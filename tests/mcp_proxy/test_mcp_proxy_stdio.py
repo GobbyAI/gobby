@@ -21,6 +21,10 @@ from gobby.mcp_proxy.stdio import (
     start_daemon_process,
     stop_daemon_process,
 )
+from gobby.mcp_proxy.wait_tools import (
+    MCP_WRAPPER_FINGERPRINT_HEADER,
+    mcp_wrapper_process_fingerprint,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -56,6 +60,36 @@ def test_source_stale_result_ignores_non_wait_tool(tmp_path: Path) -> None:
         result = wait_tools.mcp_wrapper_source_stale_result("get_task")
 
     assert result is None
+
+
+def test_wait_tool_fingerprint_stale_result_detects_missing_header() -> None:
+    from gobby.mcp_proxy import wait_tools
+
+    result = wait_tools.mcp_wrapper_fingerprint_stale_result("wait_for_agent", None)
+
+    assert result is not None
+    assert result["success"] is False
+    assert result["error_code"] == "GOBBY_MCP_WRAPPER_STALE"
+    assert result["tool_name"] == "wait_for_agent"
+    assert result["provided_wrapper_fingerprint"] is None
+    assert result["restart_required"] is True
+
+
+def test_wait_tool_fingerprint_stale_result_accepts_current_fingerprint() -> None:
+    from gobby.mcp_proxy import wait_tools
+
+    result = wait_tools.mcp_wrapper_fingerprint_stale_result(
+        "wait_for_agent",
+        wait_tools.mcp_wrapper_current_source_fingerprint(),
+    )
+
+    assert result is None
+
+
+def test_fingerprint_stale_result_ignores_non_wait_tool() -> None:
+    from gobby.mcp_proxy import wait_tools
+
+    assert wait_tools.mcp_wrapper_fingerprint_stale_result("list_tasks", None) is None
 
 
 class TestGetDaemonPid:
@@ -952,6 +986,9 @@ class TestDaemonProxyMethods:
         assert result["success"] is True
         _, kwargs = mock_client.request.call_args
         assert kwargs["headers"]["X-Gobby-Session-Id"] == "session-123"
+        assert kwargs["headers"][MCP_WRAPPER_FINGERPRINT_HEADER] == (
+            mcp_wrapper_process_fingerprint()
+        )
 
     @pytest.mark.asyncio
     async def test_request_env_session_id_skips_bootstrap_lookup(self) -> None:

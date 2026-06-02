@@ -36,9 +36,11 @@ from gobby.mcp_proxy.session_bootstrap import (
 )
 from gobby.mcp_proxy.wait_tools import (
     EXTENDED_TIMEOUT_TOOL_NAMES,
+    MCP_WRAPPER_FINGERPRINT_HEADER,
     WAIT_TOOL_HTTP_TIMEOUT_BUFFER_SECONDS,
     WAIT_TOOL_NAMES,
     call_with_wait_heartbeat,
+    mcp_wrapper_process_fingerprint,
     mcp_wrapper_source_stale_result,
     prepare_client_guard,
 )
@@ -166,7 +168,9 @@ class DaemonProxy:
                 self._last_health_ok_at = time.monotonic()
 
         # Build context headers so the daemon resolves the correct project
-        headers: dict[str, str] = {}
+        headers: dict[str, str] = {
+            MCP_WRAPPER_FINGERPRINT_HEADER: mcp_wrapper_process_fingerprint(),
+        }
         effective_project_id = project_id or self._project_id
         caller_project_id = self._project_id
         effective_session_id = session_id or await self._resolve_session_id()

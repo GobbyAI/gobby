@@ -20,6 +20,8 @@ WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS = 15.0
 WAIT_TOOL_HTTP_TIMEOUT_BUFFER_SECONDS = 30.0
 MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS = 300.0
 MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS = 90.0
+MCP_WRAPPER_FINGERPRINT_HEADER = "X-Gobby-MCP-Wrapper-Fingerprint"
+MCP_WRAPPER_STALE_ERROR_CODE = "GOBBY_MCP_WRAPPER_STALE"
 WAIT_TOOL_WRAPPER_GRACE_SECONDS = 5.0
 EXTENDED_TIMEOUT_TOOL_NAMES = (
     "close_task",
@@ -63,6 +65,24 @@ def _capture_source_digests(paths: tuple[Path, ...]) -> dict[str, str | None]:
 _MCP_WRAPPER_SOURCE_DIGESTS = _capture_source_digests(MCP_WRAPPER_SOURCE_PATHS)
 
 
+def _source_fingerprint(source_digests: dict[str, str | None]) -> str:
+    digest = hashlib.sha256()
+    for path, source_digest in sorted(source_digests.items()):
+        digest.update(path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update((source_digest or "").encode("utf-8"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def mcp_wrapper_process_fingerprint() -> str:
+    return _source_fingerprint(_MCP_WRAPPER_SOURCE_DIGESTS)
+
+
+def mcp_wrapper_current_source_fingerprint() -> str:
+    return _source_fingerprint(_capture_source_digests(MCP_WRAPPER_SOURCE_PATHS))
+
+
 def _stale_mcp_wrapper_source_paths() -> list[str]:
     stale_paths = []
     for path, startup_digest in _MCP_WRAPPER_SOURCE_DIGESTS.items():
@@ -81,13 +101,38 @@ def mcp_wrapper_source_stale_result(tool_name: str) -> dict[str, Any] | None:
 
     return {
         "success": False,
-        "error_code": "GOBBY_MCP_WRAPPER_STALE",
+        "error_code": MCP_WRAPPER_STALE_ERROR_CODE,
         "error": (
             "Gobby MCP stdio wrapper source changed since this MCP process started. "
             "Restart the Gobby MCP server before running wait tools."
         ),
         "tool_name": tool_name,
         "stale_source_paths": stale_paths,
+        "restart_required": True,
+    }
+
+
+def mcp_wrapper_fingerprint_stale_result(
+    tool_name: str,
+    provided_fingerprint: str | None,
+) -> dict[str, Any] | None:
+    if tool_name not in WAIT_TOOL_NAMES:
+        return None
+
+    expected_fingerprint = mcp_wrapper_current_source_fingerprint()
+    if provided_fingerprint == expected_fingerprint:
+        return None
+
+    return {
+        "success": False,
+        "error_code": MCP_WRAPPER_STALE_ERROR_CODE,
+        "error": (
+            "Gobby MCP stdio wrapper fingerprint is stale or missing. "
+            "Restart the Gobby MCP server before running wait tools."
+        ),
+        "tool_name": tool_name,
+        "provided_wrapper_fingerprint": provided_fingerprint,
+        "expected_wrapper_fingerprint": expected_fingerprint,
         "restart_required": True,
     }
 

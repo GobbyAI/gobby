@@ -13,6 +13,10 @@ from typing import TYPE_CHECKING, Any
 from fastapi import Depends, HTTPException, Request
 
 from gobby.mcp_proxy.tools.internal import normalize_internal_success_result
+from gobby.mcp_proxy.wait_tools import (
+    MCP_WRAPPER_FINGERPRINT_HEADER,
+    mcp_wrapper_fingerprint_stale_result,
+)
 from gobby.servers.routes.dependencies import get_internal_manager, get_mcp_manager, get_server
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.telemetry.instruments import inc_counter, observe_histogram
@@ -35,6 +39,27 @@ logger = logging.getLogger(__name__)
 # ``_ContextTokens``. The returned shape is now ``SeededContextTokens``; callers
 # treat it as an opaque handle for ``_reset_context`` / ``reset_seeded_contexts``.
 _ContextTokens = SeededContextTokens
+
+
+def _has_stdio_proxy_context(request: Request) -> bool:
+    return bool(
+        request.headers.get("X-Gobby-Caller-Project-Id")
+        or request.headers.get(MCP_WRAPPER_FINGERPRINT_HEADER)
+    )
+
+
+def _stale_stdio_wrapper_wait_result(
+    request: Request,
+    tool_name: str,
+    *,
+    require_stdio_proxy: bool,
+) -> dict[str, Any] | None:
+    if not require_stdio_proxy and not _has_stdio_proxy_context(request):
+        return None
+    return mcp_wrapper_fingerprint_stale_result(
+        tool_name,
+        request.headers.get(MCP_WRAPPER_FINGERPRINT_HEADER),
+    )
 
 
 def _get_requested_session_id(arguments: Any, request: Request | None = None) -> str | None:
@@ -619,6 +644,14 @@ async def call_mcp_tool(
                 detail={"success": False, "error": "Required fields: server_name, tool_name"},
             )
 
+        stale_wrapper_result = _stale_stdio_wrapper_wait_result(
+            request,
+            tool_name,
+            require_stdio_proxy=False,
+        )
+        if stale_wrapper_result is not None:
+            return stale_wrapper_result
+
         # Set project context from session_id or stdio proxy headers
         ctx_token = _set_context_for_request(server, arguments, request)
         # Note: session_id is NOT stripped from arguments — tools like
@@ -711,6 +744,14 @@ async def mcp_proxy(
                 status_code=400,
                 detail={"success": False, "error": f"Invalid JSON in request body: {e}"},
             ) from e
+
+        stale_wrapper_result = _stale_stdio_wrapper_wait_result(
+            request,
+            tool_name,
+            require_stdio_proxy=True,
+        )
+        if stale_wrapper_result is not None:
+            return stale_wrapper_result
 
         # Set project context from session_id or stdio proxy headers
         ctx_token = _set_context_for_request(server, arguments, request)
