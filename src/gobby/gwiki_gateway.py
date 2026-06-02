@@ -226,7 +226,7 @@ class GwikiGateway:
 
         stderr_text = stderr.decode(errors="replace").strip()
         if proc.returncode != 0:
-            payload = self._parse_error_payload(stdout)
+            payload = self._parse_error_payload(stdout, stderr)
             raise GwikiCommandError(
                 command=command_name,
                 argv=argv,
@@ -256,15 +256,18 @@ class GwikiGateway:
             raise GwikiJsonError(f"gwiki {command_name} returned JSON that was not an object")
         return payload
 
-    def _parse_error_payload(self, stdout: bytes) -> dict[str, Any] | None:
-        text = stdout.decode(errors="replace").strip()
-        if not text:
-            return None
-        try:
-            payload = json.loads(text)
-        except json.JSONDecodeError:
-            return None
-        return payload if isinstance(payload, dict) else None
+    def _parse_error_payload(self, *streams: bytes) -> dict[str, Any] | None:
+        for stream in streams:
+            text = stream.decode(errors="replace").strip()
+            if not text:
+                continue
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                return payload
+        return None
 
     def _success_envelope(
         self,
