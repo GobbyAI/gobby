@@ -628,6 +628,41 @@ async def test_get_session_commits(mock_session_manager, full_sessions_registry)
 
 
 @pytest.mark.asyncio
+async def test_get_session_commits_uses_session_project_repo_path(mock_session_manager):
+    """Session commit lookup should run git in the session project's repository."""
+    from datetime import datetime
+    from unittest.mock import patch
+
+    mock_session = _make_mock_session("sess-abc")
+    mock_session.created_at = datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC)
+    mock_session.updated_at = datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
+    mock_session.project_id = "project-123"
+    mock_session.transcript_path = "/tmp/nonrepo/transcript.jsonl"
+    mock_session_manager.get.return_value = mock_session
+
+    mock_db = MagicMock()
+    mock_db.fetchone.return_value = {
+        "id": "project-123",
+        "name": "gobby",
+        "repo_path": "/repo/gobby",
+        "github_url": None,
+        "created_at": "2025-01-01T00:00:00Z",
+        "updated_at": "2025-01-01T00:00:00Z",
+    }
+    registry = create_session_messages_registry(session_manager=mock_session_manager, db=mock_db)
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "abc123|Fix bug|2025-01-01T11:00:00+00:00"
+
+    with patch("subprocess.run", return_value=mock_result) as run:
+        result = await registry.call("get_session_commits", {"session_id": "sess-abc"})
+
+    assert result["count"] == 1
+    assert run.call_args.kwargs["cwd"] == "/repo/gobby"
+
+
+@pytest.mark.asyncio
 async def test_get_session_commits_not_found(mock_session_manager, full_sessions_registry):
     """Test get_session_commits returns error when session not found."""
     mock_session_manager.get.return_value = None
