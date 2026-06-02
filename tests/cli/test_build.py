@@ -615,36 +615,19 @@ def test_build_cli_without_input_invokes_interactive_build_skill() -> None:
     invoke_skill.assert_called_once()
 
 
-def test_build_stop_cli_opens_hub_before_control_service() -> None:
-    from gobby.build.service import BuildControlResult, BuildLifecycleEvent
+def test_build_stop_cli_requires_task_ref_or_project() -> None:
     from gobby.cli import cli
 
-    control_result = BuildControlResult(
-        project_id="project-1",
-        enabled=False,
-        lifecycle_event=BuildLifecycleEvent(
-            id=1,
-            project_id="project-1",
-            event="build_stop",
-            reason="gobby build stop",
-            by_actor="build",
-            created_at="2026-01-01T00:00:00+00:00",
-        ),
-    )
-
     with (
-        patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
         patch("gobby.cli.build._open_database") as open_db,
-        patch("gobby.cli.build.build_stop", return_value=control_result) as build_stop,
+        patch("gobby.cli.build.build_stop") as build_stop,
     ):
         result = CliRunner().invoke(cli, ["build", "stop"])
 
-    assert result.exit_code == 0
-    open_db.assert_called_once_with()
-    build_stop.assert_called_once_with(db=open_db.return_value, project_id="project-1")
-    assert build_stop.call_count == 1
-    assert build_stop.call_args is not None
-    open_db.return_value.close.assert_called_once_with()
+    assert result.exit_code != 0
+    assert "Task tree required for build stop" in result.output
+    open_db.assert_not_called()
+    build_stop.assert_not_called()
 
 
 def test_build_resume_cli_kicks_dispatcher() -> None:

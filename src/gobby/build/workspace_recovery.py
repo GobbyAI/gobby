@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from gobby.build.workspace_common import BuildWorkspaceError, WorkspaceBackend
+from gobby.build.workspace_git import _is_git_workspace_dir
 from gobby.storage.clones import Clone
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
@@ -36,7 +37,7 @@ def recover_stale_integration_artifact(
     """Clear a stale integration artifact id when no active run owns it."""
     if record is not None:
         path = _record_path(record)
-        if path is not None and path.is_dir():
+        if path is not None and _is_git_workspace_dir(path):
             return False
 
     active_run = _active_workspace_run(db, backend, workspace_id)
@@ -70,7 +71,7 @@ def _is_recoverable_workspace(
     if getattr(record, "workspace_role", "task") not in {"task", "integration"}:
         return False
     path = _record_path(record)
-    if path is None or not path.is_dir():
+    if path is None or not _is_git_workspace_dir(path):
         return False
     if not getattr(record, "base_branch", None):
         raise BuildWorkspaceError(f"{backend} base branch is required for integration promotion")

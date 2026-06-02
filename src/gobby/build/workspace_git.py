@@ -14,6 +14,14 @@ def _workspace_path(kind: str, project_name: str, branch_name: str) -> Path:
     return Path.home() / ".gobby" / kind / project_name / safe_branch
 
 
+def _is_git_workspace_dir(path: str | Path) -> bool:
+    workspace = Path(path)
+    if not workspace.is_dir():
+        return False
+    result = _git(workspace, ["rev-parse", "--is-inside-work-tree"], timeout=10)
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
 def _branch_exists(repo_path: Path, branch_name: str) -> bool:
     result = _git(repo_path, ["rev-parse", "--verify", branch_name], timeout=10)
     return result.returncode == 0

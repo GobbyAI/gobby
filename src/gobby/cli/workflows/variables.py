@@ -28,50 +28,51 @@ def set_variable(
 
         gobby workflows set-var max_retries 5
     """
-    session_var_manager = common.get_session_var_manager()
+    with common.session_var_manager_context() as session_var_manager:
+        session_id = common.resolve_session_id(session_id)
 
-    session_id = common.resolve_session_id(session_id)
-
-    # Parse value type
-    parsed_value: str | int | float | bool | None
-    value_lower = value.lower()
-    if value_lower in ("null", "none"):
-        parsed_value = None
-    elif value_lower == "true":
-        parsed_value = True
-    elif value_lower == "false":
-        parsed_value = False
-    else:
-        # Try int, then float, then string
-        try:
-            parsed_value = int(value)
-        except ValueError:
+        # Parse value type
+        parsed_value: str | int | float | bool | None
+        value_lower = value.lower()
+        if value_lower in ("null", "none"):
+            parsed_value = None
+        elif value_lower == "true":
+            parsed_value = True
+        elif value_lower == "false":
+            parsed_value = False
+        else:
+            # Try int, then float, then string
             try:
-                parsed_value = float(value)
+                parsed_value = int(value)
             except ValueError:
-                parsed_value = value
+                try:
+                    parsed_value = float(value)
+                except ValueError:
+                    parsed_value = value
 
-    # Set the variable
-    session_var_manager.set_variable(session_id, name, parsed_value)
+        # Set the variable
+        session_var_manager.set_variable(session_id, name, parsed_value)
 
-    if json_format:
-        all_variables = session_var_manager.get_variables(session_id)
-        click.echo(
-            json.dumps(
-                {
-                    "success": True,
-                    "session_id": session_id,
-                    "variable": name,
-                    "value": parsed_value,
-                    "all_variables": all_variables,
-                },
-                indent=2,
+        if json_format:
+            all_variables = session_var_manager.get_variables(session_id)
+            click.echo(
+                json.dumps(
+                    {
+                        "success": True,
+                        "session_id": session_id,
+                        "variable": name,
+                        "value": parsed_value,
+                        "all_variables": all_variables,
+                    },
+                    indent=2,
+                )
             )
-        )
-    else:
-        value_display = repr(parsed_value) if isinstance(parsed_value, str) else str(parsed_value)
-        click.echo(f"✓ Set {name} = {value_display}")
-        click.echo(f"  Session: {common.truncate_id(session_id)}")
+        else:
+            value_display = (
+                repr(parsed_value) if isinstance(parsed_value, str) else str(parsed_value)
+            )
+            click.echo(f"✓ Set {name} = {value_display}")
+            click.echo(f"  Session: {common.truncate_id(session_id)}")
 
 
 @click.command("get-var")
@@ -93,56 +94,55 @@ def get_variable(
 
         gobby workflows get-var
     """
-    session_var_manager = common.get_session_var_manager()
+    with common.session_var_manager_context() as session_var_manager:
+        session_id = common.resolve_session_id(session_id)
 
-    session_id = common.resolve_session_id(session_id)
+        variables = session_var_manager.get_variables(session_id)
 
-    variables = session_var_manager.get_variables(session_id)
+        if name:
+            # Get specific variable
+            exists = name in variables
+            value = variables.get(name)
 
-    if name:
-        # Get specific variable
-        exists = name in variables
-        value = variables.get(name)
-
-        if json_format:
-            click.echo(
-                json.dumps(
-                    {
-                        "success": True,
-                        "session_id": session_id,
-                        "variable": name,
-                        "value": value,
-                        "exists": exists,
-                    },
-                    indent=2,
-                )
-            )
-        else:
-            if exists:
-                value_display = repr(value) if isinstance(value, str) else str(value)
-                click.echo(f"{name} = {value_display}")
-            else:
-                click.echo(f"{name}: not set")
-    else:
-        # Get all variables
-        if json_format:
-            click.echo(
-                json.dumps(
-                    {
-                        "success": True,
-                        "session_id": session_id,
-                        "variables": variables,
-                    },
-                    indent=2,
-                )
-            )
-        else:
-            if variables:
-                click.echo(f"Variables for session {common.truncate_id(session_id)}:\n")
-                for var_name, var_value in sorted(variables.items()):
-                    value_display = (
-                        repr(var_value) if isinstance(var_value, str) else str(var_value)
+            if json_format:
+                click.echo(
+                    json.dumps(
+                        {
+                            "success": True,
+                            "session_id": session_id,
+                            "variable": name,
+                            "value": value,
+                            "exists": exists,
+                        },
+                        indent=2,
                     )
-                    click.echo(f"  {var_name} = {value_display}")
+                )
             else:
-                click.echo(f"No variables set for session {common.truncate_id(session_id)}")
+                if exists:
+                    value_display = repr(value) if isinstance(value, str) else str(value)
+                    click.echo(f"{name} = {value_display}")
+                else:
+                    click.echo(f"{name}: not set")
+        else:
+            # Get all variables
+            if json_format:
+                click.echo(
+                    json.dumps(
+                        {
+                            "success": True,
+                            "session_id": session_id,
+                            "variables": variables,
+                        },
+                        indent=2,
+                    )
+                )
+            else:
+                if variables:
+                    click.echo(f"Variables for session {common.truncate_id(session_id)}:\n")
+                    for var_name, var_value in sorted(variables.items()):
+                        value_display = (
+                            repr(var_value) if isinstance(var_value, str) else str(var_value)
+                        )
+                        click.echo(f"  {var_name} = {value_display}")
+                else:
+                    click.echo(f"No variables set for session {common.truncate_id(session_id)}")

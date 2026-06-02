@@ -21,6 +21,7 @@ from gobby.storage.tasks._artifacts import (
     TaskArtifacts,
 )
 from gobby.storage.tasks._artifacts import set_artifacts_atomic as _set_artifacts_atomic
+from gobby.tasks.state_semantics import current_stage, is_task_merge_ready
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
@@ -170,6 +171,17 @@ async def spawn_agent(
         db=db,
         task=task,
         task_manager=task_manager,
+        project_id=project_id,
+        services=services,
+        artifacts=artifacts,
+        isolation=effective_isolation,
+    )
+    _guard_merge_ready_leaf_branch(
+        db=db,
+        action=action,
+        task=task,
+        project_id=project_id,
+        services=services,
         artifacts=artifacts,
         isolation=effective_isolation,
     )
@@ -428,6 +440,8 @@ def _repair_leaf_target_branch(
     db: HubDatabase,
     task: Task,
     task_manager: LocalTaskManager,
+    project_id: str,
+    services: object | None,
     artifacts: TaskArtifacts,
     isolation: SpawnIsolation | None,
 ) -> TaskArtifacts:
@@ -436,12 +450,95 @@ def _repair_leaf_target_branch(
     if task.task_type == "epic" or artifacts.worktree_id or artifacts.clone_id:
         return artifacts
 
-    target_branch = _nearest_parent_integration_or_target(task_manager, task)
+    target_branch = _nearest_parent_integration_or_target(
+        task_manager,
+        task,
+        project_id=project_id,
+        services=services,
+    )
     if not target_branch or artifacts.target_branch == target_branch:
         return artifacts
 
     TaskArtifactManager(db).set_artifacts_atomic(task.id, target_branch=target_branch)
     return TaskArtifactManager(db).get_artifacts(task.id)
+
+
+def _guard_merge_ready_leaf_branch(
+    *,
+    db: HubDatabase,
+    action: SpawnAgentAction,
+    task: Task,
+    project_id: str,
+    services: object | None,
+    artifacts: TaskArtifacts,
+    isolation: SpawnIsolation | None,
+) -> None:
+    if isolation not in {"worktree", "clone"}:
+        return
+    if _uses_epic_integration_workspace(task, action):
+        return
+    if not is_task_merge_ready(task):
+        return
+    stage = current_stage(task)
+    stage_name = _field(stage, "name", None) or _field(stage, "stage_name", None)
+    if stage_name not in _DEVELOPMENT_FORWARD_ISOLATION_STAGES:
+        return
+    if isolation == "worktree" and artifacts.worktree_id:
+        return
+    if isolation == "clone" and artifacts.clone_id:
+        return
+    if not artifacts.target_branch:
+        return
+
+    branch_name = _generated_task_branch_name(
+        task=task,
+        project_id=project_id,
+        base_branch=artifacts.target_branch,
+    )
+    target_inspected, target_sha = _artifact_ref_sha(
+        db=db,
+        project_id=project_id,
+        services=services,
+        ref_name=artifacts.target_branch,
+    )
+    if not target_inspected or not target_sha:
+        return
+    branch_inspected, branch_sha = _artifact_ref_sha(
+        db=db,
+        project_id=project_id,
+        services=services,
+        ref_name=branch_name,
+    )
+    if not branch_inspected:
+        return
+    if branch_sha is None:
+        raise DispatchSpawnFailed(f"merge_ready_task_branch_missing:{branch_name}")
+    if branch_sha == target_sha:
+        raise DispatchSpawnFailed(
+            f"merge_ready_task_branch_matches_target:{branch_name}:{artifacts.target_branch}"
+        )
+
+
+def _generated_task_branch_name(*, task: Task, project_id: str, base_branch: str) -> str:
+    from gobby.agents.isolation import SpawnConfig, generate_branch_name
+
+    seq_num = getattr(task, "seq_num", None)
+    title = getattr(task, "title", None)
+    return generate_branch_name(
+        SpawnConfig(
+            prompt="",
+            task_id=getattr(task, "id", None),
+            task_title=title if isinstance(title, str) else None,
+            task_seq_num=seq_num if isinstance(seq_num, int) else None,
+            branch_name=None,
+            branch_prefix=None,
+            base_branch=base_branch,
+            project_id=project_id,
+            project_path="",
+            provider="",
+            parent_session_id="",
+        )
+    )
 
 
 def _worktree_artifact_is_stale(
@@ -587,7 +684,11 @@ def _promote_existing_clone_artifact(
 def _nearest_parent_integration_or_target(
     task_manager: LocalTaskManager,
     task: Task,
+    *,
+    project_id: str | None = None,
+    services: object | None = None,
 ) -> str | None:
+    target_fallback: str | None = None
     current_id = task.parent_task_id
     while current_id:
         try:
@@ -597,12 +698,106 @@ def _nearest_parent_integration_or_target(
         if parent is None:
             return None
         parent_artifacts = TaskArtifactManager(task_manager.db).get_artifacts(parent.id)
-        if parent_artifacts.integration_branch:
+        if parent_artifacts.integration_branch and _artifact_ref_resolves(
+            db=task_manager.db,
+            project_id=project_id,
+            services=services,
+            ref_name=parent_artifacts.integration_branch,
+        ):
             return parent_artifacts.integration_branch
-        if parent_artifacts.target_branch:
-            return parent_artifacts.target_branch
+        if (
+            target_fallback is None
+            and parent_artifacts.target_branch
+            and _artifact_ref_resolves(
+                db=task_manager.db,
+                project_id=project_id,
+                services=services,
+                ref_name=parent_artifacts.target_branch,
+            )
+        ):
+            target_fallback = parent_artifacts.target_branch
         current_id = parent.parent_task_id
-    return None
+    return target_fallback
+
+
+def _artifact_ref_resolves(
+    *,
+    db: HubDatabase,
+    project_id: str | None,
+    services: object | None,
+    ref_name: str,
+) -> bool:
+    """Return false only when the project git repo proves the artifact ref is stale."""
+    if not ref_name:
+        return False
+
+    git_manager = _service_git_manager(services, project_id) if project_id else None
+    if git_manager is None:
+        from gobby.storage.projects import LocalProjectManager
+        from gobby.worktrees.git import WorktreeGitManager
+
+        if project_id is None:
+            return True
+        project = LocalProjectManager(db).get(project_id)
+        repo_path = Path(project.repo_path) if project is not None and project.repo_path else None
+        if repo_path is None or not (repo_path / ".git").exists():
+            return True
+        git_manager = WorktreeGitManager(repo_path)
+
+    runner = getattr(git_manager, "_run_git", None)
+    if runner is None:
+        return True
+
+    for candidate in (ref_name, f"origin/{ref_name}"):
+        try:
+            result = runner(["rev-parse", "--verify", candidate], timeout=10)
+        except Exception:
+            return True
+        if getattr(result, "returncode", 1) == 0:
+            return True
+    return False
+
+
+def _artifact_ref_sha(
+    *,
+    db: HubDatabase,
+    project_id: str | None,
+    services: object | None,
+    ref_name: str,
+) -> tuple[bool, str | None]:
+    """Return (inspected, sha), where sha None means the ref was missing."""
+    if not ref_name:
+        return True, None
+
+    git_manager = _service_git_manager(services, project_id) if project_id else None
+    if git_manager is None:
+        from gobby.storage.projects import LocalProjectManager
+        from gobby.worktrees.git import WorktreeGitManager
+
+        if project_id is None:
+            return False, None
+        project = LocalProjectManager(db).get(project_id)
+        repo_path = Path(project.repo_path) if project is not None and project.repo_path else None
+        if repo_path is None or not (repo_path / ".git").exists():
+            return False, None
+        git_manager = WorktreeGitManager(repo_path)
+
+    runner = getattr(git_manager, "_run_git", None)
+    if runner is None:
+        return False, None
+
+    for candidate in (ref_name, f"origin/{ref_name}"):
+        try:
+            result = runner(["rev-parse", "--verify", f"{candidate}^{{commit}}"], timeout=10)
+        except Exception:
+            return False, None
+        if getattr(result, "returncode", 1) == 0:
+            stdout = getattr(result, "stdout", "")
+            if isinstance(stdout, str):
+                sha = stdout.strip()
+                if sha:
+                    return True, sha
+    return True, None
 
 
 def _current_project_branch(db: HubDatabase, project_id: str) -> str | None:

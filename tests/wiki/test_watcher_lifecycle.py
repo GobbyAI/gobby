@@ -127,6 +127,7 @@ async def test_startup_indexes_local_changes_with_scoped_gateways(
 
     assert constructed_scopes == [(str(project_root), None), (None, "research")]
     assert result is not None
+    assert result["index_handoff"]["status"] == "indexed"
     assert set(result["index_handoff"]["results_by_scope"]) == {"project", "topic:research"}
 
 

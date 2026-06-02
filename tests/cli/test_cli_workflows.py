@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from gobby.cli.workflows import workflows
+from gobby.cli.workflows import common, workflows
 from gobby.workflows.definitions import WorkflowDefinition, WorkflowStep
 
 pytestmark = pytest.mark.unit
@@ -25,6 +25,36 @@ def mock_session_var_manager():
 @pytest.fixture
 def cli_runner():
     return CliRunner()
+
+
+def test_close_session_var_manager_closes_cached_runtime_db() -> None:
+    """Cached workflow variable DB connections are closed before process exit."""
+    common._reset_session_var_manager_for_tests()
+    db = MagicMock()
+    next_db = MagicMock()
+
+    try:
+        with patch(
+            "gobby.cli.workflows.common.open_runtime_hub_database",
+            return_value=db,
+        ):
+            manager = common.get_session_var_manager()
+
+        assert manager.db is db
+
+        common.close_session_var_manager()
+
+        db.close.assert_called_once_with()
+
+        with patch(
+            "gobby.cli.workflows.common.open_runtime_hub_database",
+            return_value=next_db,
+        ):
+            next_manager = common.get_session_var_manager()
+
+        assert next_manager.db is next_db
+    finally:
+        common._reset_session_var_manager_for_tests()
 
 
 # ==============================================================================
@@ -197,6 +227,22 @@ def test_status_with_variables(cli_runner, mock_session_var_manager) -> None:
             assert result.exit_code == 0
             assert "task_claimed" in result.output
             assert "session_task" in result.output
+
+
+def test_status_closes_session_var_manager(cli_runner, mock_session_var_manager) -> None:
+    """The status CLI closes cached DB resources before exiting."""
+    with patch(
+        "gobby.cli.workflows.common.get_session_var_manager",
+        return_value=mock_session_var_manager,
+    ):
+        with patch("gobby.cli.workflows.common.resolve_session_id", return_value="sess1"):
+            with patch("gobby.cli.workflows.common.close_session_var_manager") as close_manager:
+                mock_session_var_manager.get_variables.return_value = {"task_claimed": True}
+
+                result = cli_runner.invoke(workflows, ["status", "--session", "sess1"])
+
+    assert result.exit_code == 0
+    close_manager.assert_called_once_with()
 
 
 def test_status_json_format(cli_runner, mock_session_var_manager) -> None:
@@ -384,6 +430,39 @@ def test_set_variable_string(cli_runner, mock_session_var_manager) -> None:
             )
 
 
+def test_set_variable_closes_session_var_manager(cli_runner, mock_session_var_manager) -> None:
+    """The set-var CLI closes cached DB resources before exiting."""
+    with patch(
+        "gobby.cli.workflows.common.get_session_var_manager",
+        return_value=mock_session_var_manager,
+    ):
+        with patch("gobby.cli.workflows.common.resolve_session_id", return_value="sess1"):
+            with patch("gobby.cli.workflows.common.close_session_var_manager") as close_manager:
+                result = cli_runner.invoke(workflows, ["set-var", "my_var", "my_value"])
+
+    assert result.exit_code == 0
+    close_manager.assert_called_once_with()
+
+
+def test_set_variable_closes_session_var_manager_on_failure(
+    cli_runner, mock_session_var_manager
+) -> None:
+    """The set-var CLI closes cached DB resources even when the write fails."""
+    mock_session_var_manager.set_variable.side_effect = RuntimeError("boom")
+
+    with patch(
+        "gobby.cli.workflows.common.get_session_var_manager",
+        return_value=mock_session_var_manager,
+    ):
+        with patch("gobby.cli.workflows.common.resolve_session_id", return_value="sess1"):
+            with patch("gobby.cli.workflows.common.close_session_var_manager") as close_manager:
+                result = cli_runner.invoke(workflows, ["set-var", "my_var", "my_value"])
+
+    assert result.exit_code != 0
+    assert isinstance(result.exception, RuntimeError)
+    close_manager.assert_called_once_with()
+
+
 def test_set_variable_boolean(cli_runner, mock_session_var_manager) -> None:
     """Test setting a boolean variable."""
     with patch(
@@ -444,6 +523,22 @@ def test_get_variable_specific(cli_runner, mock_session_var_manager) -> None:
 
             assert result.exit_code == 0
             assert "my_var = 'my_value'" in result.output
+
+
+def test_get_variable_closes_session_var_manager(cli_runner, mock_session_var_manager) -> None:
+    """The get-var CLI closes cached DB resources before exiting."""
+    with patch(
+        "gobby.cli.workflows.common.get_session_var_manager",
+        return_value=mock_session_var_manager,
+    ):
+        with patch("gobby.cli.workflows.common.resolve_session_id", return_value="sess1"):
+            with patch("gobby.cli.workflows.common.close_session_var_manager") as close_manager:
+                mock_session_var_manager.get_variables.return_value = {"my_var": "my_value"}
+
+                result = cli_runner.invoke(workflows, ["get-var", "my_var"])
+
+    assert result.exit_code == 0
+    close_manager.assert_called_once_with()
 
 
 def test_get_variable_not_set(cli_runner, mock_session_var_manager) -> None:

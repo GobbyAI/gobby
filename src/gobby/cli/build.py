@@ -831,6 +831,10 @@ def build_resume_command(input_ref: str | None, project_ref: str | None) -> None
 
 
 def _run_build_stop(input_ref: str | None = None, *, project_ref: str | None = None) -> None:
+    if input_ref is None and project_ref is None:
+        raise click.ClickException(
+            "Task tree required for build stop; pass a task ref or --project for project-scoped stop."
+        )
     project_context = _resolve_build_project_context(project_ref, Path.cwd())
     project_id = project_context.project_id
     cwd = str(project_context.cwd)

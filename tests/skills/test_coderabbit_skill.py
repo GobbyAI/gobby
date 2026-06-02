@@ -64,12 +64,33 @@ def test_coderabbit_skill_requires_plan_mode_triage_before_edits() -> None:
     assert "before the first edit" in body
 
 
+def test_coderabbit_skill_requires_exact_findings_table_contract() -> None:
+    """Verify Plan Mode triage requires the exact findings table contract."""
+    body = _body()
+    normalized_body = " ".join(body.split())
+
+    assert (
+        "| # | Decision | Path/File Name | Relevant Memory/Lesson | Reason/Planned Fix |"
+        in body
+    )
+    assert "|---|---|---|---|---|" in body
+    assert "`Path/File Name`: repo-relative path or report/artifact path" in body
+    assert "use comma-separated paths for multi-file findings" in body
+    assert (
+        "`Reason/Planned Fix`: planned fix for `fix`; reason/evidence for `no-fix`"
+        in body
+    )
+    assert "checked file, symbol, or behavior" not in normalized_body.lower()
+    assert "Reason for the decision" not in body
+
+
 def test_coderabbit_skill_documents_no_fix_decisions() -> None:
     """Verify the skill requires documented no-fix decisions for stale or invalid findings."""
     body = _body()
 
     assert "`no-fix`" in body
-    assert "Every `no-fix` decision needs a short reason" in body
+    assert "Every `no-fix` decision needs a concrete `Path/File Name` value" in body
+    assert "reason in `Reason/Planned Fix`" in body
     assert "Do not silently drop stale comments" in body
     assert "current code does not match the finding" in body
 
