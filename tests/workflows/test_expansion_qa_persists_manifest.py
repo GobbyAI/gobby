@@ -40,6 +40,52 @@ async def test_manifest_written_at_canonical_path(
 
 
 @pytest.mark.asyncio
+async def test_manifest_written_in_worktree_artifact_workspace(
+    temp_db,
+    project_manager,
+    temp_dir,
+    monkeypatch,
+) -> None:
+    coordinator_root = temp_dir / "coordinator"
+    worktree_root = temp_dir / "worktree"
+    coordinator_root.mkdir()
+    worktree_root.mkdir()
+    case = make_expansion_qa_case(temp_db, project_manager, coordinator_root)
+    worktree_plan = worktree_root / case["plan_rel"]
+    worktree_plan.parent.mkdir(parents=True, exist_ok=True)
+    worktree_plan.write_text(case["plan_path"].read_text(encoding="utf-8"), encoding="utf-8")
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        case["parent"].id,
+        worktree_path=str(worktree_root),
+        worktree_id="wt-test",
+        base_commit_sha="abc123",
+    )
+    monkeypatch.setattr(expansion_qa_coverage, "_evaluate_with_a4", lambda **_: covered_report())
+    monkeypatch.setattr(expansion_qa_coverage, "_load_a4_manifest_writer", lambda: None)
+
+    result = await case["registry"].call("run_expansion_qa_coverage", call_args(case))
+
+    expected = (
+        worktree_root
+        / ".gobby/plans/coverage"
+        / case["project"].id
+        / str(case["parent"].seq_num)
+        / "task-qa-plan.coverage.yaml"
+    )
+    coordinator_manifest = (
+        coordinator_root
+        / ".gobby/plans/coverage"
+        / case["project"].id
+        / str(case["parent"].seq_num)
+        / "task-qa-plan.coverage.yaml"
+    )
+    assert result["manifest_path"] == str(expected.relative_to(worktree_root))
+    assert result["qa_result"]["scope"]["plan_path"] == str(worktree_plan)
+    assert expected.exists()
+    assert not coordinator_manifest.exists()
+
+
+@pytest.mark.asyncio
 async def test_artifact_pointer_written(
     temp_db,
     project_manager,

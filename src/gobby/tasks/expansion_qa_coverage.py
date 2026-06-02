@@ -54,12 +54,12 @@ def run_expansion_qa_coverage(
         return {"ok": False, "error": "unsupported_task_tree", "task_tree": task_tree}
 
     root_task = _resolve_root_task(task_manager, root_task_ref, project_id, run)
-    repo_root = Path(repo_path) if repo_path else Path.cwd()
+    artifact_manager = TaskArtifactManager(task_manager.db)
+    artifacts = artifact_manager.get_artifacts(root_task.id)
+    repo_root = Path(artifacts.worktree_path or artifacts.clone_path or repo_path or Path.cwd())
     resolved_plan_path = _resolve_path(repo_root, plan_path)
     actual_plan_hash = _sha256_file(resolved_plan_path)
 
-    artifact_manager = TaskArtifactManager(task_manager.db)
-    artifacts = artifact_manager.get_artifacts(root_task.id)
     expected_hash = artifacts.plan_file_hash or plan_hash
     if actual_plan_hash != expected_hash or plan_hash != expected_hash:
         return _fail_plan_hash_drift(
