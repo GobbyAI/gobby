@@ -36,6 +36,8 @@ from gobby.mcp_proxy.session_bootstrap import (
     resolve_session_id_from_terminal_context,
 )
 from gobby.mcp_proxy.wait_tools import (
+    EXTENDED_TIMEOUT_TOOL_NAMES,
+    MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS,
     MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS,
     WAIT_TOOL_HTTP_TIMEOUT_BUFFER_SECONDS,
     WAIT_TOOL_NAMES,
@@ -57,17 +59,6 @@ def _strip_none(obj: Any) -> Any:
         return [_strip_none(item) for item in obj]
     return obj
 
-
-# Tools that can legitimately spend longer than a standard HTTP proxy call on
-# LLM-backed generation or long-running coordination before returning.
-EXTENDED_TIMEOUT_TOOL_NAMES = (
-    "close_task",
-    "expand_task",
-    "apply_tdd",
-    "merge_resolve",
-    "suggest_next_task",
-    "compact_self",
-)
 
 REMOVED_WORKFLOW_WAIT_TOOL = "wait_for_completion"
 DAEMON_HEALTH_ATTEMPTS = 30
@@ -643,7 +634,7 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
                 final_args[timeout_key] = requested_timeout
                 wait_timeout_capped = True
         elif tool_name in EXTENDED_TIMEOUT_TOOL_NAMES:
-            requested_timeout = 300.0
+            requested_timeout = MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS
 
         call_kwargs: dict[str, Any] = {}
         if project_id:

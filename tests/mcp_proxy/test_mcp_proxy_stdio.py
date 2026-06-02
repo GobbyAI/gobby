@@ -1389,9 +1389,11 @@ class TestMCPToolsWrapper:
     async def test_call_tool_returns_wrapper_timeout_for_stuck_wait_tool(self) -> None:
         _, mock_proxy, run_tool = self._register_tools()
         release_call = asyncio.Event()
+        call_finished = asyncio.Event()
 
         async def _block_until_cancelled(*_args: Any, **_kwargs: Any) -> dict[str, str]:
             await release_call.wait()
+            call_finished.set()
             return {"res": "too late"}
 
         mock_proxy.call_tool.side_effect = _block_until_cancelled
@@ -1416,6 +1418,7 @@ class TestMCPToolsWrapper:
             "timeout_seconds": 0.02,
             "effective_timeout_seconds": 0.02,
             "mcp_wrapper_timeout": True,
+            "background_call_continues": True,
             "tool_name": "wait_for_agent",
             "requested_timeout_seconds": 300.0,
             "wait_timeout_capped_by_mcp_wrapper": True,
@@ -1426,6 +1429,53 @@ class TestMCPToolsWrapper:
             {"run_id": "run-123", "timeout_seconds": 0.02},
             preflight_enabled=True,
         )
+        release_call.set()
+        await asyncio.wait_for(call_finished.wait(), timeout=0.2)
+
+    @pytest.mark.asyncio
+    async def test_call_tool_returns_wrapper_timeout_for_stuck_close_task(self) -> None:
+        _, mock_proxy, run_tool = self._register_tools()
+        release_call = asyncio.Event()
+        call_finished = asyncio.Event()
+
+        async def _block_until_released(*_args: Any, **_kwargs: Any) -> dict[str, str]:
+            await release_call.wait()
+            call_finished.set()
+            return {"res": "closed"}
+
+        mock_proxy.call_tool.side_effect = _block_until_released
+
+        with (
+            patch("gobby.mcp_proxy.stdio.MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS", 0.02),
+            patch("gobby.mcp_proxy.wait_tools.WAIT_TOOL_WRAPPER_GRACE_SECONDS", 0.01),
+        ):
+            result = await asyncio.wait_for(
+                run_tool(
+                    "call_tool",
+                    server_name="gobby-tasks",
+                    tool_name="close_task",
+                    arguments={"task_id": "#15531", "commit_sha": "abc123"},
+                ),
+                timeout=0.2,
+            )
+
+        assert result == {
+            "success": True,
+            "completed": False,
+            "timeout_seconds": 0.02,
+            "effective_timeout_seconds": 0.02,
+            "mcp_wrapper_timeout": True,
+            "background_call_continues": True,
+            "tool_name": "close_task",
+        }
+        mock_proxy.call_tool.assert_awaited_once_with(
+            "gobby-tasks",
+            "close_task",
+            {"task_id": "#15531", "commit_sha": "abc123"},
+            preflight_enabled=True,
+        )
+        release_call.set()
+        await asyncio.wait_for(call_finished.wait(), timeout=0.2)
 
     @pytest.mark.asyncio
     async def test_call_tool_emits_progress_heartbeat_for_compact_self(self) -> None:
@@ -1457,7 +1507,7 @@ class TestMCPToolsWrapper:
             await asyncio.wait_for(heartbeat_seen.wait(), timeout=0.2)
             assert ctx.report_progress.await_count >= 1
             progress_kwargs = ctx.report_progress.await_args.kwargs
-            assert progress_kwargs["total"] == 300.0
+            assert progress_kwargs["total"] == 90.0
             release_call.set()
             result = await asyncio.wait_for(task, timeout=0.2)
 
