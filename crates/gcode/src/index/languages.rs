@@ -151,7 +151,7 @@ const DART: LanguageSpec = LanguageSpec {
     extensions: &[".dart"],
     symbol_query: r#"
         (function_signature name: (identifier) @name) @definition.function
-        (class_definition name: (identifier) @name) @definition.class
+        (class_declaration name: (identifier) @name) @definition.class
         (method_signature (function_signature (identifier) @name)) @definition.method
         (enum_declaration name: (identifier) @name) @definition.type
     "#,
@@ -284,10 +284,11 @@ const SWIFT: LanguageSpec = LanguageSpec {
     extensions: &[".swift"],
     symbol_query: r#"
         (function_declaration name: (simple_identifier) @name) @definition.function
-        (class_declaration name: (type_identifier) @name) @definition.class
+        (class_declaration declaration_kind: "class" name: (type_identifier) @name) @definition.class
+        (class_declaration declaration_kind: "actor" name: (type_identifier) @name) @definition.class
         (protocol_declaration name: (type_identifier) @name) @definition.type
-        (struct_declaration name: (type_identifier) @name) @definition.type
-        (enum_declaration name: (type_identifier) @name) @definition.type
+        (class_declaration declaration_kind: "struct" name: (type_identifier) @name) @definition.type
+        (class_declaration declaration_kind: "enum" name: (type_identifier) @name) @definition.type
     "#,
     import_query: r#"
         (import_declaration) @import

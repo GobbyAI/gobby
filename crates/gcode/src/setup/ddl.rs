@@ -1,5 +1,5 @@
 use super::contracts::NAMESPACE;
-use super::identifiers::quote_identifier;
+use super::identifiers::qualified_relation;
 use gobby_core::setup::{
     OwnedObject, SetupContext, SetupError, SetupReport, StandaloneSetup, StoreKind,
 };
@@ -34,11 +34,7 @@ impl GcodeStandaloneSetup {
     }
 
     fn qualified(&self, relation: &str) -> Result<String, SetupError> {
-        Ok(format!(
-            "{}.{}",
-            quote_identifier(&self.schema, "schema")?,
-            quote_identifier(relation, "relation")?
-        ))
+        qualified_relation(&self.schema, relation, "relation")
     }
 
     pub(crate) fn postgres_object_definitions(

@@ -186,17 +186,19 @@ fn split_audio_file_with_tools(
 }
 
 fn media_duration_ms(path: &Path, tools: &MediaTools) -> Result<u64, WikiError> {
-    probe_duration_with_tool(path, &tools.ffprobe)
-        .map(|seconds| u64::from(seconds) * 1000)
-        .ok_or_else(|| WikiError::Config {
-            detail: format!(
-                "ffprobe could not determine media duration for {}",
-                path.display()
-            ),
-        })
+    probe_duration_ms_with_tool(path, &tools.ffprobe).ok_or_else(|| WikiError::Config {
+        detail: format!(
+            "ffprobe could not determine media duration for {}",
+            path.display()
+        ),
+    })
 }
 
 fn probe_duration_with_tool(path: &Path, ffprobe: &Path) -> Option<u32> {
+    probe_duration_ms_with_tool(path, ffprobe).and_then(duration_ms_to_public_seconds)
+}
+
+fn probe_duration_ms_with_tool(path: &Path, ffprobe: &Path) -> Option<u64> {
     let output = Command::new(ffprobe)
         .arg("-v")
         .arg("error")
@@ -210,10 +212,10 @@ fn probe_duration_with_tool(path: &Path, ffprobe: &Path) -> Option<u32> {
     if !output.status.success() {
         return None;
     }
-    parse_duration_seconds(&String::from_utf8_lossy(&output.stdout))
+    parse_duration_ms(&String::from_utf8_lossy(&output.stdout))
 }
 
-fn parse_duration_seconds(raw: &str) -> Option<u32> {
+fn parse_duration_ms(raw: &str) -> Option<u64> {
     let seconds = raw
         .lines()
         .map(str::trim)
@@ -221,11 +223,16 @@ fn parse_duration_seconds(raw: &str) -> Option<u32> {
     if !seconds.is_finite() || seconds < 0.0 {
         return None;
     }
-    let secs_int = seconds.trunc() as u64;
-    if secs_int > u64::from(u32::MAX) {
+    let millis = (seconds * 1000.0).ceil();
+    if millis > u64::MAX as f64 {
         return None;
     }
-    Some(seconds.ceil() as u32)
+    Some(millis as u64)
+}
+
+fn duration_ms_to_public_seconds(milliseconds: u64) -> Option<u32> {
+    let seconds = milliseconds.div_ceil(1000);
+    u32::try_from(seconds).ok()
 }
 
 fn duration_to_ms(duration: Duration, field: &'static str) -> Result<u64, WikiError> {
@@ -335,6 +342,13 @@ mod tests {
         assert_eq!(seconds_arg(0), "0.000");
         assert_eq!(seconds_arg(1_500), "1.500");
         assert_eq!(seconds_arg(61_007), "61.007");
+    }
+
+    #[test]
+    fn duration_parser_preserves_milliseconds_internally() {
+        assert_eq!(parse_duration_ms("1.234000\n"), Some(1234));
+        assert_eq!(duration_ms_to_public_seconds(1234), Some(2));
+        assert_eq!(duration_ms_to_public_seconds(1000), Some(1));
     }
 
     #[cfg(unix)]

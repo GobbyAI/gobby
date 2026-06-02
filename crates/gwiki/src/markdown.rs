@@ -200,12 +200,32 @@ pub(crate) fn parse_atx_heading(line: &str) -> Option<(u8, String)> {
         return None;
     }
 
-    let title = after_marks
-        .trim()
-        .trim_end_matches('#')
-        .trim_end()
-        .to_string();
+    let title = strip_atx_closing_sequence(after_marks.trim()).to_string();
     Some((level as u8, title))
+}
+
+fn strip_atx_closing_sequence(title: &str) -> &str {
+    let mut hash_start = title.len();
+    let mut saw_hash = false;
+    for (index, ch) in title.char_indices().rev() {
+        if ch == '#' {
+            saw_hash = true;
+            hash_start = index;
+        } else {
+            break;
+        }
+    }
+    if saw_hash
+        && hash_start > 0
+        && title[..hash_start]
+            .chars()
+            .next_back()
+            .is_some_and(char::is_whitespace)
+    {
+        title[..hash_start].trim_end()
+    } else {
+        title
+    }
 }
 
 fn build_chunks(
@@ -362,6 +382,18 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&parsed.path).expect("read page"),
             markdown
+        );
+    }
+
+    #[test]
+    fn atx_heading_keeps_hash_without_preceding_space() {
+        assert_eq!(
+            parse_atx_heading("# C#").map(|(_, title)| title),
+            Some("C#".to_string())
+        );
+        assert_eq!(
+            parse_atx_heading("# Title ###").map(|(_, title)| title),
+            Some("Title".to_string())
         );
     }
 }

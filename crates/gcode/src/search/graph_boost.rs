@@ -60,8 +60,6 @@ pub fn graph_expand(
         return vec![];
     }
 
-    let mut ids = Vec::new();
-    let mut seen = HashSet::new();
     let mut by_project: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let Some(conn) = conn else {
         return vec![];
@@ -74,18 +72,28 @@ pub fn graph_expand(
                 .push(symbol.id);
         }
     }
-    if by_project.is_empty() {
-        return vec![];
-    }
 
-    for (project_id, ids_for_project) in by_project {
-        let graph_ctx = visibility::context_for_source_project(ctx, &project_id);
+    graph_expand_grouped(ctx, by_project, |graph_ctx, ids_for_project| {
         // Callees first — "what do these symbols call?" surfaces implementation details.
         let callees =
-            code_graph::find_callee_ids_batch(&graph_ctx, &ids_for_project, 30).unwrap_or_default();
+            code_graph::find_callee_ids_batch(graph_ctx, ids_for_project, 30).unwrap_or_default();
         // Callers second — "who calls these symbols?" surfaces broader context.
         let callers =
-            code_graph::find_caller_ids_batch(&graph_ctx, &ids_for_project, 30).unwrap_or_default();
+            code_graph::find_caller_ids_batch(graph_ctx, ids_for_project, 30).unwrap_or_default();
+        (callees, callers)
+    })
+}
+
+fn graph_expand_grouped(
+    ctx: &Context,
+    by_project: BTreeMap<String, Vec<String>>,
+    mut graph_neighbors: impl FnMut(&Context, &[String]) -> (Vec<String>, Vec<String>),
+) -> Vec<String> {
+    let mut ids = Vec::new();
+    let mut seen = HashSet::new();
+    for (project_id, ids_for_project) in by_project {
+        let graph_ctx = visibility::context_for_source_project(ctx, &project_id);
+        let (callees, callers) = graph_neighbors(&graph_ctx, &ids_for_project);
         for id in callees.into_iter().chain(callers) {
             if id.is_empty() || !seen.insert(id.clone()) {
                 continue;
@@ -116,6 +124,31 @@ mod tests {
         }
     }
 
+    fn make_ctx_with_overlay() -> Context {
+        Context {
+            database_url: "postgresql://localhost/nonexistent".to_string(),
+            project_root: PathBuf::from("/overlay"),
+            project_id: "overlay".to_string(),
+            quiet: true,
+            falkordb: Some(crate::config::FalkorConfig {
+                host: "127.0.0.1".to_string(),
+                port: 16379,
+                password: None,
+                graph_name: "g".to_string(),
+            }),
+            qdrant: None,
+            embedding: None,
+            code_vectors: crate::config::CodeVectorSettings::default(),
+            daemon_url: None,
+            index_scope: crate::config::ProjectIndexScope::Overlay {
+                overlay_project_id: "overlay".to_string(),
+                overlay_root: PathBuf::from("/overlay"),
+                parent_project_id: "parent".to_string(),
+                parent_root: PathBuf::from("/parent"),
+            },
+        }
+    }
+
     #[test]
     fn test_graph_boost_no_falkordb() {
         let ctx = make_ctx_no_falkordb();
@@ -135,5 +168,54 @@ mod tests {
         let ctx = make_ctx_no_falkordb();
         let result = graph_expand(&ctx, None, &[]);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn graph_expand_grouped_expands_each_project_scope_and_dedupes() {
+        let ctx = make_ctx_with_overlay();
+        let by_project = BTreeMap::from([
+            (
+                "overlay".to_string(),
+                vec!["overlay-seed-1".to_string(), "overlay-seed-2".to_string()],
+            ),
+            ("parent".to_string(), vec!["parent-seed".to_string()]),
+        ]);
+        let mut calls = Vec::new();
+
+        let expanded = graph_expand_grouped(&ctx, by_project, |graph_ctx, ids| {
+            calls.push((graph_ctx.project_id.clone(), ids.to_vec()));
+            match graph_ctx.project_id.as_str() {
+                "overlay" => (
+                    vec!["impl-a".to_string(), "shared".to_string()],
+                    vec!["caller-a".to_string(), "shared".to_string()],
+                ),
+                "parent" => (
+                    vec!["parent-impl".to_string(), "impl-a".to_string()],
+                    vec!["".to_string(), "parent-caller".to_string()],
+                ),
+                other => panic!("unexpected project {other}"),
+            }
+        });
+
+        assert_eq!(
+            calls,
+            vec![
+                (
+                    "overlay".to_string(),
+                    vec!["overlay-seed-1".to_string(), "overlay-seed-2".to_string()]
+                ),
+                ("parent".to_string(), vec!["parent-seed".to_string()])
+            ]
+        );
+        assert_eq!(
+            expanded,
+            vec![
+                "impl-a".to_string(),
+                "shared".to_string(),
+                "caller-a".to_string(),
+                "parent-impl".to_string(),
+                "parent-caller".to_string()
+            ]
+        );
     }
 }

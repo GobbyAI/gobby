@@ -38,3 +38,31 @@ pub(super) fn with_required_core_graph<T>(
         .into()),
     }
 }
+
+pub(super) fn with_optional_core_graph<T>(
+    ctx: &Context,
+    default: impl FnOnce() -> T,
+    f: impl FnOnce(&mut GraphClient) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    let Some(config) = ctx.falkordb.as_ref() else {
+        return Ok(default());
+    };
+    let connection_config = config.connection_config();
+    match gobby_core::falkor::with_graph(
+        Some(&connection_config),
+        &config.graph_name,
+        None,
+        |client| f(client).map(Some),
+    ) {
+        Ok((Some(value), ServiceState::Available)) => Ok(value),
+        Ok((_, ServiceState::NotConfigured | ServiceState::Unreachable { .. })) => Ok(default()),
+        Ok((None, ServiceState::Available)) => Err(GraphReadError::QueryFailed {
+            message: "graph read returned no value".to_string(),
+        }
+        .into()),
+        Err(error) => Err(GraphReadError::QueryFailed {
+            message: error.to_string(),
+        }
+        .into()),
+    }
+}

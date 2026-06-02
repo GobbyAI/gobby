@@ -8,7 +8,6 @@ use gobby_core::provisioning::{
 use gobby_core::setup::{SetupContext, StandaloneSetup, ValidationContext};
 use serde_json::json;
 
-use crate::error::setup_error_to_wiki_error;
 use crate::support::env::database_url_from_env;
 use crate::support::scope::{resolve_command_scope, resolved_scope_identity};
 use crate::support::text::postgres_object_kind;
@@ -25,9 +24,7 @@ pub(crate) fn execute(
     let scope = resolve_command_scope(&selection)?;
     let output_scope = resolved_scope_identity(&scope);
     let setup = wiki_setup::default_setup();
-    let objects = setup
-        .postgres_objects()
-        .map_err(setup_error_to_wiki_error)?;
+    let objects = setup.postgres_objects().map_err(WikiError::from)?;
     let object_payloads = objects
         .iter()
         .map(|object| {
@@ -97,7 +94,7 @@ fn run_gwiki_standalone_postgres_setup(
         qdrant_config: None,
         non_interactive: true,
     };
-    let report = setup.create(&mut ctx).map_err(setup_error_to_wiki_error)?;
+    let report = setup.create(&mut ctx).map_err(WikiError::from)?;
     Ok((report.created, report.skipped, report.failed))
 }
 

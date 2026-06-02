@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::Path;
 
 use serde::Serialize;
@@ -98,12 +99,32 @@ fn create_dir(path: &Path) -> Result<(), WikiError> {
 }
 
 fn ensure_file(path: &Path, contents: &str) -> Result<bool, WikiError> {
-    if path.exists() {
-        return Ok(false);
+    if let Some(parent) = path.parent() {
+        create_dir(parent)?;
     }
-
-    write_file(path, contents)?;
-    Ok(true)
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(mut file) => {
+            if let Err(source) = file.write_all(contents.as_bytes()) {
+                let _ = std::fs::remove_file(path);
+                return Err(WikiError::Io {
+                    action: "write file",
+                    path: Some(path.to_path_buf()),
+                    source,
+                });
+            }
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(source) => Err(WikiError::Io {
+            action: "create file",
+            path: Some(path.to_path_buf()),
+            source,
+        }),
+    }
 }
 
 fn write_file(path: &Path, contents: &str) -> Result<(), WikiError> {

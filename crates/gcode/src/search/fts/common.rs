@@ -68,7 +68,7 @@ pub(super) fn query_count(
 ) -> Result<usize, postgres::Error> {
     let refs = param_refs(params);
     let row = conn.query_one(sql, &refs)?;
-    Ok(row.try_get::<_, i64>("count").unwrap_or(0) as usize)
+    Ok(row.try_get::<_, i64>("count")? as usize)
 }
 
 pub(super) fn push_visible_project_file_filter(

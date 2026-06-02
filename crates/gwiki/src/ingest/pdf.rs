@@ -296,7 +296,12 @@ fn sanitize_pdf_page_markdown(markdown: &str) -> String {
     markdown
         .lines()
         .map(|line| {
-            let line = if line.trim() == "---" { "\\---" } else { line };
+            let trimmed = line.trim();
+            let line = if trimmed.len() >= 3 && trimmed.bytes().all(|byte| byte == b'-') {
+                format!("\\{line}")
+            } else {
+                line.to_string()
+            };
             line.replace("<!-- gwiki-page:", "<!-- gwiki-page :")
         })
         .collect::<Vec<_>>()
@@ -759,7 +764,7 @@ mod tests {
             Path::new("raw/assets/report.pdf"),
             &[PdfPageMarkdown {
                 number: 1,
-                markdown: "before\n<!-- gwiki-page: 99 -->\n---\nafter".to_string(),
+                markdown: "before\n<!-- gwiki-page: 99 -->\n---\n----\nafter".to_string(),
             }],
             &PdfMarkdownSummary {
                 page_count: 1,
@@ -774,6 +779,7 @@ mod tests {
         assert!(!markdown.contains("<!-- gwiki-page: 99 -->"));
         assert!(markdown.contains("<!-- gwiki-page : 99 -->"));
         assert!(markdown.contains("\n\\---\n"));
+        assert!(markdown.contains("\n\\----\n"));
     }
 
     #[test]

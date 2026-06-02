@@ -401,7 +401,12 @@ fn ensure_hub_with_identity(
     for candidate in resolve_hub_database_urls(options, &mut get_env)? {
         match candidate.source {
             HubDatabaseUrlSource::Candidate | HubDatabaseUrlSource::Env => {
-                if override_database_url.is_none() && database_reachable(&candidate.database_url) {
+                if override_database_url.is_none()
+                    && explicit_database_url_reachable(
+                        &candidate.database_url,
+                        &mut database_reachable,
+                    )
+                {
                     override_database_url = Some(candidate.database_url);
                 }
             }
@@ -561,7 +566,9 @@ pub fn resolve_recorded_hub_database_url(
                             identity_status:
                                 RecordedHubIdentityStatus::IdentityUnknownInsufficientPrivilege {
                                     message: format!(
-                                        "identity_unknown_insufficient_privilege: preserving existing recorded hub {existing}; daemon hub {daemon} was not adopted because identity could not be verified ({message})"
+                                        "identity_unknown_insufficient_privilege: preserving existing recorded hub {}; daemon hub {} was not adopted because identity could not be verified ({message})",
+                                        redact_database_url_for_error(&existing),
+                                        redact_database_url_for_error(&daemon),
                                     ),
                                 },
                         })),
@@ -572,8 +579,8 @@ pub fn resolve_recorded_hub_database_url(
     }
 }
 
-fn redact_database_url_for_error(database_url: &str) -> String {
-    crate::degradation::redact_database_url(database_url)
+fn redact_database_url_for_error(_database_url: &str) -> String {
+    "<redacted-postgres-dsn>".to_string()
 }
 
 #[cfg(feature = "postgres")]
@@ -738,6 +745,22 @@ fn postgres_database_reachable(database_url: &str) -> bool {
 #[cfg(not(feature = "postgres"))]
 fn postgres_database_reachable(_database_url: &str) -> bool {
     false
+}
+
+#[cfg(feature = "postgres")]
+fn explicit_database_url_reachable(
+    database_url: &str,
+    database_reachable: &mut impl FnMut(&str) -> bool,
+) -> bool {
+    database_reachable(database_url)
+}
+
+#[cfg(not(feature = "postgres"))]
+fn explicit_database_url_reachable(
+    _database_url: &str,
+    _database_reachable: &mut impl FnMut(&str) -> bool,
+) -> bool {
+    true
 }
 
 pub fn provision_docker_services(
@@ -1389,11 +1412,19 @@ databases.qdrant.url: http://localhost:6333
             },
         )
         .expect("provision fallback hub");
-        assert_eq!(database_url, default_database_url(15432));
-        assert_eq!(
-            report.expect("provisioning report").health_checks,
-            vec!["postgres"]
-        );
+        #[cfg(feature = "postgres")]
+        {
+            assert_eq!(database_url, default_database_url(15432));
+            assert_eq!(
+                report.expect("provisioning report").health_checks,
+                vec!["postgres"]
+            );
+        }
+        #[cfg(not(feature = "postgres"))]
+        {
+            assert_eq!(database_url, "postgresql://unreachable/gobby");
+            assert!(report.is_none());
+        }
     }
 
     #[test]
@@ -1600,6 +1631,32 @@ databases.qdrant.url: http://localhost:6333
 
         assert_eq!(database_url, "postgresql://standalone/gobby");
         assert!(report.is_none());
+
+        let resolution = resolve_recorded_hub_database_url(
+            Some("postgresql://standalone:secret@standalone/gobby"),
+            Some("postgresql://daemon:secret@daemon/gobby"),
+            |url| {
+                matches!(
+                    url,
+                    "postgresql://standalone:secret@standalone/gobby"
+                        | "postgresql://daemon:secret@daemon/gobby"
+                )
+            },
+            |_| {
+                Ok(HubIdentityProbeResult::UnknownInsufficientPrivilege {
+                    message: "identity_unknown_insufficient_privilege".to_string(),
+                })
+            },
+        )
+        .expect("resolve unknown identity")
+        .expect("resolution");
+        let RecordedHubIdentityStatus::IdentityUnknownInsufficientPrivilege { message } =
+            resolution.identity_status
+        else {
+            panic!("expected insufficient privilege status");
+        };
+        assert!(!message.contains("postgresql://"));
+        assert!(!message.contains("secret"));
     }
 
     #[derive(Default)]

@@ -42,12 +42,14 @@ fn ensure_creates_missing_and_reuses_compatible() {
         (404, json!({"status": "not found"})),
         (200, json!({"result": true})),
         (200, json!({"result": {"operation_id": 1}})),
+        (200, json!({"result": {"count": 1}})),
         (200, json!({"result": {"operation_id": 2}})),
         (
             200,
             json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": VECTOR_DISTANCE_COSINE}}}}}),
         ),
         (200, json!({"result": {"operation_id": 3}})),
+        (200, json!({"result": {"count": 1}})),
         (200, json!({"result": {"operation_id": 4}})),
     ]);
     let mut lifecycle = CodeSymbolVectorLifecycle::new(
@@ -95,7 +97,11 @@ fn ensure_creates_missing_and_reuses_compatible() {
     assert!(qdrant_requests[2].contains(r#""source_byte_end":40"#));
     assert!(
         qdrant_requests[3]
-            .contains("POST /collections/code_symbols_project-1/points/delete HTTP/1.1")
+            .contains("POST /collections/code_symbols_project-1/points/count HTTP/1.1")
+    );
+    assert!(
+        qdrant_requests[4]
+            .contains("POST /collections/code_symbols_project-1/points/delete?wait=true HTTP/1.1")
     );
     assert!(qdrant_requests[3].contains(r#""key":"project_id""#));
     assert!(qdrant_requests[3].contains(r#""value":"project-1""#));
@@ -103,8 +109,8 @@ fn ensure_creates_missing_and_reuses_compatible() {
     assert!(qdrant_requests[3].contains(r#""value":"src/lib.rs""#));
     assert!(qdrant_requests[3].contains(r#""must_not""#));
     assert!(qdrant_requests[3].contains(r#""has_id":["sym-1"]"#));
-    assert!(qdrant_requests[4].contains("GET /collections/code_symbols_project-1 HTTP/1.1"));
-    assert!(!qdrant_requests[4].contains("DELETE"));
+    assert!(qdrant_requests[5].contains("GET /collections/code_symbols_project-1 HTTP/1.1"));
+    assert!(!qdrant_requests[5].contains("DELETE"));
 }
 
 #[test]
@@ -118,12 +124,14 @@ fn clear_and_rebuild_delete_project_and_upsert_current_symbols() {
             200,
             json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": VECTOR_DISTANCE_COSINE}}}}}),
         ),
+        (200, json!({"result": {"count": 1}})),
         (200, json!({"result": {"operation_id": 1}})),
         (
             200,
             json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": VECTOR_DISTANCE_COSINE}}}}}),
         ),
         (200, json!({"result": {"operation_id": 2}})),
+        (200, json!({"result": {"count": 1}})),
         (200, json!({"result": {"operation_id": 3}})),
     ]);
     let mut lifecycle = CodeSymbolVectorLifecycle::new(
@@ -157,17 +165,25 @@ fn clear_and_rebuild_delete_project_and_upsert_current_symbols() {
     assert_eq!(embedding_requests.len(), 1);
     assert!(
         qdrant_requests[1]
-            .contains("POST /collections/code_symbols_project-1/points/delete HTTP/1.1")
+            .contains("POST /collections/code_symbols_project-1/points/count HTTP/1.1")
     );
     assert!(qdrant_requests[1].contains(r#""key":"project_id""#));
     assert!(!qdrant_requests[1].contains(r#""key":"file_path""#));
-    assert!(qdrant_requests[3].contains("PUT /collections/code_symbols_project-1/points HTTP/1.1"));
     assert!(
-        qdrant_requests[4]
-            .contains("POST /collections/code_symbols_project-1/points/delete HTTP/1.1")
+        qdrant_requests[2]
+            .contains("POST /collections/code_symbols_project-1/points/delete?wait=true HTTP/1.1")
     );
-    assert!(qdrant_requests[4].contains(r#""must_not""#));
-    assert!(qdrant_requests[4].contains(r#""has_id":["sym-1"]"#));
+    assert!(qdrant_requests[4].contains("PUT /collections/code_symbols_project-1/points HTTP/1.1"));
+    assert!(
+        qdrant_requests[5]
+            .contains("POST /collections/code_symbols_project-1/points/count HTTP/1.1")
+    );
+    assert!(
+        qdrant_requests[6]
+            .contains("POST /collections/code_symbols_project-1/points/delete?wait=true HTTP/1.1")
+    );
+    assert!(qdrant_requests[5].contains(r#""must_not""#));
+    assert!(qdrant_requests[5].contains(r#""has_id":["sym-1"]"#));
 }
 
 #[test]

@@ -373,6 +373,9 @@ pub struct LocalBackendProbe {
 #[cfg(feature = "local_backend")]
 pub fn probe_local_backend(api_base: &str) -> Result<LocalBackendProbe, AiError> {
     let url = format!("{}/models", api_base.trim_end_matches('/'));
+    // Keep the lightweight local-backend probe on ureq: it is enabled by the
+    // local_backend feature and avoids constructing the shared AI transport for
+    // a short, unauthenticated discovery request.
     match ureq::get(&url).timeout(Duration::from_secs(2)).call() {
         Ok(response) => Ok(LocalBackendProbe {
             url,

@@ -281,34 +281,47 @@ fn ingest_video_file_with_processing(
         }
     }
 
-    if frame_interval_seconds != 0 && matches!(&vision_endpoint, VisionEndpoint::Available(_)) {
-        match media.sample_frame_images(
-            &snapshot.path,
-            Duration::from_secs(u64::from(frame_interval_seconds)),
-        ) {
-            Ok(frames) => match describe_frame_images(&snapshot.file_name, frames, vision_endpoint)
-            {
-                Ok(described_frames) => {
-                    snapshot.frame_samples = described_frames.samples;
-                    snapshot.frame_image_paths = described_frames.paths;
-                    snapshot.frame_descriptions = described_frames.descriptions;
+    if frame_interval_seconds != 0 {
+        match &vision_endpoint {
+            VisionEndpoint::Available(_) => {
+                match media.sample_frame_images(
+                    &snapshot.path,
+                    Duration::from_secs(u64::from(frame_interval_seconds)),
+                ) {
+                    Ok(frames) => {
+                        match describe_frame_images(&snapshot.file_name, frames, vision_endpoint) {
+                            Ok(described_frames) => {
+                                snapshot.frame_samples = described_frames.samples;
+                                snapshot.frame_image_paths = described_frames.paths;
+                                snapshot.frame_descriptions = described_frames.descriptions;
+                            }
+                            Err(error) => {
+                                suppress_frame_sampling = true;
+                                media_degradations.push(video_media_degradation(
+                                    "frames",
+                                    "vision_failed",
+                                    error,
+                                ));
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        suppress_frame_sampling = true;
+                        media_degradations.push(video_media_degradation(
+                            "frames",
+                            "extraction_failed",
+                            error,
+                        ));
+                    }
                 }
-                Err(error) => {
-                    suppress_frame_sampling = true;
-                    media_degradations.push(video_media_degradation(
-                        "frames",
-                        "vision_failed",
-                        error,
-                    ));
-                }
-            },
-            Err(error) => {
+            }
+            VisionEndpoint::Unavailable(degradation) => {
                 suppress_frame_sampling = true;
-                media_degradations.push(video_media_degradation(
-                    "frames",
-                    "extraction_failed",
-                    error,
-                ));
+                media_degradations.push(VideoMediaDegradation {
+                    kind: "frames".to_string(),
+                    reason: "vision_unavailable".to_string(),
+                    message: format!("{}: {}", degradation.reason, degradation.fallback),
+                });
             }
         }
     }
@@ -348,14 +361,19 @@ struct DescribedFrameImages {
     descriptions: Vec<VideoFrameDescription>,
 }
 
+struct PendingFrameImage {
+    timestamp_seconds: u32,
+    timestamp: String,
+    frame: NamedTempFile,
+    description: Option<String>,
+}
+
 fn describe_frame_images(
     video_file_name: &str,
     frames: Vec<(u64, NamedTempFile)>,
     endpoint: VisionEndpoint<'_>,
 ) -> Result<DescribedFrameImages, WikiError> {
-    let mut samples = Vec::new();
-    let mut paths = Vec::new();
-    let mut descriptions = Vec::new();
+    let mut pending = Vec::with_capacity(frames.len());
     let client = match endpoint {
         VisionEndpoint::Available(client) => Some(client),
         VisionEndpoint::Unavailable(_) => None,
@@ -364,24 +382,8 @@ fn describe_frame_images(
     for (index, (timestamp_ms, frame)) in frames.into_iter().enumerate() {
         let timestamp_seconds = (timestamp_ms / 1_000).min(u64::from(u32::MAX)) as u32;
         let timestamp = format_timestamp(timestamp_seconds);
-        let path = frame
-            .into_temp_path()
-            .keep()
-            .map_err(|error| WikiError::Io {
-                action: "persist sampled video frame",
-                path: Some(error.path.to_path_buf()),
-                source: error.error,
-            })?;
-        let source_reference = path_to_string(&path);
-        samples.push(VideoFrameSample {
-            timestamp_seconds,
-            timestamp: timestamp.clone(),
-            source_asset: path.clone(),
-            source_reference: source_reference.clone(),
-        });
-        paths.push(path.clone());
-
-        if let Some(client) = client {
+        let path = frame.path().to_path_buf();
+        let description = if let Some(client) = client {
             let bytes = std::fs::read(&path).map_err(|source| WikiError::Io {
                 action: "read sampled video frame",
                 path: Some(path.clone()),
@@ -396,10 +398,54 @@ fn describe_frame_images(
                 width: None,
                 height: None,
             })?;
+            Some(extraction.description)
+        } else {
+            None
+        };
+
+        pending.push(PendingFrameImage {
+            timestamp_seconds,
+            timestamp,
+            frame,
+            description,
+        });
+    }
+
+    let mut samples = Vec::new();
+    let mut paths = Vec::new();
+    let mut descriptions = Vec::new();
+    let mut kept_paths = Vec::new();
+
+    for pending_frame in pending {
+        let PendingFrameImage {
+            timestamp_seconds,
+            timestamp,
+            frame,
+            description,
+        } = pending_frame;
+        let path = frame.into_temp_path().keep().map_err(|error| {
+            cleanup_kept_temp_frames(&kept_paths);
+            WikiError::Io {
+                action: "persist sampled video frame",
+                path: Some(error.path.to_path_buf()),
+                source: error.error,
+            }
+        })?;
+        kept_paths.push(path.clone());
+        let source_reference = path_to_string(&path);
+        samples.push(VideoFrameSample {
+            timestamp_seconds,
+            timestamp: timestamp.clone(),
+            source_asset: path.clone(),
+            source_reference: source_reference.clone(),
+        });
+        paths.push(path.clone());
+
+        if let Some(description) = description {
             descriptions.push(VideoFrameDescription {
                 timestamp,
                 source_reference,
-                description: extraction.description,
+                description,
             });
         }
     }
@@ -409,6 +455,12 @@ fn describe_frame_images(
         paths,
         descriptions,
     })
+}
+
+fn cleanup_kept_temp_frames(paths: &[PathBuf]) {
+    for path in paths {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 fn vision_degradation(routing: AiRouting) -> VisionDegradation {
@@ -888,6 +940,16 @@ mod tests {
         }
     }
 
+    struct FailingVisionClient;
+
+    impl VisionClient for FailingVisionClient {
+        fn extract(&self, _request: &VisionRequest<'_>) -> Result<VisionExtraction, WikiError> {
+            Err(WikiError::Config {
+                detail: "vision provider failed".to_string(),
+            })
+        }
+    }
+
     fn transcript_output(
         source_lang: &str,
         translated: bool,
@@ -1217,6 +1279,26 @@ mod tests {
         assert!(frames_fail_doc.contains("Audio-first transcript from extracted video audio."));
         assert!(frames_fail_doc.contains("No frame samples recorded."));
 
+        let vision_unavailable = ingest_with_media(
+            temp.path(),
+            FakeVideoMediaExtractor {
+                audio_bytes: b"extracted audio".to_vec(),
+                frames: vec![(0, b"frame-zero".to_vec())],
+                fail_audio: None,
+                fail_frames: None,
+            },
+            TranscriptionEndpoint::Available(Box::new(FakeTranscriptionClient)),
+            VisionEndpoint::Unavailable(crate::vision::VisionDegradation {
+                reason: "disabled".to_string(),
+                fallback: "skip frames".to_string(),
+            }),
+            "vision-unavailable.mp4",
+        )
+        .expect("vision unavailable degrades");
+        let vision_unavailable_doc = read_derived(temp.path(), &vision_unavailable);
+        assert!(vision_unavailable_doc.contains("media_degradation: frames:vision_unavailable"));
+        assert!(vision_unavailable_doc.contains("No frame samples recorded."));
+
         let stt_fail = ingest_with_media(
             temp.path(),
             FakeVideoMediaExtractor {
@@ -1286,6 +1368,22 @@ mod tests {
             assert!(partial_doc.contains("transcription_missing_ranges: 9000-19000"));
             assert!(partial_doc.contains("[00:00:00] completed chunk"));
         }
+    }
+
+    #[test]
+    fn frame_vision_failure_drops_sampled_temp_frames_before_keep() {
+        let frame = temp_file_with_bytes(".jpg", b"frame-zero").expect("frame temp");
+        let frame_path = frame.path().to_path_buf();
+
+        let err = describe_frame_images(
+            "lecture.mp4",
+            vec![(0, frame)],
+            VisionEndpoint::Available(&FailingVisionClient),
+        )
+        .expect_err("vision failure should degrade caller");
+
+        assert!(err.to_string().contains("vision provider failed"));
+        assert!(!frame_path.exists(), "temp frame should be cleaned up");
     }
 
     fn ingest_with_media(

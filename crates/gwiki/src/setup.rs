@@ -45,9 +45,9 @@ pub struct GwikiStandaloneSetup {
 }
 
 impl GwikiStandaloneSetup {
-    pub fn new(schema: impl Into<String>) -> Self {
+    pub fn new() -> Self {
         Self {
-            schema: schema.into(),
+            schema: DEFAULT_SCHEMA.to_string(),
         }
     }
 
@@ -142,7 +142,7 @@ impl StandaloneSetup for GwikiStandaloneSetup {
 }
 
 pub fn default_setup() -> GwikiStandaloneSetup {
-    GwikiStandaloneSetup::new(DEFAULT_SCHEMA)
+    GwikiStandaloneSetup::new()
 }
 
 fn table(name: &'static str, sql: String) -> GwikiPostgresObject {
@@ -239,7 +239,7 @@ mod tests {
             "gwiki setup is owned by `crates/gwiki/src/setup.rs`"
         );
 
-        let setup = GwikiStandaloneSetup::new("public");
+        let setup = GwikiStandaloneSetup::new();
         assert_eq!(setup.namespace(), "gwiki");
         assert_eq!(setup.schema(), "public");
 
@@ -313,7 +313,7 @@ mod tests {
 
     #[test]
     fn published_lists_match_generated_objects() {
-        let objects = GwikiStandaloneSetup::new("public")
+        let objects = GwikiStandaloneSetup::new()
             .postgres_objects()
             .expect("setup objects");
         let tables = objects

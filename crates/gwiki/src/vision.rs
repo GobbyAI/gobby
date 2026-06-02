@@ -136,7 +136,7 @@ fn render_image_derived_markdown(
     }
     if let Some(extraction) = &extraction {
         for (key, value) in &extraction.metadata {
-            fields.push((format!("vision_{key}"), value.clone()));
+            fields.push((vision_metadata_key(key), value.clone()));
         }
     }
 
@@ -385,12 +385,39 @@ mod tests {
         assert!(markdown.contains("scope_kind: topic"));
         assert!(markdown.contains("scope_id: electronics"));
         assert!(markdown.contains("source_asset: raw/assets/image.png"));
+        assert!(markdown.contains("vision_model: fake-vision"));
         assert!(markdown.contains("## Vision Description"));
         assert!(markdown.contains("A labeled circuit diagram with two power rails."));
         assert!(markdown.contains("## OCR Text"));
         assert!(markdown.contains("VCC GND Sensor"));
         assert!(markdown.contains("## Source References"));
         assert!(markdown.contains("raw/assets/image.png"));
+    }
+
+    #[test]
+    fn vision_metadata_frontmatter_uses_sanitized_prefixed_keys() {
+        let markdown = render_image_derived_markdown(
+            &ScopeIdentity::topic("electronics"),
+            &record_for(tempfile::tempdir().expect("tempdir").path()),
+            VisionRequest {
+                file_name: "circuit.png",
+                mime_type: None,
+                asset_path: Path::new("raw/assets/image.png"),
+                bytes: b"image-bytes",
+                width: None,
+                height: None,
+            },
+            Some(VisionExtraction {
+                description: "diagram".to_string(),
+                ocr_text: None,
+                metadata: vec![("Model Name".to_string(), "fake-vision".to_string())],
+            }),
+            None,
+        );
+
+        assert!(markdown.contains("vision_model_name: fake-vision"));
+        assert!(!markdown.contains("vision_Model Name"));
+        assert!(markdown.contains("- vision_model_name: fake-vision"));
     }
 
     #[test]

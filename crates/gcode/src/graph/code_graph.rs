@@ -45,5 +45,6 @@ use read::{blast_radius_file_import_query, dedupe_limited_blast_rows, file_calls
 #[cfg(test)]
 use write::{
     cleanup_orphans_queries, clear_all_code_index_query, clear_project_query,
-    delete_file_graph_queries, delete_file_node_query,
+    delete_file_graph_queries, delete_file_node_query, import_graph_items,
+    partition_call_graph_items,
 };

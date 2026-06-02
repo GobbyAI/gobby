@@ -260,6 +260,9 @@ pub mod ai_keys {
     pub const EMBEDDINGS_API_BASE: &str = super::embedding_keys::AI_API_BASE;
     pub const EMBEDDINGS_MODEL: &str = super::embedding_keys::AI_MODEL;
     pub const EMBEDDINGS_API_KEY: &str = super::embedding_keys::AI_API_KEY;
+    pub const EMBEDDINGS_QUERY_PREFIX: &str = super::embedding_keys::AI_QUERY_PREFIX;
+    pub const EMBEDDINGS_DIM: &str = super::embedding_keys::AI_DIM;
+    pub const EMBEDDINGS_TIMEOUT_SECONDS: &str = super::embedding_keys::AI_TIMEOUT_SECONDS;
 
     pub const AUDIO_TRANSCRIBE_NAMESPACE: &str = "ai.audio_transcribe";
     pub const AUDIO_TRANSCRIBE_ROUTING: &str = "ai.audio_transcribe.routing";
@@ -306,6 +309,9 @@ pub mod ai_keys {
         EMBEDDINGS_API_BASE,
         EMBEDDINGS_MODEL,
         EMBEDDINGS_API_KEY,
+        EMBEDDINGS_QUERY_PREFIX,
+        EMBEDDINGS_DIM,
+        EMBEDDINGS_TIMEOUT_SECONDS,
         AUDIO_TRANSCRIBE_ROUTING,
         AUDIO_TRANSCRIBE_TRANSPORT,
         AUDIO_TRANSCRIBE_API_BASE,
@@ -1073,6 +1079,9 @@ mod tests {
                 .iter()
                 .all(|key| !key.starts_with("ai.video."))
         );
+        assert!(ai_keys::all().contains(&ai_keys::EMBEDDINGS_QUERY_PREFIX));
+        assert!(ai_keys::all().contains(&ai_keys::EMBEDDINGS_DIM));
+        assert!(ai_keys::all().contains(&ai_keys::EMBEDDINGS_TIMEOUT_SECONDS));
     }
 
     #[test]

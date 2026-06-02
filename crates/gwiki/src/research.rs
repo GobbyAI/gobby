@@ -568,8 +568,10 @@ fn research_note_file_state(
 }
 
 fn frontmatter_block(markdown: &str) -> Option<&str> {
-    let rest = markdown.strip_prefix("---\n")?;
-    let end = rest.find("\n---")?;
+    let rest = markdown
+        .strip_prefix("---\n")
+        .or_else(|| markdown.strip_prefix("---\r\n"))?;
+    let end = rest.find("\n---").or_else(|| rest.find("\r\n---"))?;
     Some(&rest[..end])
 }
 
@@ -781,6 +783,15 @@ mod tests {
                 agent_run_ids: vec!["run-1".to_string(), "run-2".to_string()],
             })
         }
+    }
+
+    #[test]
+    fn frontmatter_block_accepts_crlf_delimiters() {
+        let markdown = "---\r\nresearch_note_id: abc\r\nresearch_status: completed\r\n---\r\nBody";
+        let frontmatter = frontmatter_block(markdown).expect("frontmatter");
+
+        assert!(yaml_field_eq(frontmatter, "research_note_id", "abc"));
+        assert!(yaml_field_eq(frontmatter, "research_status", "completed"));
     }
 
     #[test]

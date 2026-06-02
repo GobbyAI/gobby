@@ -65,9 +65,6 @@ fn html_title(document: &Html) -> Option<String> {
 fn title_from_url_path(url: &str) -> Option<String> {
     let url = Url::parse(url).ok()?;
     let segment = url.path_segments()?.rfind(|segment| !segment.is_empty())?;
-    if segment.is_empty() {
-        return None;
-    }
     let title = markdown_title(&percent_decode_lossy(segment));
     (!title.is_empty()).then_some(title)
 }

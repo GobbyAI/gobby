@@ -118,8 +118,10 @@ fn blank_qdrant_url_is_missing_config() {
 
 #[test]
 fn delete_file_vectors_filters_by_project_and_file_without_embedding() {
-    let (qdrant_url, handle) =
-        spawn_http_responses(vec![(200, json!({"result": {"operation_id": 1}}))]);
+    let (qdrant_url, handle) = spawn_http_responses(vec![
+        (200, json!({"result": {"count": 2}})),
+        (200, json!({"result": {"operation_id": 1}})),
+    ]);
     let deleted = delete_file_vectors(
         &QdrantConfig {
             url: Some(qdrant_url),
@@ -131,16 +133,59 @@ fn delete_file_vectors_filters_by_project_and_file_without_embedding() {
     .expect("delete vectors");
     let requests = handle.join().expect("qdrant requests");
 
-    assert_eq!(deleted, 1);
-    assert_eq!(requests.len(), 1);
+    assert_eq!(deleted, 2);
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].contains("POST /collections/code_symbols_project-1/points/count HTTP/1.1"));
     assert!(
-        requests[0].contains("POST /collections/code_symbols_project-1/points/delete HTTP/1.1")
+        requests[1]
+            .contains("POST /collections/code_symbols_project-1/points/delete?wait=true HTTP/1.1")
     );
-    assert!(requests[0].contains("api-key: qdrant-key"));
-    assert!(requests[0].contains(r#""key":"project_id""#));
-    assert!(requests[0].contains(r#""value":"project-1""#));
-    assert!(requests[0].contains(r#""key":"file_path""#));
-    assert!(requests[0].contains(r#""value":"src/lib.rs""#));
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.contains("api-key: qdrant-key"))
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.contains(r#""key":"project_id""#))
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.contains(r#""value":"project-1""#))
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.contains(r#""key":"file_path""#))
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.contains(r#""value":"src/lib.rs""#))
+    );
+    assert!(requests[0].contains(r#""exact":true"#));
+}
+
+#[test]
+fn delete_file_vectors_skips_delete_when_count_is_zero() {
+    let (qdrant_url, handle) = spawn_http_responses(vec![(200, json!({"result": {"count": 0}}))]);
+    let deleted = delete_file_vectors(
+        &QdrantConfig {
+            url: Some(qdrant_url),
+            api_key: None,
+        },
+        "project-1",
+        "src/lib.rs",
+    )
+    .expect("delete vectors");
+    let requests = handle.join().expect("qdrant requests");
+
+    assert_eq!(deleted, 0);
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].contains("POST /collections/code_symbols_project-1/points/count HTTP/1.1"));
+    assert!(!requests[0].contains("/points/delete"));
 }
 
 #[test]
@@ -150,6 +195,7 @@ fn clear_project_vectors_does_not_touch_memory_vector_collections() {
             200,
             json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": "Cosine"}}}}}),
         ),
+        (200, json!({"result": {"count": 3}})),
         (200, json!({"result": {"operation_id": 1}})),
     ]);
     let mut lifecycle = CodeSymbolVectorLifecycle::new(
@@ -174,15 +220,26 @@ fn clear_project_vectors_does_not_touch_memory_vector_collections() {
     let cleared = lifecycle.clear_project_vectors().expect("clear vectors");
     let requests = handle.join().expect("qdrant requests");
 
-    assert_eq!(cleared.delete_operations_issued, 1);
-    assert_eq!(requests.len(), 2);
+    assert_eq!(cleared.delete_operations_issued, 3);
+    assert_eq!(requests.len(), 3);
     assert!(requests[0].contains("GET /collections/code_symbols_project-1 HTTP/1.1"));
+    assert!(requests[1].contains("POST /collections/code_symbols_project-1/points/count HTTP/1.1"));
     assert!(
-        requests[1].contains("POST /collections/code_symbols_project-1/points/delete HTTP/1.1")
+        requests[2]
+            .contains("POST /collections/code_symbols_project-1/points/delete?wait=true HTTP/1.1")
     );
-    assert!(requests[1].contains(r#""key":"project_id""#));
-    assert!(requests[1].contains(r#""value":"project-1""#));
+    assert!(
+        requests[1..]
+            .iter()
+            .all(|request| request.contains(r#""key":"project_id""#))
+    );
+    assert!(
+        requests[1..]
+            .iter()
+            .all(|request| request.contains(r#""value":"project-1""#))
+    );
     assert!(!requests[1].contains(r#""key":"file_path""#));
+    assert!(!requests[2].contains(r#""key":"file_path""#));
     assert!(requests.iter().all(|request| !request.contains("memory")));
     assert!(
         requests

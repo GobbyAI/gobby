@@ -5,7 +5,7 @@ use crate::graph::typed_query;
 use crate::models::GraphResult;
 use gobby_core::falkor::Row;
 
-use super::connection::with_required_core_graph;
+use super::connection::with_optional_core_graph;
 use super::payload::{
     GraphBlastRadiusTarget, GraphLink, GraphNode, GraphPayload, add_link_from_row,
     add_node_from_row, add_prefixed_node_from_row, row_string_owned, row_to_projection_metadata,
@@ -560,7 +560,7 @@ fn count_from_rows(rows: &[Row]) -> usize {
 }
 
 pub fn project_overview_graph(ctx: &Context, limit: usize) -> anyhow::Result<GraphPayload> {
-    with_required_core_graph(ctx, |client| {
+    with_optional_core_graph(ctx, GraphPayload::default, |client| {
         let limit = clamp_limit(limit);
         let link_limit = clamp_limit(limit.saturating_mul(4));
         let max_nodes = limit.saturating_mul(8);
@@ -641,7 +641,7 @@ pub fn project_overview_graph(ctx: &Context, limit: usize) -> anyhow::Result<Gra
 }
 
 pub fn file_graph(ctx: &Context, file_path: &str) -> anyhow::Result<GraphPayload> {
-    with_required_core_graph(ctx, |client| {
+    with_optional_core_graph(ctx, GraphPayload::default, |client| {
         let mut payload = GraphPayload::default();
         let mut file_node = GraphNode::new(file_path, file_path, "file");
         file_node.file_path = Some(file_path.to_string());
@@ -673,7 +673,7 @@ pub fn symbol_neighbors(
     symbol_id: &str,
     limit: usize,
 ) -> anyhow::Result<GraphPayload> {
-    with_required_core_graph(ctx, |client| {
+    with_optional_core_graph(ctx, GraphPayload::default, |client| {
         let mut payload = GraphPayload::with_center(symbol_id.to_string());
         let (query, params) = blast_radius_center_query(&ctx.project_id, symbol_id);
         let center_rows = client.query(&query, Some(params))?;
@@ -712,7 +712,7 @@ pub fn blast_radius_graph(
     depth: usize,
     limit: usize,
 ) -> anyhow::Result<GraphPayload> {
-    with_required_core_graph(ctx, |client| {
+    with_optional_core_graph(ctx, GraphPayload::default, |client| {
         let (center_id, mut center_node, rows) = match target {
             GraphBlastRadiusTarget::SymbolId(symbol_id) => {
                 let (query, params) = blast_radius_center_query(&ctx.project_id, &symbol_id);
@@ -782,19 +782,27 @@ pub fn blast_radius_graph(
 }
 
 pub fn count_callers(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
-    with_required_core_graph(ctx, |client| {
-        let (query, params) = count_callers_query(&ctx.project_id, symbol_id);
-        let rows = client.query(&query, Some(params))?;
-        Ok(count_from_rows(&rows))
-    })
+    with_optional_core_graph(
+        ctx,
+        || 0,
+        |client| {
+            let (query, params) = count_callers_query(&ctx.project_id, symbol_id);
+            let rows = client.query(&query, Some(params))?;
+            Ok(count_from_rows(&rows))
+        },
+    )
 }
 
 pub fn count_usages(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
-    with_required_core_graph(ctx, |client| {
-        let (query, params) = count_usages_query(&ctx.project_id, symbol_id);
-        let rows = client.query(&query, Some(params))?;
-        Ok(count_from_rows(&rows))
-    })
+    with_optional_core_graph(
+        ctx,
+        || 0,
+        |client| {
+            let (query, params) = count_usages_query(&ctx.project_id, symbol_id);
+            let rows = client.query(&query, Some(params))?;
+            Ok(count_from_rows(&rows))
+        },
+    )
 }
 
 pub fn find_callers(
@@ -803,7 +811,7 @@ pub fn find_callers(
     offset: usize,
     limit: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
-    with_required_core_graph(ctx, |client| {
+    with_optional_core_graph(ctx, Vec::new, |client| {
         let (query, params) = find_callers_query(&ctx.project_id, symbol_id, offset, limit);
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
@@ -816,7 +824,7 @@ pub fn find_usages(
     offset: usize,
     limit: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
-    with_required_core_graph(ctx, |client| {
+    with_optional_core_graph(ctx, Vec::new, |client| {
         let (query, params) = find_usages_query(&ctx.project_id, symbol_id, offset, limit);
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
@@ -828,7 +836,7 @@ pub fn find_caller_ids(
     symbol_id: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<String>> {
-    with_required_core_graph(ctx, |client| {
+    with_optional_core_graph(ctx, Vec::new, |client| {
         let (query, params) = find_caller_ids_query(&ctx.project_id, symbol_id, limit);
         let rows = client.query(&query, Some(params))?;
         Ok(rows
@@ -839,7 +847,7 @@ pub fn find_caller_ids(
 }
 
 pub fn find_usage_ids(ctx: &Context, symbol_id: &str, limit: usize) -> anyhow::Result<Vec<String>> {
-    with_required_core_graph(ctx, |client| {
+    with_optional_core_graph(ctx, Vec::new, |client| {
         let (query, params) = find_usage_ids_query(&ctx.project_id, symbol_id, limit);
         let rows = client.query(&query, Some(params))?;
         Ok(rows
@@ -857,7 +865,7 @@ pub fn find_callers_batch(
     if symbol_ids.is_empty() {
         return Ok(vec![]);
     }
-    with_required_core_graph(ctx, |client| {
+    with_optional_core_graph(ctx, Vec::new, |client| {
         let (query, params) = find_callers_batch_query(&ctx.project_id, symbol_ids, limit);
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
@@ -872,7 +880,7 @@ pub fn find_caller_ids_batch(
     if symbol_ids.is_empty() {
         return Ok(vec![]);
     }
-    with_required_core_graph(ctx, |client| {
+    with_optional_core_graph(ctx, Vec::new, |client| {
         let (query, params) = find_caller_ids_batch_query(&ctx.project_id, symbol_ids, limit);
         let rows = client.query(&query, Some(params))?;
         Ok(rows
@@ -890,7 +898,7 @@ pub fn find_callees_batch(
     if symbol_ids.is_empty() {
         return Ok(vec![]);
     }
-    with_required_core_graph(ctx, |client| {
+    with_optional_core_graph(ctx, Vec::new, |client| {
         let (query, params) = find_callees_batch_query(&ctx.project_id, symbol_ids, limit);
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
@@ -905,7 +913,7 @@ pub fn find_callee_ids_batch(
     if symbol_ids.is_empty() {
         return Ok(vec![]);
     }
-    with_required_core_graph(ctx, |client| {
+    with_optional_core_graph(ctx, Vec::new, |client| {
         let (query, params) = find_callee_ids_batch_query(&ctx.project_id, symbol_ids, limit);
         let rows = client.query(&query, Some(params))?;
         Ok(rows
@@ -916,7 +924,7 @@ pub fn find_callee_ids_batch(
 }
 
 pub fn get_imports(ctx: &Context, file_path: &str) -> anyhow::Result<Vec<GraphResult>> {
-    with_required_core_graph(ctx, |client| {
+    with_optional_core_graph(ctx, Vec::new, |client| {
         let (query, params) = get_imports_query(&ctx.project_id, file_path);
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
@@ -928,7 +936,7 @@ pub fn blast_radius(
     symbol_id: &str,
     depth: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
-    with_required_core_graph(ctx, |client| {
+    with_optional_core_graph(ctx, Vec::new, |client| {
         let query = blast_radius_query(depth, MAX_GRAPH_LIMIT);
         let params = typed_query::string_params(&[("project", &ctx.project_id), ("id", symbol_id)]);
         let rows = client.query(&query, Some(params))?;

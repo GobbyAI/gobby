@@ -8,6 +8,7 @@ use crate::support::scope::{resolve_command_scope, resolved_scope_identity};
 use crate::{CommandOutcome, ReadTarget, ScopeIdentity, ScopeSelection, WikiError};
 
 const MAX_TITLE_CANDIDATES: usize = 50;
+const MAX_TITLE_SEARCH_DEPTH: usize = 64;
 
 pub(crate) fn execute(
     target: ReadTarget,
@@ -166,7 +167,7 @@ fn title_candidates(
     max_results: usize,
 ) -> Result<Vec<ReadCandidate>, WikiError> {
     let mut candidates = Vec::new();
-    collect_title_candidates(root, root, title, max_results, &mut candidates)?;
+    collect_title_candidates(root, root, title, max_results, 0, &mut candidates)?;
     Ok(candidates)
 }
 
@@ -175,9 +176,10 @@ fn collect_title_candidates(
     dir: &Path,
     title: &str,
     max_results: usize,
+    depth: usize,
     candidates: &mut Vec<ReadCandidate>,
 ) -> Result<(), WikiError> {
-    if candidates.len() >= max_results {
+    if candidates.len() >= max_results || depth > MAX_TITLE_SEARCH_DEPTH {
         return Ok(());
     }
 
@@ -204,7 +206,7 @@ fn collect_title_candidates(
         })?;
         let path = entry.path();
         if path.is_dir() {
-            collect_title_candidates(root, &path, title, max_results, candidates)?;
+            collect_title_candidates(root, &path, title, max_results, depth + 1, candidates)?;
             continue;
         }
 
@@ -471,5 +473,26 @@ impl ReadDegradation {
             message: message.into(),
             guidance: "Pass --path with one of the returned candidate wiki_path values.",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn title_search_stops_at_max_depth() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut deep = temp.path().to_path_buf();
+        for depth in 0..=MAX_TITLE_SEARCH_DEPTH + 2 {
+            deep = deep.join(format!("d{depth}"));
+        }
+        std::fs::create_dir_all(&deep).expect("deep dirs");
+        std::fs::write(deep.join("target.md"), "# Deep Target\n").expect("deep markdown");
+
+        let candidates = title_candidates(temp.path(), "Deep Target", MAX_TITLE_CANDIDATES)
+            .expect("title search");
+
+        assert!(candidates.is_empty());
     }
 }

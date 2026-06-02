@@ -32,7 +32,7 @@ pub fn outline(
         eprintln!("{}", outline_missing_diagnostic(&mut conn, ctx, &file));
     }
 
-    if summarize && let Some(summary) = summarize_outline(ctx, &file, &symbols) {
+    if summarize && let Some(summary) = summarize_outline(ctx, Some(&mut conn), &file, &symbols) {
         return output::print_text(&summary);
     }
 
@@ -78,9 +78,14 @@ pub fn outline(
     }
 }
 
-fn summarize_outline(ctx: &Context, file: &str, symbols: &[Symbol]) -> Option<String> {
+fn summarize_outline(
+    ctx: &Context,
+    conn: Option<&mut postgres::Client>,
+    file: &str,
+    symbols: &[Symbol],
+) -> Option<String> {
     let code = std::fs::read_to_string(ctx.project_root.join(file)).ok()?;
-    let ai_context = resolve_outline_ai_context(ctx).ok()?;
+    let ai_context = resolve_outline_ai_context(ctx, conn).ok()?;
     let route = effective_route(&ai_context, AiCapability::TextGenerate);
 
     summarize_outline_with(file, &code, symbols, |prompt, system| {
@@ -93,9 +98,21 @@ fn summarize_outline(ctx: &Context, file: &str, symbols: &[Symbol]) -> Option<St
     })
 }
 
-fn resolve_outline_ai_context(ctx: &Context) -> anyhow::Result<AiContext> {
-    let mut conn = db::connect_readonly(&ctx.database_url)?;
+fn resolve_outline_ai_context(
+    ctx: &Context,
+    conn: Option<&mut postgres::Client>,
+) -> anyhow::Result<AiContext> {
     let standalone = config::read_standalone_config_optional();
+    if let Some(conn) = conn {
+        let primary = PostgresAiConfigSource::new(conn, secrets::resolve_config_value);
+        let mut source = AiConfigSource::with_primary(primary, standalone);
+        return Ok(AiContext::resolve(
+            Some(ctx.project_id.clone()),
+            &mut source,
+        ));
+    }
+
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
     let primary = PostgresAiConfigSource::new(&mut conn, secrets::resolve_config_value);
     let mut source = AiConfigSource::with_primary(primary, standalone);
     Ok(AiContext::resolve(

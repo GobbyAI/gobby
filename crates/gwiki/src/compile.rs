@@ -102,7 +102,7 @@ pub fn compile_to_wiki_with_options(
     request: CompileRequest,
     options: WikiCompileOptions,
 ) -> Result<WikiCompileOutcome, WikiError> {
-    let target_page = request.target_page.clone();
+    let target_page = normalize_target_page(session.scope.root(), request.target_page.as_deref())?;
     let write_intent = request.write_intent;
     let handoff_request = CompileRequest {
         topic: request.topic,
@@ -186,7 +186,7 @@ pub fn compile_to_wiki_with_options(
 
 pub fn prepare_handoff(
     session: &mut ResearchSession,
-    request: CompileRequest,
+    mut request: CompileRequest,
 ) -> Result<CompileOutcome, WikiError> {
     if request.topic.trim().is_empty() {
         return Err(WikiError::InvalidInput {
@@ -194,6 +194,8 @@ pub fn prepare_handoff(
             message: "compile handoff requires a topic".to_string(),
         });
     }
+    request.target_page =
+        normalize_target_page(session.scope.root(), request.target_page.as_deref())?;
 
     let handoff_id = format!(
         "compile-{}-{}",
@@ -771,6 +773,44 @@ fn write_target_page(target_page: &Path, rendered: &str) -> Result<(), WikiError
     })
 }
 
+fn normalize_target_page(
+    vault_root: &Path,
+    target_page: Option<&Path>,
+) -> Result<Option<PathBuf>, WikiError> {
+    let Some(target_page) = target_page else {
+        return Ok(None);
+    };
+    if target_page.is_absolute() {
+        return Err(WikiError::InvalidInput {
+            field: "target_page",
+            message: "compile target page must be vault-relative".to_string(),
+        });
+    }
+
+    let mut normalized = PathBuf::new();
+    for component in target_page.components() {
+        match component {
+            std::path::Component::Normal(value) => normalized.push(value),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => {
+                return Err(WikiError::InvalidInput {
+                    field: "target_page",
+                    message: "compile target page must stay inside the vault".to_string(),
+                });
+            }
+        }
+    }
+    if normalized.as_os_str().is_empty() {
+        return Err(WikiError::InvalidInput {
+            field: "target_page",
+            message: "compile target page must identify a wiki document".to_string(),
+        });
+    }
+    Ok(Some(vault_root.join(normalized)))
+}
+
 fn slugify(topic: &str) -> String {
     let mut slug = String::new();
     let mut last_was_dash = false;
@@ -852,7 +892,7 @@ mod tests {
                     "Durable handoff".to_string(),
                     "Synthesis inputs".to_string(),
                 ],
-                target_page: Some(scope.root().join("compile-behavior.md")),
+                target_page: Some(PathBuf::from("compile-behavior.md")),
                 write_intent: false,
             },
         )
@@ -894,7 +934,7 @@ mod tests {
             CompileRequest {
                 topic: "Compile behavior".to_string(),
                 outline: vec!["Durable handoff".to_string()],
-                target_page: Some(page_path.clone()),
+                target_page: Some(PathBuf::from("compile-behavior.md")),
                 write_intent: false,
             },
         )
@@ -924,7 +964,7 @@ mod tests {
             CompileRequest {
                 topic: "Compile behavior".to_string(),
                 outline: vec!["Durable handoff".to_string()],
-                target_page: Some(page_path.clone()),
+                target_page: Some(PathBuf::from("compile-behavior.md")),
                 write_intent: true,
             },
         )
@@ -969,6 +1009,55 @@ mod tests {
             err,
             WikiError::InvalidInput {
                 field: "accepted_note",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn compile_rejects_absolute_or_escaping_target_pages() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let scope = ResearchScope::project(temp.path());
+        let note_path = scope.root().join("raw/research/compile.md");
+        std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
+        std::fs::write(&note_path, "Citation: Example Docs").expect("note written");
+        let mut absolute_session =
+            session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+
+        let absolute = prepare_handoff(
+            &mut absolute_session,
+            CompileRequest {
+                topic: "Compile behavior".to_string(),
+                outline: vec!["Overview".to_string()],
+                target_page: Some(scope.root().join("absolute.md")),
+                write_intent: false,
+            },
+        )
+        .expect_err("absolute target page must be rejected");
+        assert!(matches!(
+            absolute,
+            WikiError::InvalidInput {
+                field: "target_page",
+                ..
+            }
+        ));
+
+        let mut escaping_session =
+            session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+        let escaping = prepare_handoff(
+            &mut escaping_session,
+            CompileRequest {
+                topic: "Compile behavior".to_string(),
+                outline: vec!["Overview".to_string()],
+                target_page: Some(PathBuf::from("../outside.md")),
+                write_intent: false,
+            },
+        )
+        .expect_err("escaping target page must be rejected");
+        assert!(matches!(
+            escaping,
+            WikiError::InvalidInput {
+                field: "target_page",
                 ..
             }
         ));

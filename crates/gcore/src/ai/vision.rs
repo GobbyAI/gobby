@@ -99,9 +99,6 @@ fn parse_json_content(content: &str) -> Option<(String, Option<String>)> {
 
     let parsed = serde_json::from_str::<VisionContent>(strip_json_fence(content)).ok()?;
     let description = parsed.description?.trim().to_string();
-    if description.is_empty() {
-        return None;
-    }
 
     Some((description, clean_optional_text(parsed.ocr_text)))
 }
@@ -222,6 +219,18 @@ mod tests {
         assert_eq!(fallback.description, "A plain prose description.");
         assert_eq!(fallback.ocr_text, None);
         assert_eq!(fallback.model.as_deref(), Some("fallback-model"));
+    }
+
+    #[test]
+    fn parses_present_empty_json_description() {
+        let result = parse_content(
+            r#"{"description":"","ocr_text":null}"#,
+            Some("vision-model".to_string()),
+        );
+
+        assert_eq!(result.description, "");
+        assert_eq!(result.ocr_text, None);
+        assert_eq!(result.model.as_deref(), Some("vision-model"));
     }
 
     fn spawn_server(response: &'static str) -> (String, RequestHandle) {

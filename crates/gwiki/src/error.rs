@@ -149,10 +149,6 @@ impl std::error::Error for WikiError {
     }
 }
 
-pub(crate) fn setup_error_to_wiki_error(error: SetupError) -> WikiError {
-    WikiError::Setup { source: error }
-}
-
 impl From<indexer::IndexError> for WikiError {
     fn from(error: indexer::IndexError) -> Self {
         Self::Index { source: error }
@@ -162,6 +158,12 @@ impl From<indexer::IndexError> for WikiError {
 impl From<search::SearchError> for WikiError {
     fn from(error: search::SearchError) -> Self {
         Self::Search { source: error }
+    }
+}
+
+impl From<SetupError> for WikiError {
+    fn from(error: SetupError) -> Self {
+        Self::Setup { source: error }
     }
 }
 
@@ -199,7 +201,7 @@ mod tests {
 
     #[test]
     fn setup_error_source_is_preserved() {
-        let error = setup_error_to_wiki_error(SetupError::CreationFailed {
+        let error = WikiError::from(SetupError::CreationFailed {
             object: "gwiki_documents".to_string(),
             message: "permission denied".to_string(),
         });

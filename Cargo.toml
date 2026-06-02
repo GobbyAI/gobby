@@ -19,4 +19,4 @@ opt-level = "z"
 opt-level = "z"
 
 [profile.release.package.gobby-wiki]
-opt-level = "z"
+opt-level = 3

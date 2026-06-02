@@ -405,26 +405,26 @@ fn usize_value(value: usize) -> anyhow::Result<TypedValue> {
 }
 
 #[derive(Debug, Clone)]
-struct ImportGraphItem {
-    source_file: String,
+pub(super) struct ImportGraphItem {
+    pub(super) source_file: String,
     target_module: String,
 }
 
 #[derive(Debug, Clone)]
-struct CallGraphItem {
+pub(super) struct CallGraphItem {
     caller_id: String,
     target_id: String,
     callee_name: String,
-    file_path: String,
+    pub(super) file_path: String,
     line: usize,
     callee_module: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
-struct CallGraphItems {
+pub(super) struct CallGraphItems {
     symbol: Vec<CallGraphItem>,
     external: Vec<CallGraphItem>,
-    unresolved: Vec<CallGraphItem>,
+    pub(super) unresolved: Vec<CallGraphItem>,
 }
 
 fn map_value(values: impl IntoIterator<Item = (&'static str, TypedValue)>) -> TypedValue {
@@ -436,16 +436,15 @@ fn map_value(values: impl IntoIterator<Item = (&'static str, TypedValue)>) -> Ty
     )
 }
 
-fn import_graph_items(file_path: &str, imports: &[ImportRelation]) -> Vec<ImportGraphItem> {
+pub(super) fn import_graph_items(
+    file_path: &str,
+    imports: &[ImportRelation],
+) -> Vec<ImportGraphItem> {
     imports
         .iter()
         .filter(|import| !import.module_name.is_empty())
         .map(|import| ImportGraphItem {
-            source_file: if import.file_path.is_empty() {
-                file_path.to_string()
-            } else {
-                import.file_path.clone()
-            },
+            source_file: file_path.to_string(),
             target_module: import.module_name.clone(),
         })
         .collect()
@@ -458,7 +457,7 @@ fn definition_graph_symbols(definitions: &[Symbol]) -> Vec<&Symbol> {
         .collect()
 }
 
-fn partition_call_graph_items(
+pub(super) fn partition_call_graph_items(
     project_id: &str,
     file_path: &str,
     calls: &[CallRelation],
@@ -471,16 +470,11 @@ fn partition_call_graph_items(
         let Some(target) = GraphCallTarget::from_call(project_id, call) else {
             continue;
         };
-        let call_file_path = if call.file_path.is_empty() {
-            file_path.to_string()
-        } else {
-            call.file_path.clone()
-        };
         let item = CallGraphItem {
             caller_id: call.caller_symbol_id.clone(),
             target_id: target.id().to_string(),
             callee_name: call.callee_name.clone(),
-            file_path: call_file_path,
+            file_path: file_path.to_string(),
             line: call.line,
             callee_module: target.module().map(str::to_string),
         };

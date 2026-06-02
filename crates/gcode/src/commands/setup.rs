@@ -277,10 +277,26 @@ fn write_gcore_config(
             Some(api_key) => config.set(embedding_keys::AI_API_KEY, api_key),
             None => config.remove(embedding_keys::AI_API_KEY),
         }
+    } else {
+        remove_embedding_keys(&mut config);
     }
 
     config.write_at(&path)?;
     Ok(path)
+}
+
+fn remove_embedding_keys(config: &mut StandaloneConfig) {
+    remove_legacy_embedding_keys(config);
+    for key in [
+        embedding_keys::AI_PROVIDER,
+        embedding_keys::AI_API_BASE,
+        embedding_keys::AI_MODEL,
+        embedding_keys::AI_DIM,
+        embedding_keys::AI_QUERY_PREFIX,
+        embedding_keys::AI_API_KEY,
+    ] {
+        config.remove(key);
+    }
 }
 
 fn remove_legacy_embedding_keys(config: &mut StandaloneConfig) {
@@ -462,6 +478,62 @@ mod tests {
         assert!(
             !output.to_string().contains("local-api-key"),
             "setup status leaked plaintext API key"
+        );
+    }
+
+    #[test]
+    fn write_gcore_config_clears_embedding_keys_when_disabled() {
+        let home = tempfile::tempdir().expect("temp home");
+        let path = gcore_config_path(home.path());
+        let legacy_keys = embedding_keys::legacy_keys();
+        let mut existing = StandaloneConfig::empty();
+        existing.set(embedding_keys::AI_PROVIDER, "lm-studio");
+        existing.set(embedding_keys::AI_API_BASE, "http://localhost:1234/v1");
+        existing.set(embedding_keys::AI_MODEL, "embed-small");
+        existing.set(embedding_keys::AI_DIM, "1024");
+        existing.set(embedding_keys::AI_QUERY_PREFIX, "query: ");
+        existing.set(embedding_keys::AI_API_KEY, "local-api-key");
+        existing.set(legacy_keys[0].clone(), "legacy-provider");
+        existing
+            .write_at(&path)
+            .expect("write existing standalone config");
+
+        let request = StandaloneSetupRequest::new(
+            true,
+            Some("postgresql://localhost/gobby".to_string()),
+            None,
+        );
+        let service_options = DockerServiceOptions::new(home.path().to_path_buf());
+
+        let path = write_gcore_config(
+            home.path(),
+            &request,
+            &service_options,
+            "postgresql://localhost/gobby",
+            None,
+            None,
+        )
+        .expect("write gcore config");
+        let config = StandaloneConfig::read_at(&path)
+            .expect("read gcore config")
+            .expect("config present");
+
+        for key in [
+            embedding_keys::AI_PROVIDER,
+            embedding_keys::AI_API_BASE,
+            embedding_keys::AI_MODEL,
+            embedding_keys::AI_DIM,
+            embedding_keys::AI_QUERY_PREFIX,
+            embedding_keys::AI_API_KEY,
+        ] {
+            assert_eq!(config.get(key), None, "embedding key survived: {key}");
+        }
+        for key in legacy_keys {
+            assert_eq!(config.get(&key), None, "legacy key survived: {key}");
+        }
+        assert_eq!(
+            config.get("databases.postgres.dsn"),
+            Some("postgresql://localhost/gobby")
         );
     }
 

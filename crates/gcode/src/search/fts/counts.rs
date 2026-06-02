@@ -230,11 +230,10 @@ fn count_visible_symbols_by_conditions(
 
 fn count_symbol_file_path_rows(
     conn: &mut Client,
-    conditions: Vec<String>,
+    mut conditions: Vec<String>,
     mut params: Vec<PgParam>,
     paths: &[String],
 ) -> Result<usize, postgres::Error> {
-    let mut conditions = conditions;
     push_pg_regex_path_filter(&mut conditions, &mut params, "cs", paths);
     let sql = format!(
         "SELECT COUNT(*)::BIGINT AS count

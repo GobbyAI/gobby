@@ -553,8 +553,10 @@ fn is_http_url(value: &str) -> bool {
 }
 
 fn parse_embedded_http_url(candidate: &str) -> Option<String> {
-    parse_http_url(candidate)
-        .or_else(|| parse_http_url(candidate.trim_end_matches([',', '.', ';', ')', ']'])))
+    parse_http_url(candidate).or_else(|| {
+        parse_http_url(candidate.trim_end_matches([',', '.', ';', ')', ']']))
+            .map(|_| candidate.to_string())
+    })
 }
 
 fn parse_http_url(value: &str) -> Option<String> {
@@ -733,6 +735,14 @@ mod tests {
         assert_eq!(
             urls_from_embedded_text("See https://example.test/path_(v1) for details"),
             vec!["https://example.test/path_(v1)".to_string()]
+        );
+    }
+
+    #[test]
+    fn embedded_url_parser_returns_original_candidate_when_trimmed_parse_succeeds() {
+        assert_eq!(
+            urls_from_embedded_text("See [https://example.test/research]."),
+            vec!["https://example.test/research].".to_string()]
         );
     }
 

@@ -106,15 +106,18 @@ fn render_git_markdown(snapshot: &GitRepositorySnapshot, title: &str, source_has
 }
 
 fn git_markdown_metadata(fields: &[(&str, String)]) -> String {
-    let mut metadata = String::from("---\n");
+    let mut mapping = serde_yaml::Mapping::new();
     for (key, value) in fields {
-        metadata.push_str(key);
-        metadata.push_str(": ");
-        metadata.push_str(
-            &serde_json::to_string(&single_line(value)).expect("string scalar serializes"),
+        mapping.insert(
+            serde_yaml::Value::String((*key).to_string()),
+            serde_yaml::Value::String(single_line(value)),
         );
-        metadata.push('\n');
     }
+    let mut metadata = String::from("---\n");
+    metadata.push_str(
+        &serde_yaml::to_string(&serde_yaml::Value::Mapping(mapping))
+            .expect("git frontmatter serializes"),
+    );
     metadata.push_str("---\n\n");
     metadata
 }
@@ -213,9 +216,22 @@ mod tests {
         let raw = std::fs::read_to_string(temp.path().join(&result.raw_path))
             .expect("raw markdown written");
         assert!(raw.contains("# https://github.com/GobbyAI/example.git"));
-        assert!(raw.contains("source_kind: \"git_repository\""));
-        assert!(raw.contains("git_remote: \"https://github.com/GobbyAI/example.git\""));
-        assert!(raw.contains("git_commit: \"7f83b1657ff1fc53b92dc18148a1d65dfa135adb\""));
+        let frontmatter = raw
+            .strip_prefix("---\n")
+            .and_then(|rest| rest.split_once("\n---\n"))
+            .map(|(frontmatter, _)| frontmatter)
+            .expect("frontmatter block");
+        let frontmatter: serde_yaml::Value =
+            serde_yaml::from_str(frontmatter).expect("parse frontmatter");
+        assert_eq!(frontmatter["source_kind"], "git_repository");
+        assert_eq!(
+            frontmatter["git_remote"],
+            "https://github.com/GobbyAI/example.git"
+        );
+        assert_eq!(
+            frontmatter["git_commit"],
+            "7f83b1657ff1fc53b92dc18148a1d65dfa135adb"
+        );
         assert!(raw.contains("file_path: README.md"));
         assert!(raw.contains("file_path: src/lib.rs"));
         assert!(raw.contains("Repository notes."));

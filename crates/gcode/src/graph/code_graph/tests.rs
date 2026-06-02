@@ -1,6 +1,6 @@
 use super::*;
 use crate::config::{CodeVectorSettings, Context};
-use crate::models::{ProjectionProvenance, SOURCE_SYSTEM_GCODE};
+use crate::models::{CallRelation, ImportRelation, ProjectionProvenance, SOURCE_SYSTEM_GCODE};
 use gobby_core::falkor::Row;
 use serde_json::json;
 
@@ -64,7 +64,7 @@ fn read_apis_return_node_link_payloads_with_link_metadata() {
 }
 
 #[test]
-fn phase7_graph_read_apis_surface_typed_unavailable_service() {
+fn graph_read_guard_stays_strict_but_public_reads_degrade_without_service() {
     let ctx = test_context(None);
 
     let guard_error = require_graph_reads(&ctx).expect_err("missing FalkorDB must fail");
@@ -73,12 +73,80 @@ fn phase7_graph_read_apis_surface_typed_unavailable_service() {
         Some(GraphReadError::NotConfigured)
     ));
 
-    let read_error =
-        project_overview_graph(&ctx, 10).expect_err("graph read must require FalkorDB");
-    assert!(matches!(
-        read_error.downcast_ref::<GraphReadError>(),
-        Some(GraphReadError::NotConfigured)
-    ));
+    assert_eq!(
+        project_overview_graph(&ctx, 10).expect("overview degrades"),
+        GraphPayload::default()
+    );
+    assert_eq!(
+        file_graph(&ctx, "src/lib.rs").expect("file graph degrades"),
+        GraphPayload::default()
+    );
+    assert_eq!(
+        symbol_neighbors(&ctx, "symbol-1", 10).expect("neighbors degrade"),
+        GraphPayload::default()
+    );
+    assert_eq!(
+        blast_radius_graph(
+            &ctx,
+            GraphBlastRadiusTarget::SymbolId("symbol-1".to_string()),
+            2,
+            10
+        )
+        .expect("blast graph degrades"),
+        GraphPayload::default()
+    );
+    assert_eq!(count_callers(&ctx, "symbol-1").expect("count degrades"), 0);
+    assert_eq!(count_usages(&ctx, "symbol-1").expect("count degrades"), 0);
+    assert!(
+        find_callers(&ctx, "symbol-1", 0, 10)
+            .expect("callers degrade")
+            .is_empty()
+    );
+    assert!(
+        find_usages(&ctx, "symbol-1", 0, 10)
+            .expect("usages degrade")
+            .is_empty()
+    );
+    assert!(
+        find_caller_ids(&ctx, "symbol-1", 10)
+            .expect("caller ids degrade")
+            .is_empty()
+    );
+    assert!(
+        find_usage_ids(&ctx, "symbol-1", 10)
+            .expect("usage ids degrade")
+            .is_empty()
+    );
+    assert!(
+        find_callers_batch(&ctx, &["symbol-1".to_string()], 10)
+            .expect("caller batch degrades")
+            .is_empty()
+    );
+    assert!(
+        find_caller_ids_batch(&ctx, &["symbol-1".to_string()], 10)
+            .expect("caller id batch degrades")
+            .is_empty()
+    );
+    assert!(
+        find_callees_batch(&ctx, &["symbol-1".to_string()], 10)
+            .expect("callee batch degrades")
+            .is_empty()
+    );
+    assert!(
+        find_callee_ids_batch(&ctx, &["symbol-1".to_string()], 10)
+            .expect("callee id batch degrades")
+            .is_empty()
+    );
+    assert!(
+        get_imports(&ctx, "src/lib.rs")
+            .expect("imports degrade")
+            .is_empty()
+    );
+    assert!(
+        blast_radius(&ctx, "symbol-1", 2)
+            .expect("blast degrades")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -126,6 +194,26 @@ fn file_calls_query_keeps_node_and_metadata_source_paths_distinct() {
     assert!(query.contains("source.file_path AS source_file_path"));
     assert!(query.contains("r.source_file_path AS metadata_source_file_path"));
     assert!(!query.contains("r.source_file_path AS source_file_path"));
+}
+
+#[test]
+fn graph_write_uses_synced_file_path_for_import_and_call_sources() {
+    let imports = vec![ImportRelation {
+        file_path: "stale/path.rs".to_string(),
+        module_name: "crate::dep".to_string(),
+    }];
+    let calls = vec![CallRelation::new(
+        "caller-1".to_string(),
+        "callee".to_string(),
+        "stale/path.rs".to_string(),
+        7,
+    )];
+
+    let import_items = import_graph_items("src/lib.rs", &imports);
+    let call_groups = partition_call_graph_items("project-1", "src/lib.rs", &calls);
+
+    assert_eq!(import_items[0].source_file, "src/lib.rs");
+    assert_eq!(call_groups.unresolved[0].file_path, "src/lib.rs");
 }
 
 #[test]

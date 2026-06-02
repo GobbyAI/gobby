@@ -1,7 +1,8 @@
 //! Provenance links from raw source chunks to synthesized wiki sections.
 
 use std::collections::BTreeMap;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -91,11 +92,7 @@ impl ProvenanceGraph {
             path: Some(path.clone()),
             source: error,
         })?;
-        fs::write(&path, json).map_err(|error| WikiError::Io {
-            action: "write provenance graph",
-            path: Some(path),
-            source: error,
-        })
+        write_provenance_json_durably(&meta_dir, &path, json.as_bytes())
     }
 
     pub fn load_from_vault(vault_root: &std::path::Path) -> Result<Self, WikiError> {
@@ -127,6 +124,64 @@ impl ProvenanceGraph {
                 .or_default()
                 .push(index);
         }
+    }
+}
+
+fn write_provenance_json_durably(
+    meta_dir: &std::path::Path,
+    path: &std::path::Path,
+    contents: &[u8],
+) -> Result<(), WikiError> {
+    let temp_path = meta_dir.join(format!(".provenance.json.{}.tmp", std::process::id()));
+    let mut temp = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp_path)
+        .map_err(|source| WikiError::Io {
+            action: "create provenance graph temp file",
+            path: Some(temp_path.clone()),
+            source,
+        })?;
+    if let Err(source) = temp.write_all(contents) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: "write provenance graph temp file",
+            path: Some(temp_path),
+            source,
+        });
+    }
+    if let Err(source) = temp.sync_all() {
+        let _ = fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: "sync provenance graph temp file",
+            path: Some(temp_path),
+            source,
+        });
+    }
+    drop(temp);
+    fs::rename(&temp_path, path).map_err(|source| WikiError::Io {
+        action: "replace provenance graph",
+        path: Some(path.to_path_buf()),
+        source,
+    })?;
+    sync_provenance_dir(meta_dir)
+}
+
+fn sync_provenance_dir(meta_dir: &std::path::Path) -> Result<(), WikiError> {
+    #[cfg(not(unix))]
+    {
+        let _ = meta_dir;
+        Ok(())
+    }
+    #[cfg(unix)]
+    {
+        fs::File::open(meta_dir)
+            .and_then(|dir| dir.sync_all())
+            .map_err(|source| WikiError::Io {
+                action: "sync provenance metadata directory",
+                path: Some(meta_dir.to_path_buf()),
+                source,
+            })
     }
 }
 

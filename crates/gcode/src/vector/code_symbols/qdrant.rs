@@ -120,6 +120,17 @@ fn parse_collection_names(data: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn parse_points_count(data: &Value) -> Result<usize, VectorLifecycleError> {
+    data.pointer("/result/count")
+        .and_then(Value::as_u64)
+        .and_then(|count| usize::try_from(count).ok())
+        .ok_or_else(|| {
+            VectorLifecycleError::QdrantOperation(
+                "count points response did not include result.count".to_string(),
+            )
+        })
+}
+
 fn qdrant_http_client() -> Result<reqwest::blocking::Client, VectorLifecycleError> {
     if let Some(client) = QDRANT_HTTP_CLIENT.get() {
         return Ok(client.clone());
@@ -213,6 +224,31 @@ pub(super) fn delete_vectors_for_filter_excluding_ids(
             json!([{ "has_id": keep_point_ids }]),
         );
     }
+    let count_body = json!({ "filter": filter.clone(), "exact": true });
+    let resp = qdrant_request_for_config(
+        client,
+        qdrant,
+        reqwest::Method::POST,
+        &format!("{}/points/count", collection_path(collection)),
+    )?
+    .json(&count_body)
+    .send()
+    .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
+    let status = resp.status();
+    if status == StatusCode::NOT_FOUND {
+        return Ok(0);
+    }
+    if !status.is_success() {
+        return Err(qdrant_http_error("count points", status, resp));
+    }
+    let data: Value = resp
+        .json()
+        .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
+    let count = parse_points_count(&data)?;
+    if count == 0 {
+        return Ok(0);
+    }
+
     let body = json!({ "filter": filter });
     let resp = qdrant_request_for_config(
         client,
@@ -230,7 +266,7 @@ pub(super) fn delete_vectors_for_filter_excluding_ids(
     if !status.is_success() {
         return Err(qdrant_http_error("delete points", status, resp));
     }
-    Ok(1)
+    Ok(count)
 }
 
 pub(super) fn qdrant_http_error(

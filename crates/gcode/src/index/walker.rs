@@ -1,7 +1,6 @@
 //! Git-aware file discovery using the `ignore` crate.
 //! Respects .gitignore and exclude patterns.
 
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::index::languages;
@@ -131,18 +130,14 @@ fn is_generated_js_bundle(path: &Path) -> bool {
         return false;
     }
 
-    if contains_generated_js_marker_in_file(path) {
+    let Ok(bytes) = std::fs::read(path) else {
+        return false;
+    };
+    if contains_generated_js_marker(&bytes) {
         return true;
     }
 
-    let Ok(metadata) = path.metadata() else {
-        return false;
-    };
-    if metadata.len() < MINIFIED_JS_MIN_BYTES as u64 {
-        return false;
-    }
-
-    let Ok(bytes) = std::fs::read(path) else {
+    if bytes.len() < MINIFIED_JS_MIN_BYTES {
         return false;
     };
 
@@ -167,17 +162,6 @@ fn contains_generated_js_marker(bytes: &[u8]) -> bool {
     GENERATED_JS_MARKERS
         .iter()
         .any(|marker| scan.contains(marker))
-}
-
-fn contains_generated_js_marker_in_file(path: &Path) -> bool {
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return false;
-    };
-    let mut bytes = vec![0; GENERATED_JS_MARKER_SCAN_BYTES];
-    let Ok(read) = file.read(&mut bytes) else {
-        return false;
-    };
-    contains_generated_js_marker(&bytes[..read])
 }
 
 fn looks_minified_js_bundle(bytes: &[u8]) -> bool {
