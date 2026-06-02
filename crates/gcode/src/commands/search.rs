@@ -19,6 +19,8 @@ pub struct SearchOptions<'a> {
     pub with_graph: bool,
 }
 
+const LITERAL_QUERY_HINT: &str = "`gcode search` is hybrid/fuzzy concept search. For exact strings, call sites, dotted config keys, quoted strings, or paths, use `gcode grep \"pattern\" [PATH...] -m 50`; for ranked file-content matches, use `gcode search-content \"query\" [PATH...]`.";
+
 pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let expanded_paths = fts::expand_paths(options.paths);
@@ -154,7 +156,9 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
         .collect();
 
     print_empty_diagnostic(ctx, results.is_empty(), options.offset, total);
-    let hint = fts::path_filter_falls_back(&expanded_paths).then(path_filter_fallback_hint);
+    let literal_hint = literal_query_hint(query);
+    let path_hint = fts::path_filter_falls_back(&expanded_paths).then(path_filter_fallback_hint);
+    let hint = combine_hints(literal_hint, path_hint);
 
     match options.format {
         Format::Json => output::print_json(&PagedResponse {
@@ -616,6 +620,59 @@ fn path_filter_fallback_hint() -> String {
         .to_string()
 }
 
+fn literal_query_hint(query: &str) -> Option<String> {
+    literal_like_query(query).then(|| LITERAL_QUERY_HINT.to_string())
+}
+
+fn literal_like_query(query: &str) -> bool {
+    let query = query.trim();
+    if query.is_empty() {
+        return false;
+    }
+
+    contains_quoted_literal(query)
+        || contains_call_site_syntax(query)
+        || contains_path_separator(query)
+        || is_dotted_literal(query)
+}
+
+fn contains_quoted_literal(query: &str) -> bool {
+    query.contains('"')
+        || query.contains('`')
+        || (query.starts_with('\'') && query.ends_with('\'') && query.len() > 1)
+}
+
+fn contains_call_site_syntax(query: &str) -> bool {
+    query.char_indices().any(|(idx, ch)| {
+        if ch != '(' || idx == 0 {
+            return false;
+        }
+
+        query[..idx]
+            .chars()
+            .next_back()
+            .is_some_and(|prev| prev.is_ascii_alphanumeric() || matches!(prev, '_' | '.' | ':'))
+    })
+}
+
+fn contains_path_separator(query: &str) -> bool {
+    query.contains('/') || query.contains('\\')
+}
+
+fn is_dotted_literal(query: &str) -> bool {
+    if query.chars().any(char::is_whitespace) || !query.contains('.') {
+        return false;
+    }
+
+    query
+        .split('.')
+        .all(|part| !part.is_empty() && part.chars().all(is_dotted_literal_char))
+}
+
+fn is_dotted_literal_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')
+}
+
 fn combine_hints(first: Option<String>, second: Option<String>) -> Option<String> {
     match (first, second) {
         (Some(first), Some(second)) => Some(format!("{first} {second}")),
@@ -758,6 +815,25 @@ mod tests {
 
         assert!(hint.contains("fetch cap"));
         assert!(hint.contains("post-filtered"));
+    }
+
+    #[test]
+    fn literal_query_hint_detects_literal_like_queries() {
+        for query in [
+            "spawn_ui_server(",
+            "config.ui.mode",
+            "\"quoted string\"",
+            "src/foo.rs",
+        ] {
+            let hint = literal_query_hint(query).expect("literal hint");
+            assert!(hint.contains("gcode grep"));
+            assert!(hint.contains("search-content"));
+        }
+    }
+
+    #[test]
+    fn literal_query_hint_skips_natural_language_queries() {
+        assert!(literal_query_hint("database connection pool").is_none());
     }
 
     #[test]

@@ -2,7 +2,16 @@ use clap::{ArgAction, ArgGroup, Parser, Subcommand};
 use gobby_code::output;
 
 #[derive(Parser)]
-#[command(name = "gcode", version, about = "Fast code index CLI for Gobby")]
+#[command(
+    name = "gcode",
+    version,
+    about = "Fast code index CLI for Gobby",
+    after_help = "Examples:
+  find call sites:   gcode grep \"spawn_ui_server(\" [PATH...] -m 50
+  read function:    gcode search-symbol \"spawn_ui_server\" --kind function
+                    gcode symbol <id>
+  find config key:  gcode grep \"config.ui.mode\" -F [PATH...] -m 50"
+)]
 pub(crate) struct Cli {
     /// Override project root (default: detect from cwd)
     #[arg(long, global = true)]
@@ -124,6 +133,9 @@ pub(crate) enum Command {
 
     // ── Search (works in all modes) ──────────────────────────────────
     /// Hybrid search: pg_search BM25 + optional semantic (Qdrant) + optional graph boost (FalkorDB)
+    #[command(
+        after_help = "`gcode search` is hybrid/fuzzy concept search. Use `gcode grep \"pattern\" [PATH...] -m 50` for exact literals, call sites, dotted config keys, quoted strings, and paths. Use `gcode search-content \"query\" [PATH...]` for ranked file-content matches."
+    )]
     Search {
         query: String,
         /// Optional file paths or globs to filter results

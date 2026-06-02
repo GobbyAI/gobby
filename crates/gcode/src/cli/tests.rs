@@ -1,5 +1,5 @@
 use super::*;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 
 #[test]
 fn parse_projection_lifecycle_commands() {
@@ -475,6 +475,31 @@ fn test_parse_search_path_flag_rejected() {
             "unexpected error for {command}: {err}"
         );
     }
+}
+
+#[test]
+fn top_level_help_includes_agent_task_examples() {
+    let help = Cli::command().render_help().to_string();
+
+    assert!(help.contains("gcode grep \"spawn_ui_server(\" [PATH...] -m 50"));
+    assert!(help.contains("gcode search-symbol \"spawn_ui_server\" --kind function"));
+    assert!(help.contains("gcode symbol <id>"));
+    assert!(help.contains("gcode grep \"config.ui.mode\" -F [PATH...] -m 50"));
+}
+
+#[test]
+fn search_help_routes_literal_and_ranked_content_queries() {
+    let mut command = Cli::command();
+    let help = command
+        .find_subcommand_mut("search")
+        .expect("search command")
+        .render_help()
+        .to_string();
+
+    assert!(help.contains("hybrid/fuzzy concept search"));
+    assert!(help.contains("gcode grep \"pattern\" [PATH...] -m 50"));
+    assert!(help.contains("exact literals, call sites, dotted config keys"));
+    assert!(help.contains("gcode search-content \"query\" [PATH...]"));
 }
 
 #[test]
