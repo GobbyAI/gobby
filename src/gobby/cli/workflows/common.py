@@ -1,5 +1,7 @@
 """Common helper functions for workflow CLI commands."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from gobby.cli.utils import resolve_session_id as resolve_session_id
@@ -33,15 +35,32 @@ def get_session_var_manager(db: HubDatabase | None = None) -> SessionVariableMan
     return _session_var_manager_instance
 
 
-def _reset_session_var_manager_for_tests() -> None:
-    """Reset cached session variable manager instances (for test isolation)."""
+@contextmanager
+def session_var_manager_context(db: HubDatabase | None = None) -> Iterator[SessionVariableManager]:
+    """Yield a session variable manager and close cached CLI resources afterwards."""
+    manager = get_session_var_manager(db)
+    try:
+        yield manager
+    finally:
+        if db is None:
+            close_session_var_manager()
+
+
+def close_session_var_manager() -> None:
+    """Close and clear the cached session variable manager database."""
     global _db_instance, _session_var_manager_instance
-    if _db_instance is not None:
-        close_fn = getattr(_db_instance, "close", None)
-        if close_fn is not None:
-            close_fn()
+    db = _db_instance
     _db_instance = None
     _session_var_manager_instance = None
+    if db is not None:
+        close_fn = getattr(db, "close", None)
+        if callable(close_fn):
+            close_fn()
+
+
+def _reset_session_var_manager_for_tests() -> None:
+    """Reset cached session variable manager instances (for test isolation)."""
+    close_session_var_manager()
 
 
 def truncate_id(session_id: str, length: int = 12) -> str:
