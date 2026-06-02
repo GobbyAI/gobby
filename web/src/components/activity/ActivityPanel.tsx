@@ -16,6 +16,7 @@ import { FilesTab } from "./FilesTab";
 import { CronTab } from "./CronTab";
 import { TracesTab } from "./TracesTab";
 import { ActivityMcpTab, type ActivityMcpTabProps } from "./ActivityMcpTab";
+import { WikiTab } from "./WikiTab";
 import type { Artifact } from "../../types/artifacts";
 import type { GobbySession } from "../../types/sessions";
 import type { CanvasPanelState } from "../canvas/hooks/useCanvasPanel";
@@ -299,6 +300,8 @@ export function ActivityPanel({
         return <TracesTab projectId={projectId} />;
       case "mcp":
         return mcp ? <ActivityMcpTab {...mcp} /> : null;
+      case "wiki":
+        return <WikiTab projectId={projectId} />;
       case "tasks":
         return <TasksTab projectId={projectId} chatSessionId={chatSessionId} />;
       case "files":
