@@ -6,6 +6,7 @@ export type ActivityTab =
   | "cron"
   | "traces"
   | "mcp"
+  | "wiki"
   | "tasks"
   | "files"
   | "plans"
@@ -62,6 +63,18 @@ export const ACTIVITY_PANEL_TABS: ActivityPanelTab[] = [
         <rect x="9" y="14" width="6" height="6" rx="1" />
         <path d="M10 7h4" />
         <path d="M12 10v4" />
+      </svg>
+    ),
+  },
+  {
+    id: "wiki",
+    label: "Wiki",
+    icon: (
+      <svg {...iconProps}>
+        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+        <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z" />
+        <path d="M8 7h8" />
+        <path d="M8 11h6" />
       </svg>
     ),
   },
