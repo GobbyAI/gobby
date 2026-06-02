@@ -118,6 +118,41 @@ async def test_error_preserves_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
     assert exc_info.value.to_envelope()["stderr"] == "scope does not exist"
 
 
+async def test_error_parses_structured_stderr_when_stdout_is_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "status": "failed",
+        "error": {
+            "code": "bad_scope",
+            "guidance": "Create the docs topic before querying status.",
+        },
+    }
+    _patch_subprocess(
+        monkeypatch,
+        [
+            FakeProcess(
+                returncode=2,
+                stdout=b"",
+                stderr=_json_bytes(payload),
+            )
+        ],
+    )
+
+    with pytest.raises(GwikiCommandError) as exc_info:
+        await _gateway().status()
+
+    stderr_text = (
+        '{"status": "failed", "error": {"code": "bad_scope", '
+        '"guidance": "Create the docs topic before querying status."}}'
+    )
+    assert exc_info.value.returncode == 2
+    assert exc_info.value.stderr == stderr_text
+    assert exc_info.value.payload == payload
+    assert exc_info.value.to_envelope()["payload"] == payload
+    assert exc_info.value.to_envelope()["stderr"] == stderr_text
+
+
 async def test_timeout_degrades(monkeypatch: pytest.MonkeyPatch) -> None:
     process = FakeProcess(timeout=True)
     calls = _patch_subprocess(monkeypatch, [process])
