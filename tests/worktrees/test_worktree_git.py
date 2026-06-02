@@ -1538,6 +1538,29 @@ class TestWorktreeGitManagerBranchCoverage:
         return WorktreeGitManager(tmp_path)
 
     @patch("subprocess.run")
+    def test_has_unpushed_commits_missing_branch_is_not_local_only(self, mock_run, manager) -> None:
+        """Missing local refs are not treated as local-only unpushed branches."""
+        mock_run.side_effect = [
+            subprocess.CompletedProcess(
+                args=["git", "rev-parse"],
+                returncode=128,
+                stdout="",
+                stderr="fatal: Needed a single revision",
+            ),
+            subprocess.CompletedProcess(
+                args=["git", "rev-list"],
+                returncode=128,
+                stdout="",
+                stderr="fatal: ambiguous argument",
+            ),
+        ]
+
+        has_unpushed, count = manager.has_unpushed_commits("missing/integration")
+
+        assert has_unpushed is False
+        assert count == 0
+
+    @patch("subprocess.run")
     def test_get_status_porcelain_failure(self, mock_run, manager, tmp_path) -> None:
         """Get status when status --porcelain command fails."""
         worktree_path = tmp_path / "worktree"

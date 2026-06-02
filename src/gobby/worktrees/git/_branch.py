@@ -119,7 +119,7 @@ def has_unpushed_commits(runner: GitRunner, branch: str | None = None) -> tuple[
             if count_result.returncode == 0:
                 count = int(count_result.stdout.strip())
                 return count > 0, count
-            return True, 0
+            return False, 0
 
         # Count commits ahead of origin
         result = runner._run_git(

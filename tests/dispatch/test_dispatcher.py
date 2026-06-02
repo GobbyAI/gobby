@@ -1669,6 +1669,101 @@ async def test_leaf_spawn_recovers_parent_integration_target_branch(
     assert artifacts.target_branch == "gobby/integration/phase"
 
 
+async def test_leaf_spawn_skips_stale_parent_integration_branch(
+    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+) -> None:
+    """Leaf spawn skips stale parent integration branch artifacts."""
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    session_manager = SessionManager(temp_db)
+    root = _task(
+        temp_db,
+        sample_project,
+        title="Build target root",
+        task_type="epic",
+        allow_automation=False,
+    )
+    parent = _task(
+        temp_db,
+        sample_project,
+        title="Closed parent epic",
+        parent_task_id=root.id,
+        task_type="epic",
+        allow_automation=False,
+    )
+    leaf = _task(
+        temp_db,
+        sample_project,
+        title="Reopened leaf",
+        parent_task_id=parent.id,
+        stage_state="in_progress",
+        isolation="worktree",
+    )
+    task_artifacts = TaskArtifactManager(temp_db)
+    task_artifacts.set_artifacts_atomic(
+        root.id,
+        target_branch="main",
+        integration_branch="task-root-integration",
+    )
+    task_artifacts.set_artifacts_atomic(
+        parent.id,
+        target_branch="main",
+        integration_branch="missing-parent-integration",
+    )
+    task_artifacts.set_artifacts_atomic(leaf.id, target_branch="missing-parent-integration")
+    action = SpawnAgentAction(
+        task_id=leaf.id,
+        task_ref=f"#{leaf.seq_num}",
+        agent_slug="backend-developer",
+        prompt="go",
+    )
+    spawn_kwargs: dict[str, object] = {}
+
+    def fake_ref_resolves(**kwargs: object) -> bool:
+        return kwargs["ref_name"] != "missing-parent-integration"
+
+    async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
+        spawn_kwargs.update(kwargs)
+        run = LocalAgentRunManager(temp_db).create(
+            parent_session_id=str(kwargs["parent_session_id"]),
+            provider="codex",
+            prompt=str(kwargs["prompt"]),
+            agent_name=str(kwargs["agent_lookup_name"]),
+            task_id=leaf.id,
+            run_id="run-leaf-stale-parent-base",
+        )
+        return {"success": True, "run_id": run.id, "isolation": "worktree"}
+
+    monkeypatch.setattr("gobby.dispatch.spawn._artifact_ref_resolves", fake_ref_resolves)
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=session_manager,
+        agent_runner=SimpleNamespace(),
+    )
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+    )
+    artifacts = task_artifacts.get_artifacts(leaf.id)
+
+    assert result.executed == 1
+    assert spawn_kwargs["base_branch"] == "task-root-integration"
+    assert artifacts.target_branch == "task-root-integration"
+
+
 @pytest.mark.asyncio
 async def test_epic_holistic_spawn_refreshes_and_reuses_integration_workspace(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
