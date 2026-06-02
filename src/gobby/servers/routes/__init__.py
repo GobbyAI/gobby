@@ -37,6 +37,7 @@ from gobby.servers.routes.stages import create_stages_router
 from gobby.servers.routes.tasks import create_tasks_router
 from gobby.servers.routes.traces import create_traces_router
 from gobby.servers.routes.voice import create_voice_router
+from gobby.servers.routes.wiki import create_wiki_router
 from gobby.servers.routes.workflows import create_workflows_router
 
 __all__ = [
@@ -71,5 +72,6 @@ __all__ = [
     "create_traces_router",
     "create_voice_router",
     "create_webhooks_router",
+    "create_wiki_router",
     "create_workflows_router",
 ]

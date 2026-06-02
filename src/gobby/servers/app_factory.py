@@ -609,6 +609,7 @@ def _register_routes(app: FastAPI, server: "HTTPServer") -> None:
         create_traces_router,
         create_voice_router,
         create_webhooks_router,
+        create_wiki_router,
         create_workflows_router,
     )
     from gobby.servers.routes.auth import create_auth_router
@@ -646,6 +647,7 @@ def _register_routes(app: FastAPI, server: "HTTPServer") -> None:
     app.include_router(create_source_control_router(server))
     app.include_router(create_traces_router(server))
     app.include_router(create_metrics_router(server))
+    app.include_router(create_wiki_router(server))
 
     comms_config = getattr(server.services.config, "communications", None)
     if comms_config and comms_config.enabled:
