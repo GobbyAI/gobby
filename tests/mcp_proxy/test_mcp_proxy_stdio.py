@@ -1399,7 +1399,7 @@ class TestMCPToolsWrapper:
         mock_proxy.call_tool.side_effect = _block_until_cancelled
 
         with (
-            patch("gobby.mcp_proxy.stdio.MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS", 0.02),
+            patch("gobby.mcp_proxy.wait_tools.MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS", 0.02),
             patch("gobby.mcp_proxy.wait_tools.WAIT_TOOL_WRAPPER_GRACE_SECONDS", 0.01),
         ):
             result = await asyncio.wait_for(
@@ -1446,7 +1446,7 @@ class TestMCPToolsWrapper:
         mock_proxy.call_tool.side_effect = _block_until_released
 
         with (
-            patch("gobby.mcp_proxy.stdio.MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS", 0.02),
+            patch("gobby.mcp_proxy.wait_tools.MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS", 0.02),
             patch("gobby.mcp_proxy.wait_tools.WAIT_TOOL_WRAPPER_GRACE_SECONDS", 0.01),
         ):
             result = await asyncio.wait_for(

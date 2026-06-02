@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from collections.abc import Awaitable
+from dataclasses import dataclass
 from typing import Any
 
 from mcp.server.fastmcp import Context
@@ -30,6 +31,62 @@ CLIENT_GUARDED_TOOL_NAMES = (*WAIT_TOOL_NAMES, *EXTENDED_TIMEOUT_TOOL_NAMES)
 HEARTBEAT_TOOL_NAMES = (*WAIT_TOOL_NAMES, *EXTENDED_TIMEOUT_TOOL_NAMES)
 
 logger = logging.getLogger("gobby.mcp.wait_tools")
+
+
+@dataclass(frozen=True)
+class PreparedClientGuard:
+    arguments: str | dict[str, Any] | None
+    timeout: float | None
+    requested_timeout_seconds: float | None = None
+    effective_timeout_seconds: float | None = None
+    wait_timeout_capped: bool = False
+
+
+def prepare_client_guard(
+    *,
+    tool_name: str,
+    arguments: str | dict[str, Any] | None,
+) -> PreparedClientGuard:
+    requested_timeout = None
+    original_wait_timeout = None
+    wait_timeout_capped = False
+    final_args = arguments
+
+    if tool_name in WAIT_TOOL_NAMES:
+        raw_timeout = None
+        timeout_key = "timeout_seconds"
+        if isinstance(final_args, dict):
+            if "timeout" in final_args:
+                timeout_key = "timeout"
+                raw_timeout = final_args["timeout"]
+            elif "timeout_seconds" in final_args:
+                raw_timeout = final_args["timeout_seconds"]
+        if raw_timeout is None:
+            raw_timeout = 300.0
+        try:
+            requested_timeout = float(raw_timeout)
+        except (TypeError, ValueError):
+            requested_timeout = None
+
+        if (
+            requested_timeout is not None
+            and requested_timeout > MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS
+        ):
+            original_wait_timeout = requested_timeout
+            requested_timeout = MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS
+            final_args = dict(final_args) if isinstance(final_args, dict) else {}
+            final_args[timeout_key] = requested_timeout
+            wait_timeout_capped = True
+    elif tool_name in EXTENDED_TIMEOUT_TOOL_NAMES:
+        requested_timeout = MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS
+
+    return PreparedClientGuard(
+        arguments=final_args,
+        timeout=requested_timeout,
+        requested_timeout_seconds=original_wait_timeout,
+        effective_timeout_seconds=requested_timeout if wait_timeout_capped else None,
+        wait_timeout_capped=wait_timeout_capped,
+    )
 
 
 def _wrapper_timeout_result(tool_name: str, timeout: float) -> dict[str, Any]:
