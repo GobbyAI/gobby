@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -14,10 +15,14 @@ class RecordingGateway:
     def __init__(
         self,
         *,
+        scope: str | None = None,
+        index_scopes: list[str] | None = None,
         index_result: dict[str, Any] | None = None,
         index_error: Exception | None = None,
     ) -> None:
         self.index_calls = 0
+        self.scope = scope
+        self.index_scopes = index_scopes
         self.index_result = index_result or {
             "ok": True,
             "command": "index",
@@ -28,6 +33,8 @@ class RecordingGateway:
 
     async def index(self) -> dict[str, Any]:
         self.index_calls += 1
+        if self.scope is not None and self.index_scopes is not None:
+            self.index_scopes.append(self.scope)
         if self.index_error is not None:
             raise self.index_error
         return self.index_result
@@ -57,6 +64,33 @@ async def test_explicit_write_indexes_changed_paths() -> None:
         "changed_paths": ["docs/a.md"],
         "result": gateway.index_result,
     }
+
+
+async def test_local_changes_index_each_changed_scope() -> None:
+    index_scopes: list[str] = []
+
+    def local_gateway(scope: str) -> RecordingGateway:
+        return RecordingGateway(scope=scope, index_scopes=index_scopes)
+
+    coordinator = WikiUpdateCoordinator(
+        RecordingGateway(),
+        local_gateway_factory=local_gateway,
+    )
+
+    result = await coordinator.handle_local_changes(
+        {
+            "project": [Path("/repo/wiki/a.md")],
+            "topic:research": [Path("/topics/research/b.md")],
+        }
+    )
+
+    assert index_scopes == ["project", "topic:research"]
+    assert result["index_handoff"]["status"] == "indexed"
+    assert result["index_handoff"]["changed_paths_by_scope"] == {
+        "project": ["/repo/wiki/a.md"],
+        "topic:research": ["/topics/research/b.md"],
+    }
+    assert set(result["index_handoff"]["results_by_scope"]) == {"project", "topic:research"}
 
 
 async def test_index_failure_degrades() -> None:

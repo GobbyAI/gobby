@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -42,8 +42,14 @@ CLI_INDEXED_BATCH_COMMANDS = frozenset({"ingest-url", "refresh"})
 class WikiUpdateCoordinator:
     """Coordinates follow-up indexing for parsed gwiki write results."""
 
-    def __init__(self, gateway: GwikiIndexGateway) -> None:
+    def __init__(
+        self,
+        gateway: GwikiIndexGateway,
+        *,
+        local_gateway_factory: Callable[[str], GwikiIndexGateway] | None = None,
+    ) -> None:
         self._gateway = gateway
+        self._local_gateway_factory = local_gateway_factory or (lambda _scope: gateway)
 
     async def handle_local_changes(
         self, changed_paths_by_scope: dict[str, list[Path]]
@@ -51,32 +57,30 @@ class WikiUpdateCoordinator:
         changed_paths = {
             scope: [str(path) for path in paths] for scope, paths in changed_paths_by_scope.items()
         }
-        try:
-            index_result = await self._gateway.index()
-        except GwikiCommandError as exc:
-            return {
-                "index_handoff": {
-                    "status": "degraded",
-                    "changed_paths_by_scope": changed_paths,
-                    "degradation": _command_error_degradation(exc),
-                }
-            }
-        except GwikiGatewayError as exc:
-            return {
-                "index_handoff": {
-                    "status": "degraded",
-                    "changed_paths_by_scope": changed_paths,
-                    "degradation": _gateway_error_degradation(exc),
-                }
-            }
+        results_by_scope: dict[str, dict[str, Any]] = {}
+        degradations_by_scope: dict[str, dict[str, Any]] = {}
 
-        return {
-            "index_handoff": {
-                "status": "indexed",
-                "changed_paths_by_scope": changed_paths,
-                "result": index_result,
-            }
+        for scope in changed_paths:
+            try:
+                results_by_scope[scope] = await self._local_gateway_factory(scope).index()
+            except GwikiCommandError as exc:
+                degradations_by_scope[scope] = _command_error_degradation(exc)
+            except GwikiGatewayError as exc:
+                degradations_by_scope[scope] = _gateway_error_degradation(exc)
+
+        index_handoff: dict[str, Any] = {
+            "status": "degraded" if degradations_by_scope else "indexed",
+            "changed_paths_by_scope": changed_paths,
+            "results_by_scope": results_by_scope,
         }
+        if degradations_by_scope:
+            index_handoff["degradations_by_scope"] = degradations_by_scope
+            if len(degradations_by_scope) == 1:
+                index_handoff["degradation"] = next(iter(degradations_by_scope.values()))
+        if len(results_by_scope) == 1:
+            index_handoff["result"] = next(iter(results_by_scope.values()))
+
+        return {"index_handoff": index_handoff}
 
     async def handle_write_result(self, result: dict[str, Any]) -> dict[str, Any]:
         response = dict(result)
