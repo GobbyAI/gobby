@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any, Protocol
 
 from gobby.gwiki_gateway import GwikiCommandError, GwikiGatewayError
@@ -43,6 +44,39 @@ class WikiUpdateCoordinator:
 
     def __init__(self, gateway: GwikiIndexGateway) -> None:
         self._gateway = gateway
+
+    async def handle_local_changes(
+        self, changed_paths_by_scope: dict[str, list[Path]]
+    ) -> dict[str, Any]:
+        changed_paths = {
+            scope: [str(path) for path in paths] for scope, paths in changed_paths_by_scope.items()
+        }
+        try:
+            index_result = await self._gateway.index()
+        except GwikiCommandError as exc:
+            return {
+                "index_handoff": {
+                    "status": "degraded",
+                    "changed_paths_by_scope": changed_paths,
+                    "degradation": _command_error_degradation(exc),
+                }
+            }
+        except GwikiGatewayError as exc:
+            return {
+                "index_handoff": {
+                    "status": "degraded",
+                    "changed_paths_by_scope": changed_paths,
+                    "degradation": _gateway_error_degradation(exc),
+                }
+            }
+
+        return {
+            "index_handoff": {
+                "status": "indexed",
+                "changed_paths_by_scope": changed_paths,
+                "result": index_result,
+            }
+        }
 
     async def handle_write_result(self, result: dict[str, Any]) -> dict[str, Any]:
         response = dict(result)
