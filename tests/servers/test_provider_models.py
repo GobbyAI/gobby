@@ -270,7 +270,7 @@ class TestProviderModelCatalog:
         """Configured models should sort first while retaining live metadata."""
         config = DaemonConfig(
             llm_providers=LLMProvidersConfig(
-                codex=LLMProviderConfig(models="gpt-5.5,gpt-5.4"),
+                claude=LLMProviderConfig(models="opus,sonnet"),
             )
         )
         catalog = ProviderModelCatalog(
@@ -278,25 +278,25 @@ class TestProviderModelCatalog:
             cache_path=temp_dir / "provider-model-catalog.json",
         )
         catalog._providers = {
-            "codex": {
+            "claude": {
                 "source": "live",
                 "models": [
                     {
-                        "value": "gpt-5.5",
-                        "label": "GPT-5.5 Live",
+                        "value": "opus",
+                        "label": "Opus Live",
                         "context_length": 321_000,
                     },
-                    {"value": "gpt-5.4", "label": "GPT-5.4 Live", "context_length": 200_000},
-                    {"value": "gpt-5.2", "label": "GPT-5.2 Live", "context_length": 200_000},
+                    {"value": "sonnet", "label": "Sonnet Live", "context_length": 200_000},
+                    {"value": "haiku", "label": "Haiku Live", "context_length": 200_000},
                 ],
             },
         }
 
-        snapshot = catalog.get_provider_snapshot("codex")
+        snapshot = catalog.get_provider_snapshot("claude")
         models = snapshot["models"]
 
-        assert [model["value"] for model in models] == ["gpt-5.5", "gpt-5.4", "gpt-5.2"]
-        assert models[0]["label"] == "GPT-5.5 Live"
+        assert [model["value"] for model in models] == ["opus", "sonnet", "haiku"]
+        assert models[0]["label"] == "Opus Live"
         assert models[0]["context_length"] == 321_000
 
     @pytest.mark.asyncio

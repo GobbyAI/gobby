@@ -9,7 +9,7 @@ import shlex
 import shutil
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from gobby.adapters.acp_client import ACPClient, StreamEvent
 from gobby.adapters.gemini_acp_client import GeminiACPClient
@@ -44,16 +44,21 @@ class TextGenerateAdapter(Protocol):
         """Generate text for the request."""
 
 
+TextGenerateAdapterFactory = Callable[[], TextGenerateAdapter]
+
+
 class TextGenerationService:
     """Select and execute daemon text_generate capability bindings."""
 
     def __init__(
         self,
         registry: AICapabilityRegistry,
-        adapters: Mapping[str, TextGenerateAdapter],
+        adapters: Mapping[str, TextGenerateAdapter] | None = None,
+        adapter_factories: Mapping[str, TextGenerateAdapterFactory] | None = None,
     ) -> None:
         self._registry = registry
-        self._adapters = dict(adapters)
+        self._adapters = dict(adapters or {})
+        self._adapter_factories = dict(adapter_factories or {})
 
     @property
     def registry(self) -> AICapabilityRegistry:
@@ -69,9 +74,13 @@ class TextGenerationService:
         )
         adapter = self._adapters.get(binding.provider)
         if adapter is None:
-            raise RuntimeError(
-                f"No text_generate adapter registered for provider {binding.provider!r}"
-            )
+            factory = self._adapter_factories.get(binding.provider)
+            if factory is None:
+                raise RuntimeError(
+                    f"No text_generate adapter registered for provider {binding.provider!r}"
+                )
+            adapter = factory()
+            self._adapters[binding.provider] = adapter
         return await adapter.generate(request)
 
 
@@ -110,6 +119,69 @@ class ACPTextGenerateAdapter:
         try:
             prompt = _compose_prompt(request)
             return await _collect_acp_text(client.send(prompt, model=request.model))
+        finally:
+            await client.stop()
+
+
+class CodexAppServerClientLike(Protocol):
+    """Subset of Codex app-server client used by text_generate."""
+
+    async def start(self) -> None:
+        """Start the app-server process."""
+
+    async def stop(self) -> None:
+        """Stop the app-server process."""
+
+    async def start_thread(
+        self,
+        cwd: str | None = None,
+        model: str | None = None,
+        approval_policy: str | None = None,
+        sandbox: str | None = None,
+        terminal_context: dict[str, Any] | None = None,
+    ) -> Any:
+        """Start a Codex app-server thread."""
+
+    def run_turn(
+        self,
+        thread_id: str,
+        prompt: str,
+        images: list[str] | None = None,
+        **config_overrides: Any,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Run one Codex app-server turn."""
+
+
+CodexAppServerClientFactory = Callable[[], CodexAppServerClientLike]
+
+
+class CodexAppServerTextGenerateAdapter:
+    """One-shot text_generate adapter backed by Codex app-server."""
+
+    def __init__(self, client_factory: CodexAppServerClientFactory | None = None) -> None:
+        self._client_factory = client_factory or _codex_app_server_client
+
+    async def generate(self, request: TextGenerationRequest) -> str:
+        client = self._client_factory()
+        await client.start()
+        try:
+            thread = await client.start_thread(cwd=request.cwd, model=request.model)
+            chunks: list[str] = []
+            fallback_chunks: list[str] = []
+            async for event in client.run_turn(
+                thread.id,
+                request.prompt,
+                context_prefix=request.system_prompt,
+            ):
+                event_type = event.get("type")
+                text = _codex_event_text(event)
+                if not text:
+                    continue
+                if event_type in {"agent/messageDelta", "item/agentMessage/delta"}:
+                    chunks.append(text)
+                elif event_type == "item/completed":
+                    fallback_chunks.append(text)
+            return "".join(chunks or fallback_chunks).strip()
         finally:
             await client.stop()
 
@@ -181,26 +253,42 @@ def build_daemon_text_generation_service(
     """Build the daemon text_generate service from configured capability bindings."""
     return TextGenerationService(
         registry or build_daemon_ai_capability_registry(config),
-        _daemon_text_generation_adapters(config),
+        adapter_factories=_daemon_text_generation_adapter_factories(config),
     )
 
 
-def _daemon_text_generation_adapters(config: DaemonConfig) -> dict[str, TextGenerateAdapter]:
-    from gobby.llm.claude import ClaudeLLMProvider
-    from gobby.llm.codex import CodexProvider
-    from gobby.llm.local import LocalLLMProvider
-
-    adapters: dict[str, TextGenerateAdapter] = {
-        "claude": LLMProviderTextGenerateAdapter(ClaudeLLMProvider(config)),
-        "codex": LLMProviderTextGenerateAdapter(CodexProvider(config)),
-        "gemini": ACPTextGenerateAdapter(GeminiACPClient),
-        "grok": ACPTextGenerateAdapter(GrokACPClient),
-        "qwen": ACPTextGenerateAdapter(QwenACPClient),
-        "droid": DroidCLITextGenerateAdapter(),
+def _daemon_text_generation_adapter_factories(
+    config: DaemonConfig,
+) -> dict[str, TextGenerateAdapterFactory]:
+    factories: dict[str, TextGenerateAdapterFactory] = {
+        "claude": lambda: _claude_text_generate_adapter(config),
+        "codex": CodexAppServerTextGenerateAdapter,
+        "gemini": lambda: ACPTextGenerateAdapter(GeminiACPClient),
+        "grok": lambda: ACPTextGenerateAdapter(GrokACPClient),
+        "qwen": lambda: ACPTextGenerateAdapter(QwenACPClient),
+        "droid": DroidCLITextGenerateAdapter,
     }
     if config.local:
-        adapters["local"] = LLMProviderTextGenerateAdapter(LocalLLMProvider(config))
-    return adapters
+        factories["local"] = lambda: _local_text_generate_adapter(config)
+    return factories
+
+
+def _claude_text_generate_adapter(config: DaemonConfig) -> TextGenerateAdapter:
+    from gobby.llm.claude import ClaudeLLMProvider
+
+    return LLMProviderTextGenerateAdapter(ClaudeLLMProvider(config))
+
+
+def _local_text_generate_adapter(config: DaemonConfig) -> TextGenerateAdapter:
+    from gobby.llm.local import LocalLLMProvider
+
+    return LLMProviderTextGenerateAdapter(LocalLLMProvider(config))
+
+
+def _codex_app_server_client() -> CodexAppServerClientLike:
+    from gobby.adapters.codex_impl.client import CodexAppServerClient
+
+    return CodexAppServerClient()
 
 
 def _compose_prompt(request: TextGenerationRequest) -> str:
@@ -232,6 +320,30 @@ def _stream_event_text(event: StreamEvent) -> str:
     return ""
 
 
+def _codex_event_text(event: dict[str, Any]) -> str:
+    delta = event.get("delta")
+    if isinstance(delta, str) and delta:
+        return delta
+
+    item = event.get("item")
+    if not isinstance(item, dict):
+        return ""
+
+    content = item.get("content")
+    if isinstance(content, str) and content:
+        return content
+    if not isinstance(content, list):
+        return ""
+
+    chunks: list[str] = []
+    for block in content:
+        if isinstance(block, dict):
+            text = block.get("text") or block.get("delta") or ""
+            if isinstance(text, str) and text:
+                chunks.append(text)
+    return "".join(chunks)
+
+
 def _decode(data: bytes | str) -> str:
     if isinstance(data, str):
         return data
@@ -240,6 +352,7 @@ def _decode(data: bytes | str) -> str:
 
 __all__ = [
     "ACPTextGenerateAdapter",
+    "CodexAppServerTextGenerateAdapter",
     "DroidCLITextGenerateAdapter",
     "LLMProviderTextGenerateAdapter",
     "TextGenerateAdapter",

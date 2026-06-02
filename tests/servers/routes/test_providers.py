@@ -343,12 +343,12 @@ class TestProviderModelsRoute:
 
         assert claude_models["local"] == "Local (qwen-coder-32b)"
 
-    def test_current_catalog_prepends_partial_configured_lists(self) -> None:
-        """Claude/Codex binding model lists take precedence before static fallbacks."""
+    def test_current_catalog_prepends_partial_configured_claude_lists(self) -> None:
+        """Claude binding model lists take precedence before static fallbacks."""
         app = FastAPI()
         config = DaemonConfig(
             llm_providers=LLMProvidersConfig(
-                codex=LLMProviderConfig(models="gpt-5.4,gpt-5.3-codex"),
+                claude=LLMProviderConfig(models="haiku,sonnet"),
             )
         )
         server = SimpleNamespace(services=SimpleNamespace(config=config))
@@ -364,19 +364,23 @@ class TestProviderModelsRoute:
             "gemini-3.1-pro-preview",
             "gemini-3-flash-preview",
         ]
+        assert [m["value"] for m in providers["claude"]["models"][:2]] == [
+            "haiku",
+            "sonnet",
+        ]
         assert [m["value"] for m in providers["codex"]["models"]] == [
-            "gpt-5.4",
-            "gpt-5.3-codex",
             "gpt-5.5",
+            "gpt-5.4",
             "gpt-5.4-mini",
+            "gpt-5.3-codex",
             "gpt-5.3-codex-spark",
             "gpt-5.2",
         ]
         assert [m["label"] for m in providers["codex"]["models"]] == [
-            "codex-5.4",
-            "codex-5.3",
             "gpt-5.5",
+            "codex-5.4",
             "mini-5.4",
+            "codex-5.3",
             "spark-5.3",
             "gpt-5.2",
         ]
@@ -399,33 +403,6 @@ class TestProviderModelsRoute:
         assert [m["label"] for m in providers["gemini"]["models"]] == [
             "pro-3.1",
             "flash-3",
-        ]
-
-    def test_honors_codex_binding_models_before_fallbacks(self) -> None:
-        """Codex binding models are first-class overrides before static fallbacks."""
-        app = FastAPI()
-        config = DaemonConfig(
-            llm_providers=LLMProvidersConfig(
-                codex=LLMProviderConfig(models="gpt-5.2,gpt-5,gpt-5-mini,o3"),
-            )
-        )
-        server = SimpleNamespace(services=SimpleNamespace(config=config))
-        app.include_router(create_providers_router(server))
-        client = TestClient(app)
-
-        response = client.get("/api/providers/models")
-        providers = {p["provider"]: p for p in response.json()["providers"]}
-
-        assert [m["value"] for m in providers["codex"]["models"]] == [
-            "gpt-5.2",
-            "gpt-5",
-            "gpt-5-mini",
-            "o3",
-            "gpt-5.5",
-            "gpt-5.4",
-            "gpt-5.4-mini",
-            "gpt-5.3-codex",
-            "gpt-5.3-codex-spark",
         ]
 
     def test_filters_hidden_codex_models_from_web_chat_surface(self) -> None:

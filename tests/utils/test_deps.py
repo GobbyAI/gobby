@@ -519,21 +519,19 @@ def test_get_configured_embedding_provider_reraises_unexpected_errors() -> None:
 def test_check_config_mismatches() -> None:
     config = MagicMock()
     config.llm_providers.claude = True
-    config.llm_providers.codex = True
     config.embeddings.api_base = "http://localhost:1234/v1"
 
     with patch("shutil.which", return_value=False):
         issues = deps.check_config_mismatches(config)
-        assert len(issues) == 3
+        assert len(issues) == 2
         assert issues[0]["subsystem"] == "Claude Code"
-        assert issues[1]["subsystem"] == "Codex"
-        assert issues[2]["subsystem"] == "LM Studio"
+        assert issues[1]["subsystem"] == "LM Studio"
 
     config.embeddings.api_base = "http://localhost:11434/v1"
     with patch("shutil.which", return_value=False):
         issues = deps.check_config_mismatches(config)
-        assert len(issues) == 3
-        assert issues[2]["subsystem"] == "Ollama"
+        assert len(issues) == 2
+        assert issues[1]["subsystem"] == "Ollama"
 
 
 def test_collect_all_deps() -> None:

@@ -190,7 +190,6 @@ class TestDefaultModelResolution:
             chat=ChatConfig(provider="codex", model="gpt-5"),
             llm_providers=LLMProvidersConfig(
                 claude=LLMProviderConfig(models="haiku,sonnet,opus"),
-                codex=LLMProviderConfig(models="gpt-5"),
                 default_model="opus",
             ),
         )

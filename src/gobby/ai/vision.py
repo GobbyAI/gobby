@@ -109,12 +109,10 @@ def build_daemon_vision_extract_service(
 
 def _daemon_vision_extract_adapters(config: DaemonConfig) -> dict[str, VisionExtractAdapter]:
     from gobby.llm.claude import ClaudeLLMProvider
-    from gobby.llm.codex import CodexProvider
     from gobby.llm.local import LocalLLMProvider
 
     adapters: dict[str, VisionExtractAdapter] = {
         "claude": LLMProviderVisionExtractAdapter(ClaudeLLMProvider(config)),
-        "codex": LLMProviderVisionExtractAdapter(CodexProvider(config)),
     }
     if config.local:
         adapters["local"] = LLMProviderVisionExtractAdapter(LocalLLMProvider(config))

@@ -510,13 +510,6 @@ def check_config_mismatches(config: Any) -> list[dict[str, str]]:
                 "error": "provider configured but claude CLI not in PATH",
             }
         )
-    if providers.codex and not shutil.which("codex"):
-        issues.append(
-            {
-                "subsystem": "Codex",
-                "error": "provider configured but codex CLI not in PATH",
-            }
-        )
     # Embedding provider vs local tools
     emb = config.embeddings
     if emb.api_base:

@@ -19,7 +19,6 @@ def llm_config() -> DaemonConfig:
     return DaemonConfig(
         llm_providers=LLMProvidersConfig(
             claude=LLMProviderConfig(models="claude-haiku-4-5, claude-sonnet-4-5"),
-            codex=LLMProviderConfig(models="gpt-4o-mini"),
         ),
     )
 
@@ -213,24 +212,6 @@ class TestLLMServiceGetDefaultProvider:
 
         assert provider == mock_instance
 
-    @patch("gobby.llm.codex.CodexProvider")
-    def test_get_default_provider_fallback(self, mock_codex_provider: MagicMock) -> None:
-        """Test default provider falls back to first available when Claude not configured."""
-        mock_instance = MagicMock()
-        mock_codex_provider.return_value = mock_instance
-
-        config = DaemonConfig(
-            llm_providers=LLMProvidersConfig(
-                claude=None,
-                codex=LLMProviderConfig(models="gpt-4o-mini"),
-            ),
-        )
-
-        service = LLMService(config)
-        provider = service.get_default_provider()
-
-        assert provider == mock_instance
-
     def test_get_default_provider_no_enabled_raises(self) -> None:
         """Test error when no providers are enabled."""
         # Create config with empty llm_providers
@@ -251,8 +232,7 @@ class TestLLMServiceProperties:
 
         enabled = service.enabled_providers
         assert "claude" in enabled
-        assert "codex" in enabled
-        assert len(enabled) == 2
+        assert len(enabled) == 1
 
     @patch("gobby.llm.claude.ClaudeLLMProvider")
     def test_initialized_providers(

@@ -25,6 +25,7 @@ from gobby.ai.registry import (
 )
 from gobby.ai.text_generation import (
     ACPTextGenerateAdapter,
+    CodexAppServerTextGenerateAdapter,
     DroidCLITextGenerateAdapter,
     LLMProviderTextGenerateAdapter,
     TextGenerateAdapter,
@@ -57,6 +58,7 @@ __all__ = [
     "CapabilityBinding",
     "CapabilityStatus",
     "CapabilityUnavailableError",
+    "CodexAppServerTextGenerateAdapter",
     "DroidCLITextGenerateAdapter",
     "LLMProviderTextGenerateAdapter",
     "LLMProviderVisionExtractAdapter",

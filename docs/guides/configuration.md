@@ -209,14 +209,13 @@ llm_providers:
   claude:
     models: haiku,sonnet,opus
     auth_mode: subscription
-  codex: null
-  gemini: null
-  qwen: null
 ```
 
 Provider `auth_mode` accepts `subscription`, `api_key`, or `adc`. Provider
-`models` is a comma-separated string. `json_strict` controls LLM JSON validation
-and can be overridden per workflow with the `llm_json_strict` variable.
+`models` is a comma-separated string. CLI/app-server providers such as Codex
+own their own authentication and model configuration outside Gobby's
+`llm_providers`. `json_strict` controls LLM JSON validation and can be
+overridden per workflow with the `llm_json_strict` variable.
 
 ### Storage, Embeddings, And Memory
 

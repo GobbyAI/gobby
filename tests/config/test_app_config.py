@@ -371,16 +371,26 @@ class TestLLMProvidersConfig:
         """Test listing LLMProvider-backed generation bindings."""
         config = LLMProvidersConfig(
             claude=LLMProviderConfig(models="claude-haiku-4-5"),
-            codex=LLMProviderConfig(models="gpt-4o-mini"),
         )
         providers = config.get_enabled_providers()
-        assert providers == ["claude", "codex"]
+        assert providers == ["claude"]
 
-    def test_removed_acp_provider_configs_are_rejected(self) -> None:
-        """Gemini/Grok/Qwen do not have old LLMProvider config entries."""
-        for provider in ("gemini", "grok", "qwen"):
-            with pytest.raises(ValidationError):
-                LLMProvidersConfig(**{provider: LLMProviderConfig(models="removed")})
+    def test_removed_cli_provider_configs_are_ignored(self) -> None:
+        """CLI/app-server providers do not become LLMProvider config entries."""
+        config = LLMProvidersConfig(
+            codex=LLMProviderConfig(models="removed"),
+            gemini=LLMProviderConfig(models="removed"),
+            grok=LLMProviderConfig(models="removed"),
+            qwen=LLMProviderConfig(models="removed"),
+        )
+
+        assert config.get_enabled_providers() == ["claude"]
+        assert not hasattr(config, "codex")
+
+    def test_unknown_provider_configs_are_rejected(self) -> None:
+        """Unknown provider keys still fail validation."""
+        with pytest.raises(ValidationError):
+            LLMProvidersConfig(openai=LLMProviderConfig(models="removed"))
 
 
 class TestDaemonConfig:

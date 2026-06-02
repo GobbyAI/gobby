@@ -573,7 +573,7 @@ def _vision_extract_binding(
     if adapter_style is None:
         return None
 
-    if entry.provider not in {"claude", "codex"}:
+    if entry.provider != "claude":
         return CapabilityBinding.unavailable(
             AICapability.VISION_EXTRACT,
             entry.provider,
@@ -662,14 +662,16 @@ def _generation_binding_config(config: DaemonConfig | None, provider: str) -> An
     if config is None:
         return None
     providers = getattr(config, "llm_providers", None)
-    if providers is None or provider not in {"claude", "codex"}:
+    if providers is None or provider != "claude":
         return None
     return getattr(providers, provider, None)
 
 
 def _text_generate_adapter_style(provider: str) -> AIAdapterStyle | None:
-    if provider in {"claude", "codex"}:
+    if provider == "claude":
         return AIAdapterStyle.LLM_PROVIDER
+    if provider == "codex":
+        return AIAdapterStyle.DAEMON
     if provider in {"gemini", "grok", "qwen"}:
         return AIAdapterStyle.ACP
     if provider == "droid":
@@ -678,8 +680,10 @@ def _text_generate_adapter_style(provider: str) -> AIAdapterStyle | None:
 
 
 def _vision_extract_adapter_style(provider: str) -> AIAdapterStyle | None:
-    if provider in {"claude", "codex"}:
+    if provider == "claude":
         return AIAdapterStyle.LLM_PROVIDER
+    if provider == "codex":
+        return AIAdapterStyle.DAEMON
     if provider in {"gemini", "grok", "qwen"}:
         return AIAdapterStyle.ACP
     if provider == "droid":

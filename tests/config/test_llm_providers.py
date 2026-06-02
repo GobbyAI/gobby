@@ -1,7 +1,4 @@
-"""Tests for config/llm_providers.py module.
-
-These tests cover the 0.5.0 Claude/Codex generation capability binding config.
-"""
+"""Tests for config/llm_providers.py module."""
 
 import json
 
@@ -114,7 +111,6 @@ class TestLLMProvidersConfigDefaults:
         assert config.claude is not None
         assert config.claude.models == "haiku,sonnet,opus"
         assert config.claude.auth_mode == "subscription"
-        assert config.codex is None
 
     def test_claude_enabled_by_default(self) -> None:
         """Test Claude provider is enabled by default."""
@@ -148,17 +144,6 @@ class TestLLMProvidersConfigWithProviders:
         assert config.claude is not None
         assert config.claude.models == "claude-haiku-4-5,claude-sonnet-4-5"
 
-    def test_multiple_providers(self) -> None:
-        """Test configuring multiple providers."""
-        from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
-
-        config = LLMProvidersConfig(
-            claude=LLMProviderConfig(models="claude-haiku-4-5"),
-            codex=LLMProviderConfig(models="gpt-4o-mini", auth_mode="api_key"),
-        )
-        assert config.claude is not None
-        assert config.codex is not None
-
 
 class TestLLMProvidersConfigGetEnabledProviders:
     """Test LLMProvidersConfig.get_enabled_providers() method."""
@@ -170,26 +155,26 @@ class TestLLMProvidersConfigGetEnabledProviders:
         config = LLMProvidersConfig(claude=LLMProviderConfig(models="claude-haiku-4-5"))
         assert config.get_enabled_providers() == ["claude"]
 
-    def test_get_enabled_providers_multiple(self) -> None:
-        """Test get_enabled_providers with multiple providers."""
+    def test_ignores_removed_cli_provider_config_keys(self) -> None:
+        """CLI/app-server providers no longer become LLMProvider config entries."""
         from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
 
         config = LLMProvidersConfig(
-            claude=LLMProviderConfig(models="claude-haiku"),
-            codex=LLMProviderConfig(models="gpt-4o"),
+            codex=LLMProviderConfig(models="gpt-5.4"),
+            gemini=LLMProviderConfig(models="gemini-pro"),
+            grok=LLMProviderConfig(models="grok"),
+            qwen=LLMProviderConfig(models="qwen"),
         )
-        providers = config.get_enabled_providers()
-        assert "claude" in providers
-        assert "codex" in providers
-        assert len(providers) == 2
 
-    def test_rejects_removed_acp_provider_config_keys(self) -> None:
-        """Gemini/Grok/Qwen no longer use old LLMProvider config entries."""
+        assert config.get_enabled_providers() == ["claude"]
+        assert not hasattr(config, "codex")
+
+    def test_rejects_unknown_provider_config_keys(self) -> None:
+        """Unknown provider keys still fail validation."""
         from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
 
-        for provider in ("gemini", "grok", "qwen"):
-            with pytest.raises(ValidationError):
-                LLMProvidersConfig(**{provider: LLMProviderConfig(models="c")})
+        with pytest.raises(ValidationError):
+            LLMProvidersConfig(openai=LLMProviderConfig(models="gpt-4o"))
 
 
 class TestLLMProviderConfigFromAppPy:

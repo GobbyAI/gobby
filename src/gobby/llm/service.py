@@ -70,7 +70,7 @@ class LLMService:
         Get or create a provider instance by name (lazy initialization).
 
         Args:
-            name: Provider name (claude, codex)
+            name: Provider name (claude, local)
 
         Returns:
             LLMProvider instance
@@ -105,22 +105,14 @@ class LLMService:
             enabled = self._config.llm_providers.get_enabled_providers()
             raise ValueError(f"Provider '{name}' is not configured. Available providers: {enabled}")
 
-        # Create provider instance based on name
-
         if name == "claude":
             from gobby.llm.claude import ClaudeLLMProvider
 
             provider = ClaudeLLMProvider(self._config)
             logger.debug("Initialized Claude provider")
 
-        elif name == "codex":
-            from gobby.llm.codex import CodexProvider
-
-            provider = CodexProvider(self._config)
-            logger.debug(f"Initialized Codex provider (auth_mode: {provider_config.auth_mode})")
-
         else:
-            raise ValueError(f"Unknown provider '{name}'. Supported providers: claude, codex")
+            raise ValueError(f"Unknown provider '{name}'. Supported providers: claude, local")
 
         self._providers[name] = provider
         self._initialized_providers.add(name)
@@ -131,7 +123,7 @@ class LLMService:
         Get a provider by name.
 
         Args:
-            name: Provider name (claude, codex)
+            name: Provider name (claude, local)
 
         Returns:
             LLMProvider instance

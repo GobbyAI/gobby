@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -13,11 +14,15 @@ from gobby.ai import (
     AICapability,
     AICapabilityRegistry,
     CapabilityBinding,
+    CodexAppServerTextGenerateAdapter,
     DroidCLITextGenerateAdapter,
     LLMProviderTextGenerateAdapter,
     TextGenerationRequest,
     TextGenerationService,
+    build_daemon_text_generation_service,
 )
+from gobby.config.app import DaemonConfig
+from gobby.config.local import LocalConfig
 from gobby.llm.base import LLMProvider
 
 pytestmark = pytest.mark.unit
@@ -37,7 +42,7 @@ class RecordingAdapter:
 async def test_text_generation_service_selects_available_registry_binding() -> None:
     providers = {
         "claude": AIAdapterStyle.LLM_PROVIDER,
-        "codex": AIAdapterStyle.LLM_PROVIDER,
+        "codex": AIAdapterStyle.DAEMON,
         "local": AIAdapterStyle.OPENAI_COMPATIBLE,
         "gemini": AIAdapterStyle.ACP,
         "grok": AIAdapterStyle.ACP,
@@ -64,6 +69,63 @@ async def test_text_generation_service_selects_available_registry_binding() -> N
         )
         assert response == f"{provider}:summarize"
         assert adapters[provider].requests[-1].provider == provider
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_resolves_only_selected_adapter() -> None:
+    providers = ("claude", "codex", "local", "gemini", "grok", "qwen", "droid")
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider=provider,
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+            )
+            for provider in providers
+        ]
+    )
+    created: list[str] = []
+
+    def factory(provider: str) -> RecordingAdapter:
+        created.append(provider)
+        return RecordingAdapter(provider)
+
+    service = TextGenerationService(
+        registry,
+        adapter_factories={
+            provider: (lambda provider=provider: factory(provider)) for provider in providers
+        },
+    )
+
+    response = await service.generate(TextGenerationRequest(prompt="summarize", provider="codex"))
+
+    assert response == "codex:summarize"
+    assert created == ["codex"]
+
+
+def test_build_daemon_text_generation_service_defers_adapter_instantiation() -> None:
+    providers = ("claude", "codex", "local", "gemini", "grok", "qwen", "droid")
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider=provider,
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+            )
+            for provider in providers
+        ]
+    )
+
+    service = build_daemon_text_generation_service(
+        DaemonConfig(local=LocalConfig(url="http://localhost:1234/v1", model="llama")),
+        registry=registry,
+    )
+
+    assert service.registry is registry
+    assert service._adapters == {}
+    assert set(service._adapter_factories) == set(providers)
 
 
 class FakeLLMProvider(LLMProvider):
@@ -140,6 +202,78 @@ class FakeACPClient:
         yield StreamEvent(event_type="content_delta", data={"content": "hello "})
         yield StreamEvent(event_type="content_delta", data={"content": "world"})
         yield StreamEvent(event_type="result", data={"content": "ignored fallback"})
+
+
+class FakeCodexAppServerClient:
+    def __init__(self) -> None:
+        self.started = False
+        self.stopped = False
+        self.thread_kwargs: dict[str, object] | None = None
+        self.turn_kwargs: dict[str, object] | None = None
+
+    async def start(self) -> None:
+        self.started = True
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+    async def start_thread(
+        self,
+        cwd: str | None = None,
+        model: str | None = None,
+        approval_policy: str | None = None,
+        sandbox: str | None = None,
+        terminal_context: dict[str, Any] | None = None,
+    ) -> SimpleNamespace:
+        self.thread_kwargs = {"cwd": cwd, "model": model}
+        return SimpleNamespace(id="thread-1")
+
+    async def run_turn(
+        self,
+        thread_id: str,
+        prompt: str,
+        images: list[str] | None = None,
+        **config_overrides: Any,
+    ) -> AsyncIterator[dict[str, Any]]:
+        self.turn_kwargs = {
+            "thread_id": thread_id,
+            "prompt": prompt,
+            "images": images,
+            **config_overrides,
+        }
+        yield {"type": "item/agentMessage/delta", "delta": "hello "}
+        yield {
+            "type": "item/completed",
+            "item": {"content": [{"text": "ignored fallback"}]},
+        }
+        yield {"type": "item/agentMessage/delta", "delta": "world"}
+
+
+@pytest.mark.asyncio
+async def test_codex_app_server_text_generate_adapter_runs_one_shot_turn() -> None:
+    client = FakeCodexAppServerClient()
+    adapter = CodexAppServerTextGenerateAdapter(lambda: client)
+
+    response = await adapter.generate(
+        TextGenerationRequest(
+            provider="codex",
+            prompt="user prompt",
+            system_prompt="system prompt",
+            model="gpt-5.4",
+            cwd="/tmp/project",
+        )
+    )
+
+    assert response == "hello world"
+    assert client.started is True
+    assert client.stopped is True
+    assert client.thread_kwargs == {"cwd": "/tmp/project", "model": "gpt-5.4"}
+    assert client.turn_kwargs == {
+        "thread_id": "thread-1",
+        "prompt": "user prompt",
+        "images": None,
+        "context_prefix": "system prompt",
+    }
 
 
 @pytest.mark.asyncio

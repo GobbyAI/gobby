@@ -1,15 +1,17 @@
 """Generation capability binding configuration module.
 
-This module keeps the 0.5.0 Claude/Codex generation binding config that is
-migrated into the daemon AI capability registry. ACP/CLI-only providers do not
-have old LLMProvider config entries here.
+This module keeps daemon-owned LLMProvider binding config. CLI/app-server
+providers such as Codex own their authentication and model configuration.
 """
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 __all__ = ["LLMProviderConfig", "LLMProvidersConfig"]
+
+
+_OBSOLETE_CLI_PROVIDER_KEYS = frozenset({"codex", "gemini", "grok", "qwen"})
 
 
 class LLMProviderConfig(BaseModel):
@@ -47,13 +49,18 @@ class LLMProvidersConfig(BaseModel):
       json_strict: true  # Strict JSON validation for LLM responses (default)
       claude:
         models: haiku,sonnet,opus
-      codex:
-        models: gpt-5.4,gpt-5.4-mini,gpt-5.3-codex,gpt-5.3-codex-spark
-        auth_mode: subscription
     ```
     """
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def drop_obsolete_cli_provider_keys(cls, data: Any) -> Any:
+        """Ignore removed CLI/app-server provider entries from older configs."""
+        if not isinstance(data, dict):
+            return data
+        return {key: value for key, value in data.items() if key not in _OBSOLETE_CLI_PROVIDER_KEYS}
 
     default_model: str | None = Field(
         default="opus",
@@ -73,16 +80,10 @@ class LLMProvidersConfig(BaseModel):
         ),
         description="Claude text_generate/vision_extract capability binding configuration",
     )
-    codex: LLMProviderConfig | None = Field(
-        default=None,
-        description="Codex text_generate/vision_extract capability binding configuration",
-    )
 
     def get_enabled_providers(self) -> list[str]:
         """Return list of enabled provider names."""
         providers = []
         if self.claude:
             providers.append("claude")
-        if self.codex:
-            providers.append("codex")
         return providers

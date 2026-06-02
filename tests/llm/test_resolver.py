@@ -114,21 +114,19 @@ class TestResolveProvider:
         """Test that config provider has third priority."""
         # Create mock config
         mock_config = MagicMock()
-        mock_config.llm_providers.get_enabled_providers.return_value = ["codex", "gemini"]
+        mock_config.llm_providers.get_enabled_providers.return_value = ["claude"]
 
         result = resolve_provider(config=mock_config)
 
-        # Should prefer claude if available, otherwise first enabled
-        assert result.provider == "codex"
+        assert result.provider == "claude"
         assert result.source == "config"
 
     def test_config_prefers_claude(self) -> None:
         """Test that config prefers claude when available."""
         mock_config = MagicMock()
         mock_config.llm_providers.get_enabled_providers.return_value = [
-            "codex",
+            "custom",
             "claude",
-            "codex",
         ]
 
         result = resolve_provider(config=mock_config)
@@ -156,14 +154,14 @@ class TestResolveProvider:
     def test_workflow_overrides_config(self) -> None:
         """Test that workflow overrides config."""
         mock_workflow = MagicMock()
-        mock_workflow.variables = {"provider": "codex"}
+        mock_workflow.variables = {"provider": "claude"}
 
         mock_config = MagicMock()
-        mock_config.llm_providers.get_enabled_providers.return_value = ["claude", "codex"]
+        mock_config.llm_providers.get_enabled_providers.return_value = ["claude"]
 
         result = resolve_provider(workflow=mock_workflow, config=mock_config)
 
-        assert result.provider == "codex"
+        assert result.provider == "claude"
         assert result.source == "workflow"
 
     def test_validates_explicit_provider(self) -> None:

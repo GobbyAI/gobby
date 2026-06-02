@@ -193,7 +193,7 @@ def test_vision_status_lists_only_proven_providers_as_available(
         binding["provider"] for binding in data["bindings"] if binding["available"]
     }
     assert "local" in available_providers
-    assert not {"droid", "gemini", "grok", "qwen"} & available_providers
+    assert not {"codex", "droid", "gemini", "grok", "qwen"} & available_providers
 
 
 def test_vision_extract_upload_executes_service(

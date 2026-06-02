@@ -109,11 +109,6 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
                     models="haiku,sonnet",
                     default_model="sonnet",
                 ),
-                codex=LLMProviderConfig(
-                    models="gpt-5.4,gpt-5.3-codex",
-                    default_model="gpt-5.4",
-                    auth_mode="api_key",
-                ),
             ),
         ),
         provider_installed=lambda _entry: True,
@@ -121,7 +116,7 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
 
     expected_styles = {
         "claude": AIAdapterStyle.LLM_PROVIDER,
-        "codex": AIAdapterStyle.LLM_PROVIDER,
+        "codex": AIAdapterStyle.DAEMON,
         "local": AIAdapterStyle.OPENAI_COMPATIBLE,
         "gemini": AIAdapterStyle.ACP,
         "grok": AIAdapterStyle.ACP,
@@ -145,18 +140,15 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
 
     codex = registry.binding(AICapability.TEXT_GENERATE, "codex")
     assert codex is not None
-    assert codex.models == ("gpt-5.4", "gpt-5.3-codex")
-    assert codex.metadata["default_model"] == "gpt-5.4"
-    assert codex.metadata["auth_mode"] == "api_key"
+    assert codex.models == ()
+    assert "default_model" not in codex.metadata
+    assert "auth_mode" not in codex.metadata
 
 
 def test_daemon_registry_reports_only_proven_vision_extract_bindings_available() -> None:
     registry = build_daemon_ai_capability_registry(
         DaemonConfig(
             local=LocalConfig(url="http://localhost:1234/v1", model="llava"),
-            llm_providers=LLMProvidersConfig(
-                codex=LLMProviderConfig(models="gpt-5-vision", default_model="gpt-5-vision")
-            ),
         ),
         provider_installed=lambda _entry: True,
     )
@@ -164,7 +156,7 @@ def test_daemon_registry_reports_only_proven_vision_extract_bindings_available()
     status = registry.status(AICapability.VISION_EXTRACT)
     available_providers = {binding.provider for binding in status.bindings if binding.available}
 
-    assert available_providers == {"claude", "codex", "local"}
+    assert available_providers == {"claude", "local"}
 
     local = registry.binding(AICapability.VISION_EXTRACT, "local")
     assert local is not None
@@ -173,8 +165,10 @@ def test_daemon_registry_reports_only_proven_vision_extract_bindings_available()
 
     codex = registry.binding(AICapability.VISION_EXTRACT, "codex")
     assert codex is not None
-    assert codex.models == ("gpt-5-vision",)
-    assert codex.metadata["default_model"] == "gpt-5-vision"
+    assert codex.available is False
+    assert codex.adapter_style == AIAdapterStyle.DAEMON
+    assert codex.reason is not None
+    assert "proven image payload support" in codex.reason
 
     for provider in ("droid", "gemini", "grok", "qwen"):
         binding = registry.binding(AICapability.VISION_EXTRACT, provider)
