@@ -34,6 +34,10 @@ from starlette.requests import ClientDisconnect
 from gobby.app_context import ServiceContainer
 from gobby.mcp_proxy.lazy import CircuitBreakerOpen
 from gobby.mcp_proxy.models import MCPError
+from gobby.mcp_proxy.wait_tools import (
+    MCP_WRAPPER_FINGERPRINT_HEADER,
+    mcp_wrapper_current_source_fingerprint,
+)
 from gobby.servers.http import HTTPServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -1107,6 +1111,42 @@ class TestCallMCPTool:
         assert data["result"] == {"tool": "list_tasks"}
         assert "response_time_ms" in data
 
+    def test_call_tool_rejects_stale_stdio_wait_wrapper(
+        self, session_storage: SessionManager
+    ) -> None:
+        """Structured calls from stdio must include a current wrapper fingerprint."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server._internal_manager = FakeInternalManager(
+            [
+                FakeInternalRegistry(
+                    name="gobby-agents",
+                    tools=[{"name": "wait_for_agent", "description": "Wait for an agent"}],
+                ),
+            ]
+        )
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/mcp/tools/call",
+                headers={"X-Gobby-Caller-Project-Id": "project-123"},
+                json={
+                    "server_name": "gobby-agents",
+                    "tool_name": "wait_for_agent",
+                    "arguments": {"run_id": "run-123", "timeout_seconds": 300},
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert data["error_code"] == "GOBBY_MCP_WRAPPER_STALE"
+        assert data["tool_name"] == "wait_for_agent"
+        assert data["restart_required"] is True
+
     def test_call_tool_internal_server_failure(self, session_storage: SessionManager) -> None:
         """Test calling tool on internal server with error."""
         server = create_http_server(
@@ -2000,6 +2040,67 @@ class TestMCPProxy:
         data = response.json()
         assert data["success"] is True
         assert data["result"] == {"tool": "list_tasks"}
+
+    def test_proxy_rejects_missing_wait_wrapper_fingerprint(
+        self, session_storage: SessionManager
+    ) -> None:
+        """Legacy stdio proxy route rejects stale wait wrappers before dispatch."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server._internal_manager = FakeInternalManager(
+            [
+                FakeInternalRegistry(
+                    name="gobby-agents",
+                    tools=[{"name": "wait_for_agent", "description": "Wait for an agent"}],
+                ),
+            ]
+        )
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/mcp/gobby-agents/tools/wait_for_agent",
+                json={"run_id": "run-123", "timeout_seconds": 300},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert data["error_code"] == "GOBBY_MCP_WRAPPER_STALE"
+        assert data["tool_name"] == "wait_for_agent"
+        assert data["restart_required"] is True
+
+    def test_proxy_accepts_current_wait_wrapper_fingerprint(
+        self, session_storage: SessionManager
+    ) -> None:
+        """Fresh stdio wrappers keep using the legacy route normally."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server._internal_manager = FakeInternalManager(
+            [
+                FakeInternalRegistry(
+                    name="gobby-agents",
+                    tools=[{"name": "wait_for_agent", "description": "Wait for an agent"}],
+                ),
+            ]
+        )
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/mcp/gobby-agents/tools/wait_for_agent",
+                headers={MCP_WRAPPER_FINGERPRINT_HEADER: mcp_wrapper_current_source_fingerprint()},
+                json={"run_id": "run-123", "timeout_seconds": 300},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["result"] == {"tool": "wait_for_agent"}
 
     def test_proxy_internal_server_fallthrough(self, session_storage: SessionManager) -> None:
         """Test proxy falls through to MCP manager when no internal manager."""
