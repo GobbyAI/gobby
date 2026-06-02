@@ -1368,20 +1368,20 @@ class TestMCPToolsWrapper:
             )
             await asyncio.wait_for(heartbeat_seen.wait(), timeout=0.2)
             assert ctx.report_progress.await_count >= 1
-            assert ctx.report_progress.await_args.kwargs["total"] == 90.0
+            assert ctx.report_progress.await_args.kwargs["total"] == 60.0
             release_call.set()
             result = await asyncio.wait_for(task, timeout=0.2)
 
         assert result == {
             "res": "call",
             "requested_timeout_seconds": 300.0,
-            "effective_timeout_seconds": 90.0,
+            "effective_timeout_seconds": 60.0,
             "wait_timeout_capped_by_mcp_wrapper": True,
         }
         mock_proxy.call_tool.assert_awaited_once_with(
             "gobby-agents",
             "wait_for_agent",
-            {"run_id": "run-123", "timeout_seconds": 90.0},
+            {"run_id": "run-123", "timeout_seconds": 60.0},
             preflight_enabled=True,
         )
 

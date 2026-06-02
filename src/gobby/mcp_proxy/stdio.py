@@ -72,7 +72,8 @@ WAIT_TOOL_NAMES = (
 )
 HEARTBEAT_TOOL_NAMES = (*WAIT_TOOL_NAMES, "compact_self")
 WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS = 15.0
-MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS = 90.0
+WAIT_TOOL_HTTP_TIMEOUT_BUFFER_SECONDS = 30.0
+MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS = 60.0
 REMOVED_WORKFLOW_WAIT_TOOL = "wait_for_completion"
 DAEMON_HEALTH_ATTEMPTS = 30
 DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS = 2.0
@@ -328,8 +329,7 @@ class DaemonProxy:
             if raw_timeout is None:
                 raw_timeout = arg_map.get("timeout_seconds", 300.0)
             arg_timeout = float(raw_timeout)
-            # Add 30s buffer for HTTP overhead
-            timeout = arg_timeout + 30.0
+            timeout = arg_timeout + WAIT_TOOL_HTTP_TIMEOUT_BUFFER_SECONDS
         request_kwargs: dict[str, Any] = {
             "json": arguments if arguments is not None else {},
             "timeout": timeout,
