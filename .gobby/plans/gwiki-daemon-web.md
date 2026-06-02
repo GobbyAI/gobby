@@ -448,6 +448,7 @@ Implementation validation after expansion:
 - **R1 (2026-05-28)**: Initial sibling Gobby repo plan for daemon/web `gwiki` integration. Scoped implementation to daemon gateway, API routes, MCP tools, Wiki Activity panel, chat actions, and hybrid self-updating behavior dependent on the `gobby-cli` `gwiki` JSON/CLI contracts.
 - **R2 (2026-06-01)**: Revised daemon/web scope for CLI-owned source lifecycle contracts. Added source listing, dry-run-first source removal, gateway/API/MCP/UI coverage, and `index_status.index_required` coordination to avoid duplicate indexing.
 - **R3 (2026-06-02)**: Expanded daemon/web scope for upstream `gwiki ingest-url --format json URL...`. Added URL batch gateway/API/MCP/web coverage, CLI-owned fetch/source/failure/indexing contract, partial/all-failed passthrough expectations, and update-coordinator duplicate-index prevention.
+- **R4 (2026-06-02)**: Verified plan against the current codebase for stage-native review. Confirmed target inventory paths resolve (`web/src/components/activity/useActivityPanel.ts`, `ActivityPanelTabs.tsx`, `ActivityPanel.tsx` are the live tab-registration surfaces; `src/gobby/servers/routes/` and `src/gobby/mcp_proxy/tools/` package roots exist; `src/gobby/wiki/` and `web/src/hooks/useWiki.ts` are net-new). Confirmed draft and expansion validation pass, consumer sweep is clean, and the M1 manifest's 10 entries map 1:1 to the 10 deliverable sections. No structural changes required.
 
 ## M1 Task Manifest
 
