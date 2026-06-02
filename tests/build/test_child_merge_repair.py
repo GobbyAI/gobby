@@ -8,6 +8,7 @@ import pytest
 from gobby.build.dispatch_tick import DispatcherTickSummary
 from gobby.build.options import BuildOptions
 from gobby.build.service import build
+from gobby.build.workspace_git import _workspace_path
 from gobby.build.workspaces import (
     BuildWorkspaceError,
     _integration_branch,
@@ -355,6 +356,61 @@ def test_epic_integration_workspace_recreates_missing_path(
     assert parent_artifacts.integration_workspace_id == recreated.id
 
 
+def test_epic_integration_workspace_recreates_invalid_git_path(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    integration_branch = _integration_branch(parent)
+    invalid_path = _workspace_path("worktrees", repo.name, integration_branch)
+    invalid_path.mkdir(parents=True)
+    (invalid_path / "not-git.txt").write_text("stale directory\n")
+
+    worktrees = LocalWorktreeManager(temp_db)
+    stale = worktrees.create(
+        project_id=project.id,
+        branch_name=integration_branch,
+        worktree_path=str(invalid_path),
+        base_branch="main",
+        task_id=parent.id,
+        workspace_role="integration",
+    )
+    task_manager.artifacts.set_artifacts_atomic(
+        parent.id,
+        integration_branch=integration_branch,
+        integration_workspace_id=stale.id,
+        target_branch="main",
+    )
+
+    ensure_epic_integration_workspaces(
+        task_manager=task_manager,
+        root_task=parent,
+        backend="worktree",
+        target_branch="main",
+        project_id=project.id,
+        services=None,
+    )
+
+    recreated = worktrees.get_by_branch(project.id, integration_branch)
+    parent_artifacts = task_manager.artifacts.get_artifacts(parent.id)
+
+    assert worktrees.get(stale.id) is None
+    assert recreated is not None
+    assert recreated.id != stale.id
+    assert recreated.worktree_path == str(invalid_path)
+    assert _git(invalid_path, "rev-parse", "--is-inside-work-tree") == "true"
+    assert not (invalid_path / "not-git.txt").exists()
+    assert parent_artifacts.integration_workspace_id == recreated.id
+
+
 def test_epic_integration_workspace_blocks_active_run_for_pruned_metadata(
     temp_db,
     tmp_path: Path,
@@ -405,6 +461,74 @@ def test_epic_integration_workspace_blocks_active_run_for_pruned_metadata(
 
     parent_artifacts = task_manager.artifacts.get_artifacts(parent.id)
     assert parent_artifacts.integration_workspace_id == stale_worktree_id
+
+
+def test_epic_integration_workspace_blocks_active_run_for_invalid_git_path(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    from gobby.storage.agents import LocalAgentRunManager
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    integration_branch = _integration_branch(parent)
+    invalid_path = _workspace_path("worktrees", repo.name, integration_branch)
+    invalid_path.mkdir(parents=True)
+    (invalid_path / "not-git.txt").write_text("active stale directory\n")
+
+    worktrees = LocalWorktreeManager(temp_db)
+    stale = worktrees.create(
+        project_id=project.id,
+        branch_name=integration_branch,
+        worktree_path=str(invalid_path),
+        base_branch="main",
+        task_id=parent.id,
+        workspace_role="integration",
+    )
+    temp_db.execute(
+        "INSERT INTO sessions "
+        "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
+        "VALUES (%s, %s, %s, %s, %s, NOW(), NOW())",
+        ("parent-session", "ext-active-invalid", "machine-1", "codex", project.id),
+    )
+    run_manager = LocalAgentRunManager(temp_db)
+    run = run_manager.create(
+        parent_session_id="parent-session",
+        provider="codex",
+        prompt="review",
+        agent_name="holistic-reviewer",
+        task_id=parent.id,
+        run_id="run-active-invalid-integration",
+    )
+    run_manager.update_runtime(run.id, worktree_id=stale.id)
+    task_manager.artifacts.set_artifacts_atomic(
+        parent.id,
+        integration_branch=integration_branch,
+        integration_workspace_id=stale.id,
+        target_branch="main",
+    )
+
+    with pytest.raises(BuildWorkspaceError, match="active run run-active-invalid-integration"):
+        ensure_epic_integration_workspaces(
+            task_manager=task_manager,
+            root_task=parent,
+            backend="worktree",
+            target_branch="main",
+            project_id=project.id,
+            services=None,
+        )
+
+    parent_artifacts = task_manager.artifacts.get_artifacts(parent.id)
+    assert worktrees.get(stale.id) is not None
+    assert (invalid_path / "not-git.txt").exists()
+    assert parent_artifacts.integration_workspace_id == stale.id
 
 
 def test_epic_integration_workspace_merges_closed_descendant_commits(
