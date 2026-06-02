@@ -16,12 +16,16 @@ from typing import Any
 
 import pytest
 
+import gobby.sessions.transcript_index as transcript_index
 from gobby.sessions.transcript_index import (
     INDEX_CACHE_MAX_ENTRIES,
+    TranscriptIndexAppender,
     build_index_from_file,
     clear_index_cache,
     detect_source_bounded,
     get_or_build_index,
+    load_index_sidecar,
+    persist_index_sidecar,
 )
 from gobby.sessions.transcript_io import _count_nonempty_lines
 from gobby.sessions.transcript_renderer import RenderedMessage, render_transcript
@@ -160,6 +164,19 @@ def _write(tmp_path: Path, name: str, lines: list[str]) -> str:
     path = tmp_path / f"{name}.jsonl"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return str(path)
+
+
+def _line_texts(lines: list[str]) -> list[str]:
+    return [f"{line}\n" for line in lines]
+
+
+def _line_offsets(lines: list[str]) -> list[int]:
+    offsets: list[int] = []
+    offset = 0
+    for line in _line_texts(lines):
+        offsets.append(offset)
+        offset += len(line.encode("utf-8"))
+    return offsets
 
 
 def _group_start_index(group_id: str) -> int:
@@ -303,6 +320,17 @@ def test_droid_sidecar_usage_is_post_pass_adjustment(tmp_path: Path) -> None:
     # The last assistant message renders into the final group.
     assert adjustment.group_index == index.total_groups - 1
 
+    persist_index_sidecar(str(transcript), index)
+    loaded = load_index_sidecar(
+        str(transcript), "droid", seek_mode="byte", mtime_ns=st.st_mtime_ns, size=st.st_size
+    )
+
+    assert loaded is not None
+    loaded_adjustment = loaded.post_pass_adjustments[0]
+    assert loaded_adjustment.field == "usage"
+    assert loaded_adjustment.value.input_tokens == 5
+    assert loaded_adjustment.value.output_tokens == 7
+
 
 def test_detect_source_bounded_prefers_path(tmp_path: Path) -> None:
     codex_dir = tmp_path / ".codex" / "sessions"
@@ -356,6 +384,101 @@ async def test_get_or_build_index_caches_and_invalidates(tmp_path: Path) -> None
     assert third is not first
     assert third.total_groups >= first.total_groups
     clear_index_cache()
+
+
+@pytest.mark.asyncio
+async def test_get_or_build_index_loads_valid_sidecar_after_cache_clear(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clear_index_cache()
+    path = _write(tmp_path, "codex-sidecar", _codex_lines())
+    st = os.stat(path)
+
+    first = await get_or_build_index(
+        path, "codex", SESSION, mtime_ns=st.st_mtime_ns, size=st.st_size
+    )
+    clear_index_cache()
+
+    def fail_build(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("sidecar load should avoid a full rebuild")
+
+    monkeypatch.setattr(transcript_index, "build_index_from_file", fail_build)
+    loaded = await get_or_build_index(
+        path, "codex", SESSION, mtime_ns=st.st_mtime_ns, size=st.st_size
+    )
+
+    assert loaded is not first
+    assert loaded.total_groups == first.total_groups
+    assert loaded.parsed_message_count == first.parsed_message_count
+    assert loaded.parsed_boundaries
+    clear_index_cache()
+
+
+@pytest.mark.asyncio
+async def test_get_or_build_index_rebuilds_on_sidecar_size_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clear_index_cache()
+    path = _write(tmp_path, "codex-truncated", _codex_lines())
+    st = os.stat(path)
+    await get_or_build_index(path, "codex", SESSION, mtime_ns=st.st_mtime_ns, size=st.st_size)
+    clear_index_cache()
+
+    Path(path).write_text(_line_texts(_codex_lines()[0:2])[0], encoding="utf-8")
+    st2 = os.stat(path)
+    calls = 0
+    original = transcript_index.build_index_from_file
+
+    def count_build(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(transcript_index, "build_index_from_file", count_build)
+    rebuilt = await get_or_build_index(
+        path, "codex", SESSION, mtime_ns=st2.st_mtime_ns, size=st2.st_size
+    )
+
+    assert calls == 1
+    assert rebuilt.size == st2.st_size
+    clear_index_cache()
+
+
+def test_transcript_index_appender_persists_append_growth(tmp_path: Path) -> None:
+    lines = _codex_lines()
+    path = _write(tmp_path, "codex-append", lines)
+    offsets = _line_offsets(lines)
+    appender = TranscriptIndexAppender("codex", SESSION, path)
+    first_batch = _line_texts(lines[:2])
+    second_batch = _line_texts(lines[2:])
+
+    appender.append_positioned_lines(
+        first_batch,
+        offsets[:2],
+        mtime_ns=0,
+        size=sum(len(line.encode("utf-8")) for line in first_batch),
+    )
+    first_count = appender.index.parsed_message_count
+    st = os.stat(path)
+    appender.append_positioned_lines(
+        second_batch,
+        offsets[2:],
+        mtime_ns=st.st_mtime_ns,
+        size=st.st_size,
+    )
+    persist_index_sidecar(path, appender.snapshot(mtime_ns=st.st_mtime_ns, size=st.st_size))
+    loaded = load_index_sidecar(
+        path, "codex", seek_mode="byte", mtime_ns=st.st_mtime_ns, size=st.st_size
+    )
+    rebuilt = build_index_from_file(
+        path, "codex", SESSION, mtime_ns=st.st_mtime_ns, size=st.st_size
+    )
+
+    assert loaded is not None
+    assert loaded.parsed_message_count > first_count
+    assert loaded.parsed_message_count == rebuilt.parsed_message_count
+    assert loaded.total_groups == rebuilt.total_groups
+    assert loaded.parsed_boundaries
 
 
 @pytest.mark.asyncio

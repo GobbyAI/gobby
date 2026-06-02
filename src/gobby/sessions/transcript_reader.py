@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import warnings
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -164,10 +165,26 @@ class TranscriptReader:
             source = await asyncio.to_thread(
                 detect_source_bounded, path, session_source=session.source
             )
-            dicts = await asyncio.to_thread(
-                _collect_legacy_from_file, path, source, session_id, cap, role
+            st = await asyncio.to_thread(os.stat, path)
+            index = await get_or_build_index(
+                path,
+                source,
+                session_id,
+                seek_mode="byte",
+                mtime_ns=st.st_mtime_ns,
+                size=st.st_size,
             )
-            return dicts[offset : offset + limit]
+            dicts = await asyncio.to_thread(
+                _collect_legacy_from_file_windowed,
+                path,
+                source,
+                session_id,
+                index,
+                offset,
+                limit,
+                role,
+            )
+            return dicts
 
         if session.external_id:
             archive_path = get_archive_dir(self._archive_dir) / f"{session.external_id}.jsonl.gz"
@@ -565,6 +582,66 @@ def _collect_legacy_from_file(
         for i, text in enumerate(_iter_jsonl_lines(path))
     )
     return _collect_legacy_dicts(parser, raws, session_id=session_id, cap=cap, role=role)
+
+
+def _iter_jsonl_raw_lines_from(
+    path: str, start_byte: int, start_line_no: int, size: int
+) -> Iterator[RawLine]:
+    offset = start_byte
+    line_no = start_line_no
+    with open(path, "rb") as handle:
+        handle.seek(start_byte)
+        for raw_bytes in handle:
+            if offset >= size:
+                break
+            yield RawLine(
+                byte_offset=offset,
+                raw_line_no=line_no,
+                text=raw_bytes.decode("utf-8", errors="replace"),
+            )
+            offset += len(raw_bytes)
+            line_no += 1
+
+
+def _collect_legacy_from_file_windowed(
+    path: str,
+    source: str,
+    session_id: str,
+    index: TranscriptIndex,
+    offset: int,
+    limit: int,
+    role: str | None,
+) -> list[dict[str, Any]]:
+    """Stream flat rows from the closest parsed checkpoint for live JSONL."""
+    boundary = index.parsed_boundary_for_offset(offset, role)
+    if boundary is None or boundary.byte_start is None:
+        cap = offset + limit
+        return _collect_legacy_from_file(path, source, session_id, cap, role)[
+            offset : offset + limit
+        ]
+
+    parser = _get_parser(source, session_id=session_id, transcript_path=path)
+    raws = _iter_jsonl_raw_lines_from(
+        path, boundary.byte_start, boundary.raw_line_start, index.size
+    )
+    seen = boundary.role_counts_start.get(role, 0) if role else boundary.message_index_start
+    skip = max(0, offset - seen)
+    out: list[dict[str, Any]] = []
+    for event in parser.iter_parse_events(raws, start_index=boundary.parsed_index_start):
+        for record in event.records:
+            if not isinstance(record, ParsedMessage):
+                continue
+            row = _parsed_to_dicts([record])[0]
+            row["session_id"] = session_id
+            if role and row.get("role") != role:
+                continue
+            if skip > 0:
+                skip -= 1
+                continue
+            out.append(row)
+            if len(out) >= limit:
+                return out
+    return out
 
 
 def _collect_legacy_from_archive(

@@ -10,10 +10,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.sessions.transcript_index import clear_index_cache
+from gobby.sessions.transcript_index import clear_index_cache, get_or_build_index
 from gobby.sessions.transcript_io import TranscriptTooLargeError
 from gobby.sessions.transcript_paths import _find_transcript_on_disk, _is_recent_file
-from gobby.sessions.transcript_reader import TranscriptReader, _filter_messages, clear_archive_cache
+from gobby.sessions.transcript_reader import (
+    TranscriptReader,
+    _collect_legacy_from_file,
+    _filter_messages,
+    clear_archive_cache,
+)
 from gobby.sessions.transcript_renderer import RenderedMessage
 
 
@@ -950,6 +955,28 @@ def _jsonl_reader_with_user_msgs(tmp_path: Path, count: int) -> TranscriptReader
     return TranscriptReader(session_manager)
 
 
+def _codex_reader_with_roles(tmp_path: Path, count: int) -> tuple[TranscriptReader, Path]:
+    transcript_path = tmp_path / "codex-rollout.jsonl"
+    _write_jsonl_file(
+        transcript_path,
+        [
+            _make_codex_message(
+                "user" if i % 3 == 0 else "assistant",
+                f"msg {i}",
+                f"2025-03-23T10:{i // 60:02d}:{i % 60:02d}Z",
+            )
+            for i in range(count)
+        ],
+    )
+    session = MagicMock()
+    session.external_id = "no-archive"
+    session.source = "codex"
+    session.transcript_path = str(transcript_path)
+    session_manager = MagicMock()
+    session_manager.get.return_value = session
+    return TranscriptReader(session_manager), transcript_path
+
+
 class TestTranscriptReaderWindowed:
     """Windowed rendered reads: tail/head ordering, paging, and native guard."""
 
@@ -958,6 +985,70 @@ class TestTranscriptReaderWindowed:
         reader = _jsonl_reader_with_user_msgs(tmp_path, 3)
 
         assert await reader.get_messages("sess-1", limit=0) == []
+
+    @pytest.mark.asyncio
+    async def test_get_messages_deep_window_matches_streaming_path(self, tmp_path: Path) -> None:
+        reader, transcript_path = _codex_reader_with_roles(tmp_path, 260)
+        offset = 137
+        limit = 9
+        expected = _collect_legacy_from_file(
+            str(transcript_path), "codex", "sess-1", offset + limit, None
+        )[offset : offset + limit]
+
+        result = await reader.get_messages("sess-1", limit=limit, offset=offset)
+
+        assert result == expected
+
+    @pytest.mark.asyncio
+    async def test_get_messages_role_window_matches_streaming_path(self, tmp_path: Path) -> None:
+        reader, transcript_path = _codex_reader_with_roles(tmp_path, 260)
+        offset = 31
+        limit = 7
+        expected = _collect_legacy_from_file(
+            str(transcript_path), "codex", "sess-1", offset + limit, "assistant"
+        )[offset : offset + limit]
+
+        result = await reader.get_messages("sess-1", limit=limit, offset=offset, role="assistant")
+
+        assert result == expected
+
+    @pytest.mark.asyncio
+    async def test_get_messages_deep_live_jsonl_starts_from_parsed_boundary(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reader, transcript_path = _codex_reader_with_roles(tmp_path, 420)
+        st = os.stat(transcript_path)
+        await get_or_build_index(
+            str(transcript_path),
+            "codex",
+            "sess-1",
+            seek_mode="byte",
+            mtime_ns=st.st_mtime_ns,
+            size=st.st_size,
+        )
+        clear_index_cache()
+        starts: list[tuple[int, int]] = []
+
+        from gobby.sessions import transcript_reader as reader_module
+
+        original = reader_module._iter_jsonl_raw_lines_from
+
+        def capture_start(path: str, start_byte: int, start_line_no: int, size: int):
+            starts.append((start_byte, start_line_no))
+            return original(path, start_byte, start_line_no, size)
+
+        def fail_streaming_fallback(*args, **kwargs):
+            raise AssertionError("windowed flat read should not use prefix streaming fallback")
+
+        monkeypatch.setattr(reader_module, "_iter_jsonl_raw_lines_from", capture_start)
+        monkeypatch.setattr(reader_module, "_collect_legacy_from_file", fail_streaming_fallback)
+
+        result = await reader.get_messages("sess-1", limit=3, offset=300)
+
+        assert len(result) == 3
+        assert starts
+        assert starts[0][0] > 0
+        assert starts[0][1] >= 128
 
     @pytest.mark.asyncio
     async def test_window_limit_zero_returns_empty_with_total(self, tmp_path: Path) -> None:

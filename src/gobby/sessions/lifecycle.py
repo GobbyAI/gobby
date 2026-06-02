@@ -28,6 +28,7 @@ from gobby.sessions.context_usage import (
 from gobby.sessions.summarize import TURN_PATTERN
 from gobby.sessions.summary_validity import is_summary_markdown_valid
 from gobby.sessions.transcript_archive import backup_transcript
+from gobby.sessions.transcript_index import rebuild_and_persist_index
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
@@ -558,6 +559,22 @@ class SessionLifecycleManager:
 
         if not messages:
             return
+
+        if not transcript_path.endswith(".json"):
+            try:
+                st = os.stat(transcript_path)
+                session_source = session.source if isinstance(session.source, str) else None
+                index_source = "gemini" if session_source == "agy" else session_source
+                await asyncio.to_thread(
+                    rebuild_and_persist_index,
+                    transcript_path,
+                    index_source or "claude",
+                    session_id,
+                    mtime_ns=st.st_mtime_ns,
+                    size=st.st_size,
+                )
+            except Exception as exc:
+                logger.debug("Failed to finalize transcript index for %s: %s", session_id, exc)
 
         # Replace any synthetic migration rows with real transcript events as soon as
         # we have a parseable transcript for this session.

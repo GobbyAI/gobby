@@ -11,6 +11,7 @@ import pytest
 
 from gobby.config.sessions import SessionLifecycleConfig
 from gobby.sessions.lifecycle import SessionLifecycleManager
+from gobby.sessions.transcript_index import load_index_sidecar
 from gobby.storage.session_models import Session
 
 pytestmark = pytest.mark.unit
@@ -755,6 +756,20 @@ class TestProcessSessionTranscriptParsers:
             context_window=None,
             model="claude-3-7-sonnet-latest",
         )
+        st = os.stat(transcript_path)
+        index = load_index_sidecar(
+            str(transcript_path),
+            "droid",
+            seek_mode="byte",
+            mtime_ns=st.st_mtime_ns,
+            size=st.st_size,
+        )
+        assert index is not None
+        assert index.post_pass_adjustments
+        adjustment = index.post_pass_adjustments[0]
+        assert adjustment.field == "usage"
+        assert adjustment.value.input_tokens == 22571
+        assert adjustment.value.output_tokens == 384
 
     @pytest.mark.asyncio
     async def test_codex_backfill_uses_latest_context_window_for_session_usage(

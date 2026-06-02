@@ -46,6 +46,7 @@ from gobby.sessions.context_usage import (
     snapshot_from_token_usage,
     snapshot_from_window_metadata,
 )
+from gobby.sessions.transcript_index import TranscriptIndexAppender, persist_index_sidecar
 from gobby.sessions.transcript_renderer import RenderState, render_incremental
 from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent, TranscriptParser
@@ -103,6 +104,7 @@ class SessionMessageProcessor:
 
         # Track render state for incremental rendering per session
         self._render_states: dict[str, RenderState] = {}
+        self._index_appenders: dict[str, TranscriptIndexAppender] = {}
 
         # Incremental stat accumulators per session
         self._stats: dict[str, dict[str, Any]] = {}
@@ -530,6 +532,12 @@ class SessionMessageProcessor:
             session_id=session_id,
             transcript_path=transcript_path,
         )
+        if not transcript_path.endswith(".json"):
+            self._index_appenders[session_id] = TranscriptIndexAppender(
+                source,
+                session_id,
+                transcript_path,
+            )
         if os.path.exists(transcript_path):
             logger.debug("Registered session %s for processing (%s)", session_id, source)
         else:
@@ -561,6 +569,7 @@ class SessionMessageProcessor:
             self._stats.pop(session_id, None)
             self._byte_offsets.pop(session_id, None)
             self._message_indices.pop(session_id, None)
+            self._index_appenders.pop(session_id, None)
             logger.debug(f"Unregistered session {session_id}")
         # Always clean render state (may exist even if session wasn't fully registered)
         self._render_states.pop(session_id, None)
@@ -622,25 +631,28 @@ class SessionMessageProcessor:
         last_index = self._message_indices.get(session_id, -1)
 
         # Read new content
-        new_lines = []
+        new_lines: list[str] = []
+        new_line_offsets: list[int] = []
         valid_offset = last_offset
 
         try:
             # Note: synchronous file I/O for simplicity; could use aiofiles if blocking is an issue
             # but reading incremental logs is usually fast.
-            with open(transcript_path, encoding="utf-8") as f:
+            with open(transcript_path, "rb") as f:
                 # Seek to last known position
                 f.seek(last_offset)
 
                 # Read line by line
                 while True:
-                    line = f.readline()
-                    if not line:
+                    line_start = f.tell()
+                    raw_line = f.readline()
+                    if not raw_line:
                         break
 
                     # Only process complete lines
-                    if line.endswith("\n"):
-                        new_lines.append(line)
+                    if raw_line.endswith(b"\n"):
+                        new_lines.append(raw_line.decode("utf-8", errors="replace"))
+                        new_line_offsets.append(line_start)
                         valid_offset = f.tell()
                     else:
                         # Incomplete line (write in progress), stop reading
@@ -672,6 +684,23 @@ class SessionMessageProcessor:
         # Always advance the byte offset once the lines are read; otherwise
         # a re-tail would reprocess already-consumed transcript lines.
         self._byte_offsets[session_id] = valid_offset
+        appender = self._index_appenders.get(session_id)
+        if appender is not None:
+            try:
+                st = os.stat(transcript_path)
+                appender.append_positioned_lines(
+                    new_lines,
+                    new_line_offsets,
+                    mtime_ns=st.st_mtime_ns,
+                    size=valid_offset,
+                )
+                if valid_offset == st.st_size:
+                    persist_index_sidecar(
+                        transcript_path,
+                        appender.snapshot(mtime_ns=st.st_mtime_ns, size=st.st_size),
+                    )
+            except Exception as exc:
+                logger.debug("Failed to update transcript index for %s: %s", session_id, exc)
 
         if not parsed_messages:
             return

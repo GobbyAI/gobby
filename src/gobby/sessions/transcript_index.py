@@ -30,8 +30,10 @@ from __future__ import annotations
 
 import asyncio
 import bisect
+import json
 import logging
 import os
+import tempfile
 from collections import OrderedDict
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
@@ -44,7 +46,7 @@ from gobby.sessions.transcript_source import (
     _detect_source_from_jsonl_lines,
     _detect_source_from_path,
 )
-from gobby.sessions.transcripts.base import ParsedMessage, RawLine
+from gobby.sessions.transcripts.base import ParsedMessage, RawLine, TokenUsage
 
 if TYPE_CHECKING:
     from gobby.sessions.transcripts.base import BaseTranscriptParser
@@ -55,18 +57,26 @@ logger = logging.getLogger(__name__)
 SOURCE_SAMPLE_LINES = 64
 #: Bounded LRU index cache size (entries). Each entry is tens of KB.
 INDEX_CACHE_MAX_ENTRIES = 16
+INDEX_SCHEMA_VERSION = 1
+INDEX_SIDECAR_SUFFIX = ".gobby-index.json"
+PARSED_BOUNDARY_INTERVAL = 128
 
 __all__ = [
     "INDEX_CACHE_MAX_ENTRIES",
     "SOURCE_SAMPLE_LINES",
     "GroupBoundary",
+    "ParsedBoundary",
     "RenderedAdjustment",
     "TranscriptIndex",
+    "TranscriptIndexAppender",
     "build_index_from_file",
     "build_index_from_lines",
     "clear_index_cache",
     "detect_source_bounded",
     "get_or_build_index",
+    "load_index_sidecar",
+    "persist_index_sidecar",
+    "rebuild_and_persist_index",
 ]
 
 
@@ -103,6 +113,17 @@ class RenderedAdjustment:
 
 
 @dataclass(slots=True)
+class ParsedBoundary:
+    """Safe raw position for resuming flat ParsedMessage row scans."""
+
+    raw_line_start: int
+    byte_start: int | None
+    parsed_index_start: int
+    message_index_start: int
+    role_counts_start: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class TranscriptIndex:
     """Compact, cacheable boundary map for one transcript snapshot."""
 
@@ -116,6 +137,8 @@ class TranscriptIndex:
     size: int
     tool_first_open: dict[str, int] = field(default_factory=dict)
     post_pass_adjustments: list[RenderedAdjustment] = field(default_factory=list)
+    parsed_boundaries: list[ParsedBoundary] = field(default_factory=list)
+    role_message_counts: dict[str, int] = field(default_factory=dict)
 
     def group_index_for_parsed_index(self, parsed_index: int) -> int | None:
         """Return the group_index whose span contains ``parsed_index`` (or None)."""
@@ -124,6 +147,22 @@ class TranscriptIndex:
         if pos < 0:
             return None
         return self.boundaries[pos].group_index
+
+    def parsed_boundary_for_offset(
+        self, offset: int, role: str | None = None
+    ) -> ParsedBoundary | None:
+        """Return the closest safe flat-row boundary at or before ``offset``."""
+        if not self.parsed_boundaries:
+            return None
+        target = max(0, offset)
+        starts = [
+            boundary.role_counts_start.get(role, 0) if role else boundary.message_index_start
+            for boundary in self.parsed_boundaries
+        ]
+        pos = bisect.bisect_right(starts, target) - 1
+        if pos < 0:
+            return self.parsed_boundaries[0]
+        return self.parsed_boundaries[pos]
 
 
 # --------------------------------------------------------------------------- #
@@ -210,6 +249,157 @@ def _counting(raws: Iterable[RawLine], counter: list[int]) -> Iterator[RawLine]:
 # --------------------------------------------------------------------------- #
 
 
+def _raw_lines_from_positions(
+    lines: Iterable[str], byte_offsets: Iterable[int], start_line_no: int
+) -> Iterator[RawLine]:
+    """Wrap already-tailed complete text lines with their source byte offsets."""
+    for offset, line in zip(byte_offsets, lines, strict=True):
+        yield RawLine(byte_offset=offset, raw_line_no=start_line_no, text=line)
+        start_line_no += 1
+
+
+def _should_record_parsed_boundary(boundaries: list[ParsedBoundary], message_count: int) -> bool:
+    if not boundaries:
+        return True
+    return message_count - boundaries[-1].message_index_start >= PARSED_BOUNDARY_INTERVAL
+
+
+def _next_index_after_records(records: list[Any], fallback: int, parsed_index: int) -> int:
+    next_index = fallback
+    for record in records:
+        if isinstance(record, ParsedMessage):
+            next_index = max(next_index, record.index + 1)
+    if not records:
+        next_index = max(next_index, parsed_index + 1)
+    return next_index
+
+
+class TranscriptIndexAppender:
+    """Incrementally maintain a :class:`TranscriptIndex` from tailed raw lines."""
+
+    def __init__(
+        self,
+        source: str,
+        session_id: str | None,
+        transcript_path: str | None,
+        *,
+        seek_mode: str = "byte",
+        parser: BaseTranscriptParser | None = None,
+    ) -> None:
+        self._parser = parser or _get_parser(
+            source, session_id=session_id, transcript_path=transcript_path
+        )
+        self._session_id = session_id
+        self._state = RenderState()
+        self._role_counts: dict[str, int] = {}
+        self._prev_current_id: str | None = None
+        self._next_start_index = 0
+        self._next_raw_line_no = 0
+        self._safe_to_start_event = True
+        self.index = TranscriptIndex(
+            boundaries=[],
+            total_groups=0,
+            parsed_message_count=0,
+            raw_record_count=0,
+            source=source,
+            seek_mode=seek_mode,
+            mtime_ns=0,
+            size=0,
+        )
+
+    def append_raw_lines(
+        self, raw_lines: Iterable[RawLine], *, mtime_ns: int, size: int
+    ) -> TranscriptIndex:
+        """Append complete positioned raw lines and update snapshot metadata."""
+        raw_counter = [0]
+        events = self._parser.iter_parse_events(
+            _counting(raw_lines, raw_counter), start_index=self._next_start_index
+        )
+        for event in events:
+            if self._safe_to_start_event and _should_record_parsed_boundary(
+                self.index.parsed_boundaries, self.index.parsed_message_count
+            ):
+                self.index.parsed_boundaries.append(
+                    ParsedBoundary(
+                        raw_line_start=event.raw_line_no,
+                        byte_start=event.byte_offset if self.index.seek_mode == "byte" else None,
+                        parsed_index_start=event.parsed_index,
+                        message_index_start=self.index.parsed_message_count,
+                        role_counts_start=dict(self._role_counts),
+                    )
+                )
+
+            for offset_in_event, record in enumerate(event.records):
+                if not isinstance(record, ParsedMessage):
+                    continue
+                self.index.parsed_message_count += 1
+                self._role_counts[record.role] = self._role_counts.get(record.role, 0) + 1
+
+                if record.content_type in ("tool_use", "mcp_tool_use") and record.tool_use_id:
+                    self.index.tool_first_open.setdefault(record.tool_use_id, record.index)
+
+                _completed, self._state = render_incremental(
+                    [record],
+                    self._state,
+                    session_id=self._session_id,
+                    error_log=self._parser.error_log,
+                )
+
+                current = self._state.current_message
+                if current is not None and current.id != self._prev_current_id:
+                    self._prev_current_id = current.id
+                    self.index.boundaries.append(
+                        GroupBoundary(
+                            group_index=len(self.index.boundaries),
+                            raw_line_start=event.raw_line_no,
+                            byte_start=event.byte_offset
+                            if self.index.seek_mode == "byte"
+                            else None,
+                            parsed_index_start=record.index,
+                            resume_safe=event.parser_safe and offset_in_event == 0,
+                            role=current.role,
+                            timestamp=current.timestamp,
+                        )
+                    )
+
+            if event.parser_safe:
+                _free_resolved_tool_calls(self._state)
+            self._safe_to_start_event = event.parser_safe
+            self._next_start_index = _next_index_after_records(
+                event.records, self._next_start_index, event.parsed_index
+            )
+
+        self.index.raw_record_count += raw_counter[0]
+        self.index.total_groups = len(self.index.boundaries)
+        self.index.role_message_counts = dict(self._role_counts)
+        self.index.mtime_ns = mtime_ns
+        self.index.size = size
+        return self.index
+
+    def append_positioned_lines(
+        self, lines: Iterable[str], byte_offsets: Iterable[int], *, mtime_ns: int, size: int
+    ) -> TranscriptIndex:
+        """Append complete text lines already read by the live tailer."""
+        line_list = list(lines)
+        offset_list = list(byte_offsets)
+        start_line_no = self._next_raw_line_no
+        self._next_raw_line_no += len(line_list)
+        return self.append_raw_lines(
+            _raw_lines_from_positions(line_list, offset_list, start_line_no),
+            mtime_ns=mtime_ns,
+            size=size,
+        )
+
+    def snapshot(self, *, mtime_ns: int, size: int) -> TranscriptIndex:
+        """Return the current index with EOF-dependent parser adjustments resolved."""
+        self.index.mtime_ns = mtime_ns
+        self.index.size = size
+        self.index.total_groups = len(self.index.boundaries)
+        self.index.role_message_counts = dict(self._role_counts)
+        self.index.post_pass_adjustments = _resolve_adjustments(self._parser, self.index)
+        return self.index
+
+
 def _build_index_core(
     raw_lines: Iterable[RawLine],
     parser: BaseTranscriptParser,
@@ -226,61 +416,15 @@ def _build_index_core(
     :class:`GroupBoundary` whenever a new ``current_message`` appears. Group
     content is discarded; only positions/counts/suppression data are retained.
     """
-    state = RenderState()
-    boundaries: list[GroupBoundary] = []
-    tool_first_open: dict[str, int] = {}
-    raw_counter = [0]
-    parsed_message_count = 0
-    prev_current_id: str | None = None
-
-    for event in parser.iter_parse_events(_counting(raw_lines, raw_counter), start_index=0):
-        for offset_in_event, record in enumerate(event.records):
-            if not isinstance(record, ParsedMessage):
-                continue
-            parsed_message_count += 1
-
-            if record.content_type in ("tool_use", "mcp_tool_use") and record.tool_use_id:
-                tool_first_open.setdefault(record.tool_use_id, record.index)
-
-            # Advance the real renderer one message at a time; discard groups.
-            _completed, state = render_incremental(
-                [record], state, session_id=session_id, error_log=parser.error_log
-            )
-
-            # A fresh current_message means this record opened a new rendered
-            # group. group_index == its ordinal == its position in `boundaries`
-            # (groups start, complete, and render in the same order).
-            current = state.current_message
-            if current is not None and current.id != prev_current_id:
-                prev_current_id = current.id
-                boundaries.append(
-                    GroupBoundary(
-                        group_index=len(boundaries),
-                        raw_line_start=event.raw_line_no,
-                        byte_start=event.byte_offset if seek_mode == "byte" else None,
-                        parsed_index_start=record.index,
-                        resume_safe=event.parser_safe and offset_in_event == 0,
-                        role=current.role,
-                        timestamp=current.timestamp,
-                    )
-                )
-
-        if event.parser_safe:
-            _free_resolved_tool_calls(state)
-
-    index = TranscriptIndex(
-        boundaries=boundaries,
-        total_groups=len(boundaries),
-        parsed_message_count=parsed_message_count,
-        raw_record_count=raw_counter[0],
-        source=source,
+    appender = TranscriptIndexAppender(
+        source,
+        session_id,
+        None,
         seek_mode=seek_mode,
-        mtime_ns=mtime_ns,
-        size=size,
-        tool_first_open=tool_first_open,
+        parser=parser,
     )
-    index.post_pass_adjustments = _resolve_adjustments(parser, index)
-    return index
+    appender.append_raw_lines(raw_lines, mtime_ns=mtime_ns, size=size)
+    return appender.snapshot(mtime_ns=mtime_ns, size=size)
 
 
 def _free_resolved_tool_calls(state: RenderState) -> None:
@@ -363,11 +507,236 @@ def build_index_from_lines(
     )
 
 
+def rebuild_and_persist_index(
+    path: str,
+    source: str,
+    session_id: str | None,
+    *,
+    mtime_ns: int,
+    size: int,
+) -> TranscriptIndex:
+    """Rebuild a byte-seek index and atomically persist its sidecar."""
+    index = build_index_from_file(path, source, session_id, mtime_ns=mtime_ns, size=size)
+    persist_index_sidecar(path, index)
+    return index
+
+
+# --------------------------------------------------------------------------- #
+# Persistent sidecar store
+# --------------------------------------------------------------------------- #
+
+
+def _sidecar_path(path: str) -> str:
+    return f"{os.path.abspath(path)}{INDEX_SIDECAR_SUFFIX}"
+
+
+def _encode_adjustment_value(value: Any) -> Any:
+    if isinstance(value, TokenUsage):
+        return {
+            "__type__": "TokenUsage",
+            "input_tokens": value.input_tokens,
+            "output_tokens": value.output_tokens,
+            "cache_creation_tokens": value.cache_creation_tokens,
+            "cache_read_tokens": value.cache_read_tokens,
+        }
+    try:
+        json.dumps(value)
+    except TypeError:
+        logger.debug("Skipping non-serializable transcript index adjustment value")
+        return None
+    return value
+
+
+def _decode_adjustment_value(value: Any) -> Any:
+    if isinstance(value, dict) and value.get("__type__") == "TokenUsage":
+        return TokenUsage(
+            input_tokens=int(value.get("input_tokens", 0)),
+            output_tokens=int(value.get("output_tokens", 0)),
+            cache_creation_tokens=int(value.get("cache_creation_tokens", 0)),
+            cache_read_tokens=int(value.get("cache_read_tokens", 0)),
+        )
+    return value
+
+
+def _index_to_payload(path: str, index: TranscriptIndex) -> dict[str, Any]:
+    return {
+        "schema_version": INDEX_SCHEMA_VERSION,
+        "source_path": os.path.abspath(path),
+        "source": index.source,
+        "seek_mode": index.seek_mode,
+        "mtime_ns": index.mtime_ns,
+        "size": index.size,
+        "boundaries": [
+            {
+                "group_index": boundary.group_index,
+                "raw_line_start": boundary.raw_line_start,
+                "byte_start": boundary.byte_start,
+                "parsed_index_start": boundary.parsed_index_start,
+                "resume_safe": boundary.resume_safe,
+                "role": boundary.role,
+                "timestamp": boundary.timestamp.isoformat(),
+            }
+            for boundary in index.boundaries
+        ],
+        "parsed_boundaries": [
+            {
+                "raw_line_start": boundary.raw_line_start,
+                "byte_start": boundary.byte_start,
+                "parsed_index_start": boundary.parsed_index_start,
+                "message_index_start": boundary.message_index_start,
+                "role_counts_start": boundary.role_counts_start,
+            }
+            for boundary in index.parsed_boundaries
+        ],
+        "parsed_message_count": index.parsed_message_count,
+        "raw_record_count": index.raw_record_count,
+        "total_groups": index.total_groups,
+        "tool_first_open": index.tool_first_open,
+        "role_message_counts": index.role_message_counts,
+        "post_pass_adjustments": [
+            {
+                "group_index": adjustment.group_index,
+                "field": adjustment.field,
+                "value": _encode_adjustment_value(adjustment.value),
+            }
+            for adjustment in index.post_pass_adjustments
+        ],
+    }
+
+
+def _payload_to_index(payload: dict[str, Any]) -> TranscriptIndex:
+    boundaries = [
+        GroupBoundary(
+            group_index=int(item["group_index"]),
+            raw_line_start=int(item["raw_line_start"]),
+            byte_start=item.get("byte_start"),
+            parsed_index_start=int(item["parsed_index_start"]),
+            resume_safe=bool(item["resume_safe"]),
+            role=str(item["role"]),
+            timestamp=datetime.fromisoformat(str(item["timestamp"])),
+        )
+        for item in payload.get("boundaries", [])
+    ]
+    parsed_boundaries = [
+        ParsedBoundary(
+            raw_line_start=int(item["raw_line_start"]),
+            byte_start=item.get("byte_start"),
+            parsed_index_start=int(item["parsed_index_start"]),
+            message_index_start=int(item["message_index_start"]),
+            role_counts_start={
+                str(role): int(count)
+                for role, count in dict(item.get("role_counts_start", {})).items()
+            },
+        )
+        for item in payload.get("parsed_boundaries", [])
+    ]
+    adjustments = [
+        RenderedAdjustment(
+            group_index=int(item["group_index"]),
+            field=str(item["field"]),
+            value=_decode_adjustment_value(item.get("value")),
+        )
+        for item in payload.get("post_pass_adjustments", [])
+    ]
+    return TranscriptIndex(
+        boundaries=boundaries,
+        total_groups=int(payload["total_groups"]),
+        parsed_message_count=int(payload["parsed_message_count"]),
+        raw_record_count=int(payload["raw_record_count"]),
+        source=str(payload["source"]),
+        seek_mode=str(payload["seek_mode"]),
+        mtime_ns=int(payload["mtime_ns"]),
+        size=int(payload["size"]),
+        tool_first_open={
+            str(tool_id): int(index)
+            for tool_id, index in payload.get("tool_first_open", {}).items()
+        },
+        post_pass_adjustments=adjustments,
+        parsed_boundaries=parsed_boundaries,
+        role_message_counts={
+            str(role): int(count) for role, count in payload.get("role_message_counts", {}).items()
+        },
+    )
+
+
+def _sidecar_matches(
+    payload: dict[str, Any],
+    *,
+    path: str,
+    source: str,
+    seek_mode: str,
+    mtime_ns: int,
+    size: int,
+) -> bool:
+    return (
+        payload.get("schema_version") == INDEX_SCHEMA_VERSION
+        and payload.get("source_path") == os.path.abspath(path)
+        and payload.get("source") == source
+        and payload.get("seek_mode") == seek_mode
+        and int(payload.get("mtime_ns", -1)) == mtime_ns
+        and int(payload.get("size", -1)) == size
+    )
+
+
+def load_index_sidecar(
+    path: str, source: str, *, seek_mode: str, mtime_ns: int, size: int
+) -> TranscriptIndex | None:
+    """Load a sidecar index if it exactly matches the requested snapshot."""
+    sidecar = _sidecar_path(path)
+    try:
+        with open(sidecar, encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except FileNotFoundError:
+        return None
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.debug("Failed to read transcript index sidecar %s: %s", sidecar, exc)
+        return None
+
+    try:
+        if not isinstance(payload, dict) or not _sidecar_matches(
+            payload, path=path, source=source, seek_mode=seek_mode, mtime_ns=mtime_ns, size=size
+        ):
+            return None
+        return _payload_to_index(payload)
+    except (KeyError, TypeError, ValueError) as exc:
+        logger.debug("Invalid transcript index sidecar %s: %s", sidecar, exc)
+        return None
+
+
+def persist_index_sidecar(path: str, index: TranscriptIndex) -> None:
+    """Atomically persist an index sidecar next to its source transcript."""
+    sidecar = _sidecar_path(path)
+    directory = os.path.dirname(sidecar)
+    os.makedirs(directory, exist_ok=True)
+    temp_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=directory,
+            prefix=f".{os.path.basename(sidecar)}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temp_name = handle.name
+            json.dump(_index_to_payload(path, index), handle, separators=(",", ":"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, sidecar)
+    except OSError as exc:
+        logger.debug("Failed to persist transcript index sidecar %s: %s", sidecar, exc)
+        if temp_name:
+            try:
+                os.unlink(temp_name)
+            except OSError:
+                pass
+
+
 # --------------------------------------------------------------------------- #
 # Bounded async index cache
 # --------------------------------------------------------------------------- #
 
-_IndexKey = tuple[str, str, int, int]
+_IndexKey = tuple[str, str, str, int, int]
 
 _INDEX_CACHE: OrderedDict[_IndexKey, TranscriptIndex] = OrderedDict()
 _CACHE_LOCK = asyncio.Lock()
@@ -392,12 +761,12 @@ async def get_or_build_index(
 ) -> TranscriptIndex:
     """Return a cached index for the snapshot, building once off the event loop.
 
-    Keyed by ``(abspath, source, mtime_ns, size)`` so any append (which changes
-    mtime/size) invalidates the entry. A per-key build lock collapses concurrent
-    first-open requests into a single build. ``lines`` (decompressed archive
-    content) selects the line-seek archive build; otherwise the file is streamed.
+    Keyed by ``(abspath, source, seek_mode, mtime_ns, size)`` so any append
+    invalidates the entry. A per-key build lock collapses concurrent first-open
+    requests into a single build. ``lines`` selects the line-seek archive build;
+    otherwise the file is streamed.
     """
-    key: _IndexKey = (os.path.abspath(path), source, mtime_ns, size)
+    key: _IndexKey = (os.path.abspath(path), source, seek_mode, mtime_ns, size)
 
     async with _CACHE_LOCK:
         cached = _INDEX_CACHE.get(key)
@@ -412,6 +781,23 @@ async def get_or_build_index(
             if cached is not None:
                 _INDEX_CACHE.move_to_end(key)
                 return cached
+
+        sidecar_index = await asyncio.to_thread(
+            load_index_sidecar,
+            path,
+            source,
+            seek_mode=seek_mode,
+            mtime_ns=mtime_ns,
+            size=size,
+        )
+        if sidecar_index is not None:
+            async with _CACHE_LOCK:
+                _INDEX_CACHE[key] = sidecar_index
+                _INDEX_CACHE.move_to_end(key)
+                while len(_INDEX_CACHE) > INDEX_CACHE_MAX_ENTRIES:
+                    _INDEX_CACHE.popitem(last=False)
+                _BUILD_LOCKS.pop(key, None)
+            return sidecar_index
 
         if lines is not None:
             materialized = list(lines)
@@ -433,6 +819,7 @@ async def get_or_build_index(
                 mtime_ns=mtime_ns,
                 size=size,
             )
+        await asyncio.to_thread(persist_index_sidecar, path, index)
 
         async with _CACHE_LOCK:
             _INDEX_CACHE[key] = index
