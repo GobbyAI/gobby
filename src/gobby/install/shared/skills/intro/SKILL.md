@@ -1,3 +1,15 @@
+---
+name: intro
+description: "Capture the user's global Gobby working profile once and save it to ~/.gobby/personal/USER.md."
+category: core
+triggers:
+  - intro
+  - onboarding
+  - working profile
+metadata:
+  gobby:
+    audience: all
+---
 # Intro
 
 Capture the user's global Gobby working profile once and save it to
