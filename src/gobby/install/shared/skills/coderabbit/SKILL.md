@@ -44,18 +44,24 @@ Mode before triage. Loading the `plan` skill or composing a plan in normal chat
 does not satisfy this gate.
 
 Plan Mode triage is read-only: ingest supplied findings and
-`./reports/coderabbit-*.md`, verify the current code, decide `fixed` or
+`./reports/coderabbit-*.md`, verify the current code, decide `fix` or
 `no-fix`, and present the implementation plan; wait for plan approval before continuing
 to implementation. If native Plan Mode blocks task creation, create or claim the
 `gobby-tasks` task immediately after plan approval and before the first edit.
 
 The Plan Mode output MUST include a finding-by-finding table. Each supplied
-finding gets its own row with:
+finding gets its own row with this exact shape:
 
-- Decision: `fix` or `no-fix`.
-- Checked file, symbol, or behavior.
-- Relevant memory/lesson from `gobby-review-learning.recall_review_context`.
-- Reason for the decision.
+| # | Decision | Path/File Name | Relevant Memory/Lesson | Reason/Planned Fix |
+|---|---|---|---|---|
+
+- `#`: stable finding number from the report or plan triage order.
+- `Decision`: `fix` or `no-fix`.
+- `Path/File Name`: repo-relative path or report/artifact path for the finding;
+  use comma-separated paths for multi-file findings.
+- `Relevant Memory/Lesson`: result from
+  `gobby-review-learning.recall_review_context`.
+- `Reason/Planned Fix`: planned fix for `fix`; reason/evidence for `no-fix`.
 
 No finding may be grouped away, summarized into another row, or silently
 omitted from the final plan.
@@ -68,12 +74,12 @@ are valid.
 
 For every finding, keep a decision record:
 
-- `fixed`: current code confirms the problem and the diff addresses it.
+- `fix`: current code confirms the problem and the diff addresses it.
 - `no-fix`: current code does not match the finding, the suggested path no
   longer exists, the behavior is already correct, or the suggestion is harmful.
 
-Every `no-fix` decision needs a short reason with the checked file, symbol, or
-behavior. Do not silently drop stale comments.
+Every `no-fix` decision needs a concrete `Path/File Name` value plus a short
+reason in `Reason/Planned Fix`. Do not silently drop stale comments.
 
 ## Workflow
 
@@ -94,7 +100,7 @@ behavior. Do not silently drop stale comments.
 9. Document stale or invalid findings as `no-fix` decisions.
 10. After triage/fix verification, call
     `gobby-review-learning.record_review_lesson` for each confirmed reusable
-    `fixed` finding and each concrete `no-fix-policy` pattern. Do not record
+    `fix` finding and each concrete `no-fix-policy` pattern. Do not record
     stale, invalid, or raw CLI-failure findings.
 11. Delete processed `./reports/coderabbit-*.md` files after their contents are
    fixed or documented. Leave unrelated report artifacts alone.
