@@ -5,10 +5,8 @@ Effect types: block, set_variable, inject_context, mcp_call, observe,
 rewrite_input, load_skill.
 """
 
-import hashlib
 import json
 import logging
-import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -35,6 +33,17 @@ from gobby.workflows.definitions import (
     RuleEffect,
     RuleTriggerEvent,
 )
+from gobby.workflows.engine.blocked_tool_recovery import (
+    CONSECUTIVE_TOOL_BLOCK_RULE,
+    block_reason_signature,
+    block_source_for_rule,
+    clear_blocked_tool_recovery_state,
+    ensure_block_reason,
+    extract_rule_name,
+    format_consecutive_tool_block_reason,
+    log_block,
+    remember_blocked_tool_recovery_state,
+)
 from gobby.workflows.engine.effects import EffectsMixin
 from gobby.workflows.engine.enforcement import EnforcementMixin
 from gobby.workflows.engine.templating import TemplatingMixin
@@ -42,8 +51,6 @@ from gobby.workflows.selectors import rule_matches_agent
 from gobby.workflows.state_manager import WorkflowInstanceManager
 
 logger = logging.getLogger(__name__)
-
-_RULE_REASON_RE = re.compile(r"^Rule enforced by Gobby: \[([^\]]+)\]")
 
 _TURN_START_EVENT_VALUES = frozenset(
     {
@@ -153,92 +160,6 @@ def _block_tool_name(event: HookEvent) -> str:
     return tool_name or "-"
 
 
-def _extract_rule_name(reason: str | None) -> str | None:
-    """Extract rule name from a standard Gobby block reason prefix."""
-    if not reason:
-        return None
-    match = _RULE_REASON_RE.match(reason)
-    if not match:
-        return None
-    return match.group(1)
-
-
-def _block_source_for_rule(rule_name: str) -> str:
-    """Map block rule names onto observability source labels."""
-    if rule_name in {"agent-tool-enforcement", "step-tool-enforcement"}:
-        return "step-enforcement"
-    return "rule"
-
-
-def _block_reason_signature(rule_name: str, reason: str) -> str:
-    digest = hashlib.sha256(reason.encode("utf-8")).hexdigest()[:16]
-    return f"{rule_name}:{digest}"
-
-
-def _warn_block_fallback(
-    *,
-    session_id: str,
-    event: HookEvent,
-    source: str,
-    rule_name: str,
-    detail: str,
-) -> None:
-    """Emit a warning when block handling has to synthesize a reason."""
-    logger.warning(
-        "BLOCK fallback session=%s event=%s tool=%s source=%s rule=%s detail=%s",
-        session_id,
-        _event_value(event.event_type),
-        _block_tool_name(event),
-        source,
-        rule_name,
-        detail,
-    )
-
-
-def _ensure_block_reason(
-    *,
-    session_id: str,
-    event: HookEvent,
-    source: str,
-    rule_name: str,
-    reason: str | None,
-    fallback_reason: str,
-    warn_detail: str,
-) -> str:
-    """Return a non-empty block reason, warning when fallback text is required."""
-    cleaned = (reason or "").strip()
-    if cleaned:
-        return cleaned
-    _warn_block_fallback(
-        session_id=session_id,
-        event=event,
-        source=source,
-        rule_name=rule_name,
-        detail=warn_detail,
-    )
-    return fallback_reason
-
-
-def _log_block(
-    *,
-    session_id: str,
-    event: HookEvent,
-    source: str,
-    rule_name: str,
-    reason: str,
-) -> None:
-    """Emit structured block log for observability and downstream debugging."""
-    logger.info(
-        "BLOCK session=%s event=%s tool=%s source=%s rule=%s reason=%s",
-        session_id,
-        _event_value(event.event_type),
-        _block_tool_name(event),
-        source,
-        rule_name,
-        reason,
-    )
-
-
 class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
     """Single-pass rule evaluation engine.
 
@@ -304,30 +225,40 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                     """Normalize block responses, log them, and attach tracing fields."""
                     if response.decision == "block":
                         resolved_rule_name = (
-                            rule_name or _extract_rule_name(response.reason) or "rule-engine-block"
+                            rule_name or extract_rule_name(response.reason) or "rule-engine-block"
                         )
-                        resolved_source = source or _block_source_for_rule(resolved_rule_name)
+                        resolved_source = source or block_source_for_rule(resolved_rule_name)
                         resolved_fallback = fallback_reason or (
                             f"Rule enforced by Gobby: [{resolved_rule_name}]\n"
                             "Gobby blocked this event without providing a reason. "
                             "This is a bug."
                         )
-                        response.reason = _ensure_block_reason(
+                        blocked_tool_name = _get_tool_identity(event.data)
+                        response.reason = ensure_block_reason(
                             session_id=session_id,
-                            event=event,
+                            event_type=event.event_type,
+                            tool_name=blocked_tool_name or "-",
                             source=resolved_source,
                             rule_name=resolved_rule_name,
                             reason=response.reason,
                             fallback_reason=resolved_fallback,
                             warn_detail=warn_detail,
                         )
-                        _log_block(
+                        log_block(
                             session_id=session_id,
-                            event=event,
+                            event_type=event.event_type,
+                            tool_name=blocked_tool_name,
                             source=resolved_source,
                             rule_name=resolved_rule_name,
                             reason=response.reason,
                         )
+                        if is_before_tool and resolved_rule_name != CONSECUTIVE_TOOL_BLOCK_RULE:
+                            remember_blocked_tool_recovery_state(
+                                variables,
+                                tool_name=blocked_tool_name,
+                                rule_name=resolved_rule_name,
+                                reason=response.reason,
+                            )
                         # Verbose-once: collapse repeat identical blocks within a turn.
                         # Dynamic reasons from the same rule still render in full.
                         # Cleared on TURN_START.
@@ -336,7 +267,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                         if not isinstance(shown, list):
                             shown = []
                             variables["_block_reasons_shown"] = shown
-                        block_signature = _block_reason_signature(
+                        block_signature = block_reason_signature(
                             resolved_rule_name, response.reason
                         )
                         if block_signature in shown:
@@ -381,7 +312,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                     if _is_pipeline_direct_mcp_event(event):
                         # Synthetic pipeline MCP events clear block state so the next real user tool starts from 0.
                         variables["consecutive_tool_blocks"] = 0
-                        variables["_last_blocked_tool"] = ""
+                        clear_blocked_tool_recovery_state(variables)
                     else:
                         tool_name = _get_tool_identity(event.data)
                         last_blocked = variables.get("_last_blocked_tool", "")
@@ -395,12 +326,10 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                             if total_attempts >= max_attempts:
                                 resp = HookResponse(
                                     decision="block",
-                                    reason=(
-                                        "Rule enforced by Gobby: [consecutive-tool-block]\n"
-                                        f"You have attempted {tool_name} {total_attempts} times consecutively "
-                                        "without addressing the error.\n"
-                                        "STOP retrying the same action. Read the previous error messages "
-                                        "and take a DIFFERENT action to resolve the underlying issue first."
+                                    reason=format_consecutive_tool_block_reason(
+                                        tool_name=tool_name,
+                                        total_attempts=total_attempts,
+                                        variables=variables,
                                     ),
                                 )
                                 return finalize_response(
@@ -418,7 +347,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
 
                 elif is_turn_start:
                     variables["consecutive_tool_blocks"] = 0
-                    variables["_last_blocked_tool"] = ""
+                    clear_blocked_tool_recovery_state(variables)
                     variables["tool_block_pending"] = False
                     variables["stop_attempts"] = 0
                     variables["_block_reasons_shown"] = []
@@ -574,7 +503,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
 
                             # Clear tool_block_pending on successful tool completion
                             variables["tool_block_pending"] = False
-                            variables["_last_blocked_tool"] = ""
+                            clear_blocked_tool_recovery_state(variables)
                             variables["consecutive_tool_blocks"] = 0
 
                             # Clear edit_write_pending when the successful tool is an
@@ -617,7 +546,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
 
                         # Clear tool_block_pending on successful tool completion
                         variables["tool_block_pending"] = False
-                        variables["_last_blocked_tool"] = ""
+                        clear_blocked_tool_recovery_state(variables)
                         variables["consecutive_tool_blocks"] = 0
 
                         # Clear edit_write_pending when the successful tool is an
@@ -695,9 +624,10 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                     if deferred_block is not None:
                         if self._effect_matches_event(deferred_block, event):
                             rule_blocked = True
-                            block_reason = _ensure_block_reason(
+                            block_reason = ensure_block_reason(
                                 session_id=session_id,
-                                event=event,
+                                event_type=event.event_type,
+                                tool_name=_block_tool_name(event),
                                 source="rule",
                                 rule_name=_row.name,
                                 reason=deferred_block.reason,

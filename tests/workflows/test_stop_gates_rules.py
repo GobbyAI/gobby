@@ -369,6 +369,8 @@ class TestBeforeAgentResetsPlumbing:
             "stop_attempts": 5,
             "consecutive_tool_blocks": 2,
             "_last_blocked_tool": "Edit",
+            "_last_blocked_rule_name": "block-edit",
+            "_last_blocked_reason": "Rule enforced by Gobby: [block-edit]\nNo editing",
         }
 
         event = _make_event(HookEventType.BEFORE_AGENT)
@@ -378,6 +380,8 @@ class TestBeforeAgentResetsPlumbing:
         assert variables["stop_attempts"] == 0
         assert variables["consecutive_tool_blocks"] == 0
         assert variables["_last_blocked_tool"] == ""
+        assert variables["_last_blocked_rule_name"] == ""
+        assert variables["_last_blocked_reason"] == ""
 
 
 def _make_event(
@@ -734,6 +738,10 @@ class TestConsecutiveBlockScoping:
         engine = RuleEngine(db)
         variables: dict[str, object] = {
             "_last_blocked_tool": "TodoWrite",
+            "_last_blocked_rule_name": "block-todowrite",
+            "_last_blocked_reason": (
+                "Rule enforced by Gobby: [block-todowrite]\nUse gobby-tasks instead"
+            ),
             "max_consecutive_blocked_tool_attempts": 5,
         }
 
@@ -781,8 +789,14 @@ class TestConsecutiveBlockScoping:
         response4 = await engine.evaluate(event4, "sess-1", variables)
         assert variables.get("consecutive_tool_blocks") == 4
         assert response4.decision == "block"
+        assert response4.reason is not None
         assert "TodoWrite" in response4.reason
-        assert "5 times" in response4.reason
+        assert "5 times consecutively after repeated BEFORE_TOOL blocks" in response4.reason
+        assert "Most recent original block reason:" in response4.reason
+        assert "Rule enforced by Gobby: [block-todowrite]\nUse gobby-tasks instead" in (
+            response4.reason
+        )
+        assert "Recovery required:" in response4.reason
 
     @pytest.mark.asyncio
     async def test_different_tool_resets_counter(self, db) -> None:
@@ -790,6 +804,10 @@ class TestConsecutiveBlockScoping:
         engine = RuleEngine(db)
         variables: dict[str, object] = {
             "_last_blocked_tool": "TodoWrite",
+            "_last_blocked_rule_name": "block-todowrite",
+            "_last_blocked_reason": (
+                "Rule enforced by Gobby: [block-todowrite]\nUse gobby-tasks instead"
+            ),
             "consecutive_tool_blocks": 1,
         }
 
@@ -801,6 +819,11 @@ class TestConsecutiveBlockScoping:
         response = await engine.evaluate(event, "sess-1", variables)
 
         assert variables.get("consecutive_tool_blocks") == 0
+        assert variables.get("_last_blocked_tool") == "TodoWrite"
+        assert variables.get("_last_blocked_rule_name") == "block-todowrite"
+        assert variables.get("_last_blocked_reason") == (
+            "Rule enforced by Gobby: [block-todowrite]\nUse gobby-tasks instead"
+        )
         # No rules installed, so it allows through to normal evaluation
         assert response.decision == "allow"
 
@@ -810,6 +833,8 @@ class TestConsecutiveBlockScoping:
         engine = RuleEngine(db)
         variables: dict[str, object] = {
             "_last_blocked_tool": "gobby-workflows:list_pipeline_executions",
+            "_last_blocked_rule_name": "pipeline-block",
+            "_last_blocked_reason": "Rule enforced by Gobby: [pipeline-block]\nRetry later",
             "consecutive_tool_blocks": 2,
         }
 
@@ -829,6 +854,8 @@ class TestConsecutiveBlockScoping:
         assert response.decision == "allow"
         assert variables.get("consecutive_tool_blocks") == 0
         assert variables.get("_last_blocked_tool") == ""
+        assert variables.get("_last_blocked_rule_name") == ""
+        assert variables.get("_last_blocked_reason") == ""
 
     @pytest.mark.asyncio
     async def test_different_tool_blocked_starts_own_counter(self, db) -> None:
@@ -836,6 +863,10 @@ class TestConsecutiveBlockScoping:
         engine = RuleEngine(db)
         variables: dict[str, object] = {
             "_last_blocked_tool": "TodoWrite",
+            "_last_blocked_rule_name": "block-todowrite",
+            "_last_blocked_reason": (
+                "Rule enforced by Gobby: [block-todowrite]\nUse gobby-tasks instead"
+            ),
             "consecutive_tool_blocks": 1,
         }
 
@@ -864,6 +895,10 @@ class TestConsecutiveBlockScoping:
         engine = RuleEngine(db)
         variables: dict[str, object] = {
             "_last_blocked_tool": "TodoWrite",
+            "_last_blocked_rule_name": "block-todowrite",
+            "_last_blocked_reason": (
+                "Rule enforced by Gobby: [block-todowrite]\nUse gobby-tasks instead"
+            ),
             "consecutive_tool_blocks": 2,
         }
 
@@ -871,6 +906,8 @@ class TestConsecutiveBlockScoping:
         await engine.evaluate(event, "sess-1", variables)
 
         assert variables.get("_last_blocked_tool") == ""
+        assert variables.get("_last_blocked_rule_name") == ""
+        assert variables.get("_last_blocked_reason") == ""
         assert variables.get("consecutive_tool_blocks") == 0
 
     @pytest.mark.asyncio
@@ -880,6 +917,8 @@ class TestConsecutiveBlockScoping:
         variables: dict[str, object] = {
             "tool_block_pending": True,
             "_last_blocked_tool": "Edit",
+            "_last_blocked_rule_name": "block-edit",
+            "_last_blocked_reason": "Rule enforced by Gobby: [block-edit]\nNo editing",
             "consecutive_tool_blocks": 1,
         }
 
@@ -890,6 +929,8 @@ class TestConsecutiveBlockScoping:
         await engine.evaluate(event, "sess-1", variables)
 
         assert variables.get("_last_blocked_tool") == ""
+        assert variables.get("_last_blocked_rule_name") == ""
+        assert variables.get("_last_blocked_reason") == ""
         assert variables.get("consecutive_tool_blocks") == 0
         assert variables.get("tool_block_pending") is False
 
@@ -931,6 +972,10 @@ class TestConsecutiveBlockScoping:
         assert response.decision == "block"
         assert variables.get("tool_block_pending") is not True
         assert variables.get("_last_blocked_tool") == "TodoWrite"
+        assert variables.get("_last_blocked_rule_name") == "block-todowrite-test"
+        assert variables.get("_last_blocked_reason") == (
+            "Rule enforced by Gobby: [block-todowrite-test]\nUse gobby-tasks instead"
+        )
 
     @pytest.mark.asyncio
     async def test_rule_block_does_not_trigger_tool_failure_recovery_on_stop(self, db) -> None:
@@ -967,6 +1012,10 @@ class TestConsecutiveBlockScoping:
         blocked = await engine.evaluate(blocked_event, "sess-1", variables)
         assert blocked.decision == "block"
         assert variables.get("_last_blocked_tool") == "TodoWrite"
+        assert variables.get("_last_blocked_rule_name") == "block-todowrite-stop-test"
+        assert variables.get("_last_blocked_reason") == (
+            "Rule enforced by Gobby: [block-todowrite-stop-test]\nUse gobby-tasks instead"
+        )
         assert variables.get("tool_block_pending") is not True
 
         stop_event = _make_event(HookEventType.STOP)
@@ -1017,6 +1066,10 @@ class TestConsecutiveBlockScoping:
         r1 = await engine.evaluate(todo_event, "sess-1", variables)
         assert r1.decision == "block"
         assert variables.get("_last_blocked_tool") == "TodoWrite"
+        assert variables.get("_last_blocked_rule_name") == "block-todowrite-test"
+        assert variables.get("_last_blocked_reason") == (
+            "Rule enforced by Gobby: [block-todowrite-test]\nUse gobby-tasks instead"
+        )
 
         # 2. Edit attempted — different tool, counter resets, allowed
         edit_event = _make_event(
@@ -1026,6 +1079,8 @@ class TestConsecutiveBlockScoping:
         r2 = await engine.evaluate(edit_event, "sess-1", variables)
         assert r2.decision == "allow"
         assert variables.get("consecutive_tool_blocks") == 0
+        assert variables.get("_last_blocked_tool") == "TodoWrite"
+        assert variables.get("_last_blocked_rule_name") == "block-todowrite-test"
 
         # 3. Read attempted — also allowed
         read_event = _make_event(
@@ -1034,6 +1089,8 @@ class TestConsecutiveBlockScoping:
         )
         r3 = await engine.evaluate(read_event, "sess-1", variables)
         assert r3.decision == "allow"
+        assert variables.get("_last_blocked_tool") == "TodoWrite"
+        assert variables.get("_last_blocked_rule_name") == "block-todowrite-test"
 
 
 # ---------------------------------------------------------------------------

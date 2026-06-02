@@ -1095,6 +1095,10 @@ class TestBeforeToolBlockTracking:
         await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert variables.get("_last_blocked_tool") == "Edit"
+        assert variables.get("_last_blocked_rule_name") == "block-edit"
+        assert variables.get("_last_blocked_reason") == (
+            "Rule enforced by Gobby: [block-edit]\nNo editing"
+        )
         assert variables.get("tool_block_pending") is None
 
     @pytest.mark.asyncio
@@ -1143,6 +1147,10 @@ class TestBeforeToolBlockTracking:
         await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert variables.get("_last_blocked_tool") == "Edit"
+        assert variables.get("_last_blocked_rule_name") == "multi-with-block"
+        assert variables.get("_last_blocked_reason") == (
+            "Rule enforced by Gobby: [multi-with-block]\nBlocked"
+        )
         assert variables.get("tool_block_pending") is not True
         assert variables.get("x") == 42
 
@@ -1153,11 +1161,19 @@ class TestBeforeToolBlockTracking:
         """tool_block_pending should be auto-cleared by the engine on successful after_tool."""
 
         engine = RuleEngine(db)
-        variables: dict[str, Any] = {"tool_block_pending": True}
+        variables: dict[str, Any] = {
+            "tool_block_pending": True,
+            "_last_blocked_tool": "Edit",
+            "_last_blocked_rule_name": "block-edit",
+            "_last_blocked_reason": "Rule enforced by Gobby: [block-edit]\nNo editing",
+        }
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Edit"})
         await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert variables["tool_block_pending"] is False
+        assert variables["_last_blocked_tool"] == ""
+        assert variables["_last_blocked_rule_name"] == ""
+        assert variables["_last_blocked_reason"] == ""
 
     @pytest.mark.asyncio
     async def test_tool_block_pending_not_cleared_on_failed_after_tool(
@@ -1222,16 +1238,44 @@ class TestConsecutiveToolBlocks:
         variables: dict[str, Any] = {
             "consecutive_tool_blocks": 3,
             "_last_blocked_tool": "Edit",
+            "_last_blocked_rule_name": "block-edit",
+            "_last_blocked_reason": "Rule enforced by Gobby: [block-edit]\nNo editing",
             "max_consecutive_blocked_tool_attempts": 5,
         }
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
         response = await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert response.decision == "block"
-        assert response.reason is not None and "5 times consecutively" in response.reason
-        assert "STOP retrying" in response.reason
+        assert response.reason is not None
+        assert "5 times consecutively after repeated BEFORE_TOOL blocks" in response.reason
+        assert "Most recent original block reason:" in response.reason
+        assert "Rule enforced by Gobby: [block-edit]\nNo editing" in response.reason
+        assert "Recovery required:" in response.reason
+        assert "STOP retrying" not in response.reason
         # Rule should NOT have been evaluated — no side effect
         assert variables.get("rule_ran") is None
+
+    @pytest.mark.asyncio
+    async def test_short_circuit_fallback_when_original_reason_unavailable(
+        self, db: HubDatabase
+    ) -> None:
+        """Threshold block should tell agents to scroll up when stored reason is absent."""
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {
+            "consecutive_tool_blocks": 3,
+            "_last_blocked_tool": "Edit",
+            "max_consecutive_blocked_tool_attempts": 5,
+        }
+        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
+        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert "Most recent original block reason:" not in response.reason
+        assert "The prior block reason was unavailable." in response.reason
+        assert "Scroll up and read the immediately preceding tool error" in response.reason
+        assert "Recovery required:" in response.reason
 
     @pytest.mark.asyncio
     async def test_counter_resets_on_successful_after_tool(self, db: HubDatabase) -> None:
@@ -1241,23 +1285,35 @@ class TestConsecutiveToolBlocks:
         variables: dict[str, Any] = {
             "consecutive_tool_blocks": 3,
             "_last_blocked_tool": "Edit",
+            "_last_blocked_rule_name": "block-edit",
+            "_last_blocked_reason": "Rule enforced by Gobby: [block-edit]\nNo editing",
         }
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Read"})
         await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert variables["consecutive_tool_blocks"] == 0
         assert variables["_last_blocked_tool"] == ""
+        assert variables["_last_blocked_rule_name"] == ""
+        assert variables["_last_blocked_reason"] == ""
 
     @pytest.mark.asyncio
     async def test_counter_resets_on_turn_start_boundary(self, db: HubDatabase) -> None:
         """Counter should reset to 0 on the semantic turn_start boundary."""
 
         engine = RuleEngine(db)
-        variables: dict[str, Any] = {"consecutive_tool_blocks": 5}
+        variables: dict[str, Any] = {
+            "consecutive_tool_blocks": 5,
+            "_last_blocked_tool": "Edit",
+            "_last_blocked_rule_name": "block-edit",
+            "_last_blocked_reason": "Rule enforced by Gobby: [block-edit]\nNo editing",
+        }
         event = _make_event(HookEventType.BEFORE_AGENT)
         await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert variables["consecutive_tool_blocks"] == 0
+        assert variables["_last_blocked_tool"] == ""
+        assert variables["_last_blocked_rule_name"] == ""
+        assert variables["_last_blocked_reason"] == ""
 
     @pytest.mark.asyncio
     async def test_counter_not_incremented_when_block_pending_false(
@@ -1289,6 +1345,8 @@ class TestConsecutiveToolBlocks:
         variables: dict[str, Any] = {
             "consecutive_tool_blocks": 2,
             "_last_blocked_tool": "Edit",
+            "_last_blocked_rule_name": "block-edit",
+            "_last_blocked_reason": "Rule enforced by Gobby: [block-edit]\nNo editing",
         }
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Edit"})
         event.metadata["is_failure"] = True
@@ -1296,6 +1354,10 @@ class TestConsecutiveToolBlocks:
 
         assert variables["consecutive_tool_blocks"] == 2
         assert variables["_last_blocked_tool"] == "Edit"
+        assert variables["_last_blocked_rule_name"] == "block-edit"
+        assert variables["_last_blocked_reason"] == (
+            "Rule enforced by Gobby: [block-edit]\nNo editing"
+        )
 
 
 class TestNoRules:
@@ -1520,6 +1582,8 @@ class TestToolBlockPendingScopeAware:
         variables: dict[str, Any] = {
             "tool_block_pending": True,
             "_last_blocked_tool": "Write",
+            "_last_blocked_rule_name": "block-write",
+            "_last_blocked_reason": "Rule enforced by Gobby: [block-write]\nNo writing",
         }
         # A different tool (Read) succeeds — should still clear the pending flag
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Read"})
@@ -1527,6 +1591,8 @@ class TestToolBlockPendingScopeAware:
 
         assert variables["tool_block_pending"] is False
         assert variables["_last_blocked_tool"] == ""
+        assert variables["_last_blocked_rule_name"] == ""
+        assert variables["_last_blocked_reason"] == ""
 
     @pytest.mark.asyncio
     async def test_tool_block_pending_clears_for_matching_tool(
@@ -1538,12 +1604,16 @@ class TestToolBlockPendingScopeAware:
         variables: dict[str, Any] = {
             "tool_block_pending": True,
             "_last_blocked_tool": "Write",
+            "_last_blocked_rule_name": "block-write",
+            "_last_blocked_reason": "Rule enforced by Gobby: [block-write]\nNo writing",
         }
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Write"})
         await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert variables["tool_block_pending"] is False
         assert variables["_last_blocked_tool"] == ""
+        assert variables["_last_blocked_rule_name"] == ""
+        assert variables["_last_blocked_reason"] == ""
 
     @pytest.mark.asyncio
     async def test_tool_block_pending_clears_when_no_last_blocked_tool(
@@ -1555,11 +1625,15 @@ class TestToolBlockPendingScopeAware:
         variables: dict[str, Any] = {
             "tool_block_pending": True,
             "_last_blocked_tool": "",
+            "_last_blocked_rule_name": "legacy-block",
+            "_last_blocked_reason": "Rule enforced by Gobby: [legacy-block]\nLegacy block",
         }
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Read"})
         await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert variables["tool_block_pending"] is False
+        assert variables["_last_blocked_rule_name"] == ""
+        assert variables["_last_blocked_reason"] == ""
 
     @pytest.mark.asyncio
     async def test_parallel_scenario_edit_fails_read_succeeds(
@@ -2821,6 +2895,8 @@ class TestConsecutiveBlockDifferentTool:
         variables: dict[str, Any] = {
             "consecutive_tool_blocks": 1,
             "_last_blocked_tool": "Edit",
+            "_last_blocked_rule_name": "block-edit",
+            "_last_blocked_reason": "Rule enforced by Gobby: [block-edit]\nNo editing",
         }
 
         # Try a different tool — counter should reset to 0
@@ -2831,6 +2907,11 @@ class TestConsecutiveBlockDifferentTool:
         assert variables["consecutive_tool_blocks"] == 0
         # But the tool is still blocked by the rule
         assert response.decision == "block"
+        assert variables["_last_blocked_tool"] == "Read"
+        assert variables["_last_blocked_rule_name"] == "block-all"
+        assert (
+            variables["_last_blocked_reason"] == "Rule enforced by Gobby: [block-all]\nAll blocked"
+        )
 
 
 class TestSessionOverridesExtended:
