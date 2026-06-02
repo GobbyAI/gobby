@@ -345,11 +345,52 @@ def test_build_cli_bare_coordinator_requires_current_session(
     plan_file = tmp_path / "plan.md"
     plan_file.write_text("# Plan\n")
     monkeypatch.delenv("GOBBY_SESSION_ID", raising=False)
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
 
     result = CliRunner().invoke(cli, ["build", str(plan_file), "--coordinator"])
 
     assert result.exit_code != 0
     assert "pass --coordinator SESSION explicitly" in result.output
+
+
+def test_build_cli_bare_coordinator_uses_codex_thread_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.build.service import BuildResult, DispatcherTickSummary
+    from gobby.cli import cli
+
+    plan_file = tmp_path / "plan.md"
+    plan_file.write_text("# Plan\n")
+    monkeypatch.delenv("GOBBY_SESSION_ID", raising=False)
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread-current")
+    build_result = BuildResult(
+        task_id="task-1",
+        created=False,
+        initial_lifecycle="development",
+        applied_stages_skipped=[],
+        tick_dispatched=0,
+        dispatcher_tick=DispatcherTickSummary(),
+    )
+
+    with (
+        patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
+        patch("gobby.cli.build._open_database") as open_db,
+        patch("gobby.storage.sessions.SessionManager") as manager_cls,
+        patch("gobby.cli.build._try_daemon_build", return_value=build_result) as daemon,
+    ):
+        manager_cls.return_value.find_active_by_external_id.return_value = SimpleNamespace(
+            id="session-from-codex"
+        )
+        result = CliRunner().invoke(cli, ["build", str(plan_file), "--coordinator", "current"])
+
+    assert result.exit_code == 0
+    opts = daemon.call_args.args[1]
+    assert opts.coordinator_session_ref == "session-from-codex"
+    manager_cls.return_value.find_active_by_external_id.assert_called_once_with(
+        "thread-current", "codex"
+    )
+    open_db.return_value.close.assert_called_once_with()
 
 
 def test_build_cli_prints_manifest_chain_when_present(tmp_path: Path) -> None:

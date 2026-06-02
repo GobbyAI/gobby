@@ -788,6 +788,17 @@ def _coordinator_session_ref(
             return resolve_session_id(current_session, project_id=caller_project_id)
         except click.ClickException as exc:
             raise click.ClickException(f"Could not resolve current coordinator: {exc}") from exc
+    codex_thread_id = (os.environ.get("CODEX_THREAD_ID") or "").strip()
+    if codex_thread_id:
+        from gobby.storage.sessions import SessionManager
+
+        db = _open_database()
+        try:
+            session = SessionManager(db).find_active_by_external_id(codex_thread_id, "codex")
+        finally:
+            db.close()
+        if session:
+            return session.id
     raise click.ClickException(
         "--coordinator needs an active Gobby session; pass --coordinator SESSION explicitly"
     )
