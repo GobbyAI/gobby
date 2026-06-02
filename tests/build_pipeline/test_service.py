@@ -587,7 +587,7 @@ async def test_build_plan_file_rerun_resumes_open_root_for_same_plan_file(
 
 
 @pytest.mark.asyncio
-async def test_build_plan_file_planning_spawn_uses_main_context_for_worktree_build(
+async def test_build_plan_file_planning_spawn_inherits_worktree_isolation(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     tmp_path: Path,
@@ -637,13 +637,13 @@ async def test_build_plan_file_planning_spawn_uses_main_context_for_worktree_bui
 
     assert task.isolation == "worktree"
     assert spawn_kwargs["agent_lookup_name"] == "planner"
-    assert spawn_kwargs["isolation"] == "none"
+    assert spawn_kwargs["isolation"] == "worktree"
     assert spawn_kwargs["worktree_id"] is None
     assert spawn_kwargs["clone_id"] is None
 
 
 @pytest.mark.asyncio
-async def test_build_plan_file_plan_adversary_spawn_uses_main_context_for_worktree_build(
+async def test_build_plan_file_plan_adversary_spawn_inherits_worktree_isolation(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     tmp_path: Path,
@@ -698,7 +698,7 @@ async def test_build_plan_file_plan_adversary_spawn_uses_main_context_for_worktr
 
     assert task.isolation == "worktree"
     assert spawn_kwargs["agent_lookup_name"] == "plan-adversary"
-    assert spawn_kwargs["isolation"] == "none"
+    assert spawn_kwargs["isolation"] == "worktree"
     assert spawn_kwargs["worktree_id"] is None
     assert spawn_kwargs["clone_id"] is None
 

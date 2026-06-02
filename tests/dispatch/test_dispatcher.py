@@ -935,13 +935,13 @@ async def test_spawn_action_uses_services_and_records_agent_run(
 
 @pytest.mark.parametrize("agent_slug", ["planner", "plan-adversary"])
 @pytest.mark.asyncio
-async def test_planning_agents_use_main_context_despite_worktree_task(
+async def test_planning_agents_inherit_task_worktree_isolation(
     agent_slug: str,
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
 ) -> None:
-    """Planning agents use main context despite worktree task."""
+    """Planning agents inherit build task worktree isolation."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -1008,21 +1008,21 @@ async def test_planning_agents_use_main_context_despite_worktree_task(
     artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
 
     assert result.executed == 1
-    assert spawn_kwargs["isolation"] == "none"
+    assert spawn_kwargs["isolation"] == "worktree"
     assert spawn_kwargs["worktree_id"] is None
     assert spawn_kwargs["clone_id"] is None
-    assert artifacts.worktree_id == stale_worktree_id
-    assert artifacts.worktree_path == stale_worktree_path
-    assert artifacts.base_commit_sha == "old-base"
+    assert artifacts.worktree_id is None
+    assert artifacts.worktree_path is None
+    assert artifacts.base_commit_sha is None
 
 
 @pytest.mark.asyncio
-async def test_expansion_review_uses_main_context_despite_worktree_task(
+async def test_expansion_review_inherits_task_worktree_isolation(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
 ) -> None:
-    """Expansion review uses main context despite worktree task."""
+    """Expansion review inherits build task worktree isolation."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -1086,11 +1086,11 @@ async def test_expansion_review_uses_main_context_despite_worktree_task(
     artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
 
     assert result.executed == 1
-    assert spawn_kwargs["isolation"] == "none"
+    assert spawn_kwargs["isolation"] == "worktree"
     assert spawn_kwargs["worktree_id"] is None
     assert spawn_kwargs["clone_id"] is None
-    assert artifacts.worktree_id == "wt-expansion"
-    assert artifacts.worktree_path == "/tmp/missing-expansion-worktree"
+    assert artifacts.worktree_id is None
+    assert artifacts.worktree_path is None
 
 
 @pytest.mark.asyncio

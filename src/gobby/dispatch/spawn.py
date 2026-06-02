@@ -40,9 +40,9 @@ _PRE_DEVELOPMENT_ISOLATION_STAGES = {
     "expansion",
 }
 _DEVELOPMENT_FORWARD_ISOLATION_STAGES = {"development", "holistic_qa", "pr", "merge"}
-# These agents coordinate main repository workflow state across stages, so they
-# force "none" isolation and override stage/task isolation rules.
-_MAIN_CONTEXT_AGENT_SLUGS = frozenset({"planner", "plan-adversary", "plan-adversary-taskless"})
+# Taskless plan review coordinates the caller's current plan workflow and has no
+# build task isolation to inherit.
+_TASKLESS_MAIN_CONTEXT_AGENT_SLUGS = frozenset({"plan-adversary-taskless"})
 
 SpawnIsolation = Literal["none", "worktree", "clone"]
 
@@ -646,18 +646,21 @@ def _effective_spawn_isolation(
     action: SpawnAgentAction,
     agent_body: object | None,
 ) -> SpawnIsolation | None:
-    if action.agent_slug in _MAIN_CONTEXT_AGENT_SLUGS:
+    if action.agent_slug in _TASKLESS_MAIN_CONTEXT_AGENT_SLUGS:
         return "none"
     stage_name = _spawn_stage_name(action)
+    task_isolation = _task_spawn_isolation(task)
     if stage_name in _PRE_DEVELOPMENT_ISOLATION_STAGES:
+        if task_isolation is not None:
+            return task_isolation
         return "none"
     if stage_name in _DEVELOPMENT_FORWARD_ISOLATION_STAGES:
-        return _task_spawn_isolation(task)
+        return task_isolation
 
     agent_isolation = getattr(agent_body, "isolation", None)
     if agent_isolation in _EXPLICIT_AGENT_ISOLATIONS:
         return cast(SpawnIsolation, agent_isolation)
-    return _task_spawn_isolation(task)
+    return task_isolation
 
 
 def _task_spawn_isolation(task: object) -> SpawnIsolation | None:
