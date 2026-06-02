@@ -8,7 +8,6 @@ tool calls to the HTTP daemon.
 import asyncio
 import logging
 import os
-import sys
 import time
 from typing import Any
 
@@ -857,14 +856,14 @@ async def ensure_daemon_running() -> None:
             "Refusing to restart it from a stdio MCP client because that can interrupt "
             "active dispatch agents.",
         )
-        sys.exit(1)
+        return
     else:
         if os.environ.get("GOBBY_AGENT_RUN_ID"):
             logger.error(
                 "Daemon is not running for managed agent MCP client; refusing to auto-start "
                 "from an agent process.",
             )
-            sys.exit(1)
+            return
 
         # Start
         result = await start_daemon_process(port, ws_port)
@@ -872,7 +871,7 @@ async def ensure_daemon_running() -> None:
             logger.error(
                 f"Failed to start daemon: {result.get('error', 'unknown error')} (port={port}, ws_port={ws_port})",
             )
-            sys.exit(1)
+            return
 
     # Wait for health
     last_health_response = None
@@ -892,7 +891,7 @@ async def ensure_daemon_running() -> None:
         f"{DAEMON_HEALTH_ATTEMPTS} attempts "
         f"(pid={pid}, port={port}, ws_port={ws_port}, last_health={last_health_response})",
     )
-    sys.exit(1)
+    return
 
 
 async def main() -> None:
