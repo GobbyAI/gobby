@@ -6,6 +6,7 @@ use super::sink::CodeFactSink;
 use super::util::DEFAULT_EXCLUDES;
 use super::*;
 use crate::config::Context;
+use crate::index::walker;
 use crate::models::{
     CallRelation, CallTargetKind, ContentChunk, ImportRelation, IndexedFile, ParseResult, Symbol,
 };
@@ -349,6 +350,7 @@ fn explicit_file_route_indexes_mjs_and_routes_markdown_to_content_only() {
     write_file(root, "src/module.mjs", b"export const value = 1;\n");
     write_file(root, "README.md", b"# Title\n");
     write_file(root, "docs/guide.markdown", b"# Guide\n");
+    write_file(root, ".github/workflows/ci.yml", b"name: ci\n");
 
     let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
 
@@ -364,6 +366,35 @@ fn explicit_file_route_indexes_mjs_and_routes_markdown_to_content_only() {
         explicit_file_route(root, &root.join("docs/guide.markdown"), &excludes),
         ExplicitFileRoute::ContentOnly
     );
+    assert_eq!(
+        explicit_file_route(root, &root.join(".github/workflows/ci.yml"), &excludes),
+        ExplicitFileRoute::ContentOnly
+    );
+}
+
+#[test]
+fn discovered_hidden_workflows_survive_index_path_filter() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    write_file(root, ".github/workflows/ci.yml", b"name: ci\n");
+    write_file(root, ".gobby/plans/plan.md", b"# Plan\n");
+
+    let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
+    let (_, content_only) = walker::discover_files(root, &excludes);
+    let filtered =
+        super::util::filter_discovered_paths(root, Path::new(".github/workflows"), content_only);
+
+    let mut rels: Vec<String> = filtered
+        .into_iter()
+        .map(|path| {
+            path.strip_prefix(root)
+                .expect("path under root")
+                .to_string_lossy()
+                .to_string()
+        })
+        .collect();
+    rels.sort();
+    assert_eq!(rels, vec![".github/workflows/ci.yml"]);
 }
 
 #[test]
