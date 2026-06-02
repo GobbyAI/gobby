@@ -778,6 +778,34 @@ class TestDaemonProxy:
                 )
 
     @pytest.mark.asyncio
+    async def test_call_tool_uses_extended_timeout_for_recall_review_context(self) -> None:
+        """recall_review_context can exceed the default 30s timeout on large batches."""
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        proxy = DaemonProxy(60887)
+        with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
+            mock_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
+            with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_request:
+                mock_request.return_value = {"success": True}
+
+                result = await proxy.call_tool(
+                    "gobby-review-learning",
+                    "recall_review_context",
+                    {"findings": [{"id": "finding-one", "body": "slow batch"}]},
+                )
+
+                assert result == {"success": True}
+                assert result["success"] is True
+                assert mock_request.await_count == 1
+                mock_request.assert_called_once_with(
+                    "POST",
+                    "/api/mcp/gobby-review-learning/tools/recall_review_context",
+                    json={"findings": [{"id": "finding-one", "body": "slow batch"}]},
+                    timeout=300.0,
+                    preflight=True,
+                )
+
+    @pytest.mark.asyncio
     async def test_call_tool_uses_timeout_seconds_buffer_for_wait_tools(self) -> None:
         """Wait tools use timeout_seconds plus buffer for the daemon HTTP request."""
         from gobby.mcp_proxy.stdio import DaemonProxy
@@ -1472,6 +1500,53 @@ class TestMCPToolsWrapper:
             "gobby-tasks",
             "close_task",
             {"task_id": "#15531", "commit_sha": "abc123"},
+            preflight_enabled=True,
+        )
+        release_call.set()
+        await asyncio.wait_for(call_finished.wait(), timeout=0.2)
+
+    @pytest.mark.asyncio
+    async def test_call_tool_returns_wrapper_timeout_for_stuck_recall_review_context(
+        self,
+    ) -> None:
+        _, mock_proxy, run_tool = self._register_tools()
+        release_call = asyncio.Event()
+        call_finished = asyncio.Event()
+
+        async def _block_until_released(*_args: Any, **_kwargs: Any) -> dict[str, str]:
+            await release_call.wait()
+            call_finished.set()
+            return {"res": "recalled"}
+
+        mock_proxy.call_tool.side_effect = _block_until_released
+
+        with (
+            patch("gobby.mcp_proxy.wait_tools.MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS", 0.02),
+            patch("gobby.mcp_proxy.wait_tools.WAIT_TOOL_WRAPPER_GRACE_SECONDS", 0.01),
+        ):
+            result = await asyncio.wait_for(
+                run_tool(
+                    "call_tool",
+                    server_name="gobby-review-learning",
+                    tool_name="recall_review_context",
+                    arguments={"findings": [{"id": "finding-one"}]},
+                ),
+                timeout=0.2,
+            )
+
+        assert result == {
+            "success": True,
+            "completed": False,
+            "timeout_seconds": 0.02,
+            "effective_timeout_seconds": 0.02,
+            "mcp_wrapper_timeout": True,
+            "background_call_continues": True,
+            "tool_name": "recall_review_context",
+        }
+        mock_proxy.call_tool.assert_awaited_once_with(
+            "gobby-review-learning",
+            "recall_review_context",
+            {"findings": [{"id": "finding-one"}]},
             preflight_enabled=True,
         )
         release_call.set()
