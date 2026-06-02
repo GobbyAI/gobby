@@ -364,3 +364,5 @@ Gateway errors must preserve:
 
 Malformed or incomplete CLI JSON is a gateway contract failure. Daemon/web
 layers should surface that failure rather than fabricating wiki domain data.
+
+_Last verified: 2026-06-02_
