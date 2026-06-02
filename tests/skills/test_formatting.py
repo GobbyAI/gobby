@@ -10,6 +10,7 @@ import pytest
 from gobby.skills.formatting import (
     format_skill_fetch_context,
     recommend_skills_for_task,
+    skill_fetch_batch_directive,
     skill_fetch_directive,
 )
 
@@ -37,6 +38,20 @@ class TestSkillFetchDirectives:
         )
         assert 'call_tool("gobby-skills", "get_skill", {"name": "plan"})' in rendered
         assert "User arguments: draft auth flow" in rendered
+
+    def test_skill_fetch_batch_directive_discovers_once(self) -> None:
+        rendered = skill_fetch_batch_directive(
+            ["loading-skills", "python", "python", "development-discipline"]
+        )
+
+        assert rendered.count("list_mcp_servers") == 1
+        assert rendered.count('list_tools("gobby-skills")') == 1
+        assert rendered.count('get_tool_schema("gobby-skills", "get_skill")') == 1
+        assert rendered.count('call_tool("gobby-skills", "get_skill"') == 3
+        assert rendered.index('{"name": "loading-skills"}') < rendered.index('{"name": "python"}')
+        assert rendered.index('{"name": "python"}') < rendered.index(
+            '{"name": "development-discipline"}'
+        )
 
 
 class TestRecommendSkillsForTask:

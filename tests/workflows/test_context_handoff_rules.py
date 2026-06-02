@@ -204,7 +204,7 @@ class TestInjectCompactHandoff:
         assert body.effects[0].type == "inject_context"
         assert body.effects[0].template is not None
         assert "Continuation Context" in body.effects[0].template
-        assert "skill_fetch_directive" in body.effects[0].template
+        assert "skill_fetch_batch_directive" in body.effects[0].template
         assert body.effects[1].type == "set_variable"
         assert body.effects[1].variable == "compact_resume_required_skills"
         assert body.effects[1].value == []

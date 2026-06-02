@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
-from gobby.skills.formatting import skill_fetch_directive
+from gobby.skills.formatting import skill_fetch_batch_directive
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -23,10 +23,10 @@ COMPACT_SELF_CONTINUE_PROMPT = "Continue where you last left off."
 COMPACT_SELF_CONTINUE_FRESH_SECONDS = 600
 COMPACT_SELF_CONTINUE_SEND_DELAY_SECONDS = 1.0
 COMPACT_SELF_CONTINUE_FALLBACK_DELAY_SECONDS = 3.0
+LOADING_SKILLS_NAME = "loading-skills"
 COMPACT_RESUME_SKILL_VARIABLE_KEYS = (
     "required_skills",
     "additional_skills",
-    "loaded_skills",
     "claimed_task_required_skills",
     "claimed_task_additional_skills",
 )
@@ -76,11 +76,11 @@ def persist_compact_resume_required_skills(
 
 def build_compact_self_continue_prompt(required_skills: list[str] | None) -> str:
     """Build the post-compact continuation prompt with skill reload directives."""
-    skills = _unique_strings(required_skills or [])
+    skills = _prepare_compact_resume_skills(required_skills or [])
     if not skills:
         return COMPACT_SELF_CONTINUE_PROMPT
 
-    directives = "\n\n".join(skill_fetch_directive(skill) for skill in skills)
+    directives = skill_fetch_batch_directive(skills)
     return (
         "Continue where you last left off. Before continuing the task, use progressive "
         "discovery to reload these required skills in order:\n\n"
@@ -357,7 +357,15 @@ def _collect_compact_resume_required_skills(variables: dict[str, Any]) -> list[s
     skills: list[str] = []
     for key in COMPACT_RESUME_SKILL_VARIABLE_KEYS:
         _extend_unique_strings(skills, variables.get(key))
-    return skills
+    return _prepare_compact_resume_skills(skills)
+
+
+def _prepare_compact_resume_skills(values: list[str]) -> list[str]:
+    skills = _unique_strings(values)
+    if len(skills) <= 1:
+        return skills
+
+    return [LOADING_SKILLS_NAME, *(skill for skill in skills if skill != LOADING_SKILLS_NAME)]
 
 
 def _extend_unique_strings(target: list[str], values: Any) -> None:

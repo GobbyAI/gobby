@@ -206,7 +206,7 @@
     "workflows/rules/context-handoff/auto-compact-after-task-close.yaml": "36185d9a1f57cc12dbd58f01cf0f69ccc40d1e868d5a8238bb75613ced700186",
     "workflows/rules/context-handoff/capture-baseline-dirty-files-on-start.yaml": "ec8a02d9c1da20bb78acdfc058f300d273fc15f45e4b6991e4cf5a19f79cb824",
     "workflows/rules/context-handoff/clear-pending-context-reset-on-start.yaml": "1e02ad509474cb4950655af4b2f1d3deb99edb3c5430076740d4f0d706f9f40b",
-    "workflows/rules/context-handoff/inject-compact-handoff.yaml": "bb1b5cc6d75c9710152971ebe8d50f4700d5910c1a538a6184b25d0a436d032c",
+    "workflows/rules/context-handoff/inject-compact-handoff.yaml": "16c281b0af7ecfc91e7f5de4d00c9e1e74ab65cf75b9f47482c7ca0e66c678f7",
     "workflows/rules/context-handoff/inject-previous-session-summary.yaml": "a7ac6067079639a09580780dcec5c745837f738c5bfac7d5fb58411132239446",
     "workflows/rules/context-handoff/inject-task-context-on-start.yaml": "4b389a39c6dfd228ec85cb0d9e59b27cbc0066d2a5681c475e15e6b870db01d9",
     "workflows/rules/context-handoff/inject-user-profile.yaml": "50f0c6bb2450267e6e30aa583fef12305436f85a053f89ded871d036d883d614",

@@ -20,9 +20,7 @@ rules:
           ## Required Skill Reload
           Reload these required skills with progressive discovery before continuing:
 
-          {% for skill in resume_skills %}
-          {{ skill_fetch_directive(skill) }}
-          {% endfor %}
+          {{ skill_fetch_batch_directive(resume_skills) }}
           {% endif %}
       - type: set_variable
         variable: compact_resume_required_skills
