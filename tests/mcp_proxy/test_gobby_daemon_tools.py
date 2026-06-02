@@ -297,8 +297,29 @@ class TestGobbyDaemonToolsCallTool:
         assert tools_handler.tool_proxy.call_tool.call_args is not None
 
     @pytest.mark.asyncio
+    async def test_call_tool_preserves_coordinator_wait_timeout(self, tools_handler):
+        """Coordinator wait_for_agent calls can use the required 300 second wait."""
+        tools_handler.tool_proxy.call_tool = AsyncMock(
+            return_value={"success": True, "completed": False, "timeout_seconds": 300.0}
+        )
+
+        result = await tools_handler.call_tool(
+            server_name="gobby-agents",
+            tool_name="wait_for_agent",
+            arguments={"run_id": "run-123", "timeout_seconds": 300},
+        )
+
+        assert result == {"completed": False, "timeout_seconds": 300.0}
+        tools_handler.tool_proxy.call_tool.assert_awaited_once_with(
+            "gobby-agents",
+            "wait_for_agent",
+            {"run_id": "run-123", "timeout_seconds": 300},
+            None,
+        )
+
+    @pytest.mark.asyncio
     async def test_call_tool_returns_client_safe_timeout_for_stuck_wait_tool(self, tools_handler):
-        """Nested call_tool wait tools return before the MCP client deadline."""
+        """Nested call_tool wait tools above the wrapper cap return before client deadline."""
         release_call = asyncio.Event()
         call_finished = asyncio.Event()
 
@@ -317,7 +338,7 @@ class TestGobbyDaemonToolsCallTool:
                 tools_handler.call_tool(
                     server_name="gobby-agents",
                     tool_name="wait_for_agent",
-                    arguments={"run_id": "run-123", "timeout_seconds": 300},
+                    arguments={"run_id": "run-123", "timeout_seconds": 600},
                 ),
                 timeout=0.2,
             )
@@ -329,7 +350,7 @@ class TestGobbyDaemonToolsCallTool:
             "mcp_wrapper_timeout": True,
             "background_call_continues": True,
             "tool_name": "wait_for_agent",
-            "requested_timeout_seconds": 300.0,
+            "requested_timeout_seconds": 600.0,
             "wait_timeout_capped_by_mcp_wrapper": True,
         }
         tools_handler.tool_proxy.call_tool.assert_awaited_once_with(
