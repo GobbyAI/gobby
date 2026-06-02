@@ -56,6 +56,7 @@ links to the guide that owns that topic.
 | [hook-schemas.md](hook-schemas.md) | Hook event schema and adapter payload reference |
 | [adapter-fidelity.md](adapter-fidelity.md) | Provider capability declarations and adapter response fidelity |
 | [variables.md](variables.md) | Session variables, conditions, and safe expression evaluation |
+| [gwiki-daemon-web.md](gwiki-daemon-web.md) | `gwiki --format json` gateway contracts for daemon, MCP, cron, and web integration |
 
 ## Integrations
 
