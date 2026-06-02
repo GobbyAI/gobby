@@ -3,6 +3,7 @@ use std::path::Path;
 use crate::config;
 use crate::db;
 use crate::index::api;
+use crate::index_lock::{self, IndexLockPolicy, IndexLockResult};
 use crate::output::{self, Format};
 use crate::project;
 use crate::skill;
@@ -65,17 +66,23 @@ pub fn run(project_root: &Path, format: Format, quiet: bool) -> anyhow::Result<(
         daemon_url: None,
         index_scope: config::ProjectIndexScope::Single,
     };
-    let index_result = api::index_files(
-        api::IndexRequest {
-            project_root: project_root.to_path_buf(),
-            path_filter: None,
-            explicit_files: Vec::new(),
-            full: false,
-            require_cpp_semantics: false,
-            sync_projections: false,
-        },
-        &index_ctx,
-    )?;
+    let index_result =
+        match index_lock::with_project_lock(&index_ctx, IndexLockPolicy::Wait, || {
+            api::index_files(
+                api::IndexRequest {
+                    project_root: project_root.to_path_buf(),
+                    path_filter: None,
+                    explicit_files: Vec::new(),
+                    full: false,
+                    require_cpp_semantics: false,
+                    sync_projections: false,
+                },
+                &index_ctx,
+            )
+        })? {
+            IndexLockResult::Acquired(outcome) => outcome,
+            IndexLockResult::Busy => unreachable!("wait policy always acquires the index lock"),
+        };
     if !quiet {
         eprintln!(
             "Indexed {} files, {} symbols in {}ms",

@@ -5,7 +5,10 @@ use crate::cli::{self, Cli, Command, EmbeddingsCommand, GraphCommand, VectorComm
 
 fn ensure_project_fresh(ctx: &config::Context, disabled: bool) -> anyhow::Result<()> {
     if !disabled {
-        freshness::ensure_fresh(ctx, freshness::FreshnessScope::Project)?;
+        warn_if_busy(
+            ctx,
+            freshness::ensure_fresh(ctx, freshness::FreshnessScope::Project)?,
+        );
     }
     Ok(())
 }
@@ -16,7 +19,10 @@ fn ensure_files_fresh(
     files: Vec<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
     if !disabled {
-        freshness::ensure_fresh(ctx, freshness::FreshnessScope::Files(files))?;
+        warn_if_busy(
+            ctx,
+            freshness::ensure_fresh(ctx, freshness::FreshnessScope::Files(files))?,
+        );
     }
     Ok(())
 }
@@ -27,9 +33,15 @@ fn ensure_file_fresh(ctx: &config::Context, disabled: bool, file: &str) -> anyho
 
 fn ensure_symbol_fresh(ctx: &config::Context, disabled: bool, id: &str) -> anyhow::Result<()> {
     if !disabled {
-        freshness::ensure_symbol_fresh(ctx, id)?;
+        warn_if_busy(ctx, freshness::ensure_symbol_fresh(ctx, id)?);
     }
     Ok(())
+}
+
+fn warn_if_busy(ctx: &config::Context, status: freshness::FreshnessStatus) {
+    if matches!(status, freshness::FreshnessStatus::SkippedBusy) && !ctx.quiet {
+        eprintln!("warning: gcode index refresh already running; reading existing index");
+    }
 }
 
 fn dispatch_early_command<F>(

@@ -6,6 +6,7 @@ pub mod freshness;
 pub mod git;
 pub mod graph;
 pub mod index;
+pub(crate) mod index_lock;
 pub mod models;
 pub mod output;
 pub mod progress;

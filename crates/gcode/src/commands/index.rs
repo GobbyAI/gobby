@@ -1,6 +1,7 @@
 use crate::config;
 use crate::config::Context;
 use crate::index::api::{self, IndexDegradation, IndexOutcome, IndexRequest, UnsupportedFileType};
+use crate::index_lock::{self, IndexLockPolicy, IndexLockResult};
 use crate::output::{self, Format};
 use crate::projection::sync::{self, ProjectionSyncReports};
 use crate::utils::short_id;
@@ -34,7 +35,12 @@ pub fn run(
         sync_projections,
     };
 
-    let outcome = api::index_files(request, &target_ctx)?;
+    let outcome = match index_lock::with_project_lock(&target_ctx, IndexLockPolicy::Wait, || {
+        api::index_files(request, &target_ctx)
+    })? {
+        IndexLockResult::Acquired(outcome) => outcome,
+        IndexLockResult::Busy => unreachable!("wait policy always acquires the index lock"),
+    };
     if sync_projections {
         let projections = sync::sync_after_index(&target_ctx, &outcome.indexed_file_paths)?;
         let payload = sync_projections_payload(&outcome, projections);
