@@ -39,6 +39,7 @@ from gobby.mcp_proxy.wait_tools import (
     WAIT_TOOL_HTTP_TIMEOUT_BUFFER_SECONDS,
     WAIT_TOOL_NAMES,
     call_with_wait_heartbeat,
+    mcp_wrapper_source_stale_result,
     prepare_client_guard,
 )
 
@@ -602,6 +603,9 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
                 "success": False,
                 "error": "Missing required parameters: server_name, tool_name",
             }
+
+        if stale_result := mcp_wrapper_source_stale_result(tool_name):
+            return stale_result
 
         guard = prepare_client_guard(tool_name=tool_name, arguments=final_args)
         final_args = guard.arguments

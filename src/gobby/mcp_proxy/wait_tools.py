@@ -1,9 +1,11 @@
 """Helpers for MCP wrapper tools that intentionally wait."""
 
 import asyncio
+import hashlib
 import logging
 from collections.abc import Awaitable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import Context
@@ -30,6 +32,10 @@ EXTENDED_TIMEOUT_TOOL_NAMES = (
 )
 CLIENT_GUARDED_TOOL_NAMES = (*WAIT_TOOL_NAMES, *EXTENDED_TIMEOUT_TOOL_NAMES)
 HEARTBEAT_TOOL_NAMES = (*WAIT_TOOL_NAMES, *EXTENDED_TIMEOUT_TOOL_NAMES)
+MCP_WRAPPER_SOURCE_PATHS = (
+    Path(__file__),
+    Path(__file__).with_name("stdio.py"),
+)
 
 logger = logging.getLogger("gobby.mcp.wait_tools")
 
@@ -41,6 +47,49 @@ class PreparedClientGuard:
     requested_timeout_seconds: float | None = None
     effective_timeout_seconds: float | None = None
     wait_timeout_capped: bool = False
+
+
+def _hash_source(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _capture_source_digests(paths: tuple[Path, ...]) -> dict[str, str | None]:
+    return {str(path): _hash_source(path) for path in paths}
+
+
+_MCP_WRAPPER_SOURCE_DIGESTS = _capture_source_digests(MCP_WRAPPER_SOURCE_PATHS)
+
+
+def _stale_mcp_wrapper_source_paths() -> list[str]:
+    stale_paths = []
+    for path, startup_digest in _MCP_WRAPPER_SOURCE_DIGESTS.items():
+        if _hash_source(Path(path)) != startup_digest:
+            stale_paths.append(path)
+    return stale_paths
+
+
+def mcp_wrapper_source_stale_result(tool_name: str) -> dict[str, Any] | None:
+    if tool_name not in WAIT_TOOL_NAMES:
+        return None
+
+    stale_paths = _stale_mcp_wrapper_source_paths()
+    if not stale_paths:
+        return None
+
+    return {
+        "success": False,
+        "error_code": "GOBBY_MCP_WRAPPER_STALE",
+        "error": (
+            "Gobby MCP stdio wrapper source changed since this MCP process started. "
+            "Restart the Gobby MCP server before running wait tools."
+        ),
+        "tool_name": tool_name,
+        "stale_source_paths": stale_paths,
+        "restart_required": True,
+    }
 
 
 def prepare_client_guard(
