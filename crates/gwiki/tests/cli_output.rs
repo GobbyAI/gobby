@@ -1,10 +1,10 @@
-use std::process::Command;
+mod common;
 
 fn gwiki(args: &[&str]) -> std::process::Output {
     let tmp = tempfile::tempdir().expect("tempdir");
     let home = tmp.path().join("home");
     std::fs::create_dir_all(&home).expect("create isolated home");
-    Command::new(env!("CARGO_BIN_EXE_gwiki"))
+    common::gwiki_command()
         .args(args)
         .env("GOBBY_WIKI_HUB", tmp.path().join("hub"))
         .env("HOME", &home)

@@ -304,7 +304,6 @@ impl Bm25SearchBackend for MemoryBm25Backend {
 mod tests {
     use super::*;
     use crate::search::{SearchHitKind, SearchScope};
-    use crate::setup::{GwikiPostgresObject, GwikiStandaloneSetup};
     use std::collections::BTreeSet;
 
     #[test]
@@ -380,12 +379,9 @@ mod tests {
     }
 
     #[test]
-    fn bm25_sql_uses_setup_created_columns() {
-        let setup_objects = GwikiStandaloneSetup::new("public")
-            .postgres_objects()
-            .expect("setup schema objects");
-        let document_columns = table_columns(&setup_objects, "gwiki_documents");
-        let chunk_columns = table_columns(&setup_objects, "gwiki_chunks");
+    fn bm25_sql_uses_managed_schema_columns() {
+        let document_columns = managed_document_columns();
+        let chunk_columns = managed_chunk_columns();
         let sql = build_bm25_sql("ownership", &SearchScope::project("project-1"), 10)
             .expect("query is searchable")
             .sql;
@@ -426,32 +422,49 @@ mod tests {
         }
     }
 
-    fn table_columns(objects: &[GwikiPostgresObject], table_name: &str) -> BTreeSet<String> {
-        let sql = objects
-            .iter()
-            .find(|object| object.name == table_name)
-            .unwrap_or_else(|| panic!("missing setup object {table_name}"))
-            .sql
-            .as_str();
-        let (_, definitions) = sql
-            .split_once('(')
-            .unwrap_or_else(|| panic!("missing table body for {table_name}: {sql}"));
+    fn managed_document_columns() -> BTreeSet<String> {
+        [
+            "id",
+            "scope_kind",
+            "scope_id",
+            "project_id",
+            "topic_name",
+            "path",
+            "title",
+            "source_kind",
+            "content_hash",
+            "frontmatter",
+            "provenance",
+            "body",
+            "indexed_at",
+            "updated_at",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+    }
 
-        definitions
-            .lines()
-            .filter_map(|line| {
-                let column = line
-                    .trim()
-                    .trim_end_matches(',')
-                    .split_whitespace()
-                    .next()?;
-                if column.starts_with(')') || matches!(column, "UNIQUE" | "PRIMARY" | "FOREIGN") {
-                    None
-                } else {
-                    Some(column.to_string())
-                }
-            })
-            .collect()
+    fn managed_chunk_columns() -> BTreeSet<String> {
+        [
+            "id",
+            "document_id",
+            "scope_kind",
+            "scope_id",
+            "project_id",
+            "topic_name",
+            "path",
+            "chunk_index",
+            "source_kind",
+            "content_hash",
+            "frontmatter",
+            "provenance",
+            "heading_path",
+            "content",
+            "created_at",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect()
     }
 
     fn unknown_alias_columns(

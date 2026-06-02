@@ -80,6 +80,9 @@ pub struct WikiProvenance {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WikiDocumentRow {
+    /// Scope columns are denormalized for PostgreSQL filtering: `scope_kind`
+    /// and `scope_id` carry the canonical scope, while `project_id` and
+    /// `topic_name` mirror the active variant for simpler query predicates.
     pub id: String,
     pub scope_kind: String,
     pub scope_id: String,
@@ -90,6 +93,59 @@ pub struct WikiDocumentRow {
     pub content_hash: String,
     pub frontmatter: Value,
     pub provenance: Value,
+}
+
+impl WikiDocumentRow {
+    pub fn new(
+        id: impl Into<String>,
+        scope: WikiScope,
+        path: impl Into<String>,
+        source_kind: WikiSourceKind,
+        content_hash: impl Into<String>,
+        frontmatter: Value,
+        provenance: Value,
+    ) -> Self {
+        let scope_kind = scope.kind().to_string();
+        let scope_id = scope.identity().to_string();
+        let project_id = scope.project_id().map(ToOwned::to_owned);
+        let topic_name = scope.topic_name().map(ToOwned::to_owned);
+        Self {
+            id: id.into(),
+            scope_kind,
+            scope_id,
+            project_id,
+            topic_name,
+            path: path.into(),
+            source_kind,
+            content_hash: content_hash.into(),
+            frontmatter,
+            provenance,
+        }
+    }
+
+    pub fn validate_scope_consistency(&self) -> Result<(), WikiError> {
+        match self.scope_kind.as_str() {
+            "project"
+                if self.project_id.as_deref() == Some(self.scope_id.as_str())
+                    && self.topic_name.is_none() =>
+            {
+                Ok(())
+            }
+            "topic"
+                if self.topic_name.as_deref() == Some(self.scope_id.as_str())
+                    && self.project_id.is_none() =>
+            {
+                Ok(())
+            }
+            _ => Err(WikiError::InvalidInput {
+                field: "scope",
+                message: format!(
+                    "inconsistent denormalized scope columns: scope_kind={}, scope_id={}, project_id={:?}, topic_name={:?}",
+                    self.scope_kind, self.scope_id, self.project_id, self.topic_name
+                ),
+            }),
+        }
+    }
 }
 
 pub fn validate_project_id(project_id: &str) -> Result<String, WikiError> {
@@ -171,6 +227,30 @@ mod tests {
                 .expect("valid topic collection"),
             "gwiki:topic:rust"
         );
+    }
+
+    #[test]
+    fn document_row_constructor_keeps_denormalized_scope_consistent() {
+        let project = WikiDocumentRow::new(
+            "doc-1",
+            WikiScope::Project {
+                project_id: "project-1".to_string(),
+            },
+            "wiki/topics/a.md",
+            WikiSourceKind::Topic,
+            "hash",
+            Value::Null,
+            Value::Null,
+        );
+        assert_eq!(project.scope_kind, "project");
+        assert_eq!(project.scope_id, "project-1");
+        assert_eq!(project.project_id.as_deref(), Some("project-1"));
+        assert_eq!(project.topic_name, None);
+        project.validate_scope_consistency().unwrap();
+
+        let mut invalid = project.clone();
+        invalid.topic_name = Some("topic".to_string());
+        assert!(invalid.validate_scope_consistency().is_err());
     }
 
     #[test]

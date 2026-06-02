@@ -1,5 +1,6 @@
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+mod common;
 
 const GWIKI_SCOPE_TABLES: &[&str] = &[
     "gwiki_ingestions",
@@ -14,7 +15,7 @@ fn search_json_includes_scope() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let hub = tmp.path().join("hub");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_gwiki"))
+    let output = common::gwiki_command()
         .args(["--format", "json", "search", "--topic", "rust", "ownership"])
         .env("GOBBY_WIKI_HUB", &hub)
         .env_remove("GWIKI_DATABASE_URL")
@@ -44,7 +45,7 @@ fn search_uses_configured_postgres_bm25_backend() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let hub = tmp.path().join("hub");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_gwiki"))
+    let output = common::gwiki_command()
         .args(["--format", "json", "search", "--topic", "rust", "ownership"])
         .env("GOBBY_WIKI_HUB", &hub)
         .env("GWIKI_DATABASE_URL", "not-a-postgres-url")
@@ -74,7 +75,7 @@ fn index_uses_configured_postgres_store() {
     std::fs::create_dir_all(wiki_page.parent().expect("wiki page parent")).expect("mkdir wiki");
     std::fs::write(&wiki_page, "# Ownership\n\nBorrowing and lifetimes.\n").expect("write wiki");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_gwiki"))
+    let output = common::gwiki_command()
         .args(["--format", "json", "index", "--topic", "rust"])
         .env("GOBBY_WIKI_HUB", &hub)
         .env("GWIKI_DATABASE_URL", "not-a-postgres-url")
@@ -103,7 +104,7 @@ fn ingest_uses_configured_postgres_store() {
     let source = tmp.path().join("source.md");
     std::fs::write(&source, "# Ownership\n\nBorrowing and lifetimes.\n").expect("write source");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_gwiki"))
+    let output = common::gwiki_command()
         .args([
             "--format",
             "json",
@@ -154,7 +155,7 @@ fn configured_postgres_index_feeds_configured_search() {
     )
     .expect("write wiki");
 
-    let setup = Command::new(env!("CARGO_BIN_EXE_gwiki"))
+    let setup = common::gwiki_command()
         .args(["--format", "json", "setup", "--topic", &topic])
         .env("GOBBY_WIKI_HUB", &hub)
         .env("GWIKI_DATABASE_URL", &database_url)
@@ -164,7 +165,7 @@ fn configured_postgres_index_feeds_configured_search() {
         .expect("gwiki setup runs");
     assert_command_success("setup", &setup);
 
-    let index = Command::new(env!("CARGO_BIN_EXE_gwiki"))
+    let index = common::gwiki_command()
         .args(["--format", "json", "index", "--topic", &topic])
         .env("GOBBY_WIKI_HUB", &hub)
         .env("GWIKI_DATABASE_URL", &database_url)
@@ -174,7 +175,7 @@ fn configured_postgres_index_feeds_configured_search() {
         .expect("gwiki index runs");
     assert_command_success("index", &index);
 
-    let search = Command::new(env!("CARGO_BIN_EXE_gwiki"))
+    let search = common::gwiki_command()
         .args([
             "--format",
             "json",

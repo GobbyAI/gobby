@@ -253,6 +253,12 @@ impl OverlayFixtureCleanup {
     }
 }
 
+impl Drop for OverlayFixtureCleanup {
+    fn drop(&mut self) {
+        let _ = self.cleanup();
+    }
+}
+
 fn cleanup_overlay_visibility_fixture(conn: &mut Client, ids: &OverlayFixtureIds) {
     let _ =
         cleanup_overlay_visibility_projects(conn, &ids.parent_project_id, &ids.overlay_project_id);

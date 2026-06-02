@@ -415,23 +415,20 @@ fn first_rendered_article_section(markdown: &str) -> Option<String> {
 }
 
 fn mark_sources_compiled(vault_root: &Path, source_paths: &[PathBuf]) -> Result<(), WikiError> {
-    let mut manifest = SourceManifest::read(vault_root)?;
-    let mut changed = false;
-    for entry in &mut manifest.entries {
-        if source_paths
-            .iter()
-            .any(|path| source_record_matches_path(entry, vault_root, path))
-            && entry.compile_status != CompileStatus::Compiled
-        {
-            entry.compile_status = CompileStatus::Compiled;
-            changed = true;
+    SourceManifest::update(vault_root, |manifest| {
+        let mut changed = false;
+        for entry in &mut manifest.entries {
+            if source_paths
+                .iter()
+                .any(|path| source_record_matches_path(entry, vault_root, path))
+                && entry.compile_status != CompileStatus::Compiled
+            {
+                entry.compile_status = CompileStatus::Compiled;
+                changed = true;
+            }
         }
-    }
-
-    if changed {
-        manifest.write(vault_root)?;
-    }
-    Ok(())
+        Ok(changed)
+    })
 }
 
 #[derive(Debug, Default)]

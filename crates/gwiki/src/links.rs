@@ -254,6 +254,8 @@ fn collapse_repeated_slashes(value: &str) -> String {
 }
 
 fn is_url_like_target(target: &str) -> bool {
+    // Add extra external schemes here when gwiki should preserve them exactly
+    // instead of normalizing them as vault-relative paths.
     target.contains("://") || target.starts_with("//") || target.starts_with("\\\\")
 }
 

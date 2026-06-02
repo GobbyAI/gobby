@@ -59,14 +59,16 @@ pub enum CoreError {
     InvalidConfig(String),
     /// Two reachable hub DSNs point at different PostgreSQL clusters or databases.
     #[error(
-        "conflicting Gobby PostgreSQL hubs: existing recorded DSN {existing_database_url} identifies {existing_identity}; daemon DSN {daemon_database_url} identifies {daemon_identity}"
+        "conflicting Gobby PostgreSQL hubs: existing recorded hub identifies {existing_identity}; daemon hub identifies {daemon_identity}"
     )]
     HubConflict {
         /// DSN from the existing standalone/subset configuration.
+        #[serde(serialize_with = "serialize_redacted_database_url")]
         existing_database_url: String,
         /// Cluster/database identity observed for the existing DSN.
         existing_identity: String,
         /// DSN reported by the daemon bootstrap/broker.
+        #[serde(serialize_with = "serialize_redacted_database_url")]
         daemon_database_url: String,
         /// Cluster/database identity observed for the daemon DSN.
         daemon_identity: String,
@@ -85,6 +87,30 @@ pub enum CoreError {
     /// Input could not be parsed or failed integrity checks.
     #[error("corrupted input: {0}")]
     CorruptedInput(String),
+}
+
+fn serialize_redacted_database_url<S>(database_url: &str, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&redact_database_url(database_url))
+}
+
+pub fn redact_database_url(database_url: &str) -> String {
+    let without_fragment = database_url
+        .split_once('#')
+        .map_or(database_url, |(head, _)| head);
+    let without_query = without_fragment
+        .split_once('?')
+        .map_or(without_fragment, |(head, _)| head);
+    if let Some((scheme, rest)) = without_query.split_once("://") {
+        let host_and_path = rest
+            .rsplit_once('@')
+            .map_or(rest, |(_, host_and_path)| host_and_path);
+        format!("{scheme}://{host_and_path}")
+    } else {
+        without_query.to_string()
+    }
 }
 
 /// Degradation states for partial results.
@@ -213,5 +239,33 @@ mod tests {
                 && daemon_database_url == "postgres://daemon"
                 && daemon_identity == "daemon-cluster/daemon-db"
         ));
+    }
+
+    #[test]
+    fn hub_conflict_display_and_json_redact_database_urls() {
+        let conflict = CoreError::HubConflict {
+            existing_database_url: "postgresql://user:secret@standalone/gobby?sslmode=require#frag"
+                .to_string(),
+            existing_identity: "cluster-a/gobby".to_string(),
+            daemon_database_url: "postgresql://daemon:secret@daemon/gobby?application_name=gobby"
+                .to_string(),
+            daemon_identity: "cluster-b/gobby".to_string(),
+        };
+
+        let message = conflict.to_string();
+        assert!(message.contains("cluster-a/gobby"));
+        assert!(message.contains("cluster-b/gobby"));
+        assert!(!message.contains("postgresql://"));
+        assert!(!message.contains("secret"));
+        assert!(!message.contains("sslmode"));
+        assert!(!message.contains("application_name"));
+
+        let encoded = serde_json::to_string(&conflict).expect("serialize hub conflict");
+        assert!(encoded.contains("postgresql://standalone/gobby"));
+        assert!(encoded.contains("postgresql://daemon/gobby"));
+        assert!(!encoded.contains("secret"));
+        assert!(!encoded.contains("sslmode"));
+        assert!(!encoded.contains("application_name"));
+        assert!(!encoded.contains("frag"));
     }
 }

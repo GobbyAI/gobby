@@ -158,11 +158,9 @@ fn effective_embedding_route(context: &AiContext) -> AiRouting {
 }
 
 fn gobby_home() -> Result<std::path::PathBuf, WikiError> {
-    dirs::home_dir()
-        .map(|home| home.join(".gobby"))
-        .ok_or_else(|| WikiError::Config {
-            detail: "failed to resolve home directory for gwiki search config".to_string(),
-        })
+    gobby_core::gobby_home().map_err(|error| WikiError::Config {
+        detail: format!("failed to resolve Gobby home for gwiki search config: {error}"),
+    })
 }
 
 struct SearchExecutionInput {

@@ -112,15 +112,16 @@ mod tests {
             std::fs::read_to_string(manifest_dir.join("src/config.rs")).expect("read config.rs");
         let config_services = std::fs::read_to_string(manifest_dir.join("src/config/services.rs"))
             .expect("read config/services.rs");
-        assert!(config_services.contains("gobby_core::config::resolve_falkordb_config"));
-        assert!(config_services.contains("gobby_core::config::resolve_qdrant_config"));
-        assert!(config_services.contains("gobby_core::config::resolve_embedding_config"));
+        assert!(config_services.contains("gobby_core::config::{"));
+        assert!(config_services.contains("ConfigSource"));
+        assert!(config_services.contains("StandaloneConfig"));
         assert!(config_services.contains("impl ConfigSource for PostgresConfigSource"));
         assert!(config_services.contains("gobby_core::postgres::read_config_value"));
         assert!(config_services.contains("gobby_core::config::decode_config_value"));
         assert!(!config_root.contains("fn decode_config_value("));
 
         let db = std::fs::read_to_string(manifest_dir.join("src/db.rs")).expect("read db.rs");
+        assert!(db.contains("gobby_core::gobby_home"));
         assert!(db.contains("gobby_core::postgres::connect_readonly"));
         assert!(db.contains("gobby_core::postgres::connect_readwrite"));
         assert!(!db.contains("Client::connect(database_url, NoTls)"));

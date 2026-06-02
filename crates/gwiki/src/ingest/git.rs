@@ -136,6 +136,12 @@ fn code_fence_info(path: &str) -> String {
 fn markdown_code_fence(text: &str) -> String {
     let backticks = bounded_max_run(text, '`');
     let tildes = bounded_max_run(text, '~');
+    let (backticks, tildes) =
+        if backticks == MAX_CODE_FENCE_LEN - 1 && tildes == MAX_CODE_FENCE_LEN - 1 {
+            (max_run(text, '`'), max_run(text, '~'))
+        } else {
+            (backticks, tildes)
+        };
     let (delimiter, max_run) = if backticks <= tildes {
         ('`', backticks)
     } else {
@@ -154,6 +160,20 @@ fn bounded_max_run(text: &str, delimiter: char) -> usize {
             if max_run + 1 >= MAX_CODE_FENCE_LEN {
                 return MAX_CODE_FENCE_LEN - 1;
             }
+        } else {
+            current_run = 0;
+        }
+    }
+    max_run
+}
+
+fn max_run(text: &str, delimiter: char) -> usize {
+    let mut max_run = 0usize;
+    let mut current_run = 0usize;
+    for ch in text.chars() {
+        if ch == delimiter {
+            current_run += 1;
+            max_run = max_run.max(current_run);
         } else {
             current_run = 0;
         }
@@ -221,5 +241,19 @@ mod tests {
             markdown_code_fence(&"~".repeat(MAX_CODE_FENCE_LEN * 4)).len(),
             3
         );
+    }
+
+    #[test]
+    fn code_fence_uses_uncapped_run_when_both_delimiters_are_saturated() {
+        let text = format!(
+            "{}\n{}",
+            "`".repeat(MAX_CODE_FENCE_LEN * 4),
+            "~".repeat(MAX_CODE_FENCE_LEN * 5)
+        );
+
+        let fence = markdown_code_fence(&text);
+
+        assert!(fence.chars().all(|ch| ch == '`'));
+        assert_eq!(fence.len(), MAX_CODE_FENCE_LEN * 4 + 1);
     }
 }

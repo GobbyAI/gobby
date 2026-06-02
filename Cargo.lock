@@ -1228,6 +1228,7 @@ dependencies = [
  "fs4",
  "gobby-core",
  "html-escape",
+ "linked-hash-map",
  "log",
  "pdf-extract",
  "pdfium-auto",
@@ -1735,6 +1736,12 @@ name = "libyaml-rs"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e126dda6f34391ab7b444f9922055facc83c07a910da3eb16f1e4d9c45dc777"
+
+[[package]]
+name = "linked-hash-map"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0717cef1bc8b636c6e1c1bbdefc09e6322da8a9321966e8928ef80d20f7f770f"
 
 [[package]]
 name = "linux-raw-sys"

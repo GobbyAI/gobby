@@ -25,6 +25,9 @@ use super::util::{
     unsupported_file_types,
 };
 
+const GIT_STATUS_TIMEOUT_ENV: &str = "GCODE_GIT_STATUS_TIMEOUT_SECS";
+const DEFAULT_GIT_STATUS_TIMEOUT_SECS: u64 = 5;
+
 #[derive(Debug, Clone)]
 pub(super) struct IndexedFileState {
     pub(super) content_hash: String,
@@ -321,7 +324,7 @@ fn git_status_relative_paths(root_path: &Path) -> anyhow::Result<HashSet<String>
         .stderr(Stdio::piped())
         .spawn()
         .context("spawn git status")?;
-    let timeout = Duration::from_secs(5);
+    let timeout = git_status_timeout();
     let output = match child.wait_timeout(timeout)? {
         Some(_) => child.wait_with_output()?,
         None => {
@@ -358,6 +361,22 @@ fn git_status_relative_paths(root_path: &Path) -> anyhow::Result<HashSet<String>
         }
     }
     Ok(paths)
+}
+
+fn git_status_timeout() -> Duration {
+    let Some(raw) = std::env::var_os(GIT_STATUS_TIMEOUT_ENV) else {
+        return Duration::from_secs(DEFAULT_GIT_STATUS_TIMEOUT_SECS);
+    };
+    let raw = raw.to_string_lossy();
+    match raw.trim().parse::<u64>() {
+        Ok(seconds) if seconds > 0 => Duration::from_secs(seconds),
+        _ => {
+            eprintln!(
+                "Warning: invalid {GIT_STATUS_TIMEOUT_ENV}={raw:?}; using default {DEFAULT_GIT_STATUS_TIMEOUT_SECS}s"
+            );
+            Duration::from_secs(DEFAULT_GIT_STATUS_TIMEOUT_SECS)
+        }
+    }
 }
 
 fn compact_stderr(stderr: &[u8]) -> String {
@@ -416,7 +435,8 @@ fn write_tombstone(conn: &mut Client, project_id: &str, rel: &str) -> anyhow::Re
 
 #[cfg(test)]
 mod tests {
-    use super::valid_porcelain_status_byte;
+    use super::{DEFAULT_GIT_STATUS_TIMEOUT_SECS, git_status_timeout, valid_porcelain_status_byte};
+    use std::time::Duration;
 
     #[test]
     fn porcelain_status_byte_validation_matches_git_v1_codes() {
@@ -425,6 +445,27 @@ mod tests {
         }
         for byte in [0, b'X', b'\n'] {
             assert!(!valid_porcelain_status_byte(byte));
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn git_status_timeout_reads_positive_env_seconds() {
+        temp_env::with_var("GCODE_GIT_STATUS_TIMEOUT_SECS", Some("2"), || {
+            assert_eq!(git_status_timeout(), Duration::from_secs(2));
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn git_status_timeout_rejects_invalid_env_values() {
+        for value in ["0", "-1", "abc"] {
+            temp_env::with_var("GCODE_GIT_STATUS_TIMEOUT_SECS", Some(value), || {
+                assert_eq!(
+                    git_status_timeout(),
+                    Duration::from_secs(DEFAULT_GIT_STATUS_TIMEOUT_SECS)
+                );
+            });
         }
     }
 }

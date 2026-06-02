@@ -224,15 +224,23 @@ fn status_body_advertises(capability: AiCapability, body: Option<&str>) -> Resul
         ],
     };
 
-    paths
-        .iter()
-        .find_map(|path| bool_at_path(&value, path))
-        .ok_or_else(|| {
-            format!(
-                "daemon status body does not advertise {}",
-                capability.as_str()
-            )
-        })
+    let mut advertised = false;
+    for path in paths {
+        if let Some(enabled) = bool_at_path(&value, path) {
+            advertised = true;
+            if enabled {
+                return Ok(true);
+            }
+        }
+    }
+    if advertised {
+        Ok(false)
+    } else {
+        Err(format!(
+            "daemon status body does not advertise {}",
+            capability.as_str()
+        ))
+    }
 }
 
 fn bool_at_path(value: &Value, path: &[&str]) -> Option<bool> {
@@ -355,6 +363,13 @@ mod tests {
     fn embed_status_body_requires_advertised_capability() {
         assert_eq!(
             status_body_advertises(AiCapability::Embed, Some(r#"{"embedding_enabled":true}"#)),
+            Ok(true)
+        );
+        assert_eq!(
+            status_body_advertises(
+                AiCapability::Embed,
+                Some(r#"{"embedding_enabled":false,"capabilities":{"embed":true}}"#)
+            ),
             Ok(true)
         );
         assert!(status_body_advertises(AiCapability::Embed, Some(r#"{}"#)).is_err());

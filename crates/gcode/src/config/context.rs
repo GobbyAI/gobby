@@ -231,9 +231,18 @@ pub fn resolve_project_identity(
         .canonicalize()
         .unwrap_or_else(|_| absolute_fallback(project_root));
 
-    if let Some(marker) = crate::project::read_isolation_marker(&root)
-        && !is_self_referential_isolation_marker(&marker, &root)
-    {
+    if let Some(marker) = crate::project::read_isolation_marker(&root) {
+        if marker.parent_project_path.is_some() ^ marker.parent_project_id.is_some() {
+            anyhow::bail!(
+                "invalid isolation marker in {}: parent_project_path and parent_project_id must be set together",
+                root.join(".gobby").join("project.json").display()
+            );
+        }
+
+        if is_self_referential_isolation_marker(&marker, &root) {
+            return resolve_non_isolated_project_identity(root, missing);
+        }
+
         if let (Some(parent_project_path), Some(parent_project_id)) = (
             marker.parent_project_path.as_deref(),
             marker.parent_project_id.as_deref(),
@@ -266,6 +275,13 @@ pub fn resolve_project_identity(
         });
     }
 
+    resolve_non_isolated_project_identity(root, missing)
+}
+
+fn resolve_non_isolated_project_identity(
+    root: PathBuf,
+    missing: MissingIdentity,
+) -> anyhow::Result<ProjectIdentity> {
     let worktree = git::worktree_info(&root)?;
     if worktree.kind == WorktreeKind::Linked {
         let project_id = crate::project::code_index_id_for_root(&worktree.top_level);
@@ -412,12 +428,11 @@ fn resolve_project_by_name(name: &str, database_url: &str) -> anyhow::Result<Pat
          WHERE root_path = $1
             OR right(root_path, length($2)) = $2
             OR right(root_path, length($3)) = $3
-         ORDER BY last_indexed_at DESC NULLS LAST
-         LIMIT 1",
+         ORDER BY last_indexed_at DESC NULLS LAST",
         &[&name, &slash_suffix, &backslash_suffix],
     )?;
 
-    if let Some(row) = rows.first() {
+    for row in rows {
         let root_path: String = row.try_get("root_path")?;
         let path = PathBuf::from(&root_path);
         if path.is_dir() {

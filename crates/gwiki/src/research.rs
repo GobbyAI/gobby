@@ -591,6 +591,16 @@ fn materializing_marker_is_stale(path: &Path) -> bool {
 }
 
 fn append_raw_index(vault_root: &Path, title: &str, note_path: &Path) -> Result<(), WikiError> {
+    crate::sources::SourceManifest::with_lock(vault_root, || {
+        append_raw_index_locked(vault_root, title, note_path)
+    })
+}
+
+fn append_raw_index_locked(
+    vault_root: &Path,
+    title: &str,
+    note_path: &Path,
+) -> Result<(), WikiError> {
     let raw_dir = vault_root.join("raw");
     fs::create_dir_all(&raw_dir).map_err(|error| WikiError::Io {
         action: "create raw directory",

@@ -21,30 +21,17 @@ fn exact_symbol_matches_result(
     limit: usize,
 ) -> anyhow::Result<Vec<Symbol>> {
     let columns = db::symbol_select_columns("");
-    let sql = match column {
-        "id" => format!(
-            "SELECT {columns}
-             FROM code_symbols
-             WHERE project_id = $1 AND id = $2
-             ORDER BY file_path ASC, line_start ASC
-             LIMIT $3"
-        ),
-        "qualified_name" => format!(
-            "SELECT {columns}
-             FROM code_symbols
-             WHERE project_id = $1 AND qualified_name = $2
-             ORDER BY file_path ASC, line_start ASC
-             LIMIT $3"
-        ),
-        "name" => format!(
-            "SELECT {columns}
-             FROM code_symbols
-             WHERE project_id = $1 AND name = $2
-             ORDER BY file_path ASC, line_start ASC
-             LIMIT $3"
-        ),
+    let column = match column {
+        "id" | "qualified_name" | "name" => column,
         _ => return Ok(Vec::new()),
     };
+    let sql = format!(
+        "SELECT {columns}
+         FROM code_symbols
+         WHERE project_id = $1 AND {column} = $2
+         ORDER BY file_path ASC, line_start ASC
+         LIMIT $3"
+    );
     let rows = conn.query(&sql, &[&project_id, &input, &(limit as i64)])?;
     let mut symbols = Vec::new();
     for row in &rows {

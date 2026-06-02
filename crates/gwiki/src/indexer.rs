@@ -236,6 +236,7 @@ fn document_kind(path: &Path) -> Option<WikiDocumentKind> {
         ["wiki", "sources", ..] => Some(WikiDocumentKind::SourceNote),
         ["wiki", "concepts", ..] => Some(WikiDocumentKind::Concept),
         ["wiki", "topics", ..] => Some(WikiDocumentKind::Topic),
+        // `wiki/code/**` stores generated code documentation, not source code.
         ["wiki", "code", ..] => Some(WikiDocumentKind::CodeDoc),
         _ => None,
     }

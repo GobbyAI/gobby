@@ -2,9 +2,11 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 use std::thread;
 use std::time::{Duration, Instant};
+
+mod common;
 
 use gobby_wiki::session::{AcceptedResearchNote, DaemonDispatch, ResearchScope, ResearchSession};
 use gobby_wiki::sources::{
@@ -12,7 +14,7 @@ use gobby_wiki::sources::{
 };
 
 fn gwiki(hub: &Path, cwd: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_gwiki"))
+    common::gwiki_command()
         .args(args)
         .env("GOBBY_WIKI_HUB", hub)
         .env("HOME", cwd.join("home"))
@@ -25,7 +27,7 @@ fn gwiki(hub: &Path, cwd: &Path, args: &[&str]) -> Output {
 }
 
 fn gwiki_with_database_url(hub: &Path, cwd: &Path, database_url: &str, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_gwiki"))
+    common::gwiki_command()
         .args(args)
         .env("GOBBY_WIKI_HUB", hub)
         .env("HOME", cwd.join("home"))

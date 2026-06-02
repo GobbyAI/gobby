@@ -56,197 +56,58 @@ impl GwikiStandaloneSetup {
     }
 
     pub fn postgres_objects(&self) -> Result<Vec<GwikiPostgresObject>, SetupError> {
-        let documents = self.qualified("gwiki_documents", "table")?;
-        let chunks = self.qualified("gwiki_chunks", "table")?;
-        let links = self.qualified("gwiki_links", "table")?;
-        let sources = self.qualified("gwiki_sources", "table")?;
-        let ingestions = self.qualified("gwiki_ingestions", "table")?;
+        let mut objects = vec![preflight(
+            "gwiki_pg_search_extension_preflight",
+            "DO $$
+             BEGIN
+                 IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_search') THEN
+                     RAISE EXCEPTION 'ParadeDB pg_search extension is required for gwiki BM25 indexes';
+                 END IF;
+             END
+             $$;"
+            .to_string(),
+        )];
 
-        let documents_scope_path_idx = self.qualified("gwiki_documents_scope_path_idx", "index")?;
-        let documents_content_hash_idx =
-            self.qualified("gwiki_documents_content_hash_idx", "index")?;
-        let chunks_scope_path_idx = self.qualified("gwiki_chunks_scope_path_idx", "index")?;
-        let sources_scope_path_idx = self.qualified("gwiki_sources_scope_path_idx", "index")?;
-        let links_scope_idx = self.qualified("gwiki_links_scope_idx", "index")?;
-        let documents_search_bm25 = self.qualified("gwiki_documents_search_bm25", "index")?;
-        let chunks_search_bm25 = self.qualified("gwiki_chunks_search_bm25", "index")?;
+        for &table_name in GWIKI_POSTGRES_TABLES {
+            objects.push(table(
+                table_name,
+                self.validate_relation_sql(table_name, "table")?,
+            ));
+        }
+        for &index_name in GWIKI_POSTGRES_INDEXES {
+            objects.push(index(
+                index_name,
+                self.validate_relation_sql(index_name, "index")?,
+            ));
+        }
 
-        Ok(vec![
-            preflight(
-                "gwiki_pg_search_extension_preflight",
-                "DO $$
-                 BEGIN
-                     IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_search') THEN
-                         RAISE EXCEPTION 'ParadeDB pg_search extension is required before creating gwiki BM25 indexes';
-                     END IF;
-                 END
-                 $$;"
-                .to_string(),
-            ),
-            table(
-                "gwiki_documents",
-                format!(
-                    "CREATE TABLE IF NOT EXISTS {documents} (
-                        id TEXT PRIMARY KEY,
-                        scope_kind TEXT NOT NULL,
-                        scope_id TEXT NOT NULL,
-                        project_id TEXT,
-                        topic_name TEXT,
-                        path TEXT NOT NULL,
-                        title TEXT,
-                        source_kind TEXT NOT NULL,
-                        content_hash TEXT NOT NULL,
-                        frontmatter JSONB NOT NULL DEFAULT '{{}}'::jsonb,
-                        provenance JSONB NOT NULL DEFAULT '{{}}'::jsonb,
-                        body TEXT NOT NULL DEFAULT '',
-                        indexed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                        UNIQUE (scope_kind, scope_id, path)
-                    );"
-                ),
-            ),
-            table(
-                "gwiki_chunks",
-                format!(
-                    "CREATE TABLE IF NOT EXISTS {chunks} (
-                        id TEXT PRIMARY KEY,
-                        document_id TEXT NOT NULL,
-                        scope_kind TEXT NOT NULL,
-                        scope_id TEXT NOT NULL,
-                        project_id TEXT,
-                        topic_name TEXT,
-                        path TEXT NOT NULL,
-                        chunk_index INTEGER NOT NULL,
-                        source_kind TEXT NOT NULL,
-                        content_hash TEXT NOT NULL,
-                        frontmatter JSONB NOT NULL DEFAULT '{{}}'::jsonb,
-                        provenance JSONB NOT NULL DEFAULT '{{}}'::jsonb,
-                        heading_path TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
-                        content TEXT NOT NULL,
-                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                        UNIQUE (scope_kind, scope_id, path, chunk_index)
-                    );"
-                ),
-            ),
-            table(
-                "gwiki_links",
-                format!(
-                    "CREATE TABLE IF NOT EXISTS {links} (
-                        id TEXT PRIMARY KEY,
-                        scope_kind TEXT NOT NULL,
-                        scope_id TEXT NOT NULL,
-                        project_id TEXT,
-                        topic_name TEXT,
-                        path TEXT NOT NULL,
-                        target_path TEXT NOT NULL,
-                        link_text TEXT NOT NULL,
-                        link_kind TEXT NOT NULL,
-                        provenance JSONB NOT NULL DEFAULT '{{}}'::jsonb,
-                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                        UNIQUE (scope_kind, scope_id, path, target_path, link_text, link_kind)
-                    );"
-                ),
-            ),
-            table(
-                "gwiki_sources",
-                format!(
-                    "CREATE TABLE IF NOT EXISTS {sources} (
-                        id TEXT PRIMARY KEY,
-                        scope_kind TEXT NOT NULL,
-                        scope_id TEXT NOT NULL,
-                        project_id TEXT,
-                        topic_name TEXT,
-                        path TEXT NOT NULL,
-                        source_kind TEXT NOT NULL,
-                        content_hash TEXT NOT NULL,
-                        frontmatter JSONB NOT NULL DEFAULT '{{}}'::jsonb,
-                        provenance JSONB NOT NULL DEFAULT '{{}}'::jsonb,
-                        captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                        UNIQUE (scope_kind, scope_id, path)
-                    );"
-                ),
-            ),
-            table(
-                "gwiki_ingestions",
-                format!(
-                    "CREATE TABLE IF NOT EXISTS {ingestions} (
-                        id TEXT PRIMARY KEY,
-                        scope_kind TEXT NOT NULL,
-                        scope_id TEXT NOT NULL,
-                        project_id TEXT,
-                        topic_name TEXT,
-                        path TEXT NOT NULL,
-                        source_kind TEXT NOT NULL,
-                        content_hash TEXT NOT NULL,
-                        frontmatter JSONB NOT NULL DEFAULT '{{}}'::jsonb,
-                        provenance JSONB NOT NULL DEFAULT '{{}}'::jsonb,
-                        status TEXT NOT NULL,
-                        ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                    );"
-                ),
-            ),
-            index(
-                "gwiki_documents_scope_path_idx",
-                format!(
-                    "CREATE INDEX IF NOT EXISTS {documents_scope_path_idx}
-                     ON {documents}(scope_kind, scope_id, path);"
-                ),
-            ),
-            index(
-                "gwiki_documents_content_hash_idx",
-                format!(
-                    "CREATE INDEX IF NOT EXISTS {documents_content_hash_idx}
-                     ON {documents}(scope_kind, scope_id, content_hash);"
-                ),
-            ),
-            index(
-                "gwiki_chunks_scope_path_idx",
-                format!(
-                    "CREATE INDEX IF NOT EXISTS {chunks_scope_path_idx}
-                     ON {chunks}(scope_kind, scope_id, path);"
-                ),
-            ),
-            index(
-                "gwiki_sources_scope_path_idx",
-                format!(
-                    "CREATE INDEX IF NOT EXISTS {sources_scope_path_idx}
-                     ON {sources}(scope_kind, scope_id, path);"
-                ),
-            ),
-            index(
-                "gwiki_links_scope_idx",
-                format!(
-                    "CREATE INDEX IF NOT EXISTS {links_scope_idx}
-                     ON {links}(scope_kind, scope_id, target_path);"
-                ),
-            ),
-            index(
-                "gwiki_documents_search_bm25",
-                format!(
-                    "CREATE INDEX IF NOT EXISTS {documents_search_bm25}
-                     ON {documents}
-                     USING bm25 (id, path, title, body)
-                     WITH (key_field = 'id');"
-                ),
-            ),
-            index(
-                "gwiki_chunks_search_bm25",
-                format!(
-                    "CREATE INDEX IF NOT EXISTS {chunks_search_bm25}
-                     ON {chunks}
-                     USING bm25 (id, path, content)
-                     WITH (key_field = 'id');"
-                ),
-            ),
-        ])
+        Ok(objects)
     }
 
-    fn qualified(&self, relation: &str, label: &str) -> Result<String, SetupError> {
+    fn validate_relation_sql(&self, relation: &str, label: &str) -> Result<String, SetupError> {
+        let qualified = self.qualified_regclass_literal(relation, label)?;
         Ok(format!(
+            "DO $$
+             BEGIN
+                 IF to_regclass({qualified}) IS NULL THEN
+                     RAISE EXCEPTION 'required gwiki {label} `{relation}` is missing';
+                 END IF;
+             END
+             $$;"
+        ))
+    }
+
+    fn qualified_regclass_literal(
+        &self,
+        relation: &str,
+        label: &str,
+    ) -> Result<String, SetupError> {
+        let qualified = format!(
             "{}.{}",
             quote_identifier(&self.schema, "schema")?,
             quote_identifier(relation, label)?
-        ))
+        );
+        Ok(sql_string_literal(&qualified))
     }
 }
 
@@ -362,6 +223,10 @@ fn quote_identifier(value: &str, label: &str) -> Result<String, SetupError> {
     Ok(format!("\"{}\"", trimmed.replace('"', "\"\"")))
 }
 
+fn sql_string_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,18 +278,18 @@ mod tests {
             assert!(!combined_sql.contains(forbidden), "{combined_sql}");
         }
 
-        assert!(combined_sql.contains("scope_kind"), "{combined_sql}");
-        assert!(combined_sql.contains("project_id"), "{combined_sql}");
-        assert!(combined_sql.contains("topic_name"), "{combined_sql}");
-        assert!(combined_sql.contains("path"), "{combined_sql}");
-        assert!(combined_sql.contains("source_kind"), "{combined_sql}");
-        assert!(combined_sql.contains("content_hash"), "{combined_sql}");
-        assert!(combined_sql.contains("frontmatter"), "{combined_sql}");
-        assert!(combined_sql.contains("provenance"), "{combined_sql}");
-        assert!(combined_sql.contains("USING bm25"), "{combined_sql}");
+        assert!(combined_sql.contains("to_regclass"), "{combined_sql}");
         assert!(combined_sql.contains("pg_extension"), "{combined_sql}");
+        for relation in GWIKI_POSTGRES_TABLES
+            .iter()
+            .chain(GWIKI_POSTGRES_INDEXES.iter())
+        {
+            assert!(combined_sql.contains(relation), "{combined_sql}");
+        }
         assert!(!combined_sql.contains("CREATE EXTENSION"), "{combined_sql}");
         assert!(!combined_sql.contains("CREATE SCHEMA"), "{combined_sql}");
+        assert!(!combined_sql.contains("CREATE TABLE"), "{combined_sql}");
+        assert!(!combined_sql.contains("CREATE INDEX"), "{combined_sql}");
         assert!(!combined_sql.contains("ALTER "), "{combined_sql}");
         assert!(!combined_sql.contains("DROP "), "{combined_sql}");
 

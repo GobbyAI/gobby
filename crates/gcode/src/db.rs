@@ -28,12 +28,7 @@ struct BootstrapDatabase {
 
 /// Return Gobby home, respecting `GOBBY_HOME` when the daemon was configured with it.
 pub fn gobby_home() -> anyhow::Result<PathBuf> {
-    if let Some(home) = std::env::var_os("GOBBY_HOME") {
-        return Ok(PathBuf::from(home));
-    }
-    Ok(dirs::home_dir()
-        .context("cannot determine home directory")?
-        .join(".gobby"))
+    gobby_core::gobby_home()
 }
 
 pub fn bootstrap_path() -> anyhow::Result<PathBuf> {

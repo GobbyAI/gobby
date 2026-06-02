@@ -74,10 +74,18 @@ pub(crate) fn execute_remove(
     let index_status = if dry_run {
         IndexStatus::not_run()
     } else {
-        if SourceManifest::remove(scope.root(), &record.id)?.is_none() {
-            degradations.push("manifest_entry_missing_after_plan".to_string());
+        match SourceManifest::remove(scope.root(), &record.id) {
+            Ok(Some(_)) => {}
+            Ok(None) => degradations.push("manifest_entry_missing_after_plan".to_string()),
+            Err(error) => degradations.push(format!("manifest_remove_failed:{error}")),
         }
-        IndexStatus::indexed(index::index_resolved_scope(&scope)?)
+        match index::index_resolved_scope(&scope) {
+            Ok(counts) => IndexStatus::indexed(counts),
+            Err(error) => {
+                degradations.push(format!("index_failed:{error}"));
+                IndexStatus::degraded()
+            }
+        }
     };
 
     Ok(render_remove_source(RemoveSourceRender {
@@ -131,6 +139,14 @@ impl IndexStatus {
             status: "indexed",
             index_required: false,
             indexed: Some(IndexedCounts::from(counts)),
+        }
+    }
+
+    fn degraded() -> Self {
+        Self {
+            status: "degraded",
+            index_required: true,
+            indexed: None,
         }
     }
 }
@@ -513,8 +529,12 @@ mod tests {
         );
 
         let mut degradations = Vec::new();
-        let entries = source_entries(temp.path(), &[record.clone()], &mut degradations)
-            .expect("source entries");
+        let entries = source_entries(
+            temp.path(),
+            std::slice::from_ref(&record),
+            &mut degradations,
+        )
+        .expect("source entries");
 
         assert!(degradations.is_empty(), "{degradations:?}");
         assert_eq!(entries.len(), 1);
@@ -533,8 +553,12 @@ mod tests {
         let record = seed_manifest_source(temp.path(), CompileStatus::Pending);
 
         let mut degradations = Vec::new();
-        let entries = source_entries(temp.path(), &[record.clone()], &mut degradations)
-            .expect("source entries");
+        let entries = source_entries(
+            temp.path(),
+            std::slice::from_ref(&record),
+            &mut degradations,
+        )
+        .expect("source entries");
 
         assert_eq!(entries[0].raw_path, format!("raw/{}.md", record.id));
         assert!(!entries[0].raw_exists);

@@ -406,7 +406,7 @@ fn explicit_skip_cleanup_deletes_stale_facts_and_projections() {
         "src/setup.mjs",
         &mut outcome,
         true,
-        true,
+        Some(true),
         || {
             deleted = true;
             Ok(())
@@ -456,7 +456,7 @@ fn explicit_skip_cleanup_ignores_never_indexed_files() {
         "src/secret.txt",
         &mut outcome,
         false,
-        false,
+        Some(false),
         || panic!("delete should not run for files without stale facts"),
     )
     .expect("cleanup skipped explicit file");
@@ -534,7 +534,7 @@ fn deleted_file_projection_cleanup_degrades_without_services() {
     };
     let mut outcome = IndexOutcome::new("project-1");
 
-    cleanup_deleted_file_projections(&ctx, "src/deleted.rs", &mut outcome, true);
+    cleanup_deleted_file_projections(&ctx, "src/deleted.rs", &mut outcome, Some(true));
 
     assert_eq!(outcome.degraded.len(), 2);
     assert!(outcome.degraded.iter().any(|degradation| matches!(
@@ -573,7 +573,7 @@ fn deleted_file_projection_cleanup_skips_vectors_when_not_previously_synced() {
     };
     let mut outcome = IndexOutcome::new("project-1");
 
-    cleanup_deleted_file_projections(&ctx, "src/deleted.rs", &mut outcome, false);
+    cleanup_deleted_file_projections(&ctx, "src/deleted.rs", &mut outcome, Some(false));
 
     assert_eq!(outcome.degraded.len(), 1);
     assert!(outcome.degraded.iter().all(|degradation| matches!(

@@ -1,5 +1,6 @@
 use std::fs;
-use std::process::Command;
+
+mod common;
 
 #[test]
 fn export_workflow_assets_writes_outputs_without_mutating_wiki_pages() {
@@ -11,7 +12,7 @@ fn export_workflow_assets_writes_outputs_without_mutating_wiki_pages() {
     fs::write(&wiki_page, "# Ownership\n\nCanonical page.\n").expect("write wiki page");
     let before = fs::read_to_string(&wiki_page).expect("read before");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_gwiki"))
+    let output = common::gwiki_command()
         .args([
             "--topic",
             "rust",
@@ -45,7 +46,7 @@ fn export_workflow_assets_writes_outputs_without_mutating_wiki_pages() {
 
     let report = tmp.path().join("health.md");
     fs::write(&report, "# Health\n\nGenerated report.\n").expect("write report");
-    let output = Command::new(env!("CARGO_BIN_EXE_gwiki"))
+    let output = common::gwiki_command()
         .args([
             "--topic",
             "rust",

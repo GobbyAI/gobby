@@ -146,15 +146,15 @@ fn resolved_log_path(path: &Path) -> PathBuf {
         return resolved.clone();
     }
 
-    let resolved = resolve_log_path_uncached(path);
-    cache.insert(key, resolved.clone());
-    resolved
+    if let Ok(resolved) = path.canonicalize() {
+        cache.insert(key, resolved.clone());
+        return resolved;
+    }
+
+    resolve_log_path_fallback(path)
 }
 
-fn resolve_log_path_uncached(path: &Path) -> PathBuf {
-    if let Ok(path) = path.canonicalize() {
-        return path;
-    }
+fn resolve_log_path_fallback(path: &Path) -> PathBuf {
     if let (Some(parent), Some(file_name)) = (path.parent(), path.file_name())
         && let Ok(parent) = parent.canonicalize()
     {

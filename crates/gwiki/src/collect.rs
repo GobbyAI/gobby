@@ -539,10 +539,9 @@ fn urls_from_embedded_text(text: &str) -> Vec<String> {
         let candidate = rest[start..]
             .split(|ch: char| ch.is_whitespace() || matches!(ch, '<' | '>' | '"' | '\''))
             .next()
-            .unwrap_or("")
-            .trim_end_matches([',', '.', ';', ')', ']']);
-        if is_http_url(candidate) {
-            urls.push(candidate.to_string());
+            .unwrap_or("");
+        if let Some(url) = parse_embedded_http_url(candidate) {
+            urls.push(url);
         }
         rest = &rest[start + candidate.len()..];
     }
@@ -550,8 +549,17 @@ fn urls_from_embedded_text(text: &str) -> Vec<String> {
 }
 
 fn is_http_url(value: &str) -> bool {
-    let lower = value.to_ascii_lowercase();
-    lower.starts_with("https://") || lower.starts_with("http://")
+    parse_http_url(value).is_some()
+}
+
+fn parse_embedded_http_url(candidate: &str) -> Option<String> {
+    parse_http_url(candidate)
+        .or_else(|| parse_http_url(candidate.trim_end_matches([',', '.', ';', ')', ']'])))
+}
+
+fn parse_http_url(value: &str) -> Option<String> {
+    let parsed = url::Url::parse(value).ok()?;
+    matches!(parsed.scheme(), "http" | "https").then(|| value.to_string())
 }
 
 fn should_store_asset(kind: &SourceKind) -> bool {
@@ -714,9 +722,17 @@ mod tests {
                 "Sources: https://example.test/one, then http://example.test/two."
             ),
             vec![
-                "https://example.test/one".to_string(),
-                "http://example.test/two".to_string()
+                "https://example.test/one,".to_string(),
+                "http://example.test/two.".to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn embedded_url_parser_preserves_valid_punctuation_before_trimming() {
+        assert_eq!(
+            urls_from_embedded_text("See https://example.test/path_(v1) for details"),
+            vec!["https://example.test/path_(v1)".to_string()]
         );
     }
 

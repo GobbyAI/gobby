@@ -1,5 +1,3 @@
-use std::process::Command;
-
 mod common;
 
 fn assert_vault_shape(root: &std::path::Path) {
@@ -26,7 +24,7 @@ fn assert_vault_shape(root: &std::path::Path) {
 fn init_creates_vault_shape() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let hub = tmp.path().join("hub");
-    let topic_output = Command::new(env!("CARGO_BIN_EXE_gwiki"))
+    let topic_output = common::gwiki_command()
         .args(["init", "--topic", "rust"])
         .env("GOBBY_WIKI_HUB", &hub)
         .current_dir(tmp.path())
@@ -45,7 +43,7 @@ fn init_creates_vault_shape() {
     let project = tmp.path().join("project");
     let gcode_json = common::write_gcode_json(&project);
 
-    let project_output = Command::new(env!("CARGO_BIN_EXE_gwiki"))
+    let project_output = common::gwiki_command()
         .args(["init", "--project"])
         .env_remove("GOBBY_WIKI_HUB")
         .current_dir(&project)

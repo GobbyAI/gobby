@@ -257,6 +257,9 @@ where
     S: FnMut(&str) -> anyhow::Result<String>,
 {
     fn config_value(&mut self, key: &str) -> anyhow::Result<Option<String>> {
+        if let Some(value) = service_env_value(key) {
+            return Ok(Some(value));
+        }
         Ok((self.read_config_value)(key)
             .and_then(|raw| gobby_core::config::decode_config_value(&raw)))
     }
@@ -350,7 +353,9 @@ fn resolve_falkordb_config_from_source(
         return Ok(None);
     };
     let port = resolve_service_port(source, "databases.falkordb.port", 16379)?;
-    let password = resolve_service_setting(source, "databases.falkordb.requirepass")?;
+    let password = resolve_service_setting(source, "databases.falkordb.requirepass")?.or(
+        resolve_service_setting(source, "databases.falkordb.password")?,
+    );
 
     Ok(Some(FalkorConfig {
         host,
@@ -421,11 +426,15 @@ fn resolve_service_port(
     let Some(raw_port) = resolve_service_setting(source, key)? else {
         return Ok(default);
     };
-    Ok(raw_port
-        .parse::<u16>()
-        .ok()
-        .filter(|port| *port > 0)
-        .unwrap_or(default))
+    match raw_port.parse::<u16>() {
+        Ok(port) if port > 0 => Ok(port),
+        _ => {
+            eprintln!(
+                "Warning: invalid service port config {key}={raw_port:?}; using default {default}"
+            );
+            Ok(default)
+        }
+    }
 }
 
 /// Resolve embedding API configuration from config_store + gcore.yaml.

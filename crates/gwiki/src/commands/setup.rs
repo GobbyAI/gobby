@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::Context as _;
 use gobby_core::config::embedding_keys;
 use gobby_core::provisioning::{
     DockerProvisioningReport, DockerServiceOptions, EnsureHubOptions, StandaloneConfig,
@@ -138,12 +137,7 @@ fn apply_service_overrides(options: &SetupOptions, service_options: &mut DockerS
 }
 
 fn gobby_home() -> anyhow::Result<PathBuf> {
-    if let Some(home) = std::env::var_os("GOBBY_HOME") {
-        return Ok(PathBuf::from(home));
-    }
-    Ok(dirs::home_dir()
-        .context("cannot determine home directory")?
-        .join(".gobby"))
+    gobby_core::gobby_home()
 }
 
 fn write_gwiki_gcore_config(
@@ -204,8 +198,10 @@ fn apply_embedding_options(
     options: &SetupOptions,
     config: &mut StandaloneConfig,
 ) -> anyhow::Result<()> {
-    if matches!(options.embedding_vector_dim, Some(0)) {
-        anyhow::bail!("--embedding-vector-dim must be positive");
+    if let Some(vector_dim) = options.embedding_vector_dim
+        && !(1..=8192).contains(&vector_dim)
+    {
+        anyhow::bail!("--embedding-vector-dim must be between 1 and 8192");
     }
     let has_embedding_options = options.embedding_provider.is_some()
         || options.embedding_api_base.is_some()
@@ -383,21 +379,23 @@ mod tests {
 
     #[test]
     fn invalid_embedding_dim_does_not_mutate_config() {
-        let mut config = StandaloneConfig::empty();
-        config.set(embedding_keys::AI_PROVIDER, "existing-provider");
-        let options = SetupOptions {
-            embedding_provider: Some("new-provider".to_string()),
-            embedding_vector_dim: Some(0),
-            ..SetupOptions::default()
-        };
+        for vector_dim in [0, 8193] {
+            let mut config = StandaloneConfig::empty();
+            config.set(embedding_keys::AI_PROVIDER, "existing-provider");
+            let options = SetupOptions {
+                embedding_provider: Some("new-provider".to_string()),
+                embedding_vector_dim: Some(vector_dim),
+                ..SetupOptions::default()
+            };
 
-        let error =
-            apply_embedding_options(&options, &mut config).expect_err("invalid dim rejected");
+            let error =
+                apply_embedding_options(&options, &mut config).expect_err("invalid dim rejected");
 
-        assert!(error.to_string().contains("must be positive"));
-        assert_eq!(
-            config.get(embedding_keys::AI_PROVIDER),
-            Some("existing-provider")
-        );
+            assert!(error.to_string().contains("between 1 and 8192"));
+            assert_eq!(
+                config.get(embedding_keys::AI_PROVIDER),
+                Some("existing-provider")
+            );
+        }
     }
 }

@@ -1,8 +1,9 @@
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
+use linked_hash_map::LinkedHashMap;
 use serde::Serialize;
 
 use crate::lint::{collect_pages, title_for_page};
@@ -306,36 +307,23 @@ fn cached_regex_is_match(pattern: String, haystack: &str) -> bool {
 
 #[derive(Default)]
 struct RegexCache {
-    entries: HashMap<String, regex::Regex>,
-    order: VecDeque<String>,
+    entries: LinkedHashMap<String, regex::Regex>,
 }
 
 impl RegexCache {
     fn get(&mut self, pattern: &str) -> Option<regex::Regex> {
-        let regex = self.entries.get(pattern)?.clone();
-        self.touch(pattern);
-        Some(regex)
+        let regex = self.entries.remove(pattern)?;
+        let cloned = regex.clone();
+        self.entries.insert(pattern.to_string(), regex);
+        Some(cloned)
     }
 
     fn insert(&mut self, pattern: String, regex: regex::Regex) {
-        if self.entries.contains_key(&pattern) {
-            self.entries.insert(pattern.clone(), regex);
-            self.touch(&pattern);
-            return;
-        }
-
-        self.entries.insert(pattern.clone(), regex);
-        self.order.push_back(pattern);
+        self.entries.remove(&pattern);
+        self.entries.insert(pattern, regex);
         while self.entries.len() > REGEX_CACHE_CAPACITY {
-            if let Some(oldest) = self.order.pop_front() {
-                self.entries.remove(&oldest);
-            }
+            self.entries.pop_front();
         }
-    }
-
-    fn touch(&mut self, pattern: &str) {
-        self.order.retain(|key| key != pattern);
-        self.order.push_back(pattern.to_string());
     }
 }
 
@@ -508,6 +496,20 @@ mod tests {
     #[test]
     fn cached_regex_returns_false_for_malformed_patterns() {
         assert!(!cached_regex_is_match("[".to_string(), "anything"));
+    }
+
+    #[test]
+    fn regex_cache_touch_updates_lru_order() {
+        let mut cache = RegexCache::default();
+        cache.insert("one".to_string(), regex::Regex::new("one").unwrap());
+        cache.insert("two".to_string(), regex::Regex::new("two").unwrap());
+
+        assert!(cache.get("one").is_some());
+
+        assert_eq!(
+            cache.entries.keys().cloned().collect::<Vec<_>>(),
+            vec!["two".to_string(), "one".to_string()]
+        );
     }
 
     #[test]

@@ -394,14 +394,15 @@ fn ensure_hub_with_identity(
     mut identity_probe: impl FnMut(&str) -> anyhow::Result<HubIdentityProbeResult>,
     provision: impl FnOnce(&DockerServiceOptions) -> anyhow::Result<DockerProvisioningReport>,
 ) -> anyhow::Result<(String, Option<DockerProvisioningReport>)> {
+    let mut override_database_url = None;
     let mut gcore_database_url = None;
     let mut bootstrap_database_url = None;
 
     for candidate in resolve_hub_database_urls(options, &mut get_env)? {
         match candidate.source {
             HubDatabaseUrlSource::Candidate | HubDatabaseUrlSource::Env => {
-                if database_reachable(&candidate.database_url) {
-                    return Ok((candidate.database_url, None));
+                if override_database_url.is_none() && database_reachable(&candidate.database_url) {
+                    override_database_url = Some(candidate.database_url);
                 }
             }
             HubDatabaseUrlSource::GcoreConfig => {
@@ -413,12 +414,33 @@ fn ensure_hub_with_identity(
         }
     }
 
-    if let Some(resolution) = resolve_recorded_hub_database_url(
+    let recorded_resolution = resolve_recorded_hub_database_url(
         gcore_database_url.as_deref(),
         bootstrap_database_url.as_deref(),
         &mut database_reachable,
         &mut identity_probe,
-    )? {
+    )?;
+
+    if let Some(override_database_url) = override_database_url {
+        if let Some(recorded) = recorded_resolution
+            && let Some(resolution) = resolve_recorded_hub_database_url(
+                Some(&recorded.database_url),
+                Some(&override_database_url),
+                &mut database_reachable,
+                &mut identity_probe,
+            )?
+        {
+            if let RecordedHubIdentityStatus::IdentityUnknownInsufficientPrivilege { message } =
+                &resolution.identity_status
+            {
+                log::warn!("{message}");
+            }
+            return Ok((resolution.database_url, None));
+        }
+        return Ok((override_database_url, None));
+    }
+
+    if let Some(resolution) = recorded_resolution {
         if let RecordedHubIdentityStatus::IdentityUnknownInsufficientPrivilege { message } =
             &resolution.identity_status
         {
@@ -551,20 +573,7 @@ pub fn resolve_recorded_hub_database_url(
 }
 
 fn redact_database_url_for_error(database_url: &str) -> String {
-    let without_fragment = database_url
-        .split_once('#')
-        .map_or(database_url, |(head, _)| head);
-    let without_query = without_fragment
-        .split_once('?')
-        .map_or(without_fragment, |(head, _)| head);
-    if let Some((scheme, rest)) = without_query.split_once("://") {
-        let host_and_path = rest
-            .rsplit_once('@')
-            .map_or(rest, |(_, host_and_path)| host_and_path);
-        format!("{scheme}://{host_and_path}")
-    } else {
-        without_query.to_string()
-    }
+    crate::degradation::redact_database_url(database_url)
 }
 
 #[cfg(feature = "postgres")]
@@ -681,6 +690,9 @@ fn resolve_hub_database_urls(
 }
 
 fn resolve_database_url_from_gcore_config(home: &Path) -> anyhow::Result<Option<String>> {
+    if !services_dir(home).is_dir() || !compose_file_path(home).is_file() {
+        return Ok(None);
+    }
     let Some(config) = StandaloneConfig::read_at(&gcore_config_path(home))? else {
         return Ok(None);
     };
@@ -1167,6 +1179,11 @@ mod tests {
         }
     }
 
+    fn write_services_stack(home: &Path) {
+        fs::create_dir_all(services_dir(home)).expect("create services dir");
+        fs::write(compose_file_path(home), "services: {}\n").expect("write compose file");
+    }
+
     #[test]
     fn gcore_yaml_reads_flat_and_nested_keys() {
         let config = StandaloneConfig::from_yaml_str(&format!(
@@ -1336,6 +1353,7 @@ databases.qdrant.url: http://localhost:6333
         let dir = tempfile::tempdir().expect("tempdir");
         let home = dir.path().join(".gobby");
         fs::create_dir_all(&home).expect("create gobby home");
+        write_services_stack(&home);
         let mut config = StandaloneConfig::empty();
         config.set("databases.postgres.dsn", "postgresql://reachable/gobby");
         config
@@ -1379,11 +1397,46 @@ databases.qdrant.url: http://localhost:6333
     }
 
     #[test]
+    fn gcore_yaml_database_url_requires_services_stack() {
+        let _env = EnvGuard::new();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path().join(".gobby");
+        fs::create_dir_all(&home).expect("create gobby home");
+        let mut config = StandaloneConfig::empty();
+        config.set("databases.postgres.dsn", "postgresql://recorded/gobby");
+        config
+            .write_at(&gcore_config_path(&home))
+            .expect("write gcore config");
+
+        let mut options = EnsureHubOptions::new(home);
+        options.service_options.postgres_port = 15432;
+        let (database_url, report) = ensure_hub_with(
+            &options,
+            |_| None,
+            |url| url == "postgresql://recorded/gobby",
+            |service_options| {
+                Ok(DockerProvisioningReport {
+                    services_dir: service_options.gobby_home.join("services"),
+                    compose_file: compose_file_path(&service_options.gobby_home),
+                    env_file: service_options.gobby_home.join("services/.env"),
+                    started_profiles: vec!["all".to_string()],
+                    health_checks: vec!["postgres".to_string()],
+                })
+            },
+        )
+        .expect("missing services stack should provision fallback hub");
+
+        assert_eq!(database_url, default_database_url(15432));
+        assert!(report.is_some());
+    }
+
+    #[test]
     fn no_double_provision_when_reachable() {
         let _env = EnvGuard::new();
         let dir = tempfile::tempdir().expect("tempdir");
         let home = dir.path().join(".gobby");
         fs::create_dir_all(&home).expect("create gobby home");
+        write_services_stack(&home);
         let mut config = StandaloneConfig::empty();
         config.set("databases.postgres.dsn", "postgresql://recorded/gobby");
         config
@@ -1416,6 +1469,7 @@ databases.qdrant.url: http://localhost:6333
         let dir = tempfile::tempdir().expect("tempdir");
         let home = dir.path().join(".gobby");
         fs::create_dir_all(&home).expect("create gobby home");
+        write_services_stack(&home);
         let mut config = StandaloneConfig::empty();
         config.set(
             "databases.postgres.dsn",
@@ -1457,11 +1511,55 @@ databases.qdrant.url: http://localhost:6333
         .expect_err("surface divergent hub conflict");
 
         let message = err.to_string();
-        assert!(message.contains("postgresql://standalone/gobby"));
-        assert!(message.contains("postgresql://daemon/gobby"));
+        assert!(message.contains("system_identifier=cluster-a, database=gobby"));
+        assert!(message.contains("system_identifier=cluster-b, database=gobby"));
+        assert!(!message.contains("postgresql://"));
         assert!(!message.contains("secret"));
         assert!(!message.contains("sslmode"));
         assert!(!message.contains("application_name"));
+    }
+
+    #[test]
+    fn reachable_env_database_url_conflicts_with_recorded_hub() {
+        let _env = EnvGuard::new();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path().join(".gobby");
+        fs::create_dir_all(&home).expect("create gobby home");
+        write_services_stack(&home);
+        let mut config = StandaloneConfig::empty();
+        config.set("databases.postgres.dsn", "postgresql://recorded/gobby");
+        config
+            .write_at(&gcore_config_path(&home))
+            .expect("write gcore config");
+
+        let err = ensure_hub_with_identity(
+            &EnsureHubOptions::new(home),
+            |name| (name == "GOBBY_POSTGRES_DSN").then(|| "postgresql://env/gobby".to_string()),
+            |url| {
+                matches!(
+                    url,
+                    "postgresql://recorded/gobby" | "postgresql://env/gobby"
+                )
+            },
+            |url| {
+                let system_identifier = if url == "postgresql://recorded/gobby" {
+                    "cluster-a"
+                } else {
+                    "cluster-b"
+                };
+                Ok(HubIdentityProbeResult::Known(HubIdentity {
+                    system_identifier: system_identifier.to_string(),
+                    database_name: "gobby".to_string(),
+                }))
+            },
+            |_| panic!("conflicting reachable hubs should not provision services"),
+        )
+        .expect_err("env DSN should be validated against recorded hub");
+
+        let message = err.to_string();
+        assert!(message.contains("system_identifier=cluster-a, database=gobby"));
+        assert!(message.contains("system_identifier=cluster-b, database=gobby"));
+        assert!(!message.contains("postgresql://"));
     }
 
     #[test]
@@ -1470,6 +1568,7 @@ databases.qdrant.url: http://localhost:6333
         let dir = tempfile::tempdir().expect("tempdir");
         let home = dir.path().join(".gobby");
         fs::create_dir_all(&home).expect("create gobby home");
+        write_services_stack(&home);
         let mut config = StandaloneConfig::empty();
         config.set("databases.postgres.dsn", "postgresql://standalone/gobby");
         config

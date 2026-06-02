@@ -1,4 +1,4 @@
-use std::process::{Command, Output};
+use std::process::Output;
 
 mod common;
 
@@ -8,7 +8,7 @@ fn gwiki(args: &[&str]) -> Output {
     let project = tmp.path().join("project");
     common::write_gcode_json(&project);
 
-    Command::new(env!("CARGO_BIN_EXE_gwiki"))
+    common::gwiki_command()
         .args(args)
         .env_clear()
         .env("HOME", tmp.path())

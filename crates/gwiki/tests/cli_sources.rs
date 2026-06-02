@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
+
+mod common;
 
 use gobby_wiki::sources::{
     CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest, SourceRecord,
@@ -9,7 +11,7 @@ use gobby_wiki::sources::{
 fn gwiki(hub: &Path, cwd: &Path, args: &[&str]) -> Output {
     let home = cwd.join("home");
     fs::create_dir_all(&home).expect("create isolated home");
-    Command::new(env!("CARGO_BIN_EXE_gwiki"))
+    common::gwiki_command()
         .args(args)
         .env("GOBBY_WIKI_HUB", hub)
         .env("HOME", home)

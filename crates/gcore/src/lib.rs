@@ -20,6 +20,16 @@ pub mod degradation;
 pub mod local_backend;
 pub mod setup;
 
+/// Return Gobby home, respecting `GOBBY_HOME` when set.
+pub fn gobby_home() -> anyhow::Result<std::path::PathBuf> {
+    if let Some(home) = std::env::var_os("GOBBY_HOME") {
+        return Ok(std::path::PathBuf::from(home));
+    }
+    dirs::home_dir()
+        .map(|home| home.join(".gobby"))
+        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))
+}
+
 // Feature-gated modules.
 #[cfg(feature = "ai")]
 pub mod ai;

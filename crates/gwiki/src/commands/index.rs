@@ -201,15 +201,9 @@ fn ai_project_id(scope: &ScopeIdentity) -> Option<String> {
 }
 
 fn gobby_home() -> Result<PathBuf, WikiError> {
-    if let Some(home) = std::env::var_os("GOBBY_HOME") {
-        return Ok(PathBuf::from(home));
-    }
-
-    dirs::home_dir()
-        .map(|home| home.join(".gobby"))
-        .ok_or_else(|| WikiError::Config {
-            detail: "failed to resolve home directory for gwiki AI config".to_string(),
-        })
+    gobby_core::gobby_home().map_err(|error| WikiError::Config {
+        detail: format!("failed to resolve Gobby home for gwiki AI config: {error}"),
+    })
 }
 
 fn render_index(scope: ScopeIdentity, root: &Path, counts: IndexCounts) -> CommandOutcome {

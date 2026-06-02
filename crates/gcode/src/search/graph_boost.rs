@@ -133,7 +133,7 @@ mod tests {
     #[test]
     fn test_graph_expand_empty_seeds() {
         let ctx = make_ctx_no_falkordb();
-        let result = graph_expand(&ctx, &[]);
+        let result = graph_expand(&ctx, None, &[]);
         assert!(result.is_empty());
     }
 }

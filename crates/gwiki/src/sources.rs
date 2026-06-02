@@ -321,6 +321,26 @@ impl SourceManifest {
         })
     }
 
+    pub fn update(
+        vault_root: &Path,
+        action: impl FnOnce(&mut SourceManifest) -> Result<bool, WikiError>,
+    ) -> Result<(), WikiError> {
+        with_manifest_lock(vault_root, || {
+            let mut manifest = Self::read(vault_root)?;
+            if action(&mut manifest)? {
+                manifest.write(vault_root)?;
+            }
+            Ok(())
+        })
+    }
+
+    pub(crate) fn with_lock<T>(
+        vault_root: &Path,
+        action: impl FnOnce() -> Result<T, WikiError>,
+    ) -> Result<T, WikiError> {
+        with_manifest_lock(vault_root, action)
+    }
+
     pub fn index_path(vault_root: &Path) -> PathBuf {
         vault_root.join("raw").join("INDEX.md")
     }

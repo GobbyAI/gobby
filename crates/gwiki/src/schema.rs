@@ -5,8 +5,7 @@ use gobby_core::setup::{
 
 use crate::setup::{GWIKI_POSTGRES_INDEXES, GWIKI_POSTGRES_TABLES};
 
-pub const MIGRATION_HINT: &str =
-    "Run `gwiki setup` to create gwiki-owned PostgreSQL tables and indexes.";
+pub const MIGRATION_HINT: &str = "Run Gobby hub migrations, then `gwiki setup` to validate gwiki-owned PostgreSQL tables and indexes.";
 const DEFAULT_SCHEMA: &str = "public";
 
 #[derive(Debug, Default)]
@@ -67,7 +66,7 @@ fn missing_relation_issue(relation: &str, detail: &str) -> SetupIssue {
             problem: format!(
                 "required gwiki datastore object `{relation}` is unavailable: {detail}"
             ),
-            action: "run explicit gwiki setup before runtime wiki commands".to_string(),
+            action: "run Gobby hub migrations, then validate with gwiki setup before runtime wiki commands".to_string(),
             command_hint: Some("gwiki setup".to_string()),
         },
     }

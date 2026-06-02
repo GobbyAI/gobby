@@ -189,11 +189,11 @@ impl BlockingUrlFetcher {
         };
         let final_url = response.get_url().to_string();
         let content_type = response.header("content-type").map(ToOwned::to_owned);
-        let mut body = Vec::new();
-        response
-            .into_reader()
-            .read_to_end(&mut body)
-            .map_err(|error| UrlIngestFailure::new(url, "read_error", error.to_string()))?;
+        let max_bytes = crate::support::env::max_inbox_item_bytes_from_env();
+        if content_length_exceeds_limit(response.header("content-length"), max_bytes) {
+            return Err(response_too_large(url, max_bytes));
+        }
+        let body = read_limited_body(response.into_reader(), max_bytes, url)?;
 
         Ok(UrlSnapshot {
             requested_url: url.to_string(),
@@ -203,6 +203,36 @@ impl BlockingUrlFetcher {
             content_type,
         })
     }
+}
+
+fn content_length_exceeds_limit(content_length: Option<&str>, max_bytes: u64) -> bool {
+    content_length
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .is_some_and(|length| length > max_bytes)
+}
+
+fn read_limited_body(
+    reader: impl Read,
+    max_bytes: u64,
+    url: &str,
+) -> Result<Vec<u8>, UrlIngestFailure> {
+    let mut body = Vec::new();
+    reader
+        .take(max_bytes.saturating_add(1))
+        .read_to_end(&mut body)
+        .map_err(|error| UrlIngestFailure::new(url, "read_error", error.to_string()))?;
+    if u64::try_from(body.len()).unwrap_or(u64::MAX) > max_bytes {
+        return Err(response_too_large(url, max_bytes));
+    }
+    Ok(body)
+}
+
+fn response_too_large(url: &str, max_bytes: u64) -> UrlIngestFailure {
+    UrlIngestFailure::new(
+        url,
+        "response_too_large",
+        format!("response exceeds GWIKI_MAX_INBOX_ITEM_BYTES limit of {max_bytes} bytes"),
+    )
 }
 
 impl UrlIngestFailure {
@@ -541,6 +571,24 @@ mod tests {
         assert_eq!(result.status(), "ingested");
         assert_eq!(result.accepted.len(), 2);
         assert_eq!(store.indexed_hash_reads, 1);
+    }
+
+    #[test]
+    fn url_fetch_limits_content_length_and_stream_bytes() {
+        assert!(content_length_exceeds_limit(Some("11"), 10));
+        assert!(!content_length_exceeds_limit(Some("10"), 10));
+        assert!(!content_length_exceeds_limit(Some("invalid"), 10));
+
+        let error = read_limited_body(std::io::Cursor::new(vec![0_u8; 11]), 10, "https://x.test")
+            .expect_err("stream exceeding limit should fail");
+
+        assert_eq!(error.code, "response_too_large");
+        assert_eq!(
+            read_limited_body(std::io::Cursor::new(vec![0_u8; 10]), 10, "https://x.test")
+                .expect("stream at limit")
+                .len(),
+            10
+        );
     }
 
     fn test_snapshot(

@@ -1,9 +1,7 @@
-use std::io::Cursor;
-use std::path::PathBuf;
-
 use bytes::Bytes;
 use reqwest::blocking::{Client, RequestBuilder, multipart};
 use serde_json::{Map, Value};
+use std::io::Cursor;
 
 use crate::ai_context::AiContext;
 use crate::ai_types::{
@@ -172,14 +170,6 @@ pub fn embed_via_daemon(
     input: &[String],
     is_query: bool,
 ) -> Result<DaemonEmbeddingResult, AiError> {
-    if input.is_empty() {
-        return Ok(DaemonEmbeddingResult {
-            embeddings: Vec::new(),
-            model: String::new(),
-            dim: 0,
-        });
-    }
-
     let capability = AiCapability::Embed;
     let client = daemon_client()?;
     let token = read_local_cli_token()?;
@@ -245,14 +235,8 @@ fn read_local_cli_token() -> Result<String, AiError> {
     Ok(token)
 }
 
-fn gobby_home() -> Result<PathBuf, AiError> {
-    if let Some(home) = std::env::var_os("GOBBY_HOME") {
-        return Ok(PathBuf::from(home));
-    }
-
-    dirs::home_dir()
-        .map(|home| home.join(".gobby"))
-        .ok_or_else(|| AiError::not_configured(None, "cannot determine home directory"))
+fn gobby_home() -> Result<std::path::PathBuf, AiError> {
+    crate::gobby_home().map_err(|error| AiError::not_configured(None, error.to_string()))
 }
 
 fn with_local_token(request: RequestBuilder, token: &str) -> RequestBuilder {
@@ -545,6 +529,24 @@ mod tests {
                 .to_string()
                 .contains("returned 1 dimension(s), expected 2")
         );
+    }
+
+    #[test]
+    fn empty_embedding_batch_parses_daemon_model_and_dim() {
+        let (port, request) = spawn_server(r#"{"embeddings":[],"model":"embed-model","dim":768}"#);
+        let home = temp_home();
+        let _env = EnvGuard::set_home(home.path());
+        write_daemon_files(home.path(), port, "embed-token");
+        let cfg = test_context(Some("project-123"));
+
+        let result = embed_via_daemon(&cfg, &[], false).unwrap();
+        let request = request.join().unwrap().unwrap();
+        let body = request_body_json(&request);
+
+        assert_eq!(body["input"], serde_json::json!([]));
+        assert_eq!(result.model, "embed-model");
+        assert_eq!(result.dim, 768);
+        assert!(result.embeddings.is_empty());
     }
 
     #[test]

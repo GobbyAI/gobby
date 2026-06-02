@@ -216,7 +216,7 @@ mod tests {
         let ctx = context_for(database_url.clone(), "gcode-lock-brief-try");
         let _holder = hold_project_lock(&database_url, &ctx.project_id);
 
-        let result = with_project_lock(
+        let result = with_project_lock::<()>(
             &ctx,
             IndexLockPolicy::BriefTry {
                 total_wait: Duration::from_millis(50),

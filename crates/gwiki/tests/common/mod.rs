@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 pub const PROJECT_ID: &str = "project-123";
 pub const GCODE_JSON: &str = r#"{
@@ -27,4 +28,34 @@ pub fn assert_gcode_json_unchanged(path: &Path) {
         fs::read_to_string(path).expect("read gcode json"),
         GCODE_JSON
     );
+}
+
+pub fn gwiki_command() -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_gwiki"));
+    strip_service_env(&mut command);
+    command
+}
+
+pub fn strip_service_env(command: &mut Command) -> &mut Command {
+    for key in [
+        "GWIKI_DATABASE_URL",
+        "GWIKI_POSTGRES_TEST_DATABASE_URL",
+        "GOBBY_POSTGRES_DSN",
+        "GCODE_DATABASE_URL",
+        "GCODE_POSTGRES_TEST_DATABASE_URL",
+        "GOBBY_FALKORDB_HOST",
+        "GOBBY_FALKORDB_PORT",
+        "GOBBY_FALKORDB_PASSWORD",
+        "GOBBY_QDRANT_URL",
+        "GOBBY_QDRANT_API_KEY",
+        "GOBBY_EMBEDDING_URL",
+        "GOBBY_EMBEDDING_MODEL",
+        "GOBBY_EMBEDDING_API_KEY",
+        "GOBBY_EMBEDDING_QUERY_PREFIX",
+        "GOBBY_EMBEDDING_TIMEOUT_SECONDS",
+        "GOBBY_HOME",
+    ] {
+        command.env_remove(key);
+    }
+    command
 }

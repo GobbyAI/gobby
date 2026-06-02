@@ -305,6 +305,44 @@ fn phase7_config_resolution_returns_gcode_falkor_config_with_core_fields_and_gra
 }
 
 #[test]
+#[serial_test::serial]
+fn falkor_password_falls_back_to_password_key() {
+    with_service_env(&[], || {
+        let values = std::collections::HashMap::from([
+            ("databases.falkordb.host", r#""stored-falkor.local""#),
+            ("databases.falkordb.password", r#""stored-pass""#),
+        ]);
+
+        let falkor = resolve_falkordb_config_from_values(config_value_for(&values), |value| {
+            Ok(value.to_string())
+        })
+        .expect("falkordb config");
+
+        assert_eq!(falkor.password.as_deref(), Some("stored-pass"));
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn invalid_service_port_warns_and_uses_default() {
+    with_service_env(&[], || {
+        for raw_port in [r#""0""#, r#""not-a-port""#] {
+            let values = std::collections::HashMap::from([
+                ("databases.falkordb.host", r#""stored-falkor.local""#),
+                ("databases.falkordb.port", raw_port),
+            ]);
+
+            let falkor = resolve_falkordb_config_from_values(config_value_for(&values), |value| {
+                Ok(value.to_string())
+            })
+            .expect("falkordb config");
+
+            assert_eq!(falkor.port, 16379);
+        }
+    });
+}
+
+#[test]
 fn test_resolve_project_id_requires_project_context() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let err = resolve_project_id(tmp.path()).expect_err("missing project context must fail");
@@ -398,7 +436,7 @@ fn isolated_marker_with_parent_metadata_resolves_overlay_scope() {
 }
 
 #[test]
-fn isolated_marker_without_complete_parent_metadata_keeps_single_scope() {
+fn isolated_marker_without_complete_parent_metadata_is_rejected() {
     let tmp = tempfile::tempdir().expect("tempdir");
     write_project_json(
         tmp.path(),
@@ -408,14 +446,33 @@ fn isolated_marker_without_complete_parent_metadata_keeps_single_scope() {
         }),
     );
 
-    let identity = resolve_project_identity(tmp.path(), MissingIdentity::Error).expect("identity");
+    let err = resolve_project_identity(tmp.path(), MissingIdentity::Error)
+        .expect_err("incomplete parent metadata should fail");
 
-    assert_eq!(
-        identity.project_id,
-        crate::project::code_index_id_for_root(tmp.path())
+    let message = err.to_string();
+    assert!(message.contains("invalid isolation marker in"), "{message}");
+    assert!(message.contains(".gobby/project.json"), "{message}");
+    assert!(
+        message.contains("parent_project_path and parent_project_id must be set together"),
+        "{message}"
     );
-    assert_eq!(identity.source, ProjectIdentitySource::IsolatedRoot);
-    assert_eq!(identity.index_scope, ProjectIndexScope::Single);
+}
+
+#[test]
+fn isolated_marker_rejects_missing_parent_path() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    write_project_json(
+        tmp.path(),
+        serde_json::json!({
+            "id": "parent-id",
+            "parent_project_id": "0f1f5df6-7f37-4a7f-9115-5b473f22934e"
+        }),
+    );
+
+    let err = resolve_project_identity(tmp.path(), MissingIdentity::Error)
+        .expect_err("incomplete parent metadata should fail");
+
+    assert!(err.to_string().contains("must be set together"));
 }
 
 #[test]

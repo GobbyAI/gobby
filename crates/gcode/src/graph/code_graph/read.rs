@@ -736,11 +736,9 @@ pub fn blast_radius_graph(
                     blast_radius_file_import_query(&ctx.project_id, &file_path, depth, limit);
                 rows.extend(client.query(&query, Some(params))?);
                 let rows = dedupe_limited_blast_rows(rows, limit);
-                (
-                    file_path.clone(),
-                    GraphNode::new(&file_path, &file_path, "file"),
-                    rows,
-                )
+                let mut center_node = GraphNode::new(&file_path, &file_path, "file");
+                center_node.file_path = Some(file_path.clone());
+                (file_path.clone(), center_node, rows)
             }
         };
 

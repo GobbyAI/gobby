@@ -776,7 +776,7 @@ pub(crate) fn link_kind(target: &str) -> &'static str {
 
 fn rollback_link_replacement(tx: Transaction<'_>, path: &str) {
     if let Err(error) = tx.rollback() {
-        eprintln!("warning: failed to rollback gwiki link replacement for {path}: {error}");
+        log::error!("failed to rollback gwiki link replacement for {path}: {error}");
     }
 }
 

@@ -33,13 +33,13 @@ pub const DEFAULT_BACKENDS: &[BackendDefault] = &[
         name: "lmstudio",
         url: "http://localhost:1234",
         probe: "/v1/models",
-        auth_token: "lmstudio",
+        auth_token: "",
     },
     BackendDefault {
         name: "ollama",
         url: "http://localhost:11434",
         probe: "/api/tags",
-        auth_token: "ollama",
+        auth_token: "",
     },
 ];
 
@@ -85,8 +85,8 @@ pub fn validate_backend(backend: &Backend, timeout_ms: u64) -> bool {
     match request.call() {
         Ok(_) => true,
         Err(ureq::Error::Status(status, response)) => {
-            log::debug!(
-                "Warning: local backend probe `{}` at {} returned HTTP {} {}",
+            log::trace!(
+                "local backend probe `{}` at {} returned HTTP {} {}",
                 backend.name,
                 url,
                 status,
@@ -95,8 +95,8 @@ pub fn validate_backend(backend: &Backend, timeout_ms: u64) -> bool {
             false
         }
         Err(error) => {
-            log::debug!(
-                "Warning: local backend probe `{}` at {} failed: {}",
+            log::trace!(
+                "local backend probe `{}` at {} failed: {}",
                 backend.name,
                 url,
                 error
@@ -156,6 +156,15 @@ mod tests {
         assert_eq!(detect_backend(&backends, 500), Some(reachable));
         let request = handle.join().expect("probe request thread");
         assert!(has_header(&request, "authorization", "Bearer token"));
+    }
+
+    #[test]
+    fn default_local_backends_do_not_send_auth_tokens() {
+        assert!(
+            default_backends()
+                .iter()
+                .all(|backend| backend.auth_token.is_empty())
+        );
     }
 
     fn has_header(request: &str, name: &str, value: &str) -> bool {

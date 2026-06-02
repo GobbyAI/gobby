@@ -11,7 +11,7 @@ fn gwiki(args: &[&str]) -> Output {
     fs::write(project.join("README.md"), "# Parse fixture\n").expect("write ingest fixture");
     if args.first().is_none_or(|command| *command != "init") {
         if args.contains(&"--topic") {
-            let mut command = Command::new(env!("CARGO_BIN_EXE_gwiki"));
+            let mut command = common::gwiki_command();
             strip_db_env(&mut command)
                 .args(["init", "--topic", "rust"])
                 .env("GOBBY_WIKI_HUB", &hub)
@@ -24,7 +24,7 @@ fn gwiki(args: &[&str]) -> Output {
                 String::from_utf8_lossy(&output.stderr)
             );
         } else if args.contains(&"--project") {
-            let mut command = Command::new(env!("CARGO_BIN_EXE_gwiki"));
+            let mut command = common::gwiki_command();
             strip_db_env(&mut command)
                 .args(["init", "--project"])
                 .env("GOBBY_WIKI_HUB", &hub)
@@ -39,7 +39,7 @@ fn gwiki(args: &[&str]) -> Output {
         }
     }
 
-    let mut command = Command::new(env!("CARGO_BIN_EXE_gwiki"));
+    let mut command = common::gwiki_command();
     strip_db_env(&mut command)
         .args(args)
         .env("GOBBY_WIKI_HUB", &hub)
