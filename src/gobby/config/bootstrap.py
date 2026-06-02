@@ -30,7 +30,7 @@ DEFAULT_WEBSOCKET_PORT = 60888
 DEFAULT_UI_PORT = 60889
 
 HubBackend = Literal["postgres"]
-PostgresInstallMode = Literal["docker", "native", "external"]
+PostgresInstallMode = Literal["docker"]
 HUB_BACKEND_MIGRATION_DOCS = "docs/guides/configuration.md#bootstrap"
 HUB_BACKEND_POSTGRES_REQUIRED = (
     'hub_backend must be postgres (hub_backend (Literal["postgres"]) only supports '
@@ -166,9 +166,16 @@ def _parse_hub_backend(value: object) -> HubBackend:
 def _parse_postgres_install_mode(value: object) -> PostgresInstallMode | None:
     if value is None:
         return None
-    if isinstance(value, str) and value in {"docker", "native", "external"}:
+    if value == "docker":
         return cast(PostgresInstallMode, value)
-    raise BootstrapConfigError("postgres_install_mode must be one of: docker, native, external")
+    if value in {"native", "external"}:
+        logger.warning(
+            "Normalizing stale postgres_install_mode=%s to docker; Docker is the only "
+            "supported PostgreSQL install mode.",
+            value,
+        )
+        return "docker"
+    raise BootstrapConfigError("postgres_install_mode must be: docker")
 
 
 def _parse_optional_str(value: object, field_name: str) -> str | None:

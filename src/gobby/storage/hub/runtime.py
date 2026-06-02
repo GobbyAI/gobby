@@ -31,6 +31,9 @@ def open_runtime_hub_database(
     try:
         if apply_migrations:
             db.apply_migrations()
+            from gobby.storage.projects import ensure_personal_project
+
+            ensure_personal_project(db)
     except Exception:
         db.close()
         raise

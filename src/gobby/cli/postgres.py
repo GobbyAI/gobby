@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import getpass
 import json
 import os
 import shlex
@@ -14,7 +13,6 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
-from urllib.parse import parse_qs, urlparse
 
 import click
 import psycopg
@@ -25,7 +23,6 @@ from gobby.cli.installers.postgres import (
     _active_install_mode,
     _docker_database_url,
     _extension_present,
-    _external_ownership_status,
     _preload_libraries,
     _read_bootstrap_database_url,
     get_postgres_status,
@@ -38,12 +35,9 @@ from gobby.cli.postgres_backup import create_postgres_backup, restore_postgres_b
 from gobby.cli.postgres_bootstrap import InstallMode, set_bootstrap_field
 from gobby.cli.utils import _is_process_alive, _redact_dsn, get_gobby_home
 
-_NO_ROLLBACK_ACK = "I accept no-rollback risk"
-_CAPTURE_SINK_KINDS = {"pgaudit-file", "wal-archive"}
-_TICKET_CAPTURE_KINDS = {"pgaudit-managed", "pgaudit-file", "wal-archive", "none"}
+_TICKET_CAPTURE_KINDS = {"pgaudit-managed"}
 _PGAUDIT_CONTAINER = "gobby-postgres"
 _PGAUDIT_LOG_DIR = "/var/log/pgaudit"
-_WAL_ARCHIVE_SLOT_KEYS = ("slot_name", "slot", "replication_slot")
 
 
 @click.group("postgres")
@@ -54,15 +48,15 @@ def postgres_cli() -> None:
 @postgres_cli.command("install")
 @click.option(
     "--mode",
-    type=click.Choice(["docker", "native", "external"]),
+    type=click.Choice(["docker"]),
     default="docker",
     show_default=True,
-    help="Install mode. docker is recommended.",
+    help="Install mode. Docker is the only supported mode.",
 )
 @click.option(
     "--dsn",
     default=None,
-    help="psycopg DSN. Required for --mode external; optional for --mode native.",
+    help="Ignored. PostgreSQL installs are Docker-only.",
 )
 def install_cmd(mode: str, dsn: str | None) -> None:
     """Install or configure PostgreSQL."""
@@ -141,11 +135,7 @@ def restore_cmd(dump_or_dir: Path, clean: bool, yes: bool) -> None:
     "--remove-data",
     is_flag=True,
     default=False,
-    help=(
-        "Docker mode: also delete the gobby_postgres_data and gobby_pgaudit_log "
-        "named volumes. Native mode: print manual data-directory deletion steps. "
-        "External mode: refuses; Gobby never deletes server-side data."
-    ),
+    help="Also delete the gobby_postgres_data and gobby_pgaudit_log Docker volumes.",
 )
 def uninstall_cmd(remove_data: bool) -> None:
     """Clean up PostgreSQL service artifacts using the recorded install mode."""
@@ -163,21 +153,13 @@ def uninstall_cmd(remove_data: bool) -> None:
     "--capture-sink",
     default=None,
     metavar="TYPE:LOCATION",
-    help=(
-        "Native/external mode only. Declares the operator-wired write-capture sink. "
-        "TYPE must be exactly 'pgaudit-file' or 'wal-archive'. Mutually exclusive "
-        "with --accept-no-rollback-risk."
-    ),
+    help="Deprecated. Capture sinks are not used by Docker PostgreSQL installs.",
 )
 @click.option(
     "--accept-no-rollback-risk",
     is_flag=True,
     default=False,
-    help=(
-        "Native/external mode only. Acknowledges that no validation-window writes will "
-        "be auto-captured; recovery will rely on the operator-managed pre-cutover backup. "
-        "Requires typing the confirmation phrase. Mutually exclusive with --capture-sink."
-    ),
+    help="Deprecated. No-rollback acknowledgements are not used by Docker installs.",
 )
 def activate_cmd(capture_sink: str | None, accept_no_rollback_risk: bool) -> None:
     """Activate PostgreSQL runtime after capture validation."""
@@ -185,27 +167,17 @@ def activate_cmd(capture_sink: str | None, accept_no_rollback_risk: bool) -> Non
         raise click.ClickException("Stop the daemon first: gobby stop")
 
     mode = _active_install_mode(gobby_home=get_gobby_home())
-    if mode == "external":
-        _require_ownership_sentinel_or_fail()
-
-    if mode == "docker":
-        if capture_sink or accept_no_rollback_risk:
-            raise click.ClickException(
-                "Capture flags are not applicable in docker mode; pgAudit is the gate."
-            )
-        probe = _probe_pgaudit_or_fail()
-        ticket = _build_cutover_ticket(
-            mode=mode,
-            capture_kind="pgaudit-managed",
-            capture_value=None,
-            verification=_verification_ok(probe),
+    if capture_sink or accept_no_rollback_risk:
+        raise click.ClickException(
+            "Capture flags are not applicable in Docker mode; pgAudit is the gate."
         )
-    else:
-        ticket = _build_native_external_ticket(
-            mode=mode,
-            capture_sink=capture_sink,
-            accept_no_rollback_risk=accept_no_rollback_risk,
-        )
+    probe = _probe_pgaudit_or_fail()
+    ticket = _build_cutover_ticket(
+        mode=mode,
+        capture_kind="pgaudit-managed",
+        capture_value=None,
+        verification=_verification_ok(probe),
+    )
 
     backup_path = _backup_bootstrap()
     _set_bootstrap_field("hub_backend", "postgres")
@@ -285,45 +257,9 @@ def _render_restore_result(result: dict[str, Any]) -> None:
 
 
 def _install_mode(value: str) -> InstallMode:
-    if value in {"docker", "native", "external"}:
-        return cast(InstallMode, value)
+    if value == "docker":
+        return "docker"
     raise click.ClickException(f"Unknown install mode: {value}")
-
-
-def _build_native_external_ticket(
-    *,
-    mode: InstallMode,
-    capture_sink: str | None,
-    accept_no_rollback_risk: bool,
-) -> dict[str, Any]:
-    if bool(capture_sink) == bool(accept_no_rollback_risk):
-        raise click.ClickException(
-            "Native/external mode requires exactly one of "
-            "--capture-sink or --accept-no-rollback-risk."
-        )
-
-    if capture_sink:
-        kind, location = _parse_capture_sink(capture_sink)
-        probe = _probe_capture_sink_or_fail(kind, location)
-        return _build_cutover_ticket(
-            mode=mode,
-            capture_kind=kind,
-            capture_value=probe["capture_value"],
-            verification=_verification_ok(probe),
-        )
-
-    acknowledgement = _require_typed_acknowledgement(_NO_ROLLBACK_ACK)
-    return _build_cutover_ticket(
-        mode=mode,
-        capture_kind="none",
-        capture_value=None,
-        verification={
-            "state": "operator-attested",
-            "probed_at": None,
-            "probe_detail": None,
-        },
-        acknowledgement=acknowledgement,
-    )
 
 
 def _daemon_running() -> bool:
@@ -339,15 +275,6 @@ def _daemon_running() -> bool:
     except ValueError:
         return False
     return _is_process_alive(pid)
-
-
-def _require_ownership_sentinel_or_fail() -> None:
-    with _postgres_connection() as conn:
-        if not _external_ownership_status(conn).get("sentinel_present"):
-            raise click.ClickException(
-                "External PostgreSQL install ownership sentinel is missing. "
-                "Run `gobby postgres install --mode external --dsn ...` first."
-            )
 
 
 def _probe_pgaudit_or_fail() -> dict[str, Any]:
@@ -390,48 +317,6 @@ def _probe_pgaudit_or_fail() -> dict[str, Any]:
     }
 
 
-def _probe_capture_sink_or_fail(kind: str, location: str) -> dict[str, Any]:
-    if kind == "pgaudit-file":
-        path = Path(location).expanduser()
-        if not path.is_absolute():
-            raise click.ClickException("pgaudit-file capture sink must be an absolute path.")
-        if not path.exists():
-            raise click.ClickException("pgaudit-file capture sink must already exist.")
-        if path.is_dir():
-            raise click.ClickException("pgaudit-file capture sink must be a file path.")
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write("")
-        return {
-            "kind": kind,
-            "capture_value": str(path),
-            "writable": True,
-        }
-
-    if kind == "wal-archive":
-        slot_name = _wal_archive_slot_name(location)
-        try:
-            with _postgres_connection() as conn:
-                row = conn.execute(
-                    "SELECT slot_name FROM pg_replication_slots WHERE slot_name = %s",
-                    (slot_name,),
-                ).fetchone()
-        except psycopg.Error as exc:
-            raise click.ClickException(
-                f"Unable to verify wal-archive replication slot {slot_name!r}: {exc}"
-            ) from exc
-        if row is None:
-            raise click.ClickException(
-                f"wal-archive capture sink replication slot {slot_name!r} was not found."
-            )
-        return {
-            "kind": kind,
-            "capture_value": location,
-            "replication_slot": slot_name,
-        }
-
-    raise click.ClickException(f"Unknown capture-sink type {kind!r}.")
-
-
 def _probe_docker_pgaudit_log_or_fail(probe_token: str) -> dict[str, str]:
     token_arg = shlex.quote(probe_token)
     script = f"""
@@ -466,45 +351,6 @@ printf '%s\\n%s\\n' "$audit_file" "$audit_line"
     return {"audit_file": lines[0], "audit_readback": lines[1]}
 
 
-def _wal_archive_slot_name(location: str) -> str:
-    value = location.strip()
-    if not value:
-        raise click.ClickException("wal-archive capture sink requires a location.")
-
-    parsed = urlparse(value)
-    if parsed.scheme:
-        query = parse_qs(parsed.query)
-        for key in _WAL_ARCHIVE_SLOT_KEYS:
-            slot_values = query.get(key)
-            if slot_values and slot_values[0].strip():
-                return slot_values[0].strip()
-        raise click.ClickException(
-            "wal-archive capture sink DSN must include slot_name, slot, or replication_slot."
-        )
-
-    if "=" in value:
-        for token in value.replace(";", " ").split():
-            key, separator, raw_slot = token.partition("=")
-            if separator and key in _WAL_ARCHIVE_SLOT_KEYS and raw_slot.strip():
-                return raw_slot.strip()
-        raise click.ClickException(
-            "wal-archive capture sink spec must include slot_name, slot, or replication_slot."
-        )
-
-    return value
-
-
-def _parse_capture_sink(capture_sink: str) -> tuple[str, str]:
-    kind, separator, location = capture_sink.partition(":")
-    if kind not in _CAPTURE_SINK_KINDS:
-        raise click.ClickException(
-            f"Unknown capture-sink type {kind!r}. Expected pgaudit-file or wal-archive."
-        )
-    if not separator or not location:
-        raise click.ClickException(f"{kind} capture sink requires a location.")
-    return kind, location
-
-
 def _postgres_connection() -> Any:
     database_url = _read_bootstrap_database_url(get_gobby_home()) or _docker_database_url(
         DEFAULT_POSTGRES_PORT
@@ -523,24 +369,6 @@ def _verification_ok(probe_detail: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _require_typed_acknowledgement(phrase: str) -> dict[str, str]:
-    typed = str(
-        click.prompt(
-            f'Type "{phrase}" to continue',
-            default="",
-            show_default=False,
-            type=str,
-        )
-    )
-    if typed != phrase:
-        raise click.ClickException("Confirmation phrase did not match; activation aborted.")
-    return {
-        "phrase": phrase,
-        "operator": getpass.getuser(),
-        "asked_at": _utc_timestamp(),
-    }
-
-
 def _build_cutover_ticket(
     *,
     mode: InstallMode,
@@ -551,13 +379,9 @@ def _build_cutover_ticket(
 ) -> dict[str, Any]:
     if capture_kind not in _TICKET_CAPTURE_KINDS:
         raise click.ClickException(f"Unknown cutover capture kind: {capture_kind}")
-    if capture_kind in _CAPTURE_SINK_KINDS and not capture_value:
-        raise click.ClickException(f"{capture_kind} cutover ticket requires capture_value.")
-    if capture_kind not in _CAPTURE_SINK_KINDS and capture_value is not None:
+    if capture_value is not None:
         raise click.ClickException(f"{capture_kind} cutover ticket must not set capture_value.")
-    if capture_kind == "none" and acknowledgement is None:
-        raise click.ClickException("No-rollback activation requires acknowledgement.")
-    if capture_kind != "none" and acknowledgement is not None:
+    if acknowledgement is not None:
         raise click.ClickException(f"{capture_kind} cutover ticket must not set acknowledgement.")
 
     activated_at = datetime.now(UTC).replace(microsecond=0)

@@ -47,15 +47,6 @@ before cutover. A stale Phase 4.7-only copy, or any audit section without
    gobby postgres status --json | jq -e '.healthy == true and .extensions.pg_search == true'
    ```
 
-   For external mode, also assert the ownership sentinel is present:
-
-   ```bash
-   gobby postgres status --json | jq -e '.ownership.sentinel_present == true'
-   ```
-
-   If this fails, the database was recreated or changed since install. Re-run
-   the external install flow before retrying activation.
-
 5. Complete the pre-activation checklist and record it in the cutover change
    ticket:
 
@@ -66,8 +57,7 @@ before cutover. A stale Phase 4.7-only copy, or any audit section without
    - Confirm every remediation PR listed by the post-Phase-5 audit is merged.
    - Confirm the MVCC integration tests added or referenced by the re-audit have
      passed for three consecutive CI runs.
-   - Confirm validation-window write capture is configured for the activation
-     mode.
+   - Confirm the Docker pgAudit write/read probe passes during activation.
 
 ## Bootstrap DSN Storage
 
@@ -83,12 +73,12 @@ file has broader permissions or when `hub_backend: postgres` is present without
 `database_url`.
 
 `gobby postgres status` reports mode, host, database, health, extension
-availability, and external ownership when applicable.
+availability, and preload libraries.
 
 `gobby postgres uninstall` is service cleanup. Before restarting the daemon
 after uninstalling a PostgreSQL service, preserve or recreate a valid PostgreSQL
-`database_url` bootstrap entry. Recreate it by rerunning the matching
-`gobby postgres install --mode ... --dsn ...` command while the daemon is stopped.
+`database_url` bootstrap entry. Recreate it by rerunning
+`gobby postgres install --mode docker` while the daemon is stopped.
 
 After the validation window closes, the steady-state PostgreSQL runtime still
 uses the same `database_url` field. Product-supported recovery must preserve a
@@ -106,37 +96,16 @@ docker exec gobby-postgres sh -c \
   'tail -f "$(find /var/log/pgaudit -name "pgaudit-*.log" -type f | sort | tail -n1)"'
 ```
 
-Native and external modes require exactly one explicit rollback-risk choice
-during activation:
-
-```bash
-gobby postgres activate --capture-sink pgaudit-file:/absolute/path/to/pgaudit.log
-gobby postgres activate --capture-sink wal-archive:slot-or-archive-dsn
-gobby postgres activate --accept-no-rollback-risk
-```
-
-`--capture-sink` accepts only `pgaudit-file:` or `wal-archive:` sinks.
-`pgaudit-file:` must name an existing writable log file, and `wal-archive:`
-must name a replication slot directly or include `slot_name`, `slot`, or
-`replication_slot` in the DSN-style spec. The `--accept-no-rollback-risk` path
-requires the typed phrase `I accept no-rollback risk` and records the operator
-and timestamp in the cutover artifact. There is no generic yes flag and no
-`custom:` capture sink.
+Activation fails if Docker pgAudit cannot prove that a write is visible in the
+managed audit log. The deprecated `--capture-sink` and
+`--accept-no-rollback-risk` flags are not valid for Docker installs.
 
 ## Activate
 
-1. Run activation with the mode-appropriate command:
+1. Run activation:
 
    ```bash
-   # Docker mode
    gobby postgres activate
-
-   # Native or external mode with operator-wired capture
-   gobby postgres activate --capture-sink pgaudit-file:/absolute/path/to/pgaudit.log
-   gobby postgres activate --capture-sink wal-archive:slot-or-archive-dsn
-
-   # Native or external mode when rollback risk is accepted
-   gobby postgres activate --accept-no-rollback-risk
    ```
 
 2. Attach the printed `~/.gobby/migrations/cutover-<timestamp>.json` path to the
@@ -174,7 +143,7 @@ During the validation window, monitor and record:
 - MVCC-driven callback regressions identified by the post-Phase-5 audit.
 - Search result ordering drift on representative queries.
 - Latency regressions greater than 2x baseline on storage-bound endpoints.
-- Health of the pgAudit append-only write log or operator-provided capture sink.
+- Health of the Docker pgAudit append-only write log.
 
 ## Export Audit Window
 

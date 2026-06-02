@@ -87,6 +87,26 @@ def test_load_bootstrap_without_resolution_reads_plain_database_url(temp_dir: Pa
     assert bootstrap.database_url == database_url
 
 
+@pytest.mark.parametrize("stale_mode", ["native", "external"])
+def test_load_bootstrap_normalizes_stale_postgres_install_modes(
+    temp_dir: Path,
+    stale_mode: str,
+) -> None:
+    from gobby.config.bootstrap import load_bootstrap
+
+    bootstrap_file = temp_dir / "bootstrap.yaml"
+    _write_bootstrap(
+        bootstrap_file,
+        "hub_backend: postgres\n"
+        "database_url: postgresql://gobby:secret@localhost:60891/gobby\n"
+        f"postgres_install_mode: {stale_mode}\n",
+    )
+
+    bootstrap = load_bootstrap(str(bootstrap_file))
+
+    assert bootstrap.postgres_install_mode == "docker"
+
+
 def test_write_postgres_defaults_refreshes_database_url(temp_dir: Path) -> None:
     from gobby.config.postgres_bootstrap import read_bootstrap_database_url, write_postgres_defaults
 

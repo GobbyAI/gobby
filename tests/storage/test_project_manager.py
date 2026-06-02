@@ -14,6 +14,8 @@ from gobby.storage.projects import (
     PERSONAL_PROJECT_ID,
     SYSTEM_PROJECT_NAMES,
     LocalProjectManager,
+    ensure_personal_project,
+    personal_project_path,
 )
 
 pytestmark = pytest.mark.unit
@@ -34,6 +36,42 @@ class TestConstants:
         assert "_personal" in SYSTEM_PROJECT_NAMES
         assert "gobby" in SYSTEM_PROJECT_NAMES
         assert "random-project" not in SYSTEM_PROJECT_NAMES
+
+    def test_personal_project_path(self, tmp_path) -> None:
+        assert personal_project_path(tmp_path) == tmp_path / "personal"
+
+
+class TestPersonalProjectEnsure:
+    """Tests for the backed personal system project."""
+
+    def test_ensure_personal_project_creates_folder_and_repo_path(
+        self,
+        project_manager: LocalProjectManager,
+        tmp_path,
+    ) -> None:
+        project = ensure_personal_project(project_manager.db, gobby_home=tmp_path)
+
+        expected_path = tmp_path / "personal"
+        assert expected_path.is_dir()
+        assert project.id == PERSONAL_PROJECT_ID
+        assert project.name == "_personal"
+        assert project.repo_path == str(expected_path)
+
+        second = ensure_personal_project(project_manager.db, gobby_home=tmp_path)
+        assert second.id == project.id
+        assert second.repo_path == str(expected_path)
+
+    def test_ensure_personal_project_repairs_stale_repo_path(
+        self,
+        project_manager: LocalProjectManager,
+        tmp_path,
+    ) -> None:
+        project_manager.ensure_exists(PERSONAL_PROJECT_ID, "_personal")
+        project_manager.update(PERSONAL_PROJECT_ID, repo_path=None)
+
+        project = ensure_personal_project(project_manager.db, gobby_home=tmp_path)
+
+        assert project.repo_path == str(tmp_path / "personal")
 
 
 class TestSoftDelete:

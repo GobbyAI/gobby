@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from .bootstrap import BootstrapConfigError, load_bootstrap
 from .bootstrap_io import (
@@ -14,7 +14,7 @@ from .bootstrap_io import (
     write_bootstrap_yaml,
 )
 
-InstallMode = Literal["docker", "native", "external"]
+InstallMode = Literal["docker"]
 KEYRING_DATABASE_URL_REF = "keyring:gobby:postgres_database_url"
 
 __all__ = [
@@ -69,10 +69,7 @@ def read_bootstrap_database_url(gobby_home: Path) -> str | None:
 
 
 def active_install_mode(*, gobby_home: Path | None = None) -> InstallMode:
-    data = read_bootstrap_yaml(bootstrap_path(gobby_home))
-    mode = data.get("postgres_install_mode")
-    if mode in {"docker", "native", "external"}:
-        return cast(InstallMode, mode)
+    read_bootstrap_yaml(bootstrap_path(gobby_home))
     return "docker"
 
 

@@ -1,0 +1,18 @@
+tags: [context-handoff, profile, user-profile, lifecycle, gobby, default]
+
+rules:
+  inject-user-profile:
+    description: "Inject the global user profile for fresh non-spawned sessions"
+    event: session_start
+    enabled: true
+    priority: 12
+    when: >
+      event.data.get('source') != 'resume'
+      and variables.get('user_profile_content')
+      and not variables.get('is_spawned_agent')
+    effects:
+      - type: inject_context
+        template: |
+          ## Global User Profile
+
+          {{ user_profile_content }}

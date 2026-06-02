@@ -65,8 +65,8 @@ def create_postgres_backup(
     dump_path = backup_dir / POSTGRES_DUMP_NAME
 
     metadata = _collect_source_metadata(database_url=database_url, mode=mode)
-    _run_pg_dump(mode=mode, database_url=database_url, dump_path=dump_path)
-    _verify_dump_with_pg_restore(mode=mode, dump_path=dump_path)
+    _run_pg_dump(database_url=database_url, dump_path=dump_path)
+    _verify_dump_with_pg_restore(dump_path=dump_path)
 
     dump_sha256 = _sha256_file(dump_path)
     metadata["dump_sha256"] = dump_sha256
@@ -113,11 +113,10 @@ def restore_postgres_backup(
                 "PostgreSQL dump checksum mismatch: "
                 f"expected {expected_sha256}, got {actual_sha256}"
             )
-    _verify_dump_with_pg_restore(mode=mode, dump_path=dump_path)
-    _run_pg_restore(mode=mode, database_url=database_url, dump_path=dump_path, clean=clean)
+    _verify_dump_with_pg_restore(dump_path=dump_path)
+    _run_pg_restore(database_url=database_url, dump_path=dump_path, clean=clean)
     probes = _run_post_restore_probes(
         database_url=database_url,
-        mode=mode,
         gobby_home=home,
     )
 
@@ -175,52 +174,37 @@ def _collect_source_metadata(*, database_url: str, mode: InstallMode) -> dict[st
         raise click.ClickException(f"Unable to inspect PostgreSQL before backup: {exc}") from exc
 
 
-def _run_pg_dump(*, mode: InstallMode, database_url: str, dump_path: Path) -> None:
-    if mode == "docker":
-        user = _dsn_user(database_url) or DEFAULT_POSTGRES_USER
-        database = _dsn_db(database_url) or DEFAULT_POSTGRES_DB
-        command = [
-            "docker",
-            "exec",
-            _POSTGRES_CONTAINER,
-            "pg_dump",
-            "-U",
-            user,
-            "-d",
-            database,
-            "-Fc",
-            "--no-owner",
-            "--no-privileges",
-        ]
-        try:
-            with dump_path.open("wb") as output:
-                result = subprocess.run(  # nosec B603 B607
-                    command,
-                    stdout=output,
-                    stderr=subprocess.PIPE,
-                    timeout=_docker_pg_dump_timeout_seconds(),
-                )
-        except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as exc:
-            raise click.ClickException(f"Docker pg_dump failed: {exc}") from exc
-        _raise_for_subprocess_error(result, "Docker pg_dump")
-        return
-
+def _run_pg_dump(*, database_url: str, dump_path: Path) -> None:
+    user = _dsn_user(database_url) or DEFAULT_POSTGRES_USER
+    database = _dsn_db(database_url) or DEFAULT_POSTGRES_DB
     command = [
+        "docker",
+        "exec",
+        _POSTGRES_CONTAINER,
         "pg_dump",
+        "-U",
+        user,
+        "-d",
+        database,
         "-Fc",
         "--no-owner",
         "--no-privileges",
-        "--dbname",
-        database_url,
-        "--file",
-        str(dump_path),
     ]
-    _run_checked(command, "pg_dump")
+    try:
+        with dump_path.open("wb") as output:
+            result = subprocess.run(  # nosec B603 B607
+                command,
+                stdout=output,
+                stderr=subprocess.PIPE,
+                timeout=_docker_pg_dump_timeout_seconds(),
+            )
+    except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as exc:
+        raise click.ClickException(f"Docker pg_dump failed: {exc}") from exc
+    _raise_for_subprocess_error(result, "Docker pg_dump")
 
 
 def _run_pg_restore(
     *,
-    mode: InstallMode,
     database_url: str,
     dump_path: Path,
     clean: bool,
@@ -229,63 +213,53 @@ def _run_pg_restore(
     if clean:
         options.extend(["--clean", "--if-exists"])
 
-    if mode == "docker":
-        user = _dsn_user(database_url) or DEFAULT_POSTGRES_USER
-        database = _dsn_db(database_url) or DEFAULT_POSTGRES_DB
-        command = [
-            "docker",
-            "exec",
-            "-i",
-            _POSTGRES_CONTAINER,
-            "pg_restore",
-            *options,
-            "-U",
-            user,
-            "-d",
-            database,
-        ]
-        try:
-            with dump_path.open("rb") as stdin:
-                result = subprocess.run(  # nosec B603 B607
-                    command,
-                    stdin=stdin,
-                    capture_output=True,
-                    timeout=_SUBPROCESS_TIMEOUT_SECONDS,
-                )
-        except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as exc:
-            raise click.ClickException(f"Docker pg_restore failed: {exc}") from exc
-        _raise_for_subprocess_error(result, "Docker pg_restore")
-        return
-
-    command = ["pg_restore", *options, "--dbname", database_url, str(dump_path)]
-    _run_checked(command, "pg_restore")
+    user = _dsn_user(database_url) or DEFAULT_POSTGRES_USER
+    database = _dsn_db(database_url) or DEFAULT_POSTGRES_DB
+    command = [
+        "docker",
+        "exec",
+        "-i",
+        _POSTGRES_CONTAINER,
+        "pg_restore",
+        *options,
+        "-U",
+        user,
+        "-d",
+        database,
+    ]
+    try:
+        with dump_path.open("rb") as stdin:
+            result = subprocess.run(  # nosec B603 B607
+                command,
+                stdin=stdin,
+                capture_output=True,
+                timeout=_SUBPROCESS_TIMEOUT_SECONDS,
+            )
+    except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as exc:
+        raise click.ClickException(f"Docker pg_restore failed: {exc}") from exc
+    _raise_for_subprocess_error(result, "Docker pg_restore")
 
 
-def _verify_dump_with_pg_restore(*, mode: InstallMode, dump_path: Path) -> None:
+def _verify_dump_with_pg_restore(*, dump_path: Path) -> None:
     if not dump_path.is_file():
         raise click.ClickException(f"PostgreSQL dump was not created: {dump_path}")
-    if mode == "docker":
-        command = ["docker", "exec", "-i", _POSTGRES_CONTAINER, "pg_restore", "--list"]
-        try:
-            with dump_path.open("rb") as stdin:
-                result = subprocess.run(  # nosec B603 B607
-                    command,
-                    stdin=stdin,
-                    capture_output=True,
-                    timeout=120,
-                )
-        except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as exc:
-            raise click.ClickException(f"Docker pg_restore --list failed: {exc}") from exc
-        _raise_for_subprocess_error(result, "Docker pg_restore --list")
-        return
-
-    _run_checked(["pg_restore", "--list", str(dump_path)], "pg_restore --list", timeout=120)
+    command = ["docker", "exec", "-i", _POSTGRES_CONTAINER, "pg_restore", "--list"]
+    try:
+        with dump_path.open("rb") as stdin:
+            result = subprocess.run(  # nosec B603 B607
+                command,
+                stdin=stdin,
+                capture_output=True,
+                timeout=120,
+            )
+    except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as exc:
+        raise click.ClickException(f"Docker pg_restore --list failed: {exc}") from exc
+    _raise_for_subprocess_error(result, "Docker pg_restore --list")
 
 
 def _run_post_restore_probes(
     *,
     database_url: str,
-    mode: InstallMode,
     gobby_home: Path,
 ) -> dict[str, Any]:
     try:
@@ -302,7 +276,7 @@ def _run_post_restore_probes(
             }
             if not pg_search_present:
                 raise click.ClickException("PostgreSQL restore probe failed: pg_search missing")
-            if mode == "docker" and not pgaudit_present:
+            if not pgaudit_present:
                 raise click.ClickException("PostgreSQL restore probe failed: pgaudit missing")
             return probes
     except psycopg.Error as exc:
@@ -402,25 +376,6 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: file.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _run_checked(
-    command: list[str],
-    action: str,
-    *,
-    timeout: int = _SUBPROCESS_TIMEOUT_SECONDS,
-) -> None:
-    try:
-        result = subprocess.run(  # nosec B603 # fixed executable names and argument vectors
-            command,
-            capture_output=True,
-            timeout=timeout,
-        )
-    except FileNotFoundError as exc:
-        raise click.ClickException(f"{action} failed: command not found") from exc
-    except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as exc:
-        raise click.ClickException(f"{action} failed: {exc}") from exc
-    _raise_for_subprocess_error(result, action)
 
 
 def _docker_pg_dump_timeout_seconds() -> int:

@@ -4,15 +4,22 @@ Installation commands for hooks.
 
 import logging
 import os
+import platform
+import shutil
+import socket
+import subprocess  # nosec B404 # fixed install preflight/start commands
 import sys
+import webbrowser
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import click
 
+from gobby.config.bootstrap import DEFAULT_DAEMON_PORT
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
+from gobby.utils.project_init import initialize_project
 
 from ._detectors import (
     _is_agy_cli_installed,
@@ -96,6 +103,180 @@ The knowledge graph backend has been replaced with FalkorDB.
 
 def _raise_graph_backend_removed() -> None:
     raise click.UsageError(_GRAPH_BACKEND_REMOVED_MESSAGE)
+
+
+def _is_source_checkout_install(install_dir: Path) -> bool:
+    return "src/gobby/install" in install_dir.as_posix()
+
+
+def _docker_daemon_available() -> bool:
+    if shutil.which("docker") is None:
+        return False
+    try:
+        result = subprocess.run(  # nosec B603 B607
+            ["docker", "info"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def _port_available(port: int, host: str = "localhost") -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.2)
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return False
+    return True
+
+
+def _run_install_preflight(
+    *,
+    is_full_install: bool,
+    detected_clis: list[str],
+    install_dir: Path,
+    require_docker: bool,
+    embedding_url: str | None,
+    embedding_provider: str | None,
+) -> tuple[list[str], list[str]]:
+    """Return full-install preflight errors and optional warnings."""
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if is_full_install:
+        if require_docker and not _docker_daemon_available():
+            errors.append("Docker daemon is required for full install. Start Docker and retry.")
+        if not detected_clis:
+            errors.append(
+                "At least one supported coding CLI is required for full install "
+                "(Claude Code, Codex, Gemini, Grok, Qwen, or Droid)."
+            )
+        python_version = tuple(int(part) for part in platform.python_version_tuple()[:2])
+        if python_version < (3, 13):
+            current = platform.python_version()
+            errors.append(f"Python >= 3.13 is required; current Python is {current}.")
+        if os.name == "posix" and shutil.which("tmux") is None:
+            errors.append("tmux is required on POSIX systems. Install tmux and retry.")
+        if _is_source_checkout_install(install_dir) and shutil.which("uv") is None:
+            errors.append("uv is required when installing from a source checkout.")
+
+        if not embedding_url and not embedding_provider:
+            warnings.append(
+                "No embedding provider override supplied; install will prompt or keep "
+                "semantic features disabled."
+            )
+
+    if shutil.which("git") is None:
+        warnings.append(
+            "git was not found on PATH; project initialization and hooks may be limited."
+        )
+
+    for port in (DEFAULT_DAEMON_PORT, 60888):
+        if not _port_available(port):
+            warnings.append(f"Port {port} is already in use.")
+
+    return errors, warnings
+
+
+def _is_git_root_without_gobby_project(project_path: Path) -> bool:
+    if not (project_path / ".git").exists():
+        return False
+    return not (project_path / ".gobby" / "project.json").exists()
+
+
+def _should_initialize_project(project_path: Path, *, no_interactive: bool) -> bool:
+    if not _is_git_root_without_gobby_project(project_path):
+        return False
+    if no_interactive:
+        return True
+    if not sys.stdin.isatty():
+        return False
+    return click.confirm(
+        "This git root is not a Gobby project yet. Initialize it now?",
+        default=True,
+    )
+
+
+def _initialize_project_after_setup(project_path: Path) -> None:
+    result = initialize_project(cwd=project_path)
+    if result.already_existed:
+        click.echo(f"Gobby project already initialized: {result.project_name}")
+    else:
+        click.echo(f"Initialized Gobby project: {result.project_name}")
+    click.echo(f"  Project ID: {result.project_id}")
+
+
+def _headless_or_remote() -> bool:
+    if os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"):
+        return True
+    if sys.platform.startswith("linux"):
+        return not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    return False
+
+
+def _ci_environment() -> bool:
+    return any(os.environ.get(name) for name in ("CI", "GITHUB_ACTIONS", "BUILDKITE"))
+
+
+def _daemon_url() -> str:
+    try:
+        from gobby.config.app import load_config
+
+        port = load_config(resolve_database_url=False).daemon_port
+    except Exception:
+        port = DEFAULT_DAEMON_PORT
+    return f"http://localhost:{port}/"
+
+
+def _daemon_already_running() -> bool:
+    try:
+        from gobby.cli.daemon import _is_daemon_healthy
+
+        return _is_daemon_healthy(int(_daemon_url().rstrip("/").rsplit(":", 1)[1]))
+    except Exception:
+        return False
+
+
+def _maybe_start_daemon_after_install(*, no_interactive: bool) -> None:
+    url = _daemon_url()
+    if no_interactive or _ci_environment() or _headless_or_remote():
+        click.echo(f"Gobby UI: {url}")
+        click.echo("Run `/gobby intro` in your first agent session.")
+        return
+    if _daemon_already_running():
+        click.echo(f"Gobby daemon already running: {url}")
+        click.echo("Run `/gobby intro` in your first agent session.")
+        return
+
+    click.echo("Starting Gobby daemon...")
+    try:
+        result = subprocess.run(  # nosec B603 # command uses current interpreter/module
+            [sys.executable, "-m", "gobby.cli", "start"],
+            text=True,
+            capture_output=True,
+            timeout=90,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as exc:
+        click.echo(f"Warning: failed to start daemon automatically: {exc}")
+        click.echo(f"Start manually with `gobby start`, then open {url}")
+        return
+
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "no details"
+        click.echo(f"Warning: failed to start daemon automatically: {detail}")
+        click.echo(f"Start manually with `gobby start`, then open {url}")
+        return
+
+    click.echo(f"Gobby daemon started: {url}")
+    if not webbrowser.open(url):
+        click.echo(f"Open {url}")
+    click.echo("Run `/gobby intro` in your first agent session.")
 
 
 @click.command("install")
@@ -368,6 +549,26 @@ def install(
     install_dir = get_install_dir()
     is_dev_mode = "src" in str(install_dir)
 
+    preflight_errors, preflight_warnings = _run_install_preflight(
+        is_full_install=is_full_install,
+        detected_clis=clis_to_install,
+        install_dir=install_dir,
+        require_docker=is_full_install and not no_ext_services_flag,
+        embedding_url=embedding_url,
+        embedding_provider=embedding_provider,
+    )
+    for warning in preflight_warnings:
+        click.echo(f"Warning: {warning}")
+    if preflight_errors:
+        for error in preflight_errors:
+            click.echo(f"Error: {error}", err=True)
+        sys.exit(1)
+
+    initialize_project_after_setup = _should_initialize_project(
+        project_path,
+        no_interactive=no_interactive_flag,
+    )
+
     click.echo("=" * 60)
     click.echo("  Gobby Hooks Installation")
     click.echo("=" * 60)
@@ -383,6 +584,8 @@ def install(
     if config_result["created"]:
         click.echo(f"Created daemon config: {config_result['path']}")
     run_daemon_setup(project_path)
+    if initialize_project_after_setup:
+        _initialize_project_after_setup(project_path)
 
     toggles = list(clis_to_install)
     if install_hooks:
@@ -476,6 +679,8 @@ def install(
         )
         if not all_success:
             sys.exit(1)
+        if is_full_install:
+            _maybe_start_daemon_after_install(no_interactive=no_interactive_flag)
     finally:
         if db is not None:
             db.close()

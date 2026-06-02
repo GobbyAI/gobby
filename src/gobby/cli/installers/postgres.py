@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
 import platform
 import shutil
 import subprocess  # nosec B404 # subprocess needed for docker, pg_isready, dpkg
-import tempfile
 import time
-import urllib.request
-from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
 from typing import Any, cast
@@ -24,7 +20,6 @@ import psycopg
 from gobby.cli import postgres_bootstrap as _bootstrap
 from gobby.cli.postgres_bootstrap import InstallMode
 from gobby.config.bootstrap import BootstrapConfigError
-from gobby.utils.version import get_version
 
 logger = logging.getLogger(__name__)
 
@@ -39,64 +34,33 @@ POSTGRES_DATA_VOLUME = "gobby_postgres_data"
 PGAUDIT_LOG_VOLUME = "gobby_pgaudit_log"
 
 
-@dataclass(frozen=True)
-class PlatformInfo:
-    """Normalized platform data for native install dispatch."""
-
-    os: str
-    distro: str
-    arch: str
-
-
 def install_postgres(
     *,
-    mode: InstallMode = "docker",
+    mode: InstallMode | str = "docker",
     dsn: str | None = None,
     gobby_home: Path | None = None,
     port: int = DEFAULT_POSTGRES_PORT,
 ) -> dict[str, Any]:
     """Install or configure PostgreSQL for the Gobby hub."""
-    if mode == "docker":
-        return _install_docker(gobby_home=gobby_home, port=port)
-    if mode == "native":
-        return _install_native(gobby_home=gobby_home, dsn=dsn)
-    if mode == "external":
-        if not dsn:
-            raise click.ClickException("--mode external requires --dsn")
-        return _install_external(gobby_home=gobby_home, dsn=dsn)
-    raise click.ClickException(f"Unknown install mode: {mode}")
+    if mode != "docker":
+        raise click.ClickException(
+            f"Unsupported PostgreSQL install mode: {mode}. Docker is the only supported mode."
+        )
+    return _install_docker(gobby_home=gobby_home, port=port)
 
 
 def uninstall_postgres(
     *,
-    mode: InstallMode = "docker",
+    mode: InstallMode | str = "docker",
     gobby_home: Path | None = None,
     remove_data: bool = False,
 ) -> dict[str, Any]:
     """Uninstall or disconnect PostgreSQL according to the recorded install mode."""
-    if mode == "docker":
-        return _uninstall_docker(gobby_home=gobby_home, remove_data=remove_data)
-    if mode == "native":
-        return _uninstall_native(gobby_home=gobby_home, remove_data=remove_data)
-    if mode == "external":
-        if remove_data:
-            raise click.ClickException(
-                "External mode never deletes server-side data. Reset the dedicated "
-                "database manually with `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` "
-                "inside the dedicated database, or drop and recreate the database."
-            )
-        home = gobby_home or _bootstrap.default_gobby_home()
-        _preserve_required_postgres_runtime(home)
-        return {
-            "success": True,
-            "mode": "external",
-            "message": (
-                "External PostgreSQL service cleanup completed; server left untouched; "
-                "runtime bootstrap preserved "
-                "because PostgreSQL is the only supported hub backend."
-            ),
-        }
-    raise click.ClickException(f"Unknown install mode: {mode}")
+    if mode != "docker":
+        raise click.ClickException(
+            f"Unsupported PostgreSQL install mode: {mode}. Docker is the only supported mode."
+        )
+    return _uninstall_docker(gobby_home=gobby_home, remove_data=remove_data)
 
 
 def _install_docker(*, gobby_home: Path | None, port: int) -> dict[str, Any]:
@@ -104,7 +68,7 @@ def _install_docker(*, gobby_home: Path | None, port: int) -> dict[str, Any]:
     if not shutil.which("docker"):
         return {
             "success": False,
-            "error": "Docker not found. Use --mode external or install Docker.",
+            "error": "Docker not found. Install Docker and retry.",
         }
 
     services_dir = home / "services"
@@ -167,61 +131,6 @@ def _install_docker(*, gobby_home: Path | None, port: int) -> dict[str, Any]:
     }
 
 
-def _install_native(*, gobby_home: Path | None, dsn: str | None) -> dict[str, Any]:
-    home = gobby_home or Path("~/.gobby").expanduser()
-    platform_info = _detect_platform()
-    if platform_info.os == "linux" and platform_info.distro in {"debian", "ubuntu"}:
-        return _install_native_debian(gobby_home=home, dsn=dsn)
-    if platform_info.os == "darwin":
-        raise click.ClickException(
-            "macOS native pg_search is not supported upstream. "
-            "Use `gobby postgres install --mode docker` (recommended), or follow "
-            "docs/runbooks/postgres-native-macos.md and re-run with --mode external."
-        )
-    raise click.ClickException(
-        f"Native install on {platform_info.distro or platform_info.os} requires building "
-        "pg_search from source. See docs/runbooks/postgres-native-source.md, or use "
-        "`gobby postgres install --mode docker` (recommended)."
-    )
-
-
-def _install_native_debian(*, gobby_home: Path, dsn: str | None) -> dict[str, Any]:
-    manifest = _read_pgsearch_version_manifest()
-    version = manifest["pg_search_version"]
-    sha256 = manifest["pg_search_sha256"]
-    database_url = dsn or _auto_discover_local_dsn()
-
-    deb_path = _download_pg_search_deb(version=version, sha256=sha256)
-    _install_deb_with_sudo(deb_path=deb_path)
-    _probe_create_pg_search_extension(dsn=database_url, sql="CREATE EXTENSION pg_search")
-    _write_bootstrap_defaults(gobby_home=gobby_home, mode="native", database_url=database_url)
-
-    return {
-        "success": True,
-        "mode": "native",
-        "database_url": database_url,
-        "pg_search_version": version,
-        "message": "PostgreSQL native pg_search install completed.",
-    }
-
-
-def _install_external(*, gobby_home: Path | None, dsn: str) -> dict[str, Any]:
-    home = gobby_home or Path("~/.gobby").expanduser()
-    with psycopg.connect(dsn, connect_timeout=10) as conn:
-        probe = _run_external_read_only_probes(conn)
-        _create_external_ownership_sentinel(conn)
-        _commit_if_supported(conn)
-
-    _write_bootstrap_defaults(gobby_home=home, mode="external", database_url=dsn)
-    return {
-        "success": True,
-        "mode": "external",
-        "database_url": dsn,
-        "pgaudit_available": probe["pgaudit_available"],
-        "message": "External PostgreSQL passed ownership and extension probes.",
-    }
-
-
 async def get_postgres_status(
     *,
     gobby_home: Path | None = None,
@@ -275,16 +184,8 @@ async def get_postgres_status(
                 "pgaudit": _extension_present(conn, "pgaudit"),
             }
             payload["preload_libraries"] = _preload_libraries(conn)
-            if active_mode == "external":
-                payload["ownership"] = _external_ownership_status(conn)
     except psycopg.Error as exc:
         logger.debug("PostgreSQL status connection failed: %s", exc)
-        if active_mode == "external":
-            payload["ownership"] = {
-                "sentinel_present": False,
-                "installed_at": None,
-                "gobby_version": None,
-            }
 
     return payload
 
@@ -354,28 +255,6 @@ def _uninstall_docker(*, gobby_home: Path | None, remove_data: bool) -> dict[str
             "PostgreSQL Docker service cleanup completed; runtime bootstrap preserved "
             "because PostgreSQL is the only supported hub backend."
         ),
-    }
-
-
-def _uninstall_native(*, gobby_home: Path | None, remove_data: bool) -> dict[str, Any]:
-    home = gobby_home or _bootstrap.default_gobby_home()
-    _preserve_required_postgres_runtime(home)
-    steps = [
-        "Remove pg_search manually with your OS package manager if desired.",
-        "Gobby does not run apt-get remove for native PostgreSQL installations.",
-        "Runtime bootstrap remains configured for PostgreSQL because it is required.",
-    ]
-    if remove_data:
-        steps.append("Remove the native PostgreSQL data directory manually after taking backups.")
-    return {
-        "success": True,
-        "mode": "native",
-        "message": (
-            "PostgreSQL native cleanup guidance emitted; runtime bootstrap preserved "
-            "because PostgreSQL is the only supported hub backend."
-        ),
-        "manual_steps": steps,
-        "data_removed": False,
     }
 
 
@@ -534,66 +413,6 @@ def _probe_create_pg_search_extension(*, dsn: str, sql: str) -> None:
         raise click.ClickException(f"pg_search probe failed: {exc}") from exc
 
 
-def _run_external_read_only_probes(conn: Any) -> dict[str, bool]:
-    schemas = [row[0] for row in conn.execute(_EXTERNAL_SCHEMA_SQL).fetchall()]
-    if set(schemas) != {"public"}:
-        raise click.ClickException(
-            "External mode requires a dedicated database with only the public schema. "
-            "Create a fresh database for Gobby, or reset it with "
-            "`DROP SCHEMA public CASCADE; CREATE SCHEMA public;`."
-        )
-
-    object_rows: list[tuple[str, str]] = []
-    object_rows.extend(_named_rows(conn.execute(_EXTERNAL_CLASS_SQL).fetchall(), "relation"))
-    object_rows.extend(_named_rows(conn.execute(_EXTERNAL_PROC_SQL).fetchall(), "function"))
-    object_rows.extend(_named_rows(conn.execute(_EXTERNAL_TYPE_SQL).fetchall(), "type"))
-    if object_rows:
-        sample = ", ".join(f"{kind}:{name}" for kind, name in object_rows[:5])
-        raise click.ClickException(
-            "External mode requires an empty dedicated public schema. Existing objects "
-            f"found: {sample}. Use a fresh database for Gobby."
-        )
-
-    if not conn.execute("SELECT 1 FROM pg_extension WHERE extname = 'pg_search'").fetchone():
-        version_row = conn.execute("SELECT version()").fetchone()
-        version_text = str(version_row[0]) if version_row else "PostgreSQL"
-        raise click.ClickException(
-            "pg_search extension is missing. Install it before re-running external mode. "
-            f"Suggested upstream command: {_format_pg_search_install_command(version_text)}"
-        )
-
-    pgaudit_available = bool(
-        conn.execute("SELECT name FROM pg_available_extensions WHERE name = 'pgaudit'").fetchone()
-    )
-    return {"pgaudit_available": pgaudit_available}
-
-
-def _named_rows(rows: list[tuple[Any, ...]], kind: str) -> list[tuple[str, str]]:
-    return [(kind, str(row[0])) for row in rows]
-
-
-def _create_external_ownership_sentinel(conn: Any) -> None:
-    conn.execute(
-        """
-        CREATE TABLE gobby_install_ownership (
-            id integer PRIMARY KEY,
-            installed_at timestamptz NOT NULL DEFAULT now(),
-            gobby_version text NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
-        INSERT INTO gobby_install_ownership (id, installed_at, gobby_version)
-        VALUES (1, now(), %s)
-        ON CONFLICT (id) DO UPDATE
-        SET installed_at = excluded.installed_at,
-            gobby_version = excluded.gobby_version
-        """,
-        (get_version(),),
-    )
-
-
 def _extension_present(conn: Any, extension: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM pg_extension WHERE extname = %s",
@@ -611,76 +430,10 @@ def _preload_libraries(conn: Any) -> list[str]:
     return [item.strip() for item in str(row[0]).split(",") if item.strip()]
 
 
-def _external_ownership_status(conn: Any) -> dict[str, Any]:
-    try:
-        row = conn.execute(
-            """
-            SELECT installed_at, gobby_version
-            FROM gobby_install_ownership
-            WHERE id = 1
-            """
-        ).fetchone()
-    except psycopg.Error:
-        row = None
-    return {
-        "sentinel_present": bool(row),
-        "installed_at": str(row[0]) if row else None,
-        "gobby_version": str(row[1]) if row else None,
-    }
-
-
 def _commit_if_supported(conn: Any) -> None:
     commit = getattr(conn, "commit", None)
     if callable(commit):
         commit()
-
-
-def _detect_platform() -> PlatformInfo:
-    system = platform.system().lower()
-    distro = ""
-    if system == "linux":
-        distro = _linux_distro_id()
-    elif system == "darwin":
-        distro = "macos"
-    return PlatformInfo(os=system, distro=distro, arch=platform.machine())
-
-
-def _linux_distro_id() -> str:
-    os_release = Path("/etc/os-release")
-    if not os_release.exists():
-        return "linux"
-    for line in os_release.read_text(encoding="utf-8").splitlines():
-        if line.startswith("ID="):
-            return line.split("=", 1)[1].strip().strip('"').lower()
-    return "linux"
-
-
-def _download_pg_search_deb(*, version: str, sha256: str) -> Path:
-    arch = _debian_arch(platform.machine())
-    url = (
-        "https://github.com/paradedb/paradedb/releases/download/"
-        f"v{version}/postgresql-18-pg-search_{version}-1PARADEDB-trixie_{arch}.deb"
-    )
-    target = Path(tempfile.gettempdir()) / f"pg_search-{version}-{arch}.deb"
-    with urllib.request.urlopen(url, timeout=60) as response:  # nosec B310 # fixed HTTPS URL
-        target.write_bytes(response.read())
-    digest = hashlib.sha256(target.read_bytes()).hexdigest()
-    if digest != sha256:
-        target.unlink(missing_ok=True)
-        raise click.ClickException(
-            f"Downloaded pg_search checksum mismatch: expected {sha256}, got {digest}"
-        )
-    return target
-
-
-def _install_deb_with_sudo(*, deb_path: Path) -> None:
-    result = subprocess.run(  # nosec B603 B607 # sudo dpkg is the native install action
-        ["sudo", "dpkg", "-i", str(deb_path)],
-        text=True,
-        timeout=120,
-    )
-    if result.returncode != 0:
-        raise click.ClickException("sudo dpkg -i failed while installing pg_search")
 
 
 def _debian_arch(machine: str) -> str:
@@ -690,14 +443,6 @@ def _debian_arch(machine: str) -> str:
     if normalized in {"aarch64", "arm64"}:
         return "arm64"
     return normalized
-
-
-def _auto_discover_local_dsn() -> str:
-    for env_name in ("GOBBY_POSTGRES_DSN", "DATABASE_URL"):
-        value = os.environ.get(env_name)
-        if value:
-            return value
-    return "postgresql://localhost:5432/gobby"
 
 
 def _docker_database_url(port: int) -> str:
@@ -725,18 +470,6 @@ def _dsn_db(dsn: str) -> str | None:
     return parsed.path.lstrip("/") or None
 
 
-def _format_pg_search_install_command(version_text: str) -> str:
-    manifest = _read_pgsearch_version_manifest()
-    version = manifest["pg_search_version"]
-    if "debian" in version_text.lower() or "ubuntu" in version_text.lower():
-        return (
-            "curl -LO https://github.com/paradedb/paradedb/releases/download/"
-            f"v{version}/postgresql-18-pg-search_{version}-1PARADEDB-trixie_$(dpkg "
-            "--print-architecture).deb && sudo dpkg -i postgresql-18-pg-search_*.deb"
-        )
-    return f"Install pg_search v{version} from https://github.com/paradedb/paradedb/releases"
-
-
 def _remove_docker_volumes(volume_names: tuple[str, ...]) -> None:
     for volume_name in volume_names:
         try:
@@ -747,46 +480,3 @@ def _remove_docker_volumes(volume_names: tuple[str, ...]) -> None:
             )
         except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as exc:
             logger.warning("Failed to remove Docker volume %s: %s", volume_name, exc)
-
-
-_EXTERNAL_SCHEMA_SQL = """
-SELECT nspname
-FROM pg_namespace
-WHERE nspname NOT IN ('pg_catalog', 'information_schema')
-  AND nspname <> 'pg_toast'
-  AND nspname NOT LIKE 'pg_temp_%'
-  AND nspname NOT LIKE 'pg_toast_temp_%'
-"""
-
-_EXTERNAL_CLASS_SQL = """
-SELECT c.relname
-FROM pg_class c
-WHERE c.relnamespace = 'public'::regnamespace
-  AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
-  AND NOT EXISTS (
-      SELECT 1 FROM pg_depend d
-      WHERE d.objid = c.oid AND d.deptype = 'e'
-  )
-"""
-
-_EXTERNAL_PROC_SQL = """
-SELECT p.proname
-FROM pg_proc p
-WHERE p.pronamespace = 'public'::regnamespace
-  AND NOT EXISTS (
-      SELECT 1 FROM pg_depend d
-      WHERE d.objid = p.oid AND d.deptype = 'e'
-  )
-"""
-
-_EXTERNAL_TYPE_SQL = """
-SELECT t.typname
-FROM pg_type t
-WHERE t.typnamespace = 'public'::regnamespace
-  AND t.typtype IN ('c', 'd', 'e', 'r')
-  AND t.typname NOT LIKE '\\_%'
-  AND NOT EXISTS (
-      SELECT 1 FROM pg_depend d
-      WHERE d.objid = t.oid AND d.deptype = 'e'
-  )
-"""

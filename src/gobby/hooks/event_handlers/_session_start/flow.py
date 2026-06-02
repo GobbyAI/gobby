@@ -15,6 +15,7 @@ from gobby.hooks.terminal_context import enrich_terminal_context_with_cwd, hook_
 from .agents import _seed_memory_recall_vars
 from .context import classify_session_start_context, mark_startup_context_injected
 from .handoff import find_parent_session, populate_handoff_session_variables
+from .profile import seed_user_profile_content
 from .types import AgentActivationResult
 
 SLOW_SESSION_START_THRESHOLD_MS = 1000
@@ -370,6 +371,12 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             )
         except Exception as e:
             handler.logger.error(f"Failed to activate default agent: {e}", exc_info=True)
+
+    if session_id and handler._session_manager is not None:
+        try:
+            seed_user_profile_content(handler, session_id)
+        except (KeyError, json.JSONDecodeError, psycopg.Error) as e:
+            handler.logger.warning(f"Failed to seed user profile vars: {e}")
 
     _t_track = time.monotonic()
     if transcript_path and handler._session_coordinator:

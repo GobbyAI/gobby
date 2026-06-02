@@ -875,6 +875,28 @@ class TestLoadConfig:
 
         assert config.cron.check_interval_seconds == 60
 
+    @pytest.mark.parametrize("stale_mode", ["native", "external"])
+    def test_load_config_normalizes_stale_postgres_install_modes_from_config_file(
+        self,
+        temp_dir: Path,
+        stale_mode: str,
+    ) -> None:
+        """Legacy config file install modes do not block startup after Docker-only migration."""
+
+        config_file = temp_dir / "config.yaml"
+        write_secure_bootstrap(config_file, f"postgres_install_mode: {stale_mode}\n")
+
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {}
+
+        config = load_config(
+            config_file=str(config_file),
+            config_store=DummyConfigStore(),
+        )
+
+        assert config.postgres_install_mode == "docker"
+
     def test_load_config_preserves_bootstrap_backend_selection_over_db(
         self, temp_dir: Path
     ) -> None:

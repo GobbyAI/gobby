@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import click
@@ -37,30 +36,13 @@ def test_install_postgres_dispatches_modes(monkeypatch: pytest.MonkeyPatch, tmp_
         lambda **kwargs: _record("docker", **kwargs),
         raising=False,
     )
-    monkeypatch.setattr(
-        installer,
-        "_install_native",
-        lambda **kwargs: _record("native", **kwargs),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        installer,
-        "_install_external",
-        lambda **kwargs: _record("external", **kwargs),
-        raising=False,
-    )
-
     assert installer.install_postgres(mode="docker", gobby_home=tmp_path)["mode"] == "docker"
-    assert installer.install_postgres(mode="native", dsn="postgresql://local/db")["mode"] == (
-        "native"
-    )
-    assert installer.install_postgres(mode="external", dsn="postgresql://remote/db")["mode"] == (
-        "external"
-    )
-    with pytest.raises(click.ClickException, match="--mode external requires --dsn"):
-        installer.install_postgres(mode="external")
 
-    assert [mode for mode, _kwargs in calls] == ["docker", "native", "external"]
+    for stale_mode in ("native", "external"):
+        with pytest.raises(click.ClickException, match="Docker is the only supported mode"):
+            installer.install_postgres(mode=stale_mode)
+
+    assert [mode for mode, _kwargs in calls] == ["docker"]
 
 
 def test_docker_install_runs_postgres_profile_and_writes_bootstrap(
@@ -180,112 +162,6 @@ def test_pg_search_manifest_selects_current_arch_checksum(
     assert manifest["pg_search_sha256"] == "arm64hash"
 
 
-def test_pg_search_native_guidance_uses_postgres_18_package(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    installer = _import_installer()
-    monkeypatch.setattr(
-        installer,
-        "_read_pgsearch_version_manifest",
-        lambda: {"pg_search_version": "0.23.4"},
-    )
-
-    command = installer._format_pg_search_install_command("Ubuntu PostgreSQL 18.4")
-
-    assert "postgresql-18-pg-search_0.23.4-1PARADEDB-trixie_$(dpkg" in command
-    assert "sudo dpkg -i postgresql-18-pg-search_*.deb" in command
-
-
-@pytest.mark.parametrize(
-    ("platform_info", "runbook"),
-    [
-        (SimpleNamespace(os="darwin", distro="macos", arch="arm64"), "postgres-native-macos.md"),
-        (SimpleNamespace(os="linux", distro="fedora", arch="x86_64"), "postgres-native-source.md"),
-    ],
-)
-def test_native_install_refuses_unsupported_platforms_with_runbook_and_docker_guidance(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    platform_info: SimpleNamespace,
-    runbook: str,
-) -> None:
-    installer = _import_installer()
-
-    monkeypatch.setattr(installer, "_detect_platform", lambda: platform_info, raising=False)
-
-    with pytest.raises(click.ClickException) as exc_info:
-        installer._install_native(gobby_home=tmp_path, dsn=None)
-
-    message = str(exc_info.value)
-    assert runbook in message
-    assert "--mode docker" in message
-
-
-def test_native_debian_installs_sha_pinned_deb_and_probes_extension(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    installer = _import_installer()
-    manifest = {
-        "pg_search_version": "0.17.0",
-        "pg_search_sha256": "a" * 64,
-        "postgres_major": "18",
-    }
-    deb_path = tmp_path / "pg_search.deb"
-    records: list[tuple[str, dict[str, Any]]] = []
-
-    def _record(name: str, **kwargs: Any) -> None:
-        records.append((name, kwargs))
-
-    monkeypatch.setattr(
-        installer,
-        "_detect_platform",
-        lambda: SimpleNamespace(os="linux", distro="ubuntu", arch="x86_64"),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        installer,
-        "_read_pgsearch_version_manifest",
-        lambda: manifest,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        installer,
-        "_download_pg_search_deb",
-        lambda **kwargs: _record("download", **kwargs) or deb_path,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        installer,
-        "_install_deb_with_sudo",
-        lambda **kwargs: _record("dpkg", **kwargs),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        installer,
-        "_probe_create_pg_search_extension",
-        lambda **kwargs: _record("probe", **kwargs),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        installer,
-        "_write_bootstrap_defaults",
-        lambda **kwargs: _record("bootstrap", **kwargs),
-        raising=False,
-    )
-
-    result = installer._install_native(
-        gobby_home=tmp_path,
-        dsn="postgresql://gobby:secret@localhost:5432/gobby",
-    )
-
-    assert result["success"] is True
-    assert [name for name, _kwargs in records] == ["download", "dpkg", "probe", "bootstrap"]
-    assert records[0][1]["version"] == "0.17.0"
-    assert records[0][1]["sha256"] == "a" * 64
-    assert records[2][1]["sql"] == "CREATE EXTENSION pg_search"
-
-
 def test_write_bootstrap_defaults_surfaces_bootstrap_errors_as_click_error(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -365,74 +241,6 @@ class _FakeConnection:
         self.committed = True
 
 
-def test_external_install_read_only_probes_before_writing_sentinel(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    installer = _import_installer()
-    statements: list[str] = []
-
-    monkeypatch.setattr(
-        installer.psycopg,
-        "connect",
-        lambda *_args, **_kwargs: _FakeConnection(statements),
-    )
-    monkeypatch.setattr(
-        installer,
-        "_write_bootstrap_defaults",
-        lambda **_kwargs: None,
-        raising=False,
-    )
-
-    result = installer._install_external(
-        gobby_home=tmp_path,
-        dsn="postgresql://gobby:secret@example.com/gobby",
-    )
-
-    assert result["success"] is True
-    upper_statements = [statement.upper() for statement in statements]
-    sentinel_index = next(
-        index
-        for index, statement in enumerate(upper_statements)
-        if "GOBBY_INSTALL_OWNERSHIP" in statement
-    )
-    assert any("PG_NAMESPACE" in statement for statement in upper_statements[:sentinel_index])
-    assert any("PG_CLASS" in statement for statement in upper_statements[:sentinel_index])
-    assert any("PG_PROC" in statement for statement in upper_statements[:sentinel_index])
-    assert any("PG_TYPE" in statement for statement in upper_statements[:sentinel_index])
-    assert any("PG_EXTENSION" in statement for statement in upper_statements[:sentinel_index])
-    assert any("PG_AVAILABLE_EXTENSIONS" in statement for statement in upper_statements)
-    assert all("CREATE EXTENSION" not in statement for statement in upper_statements)
-    assert any(
-        "CREATE TABLE GOBBY_INSTALL_OWNERSHIP" in statement for statement in upper_statements
-    )
-    assert any("INSERT INTO GOBBY_INSTALL_OWNERSHIP" in statement for statement in upper_statements)
-
-
-def test_external_install_refuses_missing_pg_search_without_writes(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    installer = _import_installer()
-    statements: list[str] = []
-
-    monkeypatch.setattr(
-        installer.psycopg,
-        "connect",
-        lambda *_args, **_kwargs: _FakeConnection(statements, pg_search_present=False),
-    )
-
-    with pytest.raises(click.ClickException, match="pg_search"):
-        installer._install_external(
-            gobby_home=tmp_path,
-            dsn="postgresql://gobby:secret@example.com/gobby",
-        )
-
-    upper_statements = [statement.upper() for statement in statements]
-    assert all("CREATE EXTENSION" not in statement for statement in upper_statements)
-    assert all("GOBBY_INSTALL_OWNERSHIP" not in statement for statement in upper_statements)
-
-
 @pytest.mark.asyncio
 async def test_get_postgres_status_returns_stable_payload(
     monkeypatch: pytest.MonkeyPatch,
@@ -456,17 +264,16 @@ async def test_get_postgres_status_returns_stable_payload(
 
     status = await installer.get_postgres_status(
         gobby_home=tmp_path,
-        mode="external",
+        mode="docker",
         dsn="postgresql://gobby:secret@example.com/gobby",
     )
 
-    assert status["mode"] == "external"
+    assert status["mode"] == "docker"
     assert status["dsn_host"] == "example.com"
     assert status["dsn_db"] == "gobby"
     assert isinstance(status["healthy"], bool)
     assert set(status["extensions"]) == {"pg_search", "pgaudit"}
     assert isinstance(status["preload_libraries"], list)
-    assert set(status["ownership"]) == {"sentinel_present", "installed_at", "gobby_version"}
     assert "keyring" not in status
 
 

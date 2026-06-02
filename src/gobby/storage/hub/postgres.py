@@ -64,9 +64,8 @@ _GCORE_CODE_INDEX_TABLES: frozenset[str] = frozenset(
     }
 )
 _PG_SEARCH_MISSING_MESSAGE = (
-    "pg_search extension is not present on this database. Docker mode: rebuild the image. "
-    "Native mode: rerun 'gobby postgres install --mode native'. External mode: install "
-    "pg_search per docs/runbooks/postgres-pgsearch-install.md."
+    "pg_search extension is not present on this database. Rebuild the Docker PostgreSQL "
+    "image with `gobby postgres install --mode docker`."
 )
 _BaselineState = Literal[
     "fresh",

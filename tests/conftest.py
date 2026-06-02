@@ -387,7 +387,7 @@ def protect_production_resources(
             # But simpler is to just return a safe config object
             config = DaemonConfig(
                 database_url="postgresql://test-safe-postgres.invalid/test-safe-postgres",
-                postgres_install_mode="external",
+                postgres_install_mode="docker",
                 telemetry={
                     "log_file": str(safe_log_client),
                     "log_file_error": str(safe_log_error),

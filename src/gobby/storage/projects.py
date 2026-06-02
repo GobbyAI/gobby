@@ -5,8 +5,10 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
+from gobby.config.bootstrap_io import default_gobby_home
 from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
@@ -15,6 +17,37 @@ ORPHANED_PROJECT_ID = "00000000-0000-0000-0000-000000000000"
 PERSONAL_PROJECT_ID = "00000000-0000-0000-0000-000000060887"
 GLOBAL_PROJECT_ID = "00000000-0000-0000-0000-000000000002"
 SYSTEM_PROJECT_NAMES = frozenset({"_orphaned", "_migrated", "_personal", "_global", "gobby"})
+
+
+def personal_project_path(gobby_home: Path | None = None) -> Path:
+    """Return the local folder that backs the personal system project."""
+    return (gobby_home or default_gobby_home()) / "personal"
+
+
+def ensure_personal_project(db: HubDatabase, *, gobby_home: Path | None = None) -> "Project":
+    """Ensure the `_personal` project has a real local folder and repo_path."""
+    path = personal_project_path(gobby_home)
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        path.chmod(0o700)
+    except OSError as exc:
+        logger.debug("Failed to chmod personal project path %s: %s", path, exc)
+
+    project_manager = LocalProjectManager(db)
+    project = project_manager.ensure_exists(PERSONAL_PROJECT_ID, "_personal", repo_path=str(path))
+    if project.repo_path != str(path) or project.deleted_at is not None:
+        now = datetime.now(UTC).isoformat()
+        db.execute(
+            """
+            UPDATE projects
+            SET repo_path = %s, deleted_at = NULL, updated_at = %s
+            WHERE id = %s
+              AND (repo_path IS DISTINCT FROM %s OR deleted_at IS NOT NULL)
+            """,
+            (str(path), now, PERSONAL_PROJECT_ID, str(path)),
+        )
+        project = project_manager.get(PERSONAL_PROJECT_ID) or project
+    return project
 
 
 @dataclass

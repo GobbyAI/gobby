@@ -124,32 +124,6 @@ def test_create_docker_backup_uses_configured_pg_dump_timeout(
     assert timeouts == [17]
 
 
-def test_create_native_backup_uses_local_postgres_tools(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    import gobby.cli.postgres_backup as backup
-
-    _patch_common(monkeypatch, backup, mode="native")
-    commands: list[list[str]] = []
-
-    def _run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[bytes]:
-        commands.append(args)
-        if args[0] == "pg_dump":
-            dump_path = Path(args[args.index("--file") + 1])
-            dump_path.write_bytes(b"LOCALDUMP")
-        elif args[:2] != ["pg_restore", "--list"]:
-            raise AssertionError(f"unexpected command: {args}")
-        return subprocess.CompletedProcess(args=args, returncode=0, stdout=b"", stderr=b"")
-
-    monkeypatch.setattr(backup.subprocess, "run", _run)
-
-    backup.create_postgres_backup(output_dir=tmp_path / "backup", gobby_home=tmp_path)
-
-    assert commands[0][:4] == ["pg_dump", "-Fc", "--no-owner", "--no-privileges"]
-    assert commands[1][:2] == ["pg_restore", "--list"]
-
-
 def test_postgres_backup_configured_only_swallows_bootstrap_read_errors(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -220,7 +194,7 @@ def test_restore_rejects_checksum_mismatch(
 ) -> None:
     import gobby.cli.postgres_backup as backup
 
-    _patch_common(monkeypatch, backup, mode="native")
+    _patch_common(monkeypatch, backup, mode="docker")
     backup_dir = tmp_path / "backup"
     backup_dir.mkdir()
     (backup_dir / backup.POSTGRES_DUMP_NAME).write_bytes(b"PGDMP")

@@ -133,7 +133,6 @@ def _prepare_gcode_runtime(
             "database_url": database_url,
             "daemon_port": daemon_port or DEFAULT_DAEMON_PORT,
             "bind_host": daemon_bind_host or DEFAULT_DAEMON_BIND_HOST,
-            "postgres_install_mode": "external",
         },
     )
     _link_runtime_assets(source_home, runtime_home)

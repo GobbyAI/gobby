@@ -253,7 +253,7 @@ class DaemonConfig(BaseModel):
         description="PostgreSQL DSN selected by bootstrap.yaml when hub_backend is postgres.",
         exclude=True,
     )
-    postgres_install_mode: Literal["docker", "native", "external"] | None = Field(
+    postgres_install_mode: Literal["docker"] | None = Field(
         default=None,
         description="PostgreSQL install mode recorded by gobby postgres install.",
     )
@@ -813,6 +813,17 @@ def _restore_bootstrap_backend_selection(config_dict: dict[str, Any], bootstrap:
         config_dict[key] = getattr(bootstrap, key)
 
 
+def _normalize_postgres_install_mode(config_dict: dict[str, Any]) -> None:
+    value = config_dict.get("postgres_install_mode")
+    if value in {"native", "external"}:
+        logger.warning(
+            "Normalizing stale postgres_install_mode=%s to docker; Docker is the only "
+            "supported PostgreSQL install mode.",
+            value,
+        )
+        config_dict["postgres_install_mode"] = "docker"
+
+
 def load_config(
     config_file: str | None = None,
     cli_overrides: dict[str, Any] | None = None,
@@ -905,6 +916,7 @@ def load_config(
             telemetry_config["log_file_hook_manager"] = safe_hook
     # Migrate legacy config keys (renamed/removed fields still in DB)
     config_dict = _migrate_legacy_config(config_dict)
+    _normalize_postgres_install_mode(config_dict)
 
     # Validate and create config object
     try:

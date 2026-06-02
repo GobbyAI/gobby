@@ -43,11 +43,68 @@ Top MCP Servers:
 
 ## Team Tips
 
-_TODO_
+- Start with the daemon. Most Gobby workflows assume `gobby` is running so MCP
+  tools, task state, memory, sessions, and `gcode` all share the same local
+  source of truth.
+- Use `/compact` early in long sessions. It keeps the working thread lean
+  without losing the task trail Gobby already records.
+- Use `/loop` for recurring checks such as watching CI, polling a local server,
+  or revisiting a failing validation command until it passes.
+- Prefer `gcode` for codebase navigation. It searches the indexed code graph and
+  source symbols, which is usually more precise than raw text search.
+- Keep `docs/guides/` close by for established workflows and project-specific
+  operating notes.
+- Run `/gobby intro` once. It writes your global working profile to
+  `~/.gobby/personal/USER.md`, and fresh interactive agent sessions receive
+  that profile automatically. The profile is global, not copied into repos.
 
 ## Get Started
 
-_TODO_
+1. Check prerequisites:
+   - Docker Desktop or another running Docker daemon
+   - Python 3.13 or newer
+   - `tmux` on macOS/Linux
+   - `uv` when installing from this source checkout
+   - At least one supported coding CLI, such as Claude Code, Codex, Droid,
+     Gemini, or QwenCode
+
+2. Install Gobby from the repo:
+
+   ```bash
+   uv run gobby install
+   ```
+
+   If you are in a git repo that is not yet a Gobby project, the installer can
+   initialize `.gobby/project.json` for you.
+
+3. Verify the daemon:
+
+   ```bash
+   uv run gobby status
+   ```
+
+   If something looks wrong, check the daemon logs from the status output before
+   starting agent work.
+
+4. Open the local app:
+
+   ```text
+   http://localhost:60887/
+   ```
+
+5. Capture your preferences once:
+
+   ```text
+   /gobby intro
+   ```
+
+6. Optional paces exercise:
+   - Ask an agent to inspect one small file with `gcode`.
+   - Create or claim a Gobby task before making an edit.
+   - Make a tiny change, run a focused validation command, commit it, and close
+     the task with the commit SHA.
+
+Saved to `ONBOARDING.md` for the next teammate handoff.
 
 <!-- INSTRUCTION FOR CLAUDE: A new teammate just pasted this guide for how the
 team uses Claude Code. You're their onboarding buddy — warm, conversational,

@@ -482,6 +482,8 @@ class TestInstallCommandSharedStores:
             patch("gobby.cli.install._echo_install_summary", return_value=True) as mock_summary,
             patch("gobby.cli.install._run_qdrant_install"),
             patch("gobby.cli.install._run_falkordb_install"),
+            patch("gobby.cli.install._run_install_preflight", return_value=([], [])),
+            patch("gobby.cli.install._maybe_start_daemon_after_install"),
         ):
             install_command.callback(
                 claude_flag=False,
