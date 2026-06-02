@@ -796,6 +796,47 @@ async def test_spawn_action_links_run_id(
 
 
 @pytest.mark.asyncio
+async def test_spawn_action_skips_stale_candidate_with_active_run_mutex(
+    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+) -> None:
+    """Stale candidates cannot overwrite an existing active run mutex."""
+    from gobby.dispatch import dispatcher
+
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    storage = _mutex_storage(temp_db)
+    assert storage.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="heartbeat",
+        ttl_seconds=600,
+        run_id="run-active",
+    )
+    action = SpawnAgentAction(
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        agent_slug="backend-developer",
+        prompt="go",
+    )
+    spawned: list[str] = []
+    monkeypatch.setattr(dispatcher, "list_automation_candidates", lambda *args, **kwargs: [task])
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(
+        dispatcher,
+        "spawn_agent",
+        lambda *_args, **_kwargs: spawned.append("run-duplicate") or "run-duplicate",
+    )
+
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    assert result.executed == 0
+    assert result.skipped == 1
+    assert spawned == []
+    mutex = storage.get_mutex(task.id)
+    assert mutex is not None
+    assert mutex.run_id == "run-active"
+
+
+@pytest.mark.asyncio
 async def test_spawn_attach_failure_terminalizes_created_run(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,

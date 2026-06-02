@@ -114,12 +114,13 @@ class TaskDispatchMutexManager:
                 existing_holder = row["lease_holder"]
                 existing_run_id = row["run_id"]
                 if existing_until is not None and existing_until >= now_iso:
-                    if existing_holder != holder or (
-                        run_id is not None and existing_run_id != run_id
+                    if (
+                        existing_holder != holder
+                        or existing_run_id is None
+                        or existing_run_id != run_id
                     ):
                         return False
-                    if run_id is None:
-                        next_run_id = existing_run_id
+                    next_run_id = existing_run_id
 
             conn.execute(
                 """
