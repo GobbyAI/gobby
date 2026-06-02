@@ -30,6 +30,26 @@ export interface WikiRemoveSourceRequest {
   keep_asset?: boolean;
 }
 
+export interface WikiSearchRequest {
+  query: string;
+  limit?: number;
+}
+
+export interface WikiReadRequest {
+  path?: string;
+  title?: string;
+}
+
+export interface WikiIngestRequest {
+  path?: string;
+  paths?: string[];
+  urls?: string[];
+}
+
+export interface WikiCompileRequest {
+  output?: string;
+}
+
 interface UseWikiOptions {
   projectId?: string | null;
   topic?: string | null;
@@ -60,12 +80,13 @@ async function readWikiEnvelope<TPayload = WikiJson>(
 
 async function postWikiEnvelope<TPayload = WikiJson>(
   path: string,
-  body: WikiRemoveSourceRequest,
+  body?: unknown,
 ): Promise<WikiEnvelope<TPayload>> {
+  const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
   const response = await fetch(`${getBaseUrl()}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    headers: isFormData ? undefined : { "Content-Type": "application/json" },
+    body: isFormData ? body : JSON.stringify(body ?? {}),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -123,6 +144,67 @@ export function useWiki(options: UseWikiOptions = {}) {
     [query],
   );
 
+  const withQuery = useCallback(
+    (path: string, params: Record<string, string | number | null | undefined> = {}) => {
+      const nextParams = new URLSearchParams(query.startsWith("?") ? query.slice(1) : query);
+      for (const [key, value] of Object.entries(params)) {
+        if (value !== null && value !== undefined && String(value).trim()) {
+          nextParams.set(key, String(value));
+        }
+      }
+      const nextQuery = nextParams.toString();
+      return nextQuery ? `${path}?${nextQuery}` : path;
+    },
+    [query],
+  );
+
+  const search = useCallback(
+    (request: WikiSearchRequest) =>
+      readWikiEnvelope(withQuery("/api/wiki/search", {
+        query: request.query,
+        limit: request.limit,
+      })),
+    [withQuery],
+  );
+
+  const read = useCallback(
+    (request: WikiReadRequest) =>
+      readWikiEnvelope(withQuery("/api/wiki/read", {
+        path: request.path,
+        title: request.title,
+      })),
+    [withQuery],
+  );
+
+  const attach = useCallback(
+    (file: File) => {
+      const body = new FormData();
+      body.set("file", file);
+      return postWikiEnvelope(withQuery("/api/wiki/attach"), body);
+    },
+    [withQuery],
+  );
+
+  const ingest = useCallback(
+    (request: WikiIngestRequest) => postWikiEnvelope(withQuery("/api/wiki/ingest"), request),
+    [withQuery],
+  );
+
+  const compileWiki = useCallback(
+    (request: WikiCompileRequest = {}) => postWikiEnvelope(withQuery("/api/wiki/compile"), request),
+    [withQuery],
+  );
+
+  const audit = useCallback(
+    () => postWikiEnvelope(withQuery("/api/wiki/audit")),
+    [withQuery],
+  );
+
+  const checkHealth = useCallback(
+    () => readWikiEnvelope(withQuery("/api/wiki/health")),
+    [withQuery],
+  );
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
       void refresh();
@@ -138,6 +220,13 @@ export function useWiki(options: UseWikiOptions = {}) {
     isLoading,
     error,
     refresh,
+    search,
+    read,
+    attach,
+    ingest,
+    compileWiki,
+    audit,
+    checkHealth,
     removeSource,
   };
 }

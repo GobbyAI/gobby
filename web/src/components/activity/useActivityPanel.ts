@@ -134,6 +134,7 @@ export function useActivityPanel(isMobile: boolean) {
   })
 
   const [activeTab, setActiveTab] = useState<ActivityTab>(loadActiveTab)
+  const [wikiRefreshSignal, setWikiRefreshSignal] = useState(0)
 
   useEffect(() => {
     if (isMobile) return
@@ -215,6 +216,10 @@ export function useActivityPanel(isMobile: boolean) {
     [isMobile],
   )
 
+  const refreshWikiTab = useCallback(() => {
+    setWikiRefreshSignal((value) => value + 1)
+  }, [])
+
   const closeIfAutoOpened = useCallback(() => {
     if (!autoOpenedRef.current) return
     autoOpenedRef.current = false
@@ -250,8 +255,10 @@ export function useActivityPanel(isMobile: boolean) {
     panelWidth,
     setPanelWidth,
     activeTab,
+    wikiRefreshSignal,
     setActiveTab: handleTabChange,
     showTab,
+    refreshWikiTab,
     closeIfAutoOpened,
     toggleFromChat,
     toggleFromPanel,
