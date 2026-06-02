@@ -27,6 +27,7 @@ pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
             scope,
             options,
         } => index::execute_ingest_file(path, scope, options),
+        Command::IngestUrl { urls, scope } => index::execute_ingest_url(urls, scope),
         Command::Sources { scope } => sources::execute(scope),
         Command::RemoveSource {
             id,
@@ -76,5 +77,6 @@ pub(crate) fn scoped_outcome(
     CommandOutcome {
         status_messages: vec![format!("{command} resolved scope {scope}")],
         result: CommandResult { payload, text },
+        exit_code: 0,
     }
 }

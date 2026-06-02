@@ -27,6 +27,10 @@ pub enum Command {
         scope: ScopeSelection,
         options: IngestFileOptions,
     },
+    IngestUrl {
+        urls: Vec<String>,
+        scope: ScopeSelection,
+    },
     Sources {
         scope: ScopeSelection,
     },
@@ -261,6 +265,7 @@ impl fmt::Display for ScopeIdentity {
 pub struct CommandOutcome {
     pub status_messages: Vec<String>,
     pub result: CommandResult,
+    pub exit_code: u8,
 }
 
 #[derive(Debug, Clone, PartialEq)]

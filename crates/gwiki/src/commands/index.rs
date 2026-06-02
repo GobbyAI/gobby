@@ -121,6 +121,50 @@ pub(crate) fn execute_ingest_file(
     Ok(render_ingest_file(&path, output_scope, &result, counts))
 }
 
+pub(crate) fn execute_ingest_url(
+    urls: Vec<String>,
+    selection: ScopeSelection,
+) -> Result<CommandOutcome, WikiError> {
+    let scope = resolve_command_scope(&selection)?;
+    // Vault initialization is idempotent here; ingest only needs the paths to exist.
+    let initialized = vault::initialize(&scope)?;
+    if !initialized.directories.is_empty() || !initialized.files.is_empty() {
+        log::debug!(
+            "initialized gwiki vault paths before ingest-url: directories={:?} files={:?}",
+            initialized.directories,
+            initialized.files
+        );
+    }
+    let output_scope = resolved_scope_identity(&scope);
+    let fetched_at = collect_timestamp().map_err(|error| WikiError::Config {
+        detail: format!("failed to read system clock: {error}"),
+    })?;
+    if let Some(database_url) = database_url_from_env() {
+        let mut conn = gobby_core::postgres::connect_readwrite(&database_url).map_err(|error| {
+            WikiError::Config {
+                detail: format!("failed to connect to PostgreSQL for gwiki ingest-url: {error}"),
+            }
+        })?;
+        let search_scope = search_scope_for_resolved(&scope);
+        let result = {
+            let mut store =
+                store::PostgresWikiStore::new(&mut conn, store_scope_for_search(&search_scope));
+            ingest::url::ingest_urls(scope.root(), &mut store, &urls, &fetched_at)?
+        };
+        let counts = if result.accepted.is_empty() {
+            IndexCounts::default()
+        } else {
+            postgres_index_counts(&mut conn, &search_scope)?
+        };
+        return Ok(render_ingest_url(output_scope, &result, counts));
+    }
+
+    let mut store = store::MemoryWikiStore::default();
+    let result = ingest::url::ingest_urls(scope.root(), &mut store, &urls, &fetched_at)?;
+    let counts = index_counts(&store);
+    Ok(render_ingest_url(output_scope, &result, counts))
+}
+
 fn resolve_ingest_ai_context(
     project_id: Option<String>,
     options: &IngestFileOptions,
@@ -250,6 +294,78 @@ Ingestions: {}",
         counts.ingestions
     );
     super::scoped_outcome("ingest-file", &scope, payload, text)
+}
+
+fn render_ingest_url(
+    scope: ScopeIdentity,
+    result: &ingest::url::UrlBatchIngest,
+    counts: IndexCounts,
+) -> CommandOutcome {
+    let accepted = result
+        .accepted
+        .iter()
+        .map(|accepted| {
+            json!({
+                "requested_url": &accepted.requested_url,
+                "final_url": &accepted.final_url,
+                "raw_path": &accepted.result.raw_path,
+                "source": {
+                    "id": &accepted.result.record.id,
+                    "kind": &accepted.result.record.kind,
+                    "content_hash": &accepted.result.record.content_hash,
+                    "location": &accepted.result.record.location,
+                },
+            })
+        })
+        .collect::<Vec<_>>();
+    let failed = result
+        .failed
+        .iter()
+        .map(|failure| {
+            json!({
+                "url": &failure.url,
+                "code": &failure.code,
+                "message": &failure.message,
+            })
+        })
+        .collect::<Vec<_>>();
+    let payload = json!({
+        "command": "ingest-url",
+        "scope": scope,
+        "status": result.status(),
+        "accepted": accepted,
+        "failed": failed,
+        "indexed": {
+            "documents": counts.documents,
+            "chunks": counts.chunks,
+            "links": counts.links,
+            "sources": counts.sources,
+            "ingestions": counts.ingestions,
+        },
+    });
+    let text = format!(
+        "Ingested URLs
+Scope: {scope}
+Status: {}
+Accepted: {}
+Failed: {}
+Documents: {}
+Chunks: {}
+Links: {}
+Sources: {}
+Ingestions: {}",
+        result.status(),
+        result.accepted.len(),
+        result.failed.len(),
+        counts.documents,
+        counts.chunks,
+        counts.links,
+        counts.sources,
+        counts.ingestions
+    );
+    let mut outcome = super::scoped_outcome("ingest-url", &scope, payload, text);
+    outcome.exit_code = result.exit_code();
+    outcome
 }
 
 fn ensure_scope_root(scope: &crate::scope::ResolvedScope) -> Result<(), WikiError> {

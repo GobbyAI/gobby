@@ -1,4 +1,6 @@
+use std::io::Read;
 use std::path::Path;
+use std::time::Duration;
 
 use scraper::{ElementRef, Html, Node, Selector};
 
@@ -10,6 +12,9 @@ use crate::ingest::{
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
 
+const URL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+const USER_AGENT: &str = "gwiki/0.1";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UrlSnapshot {
     pub requested_url: String,
@@ -19,9 +24,53 @@ pub struct UrlSnapshot {
     pub content_type: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcceptedUrlIngest {
+    pub requested_url: String,
+    pub final_url: String,
+    pub result: IngestResult,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UrlIngestFailure {
+    pub url: String,
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UrlBatchIngest {
+    pub accepted: Vec<AcceptedUrlIngest>,
+    pub failed: Vec<UrlIngestFailure>,
+}
+
+impl UrlBatchIngest {
+    pub fn status(&self) -> &'static str {
+        match (self.accepted.is_empty(), self.failed.is_empty()) {
+            (false, true) => "ingested",
+            (false, false) => "partial",
+            (true, _) => "failed",
+        }
+    }
+
+    pub fn exit_code(&self) -> u8 {
+        u8::from(self.accepted.is_empty())
+    }
+}
+
 pub fn ingest_snapshot(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
+    snapshot: UrlSnapshot,
+) -> Result<IngestResult, WikiError> {
+    let result = ingest_snapshot_without_index(vault_root, snapshot)?;
+    index_after_ingest(vault_root, store)?;
+
+    Ok(result)
+}
+
+pub(crate) fn ingest_snapshot_without_index(
+    vault_root: &Path,
     mut snapshot: UrlSnapshot,
 ) -> Result<IngestResult, WikiError> {
     let html = text_from_utf8_lossy(&snapshot.body);
@@ -48,13 +97,162 @@ pub fn ingest_snapshot(
         &source_hash,
     );
     let raw_path = write_raw_markdown(vault_root, &record, &markdown)?;
-    index_after_ingest(vault_root, store)?;
 
     Ok(IngestResult {
         record,
         raw_path,
         asset_path: None,
     })
+}
+
+pub(crate) fn ingest_urls(
+    vault_root: &Path,
+    store: &mut impl WikiIndexStore,
+    urls: &[String],
+    fetched_at: &str,
+) -> Result<UrlBatchIngest, WikiError> {
+    let fetcher = BlockingUrlFetcher::default();
+    ingest_urls_with_fetcher(vault_root, store, urls, fetched_at, |url, fetched_at| {
+        fetcher.fetch(url, fetched_at)
+    })
+}
+
+pub(crate) fn ingest_urls_with_fetcher(
+    vault_root: &Path,
+    store: &mut impl WikiIndexStore,
+    urls: &[String],
+    fetched_at: &str,
+    mut fetch: impl FnMut(&str, &str) -> Result<UrlSnapshot, UrlIngestFailure>,
+) -> Result<UrlBatchIngest, WikiError> {
+    if urls.is_empty() {
+        return Err(WikiError::InvalidInput {
+            field: "ingest-url",
+            message: "at least one URL is required".to_string(),
+        });
+    }
+
+    let mut accepted = Vec::new();
+    let mut failed = Vec::new();
+    for url in urls {
+        match fetch(url, fetched_at) {
+            Ok(snapshot) => {
+                let requested_url = snapshot.requested_url.clone();
+                let final_url = snapshot.final_url.clone();
+                match ingest_snapshot_without_index(vault_root, snapshot) {
+                    Ok(result) => accepted.push(AcceptedUrlIngest {
+                        requested_url,
+                        final_url,
+                        result,
+                    }),
+                    Err(error) => failed.push(UrlIngestFailure::from_wiki_error(url, error)),
+                }
+            }
+            Err(error) => failed.push(error),
+        }
+    }
+
+    if !accepted.is_empty() {
+        index_after_ingest(vault_root, store)?;
+    }
+
+    Ok(UrlBatchIngest { accepted, failed })
+}
+
+#[derive(Debug, Clone)]
+struct BlockingUrlFetcher {
+    agent: ureq::Agent,
+}
+
+impl Default for BlockingUrlFetcher {
+    fn default() -> Self {
+        Self {
+            agent: ureq::AgentBuilder::new().timeout(URL_FETCH_TIMEOUT).build(),
+        }
+    }
+}
+
+impl BlockingUrlFetcher {
+    fn fetch(&self, url: &str, fetched_at: &str) -> Result<UrlSnapshot, UrlIngestFailure> {
+        validate_fetch_url(url)?;
+        let response = match self.agent.get(url).set("User-Agent", USER_AGENT).call() {
+            Ok(response) => response,
+            Err(ureq::Error::Status(status, response)) => {
+                return Err(UrlIngestFailure::http_status(url, status, response));
+            }
+            Err(ureq::Error::Transport(error)) => {
+                return Err(UrlIngestFailure::new(
+                    url,
+                    "transport_error",
+                    error.to_string(),
+                ));
+            }
+        };
+        let final_url = response.get_url().to_string();
+        let content_type = response.header("content-type").map(ToOwned::to_owned);
+        let mut body = Vec::new();
+        response
+            .into_reader()
+            .read_to_end(&mut body)
+            .map_err(|error| UrlIngestFailure::new(url, "read_error", error.to_string()))?;
+
+        Ok(UrlSnapshot {
+            requested_url: url.to_string(),
+            final_url,
+            fetched_at: fetched_at.to_string(),
+            body,
+            content_type,
+        })
+    }
+}
+
+impl UrlIngestFailure {
+    fn new(url: impl Into<String>, code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            url: url.into(),
+            code: code.into(),
+            message: message.into(),
+        }
+    }
+
+    fn from_wiki_error(url: &str, error: WikiError) -> Self {
+        Self::new(url, error.code(), error.to_string())
+    }
+
+    fn http_status(url: &str, status: u16, response: ureq::Response) -> Self {
+        let body = response.into_string().unwrap_or_default();
+        let body = single_line(&body);
+        let detail = if body.is_empty() {
+            format!("HTTP status {status}")
+        } else {
+            format!("HTTP status {status}: {}", truncate_message(&body))
+        };
+        Self::new(url, "http_status", detail)
+    }
+}
+
+fn validate_fetch_url(raw_url: &str) -> Result<(), UrlIngestFailure> {
+    let parsed = url::Url::parse(raw_url)
+        .map_err(|error| UrlIngestFailure::new(raw_url, "invalid_url", error.to_string()))?;
+    if matches!(parsed.scheme(), "http" | "https") {
+        Ok(())
+    } else {
+        Err(UrlIngestFailure::new(
+            raw_url,
+            "invalid_url",
+            format!("unsupported URL scheme `{}`", parsed.scheme()),
+        ))
+    }
+}
+
+fn truncate_message(message: &str) -> String {
+    const MAX_CHARS: usize = 200;
+    let mut chars = message.chars();
+    let truncated = chars.by_ref().take(MAX_CHARS).collect::<String>();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
 }
 
 fn render_url_markdown(
@@ -207,13 +405,18 @@ fn normalize_markdown_text(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::path::Path;
     use std::path::PathBuf;
 
     use gobby_core::indexing::content_hash;
 
     use super::*;
     use crate::sources::{SourceKind, SourceManifest};
-    use crate::store::MemoryWikiStore;
+    use crate::store::{
+        MemoryWikiStore, StoreError, WikiChunk, WikiDocument, WikiIndexStore, WikiIngestion,
+        WikiLink, WikiSource,
+    };
 
     #[test]
     fn url_ingest_writes_raw_and_manifest() {
@@ -270,5 +473,140 @@ mod tests {
 
         assert_eq!(extract_title(&html), Some("Hidden & Title".to_string()));
         assert_eq!(html_to_markdownish_text(&html), "Keep & decode together.");
+    }
+
+    #[test]
+    fn batch_url_ingest_accepts_successes_and_records_failures() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let urls = vec![
+            "https://example.test/accepted".to_string(),
+            "https://example.test/failure".to_string(),
+        ];
+        let mut store = MemoryWikiStore::default();
+
+        let result = ingest_urls_with_fetcher(
+            temp.path(),
+            &mut store,
+            &urls,
+            "2026-06-02T00:00:00Z",
+            |url, fetched_at| {
+                if url.ends_with("/accepted") {
+                    Ok(test_snapshot(url, url, "Accepted URL", fetched_at))
+                } else {
+                    Err(UrlIngestFailure::new(url, "http_status", "HTTP status 500"))
+                }
+            },
+        )
+        .expect("batch ingest");
+
+        assert_eq!(result.status(), "partial");
+        assert_eq!(result.exit_code(), 0);
+        assert_eq!(result.accepted.len(), 1);
+        assert_eq!(result.failed.len(), 1);
+        assert_eq!(
+            result.accepted[0].requested_url,
+            "https://example.test/accepted"
+        );
+        assert_eq!(result.failed[0].url, "https://example.test/failure");
+        assert_eq!(result.failed[0].code, "http_status");
+        assert!(store.documents.contains_key(&PathBuf::from("raw/INDEX.md")));
+
+        let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
+        assert_eq!(manifest.entries.len(), 1);
+        assert_eq!(manifest.entries[0].kind, SourceKind::Url);
+        assert_eq!(
+            manifest.entries[0].canonical_location,
+            "https://example.test/accepted"
+        );
+    }
+
+    #[test]
+    fn batch_url_ingest_indexes_once_after_accepted_batch() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let urls = vec![
+            "https://example.test/one".to_string(),
+            "https://example.test/two".to_string(),
+        ];
+        let mut store = CountingStore::default();
+
+        let result = ingest_urls_with_fetcher(
+            temp.path(),
+            &mut store,
+            &urls,
+            "2026-06-02T00:00:00Z",
+            |url, fetched_at| Ok(test_snapshot(url, url, url, fetched_at)),
+        )
+        .expect("batch ingest");
+
+        assert_eq!(result.status(), "ingested");
+        assert_eq!(result.accepted.len(), 2);
+        assert_eq!(store.indexed_hash_reads, 1);
+    }
+
+    fn test_snapshot(
+        requested_url: &str,
+        final_url: &str,
+        title: &str,
+        fetched_at: &str,
+    ) -> UrlSnapshot {
+        UrlSnapshot {
+            requested_url: requested_url.to_string(),
+            final_url: final_url.to_string(),
+            fetched_at: fetched_at.to_string(),
+            body: format!(
+                "<!doctype html><html><head><title>{title}</title></head><body><p>{title} body.</p></body></html>"
+            )
+            .into_bytes(),
+            content_type: Some("text/html".to_string()),
+        }
+    }
+
+    #[derive(Default)]
+    struct CountingStore {
+        inner: MemoryWikiStore,
+        indexed_hash_reads: usize,
+    }
+
+    impl WikiIndexStore for CountingStore {
+        fn indexed_hashes(&mut self) -> Result<BTreeMap<PathBuf, String>, StoreError> {
+            self.indexed_hash_reads += 1;
+            self.inner.indexed_hashes()
+        }
+
+        fn upsert_document(&mut self, document: WikiDocument) -> Result<(), StoreError> {
+            self.inner.upsert_document(document)
+        }
+
+        fn replace_chunks(
+            &mut self,
+            path: &Path,
+            chunks: Vec<WikiChunk>,
+        ) -> Result<(), StoreError> {
+            self.inner.replace_chunks(path, chunks)
+        }
+
+        fn replace_links(&mut self, path: &Path, links: Vec<WikiLink>) -> Result<(), StoreError> {
+            self.inner.replace_links(path, links)
+        }
+
+        fn upsert_source(&mut self, source: WikiSource) -> Result<(), StoreError> {
+            self.inner.upsert_source(source)
+        }
+
+        fn record_ingestion(&mut self, ingestion: WikiIngestion) -> Result<(), StoreError> {
+            self.inner.record_ingestion(ingestion)
+        }
+
+        fn record_file_hash(
+            &mut self,
+            path: PathBuf,
+            content_hash: String,
+        ) -> Result<(), StoreError> {
+            self.inner.record_file_hash(path, content_hash)
+        }
+
+        fn delete_derived_rows(&mut self, path: &Path) -> Result<(), StoreError> {
+            self.inner.delete_derived_rows(path)
+        }
     }
 }

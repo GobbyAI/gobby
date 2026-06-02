@@ -60,6 +60,11 @@ enum CliCommand {
         #[arg(long, value_name = "auto|daemon|direct|off")]
         text_routing: Option<AiRouting>,
     },
+    /// Fetch URL sources into the wiki inbox.
+    IngestUrl {
+        #[arg(value_name = "URL", num_args = 1..)]
+        urls: Vec<String>,
+    },
     /// List raw source manifest entries in the selected scope.
     Sources,
     /// Remove a raw source, its manifest entry, and its raw asset.
@@ -298,7 +303,7 @@ fn main() -> ExitCode {
                 eprintln!("gwiki: {error}");
                 return ExitCode::from(1);
             }
-            ExitCode::SUCCESS
+            ExitCode::from(outcome.exit_code)
         }
         Err(error) => {
             print_error(format, &error);
@@ -354,6 +359,7 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
                 text_routing,
             },
         }),
+        CliCommand::IngestUrl { urls } => Ok(Command::IngestUrl { urls, scope }),
         CliCommand::Sources => Ok(Command::Sources { scope }),
         CliCommand::RemoveSource(args) => {
             if args.dry_run && args.yes {
@@ -564,6 +570,53 @@ mod tests {
             context.bindings.audio_translate.target_lang.as_deref(),
             Some("es")
         );
+    }
+
+    #[test]
+    fn ingest_url_cli_accepts_multiple_urls() {
+        let cli = Cli::try_parse_from([
+            "gwiki",
+            "ingest-url",
+            "--topic",
+            "rust",
+            "https://example.test/one",
+            "https://example.test/two",
+        ])
+        .expect("parse ingest-url command");
+        assert_eq!(cli.scope.topic.as_deref(), Some("rust"));
+        let CliCommand::IngestUrl { urls } = cli.command else {
+            panic!("expected parsed ingest-url command");
+        };
+        assert_eq!(
+            urls,
+            vec![
+                "https://example.test/one".to_string(),
+                "https://example.test/two".to_string()
+            ]
+        );
+
+        let command = command_from_cli(
+            CliCommand::IngestUrl {
+                urls: vec![
+                    "https://example.test/one".to_string(),
+                    "https://example.test/two".to_string(),
+                ],
+            },
+            ScopeSelection::topic("rust"),
+        )
+        .expect("map ingest-url command");
+
+        let Command::IngestUrl { urls, scope } = command else {
+            panic!("expected ingest-url command");
+        };
+        assert_eq!(
+            urls,
+            vec![
+                "https://example.test/one".to_string(),
+                "https://example.test/two".to_string()
+            ]
+        );
+        assert_eq!(scope.topic_name(), Some("rust"));
     }
 
     #[test]

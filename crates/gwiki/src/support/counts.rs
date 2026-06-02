@@ -1,6 +1,6 @@
 use crate::{WikiError, search, store};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct IndexCounts {
     pub(crate) documents: usize,
     pub(crate) chunks: usize,

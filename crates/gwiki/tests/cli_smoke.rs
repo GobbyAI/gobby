@@ -1,6 +1,10 @@
 use std::fs;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::Path;
 use std::process::{Command, Output};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use gobby_wiki::session::{AcceptedResearchNote, DaemonDispatch, ResearchScope, ResearchSession};
 use gobby_wiki::sources::{
@@ -60,6 +64,44 @@ fn unique_topic(label: &str) -> String {
         .expect("system time after epoch")
         .as_nanos();
     format!("{label}-{}-{nanos}", std::process::id())
+}
+
+fn serve_http_responses(
+    responses: Vec<(&'static str, &'static str)>,
+) -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind HTTP fixture");
+    listener
+        .set_nonblocking(true)
+        .expect("configure HTTP fixture timeout");
+    let base_url = format!("http://{}", listener.local_addr().expect("local addr"));
+    let handle = thread::spawn(move || {
+        for (status, body) in responses {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(accepted) => break accepted,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            Instant::now() < deadline,
+                            "timed out waiting for HTTP fixture request"
+                        );
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("accept HTTP fixture request: {error}"),
+                }
+            };
+            let mut buffer = [0_u8; 1024];
+            let _ = stream.read(&mut buffer);
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write HTTP fixture response");
+        }
+    });
+    (base_url, handle)
 }
 
 fn seed_accepted_research_checkpoint(vault: &Path) {
@@ -470,6 +512,111 @@ fn read_returns_scoped_wiki_document_contract() {
             .len(),
         2
     );
+}
+
+#[test]
+fn ingest_url_json_reports_partial_success() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let hub = tmp.path().join("hub");
+    let topic = unique_topic("url-partial");
+    let init = gwiki(&hub, tmp.path(), &["init", "--topic", &topic]);
+    assert_success(&init, "init topic");
+
+    let (base_url, server) = serve_http_responses(vec![
+        (
+            "200 OK",
+            "<!doctype html><html><head><title>URL Good</title></head><body><p>URL body.</p></body></html>",
+        ),
+        ("500 Internal Server Error", "fixture failure"),
+    ]);
+    let accepted_url = format!("{base_url}/accepted");
+    let failed_url = format!("{base_url}/failed");
+    let output = gwiki(
+        &hub,
+        tmp.path(),
+        &[
+            "--format",
+            "json",
+            "ingest-url",
+            "--topic",
+            &topic,
+            &accepted_url,
+            &failed_url,
+        ],
+    );
+    server.join().expect("HTTP fixture completed");
+    assert_success(&output, "ingest-url partial");
+
+    let payload = json_output(&output);
+    assert_eq!(payload["command"], "ingest-url");
+    assert_eq!(payload["status"], "partial");
+    assert_eq!(payload["accepted"].as_array().expect("accepted").len(), 1);
+    assert_eq!(payload["failed"].as_array().expect("failed").len(), 1);
+    assert_eq!(
+        payload["accepted"][0]["requested_url"].as_str(),
+        Some(accepted_url.as_str())
+    );
+    assert_eq!(
+        payload["accepted"][0]["final_url"].as_str(),
+        Some(accepted_url.as_str())
+    );
+    assert!(payload["accepted"][0]["raw_path"].as_str().is_some());
+    assert_eq!(payload["accepted"][0]["source"]["kind"], "url");
+    assert_eq!(
+        payload["failed"][0]["url"].as_str(),
+        Some(failed_url.as_str())
+    );
+    assert_eq!(payload["failed"][0]["code"], "http_status");
+    assert!(
+        payload["indexed"]["documents"]
+            .as_u64()
+            .is_some_and(|count| count >= 1),
+        "{payload:#}"
+    );
+}
+
+#[test]
+fn ingest_url_json_reports_all_failed_with_nonzero_exit() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let hub = tmp.path().join("hub");
+    let topic = unique_topic("url-failed");
+    let init = gwiki(&hub, tmp.path(), &["init", "--topic", &topic]);
+    assert_success(&init, "init topic");
+
+    let (base_url, server) =
+        serve_http_responses(vec![("500 Internal Server Error", "fixture failure")]);
+    let failed_url = format!("{base_url}/failed");
+    let output = gwiki(
+        &hub,
+        tmp.path(),
+        &[
+            "--format",
+            "json",
+            "ingest-url",
+            "--topic",
+            &topic,
+            &failed_url,
+        ],
+    );
+    server.join().expect("HTTP fixture completed");
+
+    assert!(
+        !output.status.success(),
+        "ingest-url all-failed succeeded unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload = json_output(&output);
+    assert_eq!(payload["command"], "ingest-url");
+    assert_eq!(payload["status"], "failed");
+    assert_eq!(payload["accepted"].as_array().expect("accepted").len(), 0);
+    assert_eq!(payload["failed"].as_array().expect("failed").len(), 1);
+    assert_eq!(
+        payload["failed"][0]["url"].as_str(),
+        Some(failed_url.as_str())
+    );
+    assert_eq!(payload["failed"][0]["code"], "http_status");
+    assert_eq!(payload["indexed"]["documents"].as_u64(), Some(0));
 }
 
 #[test]
