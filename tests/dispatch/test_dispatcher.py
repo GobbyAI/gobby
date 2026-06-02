@@ -1765,6 +1765,82 @@ async def test_leaf_spawn_skips_stale_parent_integration_branch(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("branch_sha", "reason"),
+    [
+        (None, "merge_ready_task_branch_missing"),
+        ("same-sha", "merge_ready_task_branch_matches_target"),
+    ],
+)
+async def test_merge_ready_leaf_spawn_blocks_contaminated_task_branch(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+    branch_sha: str | None,
+    reason: str,
+) -> None:
+    """Merge-ready leaf spawn refuses to recreate or reuse contaminated task branches."""
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch.spawn import DispatchSpawnFailed, spawn_agent
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    session_manager = SessionManager(temp_db)
+    parent = _task(
+        temp_db,
+        sample_project,
+        title="Phase epic",
+        task_type="epic",
+        allow_automation=False,
+    )
+    leaf = _task(
+        temp_db,
+        sample_project,
+        title="Leaf implementation",
+        parent_task_id=parent.id,
+        stage_state="review_approved",
+        isolation="worktree",
+    )
+    task_artifacts = TaskArtifactManager(temp_db)
+    task_artifacts.set_artifacts_atomic(
+        parent.id,
+        target_branch="main",
+        integration_branch="gobby/integration/phase",
+    )
+    task_artifacts.set_artifacts_atomic(leaf.id, target_branch="gobby/integration/phase")
+    action = SpawnAgentAction(
+        task_id=leaf.id,
+        task_ref=f"#{leaf.seq_num}",
+        agent_slug="backend-developer",
+        prompt="go",
+    )
+
+    def fake_ref_sha(**kwargs: object) -> tuple[bool, str | None]:
+        if kwargs["ref_name"] == "gobby/integration/phase":
+            return True, "same-sha"
+        return True, branch_sha
+
+    async def unexpected_spawn_agent_impl(**_kwargs: object) -> dict[str, object]:
+        raise AssertionError("merge-ready contaminated branch must fail before spawn")
+
+    monkeypatch.setattr("gobby.dispatch.spawn._artifact_ref_sha", fake_ref_sha)
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        unexpected_spawn_agent_impl,
+    )
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=session_manager,
+        agent_runner=SimpleNamespace(),
+    )
+
+    with pytest.raises(DispatchSpawnFailed, match=reason):
+        await spawn_agent(action, db=temp_db, services=services)
+
+
+@pytest.mark.asyncio
 async def test_epic_holistic_spawn_refreshes_and_reuses_integration_workspace(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
