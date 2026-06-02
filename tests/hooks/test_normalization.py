@@ -836,6 +836,19 @@ class TestCanonicalToolMetadata:
         assert data["canonical_file_path"] == "a.txt"
         assert data["canonical_file_paths"] == ["a.txt", "b.txt", "c.txt"]
 
+    def test_exec_command_truncate_respects_end_of_options_marker(self) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": "truncate -s 0 -- --dash-prefixed.txt normal.txt"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["tool_name"] == "Bash"
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_file_path"] == "--dash-prefixed.txt"
+        assert data["canonical_file_paths"] == ["--dash-prefixed.txt", "normal.txt"]
+
 
 class TestToolErrorDetection:
     """Tests for Phase 3: shell tool error detection from output text."""

@@ -95,6 +95,8 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
         "270_context_usage_value_constraints.sql",
         "271_embeddings_namespace_to_ai_embeddings.sql",
         "272_drop_embedding_provider_config.sql",
+        "273_task_merge_status.sql",
+        "274_nullable_task_merge_status.sql",
     ]
 
 
@@ -136,7 +138,8 @@ def test_embedding_namespace_migration_uses_namespaced_secret_reference() -> Non
     assert "embeddings_api_key" in migration
     assert """'"$secret:embeddings_api_key"'""" in migration
     assert "to_json('$secret:embeddings_api_key'::text)::text" not in migration
-    assert "'secret-' || md5(source_secret.id || ':embeddings_api_key')" in migration
+    assert "'secret-' || md5(source_secret.name || ':embeddings_api_key')" in migration
+    assert "WHERE key = 'embeddings.api_key'\n      AND EXISTS" in migration
     assert "DELETE FROM config_store" in migration
 
 

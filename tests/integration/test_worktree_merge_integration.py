@@ -157,6 +157,40 @@ class TestTaskStatusDuringMerge:
         assert reloaded.merge_in_progress is True
         assert reloaded.blocked_by_merge is True
 
+    def test_task_manager_update_task_can_clear_merge_status_to_null(
+        self,
+        hub_db: HubDatabase,
+    ) -> None:
+        """TaskManager preserves nullable merge status clears."""
+        from gobby.storage.projects import LocalProjectManager
+        from gobby.storage.tasks import LocalTaskManager
+
+        project = LocalProjectManager(hub_db).create(
+            name="merge-status-clear",
+            repo_path="/tmp/repo",
+        )
+        manager = LocalTaskManager(hub_db)
+        task = manager.create_task(project_id=project.id, title="Merge status", category="code")
+
+        manager.set_merge_status(task.id, merge_in_progress=True, blocked_by_merge=True)
+        updated = manager.update_task(
+            task.id,
+            merge_in_progress=None,
+            blocked_by_merge=None,
+        )
+        row = hub_db.fetchone(
+            """
+            SELECT merge_in_progress, blocked_by_merge
+            FROM tasks
+            WHERE id = %s
+            """,
+            (task.id,),
+        )
+
+        assert updated.merge_in_progress is None
+        assert updated.blocked_by_merge is None
+        assert row == {"merge_in_progress": None, "blocked_by_merge": None}
+
 
 # ==============================================================================
 # Merge State Persistence Tests

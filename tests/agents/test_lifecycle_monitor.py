@@ -892,6 +892,50 @@ class TestCheckIdleAgents:
         ]
 
     @pytest.mark.asyncio
+    async def test_idle_reprompt_returns_zero_when_enter_submit_fails(
+        self,
+        idle_monitor: AgentLifecycleMonitor,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict,
+    ) -> None:
+        """Failed Enter submission should not count as handled or recorded."""
+        import time
+
+        run = _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id="run-reprompt-enter-fails",
+            tmux_session_name="gobby-reprompt-enter-fails",
+        )
+        state = idle_monitor._idle_detector.get_state(run.id)
+        state.first_idle_at = time.monotonic() - 360
+
+        send_results = [True, True, False]
+        with (
+            patch.object(
+                idle_monitor._tmux,
+                "capture_pane",
+                new_callable=AsyncMock,
+                return_value="\u276f\n",
+            ),
+            patch.object(
+                idle_monitor._tmux,
+                "send_keys",
+                new_callable=AsyncMock,
+                side_effect=send_results,
+            ) as mock_send,
+        ):
+            handled = await idle_monitor.check_idle_agents()
+
+        assert handled == 0
+        assert idle_monitor._idle_detector.get_state(run.id).reprompt_count == 0
+        assert mock_send.call_args_list == [
+            call("gobby-reprompt-enter-fails", "Escape", literal=False),
+            call("gobby-reprompt-enter-fails", "Continue working on your task."),
+            call("gobby-reprompt-enter-fails", "Enter", literal=False),
+        ]
+
+    @pytest.mark.asyncio
     async def test_truncated_queued_message_prompt_skips_idle_reprompt_and_failure(
         self,
         idle_monitor: AgentLifecycleMonitor,

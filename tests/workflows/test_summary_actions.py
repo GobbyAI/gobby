@@ -8,6 +8,7 @@ Tests cover:
 """
 
 import json
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -528,7 +529,10 @@ class TestRenameTmuxWindow:
         assert manager.rename_calls == [("%10", "Named Socket Title")]
 
     @pytest.mark.asyncio
-    async def test_failure_does_not_propagate(self) -> None:
+    async def test_failure_does_not_propagate(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         """Rename failures are swallowed, never propagated."""
         from gobby.workflows.summary_actions import _rename_tmux_window
 
@@ -541,10 +545,15 @@ class TestRenameTmuxWindow:
             async def rename_window(self, target, title):
                 raise OSError("no tmux")
 
-        with patch("gobby.sessions.tmux_context.TmuxSessionManager", FailingTmuxManager):
+        with (
+            caplog.at_level(logging.DEBUG, logger="gobby.workflows.summary_actions"),
+            patch("gobby.sessions.tmux_context.TmuxSessionManager", FailingTmuxManager),
+        ):
             result = await _rename_tmux_window(session, "Title")
 
         assert result is None
+        assert "tmux window rename errored" in caplog.text
+        assert all(record.levelno < logging.WARNING for record in caplog.records)
 
 
 # =============================================================================

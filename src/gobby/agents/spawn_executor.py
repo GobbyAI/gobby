@@ -58,7 +58,7 @@ _CODEX_PREAPPROVED_GOBBY_TOOLS = [
     "get_variable",
     "set_variable",
 ]
-_CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC = 360
+_CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC: int = 360
 
 # Gobby-managed Claude agents must use Gobby's spawn/session controls. Native Claude
 # delegation bypasses project context, depth limits, sandbox metadata, and task ownership.
@@ -253,13 +253,13 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         reasoning_effort=request.effective_reasoning_effort,
         disallowed_tools=_CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS,
     )
-    claude_mcp_config = Path(request.cwd) / ".mcp.json"
-    claude_mcp_path: str | None = None
+    claude_mcp_config_path = Path(request.cwd) / ".mcp.json"
+    claude_mcp_config_arg: str | None = None
     strict_mcp = False
-    if claude_mcp_config.exists():
-        claude_mcp_path = str(claude_mcp_config)
+    if claude_mcp_config_path.exists():
+        claude_mcp_config_arg = str(claude_mcp_config_path)
         strict_mcp = True
-        cmd.extend(["--mcp-config", claude_mcp_path, "--strict-mcp-config"])
+        cmd.extend(["--mcp-config", claude_mcp_config_arg, "--strict-mcp-config"])
 
     # Resolve sandbox config if provided
     sandbox_config = _sandbox_config_for_spawn(request.sandbox_config, spawn_context.env_vars)
@@ -302,7 +302,7 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         sandbox_args=sandbox_args,
         sandbox_env=sandbox_env,
         env=env,
-        mcp_path=claude_mcp_path,
+        mcp_path=claude_mcp_config_arg,
         strict_mcp=strict_mcp,
     )
 

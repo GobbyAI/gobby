@@ -84,8 +84,10 @@ def test_embedded_envelope_headers_are_ignored_without_real_header(
     assert "_platform_session_id" not in adapter_payload
 
 
+@pytest.mark.parametrize("hook_type", ["Stop", "sToP"])
 def test_codex_stop_hook_timeout_blocks_fail_safe(
     temp_db: HubDatabase,
+    hook_type: str,
 ) -> None:
     session_manager = SessionManager(temp_db)
     server = create_http_server(
@@ -115,7 +117,7 @@ def test_codex_stop_hook_timeout_blocks_fail_safe(
         response = client.post(
             "/api/hooks/execute",
             json={
-                "hook_type": "Stop",
+                "hook_type": hook_type,
                 "source": "codex",
                 "input_data": {},
             },

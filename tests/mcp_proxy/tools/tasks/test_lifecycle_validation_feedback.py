@@ -87,6 +87,9 @@ def test_successful_validation_pattern_ignores_not_all_feedback(feedback: str) -
         "Verified all required validation criteria are satisfied.",
         "Resolved: all acceptance criteria were met.",
         "All validation criteria passed after the workflow was re-tested.",
+        "All validation criteria are satisfied.",
+        "All acceptance criteria are met.",
+        "All acceptance criteria passed.",
     ],
 )
 def test_successful_validation_pattern_requires_explicit_verified_success(
@@ -114,8 +117,6 @@ def test_successful_validation_pattern_rejects_historical_or_mixed_criteria(
     "feedback",
     [
         "Verified all criteria are satisfied.",
-        "All validation criteria are satisfied.",
-        "All acceptance criteria are met.",
     ],
 )
 def test_successful_validation_pattern_rejects_generic_or_unconfirmed_success(

@@ -78,6 +78,7 @@ class VisionExtractService:
             capability=AICapability.VISION_EXTRACT,
             provider=binding.provider,
             model=request.model or next(iter(binding.models), None),
+            ocr_text=text,
         )
 
 

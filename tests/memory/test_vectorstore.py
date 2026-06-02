@@ -476,7 +476,7 @@ async def test_rebuild_same_dimension_removes_stale_point_ids(
 
 
 @pytest.mark.asyncio
-async def test_rebuild_same_dimension_releases_lifecycle_lock_for_expensive_work() -> None:
+async def test_rebuild_same_dimension_holds_lifecycle_lock_for_expensive_work() -> None:
     store = VectorStore(collection_name="mock_memories", embedding_dim=4)
     client = MagicMock()
     client.collection_exists.return_value = True
@@ -509,15 +509,15 @@ async def test_rebuild_same_dimension_releases_lifecycle_lock_for_expensive_work
 
     await store.rebuild([{"id": MEM_2, "content": "keep"}], embed_fn)
 
-    assert scroll_lock_states == [False]
-    assert embed_lock_states == [False]
-    assert upsert_lock_states == [False]
-    assert delete_lock_states == [False]
+    assert scroll_lock_states == [True]
+    assert embed_lock_states == [True]
+    assert upsert_lock_states == [True]
+    assert delete_lock_states == [True]
     client.delete.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_rebuild_deletes_stale_point_ids_in_batches_outside_lifecycle_lock() -> None:
+async def test_rebuild_deletes_stale_point_ids_in_batches_under_lifecycle_lock() -> None:
     store = VectorStore(collection_name="mock_memories", embedding_dim=4)
     client = MagicMock()
     client.collection_exists.return_value = True
@@ -542,7 +542,7 @@ async def test_rebuild_deletes_stale_point_ids_in_batches_outside_lifecycle_lock
     await store.rebuild([], embed_fn)
 
     assert delete_batch_sizes == [500, 500, 1]
-    assert delete_lock_states == [False, False, False]
+    assert delete_lock_states == [True, True, True]
 
 
 @pytest.mark.asyncio

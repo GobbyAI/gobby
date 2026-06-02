@@ -232,9 +232,10 @@ class IdleCheckHandler:
             submitted = await self._tmux.send_keys(tmux_name, "Enter", literal=False)
             if submitted:
                 self._idle_detector.record_reprompt(run.id)
+                return 1
             else:
                 logger.warning("Failed to submit idle reprompt for agent %s", run.id)
-            return 1
+            return 0
 
         return 0
 

@@ -41,7 +41,7 @@ HOLD_OPEN_HOOK_TYPE_MAP: dict[str, str] = {
 
 SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION = 1
 FAIL_SAFE_HOOK_TIMEOUT_SECONDS = 20.0
-FAIL_SAFE_HOOK_TYPES = frozenset({"Stop", "stop"})
+FAIL_SAFE_HOOK_TYPES = frozenset(hook_type.casefold() for hook_type in {"Stop", "stop"})
 
 
 def _graceful_error_response(
@@ -221,7 +221,8 @@ def _fail_safe_hook_timeout_seconds(
     hook_type: str | None, metadata: dict[str, Any]
 ) -> float | None:
     """Return the bounded execution timeout for hooks that must fail safe."""
-    if hook_type in FAIL_SAFE_HOOK_TYPES or metadata.get("critical") is True:
+    normalized_hook_type = hook_type.casefold() if hook_type is not None else None
+    if normalized_hook_type in FAIL_SAFE_HOOK_TYPES or metadata.get("critical") is True:
         return FAIL_SAFE_HOOK_TIMEOUT_SECONDS
     return None
 

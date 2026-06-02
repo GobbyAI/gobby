@@ -7,19 +7,71 @@ import hashlib
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.memory.services.crossref import CrossrefRebuildError, CrossrefService
-from gobby.storage.memories import LocalMemoryManager, Memory
+from gobby.storage.memories import Memory
 
 if TYPE_CHECKING:
     from gobby.memory.services.knowledge_graph import KnowledgeGraphService
-    from gobby.memory.vectorstore import VectorStore
 
 logger = logging.getLogger(__name__)
 
 MAX_REINDEX_LIMIT = 100_000
 GLOBAL_REINDEX_DEDUPE_WINDOW_SECONDS = 60.0
+
+
+class MemoryStorageProtocol(Protocol):
+    db: Any
+
+    def list_all_ids(self, *, limit: int | None = None, offset: int = 0) -> list[str]: ...
+
+    def list_memories(
+        self,
+        project_id: str | None = None,
+        memory_type: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        tags_all: list[str] | None = None,
+        tags_any: list[str] | None = None,
+        tags_none: list[str] | None = None,
+    ) -> list[Memory]: ...
+
+    def delete_project_crossrefs(self, project_id: str) -> int: ...
+
+
+class VectorStoreProtocol(Protocol):
+    @property
+    def collection_name(self) -> str: ...
+
+    async def scroll_ids(self, batch_size: int = 1000) -> list[str]: ...
+
+    async def delete_many(
+        self,
+        memory_ids: list[str],
+        collection_name: str | None = None,
+    ) -> None: ...
+
+    async def delete(
+        self,
+        memory_id: str | None = None,
+        filters: dict[str, str] | None = None,
+        collection_name: str | None = None,
+    ) -> None: ...
+
+    async def batch_upsert(
+        self,
+        items: list[tuple[str, list[float], dict[str, Any]]],
+        collection_name: str | None = None,
+    ) -> None: ...
+
+    async def delete_collection(self, collection_name: str) -> None: ...
+
+    async def rebuild(
+        self,
+        memories: list[dict[str, Any]],
+        embed_fn: Callable[[str], Awaitable[list[float]]],
+    ) -> None: ...
 
 
 class IndexingService:
@@ -28,8 +80,8 @@ class IndexingService:
     def __init__(
         self,
         *,
-        storage: LocalMemoryManager,
-        vector_store: VectorStore | None,
+        storage: MemoryStorageProtocol,
+        vector_store: VectorStoreProtocol | None,
         embed_fn: Callable[..., Any] | None,
         kg_service: KnowledgeGraphService | None,
         crossref_service: CrossrefService,
@@ -45,6 +97,7 @@ class IndexingService:
         self._run_db = run_db
         self._global_reindex_lock = asyncio.Lock()
         self._global_reindex_task: asyncio.Task[dict[str, Any]] | None = None
+        self._last_global_reindex_identity_fingerprint: str | None = None
         self._last_global_reindex_fingerprint: str | None = None
         self._last_global_reindex_completed_at: float | None = None
 
@@ -58,6 +111,24 @@ class IndexingService:
         return [
             {"id": mem.id, "content": mem.content, "project_id": mem.project_id} for mem in memories
         ]
+
+    @staticmethod
+    def _fingerprint_memory_identity(memory_dicts: list[dict[str, Any]]) -> str:
+        digest = hashlib.sha256()
+        for mem in sorted(memory_dicts, key=lambda item: str(item["id"])):
+            digest.update(
+                json.dumps(
+                    {
+                        "id": mem["id"],
+                        "project_id": mem.get("project_id"),
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                ).encode("utf-8")
+            )
+            digest.update(b"\n")
+        return digest.hexdigest()
 
     @staticmethod
     def _fingerprint_memory_dicts(memory_dicts: list[dict[str, Any]]) -> str:
@@ -81,8 +152,11 @@ class IndexingService:
     async def _global_reindex_is_current(
         self,
         memory_dicts: list[dict[str, Any]],
+        identity_fingerprint: str,
         fingerprint: str,
     ) -> bool:
+        if self._last_global_reindex_identity_fingerprint != identity_fingerprint:
+            return False
         if self._last_global_reindex_fingerprint != fingerprint:
             return False
         if self._last_global_reindex_completed_at is None:
@@ -96,10 +170,16 @@ class IndexingService:
         expected_ids = {str(mem["id"]) for mem in memory_dicts}
         try:
             actual_ids = set(await self._vector_store.scroll_ids())
-        except Exception as exc:
-            logger.debug("Could not verify vector store IDs before skipping reindex: %s", exc)
-            return False
+        except Exception:
+            self._last_global_reindex_identity_fingerprint = None
+            self._last_global_reindex_fingerprint = None
+            logger.warning(
+                "Could not verify vector store IDs before skipping reindex",
+                exc_info=True,
+            )
+            raise
         if actual_ids != expected_ids:
+            self._last_global_reindex_identity_fingerprint = None
             self._last_global_reindex_fingerprint = None
             return False
         return True
@@ -239,8 +319,13 @@ class IndexingService:
             )
             total = len(memories)
             memory_dicts = self._memory_dicts(memories)
+            identity_fingerprint = self._fingerprint_memory_identity(memory_dicts)
             fingerprint = self._fingerprint_memory_dicts(memory_dicts)
-            if await self._global_reindex_is_current(memory_dicts, fingerprint):
+            if await self._global_reindex_is_current(
+                memory_dicts,
+                identity_fingerprint,
+                fingerprint,
+            ):
                 logger.info(
                     "Skipping global embedding reindex; source snapshot unchanged (%s memories)",
                     total,
@@ -258,6 +343,7 @@ class IndexingService:
                     "error": "Vector store or embedding function not configured",
                 }
             await self._vector_store.rebuild(memory_dicts, self._embed_fn)
+            self._last_global_reindex_identity_fingerprint = identity_fingerprint
             self._last_global_reindex_fingerprint = fingerprint
             self._last_global_reindex_completed_at = asyncio.get_running_loop().time()
         except Exception as e:
@@ -284,6 +370,7 @@ class IndexingService:
                     await self._vector_store.delete(filters={"project_id": project_id})
                 else:
                     await self._vector_store.delete_collection(self._vector_store.collection_name)
+                self._last_global_reindex_identity_fingerprint = None
                 self._last_global_reindex_fingerprint = None
                 self._last_global_reindex_completed_at = None
                 report["vectors_cleared"] = True
@@ -363,7 +450,7 @@ class IndexingService:
 
     def _delete_all_memory_crossrefs(self) -> int:
         """Delete every memory_crossrefs row and return the affected row count."""
-        return self._storage.db.execute("DELETE FROM memory_crossrefs").rowcount
+        return int(self._storage.db.execute("DELETE FROM memory_crossrefs").rowcount)
 
     async def fetch_all_project_memories(self, project_id: str) -> list[Memory]:
         """Fetch all memories for a project using pagination."""

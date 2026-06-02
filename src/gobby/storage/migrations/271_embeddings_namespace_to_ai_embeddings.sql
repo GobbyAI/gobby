@@ -1,5 +1,5 @@
 WITH source_secret AS (
-    SELECT id, encrypted_value, category, created_at
+    SELECT name, encrypted_value, category, created_at
     FROM secrets
     WHERE name IN ('embeddings_api_key', 'api_key', 'openai_api_key')
     ORDER BY CASE name
@@ -12,7 +12,7 @@ WITH source_secret AS (
 )
 INSERT INTO secrets (id, name, encrypted_value, category, description, created_at, updated_at)
 SELECT
-    'secret-' || md5(source_secret.id || ':embeddings_api_key'),
+    'secret-' || md5(source_secret.name || ':embeddings_api_key'),
     'embeddings_api_key',
     source_secret.encrypted_value,
     source_secret.category,
@@ -53,6 +53,11 @@ WITH api_key_source AS (
         0 AS priority
     FROM config_store
     WHERE key = 'embeddings.api_key'
+      AND EXISTS (
+          SELECT 1
+          FROM secrets
+          WHERE name = 'embeddings_api_key'
+      )
     UNION ALL
     SELECT
         '"$secret:embeddings_api_key"',

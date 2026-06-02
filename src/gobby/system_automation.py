@@ -319,7 +319,10 @@ class SystemAutomationLoop:
                 extra={"project_id": project_id, "reason": reason},
             )
             return DispatcherTickSummary(
-                reason=f"project_dispatch_timeout:{timeout_seconds:g}s",
+                reason=(
+                    "project_dispatch_timeout:"
+                    f"project_id={project_id}:reason={reason}:timeout={timeout_seconds:g}s"
+                ),
             )
 
     async def _dispatch_project_once_enabled(

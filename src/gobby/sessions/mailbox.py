@@ -435,6 +435,9 @@ class MailboxService:
         if cached is not None:
             expires_at, allowed = cached
             if expires_at > now:
+                if self._session_manager.get(from_session_id) is None:
+                    self._agent_cross_project_auth_cache.pop(cache_key, None)
+                    return False
                 self._agent_cross_project_auth_cache.move_to_end(cache_key)
                 return allowed
             self._agent_cross_project_auth_cache.pop(cache_key, None)

@@ -318,14 +318,14 @@ def schedule_tmux_window_rename(
                 asyncio.run_coroutine_threadsafe(coro, loop)
                 return
             except Exception:
-                logger.warning("Failed to schedule tmux rename on captured loop", exc_info=True)
+                logger.debug("Failed to schedule tmux rename on captured loop", exc_info=True)
                 coro.close()
                 return
 
     try:
         asyncio.run(coro)
     except Exception:
-        logger.warning("Failed to run tmux rename synchronously", exc_info=True)
+        logger.debug("Failed to run tmux rename synchronously", exc_info=True)
 
 
 def _synthesize_fallback_title(session: object, terminal_context: dict[str, Any]) -> str:
@@ -418,7 +418,7 @@ async def _apply_window_rename(
         mgr = _tmux_manager_for_session(session, terminal_context)
         applied = bool(await mgr.rename_window(pane, resolved))
     except Exception as e:
-        logger.warning(
+        logger.debug(
             "tmux window rename errored for %s pane=%s socket=%s title=%r: %s",
             ref,
             pane,
@@ -436,7 +436,7 @@ async def _apply_window_rename(
             resolved,
         )
     else:
-        logger.warning(
+        logger.debug(
             "tmux window rename did not apply for %s pane=%s socket=%s title=%r "
             "(target missing or tmux error)",
             ref,

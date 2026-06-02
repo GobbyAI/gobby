@@ -81,6 +81,7 @@ async def test_vision_service_selects_extract_provider() -> None:
     assert result.capability == AICapability.VISION_EXTRACT
     assert result.provider == "local"
     assert result.model == "llava"
+    assert result.ocr_text == "extracted:/tmp/image.png"
     assert adapter.requests == [
         VisionExtractRequest(
             image_path="/tmp/image.png",

@@ -69,12 +69,15 @@ def _build_canonical_tool_metadata(
 
 def _truncate_positional_paths(parts: list[str]) -> list[str]:
     """Return path operands from a simple ``truncate`` command."""
-    positional: list[str] = []
+    positional: list[tuple[str, bool]] = []
     skip_next = False
-    for part in parts[1:]:
+    for index, part in enumerate(parts[1:], start=1):
         if skip_next:
             skip_next = False
             continue
+        if part == "--":
+            positional.extend((candidate, True) for candidate in parts[index + 1 :])
+            break
         if part in _SHELL_CONTROL_TOKENS or not part:
             continue
         if part in {"-s", "--size", "-r", "--reference"}:
@@ -82,8 +85,18 @@ def _truncate_positional_paths(parts: list[str]) -> list[str]:
             continue
         if part.startswith(("--size=", "--reference=")) or part.startswith("-"):
             continue
-        positional.append(part)
-    return [candidate for candidate in positional if _looks_path_target(candidate)]
+        positional.append((part, False))
+    return [
+        candidate
+        for candidate, after_options in positional
+        if _looks_path_target(candidate)
+        or (
+            after_options
+            and candidate
+            and candidate not in _SHELL_CONTROL_TOKENS
+            and candidate != "-"
+        )
+    ]
 
 
 def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:

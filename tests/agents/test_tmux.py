@@ -180,7 +180,7 @@ class TestTmuxTextInjection:
         assert not any("send-keys" in command and "-l" in command for command in commands)
 
     @pytest.mark.asyncio
-    async def test_submit_literal_text_sends_separate_enter_key(
+    async def test_submit_literal_text_uses_buffer_enter_without_extra_submit(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -227,6 +227,29 @@ class TestTmuxTextInjection:
             ["tmux", "send-keys", "-t", "%12", "Enter"],
         ]
         assert not any("\n" in arg for command in commands for arg in command)
+
+    @pytest.mark.asyncio
+    async def test_submit_empty_literal_text_sends_raw_enter(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        commands: list[list[str]] = []
+
+        async def fake_exec(*args: str, **_kwargs: object) -> MagicMock:
+            commands.append(list(args))
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.communicate = AsyncMock(return_value=(b"", b""))
+            return proc
+
+        monkeypatch.setattr(
+            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            fake_exec,
+        )
+
+        await submit_literal_text_to_tmux_target("%12", "\n", enter_delay_seconds=0)
+
+        assert commands == [["tmux", "send-keys", "-t", "%12", "Enter"]]
 
     @pytest.mark.asyncio
     async def test_submit_literal_text_can_escape_before_paste(

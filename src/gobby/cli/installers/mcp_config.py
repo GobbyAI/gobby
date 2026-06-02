@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 _GOBBY_MCP_COMMAND = "gobby"
 _GOBBY_MCP_ARGS = ["mcp-server"]
-_CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC = 360
+_CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC: int = 360
 
 
 def _remove_toml_table_block(existing_text: str, *, table_prefix: str) -> str:

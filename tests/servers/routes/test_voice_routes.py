@@ -9,6 +9,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import gobby.servers.routes.voice as voice_module
 from gobby.ai.audio import AudioCapabilityOutput, AudioSegment
 from gobby.config.app import DaemonConfig
 from gobby.config.voice import OpenAICompatibleAudioBindingConfig, VoiceConfig
@@ -251,6 +252,42 @@ class TestVoiceRoutes:
         data = response.json()
         assert data["transcription_enabled"] is True
         assert data["translation_enabled"] is False
+
+    def test_status_reuses_audio_registry_until_config_changes(
+        self,
+        client: TestClient,
+        server_with_voice: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        server_with_voice.config.voice = VoiceConfig(
+            enabled=True,
+            stt_enabled=False,
+            openai_compatible_audio=[
+                OpenAICompatibleAudioBindingConfig(
+                    provider="remote-stt",
+                    url="http://localhost:8080/v1",
+                    model="whisper-large-v3",
+                )
+            ],
+        )
+        calls: list[str] = []
+
+        def build_registry(config: DaemonConfig) -> voice_module.AICapabilityRegistry:
+            calls.append(config.voice.whisper_model_size)
+            return voice_module.AICapabilityRegistry()
+
+        monkeypatch.setattr(voice_module, "_AUDIO_REGISTRY_CACHE", {})
+        monkeypatch.setattr(voice_module, "build_daemon_ai_capability_registry", build_registry)
+
+        first = client.get("/api/voice/status")
+        second = client.get("/api/voice/status")
+        server_with_voice.config.voice.whisper_model_size = "small"
+        third = client.get("/api/voice/status")
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert third.status_code == 200
+        assert calls == ["base", "small"]
 
     def test_status_reports_missing_chatterbox_reference_audio(
         self, client: TestClient, server_with_voice: MagicMock, tmp_path: Path

@@ -187,8 +187,8 @@ class Task:
     validation_fail_count: int = 0
     dispatch_failure_count: int = 0
     validation_override_reason: str | None = None  # Why agent bypassed validation
-    merge_in_progress: bool = False
-    blocked_by_merge: bool = False
+    merge_in_progress: bool | None = False
+    blocked_by_merge: bool | None = False
     # Commit linking
     commits: list[str] | None = None
     # Escalation fields
@@ -286,10 +286,18 @@ class Task:
                 row["validation_override_reason"] if "validation_override_reason" in keys else None
             ),
             merge_in_progress=(
-                bool(row["merge_in_progress"]) if "merge_in_progress" in keys else False
+                None
+                if "merge_in_progress" in keys and row["merge_in_progress"] is None
+                else bool(row["merge_in_progress"])
+                if "merge_in_progress" in keys
+                else False
             ),
             blocked_by_merge=(
-                bool(row["blocked_by_merge"]) if "blocked_by_merge" in keys else False
+                None
+                if "blocked_by_merge" in keys and row["blocked_by_merge"] is None
+                else bool(row["blocked_by_merge"])
+                if "blocked_by_merge" in keys
+                else False
             ),
             commits=json.loads(row["commits"]) if "commits" in keys and row["commits"] else None,
             escalated_at=escalated_at,

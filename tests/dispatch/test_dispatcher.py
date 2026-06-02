@@ -130,7 +130,8 @@ def _audit_action(task_id: str) -> AppendAuditMarkerAction:
     return AppendAuditMarkerAction(task_id=task_id, heading="Dispatch", body="marker")
 
 
-def test_sweep_expired_leases_pages_all_active_runs(
+@pytest.mark.asyncio
+async def test_sweep_expired_leases_pages_all_active_runs(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -181,7 +182,7 @@ def test_sweep_expired_leases_pages_all_active_runs(
         now=expired_start,
     )
 
-    assert sweep_expired_leases(storage) == 1
+    assert await sweep_expired_leases(storage) == 1
     assert storage.get_mutex(active_task.id) is not None
     assert storage.get_mutex(stale_task.id) is None
 

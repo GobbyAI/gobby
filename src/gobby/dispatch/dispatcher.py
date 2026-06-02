@@ -154,7 +154,7 @@ async def run_heartbeat(
         resolved_db = db
     mutex_storage = TaskDispatchMutexManager(resolved_db)
     if startup:
-        sweep_expired_leases(mutex_storage)
+        await sweep_expired_leases(mutex_storage)
     orphan_mutexes = sweep_orphan_no_run_dispatch_mutexes(
         mutex_storage,
         resolved_db,
@@ -220,9 +220,6 @@ async def run_heartbeat(
                 current,
                 current_stage=getattr(context, "current_stage", None),
             ):
-                result = _release_and_skip(mutex, result)
-                continue
-            if getattr(context, "holistic_descendant_gate", None) is not None:
                 result = _release_and_skip(mutex, result)
                 continue
             action = dispatch_rules.evaluate(current, context, _rules())

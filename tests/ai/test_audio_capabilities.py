@@ -45,6 +45,12 @@ class _MetadataAudioAdapter(_FakeAudioAdapter):
         )
 
 
+class _InvalidAudioAdapter(_FakeAudioAdapter):
+    async def transcribe(self, request: AudioCapabilityRequest) -> object:
+        self.transcribe_requests.append(request)
+        return {"text": "not a supported adapter output"}
+
+
 class _FakeWhisper:
     def __init__(self, *, available: bool = True) -> None:
         self.is_available = available
@@ -155,6 +161,24 @@ async def test_audio_service_preserves_adapter_metadata() -> None:
     assert result.segments == (AudioSegment(start=0.0, end=0.5, text="hola"),)
     assert result.language == "es"
     assert result.task == "transcribe"
+
+
+@pytest.mark.asyncio
+async def test_audio_service_rejects_invalid_adapter_output() -> None:
+    adapter = _InvalidAudioAdapter()
+    service = AudioCapabilityService(_registry(), {"remote": adapter})
+
+    with pytest.raises(
+        TypeError,
+        match="Audio adapters must return str or AudioCapabilityOutput",
+    ):
+        await service.execute(
+            AudioCapabilityRequest(
+                audio_bytes=b"audio",
+                capability=AICapability.AUDIO_TRANSCRIBE,
+                provider="remote",
+            )
+        )
 
 
 @pytest.mark.asyncio

@@ -188,7 +188,10 @@ async def test_project_dispatch_timeout_returns_summary(
 
     summary = await loop.dispatch_project_once(project_id="project-1", reason="timeout-test")
 
-    assert summary.reason == "project_dispatch_timeout:0.01s"
+    assert (
+        summary.reason
+        == "project_dispatch_timeout:project_id=project-1:reason=timeout-test:timeout=0.01s"
+    )
     assert summary.ticks == 0
     assert loop.status_snapshot()["dispatch_count"] == 0
     release.set()

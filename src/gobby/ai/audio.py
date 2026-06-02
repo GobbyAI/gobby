@@ -349,6 +349,11 @@ def _coerce_audio_output(value: str | AudioCapabilityOutput, *, task: str) -> Au
                 task=task,
             )
         )
+    if not isinstance(value, str):
+        raise TypeError(
+            "Audio adapters must return str or AudioCapabilityOutput; "
+            f"got {type(value).__name__} for {task}"
+        )
     return AudioCapabilityOutput(text=value, task=task)
 
 

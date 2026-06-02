@@ -28,7 +28,7 @@ from gobby.workflows.verification_evidence import VERIFICATION_EVIDENCE_VARIABLE
 
 logger = logging.getLogger(__name__)
 
-CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT = 30
+CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT: int = 30
 
 
 def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) -> None:

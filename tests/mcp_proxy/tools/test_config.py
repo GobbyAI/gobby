@@ -357,7 +357,7 @@ class TestListConfigKeys:
         result = tool()
 
         assert result["success"] is False
-        assert result["error"] == "config store unavailable"
+        assert result["error"] == "Internal config error"
 
 
 class TestEnsureDefaults:

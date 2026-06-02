@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import importlib
+import json
 import logging
+import time
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, File, Form, Query, UploadFile
@@ -15,6 +17,7 @@ from gobby.ai.audio import (
 )
 from gobby.ai.registry import (
     AICapability,
+    AICapabilityRegistry,
     CapabilityUnavailableError,
     build_daemon_ai_capability_registry,
     normalize_capability,
@@ -24,6 +27,43 @@ if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
+
+_AUDIO_REGISTRY_CACHE_TTL_SECONDS = 2.0
+_AUDIO_REGISTRY_CACHE_MAX_SIZE = 8
+_AUDIO_REGISTRY_CACHE: dict[str, tuple[float, AICapabilityRegistry]] = {}
+
+
+def _config_signature(config: Any) -> str:
+    model_dump = getattr(config, "model_dump", None)
+    if callable(model_dump):
+        payload = model_dump(mode="json", exclude_none=True)
+    else:
+        payload = repr(config)
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _cached_audio_registry(config: Any) -> AICapabilityRegistry | None:
+    if config is None:
+        return None
+
+    now = time.monotonic()
+    signature = _config_signature(config)
+    cached = _AUDIO_REGISTRY_CACHE.get(signature)
+    if cached is not None:
+        expires_at, registry = cached
+        if expires_at > now:
+            return registry
+        _AUDIO_REGISTRY_CACHE.pop(signature, None)
+
+    for key, (expires_at, _) in list(_AUDIO_REGISTRY_CACHE.items()):
+        if expires_at <= now:
+            _AUDIO_REGISTRY_CACHE.pop(key, None)
+
+    registry = build_daemon_ai_capability_registry(config)
+    _AUDIO_REGISTRY_CACHE[signature] = (now + _AUDIO_REGISTRY_CACHE_TTL_SECONDS, registry)
+    while len(_AUDIO_REGISTRY_CACHE) > _AUDIO_REGISTRY_CACHE_MAX_SIZE:
+        _AUDIO_REGISTRY_CACHE.pop(next(iter(_AUDIO_REGISTRY_CACHE)))
+    return registry
 
 
 def create_voice_router(server: HTTPServer) -> APIRouter:
@@ -138,7 +178,10 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
         failure_label = _audio_failure_label(selected_capability)
 
         try:
-            service = build_daemon_audio_service(config)
+            service = build_daemon_audio_service(
+                config,
+                registry=_cached_audio_registry(config),
+            )
             result = await service.execute(
                 AudioCapabilityRequest(
                     audio_bytes=audio_bytes,
@@ -207,7 +250,11 @@ def _with_audio_capability_flags(
         result.setdefault("translation_enabled", False)
         return result
 
-    registry = build_daemon_ai_capability_registry(config)
+    registry = _cached_audio_registry(config)
+    if registry is None:
+        result.setdefault("transcription_enabled", False)
+        result.setdefault("translation_enabled", False)
+        return result
     result["transcription_enabled"] = registry.status(AICapability.AUDIO_TRANSCRIBE).available
     result["translation_enabled"] = registry.status(AICapability.AUDIO_TRANSLATE).available
     return result

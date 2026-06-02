@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import re
+import urllib.parse
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -25,7 +26,24 @@ pytestmark = pytest.mark.unit
 
 
 def _scoped_postgres_url(database_url: str, schema: str) -> str:
-    return database_url + f"?options=-csearch_path%3D{schema}"
+    parsed = urllib.parse.urlsplit(database_url)
+    query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    query.append(("options", f"-csearch_path={schema}"))
+    return urllib.parse.urlunsplit(parsed._replace(query=urllib.parse.urlencode(query)))
+
+
+def test_scoped_postgres_url_preserves_existing_query_params() -> None:
+    scoped = _scoped_postgres_url(
+        "postgresql://user:pass@localhost:5432/gobby?sslmode=disable",
+        "gobby_test_schema",
+    )
+
+    parsed = urllib.parse.urlsplit(scoped)
+    assert parsed.scheme == "postgresql"
+    assert urllib.parse.parse_qs(parsed.query) == {
+        "sslmode": ["disable"],
+        "options": ["-csearch_path=gobby_test_schema"],
+    }
 
 
 @pytest.fixture

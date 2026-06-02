@@ -34,16 +34,29 @@ class _MemoryStorage:
     def list_memories(
         self,
         project_id: str | None = None,
+        memory_type: str | None = None,
         limit: int | None = None,
         offset: int = 0,
+        tags_all: list[str] | None = None,
+        tags_any: list[str] | None = None,
+        tags_none: list[str] | None = None,
     ) -> list[Memory]:
         memories = [
             memory
             for memory in self.memories
-            if project_id is None or memory.project_id == project_id
+            if (project_id is None or memory.project_id == project_id)
+            and (memory_type is None or memory.memory_type == memory_type)
         ]
         end = None if limit is None else offset + limit
         return memories[offset:end]
+
+    def list_all_ids(self, *, limit: int | None = None, offset: int = 0) -> list[str]:
+        ids = [memory.id for memory in self.memories]
+        end = None if limit is None else offset + limit
+        return ids[offset:end]
+
+    def delete_project_crossrefs(self, project_id: str) -> int:
+        return 0
 
 
 class _VectorStore:
@@ -97,8 +110,8 @@ def _service(
     run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> IndexingService:
     return IndexingService(
-        storage=storage,  # type: ignore[arg-type]
-        vector_store=vector_store,  # type: ignore[arg-type]
+        storage=storage,
+        vector_store=vector_store,
         embed_fn=_embed_fn,
         kg_service=None,
         crossref_service=MagicMock(),
@@ -153,6 +166,7 @@ async def test_global_reindex_skips_unchanged_memory_snapshot() -> None:
     assert second["embeddings_generated"] == 0
     assert second["skipped"] is True
     assert vector_store.rebuild.await_count == 1
+    assert vector_store.scroll_ids.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -243,6 +257,23 @@ async def test_global_reindex_rebuilds_when_memory_content_changes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_global_reindex_uses_identity_fast_path_before_vector_scroll() -> None:
+    storage = _MemoryStorage([_memory("mem-1", "alpha")])
+    vector_store = _VectorStore()
+    service = _service(storage, vector_store)
+
+    await service.reindex_embeddings()
+    storage.memories.append(_memory("mem-2", "beta"))
+    second = await service.reindex_embeddings()
+
+    assert second["success"] is True
+    assert second["embeddings_generated"] == 2
+    assert second["skipped"] is False
+    assert vector_store.rebuild.await_count == 2
+    assert vector_store.scroll_ids.await_count == 0
+
+
+@pytest.mark.asyncio
 async def test_global_reindex_rebuilds_after_dedupe_window() -> None:
     storage = _MemoryStorage([_memory("mem-1", "alpha")])
     vector_store = _VectorStore()
@@ -256,6 +287,28 @@ async def test_global_reindex_rebuilds_after_dedupe_window() -> None:
     assert second["embeddings_generated"] == 1
     assert second["skipped"] is False
     assert vector_store.rebuild.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_global_reindex_resets_fingerprint_when_vector_scroll_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    storage = _MemoryStorage([_memory("mem-1", "alpha")])
+    vector_store = _VectorStore()
+    service = _service(storage, vector_store)
+
+    await service.reindex_embeddings()
+    vector_store.scroll_ids.side_effect = RuntimeError("qdrant unavailable")
+
+    with caplog.at_level(logging.WARNING, logger="gobby.memory.services.indexing"):
+        second = await service.reindex_embeddings()
+
+    assert second["success"] is False
+    assert "qdrant unavailable" in second["error"]
+    assert vector_store.rebuild.await_count == 1
+    assert service._last_global_reindex_fingerprint is None
+    assert service._last_global_reindex_identity_fingerprint is None
+    assert "Could not verify vector store IDs before skipping reindex" in caplog.text
 
 
 @pytest.mark.asyncio

@@ -311,7 +311,7 @@ def test_planning_work_rule_uses_review_budget_for_revisions() -> None:
             "planning",
             "in_progress",
             stage_overrides={
-                "work_attempt_count": 4,
+                "work_attempt_count": 6,
                 "max_work_attempts": 3,
                 "review_round_count": 5,
                 "max_review_rounds": 99,
@@ -323,7 +323,7 @@ def test_planning_work_rule_uses_review_budget_for_revisions() -> None:
     assert action.agent_slug == "planner"
 
 
-def test_planning_work_rule_escalates_when_work_failures_outpace_reviews() -> None:
+def test_planning_work_rule_escalates_when_review_budget_is_exhausted() -> None:
     from gobby.dispatch.actions import EscalateAction
 
     action = _evaluate(
@@ -334,7 +334,7 @@ def test_planning_work_rule_escalates_when_work_failures_outpace_reviews() -> No
                 "work_attempt_count": 4,
                 "max_work_attempts": 3,
                 "review_round_count": 2,
-                "max_review_rounds": 99,
+                "max_review_rounds": 2,
             },
         )
     )

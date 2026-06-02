@@ -12,8 +12,8 @@ import psycopg
 
 from gobby.config.embedding_keys import AI_EMBEDDING_CONFIG_KEYS, AI_EMBEDDINGS_CONFIG_PREFIX
 
-HEALTHY = 0
-CONFIG_NOT_RESOLVED = 10
+HEALTHY: int = 0
+CONFIG_NOT_RESOLVED: int = 10
 logger = logging.getLogger(__name__)
 
 

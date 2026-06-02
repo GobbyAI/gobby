@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 from gobby.dispatch.constants import DISPATCH_HOLDER, ORPHAN_NO_RUN_MUTEX_GRACE_SECONDS
@@ -12,12 +13,16 @@ from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 _ACTIVE_RUN_PAGE_SIZE = 1000
 
 
-def sweep_expired_leases(storage: TaskDispatchMutexManager) -> int:
+async def sweep_expired_leases(storage: TaskDispatchMutexManager) -> int:
     run_storage = LocalAgentRunManager(storage.db)
     active_run_ids: set[str] = set()
     offset = 0
     while True:
-        active_runs = run_storage.list_active(limit=_ACTIVE_RUN_PAGE_SIZE, offset=offset)
+        active_runs = await asyncio.to_thread(
+            run_storage.list_active,
+            limit=_ACTIVE_RUN_PAGE_SIZE,
+            offset=offset,
+        )
         if not active_runs:
             break
         active_run_ids.update(run.id for run in active_runs)
@@ -25,7 +30,8 @@ def sweep_expired_leases(storage: TaskDispatchMutexManager) -> int:
             break
         offset += _ACTIVE_RUN_PAGE_SIZE
 
-    rows = storage.db.fetchall(
+    rows = await asyncio.to_thread(
+        storage.db.fetchall,
         """
         SELECT task_id, run_id
           FROM task_dispatch_mutex
@@ -38,7 +44,7 @@ def sweep_expired_leases(storage: TaskDispatchMutexManager) -> int:
     for row in rows:
         if row["run_id"] in active_run_ids:
             continue
-        if storage.force_release(row["task_id"]):
+        if await asyncio.to_thread(storage.force_release, row["task_id"]):
             cleared += 1
     return cleared
 

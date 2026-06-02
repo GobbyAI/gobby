@@ -32,6 +32,8 @@ _VALIDATION_GATE_WORDS = (
     r")"
 )
 _VALIDATION_FAILURE_WORDS = r"(?:failed|failing|not\s+clean|did\s+not\s+pass|not\s+pass(?:ed|ing)?)"
+# Keep failure words close to the validation term so broad feedback does not
+# turn unrelated failures elsewhere in the paragraph into close-blocking gates.
 _SAME_SENTENCE_PROXIMITY = r"[^.!?]{0,100}"
 _ZERO_FAILURE_TOKEN_RE = re.compile(
     r"\b(?:0\s+fail(?:ed|ures?)|zero\s+failures?|fail(?:ed|ures?)\s*[=:]\s*0)\b",
@@ -142,7 +144,7 @@ def feedback_admits_required_validation_failure(feedback: str | None) -> bool:
 
 _SUCCESSFUL_VALIDATION_FEEDBACK_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
-        r"(?=.*\b(?:fixed|resolved|verified|re-?tested)\b).*?"
+        r"(?:(?=.*\b(?:fixed|resolved|verified|re-?tested)\b).*?)?"
         r"(?<!\bnot\s)\ball\s+"
         r"(?:(?!(?:previous|previously|prior|unmet|unsatisfied)\b)\w+\s+){0,3}"
         r"(?:validation\s+criteria|acceptance\s+criteria)\s+"

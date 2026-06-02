@@ -76,8 +76,7 @@ def test_embeddings_namespace_migration_is_idempotent(temp_db: HubDatabase) -> N
         "SELECT id, encrypted_value FROM secrets WHERE name = 'embeddings_api_key'"
     )
     expected_id = (
-        "secret-"
-        + hashlib.md5(b"legacy-secret:embeddings_api_key", usedforsecurity=False).hexdigest()
+        "secret-" + hashlib.md5(b"api_key:embeddings_api_key", usedforsecurity=False).hexdigest()
     )
     assert copied == {"id": expected_id, "encrypted_value": "encrypted-value"}
 
@@ -103,8 +102,14 @@ def test_embeddings_namespace_migration_preserves_existing_canonical_values(
             "ai.embeddings.api_base": "http://canonical.local/v1",
             "ai.embeddings.model": "canonical-model",
             "ai.embeddings.dim": 1024,
-            "ai.embeddings.api_key": "$secret:canonical_key",
         }
+    )
+    temp_db.execute(
+        """
+        INSERT INTO config_store (key, value, source, is_secret, updated_at)
+        VALUES (%s, %s, 'test', TRUE, NOW())
+        """,
+        ("ai.embeddings.api_key", json.dumps("$secret:canonical_key")),
     )
     temp_db.execute(
         """
@@ -233,6 +238,29 @@ def test_embeddings_namespace_migration_skips_api_key_when_no_source_secret(
         )
         is False
     )
+
+
+def test_embeddings_namespace_migration_skips_dangling_legacy_api_key_reference(
+    temp_db: HubDatabase,
+) -> None:
+    store = ConfigStore(temp_db)
+    temp_db.execute(
+        """
+        INSERT INTO config_store (key, value, source, is_secret, updated_at)
+        VALUES (%s, %s, 'legacy-config', TRUE, NOW())
+        """,
+        ("embeddings.api_key", json.dumps("$secret:api_key")),
+    )
+
+    migration = (MIGRATIONS_DIR / "271_embeddings_namespace_to_ai_embeddings.sql").read_text(
+        encoding="utf-8"
+    )
+    with temp_db.transaction() as txn:
+        _execute_sql_script(txn, migration)
+
+    assert store.get("ai.embeddings.api_key") is None
+    assert temp_db.fetchone("SELECT id FROM secrets WHERE name = 'embeddings_api_key'") is None
+    assert not any(key.startswith("embeddings.") for key in store.list_keys())
 
 
 def test_embedding_provider_cleanup_migration_is_idempotent(temp_db: HubDatabase) -> None:

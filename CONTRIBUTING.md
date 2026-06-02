@@ -113,6 +113,20 @@ uv run pytest -m "not slow"
 uv run pytest -m integration
 ```
 
+`pre-push-test.sh` requires a PostgreSQL test DSN for hub runtime tests. It resolves
+one in this order:
+
+1. `DATABASE_URL`, when already exported.
+2. The configured bootstrap `database_url`.
+3. A Docker fallback from `docker-compose.test.yml`.
+
+The Docker fallback accepts either `docker compose` or `docker-compose`, starts
+the `postgres-test` service, and exports both `DATABASE_URL` and
+`GOBBY_POSTGRES_TEST_DSN` to pytest. The container listens on
+`${GOBBY_POSTGRES_TEST_PORT:-60892}` with default database, user, and password
+from `GOBBY_POSTGRES_TEST_DB`, `GOBBY_POSTGRES_TEST_USER`, and
+`GOBBY_POSTGRES_TEST_PASSWORD`.
+
 ### Test Coverage
 
 We maintain a minimum of 80% test coverage (enforced in CI).

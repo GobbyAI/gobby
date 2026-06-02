@@ -123,10 +123,10 @@ def update_task(
         params.append(dispatch_failure_count)
     if merge_in_progress is not UNSET:
         updates.append("merge_in_progress = %s")
-        params.append(bool(merge_in_progress))
+        params.append(None if merge_in_progress is None else bool(merge_in_progress))
     if blocked_by_merge is not UNSET:
         updates.append("blocked_by_merge = %s")
-        params.append(bool(blocked_by_merge))
+        params.append(None if blocked_by_merge is None else bool(blocked_by_merge))
     if github_issue_number is not UNSET:
         updates.append("github_issue_number = %s")
         params.append(github_issue_number)
