@@ -1308,6 +1308,39 @@ class TestMCPToolsWrapper:
         assert mock_proxy._session_id is None
 
     @pytest.mark.asyncio
+    async def test_call_tool_delegates_review_learning_record_lesson_unchanged(
+        self,
+    ) -> None:
+        _, mock_proxy, run_tool = self._register_tools()
+        arguments = {
+            "source_kind": "agent_review",
+            "source": "code-reviewer",
+            "source_review": "review-123",
+            "decision": "confirmed",
+            "finding": {
+                "title": "Durable writes missing",
+                "pattern_id": "durable-write-after-state-change",
+                "finding_fingerprint": "durable-write-fingerprint",
+            },
+            "evidence": {"commit_sha": "abc123"},
+        }
+
+        result = await run_tool(
+            "call_tool",
+            server_name="gobby-review-learning",
+            tool_name="record_review_lesson",
+            arguments=arguments,
+        )
+
+        assert result == {"res": "call"}
+        mock_proxy.call_tool.assert_called_with(
+            "gobby-review-learning",
+            "record_review_lesson",
+            arguments,
+            preflight_enabled=True,
+        )
+
+    @pytest.mark.asyncio
     async def test_call_tool_emits_progress_heartbeat_for_wait_tools(self) -> None:
         _, mock_proxy, run_tool = self._register_tools()
 
