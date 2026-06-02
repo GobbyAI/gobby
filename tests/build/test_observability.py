@@ -193,6 +193,43 @@ def test_build_stop_target_disables_status_and_dispatch_for_tree(temp_db) -> Non
     assert explanation["reason"] == "automation_disabled"
 
 
+def test_build_stop_target_preserves_review_approved_stage(temp_db) -> None:
+    from gobby.build.controls import build_stop_target
+    from gobby.build.observability import explain_dispatch
+    from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.tasks._lifecycle_events import BUILD_EVENT_REASON
+
+    project_id = _project(temp_db, "observability-stop-approved")
+    manager = LocalTaskManager(temp_db)
+    root = manager.create_task(project_id=project_id, title="Root", task_type="epic")
+    manager.initialize_task_manifest(root.id, stage_names=["expansion", "development"])
+    root = manager.update_task(root.id, allow_automation=True, isolation="none")
+    manager.lifecycle_events.record_lifecycle_event(
+        root.id,
+        from_state=None,
+        to_state="expansion",
+        reason=BUILD_EVENT_REASON,
+        by_actor="build",
+    )
+    manager.stage_states.start_stage(root.id, "expansion", by_session_id="dispatcher")
+    manager.stage_states.submit_for_review(root.id, "expansion", by_session_id="system")
+    manager.stage_states.approve_review(root.id, "expansion", by_session_id="reviewer")
+
+    result = asyncio.run(build_stop_target(f"#{root.seq_num}", db=temp_db, project_id=project_id))
+
+    assert result.stages_reset == 0
+    stage = manager.stage_states.current_stage(root.id)
+    assert stage is not None
+    assert stage.stage_name == "expansion"
+    assert stage.state == "review_approved"
+
+    manager.update_task(root.id, allow_automation=True)
+    explanation = explain_dispatch(root.id, db=temp_db, project_id=project_id)
+    assert explanation["eligible"] is True
+    assert explanation["proposed_action"]["action"] == "advance_stage"
+    assert explanation["proposed_action"]["stage_name"] == "expansion"
+
+
 def test_build_resume_target_reopens_project_gate_before_dispatch(temp_db, monkeypatch) -> None:
     from gobby.build import controls
     from gobby.build.dispatch_tick import DispatcherTickSummary

@@ -119,7 +119,7 @@ async def build_stop_target(
     await _cancel_active_agents(db, agents, services=services)
     mutexes_cleared = _clear_dispatch_mutexes(db, task_ids)
     claims_released = _release_stale_agent_claims(task_manager, db, tasks)
-    stages_reset = _reset_current_stages(db, tasks, reason="build_stop")
+    stages_reset = _reset_stoppable_stages(db, tasks, reason="build_stop")
 
     result = BuildTargetControlResult(
         action="stop",
@@ -612,6 +612,17 @@ def _reset_current_stages(db: HubDatabase, tasks: list[Task], *, reason: str) ->
     for task in tasks:
         if reset_current_non_ready_stage(db, task.id, reason=reason, by_actor="build"):
             reset += 1
+    return reset
+
+
+def _reset_stoppable_stages(db: HubDatabase, tasks: list[Task], *, reason: str) -> int:
+    reset = 0
+    task_manager = LocalTaskManager(db)
+    for task in tasks:
+        row = task_manager.stage_states.current_stage(task.id)
+        if row and row.state in {"in_progress", "needs_review"}:
+            if reset_current_non_ready_stage(db, task.id, reason=reason, by_actor="build"):
+                reset += 1
     return reset
 
 
