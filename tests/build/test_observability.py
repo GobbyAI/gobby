@@ -294,6 +294,41 @@ def test_get_build_status_reports_closed_root_as_completed(temp_db) -> None:
     assert status["summary"]["closed_tasks"] == 1
 
 
+def test_get_build_status_hides_stale_current_stage_for_closed_root(temp_db) -> None:
+    from gobby.build.observability import get_build_status
+    from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.tasks._lifecycle_events import BUILD_EVENT_REASON
+    from tests.storage.tasks._stage_test_helpers import set_stage_state
+
+    project_id = _project(temp_db, "observability-stale-closed-root")
+    manager = LocalTaskManager(temp_db)
+    root = _automated_task(temp_db, project_id, "Stale Closed Root")
+    manager.lifecycle_events.record_lifecycle_event(
+        root.id,
+        from_state=None,
+        to_state="development",
+        reason=BUILD_EVENT_REASON,
+        by_actor="build",
+    )
+    set_stage_state(temp_db, root.id, "development", "in_progress")
+    temp_db.execute(
+        """
+        UPDATE tasks
+           SET closed_at = %s,
+               closed_reason = %s
+         WHERE id = %s
+        """,
+        ("2026-06-02T00:00:00+00:00", "closed-with-stale-stage", root.id),
+    )
+
+    status = get_build_status(f"#{root.seq_num}", db=temp_db, project_id=project_id)
+    root_status = status["tasks"][0]
+
+    assert status["summary"]["state"] == "completed"
+    assert root_status["closed"] is True
+    assert root_status["current_stage"] is None
+
+
 def test_list_build_history_resolves_task_refs(temp_db) -> None:
     from gobby.build.observability import list_build_history
     from gobby.storage.build_history import BuildHistoryStorage

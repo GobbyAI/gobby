@@ -247,6 +247,7 @@ def _task_status(
     task: Task,
     active_agents: Sequence[Any],
 ) -> dict[str, Any]:
+    current_stage = None if task.closed_at is not None else dispatch_rules.current_stage(task)
     return {
         **_task_summary(task),
         "parent_task_id": task.parent_task_id,
@@ -260,7 +261,7 @@ def _task_status(
         "isolation": task.isolation.value,
         "claimed_by_session_id": task.claimed_by_session_id,
         "active_blocked_by": sorted(task.active_blocked_by),
-        "current_stage": _stage_summary(dispatch_rules.current_stage(task)),
+        "current_stage": _stage_summary(current_stage),
         "stages": [_stage_summary(stage) for stage in task.stages],
         "active_agents": [
             _agent_summary(run) for run in active_agents if getattr(run, "task_id", None) == task.id
