@@ -1669,6 +1669,7 @@ async def test_leaf_spawn_recovers_parent_integration_target_branch(
     assert artifacts.target_branch == "gobby/integration/phase"
 
 
+@pytest.mark.asyncio
 async def test_leaf_spawn_skips_stale_parent_integration_branch(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:

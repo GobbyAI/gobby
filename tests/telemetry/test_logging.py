@@ -15,14 +15,14 @@ from gobby.telemetry.logging import (
 
 
 @pytest.fixture
-def temp_log_dir(tmp_path):
+def temp_log_dir(tmp_path: Path) -> Path:
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
     return log_dir
 
 
 @pytest.fixture
-def telemetry_config(temp_log_dir):
+def telemetry_config(temp_log_dir: Path) -> TelemetrySettings:
     return TelemetrySettings(
         log_file=str(temp_log_dir / "gobby.log"),
         log_file_error=str(temp_log_dir / "gobby-error.log"),

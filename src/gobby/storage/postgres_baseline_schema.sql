@@ -2013,7 +2013,7 @@ AFTER DELETE ON task_stage_states
 FOR EACH ROW
 EXECUTE FUNCTION refresh_task_state_bucket_from_stage();
 
--- pg_search extension is provisioned by install (Docker initdb / native installer),
+-- pg_search extension is provisioned by install (Docker initdb),
 -- not by this schema. The runner probes for its presence and refuses to baseline
 -- without it. See docs/runbooks/postgres-pgsearch-install.md.
 CREATE INDEX tasks_search_bm25 ON tasks

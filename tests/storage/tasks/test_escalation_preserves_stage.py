@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
@@ -97,7 +100,8 @@ def test_de_escalate_can_reset_current_stage_work_attempts(temp_db, sample_proje
 
 
 def test_de_escalate_can_restore_stopped_approved_stage_from_history(
-    temp_db, sample_project
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(project_id=sample_project["id"], title="Restore approved stage")
@@ -152,7 +156,8 @@ def test_de_escalate_can_restore_stopped_approved_stage_from_history(
 
 
 def test_de_escalate_restore_stage_from_history_requires_build_stop_history(
-    temp_db, sample_project
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(project_id=sample_project["id"], title="No restore history")

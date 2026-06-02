@@ -78,8 +78,7 @@ def _add_restart_metadata(
 
 
 def _storage_config_key_to_public_key(key: str) -> str:
-    runtime_key = storage_embedding_config_key_to_runtime_key(key)
-    return runtime_embedding_config_key_to_storage_key(runtime_key)
+    return key
 
 
 def create_config_registry(

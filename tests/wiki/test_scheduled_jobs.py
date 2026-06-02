@@ -19,6 +19,7 @@ from gobby.wiki.scheduled_jobs import (
 from gobby.wiki.update_coordinator import WikiUpdateCoordinator
 
 PROJECT_ID = "proj-wiki"
+pytestmark = pytest.mark.unit
 
 
 class RecordingGateway:

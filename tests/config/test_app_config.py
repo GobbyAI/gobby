@@ -18,6 +18,7 @@ from gobby.config.app import (
     save_config,
 )
 from gobby.config.bin_freshness import BinFreshnessConfig
+from gobby.config.bootstrap import BootstrapConfigError
 from gobby.config.embedding_keys import (
     AI_EMBEDDING_API_BASE_KEY,
     AI_EMBEDDING_DIM_KEY,
@@ -875,27 +876,22 @@ class TestLoadConfig:
 
         assert config.cron.check_interval_seconds == 60
 
-    @pytest.mark.parametrize("stale_mode", ["native", "external"])
-    def test_load_config_normalizes_stale_postgres_install_modes_from_config_file(
+    def test_load_config_rejects_invalid_postgres_install_mode_from_config_file(
         self,
         temp_dir: Path,
-        stale_mode: str,
     ) -> None:
-        """Legacy config file install modes do not block startup after Docker-only migration."""
-
         config_file = temp_dir / "config.yaml"
-        write_secure_bootstrap(config_file, f"postgres_install_mode: {stale_mode}\n")
+        write_secure_bootstrap(config_file, "postgres_install_mode: bogus\n")
 
         class DummyConfigStore:
             def get_all(self) -> dict[str, object]:
                 return {}
 
-        config = load_config(
-            config_file=str(config_file),
-            config_store=DummyConfigStore(),
-        )
-
-        assert config.postgres_install_mode == "docker"
+        with pytest.raises(BootstrapConfigError, match="postgres_install_mode"):
+            load_config(
+                config_file=str(config_file),
+                config_store=DummyConfigStore(),
+            )
 
     def test_load_config_preserves_bootstrap_backend_selection_over_db(
         self, temp_dir: Path
@@ -915,7 +911,7 @@ class TestLoadConfig:
                 return {
                     "hub_backend": "local",
                     "database_url": None,
-                    "postgres_install_mode": "external",
+                    "postgres_install_mode": "bogus",
                 }
 
         config = load_config(

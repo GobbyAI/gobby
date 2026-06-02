@@ -151,7 +151,9 @@ class FakeTaskManager:
 
     def update_task(self, task_id: str, **kwargs: Any) -> FakeTask:
         self.updated.append({"task_id": task_id, **kwargs})
-        task = next(task for task in self.tasks if task.id == task_id)
+        task = next((task for task in self.tasks if task.id == task_id), None)
+        if task is None:
+            raise ValueError(f"Fake task not found for update: {task_id}")
         for key, value in kwargs.items():
             if hasattr(task, key) and value is not None:
                 setattr(task, key, value)

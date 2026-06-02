@@ -34,19 +34,23 @@ def ensure_personal_project(db: HubDatabase, *, gobby_home: Path | None = None) 
         logger.debug("Failed to chmod personal project path %s: %s", path, exc)
 
     project_manager = LocalProjectManager(db)
-    project = project_manager.ensure_exists(PERSONAL_PROJECT_ID, "_personal", repo_path=str(path))
-    if project.repo_path != str(path) or project.deleted_at is not None:
-        now = datetime.now(UTC).isoformat()
-        db.execute(
+    now = datetime.now(UTC).isoformat()
+    with db.transaction() as txn:
+        txn.execute(
             """
-            UPDATE projects
-            SET repo_path = %s, deleted_at = NULL, updated_at = %s
-            WHERE id = %s
-              AND (repo_path IS DISTINCT FROM %s OR deleted_at IS NOT NULL)
+            INSERT INTO projects (id, name, repo_path, created_at, updated_at, deleted_at)
+            VALUES (%s, %s, %s, %s, %s, NULL)
+            ON CONFLICT (id) DO UPDATE
+            SET name = EXCLUDED.name,
+                repo_path = EXCLUDED.repo_path,
+                deleted_at = NULL,
+                updated_at = EXCLUDED.updated_at
             """,
-            (str(path), now, PERSONAL_PROJECT_ID, str(path)),
+            (PERSONAL_PROJECT_ID, "_personal", str(path), now, now),
         )
-        project = project_manager.get(PERSONAL_PROJECT_ID) or project
+    project = project_manager.get(PERSONAL_PROJECT_ID)
+    if project is None:
+        raise RuntimeError("Personal project not found after transactional upsert")
     return project
 
 

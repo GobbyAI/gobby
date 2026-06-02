@@ -69,7 +69,7 @@ def read_bootstrap_database_url(gobby_home: Path) -> str | None:
 
 
 def active_install_mode(*, gobby_home: Path | None = None) -> InstallMode:
-    read_bootstrap_yaml(bootstrap_path(gobby_home))
+    _ = gobby_home
     return "docker"
 
 

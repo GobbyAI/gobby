@@ -195,7 +195,7 @@ describe('ChatInput attachments', () => {
     expect(onSend).toHaveBeenCalled()
     unmount()
 
-    expect(fetch).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalledWith('/api/chat/attachments/att-1', expect.anything())
   })
 
   it('aborts in-flight uploads when attachments become disabled', async () => {

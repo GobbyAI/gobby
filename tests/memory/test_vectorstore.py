@@ -476,6 +476,26 @@ async def test_rebuild_same_dimension_removes_stale_point_ids(
 
 
 @pytest.mark.asyncio
+async def test_rebuild_streaming_stale_delete_strategy_removes_stale_point_ids(
+    vector_store: VectorStore,
+) -> None:
+    await vector_store.upsert(MEM_1, _make_embedding(1.0), {"content": "stale"})
+    await vector_store.upsert(MEM_2, _make_embedding(2.0), {"content": "keep old"})
+
+    async def embed_fn(_text: str) -> list[float]:
+        return _make_embedding(3.0)
+
+    await vector_store.rebuild(
+        [{"id": MEM_2, "content": "keep new"}],
+        embed_fn,
+        stale_delete_strategy="streaming",
+    )
+
+    assert set(await vector_store.scroll_ids()) == {MEM_2}
+    assert await vector_store.count() == 1
+
+
+@pytest.mark.asyncio
 async def test_rebuild_same_dimension_holds_lifecycle_lock_for_expensive_work() -> None:
     store = VectorStore(collection_name="mock_memories", embedding_dim=4)
     client = MagicMock()

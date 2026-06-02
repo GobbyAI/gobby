@@ -48,6 +48,7 @@ from gobby.storage.token_events import (
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+_TRANSCRIPT_INDEX_ERRORS = (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError)
 _WINDOW_ONLY_CONTEXT_SOURCES = frozenset({"droid", "agy", "grok"})
 
 
@@ -573,8 +574,12 @@ class SessionLifecycleManager:
                     mtime_ns=st.st_mtime_ns,
                     size=st.st_size,
                 )
-            except Exception as exc:
-                logger.debug("Failed to finalize transcript index for %s: %s", session_id, exc)
+            except _TRANSCRIPT_INDEX_ERRORS:
+                logger.warning(
+                    "Failed to finalize transcript index for %s",
+                    session_id,
+                    exc_info=True,
+                )
 
         # Replace any synthetic migration rows with real transcript events as soon as
         # we have a parseable transcript for this session.

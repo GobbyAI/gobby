@@ -10,7 +10,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from qdrant_client import QdrantClient
@@ -38,6 +38,7 @@ _QDRANT_CLIENT_CLOSE_ERRORS = (
     UnexpectedResponse,
     httpx.TransportError,
 )
+StaleDeleteStrategy = Literal["precompute", "streaming"]
 
 
 def _vector_size(vectors_cfg: Any) -> int | None:
@@ -668,6 +669,8 @@ class VectorStore:
         self,
         memories: list[dict[str, Any]],
         embed_fn: Callable[[str], Awaitable[list[float]]],
+        *,
+        stale_delete_strategy: StaleDeleteStrategy = "precompute",
     ) -> None:
         """Rebuild the collection from a list of memories.
 
@@ -686,10 +689,18 @@ class VectorStore:
 
                 batch_size = 500
                 total = 0
-                incoming_ids = {str(mem["id"]) for mem in memories}
+                if stale_delete_strategy not in ("precompute", "streaming"):
+                    raise ValueError("stale_delete_strategy must be 'precompute' or 'streaming'")
+                incoming_ids: set[str] = (
+                    {str(mem["id"]) for mem in memories}
+                    if stale_delete_strategy == "precompute"
+                    else set()
+                )
                 batch: list[tuple[str, list[float], dict[str, Any]]] = []
                 for mem in memories:
                     memory_id = str(mem["id"])
+                    if stale_delete_strategy == "streaming":
+                        incoming_ids.add(memory_id)
                     content = mem["content"]
                     embedding = await embed_fn(content)
                     payload = {k: v for k, v in mem.items() if k not in ("id",)}

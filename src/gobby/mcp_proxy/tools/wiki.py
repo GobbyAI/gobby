@@ -34,6 +34,7 @@ def create_wiki_registry(
     gateway_cls: GwikiGatewayFactory = GwikiGateway,
     update_coordinator_cls: WikiUpdateCoordinatorFactory = WikiUpdateCoordinator,
 ) -> InternalToolRegistry:
+    _ = config
     registry = InternalToolRegistry(
         name="gobby-wiki",
         description=(
@@ -45,12 +46,11 @@ def create_wiki_registry(
     def gateway(project: str | None = None, topic: str | None = None) -> GwikiGateway:
         if project is not None and topic is not None:
             raise ValueError("Provide project or topic scope, not both")
-        wiki_config = getattr(config, "wiki", None)
         return gateway_cls(
-            binary=getattr(wiki_config, "binary", None),
+            binary=None,
             project=project,
             topic=topic,
-            timeout_seconds=float(getattr(wiki_config, "timeout_seconds", 30.0)),
+            timeout_seconds=30.0,
         )
 
     async def read_call(
@@ -284,19 +284,22 @@ async def _ingest_many(gateway: GwikiGateway, paths: list[str]) -> dict[str, Any
     for path in paths:
         results.append(await _map_gateway_awaitable(gateway.ingest_file(path)))
     changed_paths: list[str] = []
+    stderr: list[str] = []
     for result in results:
         payload = result.get("payload")
         if isinstance(payload, dict):
             changed_paths.extend(_changed_paths(payload))
+        if isinstance(result.get("stderr"), str) and result["stderr"]:
+            stderr.append(result["stderr"])
     return {
-        "ok": True,
+        "ok": all(bool(result.get("ok", False)) for result in results),
         "command": "ingest_file",
         "payload": {
             "command": "ingest-file",
             "results": results,
             "changed_paths": list(dict.fromkeys(changed_paths)),
         },
-        "stderr": "",
+        "stderr": "\n".join(dict.fromkeys(stderr)),
     }
 
 

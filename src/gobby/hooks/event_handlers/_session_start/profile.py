@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from gobby.storage.projects import personal_project_path
+from gobby.workflows.state_manager import SessionVariableManager
 
 USER_PROFILE_FILENAME = "USER.md"
 
@@ -20,10 +21,9 @@ def read_user_profile_content() -> str:
 
 def seed_user_profile_content(handler: Any, session_id: str | None) -> None:
     """Persist the global user profile content into session variables."""
-    if not session_id or handler._session_manager is None:
+    session_manager = handler.get_session_manager()
+    if not session_id or session_manager is None:
         return
-
-    from gobby.workflows.state_manager import SessionVariableManager
 
     try:
         content = read_user_profile_content()
@@ -31,7 +31,7 @@ def seed_user_profile_content(handler: Any, session_id: str | None) -> None:
         handler.logger.warning("Failed to read global user profile: %s", exc)
         content = ""
 
-    SessionVariableManager(handler._session_manager.db).merge_variables(
+    SessionVariableManager(session_manager.db).merge_variables(
         session_id,
         {"user_profile_content": content},
     )

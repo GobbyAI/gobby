@@ -91,14 +91,7 @@ class GwikiGateway:
         path: str | Path | None = None,
         title: str | None = None,
     ) -> dict[str, Any]:
-        if (path is None) == (title is None):
-            raise GwikiReadSelectorError("Provide exactly one of path or title")
-        args = ["read"]
-        if path is not None:
-            args.extend(["--path", str(path)])
-        else:
-            assert title is not None
-            args.extend(["--title", title])
+        args = ["read", *self._read_selector_args(path=path, title=title)]
         return await self._run_json("read", args)
 
     async def backlinks(self, target: str) -> dict[str, Any]:
@@ -204,6 +197,21 @@ class GwikiGateway:
             args.extend(["--topic", self._topic])
         return args
 
+    def _read_selector_args(
+        self,
+        *,
+        path: str | Path | None,
+        title: str | None,
+    ) -> list[str]:
+        path_value = str(path).strip() if path is not None else None
+        title_value = title.strip() if title is not None else None
+        if bool(path_value) == bool(title_value):
+            raise GwikiReadSelectorError("Provide exactly one non-empty path or title")
+        if path_value:
+            return ["--path", path_value]
+        assert title_value is not None
+        return ["--title", title_value]
+
     async def _run_command(
         self,
         command_name: str,
@@ -246,8 +254,14 @@ class GwikiGateway:
 
     async def _kill_process(self, proc: asyncio.subprocess.Process) -> None:
         try:
-            proc.kill()
-            await proc.wait()
+            proc.terminate()
+            await asyncio.wait_for(proc.wait(), timeout=1.0)
+        except TimeoutError:
+            try:
+                proc.kill()
+                await proc.wait()
+            except ProcessLookupError:
+                pass
         except ProcessLookupError:
             pass
 

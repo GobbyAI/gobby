@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from gobby.review_learning.lessons import GuardrailTarget, NormalizedLesson
 
@@ -28,6 +28,32 @@ class PromotionDecision:
     guardrail_target: GuardrailTarget | None
     category: str | None
     should_create_task: bool
+
+
+class PromotionMemoryManager(Protocol):
+    def list_memories(
+        self,
+        *,
+        project_id: str,
+        memory_type: str,
+        limit: int,
+        tags_all: list[str],
+    ) -> list[Any]: ...
+
+
+class PromotionTaskManager(Protocol):
+    def list_tasks(
+        self,
+        *,
+        project_id: str,
+        closed: bool,
+        label: str,
+        limit: int,
+    ) -> list[Any]: ...
+
+    def update_task(self, task_id: str, **kwargs: Any) -> Any: ...
+
+    def create_task(self, **kwargs: Any) -> Any: ...
 
 
 def resolve_promotion(
@@ -68,8 +94,8 @@ def promote_lesson(
     *,
     lesson: NormalizedLesson,
     evidence_memory_id: str,
-    memory_manager: Any,
-    task_manager: Any,
+    memory_manager: PromotionMemoryManager,
+    task_manager: PromotionTaskManager,
     project_id: str,
     source_session_id: str | None,
 ) -> dict[str, Any]:
@@ -129,7 +155,7 @@ def _create_or_update_task(
     evidence_memory_id: str,
     evidence_memories: list[Any],
     decision: PromotionDecision,
-    task_manager: Any,
+    task_manager: PromotionTaskManager,
     project_id: str,
     source_session_id: str | None,
 ) -> Any:
@@ -183,7 +209,11 @@ def _create_or_update_task(
     )
 
 
-def _find_existing_task(task_manager: Any, project_id: str, pattern_key: str) -> Any | None:
+def _find_existing_task(
+    task_manager: PromotionTaskManager,
+    project_id: str,
+    pattern_key: str,
+) -> Any | None:
     candidates = task_manager.list_tasks(
         project_id=project_id,
         closed=False,

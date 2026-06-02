@@ -7,6 +7,8 @@ Tests cover:
 - Constants (ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID, SYSTEM_PROJECT_NAMES)
 """
 
+from pathlib import Path
+
 import pytest
 
 from gobby.storage.projects import (
@@ -37,7 +39,7 @@ class TestConstants:
         assert "gobby" in SYSTEM_PROJECT_NAMES
         assert "random-project" not in SYSTEM_PROJECT_NAMES
 
-    def test_personal_project_path(self, tmp_path) -> None:
+    def test_personal_project_path(self, tmp_path: Path) -> None:
         assert personal_project_path(tmp_path) == tmp_path / "personal"
 
 
@@ -47,7 +49,7 @@ class TestPersonalProjectEnsure:
     def test_ensure_personal_project_creates_folder_and_repo_path(
         self,
         project_manager: LocalProjectManager,
-        tmp_path,
+        tmp_path: Path,
     ) -> None:
         project = ensure_personal_project(project_manager.db, gobby_home=tmp_path)
 
@@ -64,7 +66,7 @@ class TestPersonalProjectEnsure:
     def test_ensure_personal_project_repairs_stale_repo_path(
         self,
         project_manager: LocalProjectManager,
-        tmp_path,
+        tmp_path: Path,
     ) -> None:
         project_manager.ensure_exists(PERSONAL_PROJECT_ID, "_personal")
         project_manager.update(PERSONAL_PROJECT_ID, repo_path=None)
@@ -72,6 +74,24 @@ class TestPersonalProjectEnsure:
         project = ensure_personal_project(project_manager.db, gobby_home=tmp_path)
 
         assert project.repo_path == str(tmp_path / "personal")
+
+    def test_ensure_personal_project_repairs_name_and_deleted_at(
+        self,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+    ) -> None:
+        project_manager.ensure_exists(
+            PERSONAL_PROJECT_ID,
+            "wrong-name",
+            repo_path="/stale",
+        )
+        project_manager.soft_delete(PERSONAL_PROJECT_ID)
+
+        project = ensure_personal_project(project_manager.db, gobby_home=tmp_path)
+
+        assert project.name == "_personal"
+        assert project.repo_path == str(tmp_path / "personal")
+        assert project.deleted_at is None
 
 
 class TestSoftDelete:

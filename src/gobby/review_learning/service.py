@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from typing import Any, Protocol
 
 from gobby.review_learning.fingerprint import (
     build_occurrence_key,
@@ -16,7 +16,11 @@ from gobby.review_learning.lessons import (
     normalize_lesson,
     validate_decision,
 )
-from gobby.review_learning.promotion import promote_lesson
+from gobby.review_learning.promotion import (
+    PromotionMemoryManager,
+    PromotionTaskManager,
+    promote_lesson,
+)
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.utils.project_context import get_project_context
@@ -27,10 +31,38 @@ logger = logging.getLogger(__name__)
 _SPACE_RE = re.compile(r"\s+")
 
 
+class ReviewLearningMemoryManager(PromotionMemoryManager, Protocol):
+    db: Any
+
+    async def create_memory(
+        self,
+        *,
+        content: str,
+        memory_type: str,
+        project_id: str,
+        source_type: str,
+        source_session_id: str | None,
+        tags: list[str],
+    ) -> Any: ...
+
+    async def search_memories(
+        self,
+        *,
+        query: str,
+        project_id: str,
+        limit: int,
+        tags_all: list[str] | None,
+    ) -> list[Any]: ...
+
+
 class ReviewLearningService:
     """Record confirmed review lessons and recall relevant memory context."""
 
-    def __init__(self, memory_manager: Any, task_manager: Any):
+    def __init__(
+        self,
+        memory_manager: ReviewLearningMemoryManager,
+        task_manager: PromotionTaskManager,
+    ):
         self.memory_manager = memory_manager
         self.task_manager = task_manager
 

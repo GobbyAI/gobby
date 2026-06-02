@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -276,7 +277,7 @@ class TestVoiceRoutes:
             calls.append(config.voice.whisper_model_size)
             return voice_module.AICapabilityRegistry()
 
-        monkeypatch.setattr(voice_module, "_AUDIO_REGISTRY_CACHE", {})
+        monkeypatch.setattr(voice_module, "_AUDIO_REGISTRY_CACHE", OrderedDict())
         monkeypatch.setattr(voice_module, "build_daemon_ai_capability_registry", build_registry)
 
         first = client.get("/api/voice/status")
@@ -288,6 +289,36 @@ class TestVoiceRoutes:
         assert second.status_code == 200
         assert third.status_code == 200
         assert calls == ["base", "small"]
+
+    def test_audio_registry_cache_evicts_least_recent(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        configs = [
+            DaemonConfig(voice=VoiceConfig(whisper_model_size="base")),
+            DaemonConfig(voice=VoiceConfig(whisper_model_size="small")),
+            DaemonConfig(voice=VoiceConfig(whisper_model_size="medium")),
+        ]
+
+        monkeypatch.setattr(voice_module, "_AUDIO_REGISTRY_CACHE", OrderedDict())
+        monkeypatch.setattr(voice_module, "_AUDIO_REGISTRY_CACHE_MAX_SIZE", 2)
+        monkeypatch.setattr(voice_module, "_AUDIO_REGISTRY_CACHE_TTL_SECONDS", 60.0)
+        monkeypatch.setattr(voice_module.time, "monotonic", lambda: 100.0)
+        monkeypatch.setattr(
+            voice_module,
+            "build_daemon_ai_capability_registry",
+            lambda _config: voice_module.AICapabilityRegistry(),
+        )
+
+        voice_module._cached_audio_registry(configs[0])
+        voice_module._cached_audio_registry(configs[1])
+        voice_module._cached_audio_registry(configs[0])
+        voice_module._cached_audio_registry(configs[2])
+
+        keys = list(voice_module._AUDIO_REGISTRY_CACHE)
+        assert voice_module._config_signature(configs[0]) in keys
+        assert voice_module._config_signature(configs[1]) not in keys
+        assert voice_module._config_signature(configs[2]) in keys
 
     def test_status_reports_missing_chatterbox_reference_audio(
         self, client: TestClient, server_with_voice: MagicMock, tmp_path: Path

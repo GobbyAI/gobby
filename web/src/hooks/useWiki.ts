@@ -201,7 +201,11 @@ export function useWiki(options: UseWikiOptions = {}) {
   );
 
   const checkHealth = useCallback(
-    () => readWikiEnvelope(withQuery("/api/wiki/health")),
+    async () => {
+      const nextHealth = await readWikiEnvelope(withQuery("/api/wiki/health"));
+      setHealth(nextHealth);
+      return nextHealth;
+    },
     [withQuery],
   );
 

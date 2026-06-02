@@ -46,6 +46,10 @@ class EventHandlersBase:
     logger: logging.Logger
     _handler_map: dict[HookEventType, Callable[[HookEvent], HookResponse]]
 
+    def get_session_manager(self) -> HookSessionManager | None:
+        """Return the configured hook session manager, if available."""
+        return self._session_manager
+
     def _apply_debug_echo(self, response: HookResponse) -> None:
         """Append additionalContext to system_message when debug_echo_context is enabled.
 

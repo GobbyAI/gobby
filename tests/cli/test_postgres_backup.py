@@ -44,12 +44,13 @@ def _patch_common(
     module: Any,
     *,
     mode: str,
+    database_url: str = "postgresql://gobby:secret@localhost:60891/gobby",
 ) -> None:
     monkeypatch.setattr(module, "_active_install_mode", lambda **_kwargs: mode)
     monkeypatch.setattr(
         module,
         "_read_bootstrap_database_url",
-        lambda _home: "postgresql://gobby:secret@localhost:60891/gobby",
+        lambda _home: database_url,
     )
     monkeypatch.setattr(module.psycopg, "connect", lambda *_args, **_kwargs: _FakeConnection())
 
@@ -124,6 +125,18 @@ def test_create_docker_backup_uses_configured_pg_dump_timeout(
     assert timeouts == [17]
 
 
+def test_create_backup_rejects_non_docker_install_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import gobby.cli.postgres_backup as backup
+
+    _patch_common(monkeypatch, backup, mode="bogus")
+
+    with pytest.raises(click.ClickException, match="Gobby-managed Docker PostgreSQL"):
+        backup.create_postgres_backup(output_dir=tmp_path / "backup", gobby_home=tmp_path)
+
+
 def test_postgres_backup_configured_only_swallows_bootstrap_read_errors(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -186,6 +199,23 @@ def test_restore_docker_backup_verifies_checksum_and_runs_restore_probes(
     assert commands[1][4:8] == ["pg_restore", "--no-owner", "--no-privileges", "--clean"]
     assert "--if-exists" in commands[1]
     assert result["probes"]["pg_search_present"] is True
+
+
+def test_restore_rejects_unmanaged_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import gobby.cli.postgres_backup as backup
+
+    _patch_common(
+        monkeypatch,
+        backup,
+        mode="docker",
+        database_url="postgresql://gobby:secret@db.example.test:5432/gobby",
+    )
+
+    with pytest.raises(click.ClickException, match="Gobby-managed Docker PostgreSQL"):
+        backup.restore_postgres_backup(tmp_path / "missing", gobby_home=tmp_path)
 
 
 def test_restore_rejects_checksum_mismatch(

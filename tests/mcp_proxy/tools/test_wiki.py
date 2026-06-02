@@ -7,6 +7,7 @@ import pytest
 
 from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.registries import setup_internal_registries
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.wiki import create_wiki_registry
 
 
@@ -147,7 +148,7 @@ def reset_fakes() -> None:
     RecordingCoordinator.instances = []
 
 
-def _registry():
+def _registry() -> InternalToolRegistry:
     return create_wiki_registry(
         config=DaemonConfig(wiki={"binary": "/bin/gwiki", "timeout_seconds": 4}),
         gateway_cls=FakeGateway,
@@ -256,6 +257,35 @@ async def test_wiki_ingest_url_batch_passthrough() -> None:
         {"url": "https://example.test/b", "code": "blocked", "message": "blocked"}
     ]
     assert result["payload"]["indexed"] == {"documents": 1, "chunks": 2, "links": 3, "sources": 1}
+
+
+async def test_wiki_ingest_file_batch_aggregates_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def ingest_file(self: FakeGateway, path: str | Path) -> dict[str, Any]:
+        self.calls.append(("ingest_file", str(path)))
+        if str(path).endswith("bad.md"):
+            return {
+                "ok": False,
+                "command": "ingest_file",
+                "payload": {"changed_paths": [str(path)]},
+                "stderr": "bad file",
+            }
+        return {
+            "ok": True,
+            "command": "ingest_file",
+            "payload": {"changed_paths": [str(path)]},
+            "stderr": "warning",
+        }
+
+    monkeypatch.setattr(FakeGateway, "ingest_file", ingest_file)
+
+    result = await _registry().call("wiki_ingest", {"paths": ["/tmp/good.md", "/tmp/bad.md"]})
+
+    assert result["ok"] is False
+    assert result["success"] is False
+    assert result["stderr"] == "warning\nbad file"
+    assert result["paths"]["changed_paths"] == ["/tmp/good.md", "/tmp/bad.md"]
 
 
 def test_wiki_registry_registered_and_discoverable() -> None:

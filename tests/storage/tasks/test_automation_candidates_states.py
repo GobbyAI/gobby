@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import _automation
 from gobby.storage.tasks._crud import list_automation_candidates
 from gobby.storage.tasks._models import Isolation
@@ -16,7 +19,11 @@ from tests.storage.tasks._stage_test_helpers import (
 pytestmark = pytest.mark.unit
 
 
-def _task_at_stage(temp_db, sample_project, stage_state: str):
+def _task_at_stage(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    stage_state: str,
+):
     task = create_task(
         temp_db,
         sample_project,
@@ -34,8 +41,8 @@ def _task_at_stage(temp_db, sample_project, stage_state: str):
 
 
 def test_list_automation_candidates_includes_stage_actionable_states(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     actionable = {
         state: _task_at_stage(temp_db, sample_project, state) for state in ACTIVE_STAGE_STATES
@@ -49,8 +56,8 @@ def test_list_automation_candidates_includes_stage_actionable_states(
 
 
 def test_list_automation_candidates_excludes_done_and_null_current_stage(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     done = _task_at_stage(temp_db, sample_project, "done")
     no_manifest = create_task(
@@ -75,8 +82,8 @@ def test_list_automation_candidates_excludes_done_and_null_current_stage(
 
 
 def test_list_automation_candidates_precomputes_holistic_gate_once_per_task(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     first = _task_at_stage(temp_db, sample_project, "ready")
@@ -103,8 +110,8 @@ def test_list_automation_candidates_precomputes_holistic_gate_once_per_task(
 
 
 def test_list_automation_candidates_sorts_holistic_descendant_gates_first(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     without_gate = _task_at_stage(temp_db, sample_project, "ready")
@@ -129,8 +136,8 @@ def test_list_automation_candidates_sorts_holistic_descendant_gates_first(
 
 
 def test_list_automation_candidates_allows_reopened_child_under_holistic_gate(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     root = create_task(
         temp_db,

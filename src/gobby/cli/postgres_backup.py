@@ -62,6 +62,7 @@ def create_postgres_backup(
 
     mode = _active_install_mode(gobby_home=home)
     database_url = _resolve_database_url(home)
+    _require_managed_docker_postgres(database_url=database_url, mode=mode)
     dump_path = backup_dir / POSTGRES_DUMP_NAME
 
     metadata = _collect_source_metadata(database_url=database_url, mode=mode)
@@ -102,6 +103,7 @@ def restore_postgres_backup(
     home = gobby_home or get_gobby_home()
     mode = _active_install_mode(gobby_home=home)
     database_url = _resolve_database_url(home)
+    _require_managed_docker_postgres(database_url=database_url, mode=mode)
     dump_path = _resolve_dump_path(source.expanduser())
 
     metadata = _read_metadata_for_dump(dump_path)
@@ -293,6 +295,24 @@ def _resolve_database_url(gobby_home: Path) -> str:
             "PostgreSQL bootstrap DSN is not configured. Run `gobby postgres install` first."
         )
     return database_url
+
+
+def _require_managed_docker_postgres(*, database_url: str, mode: InstallMode | str) -> None:
+    if mode != "docker":
+        raise click.ClickException(
+            "PostgreSQL backup and restore only support Gobby-managed Docker PostgreSQL."
+        )
+    parsed = urlparse(database_url)
+    host = (parsed.hostname or "").lower()
+    if (
+        host not in {"localhost", "127.0.0.1", "::1"}
+        or parsed.port != 60891
+        or _dsn_user(database_url) != DEFAULT_POSTGRES_USER
+        or _dsn_db(database_url) != DEFAULT_POSTGRES_DB
+    ):
+        raise click.ClickException(
+            "PostgreSQL backup and restore only support Gobby-managed Docker PostgreSQL."
+        )
 
 
 def _resolve_dump_path(source: Path) -> Path:

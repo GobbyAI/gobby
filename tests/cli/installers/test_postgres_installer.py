@@ -38,9 +38,8 @@ def test_install_postgres_dispatches_modes(monkeypatch: pytest.MonkeyPatch, tmp_
     )
     assert installer.install_postgres(mode="docker", gobby_home=tmp_path)["mode"] == "docker"
 
-    for stale_mode in ("native", "external"):
-        with pytest.raises(click.ClickException, match="Docker is the only supported mode"):
-            installer.install_postgres(mode=stale_mode)
+    with pytest.raises(click.ClickException, match="Docker is the only supported mode"):
+        installer.install_postgres(mode="bogus")
 
     assert [mode for mode, _kwargs in calls] == ["docker"]
 

@@ -6,6 +6,7 @@ import importlib
 import json
 import logging
 import time
+from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, File, Form, Query, UploadFile
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 _AUDIO_REGISTRY_CACHE_TTL_SECONDS = 2.0
 _AUDIO_REGISTRY_CACHE_MAX_SIZE = 8
-_AUDIO_REGISTRY_CACHE: dict[str, tuple[float, AICapabilityRegistry]] = {}
+_AUDIO_REGISTRY_CACHE: OrderedDict[str, tuple[float, AICapabilityRegistry]] = OrderedDict()
 
 
 def _config_signature(config: Any) -> str:
@@ -52,6 +53,7 @@ def _cached_audio_registry(config: Any) -> AICapabilityRegistry | None:
     if cached is not None:
         expires_at, registry = cached
         if expires_at > now:
+            _AUDIO_REGISTRY_CACHE.move_to_end(signature)
             return registry
         _AUDIO_REGISTRY_CACHE.pop(signature, None)
 
@@ -61,8 +63,9 @@ def _cached_audio_registry(config: Any) -> AICapabilityRegistry | None:
 
     registry = build_daemon_ai_capability_registry(config)
     _AUDIO_REGISTRY_CACHE[signature] = (now + _AUDIO_REGISTRY_CACHE_TTL_SECONDS, registry)
+    _AUDIO_REGISTRY_CACHE.move_to_end(signature)
     while len(_AUDIO_REGISTRY_CACHE) > _AUDIO_REGISTRY_CACHE_MAX_SIZE:
-        _AUDIO_REGISTRY_CACHE.pop(next(iter(_AUDIO_REGISTRY_CACHE)))
+        _AUDIO_REGISTRY_CACHE.popitem(last=False)
     return registry
 
 

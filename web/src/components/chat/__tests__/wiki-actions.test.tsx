@@ -78,6 +78,12 @@ describe("wiki chat actions", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Run wiki write" }));
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("/api/wiki/compile"),
+      expect.anything(),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Run wiki action" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -98,6 +104,12 @@ describe("wiki chat actions", () => {
       "https://example.test/a\nhttps://example.test/b",
     );
     await user.click(screen.getByRole("button", { name: "Run wiki write" }));
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("/api/wiki/ingest"),
+      expect.anything(),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Run wiki action" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(

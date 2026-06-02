@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 
 GatewayCall = Callable[[GwikiGateway], Awaitable[dict[str, Any]]]
+UPLOAD_CHUNK_SIZE = 64 * 1024
 
 
 def create_wiki_router(server: HTTPServer) -> APIRouter:
@@ -217,16 +218,15 @@ async def _write(gateway: GwikiGateway, result: dict[str, Any]) -> dict[str, Any
 
 
 def _gateway(server: HTTPServer, project: str | None, topic: str | None) -> GwikiGateway:
+    _ = server
     if project is not None and topic is not None:
         raise HTTPException(status_code=400, detail="Provide project or topic scope, not both")
 
-    config = getattr(getattr(server, "services", None), "config", None)
-    wiki_config = getattr(config, "wiki", None)
     return GwikiGateway(
-        binary=getattr(wiki_config, "binary", None),
+        binary=None,
         project=project,
         topic=topic,
-        timeout_seconds=float(getattr(wiki_config, "timeout_seconds", 30.0)),
+        timeout_seconds=30.0,
     )
 
 
@@ -299,19 +299,22 @@ async def _ingest_many(gateway: GwikiGateway, paths: list[str]) -> dict[str, Any
     for path in paths:
         results.append(await _map_gateway_awaitable(gateway.ingest_file(path)))
     changed_paths: list[str] = []
+    stderr: list[str] = []
     for result in results:
         payload = result.get("payload")
         if isinstance(payload, dict):
             changed_paths.extend(_string_sequence(payload.get("changed_paths")))
+        if isinstance(result.get("stderr"), str) and result["stderr"]:
+            stderr.append(result["stderr"])
     return {
-        "ok": True,
+        "ok": all(bool(result.get("ok", False)) for result in results),
         "command": "ingest_file",
         "payload": {
             "command": "ingest-file",
             "results": results,
             "changed_paths": list(dict.fromkeys(changed_paths)),
         },
-        "stderr": "",
+        "stderr": "\n".join(dict.fromkeys(stderr)),
     }
 
 
@@ -322,5 +325,6 @@ async def _map_gateway_awaitable(awaitable: Awaitable[dict[str, Any]]) -> dict[s
 async def _stage_upload(file: UploadFile) -> Path:
     suffix = Path(file.filename or "").suffix
     with tempfile.NamedTemporaryFile(prefix="gobby-wiki-", suffix=suffix, delete=False) as staged:
-        staged.write(await file.read())
+        while chunk := await file.read(UPLOAD_CHUNK_SIZE):
+            staged.write(chunk)
         return Path(staged.name)

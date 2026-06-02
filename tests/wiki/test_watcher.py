@@ -26,6 +26,17 @@ class RecordingCoordinator:
         return {"index_handoff": {"status": "indexed"}}
 
 
+class FailingCoordinator:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def handle_local_changes(
+        self, changed_paths_by_scope: dict[str, list[Path]]
+    ) -> dict[str, Any]:
+        self.calls += 1
+        raise RuntimeError("index failed")
+
+
 async def _eventually(predicate: Callable[[], bool]) -> None:
     deadline = asyncio.get_running_loop().time() + 2.0
     while True:
@@ -83,6 +94,70 @@ async def test_local_edit_triggers_index(tmp_path: Path) -> None:
 
     assert coordinator.calls == [{"project": ["note.md"]}]
     assert watcher.health()["last_index_time"] is not None
+
+
+@pytest.mark.asyncio
+async def test_flush_keeps_pending_changes_when_coordinator_fails(tmp_path: Path) -> None:
+    coordinator = FailingCoordinator()
+    watcher = WikiWatcher(
+        scopes=[WikiWatchScope(name="project", root=tmp_path)],
+        coordinator=coordinator,
+        debounce_interval=0.01,
+        poll_interval=0.01,
+    )
+
+    await watcher.record_change(tmp_path / "note.md")
+
+    with pytest.raises(RuntimeError, match="index failed"):
+        await watcher.flush_pending()
+
+    health = watcher.health()
+    assert coordinator.calls == 1
+    assert health["pending_changes"] == 1
+    assert health["pending_debounce"] is True
+
+
+@pytest.mark.asyncio
+async def test_stop_flushes_pending_changes(tmp_path: Path) -> None:
+    coordinator = RecordingCoordinator()
+    watcher = WikiWatcher(
+        scopes=[WikiWatchScope(name="project", root=tmp_path)],
+        coordinator=coordinator,
+        debounce_interval=60.0,
+        poll_interval=0.01,
+    )
+
+    await watcher.record_change(tmp_path / "note.md")
+    await watcher.stop()
+
+    assert coordinator.calls == [{"project": ["note.md"]}]
+    assert watcher.health()["pending_changes"] == 0
+
+
+def test_snapshot_skips_transient_file_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    note = tmp_path / "note.md"
+    note.write_text("note", encoding="utf-8")
+    original_stat = Path.stat
+
+    def flaky_stat(path: Path, *args: Any, **kwargs: Any):
+        if path == note:
+            raise OSError("vanished")
+        return original_stat(path, *args, **kwargs)
+
+    watcher = WikiWatcher(
+        scopes=[],
+        coordinator=RecordingCoordinator(),
+        debounce_interval=0.01,
+        poll_interval=0.01,
+    )
+    monkeypatch.setattr(Path, "stat", flaky_stat)
+
+    snapshot = watcher._snapshot(WikiWatchScope(name="project", root=tmp_path))
+
+    assert snapshot == {}
 
 
 @pytest.mark.asyncio

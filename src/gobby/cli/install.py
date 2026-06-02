@@ -13,10 +13,11 @@ import webbrowser
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import click
 
-from gobby.config.bootstrap import DEFAULT_DAEMON_PORT
+from gobby.config.bootstrap import DEFAULT_DAEMON_PORT, BootstrapConfigError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 from gobby.utils.project_init import initialize_project
@@ -228,7 +229,7 @@ def _daemon_url() -> str:
         from gobby.config.app import load_config
 
         port = load_config(resolve_database_url=False).daemon_port
-    except Exception:
+    except (BootstrapConfigError, FileNotFoundError, PermissionError, OSError, ValueError):
         port = DEFAULT_DAEMON_PORT
     return f"http://localhost:{port}/"
 
@@ -237,8 +238,11 @@ def _daemon_already_running() -> bool:
     try:
         from gobby.cli.daemon import _is_daemon_healthy
 
-        return _is_daemon_healthy(int(_daemon_url().rstrip("/").rsplit(":", 1)[1]))
-    except Exception:
+        port = urlparse(_daemon_url()).port
+        if port is None:
+            return False
+        return _is_daemon_healthy(port)
+    except (ConnectionError, OSError, ValueError):
         return False
 
 

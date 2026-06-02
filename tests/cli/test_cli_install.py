@@ -580,6 +580,62 @@ class TestInstallCommand:
     @patch("gobby.cli.install.install_git_hooks")
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
+    @patch("gobby.cli.install._is_grok_cli_installed")
+    @patch("gobby.cli.install._is_agy_cli_installed")
+    @patch("gobby.cli.install._is_qwen_cli_installed")
+    @patch("gobby.cli.install._is_droid_cli_installed")
+    @patch("gobby.cli.install._is_codex_cli_installed")
+    @patch("gobby.cli.install.load_full_config_from_db")
+    def test_full_install_installs_git_hooks_when_repo_detected(
+        self,
+        mock_load_config: MagicMock,
+        mock_codex: MagicMock,
+        mock_droid: MagicMock,
+        mock_qwen: MagicMock,
+        mock_agy: MagicMock,
+        mock_grok: MagicMock,
+        mock_gemini: MagicMock,
+        mock_claude: MagicMock,
+        mock_install_git_hooks: MagicMock,
+        mock_ensure_config: MagicMock,
+        runner: CliRunner,
+        temp_dir: Path,
+    ) -> None:
+        mock_load_config.side_effect = FileNotFoundError
+        for detector in (
+            mock_claude,
+            mock_gemini,
+            mock_grok,
+            mock_agy,
+            mock_qwen,
+            mock_droid,
+            mock_codex,
+        ):
+            detector.return_value = False
+        mock_ensure_config.return_value = {"created": False, "path": "/test/config.yaml"}
+        mock_install_git_hooks.return_value = {
+            "success": True,
+            "installed": ["pre-commit"],
+            "skipped": [],
+        }
+
+        with (
+            patch("gobby.cli.install._should_initialize_project", return_value=False),
+            patch("gobby.cli.install._run_embedding_install", return_value="none"),
+            patch("gobby.cli.install._run_voice_install"),
+        ):
+            with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+                Path(".git").mkdir()
+                result = runner.invoke(cli, ["install", "--no-interactive"])
+
+        assert result.exit_code == 0
+        mock_install_git_hooks.assert_called_once()
+        assert "Installed git hooks" in result.output
+
+    @patch("gobby.cli.install._ensure_daemon_config")
+    @patch("gobby.cli.install.install_git_hooks")
+    @patch("gobby.cli.install._is_claude_code_installed")
+    @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
     @patch("gobby.cli.load_full_config_from_db")
     def test_install_hooks_with_skipped(

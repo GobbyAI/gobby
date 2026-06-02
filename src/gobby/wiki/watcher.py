@@ -46,6 +46,7 @@ class WikiWatcher:
         self._running = False
         self._stop_event = asyncio.Event()
         self._lock = asyncio.Lock()
+        self._flush_lock = asyncio.Lock()
         self._snapshots = {scope.name: self._snapshot(scope) for scope in self._scopes}
 
     async def run(self) -> None:
@@ -67,6 +68,7 @@ class WikiWatcher:
 
     async def stop(self) -> None:
         self._stop_event.set()
+        await self.flush_pending()
 
     async def record_change(self, path: Path) -> None:
         scope = self._scope_for_path(path)
@@ -78,22 +80,31 @@ class WikiWatcher:
                 self._pending_since = time.monotonic()
 
     async def flush_pending(self) -> dict[str, Any] | None:
-        async with self._lock:
-            if not self._pending:
-                return None
-            pending = {
-                scope: sorted(paths, key=lambda item: item.as_posix())
-                for scope, paths in self._pending.items()
-                if paths
-            }
-            self._pending = {}
-            self._pending_since = None
+        async with self._flush_lock:
+            async with self._lock:
+                if not self._pending:
+                    return None
+                pending = {
+                    scope: sorted(paths, key=lambda item: item.as_posix())
+                    for scope, paths in self._pending.items()
+                    if paths
+                }
 
-        if not pending:
-            return None
-        result = await self._coordinator.handle_local_changes(pending)
-        self._last_index_time = time.time()
-        return result
+            if not pending:
+                return None
+            result = await self._coordinator.handle_local_changes(pending)
+            async with self._lock:
+                for scope, paths in pending.items():
+                    current = self._pending.get(scope)
+                    if current is None:
+                        continue
+                    current.difference_update(paths)
+                    if not current:
+                        self._pending.pop(scope, None)
+                if not self._pending:
+                    self._pending_since = None
+            self._last_index_time = time.time()
+            return result
 
     def health(self) -> dict[str, Any]:
         pending_changes = sum(len(paths) for paths in self._pending.values())
@@ -123,14 +134,20 @@ class WikiWatcher:
         )
 
     def _snapshot(self, scope: WikiWatchScope) -> dict[Path, tuple[int, int]]:
-        if not scope.root.exists():
+        try:
+            if not scope.root.exists():
+                return {}
+        except OSError:
             return {}
         snapshot: dict[Path, tuple[int, int]] = {}
         for path in scope.root.rglob("*"):
-            if not path.is_file() or self._ignored(scope, path):
+            try:
+                if not path.is_file() or self._ignored(scope, path):
+                    continue
+                stat = path.stat()
+                snapshot[path.resolve()] = (stat.st_mtime_ns, stat.st_size)
+            except OSError:
                 continue
-            stat = path.stat()
-            snapshot[path.resolve()] = (stat.st_mtime_ns, stat.st_size)
         return snapshot
 
     def _scope_for_path(self, path: Path) -> WikiWatchScope | None:

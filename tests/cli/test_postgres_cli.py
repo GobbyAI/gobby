@@ -87,11 +87,10 @@ def test_postgres_install_command_calls_installer_and_renders_success(
     assert "PostgreSQL configured" in result.output
 
 
-@pytest.mark.parametrize("mode", ["native", "external"])
-def test_postgres_install_command_rejects_removed_modes(mode: str) -> None:
+def test_postgres_install_command_rejects_invalid_mode() -> None:
     from gobby.cli.postgres import postgres_cli
 
-    result = CliRunner().invoke(postgres_cli, ["install", "--mode", mode])
+    result = CliRunner().invoke(postgres_cli, ["install", "--mode", "bogus"])
 
     assert result.exit_code != 0
     assert "Invalid value for '--mode'" in result.output
@@ -221,15 +220,13 @@ def test_postgres_restore_command_invokes_restore_helper(
     assert "pg_search: yes" in result.output
 
 
-@pytest.mark.parametrize("mode", ["docker", "native", "external"])
 def test_postgres_uninstall_preserves_required_runtime_bootstrap(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    mode: str,
 ) -> None:
     from gobby.cli.postgres import postgres_cli
 
-    _write_postgres_bootstrap(tmp_path, mode=mode, hub_backend="postgres")
+    _write_postgres_bootstrap(tmp_path, mode="docker", hub_backend="postgres")
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
 
     result = CliRunner().invoke(postgres_cli, ["uninstall"])
@@ -238,7 +235,7 @@ def test_postgres_uninstall_preserves_required_runtime_bootstrap(
     bootstrap = _read_bootstrap(tmp_path)
     assert bootstrap["hub_backend"] == "postgres"
     assert bootstrap["database_url"] == "postgresql://gobby:secret@example.com/gobby"
-    assert bootstrap["postgres_install_mode"] == mode
+    assert bootstrap["postgres_install_mode"] == "docker"
     assert "runtime bootstrap preserved" in result.output
     assert "hub_backend=postgres" not in result.output
     assert "PostgreSQL uninstalled" not in result.output

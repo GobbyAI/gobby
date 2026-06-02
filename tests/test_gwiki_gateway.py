@@ -24,6 +24,7 @@ class FakeProcess:
         self.stdout = stdout if stdout is not None else b'{"status": "ok"}'
         self.stderr = stderr
         self.timeout = timeout
+        self.terminated = False
         self.killed = False
         self.waited = False
 
@@ -34,6 +35,9 @@ class FakeProcess:
 
     def kill(self) -> None:
         self.killed = True
+
+    def terminate(self) -> None:
+        self.terminated = True
 
     async def wait(self) -> None:
         self.waited = True
@@ -179,7 +183,8 @@ async def test_timeout_degrades(monkeypatch: pytest.MonkeyPatch) -> None:
     result = await GwikiGateway(binary="/bin/gwiki", timeout_seconds=0.01).health()
 
     assert calls == [("/bin/gwiki", "health", "--format", "json")]
-    assert process.killed is True
+    assert process.terminated is True
+    assert process.killed is False
     assert process.waited is True
     assert result == {
         "ok": False,
@@ -257,6 +262,8 @@ async def test_read_status_payloads_are_not_subprocess_failures(
         await gateway.read(path="one.md", title="One")
     with pytest.raises(GwikiReadSelectorError):
         await gateway.read()
+    with pytest.raises(GwikiReadSelectorError):
+        await gateway.read(path="")
 
 
 async def test_sources_preserves_cli_payload(monkeypatch: pytest.MonkeyPatch) -> None:

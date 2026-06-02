@@ -368,6 +368,7 @@ class TestProviderModelsRoute:
             "haiku",
             "sonnet",
         ]
+        assert "opus" in [m["value"] for m in providers["claude"]["models"][2:]]
         assert [m["value"] for m in providers["codex"]["models"]] == [
             "gpt-5.5",
             "gpt-5.4",

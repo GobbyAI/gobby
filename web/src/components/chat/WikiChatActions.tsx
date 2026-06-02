@@ -155,6 +155,7 @@ export function WikiChatActions({
     if (!activeAction || isRunning) return;
     if (activeAction.requiresIntent && pendingIntent) {
       setPendingIntent(false);
+      return;
     }
     if (activeAction.requiresInput && activeAction.kind !== "attach" && !input.trim()) {
       setError(`${activeAction.inputLabel} is required`);

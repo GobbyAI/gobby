@@ -168,13 +168,6 @@ def _parse_postgres_install_mode(value: object) -> PostgresInstallMode | None:
         return None
     if value == "docker":
         return cast(PostgresInstallMode, value)
-    if value in {"native", "external"}:
-        logger.warning(
-            "Normalizing stale postgres_install_mode=%s to docker; Docker is the only "
-            "supported PostgreSQL install mode.",
-            value,
-        )
-        return "docker"
     raise BootstrapConfigError("postgres_install_mode must be: docker")
 
 
