@@ -10,7 +10,6 @@ import logging
 import os
 import sys
 import time
-from collections.abc import Awaitable
 from typing import Any
 
 import httpx
@@ -35,6 +34,12 @@ from gobby.mcp_proxy.server_list import compact_mcp_server_list
 from gobby.mcp_proxy.session_bootstrap import (
     read_project_id,
     resolve_session_id_from_terminal_context,
+)
+from gobby.mcp_proxy.wait_tools import (
+    MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS,
+    WAIT_TOOL_HTTP_TIMEOUT_BUFFER_SECONDS,
+    WAIT_TOOL_NAMES,
+    call_with_wait_heartbeat,
 )
 
 
@@ -64,16 +69,6 @@ EXTENDED_TIMEOUT_TOOL_NAMES = (
     "compact_self",
 )
 
-WAIT_TOOL_NAMES = (
-    "wait_for_task",
-    "wait_for_any_task",
-    "wait_for_all_tasks",
-    "wait_for_agent",
-)
-HEARTBEAT_TOOL_NAMES = (*WAIT_TOOL_NAMES, "compact_self")
-WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS = 15.0
-WAIT_TOOL_HTTP_TIMEOUT_BUFFER_SECONDS = 30.0
-MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS = 60.0
 REMOVED_WORKFLOW_WAIT_TOOL = "wait_for_completion"
 DAEMON_HEALTH_ATTEMPTS = 30
 DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS = 2.0
@@ -127,48 +122,6 @@ def _removed_wait_for_completion_result() -> dict[str, Any]:
         "server_name": "gobby-workflows",
         "tool_name": REMOVED_WORKFLOW_WAIT_TOOL,
     }
-
-
-async def _call_with_wait_heartbeat(
-    tool_call: Awaitable[dict[str, Any]],
-    *,
-    ctx: Context[Any, Any, Any] | None,
-    tool_name: str,
-    timeout: float | None,
-) -> dict[str, Any]:
-    """Keep stdio MCP transport active while a long-running proxied tool blocks."""
-    if ctx is None or tool_name not in HEARTBEAT_TOOL_NAMES:
-        return await tool_call
-
-    stop_event = asyncio.Event()
-
-    async def _heartbeat() -> None:
-        elapsed = 0.0
-        while True:
-            try:
-                await asyncio.wait_for(
-                    stop_event.wait(),
-                    timeout=WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS,
-                )
-                return
-            except TimeoutError:
-                elapsed += WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS
-                progress = min(elapsed, timeout) if timeout is not None else elapsed
-                await ctx.report_progress(
-                    progress=progress,
-                    total=timeout,
-                    message=f"{tool_name} still waiting for daemon result",
-                )
-
-    heartbeat_task = asyncio.create_task(_heartbeat(), name=f"{tool_name}-heartbeat")
-    try:
-        return await tool_call
-    finally:
-        stop_event.set()
-        try:
-            await heartbeat_task
-        except asyncio.CancelledError:
-            pass
 
 
 class DaemonProxy:
@@ -698,7 +651,7 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
         if session_id:
             call_kwargs["session_id"] = session_id
 
-        result = await _call_with_wait_heartbeat(
+        result = await call_with_wait_heartbeat(
             proxy.call_tool(
                 server_name,
                 tool_name,

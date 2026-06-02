@@ -1356,7 +1356,7 @@ class TestMCPToolsWrapper:
 
         mock_proxy.call_tool.side_effect = _block_until_heartbeat
 
-        with patch("gobby.mcp_proxy.stdio.WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS", 0.01):
+        with patch("gobby.mcp_proxy.wait_tools.WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS", 0.01):
             task: asyncio.Task[Any] = asyncio.create_task(
                 run_tool(
                     "call_tool",
@@ -1386,6 +1386,48 @@ class TestMCPToolsWrapper:
         )
 
     @pytest.mark.asyncio
+    async def test_call_tool_returns_wrapper_timeout_for_stuck_wait_tool(self) -> None:
+        _, mock_proxy, run_tool = self._register_tools()
+        release_call = asyncio.Event()
+
+        async def _block_until_cancelled(*_args: Any, **_kwargs: Any) -> dict[str, str]:
+            await release_call.wait()
+            return {"res": "too late"}
+
+        mock_proxy.call_tool.side_effect = _block_until_cancelled
+
+        with (
+            patch("gobby.mcp_proxy.stdio.MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS", 0.02),
+            patch("gobby.mcp_proxy.wait_tools.WAIT_TOOL_WRAPPER_GRACE_SECONDS", 0.01),
+        ):
+            result = await asyncio.wait_for(
+                run_tool(
+                    "call_tool",
+                    server_name="gobby-agents",
+                    tool_name="wait_for_agent",
+                    arguments={"run_id": "run-123", "timeout_seconds": 300},
+                ),
+                timeout=0.2,
+            )
+
+        assert result == {
+            "success": True,
+            "completed": False,
+            "timeout_seconds": 0.02,
+            "effective_timeout_seconds": 0.02,
+            "mcp_wrapper_timeout": True,
+            "tool_name": "wait_for_agent",
+            "requested_timeout_seconds": 300.0,
+            "wait_timeout_capped_by_mcp_wrapper": True,
+        }
+        mock_proxy.call_tool.assert_awaited_once_with(
+            "gobby-agents",
+            "wait_for_agent",
+            {"run_id": "run-123", "timeout_seconds": 0.02},
+            preflight_enabled=True,
+        )
+
+    @pytest.mark.asyncio
     async def test_call_tool_emits_progress_heartbeat_for_compact_self(self) -> None:
         _, mock_proxy, run_tool = self._register_tools()
 
@@ -1401,7 +1443,7 @@ class TestMCPToolsWrapper:
 
         mock_proxy.call_tool.side_effect = _block_until_heartbeat
 
-        with patch("gobby.mcp_proxy.stdio.WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS", 0.01):
+        with patch("gobby.mcp_proxy.wait_tools.WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS", 0.01):
             task: asyncio.Task[Any] = asyncio.create_task(
                 run_tool(
                     "call_tool",
