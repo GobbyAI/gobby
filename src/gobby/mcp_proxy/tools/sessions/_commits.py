@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from gobby.storage.projects import LocalProjectManager
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +43,17 @@ def register_commits_tools(
     def _resolve_session_id(ref: str) -> str:
         return resolve_session_ref(session_manager, ref)
 
+    def _session_repo_cwd(session: Any) -> str | None:
+        if db_handle is not None:
+            project = LocalProjectManager(db_handle).get(session.project_id)
+            if project and project.repo_path:
+                return project.repo_path
+
+        if session.transcript_path:
+            return str(Path(session.transcript_path).parent)
+
+        return None
+
     @registry.tool(
         name="get_session_commits",
         description="Get git commits made during a session timeframe. Accepts #N, N, UUID, or prefix for session_id.",
@@ -63,7 +77,6 @@ def register_commits_tools(
         """
         import subprocess  # nosec B404 # subprocess needed for git commands
         from datetime import datetime
-        from pathlib import Path
 
         if session_manager is None:
             return {"success": False, "error": "Session manager not available"}
@@ -78,10 +91,7 @@ def register_commits_tools(
         if not session:
             return {"success": False, "error": f"Session {session_id} not found"}
 
-        # Get working directory from transcript path or project
-        cwd = None
-        if session.transcript_path:
-            cwd = str(Path(session.transcript_path).parent)
+        cwd = _session_repo_cwd(session)
 
         # Format timestamps for git --since/--until
         # Git expects ISO format or relative dates
