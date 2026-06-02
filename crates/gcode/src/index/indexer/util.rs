@@ -139,7 +139,8 @@ fn normalized_components(path: &Path) -> Vec<OsString> {
     path.components()
         .filter_map(|component| match component {
             std::path::Component::Prefix(prefix) => Some(prefix.as_os_str().to_os_string()),
-            std::path::Component::RootDir | std::path::Component::CurDir => None,
+            std::path::Component::RootDir => Some(OsString::from(std::path::MAIN_SEPARATOR_STR)),
+            std::path::Component::CurDir => None,
             std::path::Component::ParentDir => Some(OsString::from("..")),
             std::path::Component::Normal(value) => Some(value.to_os_string()),
         })
@@ -184,5 +185,16 @@ mod tests {
         let requested = Path::new("/tmp/other/file.rs");
 
         assert_eq!(requested_relative_path(root, requested), "../other/file.rs");
+    }
+
+    #[test]
+    fn requested_relative_path_preserves_absolute_root_separator() {
+        let root = Path::new("tmp/project");
+        let requested = Path::new("/tmp/project/src/lib.rs");
+
+        assert_eq!(
+            requested_relative_path(root, requested),
+            "/tmp/project/src/lib.rs"
+        );
     }
 }

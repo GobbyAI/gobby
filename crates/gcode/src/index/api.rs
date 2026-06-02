@@ -90,7 +90,6 @@ pub fn file_facts_exist(
             SELECT 1 FROM code_imports WHERE project_id = $1 AND source_file = $2
             UNION ALL
             SELECT 1 FROM code_calls WHERE project_id = $1 AND file_path = $2
-            LIMIT 1
         )",
         &[&project_id, &file_path],
     )?;

@@ -124,6 +124,7 @@ pub(super) const JS_BUILTIN_MODULES: &[&str] = &[
     "sea",
     "stream",
     "stream/consumers",
+    "stream/iter",
     "stream/promises",
     "stream/web",
     "string_decoder",
@@ -138,11 +139,13 @@ pub(super) const JS_BUILTIN_MODULES: &[&str] = &[
     "tty",
     "url",
     "util",
+    "util/types",
     "v8",
     "vm",
     "wasi",
     "worker_threads",
     "zlib",
+    "zlib/iter",
 ];
 
 pub fn build_import_resolution_context(

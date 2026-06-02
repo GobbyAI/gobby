@@ -60,7 +60,7 @@ pub(crate) fn execute(
         .map_err(standalone_error)?;
         let status = setup_status(&created, &skipped, &failed);
         (status, created, skipped, failed)
-    } else if let Some(database_url) = database_url_from_env() {
+    } else if let Some(database_url) = options.database_url.clone().or_else(database_url_from_env) {
         let (created, skipped, failed) = validate_gwiki_postgres_setup(&database_url)?;
         let status = setup_status(&created, &skipped, &failed);
         (status, created, skipped, failed)

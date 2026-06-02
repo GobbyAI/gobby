@@ -62,7 +62,7 @@ impl CapabilityProbeReport {
     }
 }
 
-pub fn capability_status_route(capability: AiCapability) -> Option<CapabilityStatusRoute> {
+pub fn capability_status_route(capability: AiCapability) -> CapabilityStatusRoute {
     let path = match capability {
         AiCapability::AudioTranscribe | AiCapability::AudioTranslate => "/api/voice/status",
         AiCapability::VisionExtract => "/api/llm/vision/status",
@@ -70,10 +70,10 @@ pub fn capability_status_route(capability: AiCapability) -> Option<CapabilitySta
         AiCapability::Embed => "/api/embeddings/status",
     };
 
-    Some(CapabilityStatusRoute {
+    CapabilityStatusRoute {
         method: "GET",
         path,
-    })
+    }
 }
 
 pub fn probe_daemon_capability(capability: AiCapability) -> CapabilityAvailability {
@@ -113,15 +113,7 @@ fn probe_daemon_capability_with(
     capability: AiCapability,
     transport: &impl DaemonProbeTransport,
 ) -> CapabilityAvailability {
-    let Some(route) = capability_status_route(capability) else {
-        return unavailable(
-            capability,
-            None,
-            CapabilityDegradationReason::MissingStatusRoute,
-            "daemon status route is not defined for this capability",
-            None,
-        );
-    };
+    let route = capability_status_route(capability);
 
     match transport.status(base_url, route.method, route.path) {
         ProbeObservation::Http { status, body } if (200..=299).contains(&status) => {
@@ -307,24 +299,24 @@ mod tests {
     #[test]
     fn capability_status_routes() {
         assert_eq!(
-            capability_status_route(AiCapability::VisionExtract).map(|route| route.path),
-            Some("/api/llm/vision/status")
+            capability_status_route(AiCapability::VisionExtract).path,
+            "/api/llm/vision/status"
         );
         assert_eq!(
-            capability_status_route(AiCapability::AudioTranscribe).map(|route| route.path),
-            Some("/api/voice/status")
+            capability_status_route(AiCapability::AudioTranscribe).path,
+            "/api/voice/status"
         );
         assert_eq!(
-            capability_status_route(AiCapability::AudioTranslate).map(|route| route.path),
-            Some("/api/voice/status")
+            capability_status_route(AiCapability::AudioTranslate).path,
+            "/api/voice/status"
         );
         assert_eq!(
-            capability_status_route(AiCapability::TextGenerate).map(|route| route.path),
-            Some("/api/llm/status")
+            capability_status_route(AiCapability::TextGenerate).path,
+            "/api/llm/status"
         );
         assert_eq!(
-            capability_status_route(AiCapability::Embed).map(|route| route.path),
-            Some("/api/embeddings/status")
+            capability_status_route(AiCapability::Embed).path,
+            "/api/embeddings/status"
         );
 
         let report = probe_daemon_capabilities_with("http://daemon.test", &FakeTransport::new([]));

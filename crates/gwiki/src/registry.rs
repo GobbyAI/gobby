@@ -104,6 +104,7 @@ pub fn register_scope(path: &Path, scope: &ResolvedScope) -> Result<(), WikiErro
 fn lock_registry(lock: &std::fs::File, lock_path: &Path) -> Result<(), WikiError> {
     let timeout = index_lock_timeout();
     let started = Instant::now();
+    let mut retry_delay = registry_lock_initial_delay();
 
     loop {
         match fs4::FileExt::try_lock(lock) {
@@ -120,7 +121,8 @@ fn lock_registry(lock: &std::fs::File, lock_path: &Path) -> Result<(), WikiError
                         ),
                     });
                 }
-                thread::sleep(Duration::from_millis(25).min(timeout - elapsed));
+                thread::sleep(retry_delay.min(timeout - elapsed));
+                retry_delay = next_registry_lock_delay(retry_delay);
             }
             Err(error) => {
                 return Err(WikiError::Io {
@@ -131,6 +133,14 @@ fn lock_registry(lock: &std::fs::File, lock_path: &Path) -> Result<(), WikiError
             }
         }
     }
+}
+
+fn registry_lock_initial_delay() -> Duration {
+    Duration::from_millis(25)
+}
+
+fn next_registry_lock_delay(current: Duration) -> Duration {
+    current.saturating_mul(2).min(Duration::from_millis(250))
 }
 
 fn write_registry_atomically(path: &Path, contents: &[u8]) -> Result<(), WikiError> {
@@ -218,6 +228,23 @@ fn read_registry(path: &Path) -> Result<Registry, WikiError> {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn registry_lock_retry_delay_backs_off_exponentially() {
+        let mut delay = registry_lock_initial_delay();
+
+        assert_eq!(delay, Duration::from_millis(25));
+        delay = next_registry_lock_delay(delay);
+        assert_eq!(delay, Duration::from_millis(50));
+        delay = next_registry_lock_delay(delay);
+        assert_eq!(delay, Duration::from_millis(100));
+        delay = next_registry_lock_delay(delay);
+        assert_eq!(delay, Duration::from_millis(200));
+        delay = next_registry_lock_delay(delay);
+        assert_eq!(delay, Duration::from_millis(250));
+        delay = next_registry_lock_delay(delay);
+        assert_eq!(delay, Duration::from_millis(250));
+    }
 
     #[test]
     fn register_overwrites_existing_entries() {

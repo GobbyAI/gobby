@@ -66,16 +66,93 @@ pub(super) fn should_ignore_call_name(language: &str, name: &str) -> bool {
     match language {
         "dart" => matches!(
             name,
-            "if" | "for" | "while" | "switch" | "catch" | "assert" | "return" | "throw"
+            "assert"
+                | "async"
+                | "await"
+                | "break"
+                | "case"
+                | "catch"
+                | "class"
+                | "continue"
+                | "default"
+                | "do"
+                | "else"
+                | "extension"
+                | "finally"
+                | "for"
+                | "if"
+                | "mixin"
+                | "new"
+                | "return"
+                | "super"
+                | "switch"
+                | "this"
+                | "throw"
+                | "while"
+                | "yield"
         ),
         "elixir" => matches!(
             name,
-            "def" | "defp" | "defmacro" | "defmodule" | "alias" | "import" | "use" | "require"
+            "alias"
+                | "case"
+                | "cond"
+                | "def"
+                | "defguard"
+                | "defguardp"
+                | "defimpl"
+                | "defmacro"
+                | "defmodule"
+                | "defp"
+                | "defprotocol"
+                | "fn"
+                | "for"
+                | "if"
+                | "import"
+                | "receive"
+                | "require"
+                | "try"
+                | "unless"
+                | "use"
+                | "with"
         ),
         "kotlin" => matches!(
             name,
-            "if" | "for" | "while" | "when" | "catch" | "return" | "throw"
+            "as" | "break"
+                | "catch"
+                | "class"
+                | "continue"
+                | "do"
+                | "else"
+                | "finally"
+                | "for"
+                | "fun"
+                | "if"
+                | "in"
+                | "is"
+                | "object"
+                | "return"
+                | "super"
+                | "this"
+                | "throw"
+                | "try"
+                | "val"
+                | "var"
+                | "when"
+                | "while"
         ),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ignores_language_keywords_that_look_like_calls() {
+        assert!(should_ignore_call_name("dart", "await"));
+        assert!(should_ignore_call_name("kotlin", "object"));
+        assert!(should_ignore_call_name("elixir", "with"));
+        assert!(!should_ignore_call_name("dart", "fetchUser"));
     }
 }

@@ -97,11 +97,19 @@ impl ProvenanceGraph {
 
     pub fn load_from_vault(vault_root: &std::path::Path) -> Result<Self, WikiError> {
         let path = vault_root.join("meta").join("provenance.json");
-        let json = fs::read_to_string(&path).map_err(|error| WikiError::Io {
-            action: "read provenance graph",
-            path: Some(path.clone()),
-            source: error,
-        })?;
+        let json = match fs::read_to_string(&path) {
+            Ok(json) => json,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::default());
+            }
+            Err(error) => {
+                return Err(WikiError::Io {
+                    action: "read provenance graph",
+                    path: Some(path.clone()),
+                    source: error,
+                });
+            }
+        };
         let mut graph: Self = serde_json::from_str(&json).map_err(|error| WikiError::Json {
             action: "parse provenance graph",
             path: Some(path.clone()),
@@ -247,5 +255,14 @@ mod tests {
         let loaded = ProvenanceGraph::load_from_vault(temp.path()).expect("load provenance");
 
         assert_eq!(loaded, graph);
+    }
+
+    #[test]
+    fn missing_provenance_file_loads_empty_graph() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        let graph = ProvenanceGraph::load_from_vault(temp.path()).expect("missing graph");
+
+        assert!(graph.links().is_empty());
     }
 }

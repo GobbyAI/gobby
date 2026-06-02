@@ -321,6 +321,14 @@ fn quote_identifier_rejects_names_over_postgres_byte_limit() {
 }
 
 #[test]
+fn quote_identifier_rejects_escaped_names_over_postgres_byte_limit() {
+    let name = format!("{}\"", "a".repeat(62));
+    let error = quote_identifier(&name, "schema").expect_err("escaped identifier is too long");
+
+    assert!(error.to_string().contains("at most 63 bytes"));
+}
+
+#[test]
 #[serial_test::serial]
 fn overwrite_recreates_incompatible_code_index_and_preserves_sentinel_table() {
     let Ok(database_url) = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL") else {

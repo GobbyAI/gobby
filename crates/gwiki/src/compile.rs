@@ -119,7 +119,7 @@ pub fn compile_to_wiki_with_options(
         && let Some(target_page) = handoff.bundle.target_page.as_ref()
     {
         let rendered = render_bundle(&handoff.bundle);
-        write_target_page(target_page, &rendered)?;
+        write_target_page(session.scope.root(), target_page, &rendered)?;
     }
 
     let vault_root = session.scope.root();
@@ -749,7 +749,11 @@ fn render_list_section(rendered: &mut String, title: &str, values: &[String]) {
     rendered.push('\n');
 }
 
-fn write_target_page(target_page: &Path, rendered: &str) -> Result<(), WikiError> {
+fn write_target_page(
+    vault_root: &Path,
+    target_page: &Path,
+    rendered: &str,
+) -> Result<(), WikiError> {
     if target_page.exists() {
         return Err(WikiError::InvalidInput {
             field: "write_intent",
@@ -765,12 +769,37 @@ fn write_target_page(target_page: &Path, rendered: &str) -> Result<(), WikiError
             path: Some(parent.to_path_buf()),
             source: error,
         })?;
+        ensure_compile_target_parent_inside_vault(vault_root, parent)?;
     }
     fs::write(target_page, rendered).map_err(|error| WikiError::Io {
         action: "write compile target page",
         path: Some(target_page.to_path_buf()),
         source: error,
     })
+}
+
+fn ensure_compile_target_parent_inside_vault(
+    vault_root: &Path,
+    parent: &Path,
+) -> Result<(), WikiError> {
+    let root = vault_root.canonicalize().map_err(|error| WikiError::Io {
+        action: "resolve vault root",
+        path: Some(vault_root.to_path_buf()),
+        source: error,
+    })?;
+    let parent = parent.canonicalize().map_err(|error| WikiError::Io {
+        action: "resolve compile target directory",
+        path: Some(parent.to_path_buf()),
+        source: error,
+    })?;
+    if parent.starts_with(root) {
+        Ok(())
+    } else {
+        Err(WikiError::InvalidInput {
+            field: "target_page",
+            message: "compile target page must stay inside the vault".to_string(),
+        })
+    }
 }
 
 fn normalize_target_page(
@@ -1056,6 +1085,30 @@ mod tests {
         .expect_err("escaping target page must be rejected");
         assert!(matches!(
             escaping,
+            WikiError::InvalidInput {
+                field: "target_page",
+                ..
+            }
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn compile_rejects_target_page_through_symlinked_parent() {
+        let vault = tempfile::tempdir().expect("vault tempdir");
+        let outside = tempfile::tempdir().expect("outside tempdir");
+        std::os::unix::fs::symlink(outside.path(), vault.path().join("linked"))
+            .expect("symlink outside");
+
+        let error = write_target_page(
+            vault.path(),
+            &vault.path().join("linked/outside.md"),
+            "# Outside\n",
+        )
+        .expect_err("symlinked target parent rejected");
+
+        assert!(matches!(
+            error,
             WikiError::InvalidInput {
                 field: "target_page",
                 ..

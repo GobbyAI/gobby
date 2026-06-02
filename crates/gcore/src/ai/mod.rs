@@ -1,5 +1,5 @@
 use std::io::Cursor;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
 use reqwest::blocking::{Client, RequestBuilder, Response, multipart};
@@ -48,7 +48,7 @@ fn daemon_route_or_fallback(
 ) -> AiRouting {
     // Auto is fail-safe: use daemon only when its status route advertises the
     // capability, then fall back to a configured direct route or Off.
-    if probe::capability_status_route(capability).is_some() && daemon_available(capability) {
+    if daemon_available(capability) {
         AiRouting::Daemon
     } else {
         direct_route_or_off(context, capability)
@@ -252,11 +252,7 @@ fn retry_delay(error: &AiError, retry_index: usize) -> Duration {
 }
 
 fn jitter() -> Duration {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.subsec_nanos())
-        .unwrap_or(0);
-    Duration::from_millis(u64::from(nanos % 50))
+    Duration::from_millis(u64::from(rand::random::<u8>() % 50))
 }
 
 fn parse_json_response(response: Response) -> Result<serde_json::Value, AiError> {

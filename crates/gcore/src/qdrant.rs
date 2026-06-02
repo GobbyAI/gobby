@@ -21,6 +21,13 @@ pub enum QdrantError {
         collection: Option<String>,
         request: Option<String>,
     },
+    #[error("Qdrant {operation} failed{context}: operation status `{operation_status}`", context = http_status_context(collection, request))]
+    OperationStatus {
+        operation: &'static str,
+        operation_status: String,
+        collection: Option<String>,
+        request: Option<String>,
+    },
 }
 
 fn http_status_context(collection: &Option<String>, request: &Option<String>) -> String {
@@ -60,6 +67,12 @@ pub struct UpsertRequest {
     pub id: String,
     pub vector: Vec<f32>,
     pub payload: Map<String, Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpsertResult {
+    pub operation_id: Option<u64>,
+    pub status: String,
 }
 
 /// Vector search request with opaque domain filter.
@@ -167,7 +180,7 @@ pub fn upsert(
     config: &QdrantConfig,
     collection: &str,
     points: Vec<UpsertRequest>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<UpsertResult> {
     let url = config
         .url
         .as_deref()
@@ -190,7 +203,7 @@ pub fn upsert(
     let body = serde_json::json!({ "points": points });
 
     let collection_path = encoded_collection(collection);
-    let request_path = format!("/collections/{collection_path}/points");
+    let request_path = format!("/collections/{collection_path}/points?wait=true");
     let mut req = client.put(format!("{url}{request_path}"));
     if let Some(key) = &config.api_key {
         req = req.header("api-key", key);
@@ -212,7 +225,35 @@ pub fn upsert(
         .into());
     }
 
-    Ok(())
+    let data: Value = resp.json()?;
+    let result = parse_upsert_result(&data)?;
+    if result.status != "completed" {
+        return Err(QdrantError::OperationStatus {
+            operation: "upsert",
+            operation_status: result.status,
+            collection: Some(collection.to_string()),
+            request: Some(format!("PUT {request_path}")),
+        }
+        .into());
+    }
+
+    Ok(result)
+}
+
+fn parse_upsert_result(data: &Value) -> anyhow::Result<UpsertResult> {
+    let result = data
+        .get("result")
+        .ok_or_else(|| anyhow::anyhow!("Qdrant upsert response did not include result"))?;
+    let status = result
+        .get("status")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("Qdrant upsert response did not include result.status"))?
+        .to_string();
+    let operation_id = result.get("operation_id").and_then(Value::as_u64);
+    Ok(UpsertResult {
+        operation_id,
+        status,
+    })
 }
 
 fn parse_search_hit(hit: &Value) -> Option<SearchHit> {
@@ -397,6 +438,81 @@ mod tests {
     }
 
     #[test]
+    fn upsert_requires_completed_qdrant_operation() {
+        let (base_url, request_handle) = spawn_qdrant_response(
+            200,
+            json!({"result": {"operation_id": 17, "status": "completed"}, "status": "ok"}),
+        );
+        let config = QdrantConfig {
+            url: Some(base_url),
+            api_key: None,
+        };
+
+        let result = upsert(
+            &config,
+            "collection",
+            vec![UpsertRequest {
+                id: "point-1".to_string(),
+                vector: vec![0.1],
+                payload: Map::new(),
+            }],
+        )
+        .expect("completed upsert succeeds");
+        let request = request_handle.join().expect("request thread").unwrap();
+
+        assert_eq!(
+            result,
+            UpsertResult {
+                operation_id: Some(17),
+                status: "completed".to_string()
+            }
+        );
+        assert!(request.contains("PUT /collections/collection/points?wait=true HTTP/1.1"));
+    }
+
+    #[test]
+    fn upsert_rejects_non_completed_qdrant_operation() {
+        let (base_url, request_handle) = spawn_qdrant_response(
+            200,
+            json!({"result": {"operation_id": 18, "status": "acknowledged"}, "status": "ok"}),
+        );
+        let config = QdrantConfig {
+            url: Some(base_url),
+            api_key: None,
+        };
+
+        let err = upsert(
+            &config,
+            "collection",
+            vec![UpsertRequest {
+                id: "point-1".to_string(),
+                vector: vec![0.1],
+                payload: Map::new(),
+            }],
+        )
+        .expect_err("acknowledged upsert is not complete");
+        request_handle.join().expect("request thread").unwrap();
+
+        match err.downcast_ref::<QdrantError>() {
+            Some(QdrantError::OperationStatus {
+                operation,
+                operation_status,
+                collection,
+                request,
+            }) => {
+                assert_eq!(*operation, "upsert");
+                assert_eq!(operation_status, "acknowledged");
+                assert_eq!(collection.as_deref(), Some("collection"));
+                assert_eq!(
+                    request.as_deref(),
+                    Some("PUT /collections/collection/points?wait=true")
+                );
+            }
+            None => panic!("expected QdrantError::OperationStatus, got {err}"),
+        }
+    }
+
+    #[test]
     fn custom_scope_returns_verbatim_name() {
         assert_eq!(
             collection_name("ignored", CollectionScope::Custom("code_symbols_project-1")),
@@ -522,7 +638,7 @@ mod tests {
                 assert_eq!(collection.as_deref(), Some("collection"));
                 assert_eq!(
                     request.as_deref(),
-                    Some("PUT /collections/collection/points")
+                    Some("PUT /collections/collection/points?wait=true")
                 );
             }
             None => panic!("expected QdrantError, got {err}"),

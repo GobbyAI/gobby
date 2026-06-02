@@ -10,7 +10,8 @@ use super::context::{
 use super::helpers::{extract_quoted_string, go_default_package_alias, split_top_level};
 use super::predicates::{
     bundled_elixir_dependency_roots, bundled_ruby_require_roots, csharp_declared_types,
-    elixir_dependency_roots, is_external_js_module, ruby_require_root,
+    elixir_dependency_roots, is_external_java_class, is_external_js_module, java_declared_types,
+    ruby_require_root,
 };
 use super::*;
 
@@ -549,6 +550,42 @@ fn csharp_declared_types_includes_structs() {
     assert!(names.iter().any(|name| name == "IThing"));
     assert!(names.iter().any(|name| name == "Mode"));
     assert!(names.iter().any(|name| name == "Data"));
+}
+
+#[test]
+fn declared_type_scanner_ignores_comments_and_strings() {
+    let names = java_declared_types(
+        r#"
+        // class FakeLine {}
+        String value = "record FakeString";
+        /* interface FakeBlock {} */
+        public class RealType {}
+        "#,
+    );
+
+    assert_eq!(names, vec!["RealType".to_string()]);
+}
+
+#[test]
+fn java_inner_class_simple_name_can_be_local() {
+    let mut import_context = ImportResolutionContext::default();
+    import_context
+        .java_local_classes
+        .insert("Inner".to_string());
+
+    assert!(!is_external_java_class(
+        "com.example.Outer$Inner",
+        &import_context
+    ));
+}
+
+#[test]
+fn node_v26_builtin_modules_are_external() {
+    let import_context = ImportResolutionContext::default();
+
+    assert!(is_external_js_module("stream/iter", &import_context));
+    assert!(is_external_js_module("util/types", &import_context));
+    assert!(is_external_js_module("zlib/iter", &import_context));
 }
 
 #[test]

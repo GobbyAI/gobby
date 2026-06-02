@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use linked_hash_map::LinkedHashMap;
 use serde::Serialize;
 
@@ -157,7 +158,26 @@ fn page_is_stale(page: &crate::lint::WikiPage) -> bool {
         .unknown
         .get("stale_after")
         .and_then(serde_json::Value::as_str)
-        .is_some_and(|value| !value.trim().is_empty())
+        .is_some_and(|value| stale_after_is_due(value, Utc::now()))
+}
+
+fn stale_after_is_due(value: &str, now: DateTime<Utc>) -> bool {
+    let value = value.trim();
+    if value.is_empty() {
+        return false;
+    }
+    if let Ok(parsed) = DateTime::parse_from_rfc3339(value) {
+        return parsed.with_timezone(&Utc) <= now;
+    }
+    if let Ok(parsed) = NaiveDate::parse_from_str(value, "%Y-%m-%d") {
+        return parsed <= now.date_naive();
+    }
+    for format in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"] {
+        if let Ok(parsed) = NaiveDateTime::parse_from_str(value, format) {
+            return parsed.and_utc() <= now;
+        }
+    }
+    false
 }
 
 fn source_citation_is_stale(source: &SourceRecord) -> bool {
@@ -496,6 +516,18 @@ mod tests {
     #[test]
     fn cached_regex_returns_false_for_malformed_patterns() {
         assert!(!cached_regex_is_match("[".to_string(), "anything"));
+    }
+
+    #[test]
+    fn stale_after_compares_dates_and_times_to_now() {
+        let now = DateTime::parse_from_rfc3339("2026-06-02T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        assert!(stale_after_is_due("2026-06-02", now));
+        assert!(stale_after_is_due("2026-06-02T11:59:59Z", now));
+        assert!(!stale_after_is_due("2026-06-03", now));
+        assert!(!stale_after_is_due("not-a-date", now));
     }
 
     #[test]

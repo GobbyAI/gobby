@@ -253,7 +253,7 @@ impl TryFrom<WireTranscriptionSegment> for TranscriptionSegment {
 }
 
 fn seconds_to_ms(seconds: f64) -> Result<u64, AiError> {
-    if !seconds.is_finite() || seconds.is_sign_negative() {
+    if !seconds.is_finite() || seconds < 0.0 {
         return Err(AiError::parse_failure(
             "transcription segment times must be finite, non-negative seconds",
         ));
@@ -331,6 +331,21 @@ mod tests {
         let error = TranscriptionResult::from_wire_json(json).expect_err("overflow rejected");
 
         assert!(error.to_string().contains("too large"));
+    }
+
+    #[test]
+    fn transcription_wire_seconds_accept_negative_zero() {
+        let json = serde_json::json!({
+            "text": "zero",
+            "segments": [
+                { "start": -0.0, "end": 0.0, "text": "zero" }
+            ]
+        });
+
+        let result = TranscriptionResult::from_wire_json(json).unwrap();
+
+        assert_eq!(result.segments[0].start_ms, 0);
+        assert_eq!(result.segments[0].end_ms, 0);
     }
 
     #[test]

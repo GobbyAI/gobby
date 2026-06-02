@@ -25,7 +25,7 @@ impl Drop for ProjectCleanup {
                     Ok(conn) => conn,
                     Err(err) => {
                         eprintln!(
-                            "ProjectCleanup async cleanup: Client::connect failed for project {project_id}: {err}",
+                            "ProjectCleanup cleanup: Client::connect failed for project {project_id}: {err}",
                         );
                         return;
                     }
@@ -33,7 +33,7 @@ impl Drop for ProjectCleanup {
 
                 if let Err(err) = cleanup_project(&mut conn, &project_id) {
                     eprintln!(
-                        "ProjectCleanup async cleanup: cleanup_project failed for project {project_id}: {err}",
+                        "ProjectCleanup cleanup: cleanup_project failed for project {project_id}: {err}",
                     );
                 }
             });

@@ -149,7 +149,7 @@ fn normalize_sslmode_for_parser(database_url: &str) -> String {
     if let Some((base, query)) = database_url.split_once('?') {
         let query = query
             .split('&')
-            .map(normalize_sslmode_query_pair)
+            .map(normalize_sslmode_pair)
             .collect::<Vec<_>>()
             .join("&");
         return format!("{base}?{query}");
@@ -157,32 +157,17 @@ fn normalize_sslmode_for_parser(database_url: &str) -> String {
 
     database_url
         .split_whitespace()
-        .map(normalize_sslmode_keyword_pair)
+        .map(normalize_sslmode_pair)
         .collect::<Vec<_>>()
         .join(" ")
 }
 
-fn normalize_sslmode_query_pair(pair: &str) -> String {
+fn normalize_sslmode_pair(pair: &str) -> String {
     let Some((key, value)) = pair.split_once('=') else {
         return pair.to_string();
     };
     if key != "sslmode" {
         return pair.to_string();
-    }
-    let token = normalize_sslmode_token(value);
-    if matches!(token.as_str(), "verify-ca" | "verify-full") {
-        "sslmode=require".to_string()
-    } else {
-        format!("sslmode={token}")
-    }
-}
-
-fn normalize_sslmode_keyword_pair(part: &str) -> String {
-    let Some((key, value)) = part.split_once('=') else {
-        return part.to_string();
-    };
-    if key != "sslmode" {
-        return part.to_string();
     }
     let token = normalize_sslmode_token(value);
     if matches!(token.as_str(), "verify-ca" | "verify-full") {

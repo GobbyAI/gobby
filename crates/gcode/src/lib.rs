@@ -20,7 +20,7 @@ pub mod setup;
 pub mod skill;
 pub mod utils;
 pub mod vector;
-pub mod visibility;
+pub(crate) mod visibility;
 
 pub use index::api::{
     IndexDegradation, IndexDurations, IndexOutcome, IndexRequest, UnsupportedFileType, index_files,

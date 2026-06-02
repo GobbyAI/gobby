@@ -7,6 +7,8 @@ use sha2::{Digest, Sha256};
 use crate::config::Context;
 use crate::db;
 
+const MIN_LOCK_POLL: Duration = Duration::from_millis(1);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum IndexLockPolicy {
     Wait,
@@ -97,7 +99,11 @@ fn try_advisory_lock_until(
         }
 
         let remaining = total_wait - elapsed;
-        let sleep_for = poll.min(remaining);
+        let sleep_for = if poll.is_zero() {
+            Duration::ZERO
+        } else {
+            poll.max(MIN_LOCK_POLL).min(remaining)
+        };
         if sleep_for.is_zero() {
             std::thread::yield_now();
         } else {
@@ -139,19 +145,25 @@ impl Drop for ProjectIndexLock {
         match result {
             Ok(row) => match row.try_get::<_, bool>(0) {
                 Ok(true) => {}
-                Ok(false) if !self.quiet => {
-                    eprintln!("warning: gcode index lock was not held during unlock");
+                Ok(false) => {
+                    log::debug!("gcode index lock was not held during unlock");
+                    if !self.quiet {
+                        eprintln!("warning: gcode index lock was not held during unlock");
+                    }
                 }
-                Ok(false) => {}
-                Err(error) if !self.quiet => {
-                    eprintln!("warning: failed to read gcode index unlock result: {error}");
+                Err(error) => {
+                    log::debug!("failed to read gcode index unlock result: {error}");
+                    if !self.quiet {
+                        eprintln!("warning: failed to read gcode index unlock result: {error}");
+                    }
                 }
-                Err(_) => {}
             },
-            Err(error) if !self.quiet => {
-                eprintln!("warning: failed to release gcode index lock: {error}");
+            Err(error) => {
+                log::debug!("failed to release gcode index lock: {error}");
+                if !self.quiet {
+                    eprintln!("warning: failed to release gcode index lock: {error}");
+                }
             }
-            Err(_) => {}
         }
     }
 }

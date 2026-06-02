@@ -18,6 +18,8 @@ use crate::vision::{VisionEndpoint, VisionExtraction, VisionRequest};
 use pdfium_render::prelude::{PdfRenderConfig, Pdfium};
 
 const DEFAULT_PDF_RENDER_DPI: u16 = 150;
+const MAX_RENDERED_PDF_PAGES: usize = 32;
+const MAX_RENDERED_PDF_TOTAL_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PdfPage {
@@ -77,6 +79,12 @@ struct PdfMarkdownSummary {
     degradations: Vec<DocumentDegradation>,
 }
 
+#[cfg(feature = "documents")]
+struct PdfRenderOutcome {
+    pages: Vec<PdfRenderedPage>,
+    degradation: Option<DocumentDegradation>,
+}
+
 pub fn ingest_pages(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
@@ -118,7 +126,12 @@ pub fn ingest_pdf_file(
     };
     let rendered_pages = match endpoint {
         VisionEndpoint::Available(_) => match render_pdf_pages(&snapshot, options.render_dpi) {
-            Ok(pages) => pages,
+            Ok(outcome) => {
+                if let Some(degradation) = outcome.degradation {
+                    degradations.push(degradation);
+                }
+                outcome.pages
+            }
             Err(error) => {
                 degradations.push(DocumentDegradation::new(
                     DocumentFailureMode::PdfRenderError,
@@ -269,6 +282,18 @@ fn render_pdf_markdown(
     markdown.push_str("# ");
     markdown.push_str(title);
     markdown.push_str("\n\n");
+
+    if !summary.degradations.is_empty() {
+        markdown.push_str("## Document Degradation\n\n");
+        for degradation in &summary.degradations {
+            markdown.push_str("- ");
+            markdown.push_str(degradation.reason());
+            markdown.push_str(": ");
+            markdown.push_str(&single_line(&degradation.fallback));
+            markdown.push('\n');
+        }
+        markdown.push('\n');
+    }
 
     if pages.is_empty() {
         markdown.push_str("No extractable page text.\n");
@@ -497,18 +522,22 @@ fn extract_text_layer_pages(bytes: &[u8]) -> Result<Vec<PdfPage>, WikiError> {
 }
 
 #[cfg(feature = "documents")]
-fn render_pdf_pages(
-    snapshot: &PdfFileSnapshot,
-    dpi: u16,
-) -> Result<Vec<PdfRenderedPage>, WikiError> {
+fn render_pdf_pages(snapshot: &PdfFileSnapshot, dpi: u16) -> Result<PdfRenderOutcome, WikiError> {
     let pdfium = bundled_pdfium()?;
     let document = pdfium
         .load_pdf_from_byte_slice(&snapshot.bytes, None)
         .map_err(pdfium_error)?;
     let render_dpi = dpi.max(1);
-    let mut rendered_pages = Vec::with_capacity(document.pages().len() as usize);
+    let total_pages = document.pages().len() as usize;
+    let mut rendered_pages = Vec::with_capacity(total_pages.min(MAX_RENDERED_PDF_PAGES));
+    let mut total_rendered_bytes = 0usize;
+    let mut budget_exceeded = false;
 
     for (index, page) in document.pages().iter().enumerate() {
+        if index >= MAX_RENDERED_PDF_PAGES {
+            budget_exceeded = true;
+            break;
+        }
         let target_width = points_to_pixels(page.width().value, render_dpi);
         let bitmap = page
             .render_with_config(
@@ -521,6 +550,11 @@ fn render_pdf_pages(
         let width = bitmap.width() as u32;
         let height = bitmap.height() as u32;
         let encoded = encode_png_rgba(width, height, &bitmap.as_rgba_bytes())?;
+        if total_rendered_bytes.saturating_add(encoded.len()) > MAX_RENDERED_PDF_TOTAL_BYTES {
+            budget_exceeded = true;
+            break;
+        }
+        total_rendered_bytes += encoded.len();
         rendered_pages.push(PdfRenderedPage {
             number: index + 1,
             bytes: encoded,
@@ -530,7 +564,25 @@ fn render_pdf_pages(
         });
     }
 
-    Ok(rendered_pages)
+    Ok(PdfRenderOutcome {
+        pages: rendered_pages,
+        degradation: budget_exceeded
+            .then(|| pdf_render_budget_degradation(total_pages, total_rendered_bytes)),
+    })
+}
+
+#[cfg(feature = "documents")]
+fn pdf_render_budget_degradation(
+    total_pages: usize,
+    total_rendered_bytes: usize,
+) -> DocumentDegradation {
+    DocumentDegradation::new(
+        DocumentFailureMode::PdfRenderBudgetExceeded,
+        DocumentUnitCount::pages(total_pages),
+        format!(
+            "PDF page rendering stopped after the configured budget of {MAX_RENDERED_PDF_PAGES} page(s) or {MAX_RENDERED_PDF_TOTAL_BYTES} byte(s); {total_rendered_bytes} rendered byte(s) were retained and the original asset is preserved.",
+        ),
+    )
 }
 
 #[cfg(feature = "documents")]
@@ -836,6 +888,8 @@ mod tests {
         let raw = std::fs::read_to_string(temp.path().join(&result.raw_path))
             .expect("raw markdown written");
         assert!(raw.contains("media_degradation: pdf_vision_error"));
+        assert!(raw.contains("## Document Degradation"));
+        assert!(raw.contains("pdf_vision_error"));
         assert!(raw.contains("file_size_bytes: 28"));
         assert!(raw.contains("page_count: 1"));
         assert!(raw.contains("No extractable page text."));
@@ -896,5 +950,16 @@ mod tests {
         assert!(raw.contains("media_degradation: pdf_no_extractable_content"));
         assert!(raw.contains("file_size_bytes: 10"));
         assert!(raw.contains("page_count: 0"));
+    }
+
+    #[cfg(feature = "documents")]
+    #[test]
+    fn pdf_render_budget_degradation_records_limits() {
+        let degradation = pdf_render_budget_degradation(40, 1024);
+
+        assert_eq!(degradation.reason(), "pdf_render_budget_exceeded");
+        assert_eq!(degradation.unit_count.count(), 40);
+        assert!(degradation.fallback.contains("32 page(s)"));
+        assert!(degradation.fallback.contains("1024 rendered byte(s)"));
     }
 }

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -158,6 +158,7 @@ mod prompts {
 pub struct CodewikiInput {
     pub files: Vec<String>,
     pub graph_edges: Vec<CodewikiGraphEdge>,
+    pub graph_availability: CodewikiGraphAvailability,
     pub symbols: Vec<Symbol>,
 }
 
@@ -221,7 +222,7 @@ impl CodewikiGraph {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CodewikiGraphAvailability {
+pub enum CodewikiGraphAvailability {
     Available,
     Unavailable,
 }
@@ -322,23 +323,17 @@ pub fn run(
     }
 
     let graph = fetch_codewiki_graph_edges(ctx, &files, &symbols)?;
-    let graph_availability = graph.availability;
     let input = CodewikiInput {
         files,
         graph_edges: graph.edges,
+        graph_availability: graph.availability,
         symbols,
     };
     let mut generator = resolve_text_generator(ctx);
     let ai_enabled = generator.is_some();
     let docs = match generator.as_deref_mut() {
-        Some(generate) => generate_hierarchical_docs_with_graph_availability(
-            &input,
-            Some(generate),
-            graph_availability,
-        ),
-        None => {
-            generate_hierarchical_docs_with_graph_availability(&input, None, graph_availability)
-        }
+        Some(generate) => generate_hierarchical_docs(&input, Some(generate)),
+        None => generate_hierarchical_docs(&input, None),
     };
     let module_count = docs
         .iter()
@@ -376,18 +371,12 @@ pub fn generate_hierarchical_docs(
     input: &CodewikiInput,
     generate: Option<&mut TextGenerator<'_>>,
 ) -> Vec<(String, String)> {
-    let graph_availability = if input.graph_edges.is_empty() {
-        CodewikiGraphAvailability::Unavailable
-    } else {
-        CodewikiGraphAvailability::Available
-    };
-    generate_hierarchical_docs_with_graph_availability(input, generate, graph_availability)
+    generate_hierarchical_docs_with_graph_availability(input, generate)
 }
 
 fn generate_hierarchical_docs_with_graph_availability(
     input: &CodewikiInput,
     mut generate: Option<&mut TextGenerator<'_>>,
-    graph_availability: CodewikiGraphAvailability,
 ) -> Vec<(String, String)> {
     let mut files = input
         .files
@@ -434,7 +423,7 @@ fn generate_hierarchical_docs_with_graph_availability(
     let module_docs = build_module_docs(
         &file_docs,
         &input.graph_edges,
-        graph_availability,
+        input.graph_availability,
         &mut generate,
     );
     let repo_doc = build_repo_doc(&file_docs, &module_docs, &mut generate);
@@ -781,15 +770,37 @@ fn union_files(parents: &mut HashMap<String, String>, left: &str, right: &str) {
 }
 
 fn find_file_root(parents: &mut HashMap<String, String>, file: &str) -> String {
-    let parent = parents
-        .get(file)
-        .cloned()
-        .unwrap_or_else(|| file.to_string());
-    if parent == file {
-        return parent;
+    let mut current = file.to_string();
+    let mut path = Vec::new();
+    let mut seen = HashSet::new();
+
+    let root = loop {
+        if !seen.insert(current.clone()) {
+            let root = path
+                .iter()
+                .chain(std::iter::once(&current))
+                .min()
+                .cloned()
+                .unwrap_or_else(|| current.clone());
+            parents.insert(current, root.clone());
+            break root;
+        }
+
+        let parent = parents
+            .get(&current)
+            .cloned()
+            .unwrap_or_else(|| current.clone());
+        if parent == current {
+            break parent;
+        }
+
+        path.push(current);
+        current = parent;
+    };
+
+    for node in path {
+        parents.insert(node, root.clone());
     }
-    let root = find_file_root(parents, &parent);
-    parents.insert(file.to_string(), root.clone());
     root
 }
 
@@ -1663,7 +1674,7 @@ fn yaml_quote(value: &str) -> String {
 
 fn inline_code(value: &str) -> String {
     let value = value.replace('\n', " ");
-    let delimiter = "`".repeat(max_backtick_run(&value).saturating_add(1).max(1));
+    let delimiter = "`".repeat(max_backtick_run(&value).saturating_add(1));
     if value.starts_with('`') || value.ends_with('`') {
         format!("{delimiter} {value} {delimiter}")
     } else {
@@ -1815,6 +1826,7 @@ mod tests {
         let input = CodewikiInput {
             files: vec!["src/lib.rs".to_string(), "src/nested/api.rs".to_string()],
             graph_edges: Vec::new(),
+            graph_availability: CodewikiGraphAvailability::Available,
             symbols: vec![
                 test_symbol("src/lib.rs", "Client", "class", 1, "pub struct Client {"),
                 test_symbol("src/lib.rs", "connect", "function", 5, "pub fn connect()"),
@@ -1867,6 +1879,7 @@ mod tests {
                 "src/api/handler.rs::handle",
                 "src/domain/service.rs::Service",
             )],
+            graph_availability: CodewikiGraphAvailability::Available,
             symbols: vec![
                 test_symbol(
                     "src/api/handler.rs",
@@ -1922,6 +1935,20 @@ mod tests {
     }
 
     #[test]
+    fn file_root_detection_breaks_parent_cycles() {
+        let mut parents = HashMap::from([
+            ("b.rs".to_string(), "a.rs".to_string()),
+            ("a.rs".to_string(), "b.rs".to_string()),
+        ]);
+
+        let root = find_file_root(&mut parents, "a.rs");
+
+        assert_eq!(root, "a.rs");
+        assert_eq!(parents.get("a.rs").map(String::as_str), Some("a.rs"));
+        assert_eq!(parents.get("b.rs").map(String::as_str), Some("a.rs"));
+    }
+
+    #[test]
     fn clusters_without_falkordb() {
         let input = CodewikiInput {
             files: vec![
@@ -1930,6 +1957,7 @@ mod tests {
                 "tests/domain/service_test.rs".to_string(),
             ],
             graph_edges: Vec::new(),
+            graph_availability: CodewikiGraphAvailability::Unavailable,
             symbols: vec![
                 test_symbol(
                     "src/api/handler.rs",
@@ -2018,6 +2046,7 @@ mod tests {
                     "src/storage/repo.rs::Repo",
                 ),
             ],
+            graph_availability: CodewikiGraphAvailability::Available,
             symbols: vec![
                 test_symbol(
                     "src/api/handler.rs",
@@ -2073,6 +2102,7 @@ mod tests {
         let input = CodewikiInput {
             files: vec!["src/api/handler.rs".to_string()],
             graph_edges: Vec::new(),
+            graph_availability: CodewikiGraphAvailability::Unavailable,
             symbols: vec![test_symbol(
                 "src/api/handler.rs",
                 "handle",
@@ -2097,10 +2127,35 @@ mod tests {
     }
 
     #[test]
+    fn empty_available_graph_does_not_emit_degradation_marker() {
+        let input = CodewikiInput {
+            files: vec!["src/api/handler.rs".to_string()],
+            graph_edges: Vec::new(),
+            graph_availability: CodewikiGraphAvailability::Available,
+            symbols: vec![test_symbol(
+                "src/api/handler.rs",
+                "handle",
+                "function",
+                1,
+                "pub fn handle()",
+            )],
+        };
+
+        let docs = generate_hierarchical_docs(&input, None);
+        let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
+        let module = docs_by_path
+            .get("modules/src/api.md")
+            .expect("module doc still renders");
+
+        assert!(!module.contains("degraded: graph-unavailable"));
+    }
+
+    #[test]
     fn citations_validated_against_spans() {
         let input = CodewikiInput {
             files: vec!["src/lib.rs".to_string()],
             graph_edges: Vec::new(),
+            graph_availability: CodewikiGraphAvailability::Available,
             symbols: vec![
                 test_symbol_range(
                     "src/lib.rs",
@@ -2164,6 +2219,7 @@ mod tests {
         let input = CodewikiInput {
             files: vec!["src/lib.rs".to_string(), "src/nested/api.rs".to_string()],
             graph_edges: Vec::new(),
+            graph_availability: CodewikiGraphAvailability::Available,
             symbols: vec![
                 test_symbol("src/lib.rs", "Client", "class", 1, "pub struct Client;"),
                 test_symbol(

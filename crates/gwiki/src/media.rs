@@ -6,6 +6,9 @@ use tempfile::{Builder, NamedTempFile};
 
 use crate::WikiError;
 
+const MAX_SAMPLED_FRAMES: usize = 120;
+const MIN_FRAME_SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
+
 #[derive(Debug)]
 pub struct Chunk {
     pub start_ms: u64,
@@ -94,11 +97,9 @@ fn sample_frame_images_with_tools(
     interval: Duration,
     tools: &MediaTools,
 ) -> Result<Vec<(u64, NamedTempFile)>, WikiError> {
-    let interval_ms = duration_to_ms(interval, "interval")?;
     let duration_ms = media_duration_ms(video, tools)?;
     let mut frames = Vec::new();
-    let mut start_ms = 0;
-    while start_ms < duration_ms {
+    for start_ms in frame_sample_offsets(duration_ms, interval)? {
         let frame = media_temp_file(".jpg", "create temporary frame image")?;
         let mut command = Command::new(&tools.ffmpeg);
         command
@@ -119,9 +120,22 @@ fn sample_frame_images_with_tools(
             .arg(frame.path());
         run_media_command(command, "ffmpeg", "run ffmpeg", video)?;
         frames.push((start_ms, frame));
-        start_ms += interval_ms;
     }
     Ok(frames)
+}
+
+fn frame_sample_offsets(duration_ms: u64, interval: Duration) -> Result<Vec<u64>, WikiError> {
+    let interval_ms = duration_to_ms(interval.max(MIN_FRAME_SAMPLE_INTERVAL), "interval")?;
+    let mut offsets = Vec::new();
+    let mut start_ms = 0;
+    while start_ms < duration_ms && offsets.len() < MAX_SAMPLED_FRAMES {
+        offsets.push(start_ms);
+        start_ms = start_ms.saturating_add(interval_ms);
+        if start_ms == u64::MAX {
+            break;
+        }
+    }
+    Ok(offsets)
 }
 
 fn split_audio_file_with_tools(
@@ -349,6 +363,15 @@ mod tests {
         assert_eq!(parse_duration_ms("1.234000\n"), Some(1234));
         assert_eq!(duration_ms_to_public_seconds(1234), Some(2));
         assert_eq!(duration_ms_to_public_seconds(1000), Some(1));
+    }
+
+    #[test]
+    fn frame_sampling_offsets_are_capped_and_clamped() {
+        let offsets = frame_sample_offsets(10_000_000, Duration::from_millis(1)).expect("offsets");
+
+        assert_eq!(offsets.len(), MAX_SAMPLED_FRAMES);
+        assert_eq!(offsets[0], 0);
+        assert_eq!(offsets[1], 1_000);
     }
 
     #[cfg(unix)]

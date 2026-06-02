@@ -6,8 +6,8 @@ use scraper::{ElementRef, Html, Node, Selector};
 
 use crate::WikiError;
 use crate::ingest::{
-    IngestResult, index_after_ingest, markdown_metadata, markdown_title, single_line,
-    text_from_utf8_lossy, write_raw_markdown,
+    IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
+    single_line, text_from_utf8_lossy, write_asset, write_raw_markdown,
 };
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
@@ -73,6 +73,10 @@ pub(crate) fn ingest_snapshot_without_index(
     vault_root: &Path,
     mut snapshot: UrlSnapshot,
 ) -> Result<IngestResult, WikiError> {
+    if !snapshot_is_html(&snapshot) {
+        return ingest_non_html_snapshot_without_index(vault_root, snapshot);
+    }
+
     let html = text_from_utf8_lossy(&snapshot.body);
     let source_hash = gobby_core::indexing::content_hash(&snapshot.body);
     let document = Html::parse_document(&html);
@@ -102,6 +106,44 @@ pub(crate) fn ingest_snapshot_without_index(
         record,
         raw_path,
         asset_path: None,
+    })
+}
+
+fn ingest_non_html_snapshot_without_index(
+    vault_root: &Path,
+    mut snapshot: UrlSnapshot,
+) -> Result<IngestResult, WikiError> {
+    let source_hash = gobby_core::indexing::content_hash(&snapshot.body);
+    let kind = source_kind_for_url_response(snapshot.content_type.as_deref());
+    let title = markdown_title(&file_name_for_url_response(&snapshot, &kind));
+    let body = std::mem::take(&mut snapshot.body);
+    let draft = SourceDraft {
+        location: snapshot.final_url.clone(),
+        kind: kind.clone(),
+        fetched_at: snapshot.fetched_at.clone(),
+        content: body.clone(),
+        title: Some(title.clone()),
+        citation: Some(snapshot.final_url.clone()),
+        license: None,
+        ingestion_method: IngestionMethod::Manual,
+        compile_status: CompileStatus::Pending,
+    };
+    let record = SourceManifest::register(vault_root, draft)?;
+    let asset_path = write_asset(vault_root, &record, &title, &body)?;
+    let markdown = render_non_html_url_markdown(
+        &snapshot,
+        &record.canonical_location,
+        &title,
+        &kind,
+        &source_hash,
+        &asset_path,
+    );
+    let raw_path = write_raw_markdown(vault_root, &record, &markdown)?;
+
+    Ok(IngestResult {
+        record,
+        raw_path,
+        asset_path: Some(asset_path),
     })
 }
 
@@ -312,6 +354,92 @@ fn render_url_markdown(
     markdown
 }
 
+fn render_non_html_url_markdown(
+    snapshot: &UrlSnapshot,
+    canonical_url: &str,
+    title: &str,
+    kind: &SourceKind,
+    source_hash: &str,
+    asset_path: &Path,
+) -> String {
+    let mut fields = vec![
+        ("source_kind", kind.to_string()),
+        ("source_url", snapshot.final_url.clone()),
+        ("requested_url", snapshot.requested_url.clone()),
+        ("canonical_url", canonical_url.to_string()),
+        ("fetched_at", snapshot.fetched_at.clone()),
+        ("source_hash", source_hash.to_string()),
+        ("source_asset", path_to_string(asset_path)),
+        ("media_degradation", "url_non_html_asset".to_string()),
+    ];
+    if let Some(content_type) = &snapshot.content_type {
+        fields.push(("content_type", content_type.clone()));
+    }
+    let mut markdown = markdown_metadata(&fields);
+    markdown.push_str("# ");
+    markdown.push_str(&markdown_title(title));
+    markdown.push_str("\n\n");
+    markdown.push_str("Non-HTML URL response preserved as a source asset.\n");
+    markdown
+}
+
+fn snapshot_is_html(snapshot: &UrlSnapshot) -> bool {
+    match content_type_media_type(snapshot.content_type.as_deref()).as_deref() {
+        Some("text/html" | "application/xhtml+xml") => true,
+        Some(_) => false,
+        None => body_looks_like_html(&snapshot.body),
+    }
+}
+
+fn source_kind_for_url_response(content_type: Option<&str>) -> SourceKind {
+    match content_type_media_type(content_type).as_deref() {
+        Some("application/pdf") => SourceKind::Pdf,
+        Some(media_type) if media_type.starts_with("image/") => SourceKind::Image,
+        Some(media_type) if media_type.starts_with("audio/") => SourceKind::Audio,
+        Some(media_type) if media_type.starts_with("video/") => SourceKind::Video,
+        Some("application/json" | "application/xml" | "text/plain" | "text/csv" | "text/xml") => {
+            SourceKind::Text
+        }
+        Some(media_type) if media_type.starts_with("text/") => SourceKind::Text,
+        _ => SourceKind::File,
+    }
+}
+
+fn content_type_media_type(content_type: Option<&str>) -> Option<String> {
+    content_type?
+        .split(';')
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_ascii_lowercase)
+}
+
+fn body_looks_like_html(body: &[u8]) -> bool {
+    let text = text_from_utf8_lossy(&body[..body.len().min(512)]).to_ascii_lowercase();
+    let trimmed = text.trim_start();
+    trimmed.starts_with("<!doctype html")
+        || trimmed.starts_with("<html")
+        || trimmed.contains("<body")
+}
+
+fn file_name_for_url_response(snapshot: &UrlSnapshot, kind: &SourceKind) -> String {
+    let from_url = url::Url::parse(&snapshot.final_url)
+        .ok()
+        .and_then(|url| {
+            url.path_segments()
+                .and_then(|mut segments| segments.next_back().map(str::to_string))
+        })
+        .filter(|value| !value.trim().is_empty());
+    from_url.unwrap_or_else(|| match kind {
+        SourceKind::Pdf => "download.pdf".to_string(),
+        SourceKind::Image => "image".to_string(),
+        SourceKind::Audio => "audio".to_string(),
+        SourceKind::Video => "video".to_string(),
+        SourceKind::Text => "download.txt".to_string(),
+        _ => "download".to_string(),
+    })
+}
+
 fn extract_title(document: &Html) -> Option<String> {
     let selector = Selector::parse("title").ok()?;
     let title = document
@@ -489,6 +617,39 @@ mod tests {
         assert_eq!(entry.content_hash, expected_hash);
         assert_eq!(entry.fetched_at, "2026-05-29T16:00:00Z");
         assert!(store.documents.contains_key(&PathBuf::from("raw/INDEX.md")));
+    }
+
+    #[test]
+    fn url_ingest_preserves_non_html_as_typed_asset() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let body = b"%PDF-1.7\nbinary-ish\n%%EOF\n".to_vec();
+        let snapshot = UrlSnapshot {
+            requested_url: "https://example.com/report".to_string(),
+            final_url: "https://example.com/files/report.pdf".to_string(),
+            fetched_at: "2026-05-29T16:00:00Z".to_string(),
+            body: body.clone(),
+            content_type: Some("Application/PDF; charset=binary".to_string()),
+        };
+        let mut store = MemoryWikiStore::default();
+
+        let result =
+            ingest_snapshot(temp.path(), &mut store, snapshot).expect("ingest pdf url snapshot");
+
+        let asset_path = result.asset_path.expect("non-html asset path");
+        assert_eq!(
+            std::fs::read(temp.path().join(&asset_path)).expect("asset bytes"),
+            body
+        );
+        let raw = std::fs::read_to_string(temp.path().join(&result.raw_path))
+            .expect("raw markdown written");
+        assert!(raw.contains("source_kind: pdf"));
+        assert!(raw.contains("source_asset: "));
+        assert!(raw.contains("media_degradation: url_non_html_asset"));
+        assert!(raw.contains("Non-HTML URL response preserved as a source asset."));
+        assert!(!raw.contains("binary-ish"));
+
+        let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
+        assert_eq!(manifest.entries[0].kind, SourceKind::Pdf);
     }
 
     #[test]

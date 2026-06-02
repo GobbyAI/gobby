@@ -14,6 +14,9 @@ use crate::{ScopeSelection, WikiError};
 
 const MAX_RESEARCH_NOTE_SUFFIX_ATTEMPTS: usize = 1000;
 const RESEARCH_NOTE_MARKER_STALE_AFTER: Duration = Duration::from_secs(15 * 60);
+const RESEARCH_NOTE_MATERIALIZE_TIMEOUT: Duration = Duration::from_secs(10);
+const RESEARCH_NOTE_MATERIALIZE_INITIAL_DELAY: Duration = Duration::from_millis(25);
+const RESEARCH_NOTE_MATERIALIZE_MAX_DELAY: Duration = Duration::from_millis(250);
 const RESEARCH_NOTE_NAMESPACE: uuid::Uuid = uuid::Uuid::from_bytes([
     0x9c, 0x51, 0x3a, 0x5b, 0x35, 0x92, 0x4d, 0x6d, 0x8e, 0x5f, 0x42, 0x1f, 0x20, 0xb7, 0x8a, 0xe4,
 ]);
@@ -44,6 +47,8 @@ pub struct ResearchOutcome {
 
 pub trait ResearchDispatcher {
     fn dispatch(&self, session: &ResearchSession) -> Result<DaemonDispatch, WikiError>;
+
+    fn teardown(&self, _dispatch: &DaemonDispatch) {}
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,46 +78,55 @@ pub fn run_with_dispatcher(
         session
     };
 
-    let monitor = EventMonitor::for_vault(session.scope.root());
-    monitor.append_event(&SessionEvent {
-        session_id: session.session_id.clone(),
-        dispatch_id: session
-            .dispatch
-            .as_ref()
-            .map(|dispatch| dispatch.dispatch_id.clone()),
-        kind: if options.resume {
-            "research_resumed".to_string()
-        } else {
-            "research_dispatched".to_string()
-        },
-        message: "research session active".to_string(),
-        timestamp_ms: unix_timestamp_ms()?,
-    })?;
+    let should_teardown_on_error = !options.resume;
+    let result = (|| -> Result<(), WikiError> {
+        let monitor = EventMonitor::for_vault(session.scope.root());
+        monitor.append_event(&SessionEvent {
+            session_id: session.session_id.clone(),
+            dispatch_id: session
+                .dispatch
+                .as_ref()
+                .map(|dispatch| dispatch.dispatch_id.clone()),
+            kind: if options.resume {
+                "research_resumed".to_string()
+            } else {
+                "research_dispatched".to_string()
+            },
+            message: "research session active".to_string(),
+            timestamp_ms: unix_timestamp_ms()?,
+        })?;
 
-    for note in &options.accepted_notes {
-        let accepted = write_accepted_note(session.scope.root(), &session.session_id, note)?;
-        if accepted.created {
-            monitor.append_event(&SessionEvent {
-                session_id: session.session_id.clone(),
-                dispatch_id: session
-                    .dispatch
-                    .as_ref()
-                    .map(|dispatch| dispatch.dispatch_id.clone()),
-                kind: "note_accepted".to_string(),
-                message: format!("accepted research note {}", accepted.note.title),
-                timestamp_ms: unix_timestamp_ms()?,
-            })?;
+        for note in &options.accepted_notes {
+            let accepted = write_accepted_note(session.scope.root(), &session.session_id, note)?;
+            if accepted.created {
+                monitor.append_event(&SessionEvent {
+                    session_id: session.session_id.clone(),
+                    dispatch_id: session
+                        .dispatch
+                        .as_ref()
+                        .map(|dispatch| dispatch.dispatch_id.clone()),
+                    kind: "note_accepted".to_string(),
+                    message: format!("accepted research note {}", accepted.note.title),
+                    timestamp_ms: unix_timestamp_ms()?,
+                })?;
+            }
+            if !session
+                .accepted_notes
+                .iter()
+                .any(|note| note.path == accepted.note.path)
+            {
+                session.accepted_notes.push(accepted.note);
+            }
         }
-        if !session
-            .accepted_notes
-            .iter()
-            .any(|note| note.path == accepted.note.path)
-        {
-            session.accepted_notes.push(accepted.note);
+
+        session.save_checkpoint()
+    })();
+    if let Err(error) = result {
+        if should_teardown_on_error && let Some(dispatch) = session.dispatch.as_ref() {
+            dispatcher.teardown(dispatch);
         }
+        return Err(error);
     }
-
-    session.save_checkpoint()?;
 
     Ok(ResearchOutcome {
         session,
@@ -226,6 +240,10 @@ impl ResearchDispatcher for GobbyDaemonResearchDispatcher {
             daemon_base_url: self.base_url.clone(),
             agent_run_ids,
         })
+    }
+
+    fn teardown(&self, dispatch: &DaemonDispatch) {
+        stop_spawned_agents(&dispatch.daemon_base_url, &dispatch.agent_run_ids);
     }
 }
 
@@ -436,13 +454,10 @@ fn create_materializing_research_note(
                 })?;
             }
             ResearchNoteFileState::MaterializingMatching { .. } => {
-                return Err(WikiError::InvalidInput {
-                    field: "accepted_note",
-                    message: format!(
-                        "accepted research note `{title}` is already materializing at {}",
-                        path.display()
-                    ),
-                });
+                if let Some(path) = wait_for_materializing_research_note(&path, draft_id, title)? {
+                    return Ok(AcceptedNoteSlot::Existing(path));
+                }
+                continue;
             }
             ResearchNoteFileState::Occupied => continue,
             ResearchNoteFileState::Missing => {}
@@ -483,6 +498,44 @@ fn create_materializing_research_note(
         field: "title",
         message: format!("could not allocate unique research note path for `{title}`"),
     })
+}
+
+fn wait_for_materializing_research_note(
+    path: &Path,
+    draft_id: &str,
+    title: &str,
+) -> Result<Option<PathBuf>, WikiError> {
+    let started = Instant::now();
+    let mut delay = RESEARCH_NOTE_MATERIALIZE_INITIAL_DELAY;
+    loop {
+        match research_note_file_state(path, draft_id)? {
+            ResearchNoteFileState::CompletedMatching => return Ok(Some(path.to_path_buf())),
+            ResearchNoteFileState::Missing | ResearchNoteFileState::Occupied => return Ok(None),
+            ResearchNoteFileState::MaterializingMatching { stale } if stale => {
+                fs::remove_file(path).map_err(|error| WikiError::Io {
+                    action: "remove stale accepted research note marker",
+                    path: Some(path.to_path_buf()),
+                    source: error,
+                })?;
+                return Ok(None);
+            }
+            ResearchNoteFileState::MaterializingMatching { .. } => {
+                if started.elapsed() >= RESEARCH_NOTE_MATERIALIZE_TIMEOUT {
+                    return Err(WikiError::InvalidInput {
+                        field: "accepted_note",
+                        message: format!(
+                            "accepted research note `{title}` is still materializing at {}",
+                            path.display()
+                        ),
+                    });
+                }
+                thread::sleep(delay);
+                delay = delay
+                    .saturating_mul(2)
+                    .min(RESEARCH_NOTE_MATERIALIZE_MAX_DELAY);
+            }
+        }
+    }
 }
 
 fn accepted_note_draft_id(note: &AcceptedNoteDraft) -> String {
@@ -771,6 +824,8 @@ fn unix_timestamp_ms() -> Result<u64, WikiError> {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use super::*;
 
     struct FakeDispatcher;
@@ -782,6 +837,24 @@ mod tests {
                 daemon_base_url: "http://daemon.test".to_string(),
                 agent_run_ids: vec!["run-1".to_string(), "run-2".to_string()],
             })
+        }
+    }
+
+    struct RecordingDispatcher {
+        teardown_count: Cell<usize>,
+    }
+
+    impl ResearchDispatcher for RecordingDispatcher {
+        fn dispatch(&self, _session: &ResearchSession) -> Result<DaemonDispatch, WikiError> {
+            Ok(DaemonDispatch {
+                dispatch_id: "dispatch-123".to_string(),
+                daemon_base_url: "http://daemon.test".to_string(),
+                agent_run_ids: vec!["run-1".to_string()],
+            })
+        }
+
+        fn teardown(&self, _dispatch: &DaemonDispatch) {
+            self.teardown_count.set(self.teardown_count.get() + 1);
         }
     }
 
@@ -947,6 +1020,71 @@ mod tests {
         let index = std::fs::read_to_string(root.join("raw/INDEX.md")).expect("raw index");
         assert_eq!(index.matches("raw/research/same-title.md").count(), 1);
         assert!(!root.join("raw/research/same-title-2.md").exists());
+    }
+
+    #[test]
+    fn accepted_note_waits_for_materializing_marker_to_complete() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let research_dir = root.join("raw/research");
+        std::fs::create_dir_all(&research_dir).expect("research dir");
+        let draft = AcceptedNoteDraft {
+            title: "Shared note".to_string(),
+            body: "same body".to_string(),
+            source: None,
+        };
+        let draft_id = accepted_note_draft_id(&draft);
+        let path = research_dir.join("shared-note.md");
+        let marker =
+            render_accepted_note_body("research-1", &draft, &draft_id, "materializing", false)
+                .expect("marker");
+        std::fs::write(&path, marker).expect("write materializing marker");
+        let completed_path = path.clone();
+        let completed_draft = draft.clone();
+        let completed_id = draft_id.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            let body = render_accepted_note_body(
+                "research-1",
+                &completed_draft,
+                &completed_id,
+                "completed",
+                true,
+            )
+            .expect("completed body");
+            std::fs::write(completed_path, body).expect("complete marker");
+        });
+
+        let accepted = write_accepted_note(root, "research-1", &draft).expect("accepted note");
+
+        assert!(!accepted.created);
+        assert_eq!(accepted.note.path, path);
+    }
+
+    #[test]
+    fn dispatch_tears_down_agents_on_post_dispatch_persistence_failure() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join(".gwiki"), "not a directory").expect("block .gwiki");
+        let dispatcher = RecordingDispatcher {
+            teardown_count: Cell::new(0),
+        };
+
+        let error = run_with_dispatcher(
+            ResearchOptions {
+                question: "How should failed dispatch clean up?".to_string(),
+                scope: ResearchScope::project(temp.path()),
+                source_constraints: Vec::new(),
+                agent_count: 1,
+                dispatch_task_id: Some("#300".to_string()),
+                resume: false,
+                accepted_notes: Vec::new(),
+            },
+            &dispatcher,
+        )
+        .expect_err("persistence should fail");
+
+        assert!(matches!(error, WikiError::Io { .. }));
+        assert_eq!(dispatcher.teardown_count.get(), 1);
     }
 
     #[test]

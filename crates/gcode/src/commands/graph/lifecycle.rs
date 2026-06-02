@@ -264,7 +264,7 @@ fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> 
         GraphLifecycleAction::Rebuild,
         ctx,
         json!({
-            "success": true,
+            "success": errors.is_empty(),
             "project_id": ctx.project_id,
             "status": report.status,
             "synced_files": report.synced_files,

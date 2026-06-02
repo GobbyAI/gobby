@@ -161,6 +161,8 @@ fn run() -> anyhow::Result<()> {
     let ctx = config::Context::resolve(cli.project.as_deref(), cli.quiet)?;
 
     match cli.command {
+        // These commands are handled before Context::resolve(); this arm keeps the
+        // exhaustive match explicit if the early-dispatch block returns normally.
         Command::Init | Command::Setup { .. } | Command::Projects | Command::Prune { .. } => Ok(()),
         Command::Index {
             path,

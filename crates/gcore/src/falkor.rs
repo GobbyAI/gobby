@@ -189,6 +189,8 @@ fn is_existing_index_error(error: &anyhow::Error) -> bool {
     let message = error.to_string().to_ascii_lowercase();
     // FalkorDB currently reports duplicate-index creation through version- and
     // driver-specific message strings instead of a stable typed error code.
+    // TODO: replace these exact message patterns if the driver exposes a typed
+    // duplicate-index error.
     message.contains("already indexed")
         || message.contains("already exists")
         || message.contains("index already exists")

@@ -92,6 +92,7 @@ pub(super) fn csharp_declared_types(contents: &str) -> Vec<String> {
 /// The indexer records authoritative symbols from tree-sitter; this token scan
 /// only helps decide whether an otherwise unresolved import target is local.
 pub(super) fn declared_types(contents: &str, keywords: &[&str]) -> Vec<String> {
+    let contents = strip_comments_and_string_literals(contents);
     let mut names = Vec::new();
     let tokens: Vec<&str> = contents
         .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
@@ -103,6 +104,71 @@ pub(super) fn declared_types(contents: &str, keywords: &[&str]) -> Vec<String> {
         }
     }
     names
+}
+
+fn strip_comments_and_string_literals(contents: &str) -> String {
+    let mut out = String::with_capacity(contents.len());
+    let mut chars = contents.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '/' if chars.peek() == Some(&'/') => {
+                out.push(' ');
+                out.push(' ');
+                chars.next();
+                for ch in chars.by_ref() {
+                    if ch == '\n' {
+                        out.push('\n');
+                        break;
+                    }
+                    out.push(' ');
+                }
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                out.push(' ');
+                out.push(' ');
+                chars.next();
+                let mut previous = '\0';
+                for ch in chars.by_ref() {
+                    if ch == '\n' {
+                        out.push('\n');
+                    } else {
+                        out.push(' ');
+                    }
+                    if previous == '*' && ch == '/' {
+                        break;
+                    }
+                    previous = ch;
+                }
+            }
+            '"' | '\'' | '`' => {
+                let quote = ch;
+                out.push(' ');
+                while let Some(ch) = chars.next() {
+                    if ch == '\\' {
+                        out.push(' ');
+                        if let Some(escaped) = chars.next() {
+                            out.push(if escaped == '\n' { '\n' } else { ' ' });
+                        }
+                        continue;
+                    }
+                    if ch == quote {
+                        out.push(' ');
+                        break;
+                    }
+                    if ch == '\n' {
+                        out.push('\n');
+                        if quote != '`' {
+                            break;
+                        }
+                    } else {
+                        out.push(' ');
+                    }
+                }
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 /// Heuristic fallback scanner for PHP import-resolution local symbol indexes.
@@ -130,11 +196,19 @@ pub(super) fn is_external_java_class(
     class_path: &str,
     import_context: &ImportResolutionContext,
 ) -> bool {
-    !import_context.java_local_classes.contains(class_path)
-        && class_path
-            .rsplit('.')
-            .next()
-            .is_none_or(|class_name| !import_context.java_local_classes.contains(class_name))
+    java_class_name_candidates(class_path)
+        .filter(|candidate| !candidate.is_empty())
+        .all(|candidate| !import_context.java_local_classes.contains(candidate))
+}
+
+fn java_class_name_candidates(class_path: &str) -> impl Iterator<Item = &str> {
+    let dotted = class_path.rsplit('.').next().unwrap_or(class_path);
+    [
+        class_path,
+        dotted,
+        dotted.rsplit('$').next().unwrap_or(dotted),
+    ]
+    .into_iter()
 }
 
 pub(super) fn is_external_csharp_path(

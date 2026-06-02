@@ -9,6 +9,7 @@ use crate::{CommandOutcome, ReadTarget, ScopeIdentity, ScopeSelection, WikiError
 
 const MAX_TITLE_CANDIDATES: usize = 50;
 const MAX_TITLE_SEARCH_DEPTH: usize = 64;
+const MAX_TITLE_SCAN_ENTRIES: usize = 10_000;
 
 pub(crate) fn execute(
     target: ReadTarget,
@@ -166,20 +167,43 @@ fn title_candidates(
     title: &str,
     max_results: usize,
 ) -> Result<Vec<ReadCandidate>, WikiError> {
+    title_candidates_with_scan_budget(root, title, max_results, MAX_TITLE_SCAN_ENTRIES)
+}
+
+fn title_candidates_with_scan_budget(
+    root: &Path,
+    title: &str,
+    max_results: usize,
+    max_scanned_entries: usize,
+) -> Result<Vec<ReadCandidate>, WikiError> {
     let mut candidates = Vec::new();
-    collect_title_candidates(root, root, title, max_results, 0, &mut candidates)?;
+    let mut search = TitleCandidateSearch {
+        max_results,
+        max_scanned_entries,
+        scanned_entries: 0,
+    };
+    collect_title_candidates(root, root, title, 0, &mut search, &mut candidates)?;
     Ok(candidates)
+}
+
+struct TitleCandidateSearch {
+    max_results: usize,
+    max_scanned_entries: usize,
+    scanned_entries: usize,
 }
 
 fn collect_title_candidates(
     root: &Path,
     dir: &Path,
     title: &str,
-    max_results: usize,
     depth: usize,
+    search: &mut TitleCandidateSearch,
     candidates: &mut Vec<ReadCandidate>,
 ) -> Result<(), WikiError> {
-    if candidates.len() >= max_results || depth > MAX_TITLE_SEARCH_DEPTH {
+    if candidates.len() >= search.max_results
+        || depth > MAX_TITLE_SEARCH_DEPTH
+        || search.scanned_entries >= search.max_scanned_entries
+    {
         return Ok(());
     }
 
@@ -196,7 +220,9 @@ fn collect_title_candidates(
     };
 
     for entry in entries {
-        if candidates.len() >= max_results {
+        if candidates.len() >= search.max_results
+            || search.scanned_entries >= search.max_scanned_entries
+        {
             return Ok(());
         }
         let entry = entry.map_err(|error| WikiError::Io {
@@ -204,9 +230,10 @@ fn collect_title_candidates(
             path: Some(dir.to_path_buf()),
             source: error,
         })?;
+        search.scanned_entries += 1;
         let path = entry.path();
         if path.is_dir() {
-            collect_title_candidates(root, &path, title, max_results, depth + 1, candidates)?;
+            collect_title_candidates(root, &path, title, depth + 1, search, candidates)?;
             continue;
         }
 
@@ -227,7 +254,7 @@ fn collect_title_candidates(
                 wiki_path: relative.to_path_buf(),
                 title: Some(title.to_string()),
             });
-            if candidates.len() >= max_results {
+            if candidates.len() >= search.max_results {
                 return Ok(());
             }
         }
@@ -492,6 +519,20 @@ mod tests {
 
         let candidates = title_candidates(temp.path(), "Deep Target", MAX_TITLE_CANDIDATES)
             .expect("title search");
+
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn title_search_stops_at_scan_budget() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let topic_dir = temp.path().join("wiki/topics");
+        std::fs::create_dir_all(&topic_dir).expect("topic dir");
+        std::fs::write(topic_dir.join("target.md"), "# Target\n").expect("target markdown");
+
+        let candidates =
+            title_candidates_with_scan_budget(temp.path(), "Target", MAX_TITLE_CANDIDATES, 0)
+                .expect("title search");
 
         assert!(candidates.is_empty());
     }

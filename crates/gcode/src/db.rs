@@ -102,25 +102,25 @@ fn resolve_database_url_from_sources_with_identity_and_reachability(
     let gcore_database_url = resolve_database_url_from_gcore_config(home)?;
 
     if let Ok(database_url) = broker_resolver(&path) {
-        if let Some(resolution) = gobby_core::provisioning::resolve_recorded_hub_database_url(
+        if let Some(database_url) = resolve_recorded_hub_database_url(
             gcore_database_url.as_deref(),
-            Some(&database_url),
+            &database_url,
             &mut database_reachable,
             &mut identity_probe,
         )? {
-            return Ok(resolution.database_url);
+            return Ok(database_url);
         }
         return Ok(database_url);
     }
 
     if let Some(database_url) = resolve_database_url_from_bootstrap_file(&path)? {
-        if let Some(resolution) = gobby_core::provisioning::resolve_recorded_hub_database_url(
+        if let Some(database_url) = resolve_recorded_hub_database_url(
             gcore_database_url.as_deref(),
-            Some(&database_url),
+            &database_url,
             &mut database_reachable,
             &mut identity_probe,
         )? {
-            return Ok(resolution.database_url);
+            return Ok(database_url);
         }
         return Ok(database_url);
     }
@@ -138,6 +138,24 @@ fn resolve_database_url_from_sources_with_identity_and_reachability(
     bail!(
         "missing Gobby PostgreSQL configuration. Run `gcode setup --standalone`, set {GCODE_DATABASE_URL_ENV}, or configure the Gobby daemon bootstrap."
     )
+}
+
+fn resolve_recorded_hub_database_url(
+    gcore_database_url: Option<&str>,
+    candidate_database_url: &str,
+    database_reachable: &mut impl FnMut(&str) -> bool,
+    identity_probe: &mut impl FnMut(
+        &str,
+    )
+        -> anyhow::Result<gobby_core::provisioning::HubIdentityProbeResult>,
+) -> anyhow::Result<Option<String>> {
+    Ok(gobby_core::provisioning::resolve_recorded_hub_database_url(
+        gcore_database_url,
+        Some(candidate_database_url),
+        database_reachable,
+        identity_probe,
+    )?
+    .map(|resolution| resolution.database_url))
 }
 
 fn resolve_database_url_from_bootstrap_file(path: &Path) -> anyhow::Result<Option<String>> {

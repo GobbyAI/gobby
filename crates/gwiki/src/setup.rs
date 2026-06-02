@@ -7,12 +7,12 @@ pub const DEFAULT_SCHEMA: &str = "public";
 pub const SETUP_OWNERSHIP_NOTE: &str = "gwiki setup is owned by `crates/gwiki/src/setup.rs`";
 const POSTGRES_IDENTIFIER_MAX_BYTES: usize = 63;
 
-pub const GWIKI_POSTGRES_TABLES: &[&str] = &[
-    "gwiki_documents",
-    "gwiki_chunks",
-    "gwiki_links",
-    "gwiki_sources",
-    "gwiki_ingestions",
+pub const GWIKI_POSTGRES_TABLES: &[GwikiTable] = &[
+    GwikiTable::Documents,
+    GwikiTable::Chunks,
+    GwikiTable::Links,
+    GwikiTable::Sources,
+    GwikiTable::Ingestions,
 ];
 
 pub const GWIKI_POSTGRES_INDEXES: &[&str] = &[
@@ -24,6 +24,27 @@ pub const GWIKI_POSTGRES_INDEXES: &[&str] = &[
     "gwiki_documents_search_bm25",
     "gwiki_chunks_search_bm25",
 ];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GwikiTable {
+    Documents,
+    Chunks,
+    Links,
+    Sources,
+    Ingestions,
+}
+
+impl GwikiTable {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Documents => "gwiki_documents",
+            Self::Chunks => "gwiki_chunks",
+            Self::Links => "gwiki_links",
+            Self::Sources => "gwiki_sources",
+            Self::Ingestions => "gwiki_ingestions",
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GwikiPostgresObjectKind {
@@ -68,7 +89,8 @@ impl GwikiStandaloneSetup {
             .to_string(),
         )];
 
-        for &table_name in GWIKI_POSTGRES_TABLES {
+        for gwiki_table in GWIKI_POSTGRES_TABLES {
+            let table_name = gwiki_table.name();
             objects.push(table(
                 table_name,
                 self.validate_relation_sql(table_name, "table")?,
@@ -212,7 +234,8 @@ fn quote_identifier(value: &str, label: &str) -> Result<String, SetupError> {
             message: format!("{label} identifier must not contain NUL bytes"),
         });
     }
-    if trimmed.len() > POSTGRES_IDENTIFIER_MAX_BYTES {
+    let escaped = trimmed.replace('"', "\"\"");
+    if escaped.len() > POSTGRES_IDENTIFIER_MAX_BYTES {
         return Err(SetupError::CreationFailed {
             object: label.to_string(),
             message: format!(
@@ -220,7 +243,7 @@ fn quote_identifier(value: &str, label: &str) -> Result<String, SetupError> {
             ),
         });
     }
-    Ok(format!("\"{}\"", trimmed.replace('"', "\"\"")))
+    Ok(format!("\"{escaped}\""))
 }
 
 fn sql_string_literal(value: &str) -> String {
@@ -280,10 +303,10 @@ mod tests {
 
         assert!(combined_sql.contains("to_regclass"), "{combined_sql}");
         assert!(combined_sql.contains("pg_extension"), "{combined_sql}");
-        for relation in GWIKI_POSTGRES_TABLES
-            .iter()
-            .chain(GWIKI_POSTGRES_INDEXES.iter())
-        {
+        for table in GWIKI_POSTGRES_TABLES {
+            assert!(combined_sql.contains(table.name()), "{combined_sql}");
+        }
+        for relation in GWIKI_POSTGRES_INDEXES {
             assert!(combined_sql.contains(relation), "{combined_sql}");
         }
         assert!(!combined_sql.contains("CREATE EXTENSION"), "{combined_sql}");
@@ -327,7 +350,13 @@ mod tests {
             .map(|object| object.name)
             .collect::<Vec<_>>();
 
-        assert_eq!(tables, GWIKI_POSTGRES_TABLES);
+        assert_eq!(
+            tables,
+            GWIKI_POSTGRES_TABLES
+                .iter()
+                .map(|table| table.name())
+                .collect::<Vec<_>>()
+        );
         assert_eq!(indexes, GWIKI_POSTGRES_INDEXES);
     }
 
@@ -335,6 +364,14 @@ mod tests {
     fn quote_identifier_rejects_names_over_postgres_byte_limit() {
         let name = "a".repeat(64);
         let error = quote_identifier(&name, "schema").expect_err("identifier is too long");
+
+        assert!(error.to_string().contains("at most 63 bytes"));
+    }
+
+    #[test]
+    fn quote_identifier_rejects_escaped_names_over_postgres_byte_limit() {
+        let name = format!("{}\"", "a".repeat(62));
+        let error = quote_identifier(&name, "schema").expect_err("escaped identifier is too long");
 
         assert!(error.to_string().contains("at most 63 bytes"));
     }

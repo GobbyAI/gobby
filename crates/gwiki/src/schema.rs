@@ -15,8 +15,9 @@ impl AttachedValidator for GwikiRuntimeSchema {
     fn required_objects(&self) -> Vec<RequiredObject> {
         GWIKI_POSTGRES_TABLES
             .iter()
-            .chain(GWIKI_POSTGRES_INDEXES.iter())
-            .map(|relation| required_relation(relation))
+            .map(|table| table.name())
+            .chain(GWIKI_POSTGRES_INDEXES.iter().copied())
+            .map(required_relation)
             .collect()
     }
 }

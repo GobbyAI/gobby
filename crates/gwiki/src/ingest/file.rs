@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use gobby_core::ai_context::AiContext;
 #[cfg(all(feature = "documents", feature = "ai"))]
@@ -289,14 +289,18 @@ fn detect_source_kind(path: &Path) -> SourceKind {
 }
 
 fn source_location(vault_root: &Path, path: &Path) -> String {
-    let display_path = path
-        .strip_prefix(vault_root)
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|_| {
-            path.file_name()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| path.to_path_buf())
-        });
+    let display_path = if let Ok(relative) = path.strip_prefix(vault_root) {
+        relative.to_path_buf()
+    } else if let (Ok(canonical_root), Ok(canonical_path)) =
+        (vault_root.canonicalize(), path.canonicalize())
+    {
+        canonical_path
+            .strip_prefix(&canonical_root)
+            .map(Path::to_path_buf)
+            .unwrap_or(canonical_path)
+    } else {
+        path.to_path_buf()
+    };
     display_path.to_string_lossy().replace('\\', "/")
 }
 
@@ -400,6 +404,25 @@ mod tests {
             video_frame_interval_seconds: Some(0),
             ..IngestFileOptions::default()
         }
+    }
+
+    #[test]
+    fn source_location_preserves_external_canonical_path() {
+        let vault = tempfile::tempdir().expect("vault tempdir");
+        let outside = tempfile::tempdir().expect("outside tempdir");
+        let source = outside.path().join("source.md");
+        std::fs::write(&source, "# Source\n").expect("write outside source");
+
+        let location = source_location(vault.path(), &source);
+
+        assert_eq!(
+            location,
+            source
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/")
+        );
     }
 
     #[test]

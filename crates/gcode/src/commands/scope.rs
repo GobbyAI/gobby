@@ -27,12 +27,30 @@ pub(crate) fn normalize_file_arg(ctx: &Context, file: &str) -> String {
 }
 
 pub(crate) fn path_exists_in_current_project(ctx: &Context, file_path: &str) -> bool {
-    let path = ctx.project_root.join(file_path);
+    if path_exists_under_root(&ctx.project_root, file_path) {
+        return true;
+    }
+
+    if let crate::config::ProjectIndexScope::Overlay {
+        overlay_root,
+        parent_root,
+        ..
+    } = &ctx.index_scope
+    {
+        path_exists_under_root(overlay_root, file_path)
+            || path_exists_under_root(parent_root, file_path)
+    } else {
+        false
+    }
+}
+
+fn path_exists_under_root(root: &Path, file_path: &str) -> bool {
+    let path = root.join(file_path);
     if !path.exists() {
         return false;
     }
 
-    let Ok(root) = ctx.project_root.canonicalize() else {
+    let Ok(root) = root.canonicalize() else {
         return false;
     };
     let Ok(abs) = path.canonicalize() else {
@@ -168,5 +186,23 @@ mod tests {
             clean_relative_path(Path::new("/tmp/project/src/lib.rs")),
             "tmp/project/src/lib.rs"
         );
+    }
+
+    #[test]
+    fn path_exists_accepts_overlay_parent_files() {
+        let overlay = tempfile::tempdir().expect("overlay tempdir");
+        let parent = tempfile::tempdir().expect("parent tempdir");
+        std::fs::create_dir_all(parent.path().join("src")).expect("create parent src");
+        std::fs::write(parent.path().join("src/lib.rs"), "pub fn parent() {}\n")
+            .expect("write parent file");
+        let mut ctx = context_for(overlay.path().to_path_buf());
+        ctx.index_scope = crate::config::ProjectIndexScope::Overlay {
+            overlay_project_id: "overlay".to_string(),
+            overlay_root: overlay.path().to_path_buf(),
+            parent_project_id: "parent".to_string(),
+            parent_root: parent.path().to_path_buf(),
+        };
+
+        assert!(path_exists_in_current_project(&ctx, "src/lib.rs"));
     }
 }

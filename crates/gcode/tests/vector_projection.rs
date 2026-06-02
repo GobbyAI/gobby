@@ -41,14 +41,20 @@ fn ensure_creates_missing_and_reuses_compatible() {
     let (qdrant_url, qdrant_handle) = spawn_http_responses(vec![
         (404, json!({"status": "not found"})),
         (200, json!({"result": true})),
-        (200, json!({"result": {"operation_id": 1}})),
+        (
+            200,
+            json!({"result": {"operation_id": 1, "status": "completed"}}),
+        ),
         (200, json!({"result": {"count": 1}})),
         (200, json!({"result": {"operation_id": 2}})),
         (
             200,
             json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": VECTOR_DISTANCE_COSINE}}}}}),
         ),
-        (200, json!({"result": {"operation_id": 3}})),
+        (
+            200,
+            json!({"result": {"operation_id": 3, "status": "completed"}}),
+        ),
         (200, json!({"result": {"count": 1}})),
         (200, json!({"result": {"operation_id": 4}})),
     ]);
@@ -90,7 +96,10 @@ fn ensure_creates_missing_and_reuses_compatible() {
     assert!(qdrant_requests[1].contains("PUT /collections/code_symbols_project-1 HTTP/1.1"));
     assert!(qdrant_requests[1].contains(r#""size":3"#));
     assert!(qdrant_requests[1].contains(r#""distance":"Cosine""#));
-    assert!(qdrant_requests[2].contains("PUT /collections/code_symbols_project-1/points HTTP/1.1"));
+    assert!(
+        qdrant_requests[2]
+            .contains("PUT /collections/code_symbols_project-1/points?wait=true HTTP/1.1")
+    );
     assert!(qdrant_requests[2].contains(r#""provenance":"EXTRACTED""#));
     assert!(qdrant_requests[2].contains(r#""source_system":"gcode""#));
     assert!(qdrant_requests[2].contains(r#""source_line_start":3"#));
@@ -130,7 +139,10 @@ fn clear_and_rebuild_delete_project_and_upsert_current_symbols() {
             200,
             json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": VECTOR_DISTANCE_COSINE}}}}}),
         ),
-        (200, json!({"result": {"operation_id": 2}})),
+        (
+            200,
+            json!({"result": {"operation_id": 2, "status": "completed"}}),
+        ),
         (200, json!({"result": {"count": 1}})),
         (200, json!({"result": {"operation_id": 3}})),
     ]);
@@ -173,7 +185,10 @@ fn clear_and_rebuild_delete_project_and_upsert_current_symbols() {
         qdrant_requests[2]
             .contains("POST /collections/code_symbols_project-1/points/delete?wait=true HTTP/1.1")
     );
-    assert!(qdrant_requests[4].contains("PUT /collections/code_symbols_project-1/points HTTP/1.1"));
+    assert!(
+        qdrant_requests[4]
+            .contains("PUT /collections/code_symbols_project-1/points?wait=true HTTP/1.1")
+    );
     assert!(
         qdrant_requests[5]
             .contains("POST /collections/code_symbols_project-1/points/count HTTP/1.1")

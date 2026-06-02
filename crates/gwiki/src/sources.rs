@@ -482,9 +482,6 @@ fn existing_index_without_manifest(index_path: &Path) -> Result<String, WikiErro
             skipping_manifest = true;
             continue;
         }
-        if skipping_manifest && line.starts_with("## ") {
-            skipping_manifest = false;
-        }
         if !skipping_manifest {
             preserved.push(line);
         }
@@ -686,5 +683,23 @@ mod tests {
             canonicalize_location("https://Example.com/docs/?b=2&a=1#frag"),
             "https://example.com/docs?a=1&b=2"
         );
+    }
+
+    #[test]
+    fn existing_index_strips_manifest_through_following_headings() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let index_path = SourceManifest::index_path(temp.path());
+        std::fs::create_dir_all(index_path.parent().expect("raw dir")).expect("raw dir");
+        std::fs::write(
+            &index_path,
+            "# Raw Sources\n\nManual note.\n\n## Source manifest\n\n- generated\n\n## Generated Heading\n\n- stale generated content\n",
+        )
+        .expect("index");
+
+        let stripped = existing_index_without_manifest(&index_path).expect("strip manifest");
+
+        assert!(stripped.contains("Manual note."));
+        assert!(!stripped.contains("Generated Heading"));
+        assert!(!stripped.contains("stale generated content"));
     }
 }

@@ -598,19 +598,31 @@ fn persist_video_frame_assets(
             .get(index)
             .is_some_and(|sample| sample.source_asset.as_path() == path.as_path())
             && path.starts_with(std::env::temp_dir());
-        let bytes = std::fs::read(path).map_err(|source| WikiError::Io {
-            action: "read sampled video frame asset",
-            path: Some(path.clone()),
-            source,
-        })?;
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(source) => {
+                cleanup_sampled_temp_frame_sources(&samples, frame_image_paths);
+                return Err(WikiError::Io {
+                    action: "read sampled video frame asset",
+                    path: Some(path.clone()),
+                    source,
+                });
+            }
+        };
         let file_name = format!("{video_file_name}.frame-{index:04}.jpg");
-        let persisted_path = write_asset_with_suffix(
+        let persisted_path = match write_asset_with_suffix(
             vault_root,
             record,
             &format!("frame-{index:04}"),
             &file_name,
             &bytes,
-        )?;
+        ) {
+            Ok(path) => path,
+            Err(error) => {
+                cleanup_sampled_temp_frame_sources(&samples, frame_image_paths);
+                return Err(error);
+            }
+        };
         let reference = path_to_string(&persisted_path);
         if let Some(sample) = samples.get_mut(index) {
             sample.source_asset = persisted_path.clone();
@@ -641,6 +653,18 @@ fn remove_sampled_temp_frame(path: &Path) -> Result<(), WikiError> {
             path: Some(path.to_path_buf()),
             source,
         }),
+    }
+}
+
+fn cleanup_sampled_temp_frame_sources(samples: &[VideoFrameSample], frame_image_paths: &[PathBuf]) {
+    for (index, path) in frame_image_paths.iter().enumerate() {
+        let should_cleanup = samples
+            .get(index)
+            .is_some_and(|sample| sample.source_asset.as_path() == path.as_path())
+            && path.starts_with(std::env::temp_dir());
+        if should_cleanup {
+            let _ = std::fs::remove_file(path);
+        }
     }
 }
 
@@ -1384,6 +1408,64 @@ mod tests {
 
         assert!(err.to_string().contains("vision provider failed"));
         assert!(!frame_path.exists(), "temp frame should be cleaned up");
+    }
+
+    #[test]
+    fn persisted_frame_read_failure_drops_remaining_kept_temp_frames() {
+        let vault = tempfile::tempdir().expect("vault tempdir");
+        let record = SourceManifest::register(
+            vault.path(),
+            SourceDraft {
+                location: "/tmp/video.mp4".to_string(),
+                kind: SourceKind::Video,
+                fetched_at: "2026-05-29T21:30:00Z".to_string(),
+                content: Vec::new(),
+                title: Some("video.mp4".to_string()),
+                citation: None,
+                license: None,
+                ingestion_method: IngestionMethod::Manual,
+                compile_status: CompileStatus::Pending,
+            },
+        )
+        .expect("source record");
+        let missing_path = std::env::temp_dir().join(format!(
+            "gwiki-missing-frame-{}-{}.jpg",
+            std::process::id(),
+            "read-failure"
+        ));
+        let _ = std::fs::remove_file(&missing_path);
+        let kept = temp_file_with_bytes(".jpg", b"kept frame").expect("frame temp");
+        let kept_path = kept.into_temp_path().keep().expect("keep frame");
+        let samples = vec![
+            VideoFrameSample {
+                timestamp_seconds: 0,
+                timestamp: "00:00:00".to_string(),
+                source_asset: missing_path.clone(),
+                source_reference: path_to_string(&missing_path),
+            },
+            VideoFrameSample {
+                timestamp_seconds: 4,
+                timestamp: "00:00:04".to_string(),
+                source_asset: kept_path.clone(),
+                source_reference: path_to_string(&kept_path),
+            },
+        ];
+
+        let error = persist_video_frame_assets(
+            vault.path(),
+            &record,
+            "video.mp4",
+            samples,
+            &[missing_path, kept_path.clone()],
+            &[],
+        )
+        .expect_err("missing frame read fails");
+
+        assert!(error.to_string().contains("read sampled video frame asset"));
+        assert!(
+            !kept_path.exists(),
+            "remaining kept temp frame should be cleaned"
+        );
     }
 
     fn ingest_with_media(

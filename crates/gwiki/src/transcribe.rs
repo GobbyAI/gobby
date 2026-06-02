@@ -1,4 +1,7 @@
+use std::io::Write;
 use std::path::{Path, PathBuf};
+
+use tempfile::{Builder, NamedTempFile};
 
 use crate::ingest::{markdown_metadata, markdown_title, path_to_string, single_line};
 use crate::sources::SourceRecord;
@@ -124,16 +127,88 @@ pub fn write_audio_transcript_markdown(
         transcription.as_ref(),
         degradation.as_ref(),
     );
-    std::fs::write(&path, markdown).map_err(|error| WikiError::Io {
-        action: "write audio transcript markdown",
-        path: Some(path),
-        source: error,
-    })?;
+    write_transcript_markdown_atomically(&path, markdown.as_bytes())?;
 
     Ok(TranscriptionMarkdownResult {
         path: relative_path,
         degradation,
     })
+}
+
+fn write_transcript_markdown_atomically(path: &Path, contents: &[u8]) -> Result<(), WikiError> {
+    let mut temp_file = create_transcript_temp_file(path)?;
+    if let Err(error) = temp_file.write_all(contents) {
+        return Err(WikiError::Io {
+            action: "write audio transcript markdown temp file",
+            path: Some(temp_file.path().to_path_buf()),
+            source: error,
+        });
+    }
+    if let Err(error) = temp_file.as_file().sync_all() {
+        return Err(WikiError::Io {
+            action: "sync audio transcript markdown temp file",
+            path: Some(temp_file.path().to_path_buf()),
+            source: error,
+        });
+    }
+    if let Err(error) = temp_file.persist(path) {
+        return Err(WikiError::Io {
+            action: "replace audio transcript markdown",
+            path: Some(path.to_path_buf()),
+            source: error.error,
+        });
+    }
+    sync_parent_dir(path)
+}
+
+fn create_transcript_temp_file(path: &Path) -> Result<NamedTempFile, WikiError> {
+    let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    else {
+        return Err(WikiError::Io {
+            action: "create audio transcript markdown temp file",
+            path: Some(path.to_path_buf()),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "audio transcript target has no parent directory",
+            ),
+        });
+    };
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("transcript.md");
+    Builder::new()
+        .prefix(&format!(".{file_name}."))
+        .suffix(".tmp")
+        .tempfile_in(parent)
+        .map_err(|source| WikiError::Io {
+            action: "create audio transcript markdown temp file",
+            path: Some(parent.to_path_buf()),
+            source,
+        })
+}
+
+fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(())
+    }
+    #[cfg(unix)]
+    {
+        let Some(parent) = path.parent() else {
+            return Ok(());
+        };
+        std::fs::File::open(parent)
+            .and_then(|dir| dir.sync_all())
+            .map_err(|error| WikiError::Io {
+                action: "sync audio transcript markdown directory",
+                path: Some(parent.to_path_buf()),
+                source: error,
+            })
+    }
 }
 
 fn derived_markdown_path(record: &SourceRecord) -> PathBuf {
@@ -398,6 +473,13 @@ mod tests {
         assert!(markdown.contains("Original audio: `raw/assets/interview.wav`"));
         assert!(markdown.contains("Raw source: `raw/"));
         assert!(markdown.contains("## Source References"));
+        let derived_dir = temp.path().join("wiki/sources");
+        let temp_entries = std::fs::read_dir(&derived_dir)
+            .expect("derived dir")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+            .count();
+        assert_eq!(temp_entries, 0);
     }
 
     #[test]

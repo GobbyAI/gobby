@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use reqwest::StatusCode;
 use serde_json::{Map, Value, json};
 
@@ -19,6 +21,8 @@ use super::types::{
     CodeSymbolVectorLifecycleStatus, CodeSymbolVectorPayload, ExistingVectorCollectionSchema,
     VectorCollectionSchema, VectorLifecycleError,
 };
+
+const QDRANT_LIFECYCLE_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug)]
 pub struct CodeSymbolVectorLifecycle {
@@ -68,7 +72,10 @@ impl CodeSymbolVectorLifecycle {
 
         let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, &project_id);
         let embedding = EmbeddingBackend::new(embedding.into())?;
-        let client = reqwest::blocking::Client::new();
+        let client = reqwest::blocking::Client::builder()
+            .timeout(QDRANT_LIFECYCLE_TIMEOUT)
+            .build()
+            .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
         Ok(Self {
             project_id,
             collection,
@@ -306,10 +313,11 @@ impl CodeSymbolVectorLifecycle {
             return Ok(0);
         }
         let requested = points.len();
-        let ((), state) = gobby_core::qdrant::with_qdrant(Some(&self.qdrant), (), |config| {
-            gobby_core::qdrant::upsert(config, &self.collection, points)
-        })
-        .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
+        let (_result, state) =
+            gobby_core::qdrant::with_qdrant(Some(&self.qdrant), None, |config| {
+                gobby_core::qdrant::upsert(config, &self.collection, points).map(Some)
+            })
+            .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
         match state {
             ServiceState::Available => Ok(requested),
             ServiceState::NotConfigured => Err(VectorLifecycleError::MissingQdrantConfig),
