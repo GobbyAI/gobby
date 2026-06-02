@@ -13,6 +13,8 @@ from gobby.build.lifecycle_state import BuildState, derive_build_state
 from gobby.build.options import BuildOptions
 from gobby.build.plan_lifecycle import build_plan_file as _build_plan_file
 from gobby.build.profiles import resolve_build_profile_options
+from gobby.build.project_controls import build_resume
+from gobby.build.project_state import is_project_automation_enabled
 from gobby.build.results import BuildResult
 from gobby.build.resume_lifecycle import resume_existing_lifecycle as _resume_existing_lifecycle
 from gobby.build.runtime_hooks import RuntimeHooks
@@ -186,6 +188,17 @@ def _runtime_hooks() -> RuntimeHooks:
     )
 
 
+def _ensure_launch_automation_enabled(
+    db: HubDatabase,
+    project_id: str,
+    warnings: list[str],
+) -> None:
+    if is_project_automation_enabled(db, project_id):
+        return
+    build_resume(db=db, project_id=project_id)
+    warnings.append("Project build automation was paused; resumed before initial dispatch.")
+
+
 async def _build_impl(
     input_ref: str,
     opts: BuildOptions,
@@ -210,6 +223,7 @@ async def _build_impl(
     _validate_max_active_agents(opts)
     _validate_planning_seed(opts)
     target_branch = await _resolve_target_branch(db, project_id, opts, input_kind)
+    _ensure_launch_automation_enabled(db, project_id, warnings)
 
     if input_kind == "plan_file":
         if not isinstance(task_or_plan, Path):

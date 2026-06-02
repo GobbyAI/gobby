@@ -993,11 +993,12 @@ async def test_build_passes_active_agent_cap_separately_from_stage_work_cap(
 
 
 @pytest.mark.asyncio
-async def test_explicit_build_tick_bypasses_paused_dispatcher_cron(
+async def test_build_launch_resumes_paused_dispatcher_before_tick(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     tmp_path: Path,
 ) -> None:
+    from gobby.build.project_state import is_project_automation_enabled
     from gobby.build.service import DispatcherTickSummary, build_stop
 
     project_id, _repo_path = _project(temp_db, tmp_path)
@@ -1024,6 +1025,10 @@ async def test_explicit_build_tick_bypasses_paused_dispatcher_cron(
     )
 
     assert result.tick_dispatched == 1
+    assert is_project_automation_enabled(temp_db, project_id) is True
+    assert result.warnings == [
+        "Project build automation was paused; resumed before initial dispatch."
+    ]
     assert tick_kwargs[0]["dispatcher_enabled"] is True
     assert tick_kwargs[0]["max_ticks"] == 1
     assert tick_kwargs[0]["max_actions"] == 1
