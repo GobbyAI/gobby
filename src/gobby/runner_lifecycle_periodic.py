@@ -75,7 +75,8 @@ def _wiki_topic_name(scope: str) -> str | None:
     if scope == "project":
         return None
     if scope.startswith("topic:"):
-        return scope.removeprefix("topic:")
+        topic = scope.removeprefix("topic:").strip()
+        return topic or None
     return scope
 
 

@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-import gobby.runner_lifecycle_periodic as runner_lifecycle_periodic
+from gobby import runner_lifecycle_periodic
 from gobby.config.app import DaemonConfig
 from gobby.config.wiki import WikiConfig, WikiRootConfig
 from gobby.runner_lifecycle_periodic import start_periodic_tasks
@@ -117,17 +117,18 @@ async def test_startup_indexes_local_changes_with_scoped_gateways(
 
     start_periodic_tasks(runner, tracker=None, **_loops())
     try:
-        result = await runner._wiki_watcher._coordinator.handle_local_changes(
-            {
-                "project": [project_root / "a.md"],
-                "topic:research": [topic_root / "b.md"],
-            }
-        )
+        assert isinstance(runner._wiki_watcher, WikiWatcher)
+        await runner._wiki_watcher.record_change(project_root / "a.md")
+        await runner._wiki_watcher.record_change(topic_root / "b.md")
+
+        result = await runner._wiki_watcher.flush_pending()
     finally:
         await _cancel_periodic_tasks(runner)
 
     assert constructed_scopes == [(str(project_root), None), (None, "research")]
+    assert result is not None
     assert result["index_handoff"]["status"] == "indexed"
+    assert set(result["index_handoff"]["results_by_scope"]) == {"project", "topic:research"}
 
 
 @pytest.mark.asyncio
