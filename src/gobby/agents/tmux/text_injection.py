@@ -194,7 +194,6 @@ async def submit_literal_text_to_tmux_target(
             f"{literal_text}\n",
             tmux_cmd=base_cmd,
             timeout=timeout,
-            enter_delay_seconds=enter_delay_seconds,
         )
     else:
         await send_enter_key_to_tmux_target(

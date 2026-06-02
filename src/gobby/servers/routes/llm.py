@@ -242,15 +242,19 @@ async def _vision_temp_cleanup_loop() -> None:
 
 def start_vision_temp_cleanup_task(app: Any) -> None:
     _run_vision_temp_cleanup_once()
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
     existing = getattr(app.state, _VISION_TEMP_CLEANUP_TASK_ATTR, None)
     if existing is not None and not existing.done():
-        if existing.get_loop() is asyncio.get_running_loop():
+        if existing.get_loop() is loop:
             return
         existing.cancel()
     setattr(
         app.state,
         _VISION_TEMP_CLEANUP_TASK_ATTR,
-        asyncio.create_task(_vision_temp_cleanup_loop()),
+        loop.create_task(_vision_temp_cleanup_loop()),
     )
 
 

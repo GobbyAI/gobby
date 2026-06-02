@@ -11,6 +11,7 @@ import pytest
 from gobby.config.app import DaemonConfig
 from gobby.config.embedding_keys import (
     AI_EMBEDDING_API_KEY_KEY,
+    AI_EMBEDDING_DIM_KEY,
     AI_EMBEDDING_MODEL_KEY,
     EMBEDDING_API_KEY_SECRET_NAME,
 )
@@ -328,12 +329,19 @@ class TestListConfigKeys:
         self, config_registry: InternalToolRegistry, config_store: ConfigStore
     ) -> None:
         config_store.set(AI_EMBEDDING_MODEL_KEY, "bge-m3")
+        config_store.db.execute(
+            """
+            INSERT INTO config_store (key, value, source, updated_at)
+            VALUES (%s, %s, %s, %s)
+            """,
+            ("embeddings.dim", "1024", "test", "2026-01-01T00:00:00+00:00"),
+        )
 
         tool = config_registry.get_tool("list_config_keys")
-        result = tool(prefix="ai.embeddings")
+        result = tool()
 
         assert result["success"] is True
-        assert result["keys"] == [AI_EMBEDDING_MODEL_KEY]
+        assert result["keys"] == [AI_EMBEDDING_DIM_KEY, AI_EMBEDDING_MODEL_KEY]
 
     def test_list_config_keys_rejects_embedding_alias(self, config_registry) -> None:
         tool = config_registry.get_tool("list_config_keys")
@@ -357,7 +365,7 @@ class TestListConfigKeys:
         result = tool()
 
         assert result["success"] is False
-        assert result["error"] == "Internal config error"
+        assert result["error"] == "config store unavailable"
 
 
 class TestEnsureDefaults:

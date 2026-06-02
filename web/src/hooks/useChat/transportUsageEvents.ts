@@ -109,7 +109,7 @@ function isRawTokenEventMessage(data: unknown): data is RawTokenEventMessage {
     data.session_totals.cache_creation_tokens,
     data.session_totals.cache_read_tokens,
     data.session_totals.context_window,
-  ].every((value) => value === undefined || numericValue(value) !== null);
+  ].every(isOptionalNumeric);
 }
 
 export function normalizeSessionUsageUpdatedMessage(

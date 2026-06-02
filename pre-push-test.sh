@@ -51,7 +51,7 @@ if [ "${GOBBY_RUN_BUILD_CANARY:-}" != "1" ]; then
         --deselect=tests/e2e/test_build_dispatcher_autonomy.py::test_real_small_gobby_build_canary
     )
 fi
-if [ -z "${GOBBY_RUN_E2E_SESSION_LIFECYCLE:-}" ]; then
+if [ "${GOBBY_RUN_E2E_SESSION_LIFECYCLE:-}" != "1" ]; then
     PYTEST_SELECTION_ARGS+=(
         --deselect=tests/sessions/test_e2e_session_tracking.py::test_full_lifecycle
     )

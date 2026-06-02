@@ -40,6 +40,8 @@ HOLD_OPEN_HOOK_TYPE_MAP: dict[str, str] = {
 }
 
 SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION = 1
+# Fail-safe hook calls are synchronous CLI-path gates; keep this short enough
+# that a stuck daemon cannot leave provider hooks hanging indefinitely.
 FAIL_SAFE_HOOK_TIMEOUT_SECONDS = 20.0
 FAIL_SAFE_HOOK_TYPES = frozenset(hook_type.casefold() for hook_type in {"Stop", "stop"})
 

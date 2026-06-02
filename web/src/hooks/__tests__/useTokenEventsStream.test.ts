@@ -188,7 +188,7 @@ describe("useTokenEventsStream", () => {
           output_tokens: "22",
           cache_creation_tokens: "16",
           cache_read_tokens: "40",
-          context_window: "2000",
+          context_window: null,
         },
       });
     });
@@ -204,7 +204,7 @@ describe("useTokenEventsStream", () => {
         output_tokens: 22,
         cache_creation_tokens: 16,
         cache_read_tokens: 40,
-        context_window: 2000,
+        context_window: null,
       },
     });
   });

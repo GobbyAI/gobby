@@ -7,7 +7,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from gobby.memory.services.crossref import CrossrefRebuildError, CrossrefService
 from gobby.storage.memories import Memory
@@ -337,12 +337,9 @@ class IndexingService:
                     "skipped": True,
                     "skip_reason": "source_snapshot_unchanged",
                 }
-            if self._vector_store is None or self._embed_fn is None:
-                return {
-                    "success": False,
-                    "error": "Vector store or embedding function not configured",
-                }
-            await self._vector_store.rebuild(memory_dicts, self._embed_fn)
+            vector_store = cast(VectorStoreProtocol, self._vector_store)
+            embed_fn = cast(Callable[..., Any], self._embed_fn)
+            await vector_store.rebuild(memory_dicts, embed_fn)
             self._last_global_reindex_identity_fingerprint = identity_fingerprint
             self._last_global_reindex_fingerprint = fingerprint
             self._last_global_reindex_completed_at = asyncio.get_running_loop().time()

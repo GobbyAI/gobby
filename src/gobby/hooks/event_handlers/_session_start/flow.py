@@ -420,7 +420,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
                 session_id,
                 {"task_context": task_context_str},
             )
-        except (json.JSONDecodeError, psycopg.Error) as e:
+        except (KeyError, json.JSONDecodeError, psycopg.Error) as e:
             handler.logger.warning(f"Failed to persist task context: {e}")
 
     if event.task_id:

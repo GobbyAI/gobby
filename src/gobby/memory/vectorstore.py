@@ -684,17 +684,12 @@ class VectorStore:
             async with self._collection_lifecycle_lock:
                 collection_reset = await self._prepare_collection_for_rebuild(client)
 
-                existing_ids = set[str]()
-                if not collection_reset:
-                    existing_ids = set(await self.scroll_ids())
-
                 batch_size = 500
                 total = 0
-                incoming_ids: set[str] = set()
+                incoming_ids = {str(mem["id"]) for mem in memories}
                 batch: list[tuple[str, list[float], dict[str, Any]]] = []
                 for mem in memories:
-                    memory_id = mem["id"]
-                    incoming_ids.add(memory_id)
+                    memory_id = str(mem["id"])
                     content = mem["content"]
                     embedding = await embed_fn(content)
                     payload = {k: v for k, v in mem.items() if k not in ("id",)}
@@ -710,13 +705,46 @@ class VectorStore:
                     await self.batch_upsert(batch)
                     total += len(batch)
 
-                stale_ids = sorted(existing_ids - incoming_ids)
-                if stale_ids:
-                    for index in range(0, len(stale_ids), batch_size):
-                        stale_batch = stale_ids[index : index + batch_size]
-                        await self.delete_many(stale_batch)
+                if not collection_reset:
+                    await self._delete_stale_ids(client, incoming_ids, batch_size=batch_size)
 
                 logger.info("Rebuilt %s vectors in '%s'", total, self._collection_name)
+
+    async def _delete_stale_ids(
+        self,
+        client: QdrantClient,
+        incoming_ids: set[str],
+        *,
+        batch_size: int,
+    ) -> None:
+        offset = None
+        stale_batch: list[str] = []
+        while True:
+            try:
+                points, next_offset = await asyncio.to_thread(
+                    client.scroll,
+                    collection_name=self._collection_name,
+                    limit=batch_size,
+                    offset=offset,
+                    with_payload=False,
+                    with_vectors=False,
+                )
+            except Exception as exc:
+                self._raise_if_recoverable(exc)
+                raise
+            for point in points:
+                point_id = str(point.id)
+                if point_id in incoming_ids:
+                    continue
+                stale_batch.append(point_id)
+                if len(stale_batch) >= batch_size:
+                    await self.delete_many(stale_batch)
+                    stale_batch = []
+            if next_offset is None:
+                break
+            offset = next_offset
+        if stale_batch:
+            await self.delete_many(stale_batch)
 
     async def scroll_ids(self, batch_size: int = 1000) -> list[str]:
         """Return all point IDs in the collection."""

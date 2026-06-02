@@ -27,7 +27,9 @@ from gobby.workflows.git_utils import (
 
 logger = logging.getLogger(__name__)
 
-_UNRESOLVED_SESSION_REF_RE = re.compile(r"(?<![a-z0-9_])#?\{?session_ref\}?(?![a-z0-9_])")
+_UNRESOLVED_SESSION_REF_RE = re.compile(
+    r"(?<![a-z0-9_])(?:#session_ref|#\{session_ref\}|\{session_ref\})(?![a-z0-9_])"
+)
 
 
 def _get_result_truncation_limit(content_str: str) -> int:

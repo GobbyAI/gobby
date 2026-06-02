@@ -785,31 +785,44 @@ class TestTranscriptReaderRendered:
         assert status["parsed_message_count"] == 0
 
 
+def _gemini_json_reader(
+    tmp_path: Path,
+    filename: str,
+    messages: list[dict[str, object]],
+    *,
+    session_id: str = "gemini-session-uuid",
+) -> TranscriptReader:
+    json_path = tmp_path / filename
+    json_path.write_text(
+        json.dumps({"sessionId": session_id, "messages": messages}),
+        encoding="utf-8",
+    )
+
+    session = MagicMock()
+    session.source = "gemini"
+    session.transcript_path = str(json_path)
+    session.external_id = None
+
+    session_manager = MagicMock()
+    session_manager.get.return_value = session
+    return TranscriptReader(session_manager)
+
+
 class TestTranscriptReaderGeminiJSON:
     """TranscriptReader handles Gemini native JSON session files."""
 
     @pytest.mark.asyncio
     async def test_read_gemini_json_get_messages(self, tmp_path: Path):
         """get_messages works with Gemini JSON session files."""
-        json_path = tmp_path / "session-2025-03-23T10-00-00-abc12345.json"
-        gemini_session = {
-            "sessionId": "abc12345-full-uuid",
-            "messages": [
+        reader = _gemini_json_reader(
+            tmp_path,
+            "session-2025-03-23T10-00-00-abc12345.json",
+            [
                 {"type": "user", "content": "hello gemini", "timestamp": "2025-03-23T10:00:00Z"},
                 {"type": "gemini", "content": "hi there!", "timestamp": "2025-03-23T10:00:01Z"},
             ],
-        }
-        json_path.write_text(json.dumps(gemini_session))
-
-        session = MagicMock()
-        session.source = "gemini"
-        session.transcript_path = str(json_path)
-        session.external_id = None
-
-        session_manager = MagicMock()
-        session_manager.get.return_value = session
-
-        reader = TranscriptReader(session_manager)
+            session_id="abc12345-full-uuid",
+        )
         result = await reader.get_messages("sess-1", limit=50)
 
         assert len(result) == 2
@@ -821,25 +834,15 @@ class TestTranscriptReaderGeminiJSON:
     @pytest.mark.asyncio
     async def test_read_gemini_json_rendered(self, tmp_path: Path):
         """get_rendered_messages works with Gemini JSON session files."""
-        json_path = tmp_path / "session-2025-03-23T10-00-00-abc12345.json"
-        gemini_session = {
-            "sessionId": "abc12345-full-uuid",
-            "messages": [
+        reader = _gemini_json_reader(
+            tmp_path,
+            "session-2025-03-23T10-00-00-abc12345.json",
+            [
                 {"type": "user", "content": "what is 2+2?", "timestamp": "2025-03-23T10:00:00Z"},
                 {"type": "gemini", "content": "4", "timestamp": "2025-03-23T10:00:01Z"},
             ],
-        }
-        json_path.write_text(json.dumps(gemini_session))
-
-        session = MagicMock()
-        session.source = "gemini"
-        session.transcript_path = str(json_path)
-        session.external_id = None
-
-        session_manager = MagicMock()
-        session_manager.get.return_value = session
-
-        reader = TranscriptReader(session_manager)
+            session_id="abc12345-full-uuid",
+        )
         result = await reader.get_rendered_messages("sess-1")
 
         assert len(result) == 2
@@ -851,26 +854,16 @@ class TestTranscriptReaderGeminiJSON:
     @pytest.mark.asyncio
     async def test_count_gemini_json_messages(self, tmp_path: Path):
         """count_messages works with Gemini JSON session files."""
-        json_path = tmp_path / "session-test.json"
-        gemini_session = {
-            "sessionId": "test-uuid",
-            "messages": [
+        reader = _gemini_json_reader(
+            tmp_path,
+            "session-test.json",
+            [
                 {"type": "user", "content": "msg1", "timestamp": "2025-03-23T10:00:00Z"},
                 {"type": "gemini", "content": "reply1", "timestamp": "2025-03-23T10:00:01Z"},
                 {"type": "user", "content": "msg2", "timestamp": "2025-03-23T10:00:02Z"},
             ],
-        }
-        json_path.write_text(json.dumps(gemini_session))
-
-        session = MagicMock()
-        session.source = "gemini"
-        session.transcript_path = str(json_path)
-        session.external_id = None
-
-        session_manager = MagicMock()
-        session_manager.get.return_value = session
-
-        reader = TranscriptReader(session_manager)
+            session_id="test-uuid",
+        )
         count = await reader.count_messages("sess-1")
 
         assert count == 3
@@ -878,10 +871,10 @@ class TestTranscriptReaderGeminiJSON:
     @pytest.mark.asyncio
     async def test_gemini_json_with_tool_calls(self, tmp_path: Path):
         """Gemini JSON with embedded toolCalls parses correctly."""
-        json_path = tmp_path / "session-tools.json"
-        gemini_session = {
-            "sessionId": "tools-uuid",
-            "messages": [
+        reader = _gemini_json_reader(
+            tmp_path,
+            "session-tools.json",
+            [
                 {"type": "user", "content": "list files", "timestamp": "2025-03-23T10:00:00Z"},
                 {
                     "type": "gemini",
@@ -892,18 +885,8 @@ class TestTranscriptReaderGeminiJSON:
                     ],
                 },
             ],
-        }
-        json_path.write_text(json.dumps(gemini_session))
-
-        session = MagicMock()
-        session.source = "gemini"
-        session.transcript_path = str(json_path)
-        session.external_id = None
-
-        session_manager = MagicMock()
-        session_manager.get.return_value = session
-
-        reader = TranscriptReader(session_manager)
+            session_id="tools-uuid",
+        )
         result = await reader.get_messages("sess-1", limit=50)
 
         # user + assistant text + tool_use = at least 3 messages

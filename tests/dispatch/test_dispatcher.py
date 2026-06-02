@@ -187,6 +187,22 @@ async def test_sweep_expired_leases_pages_all_active_runs(
     assert storage.get_mutex(stale_task.id) is None
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, None),
+        ("not-a-date", None),
+        ("2026-01-01T12:00:00Z", datetime(2026, 1, 1, 12, 0, tzinfo=UTC)),
+        ("2026-01-01T12:00:00", datetime(2026, 1, 1, 12, 0, tzinfo=UTC)),
+        ("2026-01-01T12:00:00+02:30", datetime(2026, 1, 1, 9, 30, tzinfo=UTC)),
+    ],
+)
+def test_parse_mutex_timestamp(value: object, expected: datetime | None) -> None:
+    from gobby.dispatch.lease_cleanup import _parse_mutex_timestamp
+
+    assert _parse_mutex_timestamp(value) == expected
+
+
 @pytest.mark.asyncio
 async def test_append_audit_marker_is_exact_marker_idempotent(
     temp_db: HubDatabase,
@@ -2344,6 +2360,7 @@ async def test_merge_workspace_action_releases_lease_before_stage_transition(
         db: HubDatabase,
         services: object | None = None,
     ) -> object:
+        assert storage.get_mutex(action.task_id) is None
         manager = dispatcher._stage_states_manager(db=db, services=services)
         return manager.complete_stage(action.task_id, "merge", by_session_id="dispatcher")
 

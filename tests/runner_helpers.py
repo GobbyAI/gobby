@@ -38,7 +38,7 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
     set_mock_default(config.ui, "port", 5173)
 
     config.embeddings = getattr(config, "embeddings", MagicMock())
-    set_mock_default(config.embeddings, "api_base", "")
+    set_mock_default(config.embeddings, "api_base", "http://127.0.0.1:11434/v1")
     set_mock_default(config.embeddings, "model", "text-embedding-3-small")
     set_mock_default(config.embeddings, "api_key", None)
     set_mock_default(config.embeddings, "dim", 1536)

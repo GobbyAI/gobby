@@ -936,6 +936,59 @@ class TestCheckIdleAgents:
         ]
 
     @pytest.mark.asyncio
+    async def test_idle_reprompt_recovers_when_escape_clear_fails(
+        self,
+        idle_monitor: AgentLifecycleMonitor,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict,
+    ) -> None:
+        """Failed Escape clear should recover before sending the final reprompt."""
+        import time
+
+        run = _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id="run-reprompt-escape-fails",
+            tmux_session_name="gobby-reprompt-escape-fails",
+        )
+        state = idle_monitor._idle_detector.get_state(run.id)
+        state.first_idle_at = time.monotonic() - 360
+
+        send_results = [False, True, True, True, True]
+        with (
+            patch.object(
+                idle_monitor._tmux,
+                "capture_pane",
+                new_callable=AsyncMock,
+                return_value="\u276f\n",
+            ),
+            patch.object(
+                idle_monitor._tmux,
+                "has_session",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_has_session,
+            patch.object(
+                idle_monitor._tmux,
+                "send_keys",
+                new_callable=AsyncMock,
+                side_effect=send_results,
+            ) as mock_send,
+        ):
+            handled = await idle_monitor.check_idle_agents()
+
+        assert handled == 1
+        assert idle_monitor._idle_detector.get_state(run.id).reprompt_count == 1
+        assert mock_has_session.await_count == 2
+        assert mock_send.call_args_list == [
+            call("gobby-reprompt-escape-fails", "Escape", literal=False),
+            call("gobby-reprompt-escape-fails", "C-c", literal=False),
+            call("gobby-reprompt-escape-fails", "Enter", literal=False),
+            call("gobby-reprompt-escape-fails", "Continue working on your task."),
+            call("gobby-reprompt-escape-fails", "Enter", literal=False),
+        ]
+
+    @pytest.mark.asyncio
     async def test_truncated_queued_message_prompt_skips_idle_reprompt_and_failure(
         self,
         idle_monitor: AgentLifecycleMonitor,

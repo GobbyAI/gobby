@@ -412,7 +412,9 @@ class TestRenameTmuxWindow:
         from gobby.workflows.summary_actions import _contains_unresolved_session_ref
 
         assert _contains_unresolved_session_ref("#session_ref gobby") is True
+        assert _contains_unresolved_session_ref("#{session_ref}: gobby") is True
         assert _contains_unresolved_session_ref("{session_ref}: gobby") is True
+        assert _contains_unresolved_session_ref("session_ref: gobby") is False
         assert _contains_unresolved_session_ref("session_reference: gobby") is False
 
     def test_resolve_window_title_does_not_duplicate_existing_ref_prefix(self) -> None:

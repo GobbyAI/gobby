@@ -152,8 +152,10 @@ def has_holistic_ancestor_gate(
     if _stage_state(stage) == "done" or not task.parent_task_id:
         return False
 
+    gate_states = tuple(sorted(HOLISTIC_QA_GATE_STATES))
+    state_placeholders = ", ".join(["%s"] * len(gate_states))
     row = db.fetchone(
-        """
+        f"""
         WITH RECURSIVE ancestors(id, parent_task_id, depth) AS (
             SELECT parent.id, parent.parent_task_id, 1
               FROM tasks child
@@ -178,10 +180,10 @@ def has_holistic_ancestor_gate(
            )
          WHERE ancestor_task.task_type = 'epic'
            AND current_stage.stage_name = %s
-           AND current_stage.state IN ('ready', 'in_progress')
+           AND current_stage.state IN ({state_placeholders})
          LIMIT 1
-        """,
-        (task.id, HOLISTIC_QA_STAGE),
+        """,  # nosec B608 - placeholders are generated from an internal fixed-size state set.
+        (task.id, HOLISTIC_QA_STAGE, *gate_states),
     )
     return row is not None
 

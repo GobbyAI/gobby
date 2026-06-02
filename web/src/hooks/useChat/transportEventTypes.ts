@@ -124,11 +124,11 @@ export interface RawTokenEventMessage {
   cache_read_tokens?: RawNumericValue;
   context_window?: RawNumericValue;
   session_totals?: {
-    input_tokens?: number | string;
-    output_tokens?: number | string;
-    cache_creation_tokens?: number | string;
-    cache_read_tokens?: number | string;
-    context_window?: number | string;
+    input_tokens?: RawNumericValue;
+    output_tokens?: RawNumericValue;
+    cache_creation_tokens?: RawNumericValue;
+    cache_read_tokens?: RawNumericValue;
+    context_window?: RawNumericValue;
   };
 }
 

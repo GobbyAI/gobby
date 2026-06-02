@@ -806,6 +806,129 @@ describe('useSessionDetail', () => {
     expect(tailFetchCounts['sess-b']).toBe(1)
   })
 
+  it('queues a transcript tail refresh while another refresh is in flight', async () => {
+    await loadModule()
+
+    let tailFetchCount = 0
+    let resolveFirstRefresh: ((response: Response) => void) | null = null
+    mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url
+
+      if (/\/api\/sessions\/sess-cli$/.test(url)) {
+        return new Response(
+          JSON.stringify({
+            session: {
+              id: 'sess-cli',
+              external_id: 'sess-cli-ext',
+              session_type: 'terminal',
+              status: 'active',
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      if (url.includes('/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail')) {
+        tailFetchCount += 1
+        if (tailFetchCount === 2) {
+          return new Promise<Response>((resolve) => {
+            resolveFirstRefresh = resolve
+          })
+        }
+        return new Response(
+          JSON.stringify({
+            messages: [
+              {
+                id: 'sess-msg-1',
+                role: 'assistant',
+                content: tailFetchCount >= 3 ? 'Queued refresh output' : 'Initial output',
+                timestamp: '2026-04-09T00:00:00Z',
+              },
+            ],
+            total_count: 1,
+            rendered_count: 1,
+            returned_count: 1,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+
+    const { result } = renderHook(() => useSessionDetail('sess-cli'))
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(tailFetchCount).toBe(1)
+
+    vi.useFakeTimers()
+    act(() => {
+      ws.simulateMessage({
+        type: 'session_event',
+        event: 'session_updated',
+        session_id: 'sess-cli',
+      })
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(500)
+    })
+    expect(tailFetchCount).toBe(2)
+    expect(resolveFirstRefresh).not.toBeNull()
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'session_event',
+        event: 'session_updated',
+        session_id: 'sess-cli',
+      })
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(500)
+    })
+    expect(tailFetchCount).toBe(2)
+
+    await act(async () => {
+      resolveFirstRefresh?.(
+        new Response(
+          JSON.stringify({
+            messages: [
+              {
+                id: 'sess-msg-1',
+                role: 'assistant',
+                content: 'First refresh output',
+                timestamp: '2026-04-09T00:00:00Z',
+              },
+            ],
+            total_count: 1,
+            rendered_count: 1,
+            returned_count: 1,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(500)
+    })
+
+    expect(tailFetchCount).toBe(3)
+    expect(result.current.messages[0].content).toBe('Queued refresh output')
+  })
+
   it('shows an error and clears stale detail when selected session refresh disappears', async () => {
     await loadModule()
 

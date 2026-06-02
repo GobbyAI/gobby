@@ -121,6 +121,24 @@ class IdleCheckHandler:
             self._idle_timeout_seconds_for_run(run),
         )
 
+    async def _recover_failed_reprompt_clear(self, run: AgentRun, tmux_name: str) -> bool:
+        if not await self._tmux.has_session(tmux_name):
+            logger.warning(
+                "Cannot recover failed idle prompt clear for agent %s: tmux gone",
+                run.id,
+            )
+            return False
+        if not await self._tmux.send_keys(tmux_name, "C-c", literal=False):
+            logger.warning("Failed to interrupt queued prompt while recovering agent %s", run.id)
+            return False
+        if not await self._tmux.send_keys(tmux_name, "Enter", literal=False):
+            logger.warning("Failed to submit interrupt while recovering agent %s", run.id)
+            return False
+        if not await self._tmux.has_session(tmux_name):
+            logger.warning("Cannot reprompt agent %s after recovery: tmux gone", run.id)
+            return False
+        return True
+
     async def _handle_idle_check(self, run: AgentRun) -> int:
         """Handle idle check for a single agent."""
         latest_run = await self._run_db(self._agent_run_manager.get, run.id)
@@ -224,7 +242,8 @@ class IdleCheckHandler:
             cleared = await self._tmux.send_keys(tmux_name, "Escape", literal=False)
             if not cleared:
                 logger.warning("Failed to clear queued prompt before reprompting agent %s", run.id)
-                return 0
+                if not await self._recover_failed_reprompt_clear(run, tmux_name):
+                    return 0
             sent = await self._tmux.send_keys(tmux_name, reprompt_message)
             if not sent:
                 logger.warning("Failed to send idle reprompt text to agent %s", run.id)

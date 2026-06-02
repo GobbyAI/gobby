@@ -77,6 +77,11 @@ def _add_restart_metadata(
         result["restart_hint"] = _FALKOR_RESTART_HINT
 
 
+def _storage_config_key_to_public_key(key: str) -> str:
+    runtime_key = storage_embedding_config_key_to_runtime_key(key)
+    return runtime_embedding_config_key_to_storage_key(runtime_key)
+
+
 def create_config_registry(
     config: DaemonConfig,
     config_store: ConfigStore,
@@ -445,13 +450,16 @@ def create_config_registry(
             if prefix is not None:
                 runtime_prefix = external_embedding_config_key_to_runtime_key(prefix)
                 storage_prefix = runtime_embedding_config_key_to_storage_key(runtime_prefix)
-            keys = config_store.list_keys(prefix=storage_prefix)
+            keys = sorted(
+                _storage_config_key_to_public_key(key)
+                for key in config_store.list_keys(prefix=storage_prefix)
+            )
             return {"success": True, "count": len(keys), "keys": keys}
         except ValueError as e:
             return {"success": False, "error": str(e)}
         except Exception:
             logger.exception("Failed to list config keys")
-            return {"success": False, "error": _UNEXPECTED_CONFIG_ERROR}
+            return {"success": False, "error": "config store unavailable"}
 
     @registry.tool(
         name="ensure_defaults",
@@ -500,7 +508,7 @@ def create_config_registry(
                 "success": True,
                 "inserted": count,
                 "total_section_keys": len(section_defaults),
-                "keys_inserted": sorted(missing.keys()),
+                "keys_inserted": sorted(_storage_config_key_to_public_key(key) for key in missing),
             }
         except ValueError as e:
             return {"success": False, "error": str(e)}

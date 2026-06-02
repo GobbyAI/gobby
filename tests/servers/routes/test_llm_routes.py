@@ -313,6 +313,18 @@ def test_vision_temp_dir_enforces_restrictive_mode_on_existing_dir(
     assert stat.S_IMODE(temp_dir.stat().st_mode) == 0o700
 
 
+def test_vision_temp_cleanup_task_skips_without_running_loop(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(llm_module.tempfile, "gettempdir", lambda: str(tmp_path))
+    app = FastAPI()
+
+    llm_module.start_vision_temp_cleanup_task(app)
+
+    assert getattr(app.state, "vision_temp_cleanup_task", None) is None
+
+
 def test_write_temp_image_raises_contextual_error_on_temp_dir_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

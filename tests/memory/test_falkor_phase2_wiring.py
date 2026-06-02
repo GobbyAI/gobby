@@ -121,7 +121,7 @@ def test_runner_memory_stack_uses_canonical_falkordb_enablement_and_kwargs() -> 
                 dim=768,
                 model="nomic-embed-text",
                 api_key=None,
-                api_base=None,
+                api_base="http://127.0.0.1:11434/v1",
             ),
             databases=SimpleNamespace(
                 qdrant=SimpleNamespace(

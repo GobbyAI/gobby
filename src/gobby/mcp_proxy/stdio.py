@@ -104,6 +104,14 @@ def _daemon_unavailable_result(port: int, detail: str) -> dict[str, Any]:
     }
 
 
+def _request_timeout_result(path: str, timeout: float) -> dict[str, Any]:
+    return {
+        "success": False,
+        "error": f"Gobby daemon request timed out after {timeout:g}s while calling {path}.",
+        "error_code": "REQUEST_TIMEOUT",
+    }
+
+
 def _removed_wait_for_completion_result() -> dict[str, Any]:
     return {
         "success": False,
@@ -242,10 +250,7 @@ class DaemonProxy:
         except httpx.ConnectError:
             return _daemon_unavailable_result(self.port, "connection failed")
         except httpx.TimeoutException:
-            return _daemon_unavailable_result(
-                self.port,
-                f"request timed out after {timeout:g}s while calling {path}",
-            )
+            return _request_timeout_result(path, timeout)
         except Exception as e:
             error_msg = str(e) or f"{type(e).__name__}: (no message)"
             return {"success": False, "error": error_msg}

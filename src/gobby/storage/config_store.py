@@ -82,6 +82,8 @@ class ConfigStore:
 
     Keys are flattened dotted paths (e.g. "llm_providers.claude.models").
     Values are JSON-encoded for type preservation.
+    Secret config keys have a canonical 1:1 mapping to SecretStore names via
+    config_key_to_secret_name(); do not share one encrypted secret across keys.
     """
 
     def __init__(self, db: HubDatabase):

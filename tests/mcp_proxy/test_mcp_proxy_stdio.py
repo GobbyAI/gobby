@@ -669,7 +669,7 @@ class TestDaemonProxy:
         assert mock_client.request.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_request_timeout_returns_daemon_unavailable(self) -> None:
+    async def test_request_timeout_returns_request_timeout(self) -> None:
         """Daemon read timeouts should become actionable proxy errors."""
         from gobby.mcp_proxy.stdio import DaemonProxy
 
@@ -684,7 +684,7 @@ class TestDaemonProxy:
             result = await proxy._request("POST", "/api/mcp/gobby-agents/tools/list", timeout=5.0)
 
         assert result["success"] is False
-        assert result["error_code"] == "DAEMON_UNAVAILABLE"
+        assert result["error_code"] == "REQUEST_TIMEOUT"
         assert "request timed out after 5s" in result["error"]
         assert "/api/mcp/gobby-agents/tools/list" in result["error"]
 

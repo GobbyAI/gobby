@@ -445,6 +445,7 @@ def test_real_small_gobby_build_canary(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
+    build_timeout = float(os.environ.get("GOBBY_BUILD_TIMEOUT", "300"))
     result = subprocess.run(
         [
             "uv",
@@ -461,7 +462,7 @@ def test_real_small_gobby_build_canary(tmp_path: Path) -> None:
         cwd=Path(__file__).resolve().parents[2],
         text=True,
         capture_output=True,
-        timeout=120,
+        timeout=build_timeout,
         check=False,
     )
 

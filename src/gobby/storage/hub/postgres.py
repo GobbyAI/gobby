@@ -469,7 +469,7 @@ def _is_create_statement_for_table(
         r"\"?[A-Za-z_][A-Za-z0-9_]*\"?"
         r"\s+ON\s+\"?([A-Za-z_][A-Za-z0-9_]*)\"?",
         text,
-        re.IGNORECASE | re.DOTALL,
+        re.IGNORECASE,
     )
     if index_match:
         return table_matches(index_match.group(1))

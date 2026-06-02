@@ -204,6 +204,8 @@ export function useSessionDetail(sessionId: string | null) {
   const detailPollCleanupRef = useRef<(() => void) | null>(null)
   const tailRefreshTimeoutRef = useRef<number | null>(null)
   const tailRefreshInFlightRef = useRef(false)
+  const tailRefreshPendingSessionRef = useRef<string | null>(null)
+  const scheduleTailRefreshRef = useRef<(activeSessionId: string) => void>(() => {})
   const tailWindowVersionRef = useRef(0)
   const detailLoadVersionRef = useRef(0)
   // Mirrors of paging state read synchronously by loadMore / live append.
@@ -237,6 +239,7 @@ export function useSessionDetail(sessionId: string | null) {
       window.clearTimeout(tailRefreshTimeoutRef.current)
       tailRefreshTimeoutRef.current = null
     }
+    tailRefreshPendingSessionRef.current = null
   }, [])
 
   const resetPaging = useCallback(() => {
@@ -246,6 +249,7 @@ export function useSessionDetail(sessionId: string | null) {
     renderedTotalRef.current = 0
     loadingOlderRef.current = false
     tailRefreshInFlightRef.current = false
+    tailRefreshPendingSessionRef.current = null
     tailWindowVersionRef.current += 1
     setIsLoadingOlder(false)
     setFirstItemIndex(START_INDEX)
@@ -457,7 +461,11 @@ export function useSessionDetail(sessionId: string | null) {
     tailRefreshTimeoutRef.current = window.setTimeout(() => {
       tailRefreshTimeoutRef.current = null
       if (sessionIdRef.current !== activeSessionId || messageSourceRef.current !== 'session') return
-      if (loadingOlderRef.current || tailRefreshInFlightRef.current) return
+      if (tailRefreshInFlightRef.current) {
+        tailRefreshPendingSessionRef.current = activeSessionId
+        return
+      }
+      if (loadingOlderRef.current) return
 
       const refreshVersion = detailLoadVersionRef.current
       const tailWindowVersion = tailWindowVersionRef.current
@@ -482,10 +490,23 @@ export function useSessionDetail(sessionId: string | null) {
           }
         } finally {
           tailRefreshInFlightRef.current = false
+          const pendingSessionId = tailRefreshPendingSessionRef.current
+          tailRefreshPendingSessionRef.current = null
+          if (
+            pendingSessionId &&
+            sessionIdRef.current === pendingSessionId &&
+            messageSourceRef.current === 'session'
+          ) {
+            scheduleTailRefreshRef.current(pendingSessionId)
+          }
         }
       })()
     }, TAIL_REFRESH_DEBOUNCE_MS)
   }, [applyRefreshedTailMessages, clearTailRefresh])
+
+  useEffect(() => {
+    scheduleTailRefreshRef.current = scheduleTailRefresh
+  }, [scheduleTailRefresh])
 
   // Refresh only session metadata; reload the transcript only when its identity
   // (path/source) changed. Otherwise debounce a tail-page refresh so missed

@@ -125,12 +125,12 @@ def register_plan_command(
     type=click.Choice(["standard", "expansion"]),
     default="standard",
     show_default=True,
-    help="Validation mode. expansion includes test consumers.",
+    help="Validation mode. expansion always includes test consumers.",
 )
 @click.option(
     "--include-tests",
     is_flag=True,
-    help="Include test files in consumer-sweep target coverage.",
+    help="Include test files in standard-mode consumer-sweep target coverage.",
 )
 def validate_plan_command(
     plan_file: Path,
@@ -139,11 +139,12 @@ def validate_plan_command(
     include_tests: bool,
 ) -> None:
     """Validate a plan file, including semantic and consumer-sweep lint."""
+    include_test_consumers = mode == "expansion" or include_tests
 
     result = _validate_plan_for_cli(
         plan_file,
         project_ref,
-        include_tests=include_tests or mode == "expansion",
+        include_tests=include_test_consumers,
     )
     if not result["valid"]:
         for error in result.get("errors", []):
