@@ -1,5 +1,6 @@
 """Tests for GobbyDaemonTools handler class in server.py."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -294,6 +295,51 @@ class TestGobbyDaemonToolsCallTool:
         )
         assert tools_handler.tool_proxy.call_tool.call_count == 1
         assert tools_handler.tool_proxy.call_tool.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_call_tool_returns_client_safe_timeout_for_stuck_wait_tool(self, tools_handler):
+        """Nested call_tool wait tools return before the MCP client deadline."""
+        release_call = asyncio.Event()
+        call_finished = asyncio.Event()
+
+        async def _block_until_released(*_args):
+            await release_call.wait()
+            call_finished.set()
+            return {"success": True, "res": "too late"}
+
+        tools_handler.tool_proxy.call_tool = AsyncMock(side_effect=_block_until_released)
+
+        with (
+            patch("gobby.mcp_proxy.wait_tools.MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS", 0.02),
+            patch("gobby.mcp_proxy.wait_tools.WAIT_TOOL_WRAPPER_GRACE_SECONDS", 0.01),
+        ):
+            result = await asyncio.wait_for(
+                tools_handler.call_tool(
+                    server_name="gobby-agents",
+                    tool_name="wait_for_agent",
+                    arguments={"run_id": "run-123", "timeout_seconds": 300},
+                ),
+                timeout=0.2,
+            )
+
+        assert result == {
+            "completed": False,
+            "timeout_seconds": 0.02,
+            "effective_timeout_seconds": 0.02,
+            "mcp_wrapper_timeout": True,
+            "background_call_continues": True,
+            "tool_name": "wait_for_agent",
+            "requested_timeout_seconds": 300.0,
+            "wait_timeout_capped_by_mcp_wrapper": True,
+        }
+        tools_handler.tool_proxy.call_tool.assert_awaited_once_with(
+            "gobby-agents",
+            "wait_for_agent",
+            {"run_id": "run-123", "timeout_seconds": 0.02},
+            None,
+        )
+        release_call.set()
+        await asyncio.wait_for(call_finished.wait(), timeout=0.2)
 
     @pytest.mark.asyncio
     async def test_call_tool_propagates_errors(self, tools_handler):

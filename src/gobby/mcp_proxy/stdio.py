@@ -37,11 +37,10 @@ from gobby.mcp_proxy.session_bootstrap import (
 )
 from gobby.mcp_proxy.wait_tools import (
     EXTENDED_TIMEOUT_TOOL_NAMES,
-    MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS,
-    MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS,
     WAIT_TOOL_HTTP_TIMEOUT_BUFFER_SECONDS,
     WAIT_TOOL_NAMES,
     call_with_wait_heartbeat,
+    prepare_client_guard,
 )
 
 
@@ -605,36 +604,8 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
                 "error": "Missing required parameters: server_name, tool_name",
             }
 
-        requested_timeout = None
-        original_wait_timeout = None
-        wait_timeout_capped = False
-        if tool_name in WAIT_TOOL_NAMES:
-            raw_timeout = None
-            timeout_key = "timeout_seconds"
-            if isinstance(final_args, dict):
-                if "timeout" in final_args:
-                    timeout_key = "timeout"
-                    raw_timeout = final_args["timeout"]
-                elif "timeout_seconds" in final_args:
-                    raw_timeout = final_args["timeout_seconds"]
-            if raw_timeout is None:
-                raw_timeout = 300.0
-            try:
-                requested_timeout = float(raw_timeout)
-            except (TypeError, ValueError):
-                requested_timeout = None
-
-            if (
-                requested_timeout is not None
-                and requested_timeout > MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS
-            ):
-                original_wait_timeout = requested_timeout
-                requested_timeout = MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS
-                final_args = dict(final_args) if isinstance(final_args, dict) else {}
-                final_args[timeout_key] = requested_timeout
-                wait_timeout_capped = True
-        elif tool_name in EXTENDED_TIMEOUT_TOOL_NAMES:
-            requested_timeout = MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS
+        guard = prepare_client_guard(tool_name=tool_name, arguments=final_args)
+        final_args = guard.arguments
 
         call_kwargs: dict[str, Any] = {}
         if project_id:
@@ -652,11 +623,11 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
             ),
             ctx=ctx,
             tool_name=tool_name,
-            timeout=requested_timeout,
+            timeout=guard.timeout,
         )
-        if wait_timeout_capped:
-            result["requested_timeout_seconds"] = original_wait_timeout
-            result["effective_timeout_seconds"] = requested_timeout
+        if guard.wait_timeout_capped:
+            result["requested_timeout_seconds"] = guard.requested_timeout_seconds
+            result["effective_timeout_seconds"] = guard.effective_timeout_seconds
             result["wait_timeout_capped_by_mcp_wrapper"] = True
         return result
 

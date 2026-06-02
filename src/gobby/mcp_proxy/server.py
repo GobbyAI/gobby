@@ -22,6 +22,7 @@ from gobby.mcp_proxy.server_list import compact_mcp_server_list
 from gobby.mcp_proxy.services.recommendation import RecommendationService, SearchMode
 from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
+from gobby.mcp_proxy.wait_tools import call_with_wait_heartbeat, prepare_client_guard
 from gobby.utils import project_context as project_context_utils
 from gobby.utils.session_context import reset_seeded_contexts, resolve_and_seed_contexts
 
@@ -264,12 +265,27 @@ class GobbyDaemonTools:
         # ref would re-poison workflow checks and tool filters.
         effective_session_id = tokens.resolved_session_id
 
+        guard = prepare_client_guard(tool_name=tool_name, arguments=arguments)
+
         try:
-            result = await self.tool_proxy.call_tool(
-                server_name, tool_name, arguments, effective_session_id
+            result = await call_with_wait_heartbeat(
+                self.tool_proxy.call_tool(
+                    server_name,
+                    tool_name,
+                    guard.arguments,
+                    effective_session_id,
+                ),
+                ctx=None,
+                tool_name=tool_name,
+                timeout=guard.timeout,
             )
         finally:
             reset_seeded_contexts(tokens)
+
+        if isinstance(result, dict) and guard.wait_timeout_capped:
+            result["requested_timeout_seconds"] = guard.requested_timeout_seconds
+            result["effective_timeout_seconds"] = guard.effective_timeout_seconds
+            result["wait_timeout_capped_by_mcp_wrapper"] = True
 
         # Check if result indicates an error:
         # - Old pattern: {"success": False, "error": ...}
