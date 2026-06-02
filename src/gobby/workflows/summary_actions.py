@@ -331,36 +331,31 @@ def schedule_tmux_window_rename(
 
 
 def _synthesize_fallback_title(session: object, terminal_context: dict[str, Any]) -> str:
-    """Synthesize a fallback title from terminal context when title is empty.
+    """Synthesize a fallback title for a session that still has no title.
 
-    Prefers basename from terminal context fields (cwd, project_path, workspace_path,
-    repo_path), falls back to session source, then defaults to "session".
+    Deliberately never derives from terminal paths (cwd / project_path /
+    workspace_path / repo_path basename): a path basename is indistinguishable
+    from a real title and is exactly what made title-less sessions masquerade as
+    the project directory (the original ``#N: gobby`` bug). Falls back to the
+    session ``source`` (e.g. ``claude``), then a neutral ``"untitled"`` label.
+
+    With the per-turn heuristic, digest-cancellation fallback, and repair-sweep
+    title synthesis in place this branch is rarely reached; when it is, it must
+    no longer produce a misleading directory name.
 
     Args:
         session: The session object
-        terminal_context: Parsed terminal context dict
+        terminal_context: Parsed terminal context dict (unused; retained for the
+            stable call signature shared with ``_resolve_window_title``)
 
     Returns:
         A fallback title string
     """
-    fallback_fields = ["cwd", "project_path", "workspace_path", "repo_path"]
-    for field in fallback_fields:
-        title = _path_basename_title(terminal_context.get(field))
-        if title:
-            return title
-
     session_source = getattr(session, "source", None)
     if session_source:
         return str(session_source)
 
-    return "session"
-
-
-def _path_basename_title(value: Any) -> str | None:
-    if not isinstance(value, str) or not value:
-        return None
-    title = Path(value).name
-    return title or None
+    return "untitled"
 
 
 def _contains_unresolved_session_ref(value: Any) -> bool:
@@ -516,6 +511,54 @@ async def enforce_window_name_if_unmanaged(session: Any) -> bool:
 
     title = getattr(session, "title", None) or ""
     return await _apply_window_rename(session, tc, pane, title)
+
+
+async def repair_missing_session_title(session_manager: Any, session: Any) -> str | None:
+    """Synthesize and persist a heuristic title for a title-less session with turns.
+
+    The provider-agnostic backstop for the repair sweep: when a tracked session
+    has had turns (``turn_count > 0``) but still carries no title — because the
+    per-turn heuristic and LLM digest paths both missed (notably interactive
+    Claude, whose stops are perpetually blocked so the digest title never lands)
+    — derive a cheap title from the transcript (no LLM) and persist it with
+    ``title_source="heuristic"``.
+
+    Persisting routes through ``session_manager.update_title``, whose
+    title-change side effects schedule the tmux window rename, so the window
+    stops showing the empty-title fallback. Returns the persisted title, or
+    ``None`` when no synthesis was applicable (no turns, an existing or manual
+    title, or no usable transcript prompt).
+    """
+    if not session_manager or session is None:
+        return None
+    if (getattr(session, "turn_count", 0) or 0) <= 0:
+        return None
+    if str(getattr(session, "title", "") or "").strip():
+        return None
+    if str(getattr(session, "title_source", "") or "").strip().lower() == "manual":
+        return None
+
+    session_id = getattr(session, "id", None)
+    if not session_id:
+        return None
+
+    from gobby.memory.digest import _heuristic_title_from_transcript
+
+    title = await _heuristic_title_from_transcript(
+        getattr(session, "transcript_path", None),
+        getattr(session, "source", None),
+    )
+    if not title:
+        return None
+
+    updated = session_manager.update_title(session_id, title, title_source="heuristic")
+    if updated is None:
+        return None
+    logger.info(
+        "Repair sweep synthesized heuristic title for session %s",
+        getattr(session, "ref", session_id),
+    )
+    return title
 
 
 async def generate_summary(

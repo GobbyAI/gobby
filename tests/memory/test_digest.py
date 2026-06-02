@@ -5,6 +5,7 @@ Relocated from tests/workflows/test_memory_actions.py as part of dead-code clean
 
 import hashlib
 import logging
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -13,6 +14,7 @@ from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.digest import (
     _build_heuristic_title,
     _get_next_turn_number,
+    _heuristic_title_from_transcript,
     _parse_turn_record_response,
     _read_last_turn_from_transcript,
     _read_undigested_turns,
@@ -26,6 +28,8 @@ from gobby.memory.digest import (
 from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
+
+_CLAUDE_FIXTURE = Path(__file__).parent / "fixtures" / "claude_transcript_titles.jsonl"
 
 
 def _turn_record_json(
@@ -251,6 +255,72 @@ class TestBootstrapSessionTitle:
 
         assert title is None
         session_manager.update_title.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_derives_title_from_transcript_when_prompt_missing(self) -> None:
+        """When the event carries no prompt, fall back to the transcript opener."""
+        session_manager = MagicMock()
+        session = MagicMock()
+        session.title = None
+        session.source = "claude"
+        session.transcript_path = str(_CLAUDE_FIXTURE)
+        session_manager.get.return_value = session
+        session_manager.update_title.return_value = session
+
+        # prompt_text is empty/None — heuristic must come from the transcript.
+        title = await bootstrap_session_title(session_manager, "session-123", "")
+
+        assert title == "Fix Claude session titles in VSCode"
+        session_manager.update_title.assert_called_once_with(
+            "session-123",
+            "Fix Claude session titles in VSCode",
+            title_source="heuristic",
+        )
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_prompt_and_no_transcript(self) -> None:
+        session_manager = MagicMock()
+        session = MagicMock()
+        session.title = None
+        session.source = "claude"
+        session.transcript_path = None
+        session_manager.get.return_value = session
+
+        title = await bootstrap_session_title(session_manager, "session-123", "")
+
+        assert title is None
+        session_manager.update_title.assert_not_called()
+
+
+class TestHeuristicTitleFromTranscript:
+    """Tests for _heuristic_title_from_transcript (real Claude fixture)."""
+
+    @pytest.mark.asyncio
+    async def test_extracts_first_user_prompt_from_real_fixture(self) -> None:
+        title = await _heuristic_title_from_transcript(str(_CLAUDE_FIXTURE), "claude")
+        # The opener wins — tool_result user turns and the later follow-up are
+        # not used as the session title.
+        assert title == "Fix Claude session titles in VSCode"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_for_missing_path(self) -> None:
+        assert await _heuristic_title_from_transcript("/nonexistent/path.jsonl", "claude") is None
+        assert await _heuristic_title_from_transcript(None, "claude") is None
+
+    @pytest.mark.asyncio
+    async def test_skips_lifecycle_and_tool_results(self, tmp_path) -> None:
+        import json
+
+        transcript = tmp_path / "transcript.jsonl"
+        turns = [
+            {"message": {"role": "user", "content": "/clear"}},
+            {"message": {"role": "user", "content": [{"type": "tool_result", "content": "x"}]}},
+            {"message": {"role": "user", "content": "Refactor the dispatcher rules"}},
+        ]
+        transcript.write_text("\n".join(json.dumps(t) for t in turns))
+
+        title = await _heuristic_title_from_transcript(str(transcript), "claude")
+        assert title == "Refactor the dispatcher rules"
 
 
 class TestReadLastTurnFromTranscript:
@@ -514,6 +584,44 @@ class TestBuildTurnAndDigest:
         assert "exit_code=143" in result["reason"]
         mock_session_manager.persist_digest_state.assert_not_called()
         assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
+
+    @pytest.mark.asyncio
+    async def test_cancellation_persists_heuristic_title_from_transcript(
+        self,
+        mock_memory_manager,
+        mock_session_manager,
+        mock_llm_service,
+    ):
+        """On provider cancellation, a transcript heuristic title still lands when
+        the session has none — so a window name is set even without the LLM."""
+        session = mock_session_manager.get.return_value
+        session.title = None
+        session.transcript_path = str(_CLAUDE_FIXTURE)
+        session.source = "claude"
+
+        provider = mock_llm_service.get_default_provider.return_value
+        provider.generate_text.side_effect = LLMProviderCancellation(
+            "generate_text[memory.turn_record] cancelled: provider exited [exit_code=143]"
+        )
+
+        result = await build_turn_and_digest(
+            memory_manager=mock_memory_manager,
+            session_manager=mock_session_manager,
+            session_id="session-123",
+            prompt_text="Summarize this turn",
+            llm_service=mock_llm_service,
+        )
+
+        assert result is not None
+        assert result["cancelled"] is True
+        assert result["title"] == "Fix Claude session titles in VSCode"
+        assert result["title_source"] == "heuristic"
+        mock_session_manager.update_title.assert_called_once_with(
+            "session-123",
+            "Fix Claude session titles in VSCode",
+            title_source="heuristic",
+        )
+        mock_session_manager.persist_digest_state.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_digest_persistence_failure_raises_without_legacy_writes(

@@ -76,6 +76,45 @@ def _provider_cancelled_result(session_id: str, exc: LLMProviderCancellation) ->
     return {"cancelled": True, "reason": str(exc)}
 
 
+async def _provider_cancelled_fallback(
+    session_manager: Any,
+    session_id: str,
+    exc: LLMProviderCancellation,
+) -> dict[str, Any]:
+    """Land a heuristic title when LLM digest/title generation is cancelled.
+
+    Provider-shutdown cancellation otherwise leaves the title unset because the
+    LLM call never completes — the dominant reason interactive Claude sessions
+    keep an empty title. When the session still has no title, persist a cheap
+    transcript-derived heuristic so a descriptive window name always lands even
+    when the LLM is unavailable.
+    """
+    result = _provider_cancelled_result(session_id, exc)
+    if not session_manager or not session_id:
+        return result
+    session = session_manager.get(session_id)
+    if session is None:
+        return result
+    if str(getattr(session, "title", "") or "").strip():
+        return result
+
+    title = await _heuristic_title_from_transcript(
+        getattr(session, "transcript_path", None),
+        getattr(session, "source", None),
+    )
+    if not title:
+        return result
+
+    updated = session_manager.update_title(session_id, title, title_source="heuristic")
+    if updated is not None:
+        result["title"] = title
+        result["title_source"] = "heuristic"
+        logger.info(
+            "Persisted heuristic fallback title for cancelled digest session %s", session_id
+        )
+    return result
+
+
 async def memory_sync_import(memory_sync_manager: Any) -> dict[str, Any]:
     """Import memories from filesystem.
 
@@ -444,6 +483,63 @@ def _build_heuristic_title(prompt_text: Any) -> str | None:
     return candidate[0].upper() + candidate[1:]
 
 
+async def _heuristic_title_from_transcript(
+    transcript_path: str | None,
+    source: str | None,
+    *,
+    max_turns: int = 200,
+) -> str | None:
+    """Derive a heuristic title from the first meaningful user prompt.
+
+    Reads the transcript's current segment (since the last ``/clear``) via the
+    shared parser registry and feeds the opening non-lifecycle user prompt to
+    :func:`_build_heuristic_title`. LLM-free; the resilient backstop for sessions
+    whose per-turn title paths never landed (notably interactive Claude sessions
+    whose stops are perpetually blocked). Returns ``None`` when the transcript is
+    missing, empty, or yields no usable prompt.
+    """
+    if not transcript_path or not Path(transcript_path).exists():
+        return None
+    try:
+        from gobby.sessions.transcripts import get_parser
+
+        parser = get_parser(source or "")
+
+        def _read_lines() -> list[str]:
+            with open(transcript_path, encoding="utf-8") as f:
+                return f.readlines()
+
+        turns: list[dict[str, Any]] = []
+        for line in await asyncio.to_thread(_read_lines):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                turns.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        segment = parser.extract_turns_since_clear(turns, max_turns=max_turns) if turns else []
+        if not segment:
+            return None
+        # Large num_pairs keeps every message, so the first user one is the opener.
+        for msg in parser.extract_last_messages(segment, num_pairs=len(segment) + 1):
+            if msg.get("role") != "user":
+                continue
+            content = str(msg.get("content") or "")
+            stripped = content.strip().lower()
+            if not stripped or any(
+                stripped == c or stripped.startswith(c + " ") for c in _LIFECYCLE_CMDS
+            ):
+                continue
+            title = _build_heuristic_title(content)
+            if title:
+                return title
+        return None
+    except Exception as e:
+        logger.debug("Heuristic title from transcript %s failed: %s", transcript_path, e)
+        return None
+
+
 def _should_update_digest_title(session: SessionTitlePolicy) -> bool:
     """Return whether digest-owned title generation may update this session title."""
     existing_title = str(getattr(session, "title", None) or "").strip()
@@ -493,6 +589,14 @@ async def bootstrap_session_title(
         return None
 
     title = _build_heuristic_title(prompt_text)
+    if not title:
+        # Event payload carried no usable prompt (empty/normalization gap on some
+        # provider paths). Fall back to the transcript's first user turn so the
+        # heuristic does not depend solely on the event data.
+        title = await _heuristic_title_from_transcript(
+            getattr(session, "transcript_path", None),
+            getattr(session, "source", None),
+        )
     if not title:
         return None
 
@@ -845,7 +949,7 @@ async def build_turn_and_digest(
                     digest_config=digest_config,
                 )
             except LLMProviderCancellation as e:
-                return _provider_cancelled_result(session_id, e)
+                return await _provider_cancelled_fallback(session_manager, session_id, e)
             except Exception as e:
                 logger.warning(f"build_turn_and_digest: Title synthesis failed: {e}")
                 return None
@@ -923,7 +1027,7 @@ async def build_turn_and_digest(
     except _DigestPersistenceError:
         raise
     except LLMProviderCancellation as e:
-        return _provider_cancelled_result(session_id, e)
+        return await _provider_cancelled_fallback(session_manager, session_id, e)
     except Exception as e:
         logger.error(
             f"build_turn_and_digest: Failed for session {session_id}: {e}",

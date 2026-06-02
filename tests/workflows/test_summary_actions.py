@@ -373,8 +373,12 @@ class TestRenameTmuxWindow:
         assert manager.rename_calls == [("%42", "#99: My Title")]
 
     @pytest.mark.asyncio
-    async def test_empty_title_falls_back_to_cwd_basename_and_ref(self) -> None:
-        """Empty titles use cwd basename before applying the session ref."""
+    async def test_empty_title_falls_back_to_source_not_cwd_basename(self) -> None:
+        """Empty titles never use the cwd basename (the old ``#N: gobby`` bug).
+
+        The fallback is the session ``source``, even when a cwd basename exists —
+        a path basename is indistinguishable from a real title.
+        """
         from gobby.workflows.summary_actions import _rename_tmux_window
 
         _RecordingTmuxManager.instances = []
@@ -388,7 +392,7 @@ class TestRenameTmuxWindow:
             await _rename_tmux_window(session, "")
 
         manager = _RecordingTmuxManager.instances[0]
-        assert manager.rename_calls == [("%42", "#99: gobby")]
+        assert manager.rename_calls == [("%42", "#99: claude")]
 
     @pytest.mark.asyncio
     async def test_unresolved_session_ref_uses_seq_num(self) -> None:
@@ -401,12 +405,13 @@ class TestRenameTmuxWindow:
         session.agent_depth = 0
         session.ref = "#session_ref"
         session.seq_num = 99
+        session.source = "claude"
 
         with patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager):
             await _rename_tmux_window(session, "")
 
         manager = _RecordingTmuxManager.instances[0]
-        assert manager.rename_calls == [("%42", "#99: gobby")]
+        assert manager.rename_calls == [("%42", "#99: claude")]
 
     def test_unresolved_session_ref_detection_requires_placeholder_token(self) -> None:
         from gobby.workflows.summary_actions import _contains_unresolved_session_ref
@@ -428,7 +433,7 @@ class TestRenameTmuxWindow:
 
     @pytest.mark.asyncio
     async def test_unresolved_title_falls_back_before_prefixing(self) -> None:
-        """A stored placeholder title is replaced with the fallback basename."""
+        """A stored placeholder title is replaced with the source fallback."""
         from gobby.workflows.summary_actions import _rename_tmux_window
 
         _RecordingTmuxManager.instances = []
@@ -437,27 +442,28 @@ class TestRenameTmuxWindow:
         session.agent_depth = 0
         session.ref = "#session_ref"
         session.seq_num = 99
+        session.source = "claude"
 
         with patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager):
             await _rename_tmux_window(session, "#session_ref gobby")
 
         manager = _RecordingTmuxManager.instances[0]
-        assert manager.rename_calls == [("%42", "#99: gobby")]
+        assert manager.rename_calls == [("%42", "#99: claude")]
 
     @pytest.mark.asyncio
-    async def test_empty_title_falls_back_to_source_then_session(self) -> None:
-        """Empty titles use source when no path basename exists, then session."""
+    async def test_empty_title_falls_back_to_source_then_untitled(self) -> None:
+        """Empty titles use the session source, then a neutral 'untitled' label."""
         from gobby.workflows.summary_actions import _rename_tmux_window
 
         _RecordingTmuxManager.instances = []
         source_session = MagicMock()
-        source_session.terminal_context = {"tmux_pane": "%43", "cwd": "/"}
+        source_session.terminal_context = {"tmux_pane": "%43", "cwd": "/work/repos/gobby"}
         source_session.agent_depth = 0
         source_session.ref = None
         source_session.source = "codex"
 
         session_fallback = MagicMock()
-        session_fallback.terminal_context = {"tmux_pane": "%44"}
+        session_fallback.terminal_context = {"tmux_pane": "%44", "cwd": "/work/repos/gobby"}
         session_fallback.agent_depth = 0
         session_fallback.ref = None
         session_fallback.source = None
@@ -466,8 +472,10 @@ class TestRenameTmuxWindow:
             await _rename_tmux_window(source_session, "")
             await _rename_tmux_window(session_fallback, "")
 
+        # Even with a cwd basename present, the fallback is source / "untitled" —
+        # never the directory name.
         assert _RecordingTmuxManager.instances[0].rename_calls == [("%43", "codex")]
-        assert _RecordingTmuxManager.instances[1].rename_calls == [("%44", "session")]
+        assert _RecordingTmuxManager.instances[1].rename_calls == [("%44", "untitled")]
 
     @pytest.mark.asyncio
     async def test_spawned_agent_renames_on_gobby_socket(self) -> None:
@@ -602,13 +610,14 @@ class TestEnforceWindowNameIfUnmanaged:
         session.agent_depth = 0
         session.ref = "#99"
         session.title = ""
+        session.source = "claude"
 
         with patch("gobby.sessions.tmux_context.TmuxSessionManager", _EnforceTmuxManager):
             acted = await enforce_window_name_if_unmanaged(session)
 
         assert acted is True
         rename_calls = [c for m in _EnforceTmuxManager.instances for c in m.rename_calls]
-        assert rename_calls == [("%42", "#99: gobby")]
+        assert rename_calls == [("%42", "#99: claude")]
 
     @pytest.mark.asyncio
     async def test_skips_window_already_managed(self) -> None:
@@ -645,13 +654,14 @@ class TestEnforceWindowNameIfUnmanaged:
         session.ref = "#session_ref"
         session.seq_num = 99
         session.title = "#session_ref gobby"
+        session.source = "claude"
 
         with patch("gobby.sessions.tmux_context.TmuxSessionManager", _EnforceTmuxManager):
             acted = await enforce_window_name_if_unmanaged(session)
 
         assert acted is True
         rename_calls = [c for m in _EnforceTmuxManager.instances for c in m.rename_calls]
-        assert rename_calls == [("%42", "#99: gobby")]
+        assert rename_calls == [("%42", "#99: claude")]
 
     @pytest.mark.asyncio
     async def test_skips_when_window_unreadable(self) -> None:
@@ -687,6 +697,159 @@ class TestEnforceWindowNameIfUnmanaged:
 
         assert acted is False
         assert _EnforceTmuxManager.instances == []
+
+
+class TestSynthesizeFallbackTitle:
+    """Tests that the empty-title fallback never leaks a directory basename."""
+
+    def test_never_uses_path_basename(self) -> None:
+        from gobby.workflows.summary_actions import _synthesize_fallback_title
+
+        session = MagicMock()
+        session.source = "claude"
+        terminal_context = {
+            "cwd": "/work/repos/gobby/",
+            "project_path": "/work/repos/gobby",
+            "workspace_path": "/work/repos/gobby",
+            "repo_path": "/work/repos/gobby",
+        }
+
+        # The directory name 'gobby' must never surface as a title.
+        assert _synthesize_fallback_title(session, terminal_context) == "claude"
+
+    def test_falls_back_to_untitled_without_source(self) -> None:
+        from gobby.workflows.summary_actions import _synthesize_fallback_title
+
+        session = MagicMock()
+        session.source = None
+
+        assert _synthesize_fallback_title(session, {"cwd": "/work/repos/gobby"}) == "untitled"
+
+
+class TestRepairMissingSessionTitle:
+    """Tests for the repair-sweep transcript-heuristic title synthesis (Step 3)."""
+
+    @staticmethod
+    def _write_claude_transcript(path: Any) -> None:
+        turns = [
+            {"message": {"role": "user", "content": "Fix the Vite HMR websocket subprotocol bug"}},
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Investigating the proxy handshake."}],
+                }
+            },
+        ]
+        path.write_text("\n".join(json.dumps(t) for t in turns))
+
+    @pytest.mark.asyncio
+    async def test_synthesizes_and_persists_heuristic_title(self, tmp_path) -> None:
+        from gobby.workflows.summary_actions import repair_missing_session_title
+
+        transcript = tmp_path / "transcript.jsonl"
+        self._write_claude_transcript(transcript)
+
+        session = MagicMock()
+        session.id = "sess-1"
+        session.ref = "#42"
+        session.source = "claude"
+        session.title = ""
+        session.title_source = None
+        session.turn_count = 7
+        session.transcript_path = str(transcript)
+
+        manager = MagicMock()
+        manager.update_title.return_value = session
+
+        result = await repair_missing_session_title(manager, session)
+
+        assert result == "Fix the Vite HMR websocket subprotocol bug"
+        manager.update_title.assert_called_once_with(
+            "sess-1",
+            "Fix the Vite HMR websocket subprotocol bug",
+            title_source="heuristic",
+        )
+
+    @pytest.mark.asyncio
+    async def test_skips_session_without_turns(self, tmp_path) -> None:
+        from gobby.workflows.summary_actions import repair_missing_session_title
+
+        transcript = tmp_path / "transcript.jsonl"
+        self._write_claude_transcript(transcript)
+
+        session = MagicMock()
+        session.id = "sess-1"
+        session.source = "claude"
+        session.title = ""
+        session.title_source = None
+        session.turn_count = 0
+        session.transcript_path = str(transcript)
+
+        manager = MagicMock()
+
+        assert await repair_missing_session_title(manager, session) is None
+        manager.update_title.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_skips_session_with_existing_title(self, tmp_path) -> None:
+        from gobby.workflows.summary_actions import repair_missing_session_title
+
+        transcript = tmp_path / "transcript.jsonl"
+        self._write_claude_transcript(transcript)
+
+        session = MagicMock()
+        session.id = "sess-1"
+        session.source = "claude"
+        session.title = "Existing Title"
+        session.title_source = "llm"
+        session.turn_count = 7
+        session.transcript_path = str(transcript)
+
+        manager = MagicMock()
+
+        assert await repair_missing_session_title(manager, session) is None
+        manager.update_title.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_skips_manual_title_source(self, tmp_path) -> None:
+        from gobby.workflows.summary_actions import repair_missing_session_title
+
+        transcript = tmp_path / "transcript.jsonl"
+        self._write_claude_transcript(transcript)
+
+        session = MagicMock()
+        session.id = "sess-1"
+        session.source = "claude"
+        session.title = ""
+        session.title_source = "manual"
+        session.turn_count = 7
+        session.transcript_path = str(transcript)
+
+        manager = MagicMock()
+
+        assert await repair_missing_session_title(manager, session) is None
+        manager.update_title.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_usable_prompt(self, tmp_path) -> None:
+        from gobby.workflows.summary_actions import repair_missing_session_title
+
+        # Transcript with only a lifecycle command yields no heuristic title.
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text(json.dumps({"message": {"role": "user", "content": "/clear"}}))
+
+        session = MagicMock()
+        session.id = "sess-1"
+        session.source = "claude"
+        session.title = ""
+        session.title_source = None
+        session.turn_count = 3
+        session.transcript_path = str(transcript)
+
+        manager = MagicMock()
+
+        assert await repair_missing_session_title(manager, session) is None
+        manager.update_title.assert_not_called()
 
 
 # =============================================================================

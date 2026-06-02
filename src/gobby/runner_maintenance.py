@@ -26,7 +26,10 @@ from gobby.shutdown_intent import (
     read_shutdown_intent,
 )
 from gobby.storage.sql_dialect import older_than_now_expr
-from gobby.workflows.summary_actions import enforce_window_name_if_unmanaged
+from gobby.workflows.summary_actions import (
+    enforce_window_name_if_unmanaged,
+    repair_missing_session_title,
+)
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics import ToolMetricsManager
@@ -327,6 +330,12 @@ async def tmux_window_name_repair_loop(
             if not isinstance(tc, dict) or not tc.get("tmux_pane"):
                 continue
             try:
+                # Land a transcript-derived title first for title-less sessions
+                # with turns; persisting it schedules the window rename via the
+                # title-change side effect, so skip the empty-title enforce path.
+                if await repair_missing_session_title(session_manager, session):
+                    renamed += 1
+                    continue
                 if await enforce_window_name_if_unmanaged(session):
                     renamed += 1
             except Exception:
