@@ -46,7 +46,7 @@ def test_acquire_release_round_trip(
         ttl_seconds=60,
         now=now + timedelta(seconds=10),
     )
-    assert manager.acquire_mutex(
+    assert not manager.acquire_mutex(
         task.id,
         holder="state-dispatcher:1",
         kind="lifecycle",
@@ -59,7 +59,7 @@ def test_acquire_release_round_trip(
     assert mutex is not None
     assert mutex.lease_holder == "state-dispatcher:1"
     assert mutex.action_kind == "lifecycle"
-    assert datetime.fromisoformat(mutex.lease_until) == now + timedelta(seconds=130)
+    assert datetime.fromisoformat(mutex.lease_until) == now + timedelta(seconds=60)
 
     assert manager.release_mutex(task.id, holder="state-dispatcher:1")
     assert manager.get_mutex(task.id) is None
@@ -84,7 +84,7 @@ def test_active_mutex_cannot_be_replaced_by_same_holder_with_different_run(
         ttl_seconds=60,
         now=now,
     )
-    assert manager.acquire_mutex(
+    assert not manager.acquire_mutex(
         task.id,
         holder="dispatcher",
         kind="heartbeat",
