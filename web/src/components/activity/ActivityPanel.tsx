@@ -96,6 +96,7 @@ interface ActivityPanelProps {
   onSwapSession?: (target: import("../../types/chat").SwappedSessionTarget) => void;
   onResumeSession?: (sessionId: string) => Promise<string> | string | void;
   isMobile?: boolean;
+  wikiRefreshSignal?: number;
 }
 
 interface ActivityDropdownProps {
@@ -204,6 +205,7 @@ export function ActivityPanel({
   onSwapSession,
   onResumeSession,
   isMobile = false,
+  wikiRefreshSignal = 0,
 }: ActivityPanelProps) {
   // viewportWidth feeds the resize-handle max-width calc only. The overlay
   // decision is mobile-only now (decoupled from desktop): the desktop
@@ -301,7 +303,7 @@ export function ActivityPanel({
       case "mcp":
         return mcp ? <ActivityMcpTab {...mcp} /> : null;
       case "wiki":
-        return <WikiTab projectId={projectId} />;
+        return <WikiTab projectId={projectId} refreshSignal={wikiRefreshSignal} />;
       case "tasks":
         return <TasksTab projectId={projectId} chatSessionId={chatSessionId} />;
       case "files":

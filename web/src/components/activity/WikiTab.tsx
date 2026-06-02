@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
   useWiki,
@@ -10,6 +10,7 @@ import { WikiSourceRemovalDialog } from "./WikiSourceRemovalDialog";
 
 interface WikiTabProps {
   projectId?: string | null;
+  refreshSignal?: number;
 }
 
 interface WikiLink {
@@ -176,13 +177,20 @@ function LinksList({ links }: { links: WikiLink[] }) {
   );
 }
 
-export function WikiTab({ projectId }: WikiTabProps) {
+export function WikiTab({ projectId, refreshSignal = 0 }: WikiTabProps) {
   const { status, health, sources, isLoading, error, refresh, removeSource } = useWiki({ projectId });
   const [removingSource, setRemovingSource] = useState<WikiSourceRecord | null>(null);
   const [preview, setPreview] = useState<WikiEnvelope | null>(null);
   const [removalError, setRemovalError] = useState<string | null>(null);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
+  const lastRefreshSignalRef = useRef(refreshSignal);
+
+  useEffect(() => {
+    if (lastRefreshSignalRef.current === refreshSignal) return;
+    lastRefreshSignalRef.current = refreshSignal;
+    if (refreshSignal > 0) void refresh();
+  }, [refresh, refreshSignal]);
 
   const statusPayload = asRecord(status?.payload);
   const healthPayload = asRecord(health?.payload);
