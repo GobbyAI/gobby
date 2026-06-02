@@ -317,6 +317,7 @@ fn transcription_output_from_core(result: CoreTranscriptionResult) -> Transcript
         task: result.task,
         target_language: result.target_language,
         translated: result.translated,
+        translation_degraded: false,
         partial: false,
         completed_ranges: Vec::new(),
         missing_ranges: Vec::new(),

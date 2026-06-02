@@ -27,19 +27,24 @@ pub(super) struct SymbolFilters<'a> {
     pub(super) paths: &'a [String],
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(super) enum SymbolOrder {
     Bm25Score,
-    FileLine,
     Name,
+    ExactCaseFirst(String),
 }
 
 impl SymbolOrder {
-    fn sql(self) -> &'static str {
+    fn sql(&self) -> String {
         match self {
-            Self::Bm25Score => "pg_search.score(cs.id) DESC, cs.id ASC",
-            Self::FileLine => "cs.file_path ASC, cs.line_start ASC",
-            Self::Name => "cs.name ASC, cs.file_path ASC, cs.line_start ASC",
+            Self::Bm25Score => "pg_search.score(cs.id) DESC, cs.id ASC".to_string(),
+            Self::Name => "cs.name ASC, cs.file_path ASC, cs.line_start ASC".to_string(),
+            Self::ExactCaseFirst(query_param) => format!(
+                "CASE WHEN cs.name = {q} OR cs.qualified_name = {q} THEN 0 ELSE 1 END,
+                 cs.file_path ASC,
+                 cs.line_start ASC",
+                q = query_param
+            ),
         }
     }
 }

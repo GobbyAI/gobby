@@ -203,8 +203,16 @@ fn probe_daemon_capabilities_with(
             contracts[1..]
                 .iter()
                 .copied()
-                .map(|contract| scope.spawn(move || probe_contract(base_url, transport, contract)))
-                .map(|handle| handle.join().expect("daemon capability probe panicked"))
+                .map(|contract| {
+                    (
+                        contract,
+                        scope.spawn(move || probe_contract(base_url, transport, contract)),
+                    )
+                })
+                .map(|(contract, handle)| match handle.join() {
+                    Ok(availability) => availability,
+                    Err(_) => unreachable_availability(contract, "capability probe panicked"),
+                })
                 .collect::<Vec<_>>()
         });
         availabilities.extend(rest);
@@ -451,5 +459,27 @@ mod tests {
             degradation.reason == DegradationReason::Unreachable
                 && degradation.message.contains("connection refused")
         }));
+    }
+
+    #[test]
+    fn probe_thread_panic_degrades_that_capability() {
+        struct PanickingTransport;
+
+        impl DaemonProbeTransport for PanickingTransport {
+            fn status(&self, _base_url: &str, _method: &str, path: &str) -> ProbeObservation {
+                if path == VISION.path {
+                    panic!("vision probe panic");
+                }
+                ProbeObservation::HttpStatus(200)
+            }
+        }
+
+        let report = probe_daemon_capabilities_with("http://daemon.test", &PanickingTransport);
+
+        assert!(report.embeddings.available);
+        assert!(!report.vision.available);
+        let degradation = report.vision.degradation.expect("vision degraded");
+        assert_eq!(degradation.reason, DegradationReason::Unreachable);
+        assert!(degradation.message.contains("capability probe panicked"));
     }
 }

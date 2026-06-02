@@ -8,6 +8,8 @@ use crate::config::Context;
 use crate::db;
 
 const MIN_LOCK_POLL: Duration = Duration::from_millis(1);
+const ADVISORY_LOCK_DELAY_WARNING_MS_ENV: &str = "GCODE_ADVISORY_LOCK_DELAY_WARNING_MS";
+const DEFAULT_ADVISORY_LOCK_DELAY_WARNING_MS: u64 = 30_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum IndexLockPolicy {
@@ -56,6 +58,7 @@ fn acquire_project_lock(
     let key = project_lock_key(&ctx.project_id);
     let mut conn = db::connect_readwrite(&ctx.database_url)
         .with_context(|| "failed to connect PostgreSQL hub for gcode index lock")?;
+    let started = Instant::now();
 
     let acquired = match policy {
         IndexLockPolicy::Wait => {
@@ -69,6 +72,13 @@ fn acquire_project_lock(
     };
 
     if acquired {
+        let elapsed = started.elapsed();
+        if !ctx.quiet && elapsed >= advisory_lock_delay_warning() {
+            eprintln!(
+                "warning: waited {}ms to acquire gcode index lock",
+                elapsed.as_millis()
+            );
+        }
         Ok(ProjectIndexLockAttempt::Acquired(Box::new(
             ProjectIndexLock {
                 conn,
@@ -105,6 +115,8 @@ fn try_advisory_lock_until(
             poll.max(MIN_LOCK_POLL).min(remaining)
         };
         if sleep_for.is_zero() {
+            // A zero poll interval intentionally means aggressive retry with a
+            // scheduler yield only; callers use it only for very short windows.
             std::thread::yield_now();
         } else {
             std::thread::sleep(sleep_for);
@@ -120,6 +132,8 @@ fn try_advisory_lock(conn: &mut Client, key: i64) -> anyhow::Result<bool> {
 }
 
 pub(crate) fn project_lock_key(project_id: &str) -> i64 {
+    // PostgreSQL advisory locks are 64-bit; this truncates SHA-256 and accepts
+    // the residual collision risk in exchange for deterministic project locks.
     let mut hasher = Sha256::new();
     hasher.update(b"gcode:index:");
     hasher.update(project_id.as_bytes());
@@ -129,6 +143,14 @@ pub(crate) fn project_lock_key(project_id: &str) -> i64 {
             .try_into()
             .expect("SHA-256 digest has at least 8 bytes"),
     )
+}
+
+fn advisory_lock_delay_warning() -> Duration {
+    std::env::var(ADVISORY_LOCK_DELAY_WARNING_MS_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or_else(|| Duration::from_millis(DEFAULT_ADVISORY_LOCK_DELAY_WARNING_MS))
 }
 
 struct ProjectIndexLock {

@@ -532,8 +532,17 @@ fn split_top_level_preserves_escaped_quotes_inside_strings() {
 
 #[test]
 fn split_top_level_rejects_unbalanced_delimiters() {
-    assert!(split_top_level("one, call(two, three", ',').is_err());
-    assert!(split_top_level("one, two]", ',').is_err());
+    let opening = split_top_level("one, call(two, three", ',')
+        .expect_err("unbalanced opening delimiter should fail")
+        .to_string();
+    assert!(opening.contains("splitting on `,`"));
+    assert!(opening.contains("one, call(two, three"));
+
+    let closing = split_top_level("one, two]", ',')
+        .expect_err("unbalanced closing delimiter should fail")
+        .to_string();
+    assert!(closing.contains("unbalanced closing bracket"));
+    assert!(closing.contains("byte 8"));
 }
 
 #[test]

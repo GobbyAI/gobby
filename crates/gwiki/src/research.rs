@@ -252,10 +252,13 @@ fn stop_spawned_agents(base_url: &str, run_ids: &[String]) {
     let url = format!("{}{}", base_url.trim_end_matches('/'), endpoint);
     for run_id in run_ids {
         let payload = serde_json::json!({ "run_id": run_id });
-        let _ = ureq::post(&url)
+        if let Err(error) = ureq::post(&url)
             .timeout(Duration::from_secs(10))
             .set("Content-Type", "application/json")
-            .send_string(&payload.to_string());
+            .send_string(&payload.to_string())
+        {
+            log::warn!("failed to stop spawned research agent run {run_id} at {url}: {error}");
+        }
     }
 }
 

@@ -821,6 +821,7 @@ mod tests {
             task: Some("transcribe".to_string()),
             target_language: None,
             translated: false,
+            translation_degraded: false,
             partial: false,
             completed_ranges: Vec::new(),
             missing_ranges: Vec::new(),

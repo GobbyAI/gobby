@@ -77,7 +77,7 @@ pub fn initialize(scope: &ResolvedScope) -> Result<CreatedVaultPaths, WikiError>
         source: error,
     })?;
     let scope_file_created = !scope_file.exists();
-    write_file(scope_file.as_path(), format!("{scope_json}\n").as_str())?;
+    write_scope_file_atomically(scope_file.as_path(), format!("{scope_json}\n").as_bytes())?;
     if scope_file_created {
         created.files.push(".gwiki/scope.json".to_string());
     }
@@ -127,15 +127,75 @@ fn ensure_file(path: &Path, contents: &str) -> Result<bool, WikiError> {
     }
 }
 
-fn write_file(path: &Path, contents: &str) -> Result<(), WikiError> {
+fn write_scope_file_atomically(path: &Path, contents: &[u8]) -> Result<(), WikiError> {
     if let Some(parent) = path.parent() {
         create_dir(parent)?;
     }
-    std::fs::write(path, contents).map_err(|error| WikiError::Io {
-        action: "write file",
-        path: Some(path.to_path_buf()),
+    let temp_path = temp_sibling_path(path);
+    let mut file = std::fs::File::create(&temp_path).map_err(|error| WikiError::Io {
+        action: "create scope file temp file",
+        path: Some(temp_path.clone()),
         source: error,
-    })
+    })?;
+    if let Err(error) = file.write_all(contents) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: "write scope file temp file",
+            path: Some(temp_path),
+            source: error,
+        });
+    }
+    if let Err(error) = file.sync_all() {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: "sync scope file temp file",
+            path: Some(temp_path),
+            source: error,
+        });
+    }
+    drop(file);
+    if let Err(error) = std::fs::rename(&temp_path, path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: "replace scope file",
+            path: Some(path.to_path_buf()),
+            source: error,
+        });
+    }
+    sync_parent_dir(path)
+}
+
+fn temp_sibling_path(path: &Path) -> std::path::PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("scope.json");
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    path.with_file_name(format!(".{file_name}.{}.{nanos}.tmp", std::process::id()))
+}
+
+fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(())
+    }
+    #[cfg(unix)]
+    {
+        let Some(parent) = path.parent() else {
+            return Ok(());
+        };
+        std::fs::File::open(parent)
+            .and_then(|dir| dir.sync_all())
+            .map_err(|error| WikiError::Io {
+                action: "sync scope file directory",
+                path: Some(parent.to_path_buf()),
+                source: error,
+            })
+    }
 }
 
 #[cfg(test)]

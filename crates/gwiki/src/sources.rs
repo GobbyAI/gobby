@@ -2,14 +2,19 @@
 
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
 use crate::WikiError;
 
 const SOURCE_ID_HASH_PREFIX_LEN: usize = 16;
+const SOURCE_MANIFEST_LOCK_TIMEOUT_ENV: &str = "GWIKI_SOURCE_MANIFEST_LOCK_TIMEOUT_MS";
+const DEFAULT_SOURCE_MANIFEST_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
+const SOURCE_MANIFEST_LOCK_RETRY_DELAY: Duration = Duration::from_millis(25);
 
 const SOURCE_MARKER: &str = "<!-- gwiki-source:";
 
@@ -378,12 +383,62 @@ fn with_manifest_lock<T>(
             path: Some(lock_path.clone()),
             source: error,
         })?;
-    fs4::FileExt::lock(&lock).map_err(|error| WikiError::Io {
-        action: "lock source manifest",
+    lock_source_manifest(&lock, &lock_path)?;
+    let action_result = action();
+    let unlock_result = fs4::FileExt::unlock(&lock).map_err(|error| WikiError::Io {
+        action: "unlock source manifest",
         path: Some(lock_path),
         source: error,
-    })?;
-    action()
+    });
+
+    match action_result {
+        Ok(value) => unlock_result.map(|()| value),
+        Err(error) => {
+            let _ = unlock_result;
+            Err(error)
+        }
+    }
+}
+
+fn lock_source_manifest(lock: &File, lock_path: &Path) -> Result<(), WikiError> {
+    let timeout = source_manifest_lock_timeout();
+    let started = Instant::now();
+
+    loop {
+        match fs4::FileExt::try_lock(lock) {
+            Ok(()) => return Ok(()),
+            Err(fs4::TryLockError::WouldBlock) => {
+                let elapsed = started.elapsed();
+                if elapsed >= timeout {
+                    return Err(WikiError::Io {
+                        action: "lock source manifest",
+                        path: Some(lock_path.to_path_buf()),
+                        source: std::io::Error::new(
+                            ErrorKind::TimedOut,
+                            format!("timed out after {}ms", timeout.as_millis()),
+                        ),
+                    });
+                }
+                thread::sleep(SOURCE_MANIFEST_LOCK_RETRY_DELAY.min(timeout - elapsed));
+            }
+            Err(error) => {
+                return Err(WikiError::Io {
+                    action: "lock source manifest",
+                    path: Some(lock_path.to_path_buf()),
+                    source: error.into(),
+                });
+            }
+        }
+    }
+}
+
+fn source_manifest_lock_timeout() -> Duration {
+    std::env::var(SOURCE_MANIFEST_LOCK_TIMEOUT_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(DEFAULT_SOURCE_MANIFEST_LOCK_TIMEOUT)
 }
 
 struct SourceRecordParts {

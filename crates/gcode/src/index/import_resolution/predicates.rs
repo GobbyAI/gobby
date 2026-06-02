@@ -142,7 +142,9 @@ fn strip_comments_and_string_literals(contents: &str) -> String {
             }
             '"' | '\'' | '`' => {
                 let quote = ch;
+                let out_len_before_literal = out.len();
                 out.push(' ');
+                let mut terminated = false;
                 while let Some(ch) = chars.next() {
                     if ch == '\\' {
                         out.push(' ');
@@ -153,6 +155,7 @@ fn strip_comments_and_string_literals(contents: &str) -> String {
                     }
                     if ch == quote {
                         out.push(' ');
+                        terminated = true;
                         break;
                     }
                     if ch == '\n' {
@@ -163,6 +166,10 @@ fn strip_comments_and_string_literals(contents: &str) -> String {
                     } else {
                         out.push(' ');
                     }
+                }
+                if !terminated {
+                    out.truncate(out_len_before_literal);
+                    break;
                 }
             }
             _ => out.push(ch),

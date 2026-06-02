@@ -13,8 +13,12 @@ pub(crate) fn translate_audio(
     if is_english(&target_lang) {
         return match client.translate_to_english(request, language_hint) {
             Ok(output) => Ok(mark_english_translation(output, language_hint)),
-            Err(_) => {
-                let output = client.transcribe(request)?;
+            Err(error) => {
+                eprintln!(
+                    "Warning: translate_to_english failed; falling back to transcription plus segment translation: {error}"
+                );
+                let mut output = client.transcribe(request)?;
+                output.translation_degraded = true;
                 translate_transcription_segments(output, client, &target_lang, language_hint)
             }
         };
@@ -251,6 +255,7 @@ mod tests {
         );
         assert_eq!(translated.target_language.as_deref(), Some("en"));
         assert_eq!(translated.segments[0].text, "hello");
+        assert!(translated.translation_degraded);
     }
 
     #[test]
@@ -336,6 +341,7 @@ mod tests {
             task: Some("transcribe".to_string()),
             target_language: None,
             translated: false,
+            translation_degraded: false,
             partial: false,
             completed_ranges: Vec::new(),
             missing_ranges: Vec::new(),

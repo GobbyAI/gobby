@@ -249,8 +249,9 @@ fn multipart_form_with_file(
     mime: &str,
     capability: AiCapability,
 ) -> Result<multipart::Form, AiError> {
-    let file_len = u64::try_from(bytes.len())
-        .map_err(|_| AiError::parse_failure("daemon multipart payload is too large to send"))?;
+    let file_len = u64::try_from(bytes.len()).map_err(|_| {
+        AiError::parse_failure("daemon multipart payload length exceeds this platform's u64 sizing")
+    })?;
     let file_part = multipart::Part::reader_with_length(Cursor::new(bytes), file_len)
         .file_name(file_name.to_string())
         .mime_str(mime)

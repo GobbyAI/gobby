@@ -163,7 +163,58 @@ pub(super) fn rust_join_use_path(prefix: &str, item: &str) -> Option<String> {
     })
 }
 
-pub(super) fn split_top_level(text: &str, delimiter: char) -> Result<Vec<&str>, &'static str> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct SplitTopLevelError {
+    delimiter: char,
+    position: usize,
+    kind: &'static str,
+    context: String,
+}
+
+impl std::fmt::Display for SplitTopLevelError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} while splitting on `{}` at byte {} near `{}`",
+            self.kind, self.delimiter, self.position, self.context
+        )
+    }
+}
+
+impl std::error::Error for SplitTopLevelError {}
+
+impl SplitTopLevelError {
+    fn new(text: &str, delimiter: char, position: usize, kind: &'static str) -> Self {
+        Self {
+            delimiter,
+            position,
+            kind,
+            context: split_error_context(text, position),
+        }
+    }
+}
+
+fn split_error_context(text: &str, position: usize) -> String {
+    const CONTEXT_CHARS: usize = 24;
+    let position = position.min(text.len());
+    let start = text[..position]
+        .char_indices()
+        .rev()
+        .nth(CONTEXT_CHARS)
+        .map(|(idx, _)| idx)
+        .unwrap_or(0);
+    let end = text[position..]
+        .char_indices()
+        .nth(CONTEXT_CHARS)
+        .map(|(idx, _)| position + idx)
+        .unwrap_or(text.len());
+    text[start..end].replace('\n', "\\n")
+}
+
+pub(super) fn split_top_level(
+    text: &str,
+    delimiter: char,
+) -> Result<Vec<&str>, SplitTopLevelError> {
     let mut parts = Vec::new();
     let mut start = 0;
     let mut paren_depth = 0usize;
@@ -187,13 +238,34 @@ pub(super) fn split_top_level(text: &str, delimiter: char) -> Result<Vec<&str>, 
             '"' if !in_single => in_double = !in_double,
             '(' if !in_single && !in_double => paren_depth += 1,
             ')' if !in_single && !in_double && paren_depth > 0 => paren_depth -= 1,
-            ')' if !in_single && !in_double => return Err("unbalanced closing parenthesis"),
+            ')' if !in_single && !in_double => {
+                return Err(SplitTopLevelError::new(
+                    text,
+                    delimiter,
+                    idx,
+                    "unbalanced closing parenthesis",
+                ));
+            }
             '{' if !in_single && !in_double => brace_depth += 1,
             '}' if !in_single && !in_double && brace_depth > 0 => brace_depth -= 1,
-            '}' if !in_single && !in_double => return Err("unbalanced closing brace"),
+            '}' if !in_single && !in_double => {
+                return Err(SplitTopLevelError::new(
+                    text,
+                    delimiter,
+                    idx,
+                    "unbalanced closing brace",
+                ));
+            }
             '[' if !in_single && !in_double => bracket_depth += 1,
             ']' if !in_single && !in_double && bracket_depth > 0 => bracket_depth -= 1,
-            ']' if !in_single && !in_double => return Err("unbalanced closing bracket"),
+            ']' if !in_single && !in_double => {
+                return Err(SplitTopLevelError::new(
+                    text,
+                    delimiter,
+                    idx,
+                    "unbalanced closing bracket",
+                ));
+            }
             ch if ch == delimiter
                 && !in_single
                 && !in_double
@@ -211,10 +283,20 @@ pub(super) fn split_top_level(text: &str, delimiter: char) -> Result<Vec<&str>, 
     parts.push(text[start..].trim());
 
     if in_single || in_double {
-        return Err("unterminated string literal");
+        return Err(SplitTopLevelError::new(
+            text,
+            delimiter,
+            text.len(),
+            "unterminated string literal",
+        ));
     }
     if paren_depth != 0 || brace_depth != 0 || bracket_depth != 0 {
-        return Err("unbalanced opening delimiter");
+        return Err(SplitTopLevelError::new(
+            text,
+            delimiter,
+            text.len(),
+            "unbalanced opening delimiter",
+        ));
     }
 
     Ok(parts)

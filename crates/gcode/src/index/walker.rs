@@ -364,6 +364,38 @@ mod tests {
     }
 
     #[test]
+    fn skips_single_line_minified_js_bundle_with_newline() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let mut bundle = b"(()=>{const bundle='".to_vec();
+        bundle.extend(std::iter::repeat_n(b'a', MINIFIED_JS_MIN_BYTES));
+        bundle.extend(b"';})();\n");
+        write_file(root, "dist/app.js", &bundle);
+        let excludes = Vec::new();
+
+        assert_eq!(
+            classify_file(root, &root.join("dist/app.js"), &excludes),
+            None
+        );
+    }
+
+    #[test]
+    fn skips_single_line_minified_js_bundle_without_newline() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let mut bundle = b"(()=>{const bundle='".to_vec();
+        bundle.extend(std::iter::repeat_n(b'a', MINIFIED_JS_MIN_BYTES));
+        bundle.extend(b"';})();");
+        write_file(root, "dist/app.js", &bundle);
+        let excludes = Vec::new();
+
+        assert_eq!(
+            classify_file(root, &root.join("dist/app.js"), &excludes),
+            None
+        );
+    }
+
+    #[test]
     fn classifies_source_build_directory_as_ast_indexable() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path();

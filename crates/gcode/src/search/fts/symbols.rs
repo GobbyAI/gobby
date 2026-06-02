@@ -113,39 +113,22 @@ pub fn search_symbols_exact_first(
     let mut params = Vec::new();
     let project = push_param(&mut params, project_id.to_string());
     let query_param = push_param(&mut params, query.to_string());
+    let order = SymbolOrder::ExactCaseFirst(query_param.clone());
     let exact = query_symbols_by_conditions(
         conn,
         vec![
             format!("cs.project_id = {project}"),
-            format!("(cs.name = {query_param} OR cs.qualified_name = {query_param})"),
-        ],
-        params,
-        filters,
-        limit,
-        SymbolOrder::FileLine,
-    );
-    append_unique_symbols(&mut results, &mut seen, exact, limit);
-    if results.len() >= limit {
-        return results;
-    }
-
-    let mut params = Vec::new();
-    let project = push_param(&mut params, project_id.to_string());
-    let query_param = push_param(&mut params, query.to_string());
-    let ci_exact = query_symbols_by_conditions(
-        conn,
-        vec![
-            format!("cs.project_id = {project}"),
             format!(
-                "(lower(cs.name) = lower({query_param}) OR lower(cs.qualified_name) = lower({query_param}))"
+                "(cs.name = {q} OR cs.qualified_name = {q} OR lower(cs.name) = lower({q}) OR lower(cs.qualified_name) = lower({q}))",
+                q = query_param
             ),
         ],
         params,
         filters,
         limit,
-        SymbolOrder::FileLine,
+        order,
     );
-    append_unique_symbols(&mut results, &mut seen, ci_exact, limit);
+    append_unique_symbols(&mut results, &mut seen, exact, limit);
     if results.len() >= limit {
         return results;
     }
@@ -277,36 +260,20 @@ pub fn search_symbols_exact_first_visible(
 
     let mut params = Vec::new();
     let query_param = push_param(&mut params, query.to_string());
+    let order = SymbolOrder::ExactCaseFirst(query_param.clone());
     let exact = query_visible_symbols_by_conditions(
         conn,
         ctx,
         vec![format!(
-            "(cs.name = {query_param} OR cs.qualified_name = {query_param})"
+            "(cs.name = {q} OR cs.qualified_name = {q} OR lower(cs.name) = lower({q}) OR lower(cs.qualified_name) = lower({q}))",
+            q = query_param
         )],
         params,
         filters,
         limit,
-        SymbolOrder::FileLine,
+        order,
     );
     append_unique_symbols(&mut results, &mut seen, exact, limit);
-    if results.len() >= limit {
-        return results;
-    }
-
-    let mut params = Vec::new();
-    let query_param = push_param(&mut params, query.to_string());
-    let ci_exact = query_visible_symbols_by_conditions(
-        conn,
-        ctx,
-        vec![format!(
-            "(lower(cs.name) = lower({query_param}) OR lower(cs.qualified_name) = lower({query_param}))"
-        )],
-        params,
-        filters,
-        limit,
-        SymbolOrder::FileLine,
-    );
-    append_unique_symbols(&mut results, &mut seen, ci_exact, limit);
     if results.len() >= limit {
         return results;
     }

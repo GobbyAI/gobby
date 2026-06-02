@@ -2,6 +2,10 @@
 //!
 //! This module is available with the `falkor` feature. The feature also enables
 //! `urlencoding` so FalkorDB connection URLs can encode passwords safely.
+//! Duplicate-index suppression is based on observed FalkorDB/driver message
+//! fragments because the crate does not expose a stable typed duplicate-index
+//! error. Live tests are env-gated against the caller-provided service image;
+//! this adapter intentionally does not claim a tested FalkorDB version range.
 
 use std::collections::HashMap;
 
@@ -192,15 +196,22 @@ fn escape_identifier(value: &str) -> String {
     format!("`{}`", value.replace('`', "``"))
 }
 
+const EXISTING_INDEX_ERROR_PATTERNS: &[&str] =
+    &["already indexed", "already exists", "index already exists"];
+
 fn is_existing_index_error(error: &anyhow::Error) -> bool {
     let message = error.to_string().to_ascii_lowercase();
     // FalkorDB currently reports duplicate-index creation through version- and
     // driver-specific message strings instead of a stable typed error code.
     // TODO: replace these exact message patterns if the driver exposes a typed
     // duplicate-index error.
-    message.contains("already indexed")
-        || message.contains("already exists")
-        || message.contains("index already exists")
+    let matched = EXISTING_INDEX_ERROR_PATTERNS
+        .iter()
+        .any(|pattern| message.contains(pattern));
+    if !matched && message.contains("index") {
+        log::debug!("unmatched FalkorDB index-like error: {error}");
+    }
+    matched
 }
 
 fn parse_falkor_result(result: QueryResult<LazyResultSet<'_>>) -> Vec<Row> {

@@ -5,7 +5,7 @@ use gobby_core::ai_context::AiContext;
 use gobby_core::config::AiCapability;
 use gobby_core::config::AiRouting;
 
-#[cfg(feature = "ai")]
+#[cfg(all(feature = "documents", feature = "ai"))]
 use crate::ai::clients::ProductionVisionClient;
 use crate::api::IngestFileOptions;
 use crate::ingest::audio::{
@@ -29,7 +29,7 @@ use crate::vision::VisionDegradation;
 #[cfg(feature = "documents")]
 use crate::vision::VisionEndpoint;
 use crate::{ScopeIdentity, WikiError};
-#[cfg(feature = "ai")]
+#[cfg(all(feature = "documents", feature = "ai"))]
 use gobby_core::ai::effective_route;
 
 const TEXT_INLINE_LIMIT_BYTES: usize = 256 * 1024;

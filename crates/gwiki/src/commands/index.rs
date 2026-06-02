@@ -2,9 +2,11 @@ use std::path::{Path, PathBuf};
 
 use gobby_core::ai_context::{AiConfigSource, AiContext, LocalAiConfigSource};
 use gobby_core::config::ConfigSource;
+use postgres::Client;
 use serde_json::json;
 
 use crate::ingest::{self, IngestResult};
+use crate::search::SearchScope;
 use crate::support::counts::{IndexCounts, index_counts, postgres_index_counts};
 use crate::support::env::database_url_from_env;
 use crate::support::scope::{
@@ -32,16 +34,13 @@ pub(crate) fn index_resolved_scope(
     scope: &crate::scope::ResolvedScope,
 ) -> Result<IndexCounts, WikiError> {
     if let Some(database_url) = database_url_from_env() {
-        let mut conn = gobby_core::postgres::connect_readwrite(&database_url).map_err(|error| {
-            WikiError::Config {
-                detail: format!("failed to connect to PostgreSQL for gwiki index: {error}"),
-            }
-        })?;
+        let mut conn = connect_postgres_index(&database_url, "gwiki index")?;
         let search_scope = search_scope_for_resolved(scope);
-        let mut store =
-            store::PostgresWikiStore::new(&mut conn, store_scope_for_search(&search_scope));
-        indexer::index_vault(scope.root(), &mut store)?;
-        return postgres_index_counts(&mut conn, &search_scope);
+        {
+            let mut store = postgres_store_for_search(&mut conn, &search_scope);
+            indexer::index_vault(scope.root(), &mut store)?;
+        }
+        return indexed_counts_for_postgres(&mut conn, &search_scope, true);
     }
 
     let mut store = store::MemoryWikiStore::default();
@@ -71,11 +70,7 @@ pub(crate) fn execute_ingest_file(
         detail: format!("failed to read system clock: {error}"),
     })?;
     if let Some(database_url) = database_url_from_env() {
-        let mut conn = gobby_core::postgres::connect_readwrite(&database_url).map_err(|error| {
-            WikiError::Config {
-                detail: format!("failed to connect to PostgreSQL for gwiki ingest-file: {error}"),
-            }
-        })?;
+        let mut conn = connect_postgres_index(&database_url, "gwiki ingest-file")?;
         let (ai_context, options) = {
             let primary = PostgresConfigSource { conn: &mut conn };
             let mut source = AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home)
@@ -86,8 +81,7 @@ pub(crate) fn execute_ingest_file(
         };
         let search_scope = search_scope_for_resolved(&scope);
         let result = {
-            let mut store =
-                store::PostgresWikiStore::new(&mut conn, store_scope_for_search(&search_scope));
+            let mut store = postgres_store_for_search(&mut conn, &search_scope);
             ingest::file::ingest_path(
                 scope.root(),
                 &mut store,
@@ -98,7 +92,7 @@ pub(crate) fn execute_ingest_file(
                 &fetched_at,
             )?
         };
-        let counts = postgres_index_counts(&mut conn, &search_scope)?;
+        let counts = indexed_counts_for_postgres(&mut conn, &search_scope, true)?;
         return Ok(render_ingest_file(&path, output_scope, &result, counts));
     }
 
@@ -140,22 +134,14 @@ pub(crate) fn execute_ingest_url(
         detail: format!("failed to read system clock: {error}"),
     })?;
     if let Some(database_url) = database_url_from_env() {
-        let mut conn = gobby_core::postgres::connect_readwrite(&database_url).map_err(|error| {
-            WikiError::Config {
-                detail: format!("failed to connect to PostgreSQL for gwiki ingest-url: {error}"),
-            }
-        })?;
+        let mut conn = connect_postgres_index(&database_url, "gwiki ingest-url")?;
         let search_scope = search_scope_for_resolved(&scope);
         let result = {
-            let mut store =
-                store::PostgresWikiStore::new(&mut conn, store_scope_for_search(&search_scope));
+            let mut store = postgres_store_for_search(&mut conn, &search_scope);
             ingest::url::ingest_urls(scope.root(), &mut store, &urls, &fetched_at)?
         };
-        let counts = if result.accepted.is_empty() {
-            IndexCounts::default()
-        } else {
-            postgres_index_counts(&mut conn, &search_scope)?
-        };
+        let counts =
+            indexed_counts_for_postgres(&mut conn, &search_scope, !result.accepted.is_empty())?;
         return Ok(render_ingest_url(output_scope, &result, counts));
     }
 
@@ -214,12 +200,37 @@ fn gobby_home() -> Result<PathBuf, WikiError> {
     })
 }
 
+fn connect_postgres_index(database_url: &str, command: &str) -> Result<Client, WikiError> {
+    gobby_core::postgres::connect_readwrite(database_url).map_err(|error| WikiError::Config {
+        detail: format!("failed to connect to PostgreSQL for {command}: {error}"),
+    })
+}
+
+fn postgres_store_for_search<'a>(
+    conn: &'a mut Client,
+    search_scope: &SearchScope,
+) -> store::PostgresWikiStore<'a> {
+    store::PostgresWikiStore::new(conn, store_scope_for_search(search_scope))
+}
+
+fn indexed_counts_for_postgres(
+    conn: &mut Client,
+    search_scope: &SearchScope,
+    should_count: bool,
+) -> Result<IndexCounts, WikiError> {
+    if should_count {
+        postgres_index_counts(conn, search_scope)
+    } else {
+        Ok(IndexCounts::default())
+    }
+}
+
 fn render_index(scope: ScopeIdentity, root: &Path, counts: IndexCounts) -> CommandOutcome {
     let payload = json!({
         "command": "index",
         "scope": scope,
         "status": "indexed",
-        "root": root,
+        "root": root.display().to_string(),
         "indexed": {
             "documents": counts.documents,
             "chunks": counts.chunks,

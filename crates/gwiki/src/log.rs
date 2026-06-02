@@ -66,7 +66,10 @@ fn append_log(path: &Path, entry: &LogEntry) -> Result<(), WikiError> {
             source: error,
         })?;
 
-    let write_header = file.metadata().map_or(true, |metadata| metadata.len() == 0);
+    let write_header = file
+        .metadata()
+        .map(|metadata| metadata.len() == 0)
+        .unwrap_or(false);
     if write_header {
         file.write_all(b"# Log\n\n")
             .map_err(|error| WikiError::Io {

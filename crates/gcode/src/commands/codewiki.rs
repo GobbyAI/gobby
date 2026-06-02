@@ -2299,7 +2299,7 @@ mod tests {
         signature: &str,
     ) -> Symbol {
         Symbol {
-            id: format!("{file_path}:{name}"),
+            id: Symbol::make_id("project-1", file_path, name, kind, 0),
             project_id: "project-1".to_string(),
             file_path: file_path.to_string(),
             name: name.to_string(),
@@ -2329,7 +2329,7 @@ mod tests {
         signature: &str,
     ) -> Symbol {
         Symbol {
-            id: format!("{file_path}:{name}"),
+            id: Symbol::make_id("project-1", file_path, name, kind, 0),
             project_id: "project-1".to_string(),
             file_path: file_path.to_string(),
             name: name.to_string(),

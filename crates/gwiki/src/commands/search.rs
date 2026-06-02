@@ -158,7 +158,8 @@ fn effective_embedding_route(context: &AiContext) -> AiRouting {
         match context.binding(AiCapability::Embed).routing {
             AiRouting::Off => AiRouting::Off,
             AiRouting::Direct => AiRouting::Direct,
-            AiRouting::Daemon | AiRouting::Auto => AiRouting::Off,
+            AiRouting::Daemon => AiRouting::Off,
+            AiRouting::Auto => AiRouting::Auto,
         }
     }
 }

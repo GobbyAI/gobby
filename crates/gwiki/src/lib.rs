@@ -65,6 +65,8 @@ pub mod sources;
 #[allow(dead_code)]
 pub(crate) mod store;
 pub mod synthesis;
+#[cfg(all(test, feature = "ai"))]
+mod test_http;
 #[allow(dead_code)]
 pub(crate) mod transcribe;
 #[allow(dead_code)]

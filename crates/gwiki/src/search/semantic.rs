@@ -2,7 +2,7 @@ use std::path::PathBuf;
 #[cfg(feature = "embeddings-http")]
 use std::time::Duration;
 
-#[cfg(feature = "ai")]
+#[cfg(all(feature = "ai", feature = "embeddings-http"))]
 use gobby_core::ai::daemon;
 #[cfg(feature = "ai")]
 use gobby_core::ai_context::AiContext;

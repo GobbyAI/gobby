@@ -1,4 +1,5 @@
 use std::fmt;
+use std::time::Duration;
 
 use anyhow::Context as _;
 use reqwest::StatusCode;
@@ -6,6 +7,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::config::Context;
+
+const GRAPH_CLEAR_TIMEOUT_ENV: &str = "GCODE_GRAPH_CLEAR_TIMEOUT_SECS";
+const GRAPH_REBUILD_TIMEOUT_ENV: &str = "GCODE_GRAPH_REBUILD_TIMEOUT_SECS";
+const DEFAULT_GRAPH_CLEAR_TIMEOUT_SECS: u64 = 15;
+const DEFAULT_GRAPH_REBUILD_TIMEOUT_SECS: u64 = 120;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -41,6 +47,8 @@ impl GraphLifecycleAction {
 pub struct GraphLifecycleRequest {
     pub project_id: String,
     pub daemon_url: Option<String>,
+    #[serde(default)]
+    pub timeouts: GraphLifecycleTimeouts,
 }
 
 impl GraphLifecycleRequest {
@@ -48,8 +56,52 @@ impl GraphLifecycleRequest {
         Self {
             project_id: ctx.project_id.clone(),
             daemon_url: ctx.daemon_url.clone(),
+            timeouts: GraphLifecycleTimeouts::from_env(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphLifecycleTimeouts {
+    pub clear: Duration,
+    pub rebuild: Duration,
+}
+
+impl Default for GraphLifecycleTimeouts {
+    fn default() -> Self {
+        Self {
+            clear: Duration::from_secs(DEFAULT_GRAPH_CLEAR_TIMEOUT_SECS),
+            rebuild: Duration::from_secs(DEFAULT_GRAPH_REBUILD_TIMEOUT_SECS),
+        }
+    }
+}
+
+impl GraphLifecycleTimeouts {
+    pub fn from_env() -> Self {
+        Self {
+            clear: timeout_from_env(GRAPH_CLEAR_TIMEOUT_ENV, DEFAULT_GRAPH_CLEAR_TIMEOUT_SECS),
+            rebuild: timeout_from_env(
+                GRAPH_REBUILD_TIMEOUT_ENV,
+                DEFAULT_GRAPH_REBUILD_TIMEOUT_SECS,
+            ),
+        }
+    }
+
+    fn for_action(self, action: GraphLifecycleAction) -> Duration {
+        match action {
+            GraphLifecycleAction::Clear => self.clear,
+            GraphLifecycleAction::Rebuild => self.rebuild,
+        }
+    }
+}
+
+fn timeout_from_env(key: &str, default_secs: u64) -> Duration {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| Duration::from_secs(default_secs))
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -201,12 +253,8 @@ pub fn run_lifecycle_action(
 ) -> anyhow::Result<GraphLifecycleOutput> {
     let daemon_url = require_daemon_url(request.daemon_url.as_deref(), action)?;
     let url = build_lifecycle_url(daemon_url, action, &request.project_id)?;
-    let timeout = match action {
-        GraphLifecycleAction::Clear => std::time::Duration::from_secs(15),
-        GraphLifecycleAction::Rebuild => std::time::Duration::from_secs(120),
-    };
     let client = reqwest::blocking::Client::builder()
-        .timeout(timeout)
+        .timeout(request.timeouts.for_action(action))
         .build()
         .context("failed to build HTTP client")?;
 

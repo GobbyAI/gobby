@@ -231,6 +231,7 @@ fn empty_output() -> TranscriptionOutput {
         task: None,
         target_language: None,
         translated: false,
+        translation_degraded: false,
         partial: false,
         completed_ranges: Vec::new(),
         missing_ranges: Vec::new(),
@@ -254,6 +255,7 @@ fn merge_metadata(aggregate: &mut TranscriptionOutput, output: &TranscriptionOut
         aggregate.target_language = output.target_language.clone();
     }
     aggregate.translated |= output.translated;
+    aggregate.translation_degraded |= output.translation_degraded;
 }
 
 fn offset_segments(segments: &mut [TranscriptSegment], chunk_start_ms: u64) {
@@ -600,6 +602,7 @@ mod tests {
             task: Some("transcribe".to_string()),
             target_language: None,
             translated: false,
+            translation_degraded: false,
             partial: false,
             completed_ranges: Vec::new(),
             missing_ranges: Vec::new(),

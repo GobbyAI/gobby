@@ -23,9 +23,6 @@ pub fn search_content(
     }
 
     let bm25_query = sanitize_pg_search_query(query);
-    if bm25_query.is_empty() {
-        return search_content_like(conn, query, project_id, language, paths, limit);
-    }
     let mut params = Vec::new();
     let query_placeholder = push_param(&mut params, bm25_query);
     let project_placeholder = push_param(&mut params, project_id.to_string());
@@ -83,10 +80,6 @@ pub fn search_content_visible(
     }
 
     let bm25_query = sanitize_pg_search_query(query);
-    if bm25_query.is_empty() {
-        return search_content_visible_like(conn, query, ctx, language, paths, limit);
-    }
-
     let mut params = Vec::new();
     let visible_files_sql = visible_files_sql(ctx, &mut params);
     let query_placeholder = push_param(&mut params, bm25_query);
@@ -264,6 +257,7 @@ fn visible_files_sql(ctx: &Context, params: &mut Vec<PgParam>) -> String {
 }
 
 fn content_hits_from_rows(rows: &[Row], query: &str) -> Vec<ContentSearchHit> {
+    let tokens = snippet_tokens(query);
     rows.iter()
         .filter_map(|row| {
             let content: String = row.try_get("content").ok()?;
@@ -273,19 +267,28 @@ fn content_hits_from_rows(rows: &[Row], query: &str) -> Vec<ContentSearchHit> {
                 file_path: row.try_get("file_path").ok()?,
                 line_start,
                 line_end,
-                snippet: make_snippet(&content, query),
+                snippet: make_snippet_with_tokens(&content, &tokens),
                 language: row.try_get("language").ok()?,
             })
         })
         .collect()
 }
 
+#[cfg(test)]
 pub(super) fn make_snippet(content: &str, query: &str) -> String {
-    let tokens: Vec<String> = query
+    let tokens = snippet_tokens(query);
+    make_snippet_with_tokens(content, &tokens)
+}
+
+fn snippet_tokens(query: &str) -> Vec<String> {
+    query
         .split_whitespace()
         .map(str::to_lowercase)
         .filter(|token| !token.is_empty())
-        .collect();
+        .collect()
+}
+
+fn make_snippet_with_tokens(content: &str, tokens: &[String]) -> String {
     let (lower_content, lower_byte_to_original_char) = lowercase_with_original_char_map(content);
     let match_at = tokens
         .iter()

@@ -29,6 +29,7 @@ pub struct TranscriptionOutput {
     pub task: Option<String>,
     pub target_language: Option<String>,
     pub translated: bool,
+    pub translation_degraded: bool,
     pub partial: bool,
     pub completed_ranges: Vec<TranscriptionRange>,
     pub missing_ranges: Vec<TranscriptionRange>,
@@ -273,6 +274,9 @@ fn render_audio_transcript_markdown(
             ));
         }
         fields.push(("translated".to_string(), output.translated.to_string()));
+        if output.translation_degraded {
+            fields.push(("translation_degraded".to_string(), "true".to_string()));
+        }
         if !output.completed_ranges.is_empty() {
             fields.push((
                 "transcription_completed_ranges".to_string(),
@@ -398,6 +402,7 @@ mod tests {
                 task: Some("transcribe".to_string()),
                 target_language: None,
                 translated: false,
+                translation_degraded: false,
                 partial: false,
                 completed_ranges: Vec::new(),
                 missing_ranges: Vec::new(),
@@ -513,6 +518,7 @@ mod tests {
                 task: Some("translate".to_string()),
                 target_language: Some("en".to_string()),
                 translated: true,
+                translation_degraded: true,
                 partial: true,
                 completed_ranges: vec![TranscriptionRange {
                     start_ms: 1_000,
@@ -537,6 +543,7 @@ mod tests {
         assert!(markdown.contains("transcription_task: translate"));
         assert!(markdown.contains("transcription_target_language: en"));
         assert!(markdown.contains("translated: true"));
+        assert!(markdown.contains("translation_degraded: true"));
         assert!(markdown.contains("transcription_partial: true"));
         assert!(markdown.contains("transcription_missing_ranges: 3500-7000"));
         assert!(markdown.contains("[00:00:01] Translated field recording sentence."));

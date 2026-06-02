@@ -47,6 +47,8 @@ where
     if request.limit == 0 {
         return Ok(Vec::new());
     }
+    // Fetch extra candidates because path/source filters run after backend
+    // search, and BM25 can otherwise return too few scoped wiki hits.
     let backend_request = Bm25SearchRequest {
         limit: request.limit.saturating_mul(4),
         ..request.clone()

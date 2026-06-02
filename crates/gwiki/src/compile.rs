@@ -316,7 +316,6 @@ fn update_wiki_index(vault_root: &Path, article: &SynthesizedPage) -> Result<(),
         path: Some(index_path),
         source: error,
     })?;
-    drop(lock);
     Ok(())
 }
 

@@ -995,6 +995,7 @@ mod tests {
             task: Some(task.to_string()),
             target_language: translated.then(|| "en".to_string()),
             translated,
+            translation_degraded: false,
             partial: false,
             completed_ranges: Vec::new(),
             missing_ranges: Vec::new(),

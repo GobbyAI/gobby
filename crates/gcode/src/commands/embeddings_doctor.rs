@@ -44,6 +44,8 @@ pub(crate) struct EmbeddingsDoctorReport {
     pub endpoint: Option<String>,
     pub model: Option<String>,
     pub dim: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub probe_error: Option<String>,
     pub api_key_present: bool,
     pub api_key_fingerprint: Option<String>,
     pub namespace_resolved: Option<String>,
@@ -108,6 +110,7 @@ fn build_doctor_report(
                 endpoint: None,
                 model: None,
                 dim: None,
+                probe_error: None,
                 api_key_present: false,
                 api_key_fingerprint: None,
                 namespace_resolved: None,
@@ -123,8 +126,10 @@ fn build_doctor_report(
         Some(dim) => Some(dim),
         None => match probe(&resolution.config) {
             Ok(dim) => Some(dim),
-            Err(_) => {
-                return (report_without_peer(&resolution, None), EXIT_TRANSPORT);
+            Err(error) => {
+                let mut report = report_without_peer(&resolution, None);
+                report.probe_error = Some(error);
+                return (report, EXIT_TRANSPORT);
             }
         },
     };
@@ -175,6 +180,7 @@ fn base_report(resolution: &EmbeddingConfigDetails, dim: Option<usize>) -> Embed
         endpoint: Some(resolution.config.api_base.clone()),
         model: Some(resolution.config.model.clone()),
         dim,
+        probe_error: None,
         api_key_present: resolution.config.api_key.is_some(),
         api_key_fingerprint: resolution
             .config
@@ -352,5 +358,6 @@ mod tests {
         );
         assert_eq!(code, EXIT_TRANSPORT);
         assert_eq!(transport.dim, None);
+        assert_eq!(transport.probe_error.as_deref(), Some("probe failed"));
     }
 }

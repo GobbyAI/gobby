@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 use serde::Serialize;
@@ -10,6 +11,8 @@ use crate::{CommandOutcome, ReadTarget, ScopeIdentity, ScopeSelection, WikiError
 const MAX_TITLE_CANDIDATES: usize = 50;
 const MAX_TITLE_SEARCH_DEPTH: usize = 64;
 const MAX_TITLE_SCAN_ENTRIES: usize = 10_000;
+const READ_MAX_BYTES_ENV: &str = "GWIKI_READ_MAX_BYTES";
+const DEFAULT_READ_MAX_BYTES: usize = 1024 * 1024;
 
 pub(crate) fn execute(
     target: ReadTarget,
@@ -88,19 +91,64 @@ fn read_existing_path(
     wiki_path: PathBuf,
 ) -> Result<ReadOutput, WikiError> {
     let absolute_path = root.join(&wiki_path);
-    let content = std::fs::read_to_string(&absolute_path).map_err(|error| WikiError::Io {
-        action: "read wiki document",
+    let max_bytes = configured_read_max_bytes();
+    let metadata = std::fs::metadata(&absolute_path).map_err(|error| WikiError::Io {
+        action: "stat wiki document",
         path: Some(absolute_path.clone()),
         source: error,
     })?;
+    let byte_len = usize::try_from(metadata.len()).unwrap_or(usize::MAX);
+    let (content, truncated) = read_markdown_prefix(&absolute_path, max_bytes)?;
     Ok(ReadOutput::found(
         scope,
         requested,
         wiki_path,
         absolute_path,
-        first_heading(&content),
-        content,
+        ReadFoundContent {
+            title: first_heading(&content),
+            content,
+            byte_len,
+            truncated,
+        },
     ))
+}
+
+fn configured_read_max_bytes() -> usize {
+    std::env::var(READ_MAX_BYTES_ENV)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_READ_MAX_BYTES)
+}
+
+fn read_markdown_prefix(path: &Path, max_bytes: usize) -> Result<(String, bool), WikiError> {
+    let mut file = std::fs::File::open(path).map_err(|error| WikiError::Io {
+        action: "read wiki document",
+        path: Some(path.to_path_buf()),
+        source: error,
+    })?;
+    let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024).saturating_add(1));
+    file.by_ref()
+        .take(max_bytes.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| WikiError::Io {
+            action: "read wiki document",
+            path: Some(path.to_path_buf()),
+            source: error,
+        })?;
+    let truncated = bytes.len() > max_bytes;
+    if truncated {
+        bytes.truncate(max_bytes);
+        while std::str::from_utf8(&bytes).is_err() {
+            bytes.pop();
+        }
+    }
+    let content = String::from_utf8(bytes).map_err(|error| WikiError::Io {
+        action: "read wiki document",
+        path: Some(path.to_path_buf()),
+        source: std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+    })?;
+    Ok((content, truncated))
 }
 
 fn normalize_requested_path(path: &Path) -> Result<PathBuf, ReadDegradation> {
@@ -237,7 +285,7 @@ fn collect_title_candidates(
             continue;
         }
 
-        let Some(relative) = path.strip_prefix(root).ok() else {
+        let Ok(relative) = path.strip_prefix(root) else {
             continue;
         };
         if !is_readable_wiki_path(relative) {
@@ -329,16 +377,21 @@ struct ReadOutput {
     degradations: Vec<ReadDegradation>,
 }
 
+struct ReadFoundContent {
+    title: Option<String>,
+    content: String,
+    byte_len: usize,
+    truncated: bool,
+}
+
 impl ReadOutput {
     fn found(
         scope: ScopeIdentity,
         requested: ReadRequested,
         wiki_path: PathBuf,
         absolute_path: PathBuf,
-        title: Option<String>,
-        content: String,
+        found: ReadFoundContent,
     ) -> Self {
-        let byte_len = content.len();
         Self {
             command: "read",
             scope,
@@ -346,11 +399,11 @@ impl ReadOutput {
             status: "found",
             wiki_path: Some(wiki_path),
             absolute_path: Some(absolute_path),
-            title,
+            title: found.title,
             content_format: "markdown",
-            content: Some(content),
-            byte_len: Some(byte_len),
-            truncated: false,
+            content: Some(found.content),
+            byte_len: Some(found.byte_len),
+            truncated: found.truncated,
             candidates: Vec::new(),
             degradations: Vec::new(),
         }
@@ -506,6 +559,37 @@ impl ReadDegradation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static READ_TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn read_path_caps_content_and_marks_truncated() {
+        let _guard = READ_TEST_ENV_LOCK.lock().expect("env lock");
+        // SAFETY: READ_TEST_ENV_LOCK serializes this process-wide env mutation.
+        unsafe {
+            std::env::set_var(READ_MAX_BYTES_ENV, "12");
+        }
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("wiki/topics/large.md");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("topic dir");
+        std::fs::write(&path, "# Large\n0123456789abcdef").expect("large markdown");
+
+        let output = read_path(
+            temp.path(),
+            ScopeIdentity::topic("field-work"),
+            PathBuf::from("wiki/topics/large.md"),
+        )
+        .expect("read path");
+
+        assert_eq!(output.status, "found");
+        assert!(output.truncated);
+        assert_eq!(output.byte_len, Some("# Large\n0123456789abcdef".len()));
+        assert_eq!(output.content.as_deref(), Some("# Large\n012"));
+        // SAFETY: READ_TEST_ENV_LOCK serializes this process-wide env mutation.
+        unsafe {
+            std::env::remove_var(READ_MAX_BYTES_ENV);
+        }
+    }
 
     #[test]
     fn title_search_stops_at_max_depth() {
