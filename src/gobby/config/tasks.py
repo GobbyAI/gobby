@@ -40,7 +40,7 @@ class CompactHandoffConfig(BaseModel):
         description="Enable compact handoff context extraction and injection",
     )
     refresh_timeout_seconds: float = Field(
-        default=180.0,
+        default=10.0,
         gt=0,
         description=(
             "Maximum seconds compact_self waits for pre-compact handoff summary refresh "
