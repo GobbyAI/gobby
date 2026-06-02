@@ -56,7 +56,6 @@ pub fn backend_api_base(backend: &Backend) -> String {
 }
 
 /// Probe backends in order, return the first that responds successfully.
-#[cfg(feature = "local_backend")]
 pub fn detect_backend(backends: &[Backend], timeout_ms: u64) -> Option<Backend> {
     for backend in backends {
         if validate_backend(backend, timeout_ms) {
@@ -67,7 +66,6 @@ pub fn detect_backend(backends: &[Backend], timeout_ms: u64) -> Option<Backend> 
 }
 
 /// Validate that a specific backend is reachable.
-#[cfg(feature = "local_backend")]
 pub fn validate_backend(backend: &Backend, timeout_ms: u64) -> bool {
     let timeout = std::time::Duration::from_millis(timeout_ms);
     let url = format!("{}{}", backend.url, backend.probe);
@@ -106,7 +104,7 @@ pub fn validate_backend(backend: &Backend, timeout_ms: u64) -> bool {
     }
 }
 
-#[cfg(all(test, feature = "local_backend"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::io::{Read, Write};

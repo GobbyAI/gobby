@@ -2,8 +2,10 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use rayon::prelude::*;
+use regex::Regex;
 
 use crate::models::ImportRelation;
 
@@ -650,40 +652,37 @@ pub(super) fn load_elixir_external_roots(root_path: &Path) -> HashMap<String, St
 pub(super) fn load_elixir_dependency_names(root_path: &Path) -> HashSet<String> {
     let mut deps = HashSet::new();
     if let Ok(contents) = std::fs::read_to_string(root_path.join("mix.exs")) {
-        for line in contents.lines() {
-            let trimmed = line.trim();
-            if let Some(rest) = trimmed.strip_prefix("{:") {
-                let dep = rest
-                    .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-                    .next()
-                    .unwrap_or_default();
-                if !dep.is_empty() {
-                    deps.insert(dep.to_string());
-                }
+        // This is a whole-file manifest heuristic, not an Elixir parser. It catches
+        // normal deps entries even when tuple formatting spans lines.
+        for captures in elixir_mix_dependency_regex().captures_iter(&contents) {
+            if let Some(dep) = captures.get(1) {
+                deps.insert(dep.as_str().to_string());
             }
         }
     }
     if let Ok(contents) = std::fs::read_to_string(root_path.join("mix.lock")) {
-        for line in contents
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-        {
-            let Some(start) = line.find('"') else {
-                continue;
-            };
-            let rest = &line[start + 1..];
-            let Some(end) = rest.find('"') else {
-                continue;
-            };
-            let dep = &rest[..end];
-            if dep
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-            {
-                deps.insert(dep.to_string());
+        // Lockfiles are Elixir maps; quoted dependency keys are enough here. Values
+        // may contain package names and repository names that should not be indexed.
+        for captures in elixir_lock_dependency_regex().captures_iter(&contents) {
+            if let Some(dep) = captures.get(1) {
+                deps.insert(dep.as_str().to_string());
             }
         }
     }
     deps
+}
+
+fn elixir_mix_dependency_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(r"\{\s*:([A-Za-z_][A-Za-z0-9_]*)\b").expect("Elixir dependency regex compiles")
+    })
+}
+
+fn elixir_lock_dependency_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(r#""([A-Za-z_][A-Za-z0-9_]*)"\s*:"#)
+            .expect("Elixir lock dependency regex compiles")
+    })
 }

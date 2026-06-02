@@ -39,7 +39,10 @@ pub fn run(
         api::index_files(request, &target_ctx)
     })? {
         IndexLockResult::Acquired(outcome) => outcome,
-        IndexLockResult::Busy => unreachable!("wait policy always acquires the index lock"),
+        IndexLockResult::Busy => anyhow::bail!(
+            "index lock is busy for project {}; wait policy did not acquire it",
+            target_ctx.project_id
+        ),
     };
     if sync_projections {
         let projections = sync::sync_after_index(&target_ctx, &outcome.indexed_file_paths)?;

@@ -272,11 +272,12 @@ as content-only text for `search-content`.
 |------|-----------|
 | **Tier 1** | Python, JavaScript, TypeScript, Go, Rust, Java, C, C++, C#, Ruby, PHP, Swift, Kotlin |
 | **Tier 2** | Dart, Elixir |
-| **Tier 3** | JSON, YAML, Markdown (structural symbols + content chunks) |
+| **Tier 3** | JSON, YAML |
 
 Content-only indexing covers repo text files such as source comments, skill
 files, docs/Markdown, configs, scripts, CSS, SQL, `Dockerfile`/`Makefile`, and
-other extensionless text files. Binary, excluded, empty, and >10MB files are
+other extensionless text files. Markdown is content-only and does not go through
+tree-sitter AST symbol detection. Binary, excluded, empty, and >10MB files are
 skipped. Secret-like skips are filename/path checks from `src/index/security.rs`:
 extensions such as `.env`, `.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`,
 and `.secret`; prefixes such as `credentials`, `.env`, `id_rsa`, `id_ed25519`,

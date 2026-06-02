@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use serde::Serialize;
 
@@ -127,7 +127,7 @@ pub fn synthesize_article(
     vault_root: &Path,
     input: &SynthesisInput,
     target_page: Option<PathBuf>,
-) -> SynthesizedPage {
+) -> Result<SynthesizedPage, WikiError> {
     let path = target_page.unwrap_or_else(|| {
         let directory = vault_root.join(input.target_kind.directory());
         let slug = slugify_unique(&input.topic, |slug| {
@@ -135,6 +135,7 @@ pub fn synthesize_article(
         });
         directory.join(format!("{slug}.md"))
     });
+    ensure_synthesized_path_inside_vault(vault_root, &path, "article_path")?;
     let mut markdown = String::new();
     render_frontmatter(
         &mut markdown,
@@ -183,53 +184,51 @@ pub fn synthesize_article(
         render_list_section(&mut markdown, "Backlinks", &source_links);
     }
 
-    SynthesizedPage {
+    Ok(SynthesizedPage {
         path,
         title: input.topic.clone(),
         markdown,
-    }
+    })
 }
 
 pub fn synthesize_source_pages(
     vault_root: &Path,
     input: &SynthesisInput,
     article_path: &Path,
-) -> Vec<SynthesizedPage> {
+) -> Result<Vec<SynthesizedPage>, WikiError> {
     let article_link = wiki_link(vault_root, article_path, &input.topic);
     let source_paths = source_page_paths(vault_root, article_path, &input.accepted_sources);
-    input
-        .accepted_sources
-        .iter()
-        .zip(source_paths)
-        .map(|(source, path)| {
-            let mut markdown = String::new();
-            render_frontmatter(
-                &mut markdown,
-                &source.title,
-                ArticleKind::Source.source_kind(),
-                &input.handoff_id,
-                "source",
-            );
-            markdown.push_str("# ");
-            markdown.push_str(&source.title);
-            markdown.push_str("\n\n");
-            markdown.push_str("Source path: `");
-            markdown.push_str(&relative_path(vault_root, &source.path));
-            markdown.push_str("`\n\n");
-            render_list_section(&mut markdown, "Extracts", &source.chunks);
-            render_list_section(
-                &mut markdown,
-                "Used by",
-                std::slice::from_ref(&article_link),
-            );
+    let mut pages = Vec::with_capacity(input.accepted_sources.len());
+    for (source, path) in input.accepted_sources.iter().zip(source_paths) {
+        ensure_synthesized_path_inside_vault(vault_root, &path, "source_path")?;
+        let mut markdown = String::new();
+        render_frontmatter(
+            &mut markdown,
+            &source.title,
+            ArticleKind::Source.source_kind(),
+            &input.handoff_id,
+            "source",
+        );
+        markdown.push_str("# ");
+        markdown.push_str(&source.title);
+        markdown.push_str("\n\n");
+        markdown.push_str("Source path: `");
+        markdown.push_str(&relative_path(vault_root, &source.path));
+        markdown.push_str("`\n\n");
+        render_list_section(&mut markdown, "Extracts", &source.chunks);
+        render_list_section(
+            &mut markdown,
+            "Used by",
+            std::slice::from_ref(&article_link),
+        );
 
-            SynthesizedPage {
-                path,
-                title: source.title.clone(),
-                markdown,
-            }
-        })
-        .collect()
+        pages.push(SynthesizedPage {
+            path,
+            title: source.title.clone(),
+            markdown,
+        });
+    }
+    Ok(pages)
 }
 
 /// Advisory preflight for callers that want to fail before expensive synthesis.
@@ -254,15 +253,18 @@ pub fn ensure_page_write_allowed(
 }
 
 pub fn write_synthesized_page(
+    vault_root: &Path,
     page: &SynthesizedPage,
     policy: WritePolicy,
 ) -> Result<PageWriteOutcome, WikiError> {
+    ensure_synthesized_path_inside_vault(vault_root, &page.path, "synthesized_page")?;
     if let Some(parent) = page.path.parent() {
         fs::create_dir_all(parent).map_err(|error| WikiError::Io {
             action: "create synthesized page directory",
             path: Some(parent.to_path_buf()),
             source: error,
         })?;
+        ensure_existing_parent_inside_vault(vault_root, parent, "synthesized_page")?;
     }
 
     let kind = match policy {
@@ -321,6 +323,63 @@ pub fn write_synthesized_page(
         path: page.path.clone(),
         kind,
     })
+}
+
+pub fn ensure_synthesized_path_inside_vault(
+    vault_root: &Path,
+    path: &Path,
+    field: &'static str,
+) -> Result<(), WikiError> {
+    let root = vault_root.canonicalize().map_err(|error| WikiError::Io {
+        action: "resolve vault root",
+        path: Some(vault_root.to_path_buf()),
+        source: error,
+    })?;
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    };
+    let Ok(relative) = candidate.strip_prefix(&root) else {
+        return Err(synthesized_path_outside_vault(field));
+    };
+    if relative.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return Err(synthesized_path_outside_vault(field));
+    }
+    Ok(())
+}
+
+fn ensure_existing_parent_inside_vault(
+    vault_root: &Path,
+    parent: &Path,
+    field: &'static str,
+) -> Result<(), WikiError> {
+    let root = vault_root.canonicalize().map_err(|error| WikiError::Io {
+        action: "resolve vault root",
+        path: Some(vault_root.to_path_buf()),
+        source: error,
+    })?;
+    let parent = parent.canonicalize().map_err(|error| WikiError::Io {
+        action: "resolve synthesized page directory",
+        path: Some(parent.to_path_buf()),
+        source: error,
+    })?;
+    if parent.starts_with(root) {
+        return Ok(());
+    }
+    Err(synthesized_path_outside_vault(field))
+}
+
+fn synthesized_path_outside_vault(field: &'static str) -> WikiError {
+    WikiError::InvalidInput {
+        field,
+        message: "synthesized wiki page path must stay inside the vault".to_string(),
+    }
 }
 
 pub fn wiki_link(vault_root: &Path, path: &Path, title: &str) -> String {
@@ -615,7 +674,7 @@ mod tests {
             markdown: "---\ntitle: Existing\n---\n# Existing\nNew synthesis.\n".to_string(),
         };
 
-        let error = write_synthesized_page(&page, WritePolicy::RequireMergeIntent)
+        let error = write_synthesized_page(temp.path(), &page, WritePolicy::RequireMergeIntent)
             .expect_err("existing page requires merge intent");
 
         assert!(matches!(
@@ -641,10 +700,12 @@ mod tests {
             markdown: "# New\n".to_string(),
         };
 
-        let created = write_synthesized_page(&page, WritePolicy::AllowOverwriteAfterMerge)
-            .expect("create synthesized page");
-        let overwritten = write_synthesized_page(&page, WritePolicy::AllowOverwriteAfterMerge)
-            .expect("overwrite synthesized page");
+        let created =
+            write_synthesized_page(temp.path(), &page, WritePolicy::AllowOverwriteAfterMerge)
+                .expect("create synthesized page");
+        let overwritten =
+            write_synthesized_page(temp.path(), &page, WritePolicy::AllowOverwriteAfterMerge)
+                .expect("overwrite synthesized page");
 
         assert_eq!(created.kind, PageWriteKind::Created);
         assert_eq!(overwritten.kind, PageWriteKind::Overwritten);
@@ -676,6 +737,72 @@ mod tests {
 
         assert_ne!(paths[0], article_path);
         assert!(paths[0].starts_with(temp.path().join("wiki/sources")));
+    }
+
+    #[test]
+    fn synthesized_article_rejects_escaping_target_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let input = SynthesisInput {
+            handoff_id: "handoff-1".to_string(),
+            topic: "Escape".to_string(),
+            outline: vec![],
+            target_kind: ArticleKind::Topic,
+            accepted_sources: vec![],
+            citations: vec![],
+            conflicting_claims: vec![],
+            missing_evidence: vec![],
+            daemon_synthesis_available: false,
+        };
+        let outside_name = format!(
+            "{}-outside.md",
+            temp.path()
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("synthesis")
+        );
+        let target = temp.path().join("..").join(outside_name);
+
+        let error = synthesize_article(temp.path(), &input, Some(target))
+            .expect_err("escaping target must be rejected");
+
+        assert!(matches!(
+            error,
+            WikiError::InvalidInput {
+                field: "article_path",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn synthesized_writer_rejects_escaping_page_path_before_write() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let outside_name = format!(
+            "{}-outside.md",
+            temp.path()
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("synthesis")
+        );
+        let outside = temp.path().join("..").join(outside_name);
+        let page = SynthesizedPage {
+            path: outside.clone(),
+            title: "Outside".to_string(),
+            markdown: "# Outside\n".to_string(),
+        };
+
+        let error =
+            write_synthesized_page(temp.path(), &page, WritePolicy::AllowOverwriteAfterMerge)
+                .expect_err("escaping page must be rejected");
+
+        assert!(matches!(
+            error,
+            WikiError::InvalidInput {
+                field: "synthesized_page",
+                ..
+            }
+        ));
+        assert!(!outside.exists());
     }
 
     #[test]

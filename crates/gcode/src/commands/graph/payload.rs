@@ -7,13 +7,13 @@ fn format_graph_payload_text(payload: &GraphPayload) -> String {
     let mut lines = Vec::new();
     lines.push(format!(
         "nodes: {}, links: {}",
-        payload.nodes.len(),
+        payload.node_count(),
         payload.links.len()
     ));
     if let Some(center) = &payload.center {
         lines.push(format!("center: {center}"));
     }
-    for node in &payload.nodes {
+    for node in payload.nodes() {
         match node.file_path.as_deref() {
             Some(file) if !file.is_empty() => lines.push(format!(
                 "node {} [{}] {} {}",

@@ -117,7 +117,7 @@ fn strip_json_fence(content: &str) -> &str {
     without_language
         .strip_suffix("```")
         .map(str::trim)
-        .unwrap_or(trimmed)
+        .unwrap_or_else(|| without_language.trim())
 }
 
 fn parse_delimited_content(content: &str) -> Option<(String, Option<String>)> {
@@ -230,6 +230,18 @@ mod tests {
 
         assert_eq!(result.description, "");
         assert_eq!(result.ocr_text, None);
+        assert_eq!(result.model.as_deref(), Some("vision-model"));
+    }
+
+    #[test]
+    fn parses_unterminated_json_fence() {
+        let result = parse_content(
+            "```json\n{\"description\":\"A receipt\",\"ocr_text\":\"TOTAL\"}",
+            Some("vision-model".to_string()),
+        );
+
+        assert_eq!(result.description, "A receipt");
+        assert_eq!(result.ocr_text.as_deref(), Some("TOTAL"));
         assert_eq!(result.model.as_deref(), Some("vision-model"));
     }
 

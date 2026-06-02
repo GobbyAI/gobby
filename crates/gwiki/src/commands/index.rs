@@ -188,12 +188,20 @@ fn resolve_video_frame_interval_seconds(source: &mut impl ConfigSource) -> Resul
         .map_err(|error| WikiError::Config {
             detail: format!("failed to resolve {VIDEO_FRAME_INTERVAL_KEY}: {error}"),
         })?;
-    value
+    let interval = value
         .trim()
         .parse::<u32>()
         .map_err(|error| WikiError::Config {
             detail: format!("invalid {VIDEO_FRAME_INTERVAL_KEY} value `{value}`: {error}"),
-        })
+        })?;
+    if interval == 0 {
+        return Err(WikiError::Config {
+            detail: format!(
+                "invalid {VIDEO_FRAME_INTERVAL_KEY} value `{value}`: must be greater than 0"
+            ),
+        });
+    }
+    Ok(interval)
 }
 
 fn ai_project_id(scope: &ScopeIdentity) -> Option<String> {
@@ -372,4 +380,35 @@ fn ensure_scope_root(scope: &crate::scope::ResolvedScope) -> Result<(), WikiErro
             scope.root().display()
         ),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestConfigSource {
+        value: Option<&'static str>,
+    }
+
+    impl ConfigSource for TestConfigSource {
+        fn config_value(&mut self, key: &str) -> Option<String> {
+            (key == VIDEO_FRAME_INTERVAL_KEY)
+                .then(|| self.value.map(str::to_string))
+                .flatten()
+        }
+
+        fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+            Ok(value.to_string())
+        }
+    }
+
+    #[test]
+    fn video_frame_interval_zero_is_invalid() {
+        let mut source = TestConfigSource { value: Some("0") };
+        let error = resolve_video_frame_interval_seconds(&mut source)
+            .expect_err("zero interval must be invalid");
+
+        assert!(matches!(error, WikiError::Config { .. }));
+        assert!(error.to_string().contains("must be greater than 0"));
+    }
 }

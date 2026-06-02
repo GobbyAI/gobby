@@ -17,6 +17,7 @@ pub mod transcription;
 pub mod vision;
 
 const TEXT_VISION_TIMEOUT: Duration = Duration::from_secs(60);
+const EMBEDDINGS_TIMEOUT: Duration = Duration::from_secs(10);
 const STT_CHUNK_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_RETRIES: usize = 2;
 const BASE_BACKOFF: Duration = Duration::from_millis(250);
@@ -205,9 +206,8 @@ fn apply_api_key(request: RequestBuilder, binding: &CapabilityBinding) -> Reques
 fn timeout_for(capability: AiCapability) -> Duration {
     match capability {
         AiCapability::AudioTranscribe | AiCapability::AudioTranslate => STT_CHUNK_TIMEOUT,
-        AiCapability::Embed | AiCapability::VisionExtract | AiCapability::TextGenerate => {
-            TEXT_VISION_TIMEOUT
-        }
+        AiCapability::Embed => EMBEDDINGS_TIMEOUT,
+        AiCapability::VisionExtract | AiCapability::TextGenerate => TEXT_VISION_TIMEOUT,
     }
 }
 
@@ -332,10 +332,12 @@ fn chat_completions_url(cfg: &AiContext, capability: AiCapability) -> Result<Str
             )
         })?;
 
-    Ok(format!(
-        "{}/v1/chat/completions",
-        api_base.trim_end_matches('/')
-    ))
+    Ok(format!("{}/v1/chat/completions", chat_api_root(api_base)))
+}
+
+fn chat_api_root(api_base: &str) -> &str {
+    let trimmed = api_base.trim_end_matches('/');
+    trimmed.strip_suffix("/v1").unwrap_or(trimmed)
 }
 
 fn chat_completion_content(value: &serde_json::Value) -> Result<String, AiError> {
@@ -358,7 +360,6 @@ fn chat_completion_model(value: &serde_json::Value) -> Option<String> {
         .map(str::to_string)
 }
 
-#[cfg(feature = "local_backend")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalBackendProbe {
     pub url: String,
@@ -366,12 +367,10 @@ pub struct LocalBackendProbe {
     pub body: Option<String>,
 }
 
-#[cfg(feature = "local_backend")]
 pub fn probe_local_backend(api_base: &str) -> Result<LocalBackendProbe, AiError> {
     let url = format!("{}/models", api_base.trim_end_matches('/'));
-    // Keep the lightweight local-backend probe on ureq: it is enabled by the
-    // local_backend feature and avoids constructing the shared AI transport for
-    // a short, unauthenticated discovery request.
+    // Keep the lightweight local-backend probe on ureq to avoid constructing the
+    // shared AI transport for a short, unauthenticated discovery request.
     match ureq::get(&url).timeout(Duration::from_secs(2)).call() {
         Ok(response) => Ok(LocalBackendProbe {
             url,
@@ -451,6 +450,29 @@ mod tests {
             Some(Duration::ZERO)
         );
         assert_eq!(parse_retry_after("120"), Some(MAX_BACKOFF));
+    }
+
+    #[test]
+    fn embeddings_use_shorter_timeout_than_generation() {
+        assert_eq!(timeout_for(AiCapability::Embed), EMBEDDINGS_TIMEOUT);
+        assert!(timeout_for(AiCapability::Embed) < timeout_for(AiCapability::TextGenerate));
+        assert!(timeout_for(AiCapability::Embed) < timeout_for(AiCapability::VisionExtract));
+    }
+
+    #[test]
+    fn chat_api_root_trims_trailing_v1_segment() {
+        assert_eq!(
+            chat_api_root("http://localhost:11434/v1"),
+            "http://localhost:11434"
+        );
+        assert_eq!(
+            chat_api_root("http://localhost:11434/custom/v1/"),
+            "http://localhost:11434/custom"
+        );
+        assert_eq!(
+            chat_api_root("http://localhost:11434/v10"),
+            "http://localhost:11434/v10"
+        );
     }
 
     #[test]

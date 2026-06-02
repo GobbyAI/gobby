@@ -151,7 +151,9 @@ fn resolved_log_path(path: &Path) -> PathBuf {
         return resolved;
     }
 
-    resolve_log_path_fallback(path)
+    let resolved = resolve_log_path_fallback(path);
+    cache.insert(key, resolved.clone());
+    resolved
 }
 
 fn resolve_log_path_fallback(path: &Path) -> PathBuf {

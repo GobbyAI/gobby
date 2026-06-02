@@ -157,9 +157,9 @@ pub fn compile_to_wiki_with_options(
         daemon_synthesis_available: options.daemon_synthesis_available,
     };
     let prompt = build_synthesis_prompt(&input);
-    let article = synthesize_article(vault_root, &input, target_page);
+    let article = synthesize_article(vault_root, &input, target_page)?;
     let mut pages = vec![article.clone()];
-    pages.extend(synthesize_source_pages(vault_root, &input, &article.path));
+    pages.extend(synthesize_source_pages(vault_root, &input, &article.path)?);
 
     let policy = if write_intent {
         WritePolicy::AllowOverwriteAfterMerge
@@ -168,7 +168,7 @@ pub fn compile_to_wiki_with_options(
     };
     let mut page_writes = Vec::with_capacity(pages.len());
     for page in &pages {
-        page_writes.push(write_synthesized_page(page, policy)?);
+        page_writes.push(write_synthesized_page(vault_root, page, policy)?);
     }
     update_wiki_index(vault_root, &article)?;
     write_provenance(vault_root, &article, &handoff.bundle.accepted_sources)?;

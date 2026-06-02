@@ -27,8 +27,7 @@ fn cargo_features_define_public_boundary() {
         r#"qdrant = ["dep:reqwest", "dep:urlencoding"]"#,
         r#"indexing = ["dep:ignore", "dep:sha2"]"#,
         "search = []",
-        r#"local_backend = ["dep:ureq"]"#,
-        r#"ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:httpdate", "dep:rand", "local_backend", "reqwest/multipart"]"#,
+        r#"ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:httpdate", "dep:rand", "reqwest/multipart"]"#,
         r#"full = ["postgres", "falkor", "qdrant", "indexing", "search", "ai"]"#,
         r#"serde = { version = "1", features = ["derive"] }"#,
         r#"thiserror = "2""#,
@@ -42,7 +41,7 @@ fn cargo_features_define_public_boundary() {
         r#"bytes = { version = "1", optional = true }"#,
         r#"httpdate = { version = "1", optional = true }"#,
         r#"rand = { version = "0.8", optional = true }"#,
-        r#"ureq = { version = "2", optional = true }"#,
+        r#"ureq = "2""#,
         r#"ignore = { version = "0.4", optional = true }"#,
         r#"sha2 = { version = "0.10", optional = true }"#,
         r#"urlencoding = { version = "2", optional = true }"#,
@@ -53,10 +52,10 @@ fn cargo_features_define_public_boundary() {
         );
     }
 
-    let gloc_gcore_dependency = r#"gobby-core = { path = "../gcore", default-features = false, features = ["local_backend"] }"#;
+    let gloc_gcore_dependency = r#"gobby-core = { path = "../gcore", default-features = false }"#;
     assert!(
         gloc_manifest.contains(gloc_gcore_dependency),
-        "gloc must enable only gobby-core/local_backend, not the heavier ai feature"
+        "gloc must not enable the heavier gobby-core/ai feature"
     );
 }
 

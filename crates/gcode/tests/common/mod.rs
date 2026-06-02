@@ -18,35 +18,27 @@ impl Drop for ProjectCleanup {
     fn drop(&mut self) {
         let database_url = self.database_url.clone();
         let project_id = self.project_id.clone();
-        let handle = std::thread::Builder::new()
-            .name("gcode-test-project-cleanup".to_string())
-            .spawn(move || {
-                let mut conn = match Client::connect(&database_url, NoTls) {
-                    Ok(conn) => conn,
-                    Err(err) => {
-                        eprintln!(
-                            "ProjectCleanup cleanup: Client::connect failed for project {project_id}: {err}",
-                        );
-                        return;
-                    }
-                };
+        if std::panic::catch_unwind(move || {
+			let mut conn = match Client::connect(&database_url, NoTls) {
+				Ok(conn) => conn,
+				Err(err) => {
+					eprintln!(
+						"ProjectCleanup cleanup: Client::connect failed for project {project_id}: {err}",
+					);
+					return;
+				}
+			};
 
-                if let Err(err) = cleanup_project(&mut conn, &project_id) {
-                    eprintln!(
-                        "ProjectCleanup cleanup: cleanup_project failed for project {project_id}: {err}",
-                    );
-                }
-            });
-        match handle {
-            Ok(handle) => {
-                if handle.join().is_err() {
-                    eprintln!("ProjectCleanup cleanup thread panicked for project cleanup");
-                }
-            }
-            Err(err) => {
-                eprintln!("ProjectCleanup cleanup thread spawn failed: {err}");
-            }
-        }
+			if let Err(err) = cleanup_project(&mut conn, &project_id) {
+				eprintln!(
+					"ProjectCleanup cleanup: cleanup_project failed for project {project_id}: {err}",
+				);
+			}
+		})
+		.is_err()
+		{
+			eprintln!("ProjectCleanup cleanup panicked for project cleanup");
+		}
     }
 }
 

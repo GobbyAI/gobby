@@ -288,10 +288,38 @@ mod tests {
 
         assert_eq!(query.matches(" IN [").count(), 1, "{query}");
         assert!(query.contains("target.id IN ['a', 'b\\'\\\\c']"), "{query}");
+        assert!(
+            query.contains("WITH caller, min(r.file) AS file, min(r.line) AS line"),
+            "{query}"
+        );
+        assert!(query.contains("ORDER BY caller.id"), "{query}");
         assert!(query.contains("LIMIT 100"), "{query}");
         assert_no_numeric_or_list_placeholders(&query);
         assert_eq!(
             params.get("project").map(String::as_str),
+            Some("'project-1'")
+        );
+
+        let (callee_query, callee_params) =
+            find_callees_batch_query("project-1", &["a".to_string(), "b'\\c".to_string()], 250);
+
+        assert_eq!(callee_query.matches(" IN [").count(), 1, "{callee_query}");
+        assert!(
+            callee_query.contains("src.id IN ['a', 'b\\'\\\\c']"),
+            "{callee_query}"
+        );
+        assert!(
+            callee_query.contains("WITH target, min(r.file) AS file, min(r.line) AS line"),
+            "{callee_query}"
+        );
+        assert!(
+            callee_query.contains("ORDER BY target.id"),
+            "{callee_query}"
+        );
+        assert!(callee_query.contains("LIMIT 100"), "{callee_query}");
+        assert_no_numeric_or_list_placeholders(&callee_query);
+        assert_eq!(
+            callee_params.get("project").map(String::as_str),
             Some("'project-1'")
         );
     }
@@ -355,6 +383,11 @@ mod tests {
             batch.contains(&format!("target.id IN [{expected_ids}]")),
             "{batch}"
         );
+        assert!(
+            batch.contains("WITH caller, min(r.file) AS file, min(r.line) AS line"),
+            "{batch}"
+        );
+        assert!(batch.contains("ORDER BY caller.id"), "{batch}");
         assert!(batch.contains("LIMIT 100"), "{batch}");
         assert_no_numeric_or_list_placeholders(&batch);
         assert_eq!(batch_params.get("project"), Some(&expected_project));

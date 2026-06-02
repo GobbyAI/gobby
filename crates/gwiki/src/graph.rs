@@ -82,6 +82,11 @@ impl Default for RelatedPathOptions {
 
 pub fn graph_write_statements(facts: &WikiGraphFacts) -> Vec<GraphStatement> {
     let mut statements = Vec::new();
+    let documents = facts
+        .documents
+        .iter()
+        .map(|document| (document.scope.clone(), document.path.clone()))
+        .collect::<BTreeSet<_>>();
 
     for document in &facts.documents {
         statements.push(GraphStatement {
@@ -99,22 +104,30 @@ pub fn graph_write_statements(facts: &WikiGraphFacts) -> Vec<GraphStatement> {
     }
 
     for link in &facts.links {
+        if !documents.contains(&(link.scope.clone(), link.source_path.clone())) {
+            continue;
+        }
         statements.push(match &link.target {
-            WikiGraphLinkTarget::Resolved(target_path) => GraphStatement {
-                cypher: format!(
-                    "MATCH (source:{} {{{}}}) MERGE (target:{} {{{}}}) MERGE (source)-[:{} {{{}: {}}}]->(target)",
-                    label(WIKI_DOC_LABEL),
-                    scoped_path_properties(&link.scope, &link.source_path),
-                    label(WIKI_DOC_LABEL),
-                    scoped_path_properties(&link.scope, target_path),
-                    rel(WIKI_LINKS_TO_REL),
-                    property("raw_target"),
-                    string(&link.raw_target),
-                ),
-            },
-            WikiGraphLinkTarget::Unresolved(target) => GraphStatement {
-                cypher: format!(
-                    "MATCH (source:{} {{{}}}) MERGE (target:{} {{{}, {}: {}}}) MERGE (source)-[:{} {{{}: {}}}]->(target)",
+			WikiGraphLinkTarget::Resolved(target_path) => {
+				if !documents.contains(&(link.scope.clone(), target_path.clone())) {
+					continue;
+				}
+				GraphStatement {
+					cypher: format!(
+						"MATCH (source:{} {{{}}}) MATCH (target:{} {{{}}}) MERGE (source)-[:{} {{{}: {}}}]->(target)",
+						label(WIKI_DOC_LABEL),
+						scoped_path_properties(&link.scope, &link.source_path),
+						label(WIKI_DOC_LABEL),
+						scoped_path_properties(&link.scope, target_path),
+						rel(WIKI_LINKS_TO_REL),
+						property("raw_target"),
+						string(&link.raw_target),
+					),
+				}
+			}
+			WikiGraphLinkTarget::Unresolved(target) => GraphStatement {
+				cypher: format!(
+					"MATCH (source:{} {{{}}}) MERGE (target:{} {{{}, {}: {}}}) MERGE (source)-[:{} {{{}: {}}}]->(target)",
                     label(WIKI_DOC_LABEL),
                     scoped_path_properties(&link.scope, &link.source_path),
                     label(WIKI_TARGET_LABEL),
@@ -130,9 +143,12 @@ pub fn graph_write_statements(facts: &WikiGraphFacts) -> Vec<GraphStatement> {
     }
 
     for source in &facts.sources {
+        if !documents.contains(&(source.scope.clone(), source.document_path.clone())) {
+            continue;
+        }
         statements.push(GraphStatement {
             cypher: format!(
-                "MERGE (source:{} {{{}}}) MERGE (doc:{} {{{}}}) MERGE (source)-[:{}]->(doc)",
+                "MERGE (source:{} {{{}}}) MATCH (doc:{} {{{}}}) MERGE (source)-[:{}]->(doc)",
                 label(WIKI_SOURCE_LABEL),
                 scoped_path_properties(&source.scope, &source.source_path),
                 label(WIKI_DOC_LABEL),
@@ -429,6 +445,41 @@ mod tests {
                 "{forbidden} must not leak into wiki graph"
             );
         }
+    }
+
+    #[test]
+    fn graph_write_skips_relationships_to_missing_documents() {
+        let scope = SearchScope::project("project-1");
+        let facts = WikiGraphFacts {
+            documents: vec![doc(scope.clone(), "wiki/source.md")],
+            links: vec![
+                resolved_link(
+                    scope.clone(),
+                    "wiki/source.md",
+                    "Missing",
+                    "wiki/missing.md",
+                ),
+                unresolved_link(scope.clone(), "wiki/source.md", "Missing"),
+                unresolved_link(scope.clone(), "wiki/ghost.md", "Ghost"),
+            ],
+            sources: vec![WikiGraphSource {
+                scope: scope.clone(),
+                source_path: "raw/missing.md".into(),
+                document_path: "wiki/missing.md".into(),
+            }],
+        };
+
+        let statements = graph_write_statements(&facts);
+        let joined = statements
+            .iter()
+            .map(|statement| statement.cypher.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(joined.matches(WIKI_LINKS_TO_REL).count(), 0);
+        assert_eq!(joined.matches(SUPPORTS_REL).count(), 0);
+        assert_eq!(joined.matches(MENTIONS_TARGET_REL).count(), 1);
+        assert!(joined.contains(WIKI_TARGET_LABEL));
     }
 
     #[test]

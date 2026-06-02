@@ -16,6 +16,7 @@ use crate::utils::short_id;
 use crate::visibility;
 
 const OUTLINE_SYSTEM_PROMPT: &str = "You write concise code outlines for developers. Return a compact natural-language outline focused on responsibilities, main symbols, and notable control flow. Do not include markdown fences.";
+const OUTLINE_SUMMARY_MAX_BYTES: u64 = 1024 * 1024;
 
 pub fn outline(
     ctx: &Context,
@@ -84,7 +85,12 @@ fn summarize_outline(
     file: &str,
     symbols: &[Symbol],
 ) -> Option<String> {
-    let code = std::fs::read_to_string(ctx.project_root.join(file)).ok()?;
+    let path = ctx.project_root.join(file);
+    let metadata = path.metadata().ok()?;
+    if metadata.len() > OUTLINE_SUMMARY_MAX_BYTES {
+        return None;
+    }
+    let code = std::fs::read_to_string(path).ok()?;
     let ai_context = resolve_outline_ai_context(ctx, conn).ok()?;
     let route = effective_route(&ai_context, AiCapability::TextGenerate);
 
@@ -508,6 +514,11 @@ mod tests {
         );
 
         assert_eq!(summary, Some("Natural-language outline".to_string()));
+    }
+
+    #[test]
+    fn outline_summary_size_cap_is_one_mib() {
+        assert_eq!(OUTLINE_SUMMARY_MAX_BYTES, 1024 * 1024);
     }
 
     #[test]

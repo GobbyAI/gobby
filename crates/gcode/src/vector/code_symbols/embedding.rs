@@ -5,8 +5,11 @@ use std::sync::{Mutex, OnceLock};
 use crate::config::{Context, EmbeddingConfig};
 use crate::db;
 use crate::models::Symbol;
+use crate::secrets;
 use gobby_core::ai::{daemon, effective_route};
-use gobby_core::ai_context::{AiConfigSource, AiContext, NoPrimaryAiConfigSource};
+use gobby_core::ai_context::{
+    AiConfigSource, AiContext, NoPrimaryAiConfigSource, PostgresAiConfigSource,
+};
 use gobby_core::config::AiCapability;
 
 use super::types::VectorLifecycleError;
@@ -118,25 +121,43 @@ impl EmbeddingBackend {
 }
 
 pub fn embedding_source_from_context(ctx: &Context) -> Option<EmbeddingSource> {
-    let ai_context = resolve_embedding_ai_context(ctx);
+    let resolved = resolve_embedding_ai_context(ctx);
+    embedding_source_from_resolved_ai_context(resolved.context, resolved.direct_config)
+}
+
+fn embedding_source_from_resolved_ai_context(
+    ai_context: AiContext,
+    direct_config: Option<EmbeddingConfig>,
+) -> Option<EmbeddingSource> {
     match effective_route(&ai_context, AiCapability::Embed) {
         gobby_core::config::AiRouting::Off => None,
         gobby_core::config::AiRouting::Daemon => {
             Some(EmbeddingSource::Daemon(Box::new(ai_context)))
         }
-        gobby_core::config::AiRouting::Direct => ctx.embedding.clone().map(EmbeddingSource::Direct),
+        gobby_core::config::AiRouting::Direct => direct_config.map(EmbeddingSource::Direct),
         gobby_core::config::AiRouting::Auto => None,
     }
 }
 
-fn resolve_embedding_ai_context(ctx: &Context) -> AiContext {
+struct ResolvedEmbeddingAiContext {
+    context: AiContext,
+    direct_config: Option<EmbeddingConfig>,
+}
+
+fn resolve_embedding_ai_context(ctx: &Context) -> ResolvedEmbeddingAiContext {
     let standalone = crate::config::read_standalone_config_optional();
     if let Ok(mut conn) = db::connect_readonly(&ctx.database_url) {
-        return crate::config::resolve_ai_context(
-            &mut conn,
-            standalone,
-            Some(ctx.project_id.clone()),
+        let primary = PostgresAiConfigSource::new(&mut conn, secrets::resolve_config_value);
+        let mut source = AiConfigSource::with_primary(primary, standalone);
+        let context = AiContext::resolve(Some(ctx.project_id.clone()), &mut source);
+        let direct_config = gobby_core::config::resolve_embedding_config_from_binding(
+            &mut source,
+            context.binding(AiCapability::Embed),
         );
+        return ResolvedEmbeddingAiContext {
+            context,
+            direct_config,
+        };
     }
 
     let mut source = AiConfigSource::with_primary(NoPrimaryAiConfigSource, standalone);
@@ -146,7 +167,15 @@ fn resolve_embedding_ai_context(ctx: &Context) -> AiContext {
         context.bindings.embed.model = Some(embedding.model.clone());
         context.bindings.embed.api_key = embedding.api_key.clone();
     }
-    context
+    let direct_config = gobby_core::config::resolve_embedding_config_from_binding(
+        &mut source,
+        context.binding(AiCapability::Embed),
+    )
+    .or_else(|| ctx.embedding.clone());
+    ResolvedEmbeddingAiContext {
+        context,
+        direct_config,
+    }
 }
 
 pub fn embedding_client(
@@ -469,5 +498,31 @@ mod tests {
         assert_eq!(config.api_key.as_deref(), Some("resolved-embedding-key"));
         assert_eq!(config.query_prefix.as_deref(), Some("query:"));
         assert_eq!(config.timeout_seconds, 12);
+    }
+
+    #[test]
+    fn direct_source_uses_resolved_embedding_config() {
+        let mut source = TestSource::with_values([
+            (ai_keys::EMBEDDINGS_ROUTING, "direct"),
+            (ai_keys::EMBEDDINGS_TRANSPORT, "openai_compatible_http"),
+            (ai_keys::EMBEDDINGS_API_BASE, "http://resolved.local/v1"),
+            (ai_keys::EMBEDDINGS_MODEL, "resolved-embed-model"),
+        ]);
+        let context = AiContext::resolve(None, &mut source);
+        let direct_config = EmbeddingConfig {
+            api_base: "http://resolved.local/v1".to_string(),
+            model: "resolved-embed-model".to_string(),
+            api_key: None,
+            query_prefix: None,
+            timeout_seconds: 10,
+        };
+
+        let source =
+            embedding_source_from_resolved_ai_context(context, Some(direct_config.clone()));
+
+        match source {
+            Some(EmbeddingSource::Direct(config)) => assert_eq!(config, direct_config),
+            other => panic!("expected direct embedding source, got {other:?}"),
+        }
     }
 }

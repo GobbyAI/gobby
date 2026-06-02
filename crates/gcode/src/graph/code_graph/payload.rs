@@ -7,7 +7,7 @@ use gobby_core::falkor::Row;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GraphPayload {
-    pub nodes: Vec<GraphNode>,
+    nodes: Vec<GraphNode>,
     pub links: Vec<GraphLink>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub center: Option<String>,
@@ -39,6 +39,14 @@ impl GraphPayload {
             return;
         }
         self.nodes.push(node);
+    }
+
+    pub fn nodes(&self) -> &[GraphNode] {
+        &self.nodes
+    }
+
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
     }
 
     fn refresh_node_cache(&mut self) {

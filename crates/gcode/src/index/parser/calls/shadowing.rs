@@ -44,19 +44,42 @@ fn local_name_in_scope_before_call(
 
 fn remove_block_comments(text: &str) -> String {
     let mut cleaned = String::with_capacity(text.len());
-    let mut rest = text;
-    loop {
-        let Some(start) = rest.find("/*") else {
-            cleaned.push_str(rest);
-            break;
-        };
-        cleaned.push_str(&rest[..start]);
-        let after_start = &rest[start + 2..];
-        let Some(end) = after_start.find("*/") else {
-            break;
-        };
-        rest = &after_start[end + 2..];
+    let mut cursor = 0;
+    while let Some(relative_start) = text[cursor..].find("/*") {
+        let start = cursor + relative_start;
+        cleaned.push_str(&text[cursor..start]);
+
+        let mut depth = 1usize;
+        let mut scan = start + 2;
+        while scan < text.len() {
+            let rest = &text[scan..];
+            let next_open = rest.find("/*").map(|index| scan + index);
+            let next_close = rest.find("*/").map(|index| scan + index);
+            match (next_open, next_close) {
+                (Some(open), Some(close)) if open < close => {
+                    depth += 1;
+                    scan = open + 2;
+                }
+                (_, Some(close)) => {
+                    depth -= 1;
+                    scan = close + 2;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {
+                    scan = text.len();
+                    break;
+                }
+            }
+        }
+
+        if depth > 0 {
+            return cleaned;
+        }
+        cursor = scan;
     }
+    cleaned.push_str(&text[cursor..]);
     cleaned
 }
 
@@ -307,6 +330,30 @@ mod tests {
     fn block_comments_do_not_define_shadowing_bindings() {
         let prefix = "/*\nconst fetch = localFetch;\n*/\nfetch();";
         assert_eq!(remove_block_comments(prefix), "\nfetch();");
+        assert!(!local_name_in_scope_before_call(
+            prefix.as_bytes(),
+            None,
+            prefix.len(),
+            "fetch"
+        ));
+    }
+
+    #[test]
+    fn nested_block_comments_do_not_leak_inner_tail() {
+        let prefix = "/* outer /* inner */ const fetch = localFetch; */\nfetch();";
+        assert_eq!(remove_block_comments(prefix), "\nfetch();");
+        assert!(!local_name_in_scope_before_call(
+            prefix.as_bytes(),
+            None,
+            prefix.len(),
+            "fetch"
+        ));
+    }
+
+    #[test]
+    fn unclosed_block_comments_are_treated_as_eof_terminated() {
+        let prefix = "let keep = 1;\n/* const fetch = localFetch;\nfetch();";
+        assert_eq!(remove_block_comments(prefix), "let keep = 1;\n");
         assert!(!local_name_in_scope_before_call(
             prefix.as_bytes(),
             None,

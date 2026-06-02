@@ -109,7 +109,14 @@ impl GraphClient {
         );
         match self.query(&cypher, None) {
             Ok(_) => Ok(()),
-            Err(error) if is_existing_index_error(&error) => Ok(()),
+            Err(error) if is_existing_index_error(&error) => {
+                log::debug!(
+                    "FalkorDB index :{}({}) already exists; suppressing duplicate-index error: {error}",
+                    label,
+                    property
+                );
+                Ok(())
+            }
             Err(error) => Err(error),
         }
     }

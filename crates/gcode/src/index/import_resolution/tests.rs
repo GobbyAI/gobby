@@ -395,6 +395,32 @@ fn loads_elixir_mix_lock_first_quoted_dependency_per_line() {
 }
 
 #[test]
+fn loads_elixir_mix_dependencies_with_whole_file_regex() {
+    let tempdir = TempDir::new().expect("tempdir");
+    fs::write(
+        tempdir.path().join("mix.exs"),
+        r#"
+defp deps do
+  [
+    {
+      :jason,
+      "~> 1.4"
+    },
+    {:plug_cowboy,
+     "~> 2.7"}
+  ]
+end
+"#,
+    )
+    .expect("mix.exs");
+
+    let deps = load_elixir_dependency_names(tempdir.path());
+
+    assert!(deps.contains("jason"));
+    assert!(deps.contains("plug_cowboy"));
+}
+
+#[test]
 fn bundled_import_root_data_loads_known_mappings() {
     assert_eq!(ruby_require_root("json"), Some("JSON"));
     assert_eq!(ruby_require_root("unknown_gem"), None);

@@ -215,10 +215,12 @@ pub(crate) fn find_callers_batch_query(
     (
         format!(
             "MATCH (caller:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{project: $project}}) \
-             WHERE ({CALL_TARGET_PREDICATE}) AND target.id IN [{ids}] \
-             RETURN caller.id AS caller_id, caller.name AS caller_name, \
-                    r.file AS file, r.line AS line \
-             LIMIT {limit}"
+			 WHERE ({CALL_TARGET_PREDICATE}) AND target.id IN [{ids}] \
+			 WITH caller, min(r.file) AS file, min(r.line) AS line \
+			 RETURN caller.id AS caller_id, caller.name AS caller_name, \
+			        file AS file, line AS line \
+			 ORDER BY caller.id \
+			 LIMIT {limit}"
         ),
         typed_query::string_params(&[("project", project_id)]),
     )
@@ -253,10 +255,12 @@ pub(crate) fn find_callees_batch_query(
     (
         format!(
             "MATCH (src:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{project: $project}}) \
-             WHERE src.id IN [{ids}] AND ({CALL_TARGET_PREDICATE}) \
-             RETURN target.id AS callee_id, target.name AS callee_name, \
-                    r.file AS file, r.line AS line \
-             LIMIT {limit}"
+			 WHERE src.id IN [{ids}] AND ({CALL_TARGET_PREDICATE}) \
+			 WITH target, min(r.file) AS file, min(r.line) AS line \
+			 RETURN target.id AS callee_id, target.name AS callee_name, \
+			        file AS file, line AS line \
+			 ORDER BY target.id \
+			 LIMIT {limit}"
         ),
         typed_query::string_params(&[("project", project_id)]),
     )
@@ -573,7 +577,7 @@ pub fn project_overview_graph(ctx: &Context, limit: usize) -> anyhow::Result<Gra
         }
 
         let file_paths = payload
-            .nodes
+            .nodes()
             .iter()
             .filter(|node| node.node_type == "file")
             .map(|node| node.id.clone())
@@ -589,7 +593,7 @@ pub fn project_overview_graph(ctx: &Context, limit: usize) -> anyhow::Result<Gra
             if let Some(module_id) = row_string_owned(&row, &["target"]) {
                 payload.push_node(GraphNode::new(module_id.clone(), module_id, "module"));
             }
-            if payload.nodes.len() >= max_nodes {
+            if payload.node_count() >= max_nodes {
                 break;
             }
         }
@@ -610,7 +614,7 @@ pub fn project_overview_graph(ctx: &Context, limit: usize) -> anyhow::Result<Gra
                 node.line_start = row_usize(&row, &["line_start"]);
                 payload.push_node(node);
             }
-            if payload.nodes.len() >= max_nodes {
+            if payload.node_count() >= max_nodes {
                 break;
             }
         }
@@ -631,7 +635,7 @@ pub fn project_overview_graph(ctx: &Context, limit: usize) -> anyhow::Result<Gra
                 node.line_start = row_usize(&row, &["target_line_start"]);
                 payload.push_node(node);
             }
-            if payload.nodes.len() >= max_nodes {
+            if payload.node_count() >= max_nodes {
                 break;
             }
         }

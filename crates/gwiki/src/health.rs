@@ -231,12 +231,7 @@ fn source_is_cited(
     pages: &[crate::lint::WikiPage],
     provenance: &ProvenanceGraph,
 ) -> bool {
-    if provenance
-        .links_for_source(&source.id)
-        .into_iter()
-        .next()
-        .is_some()
-    {
+    if !provenance.links_for_source(&source.id).is_empty() {
         return true;
     }
     pages.iter().any(|page| {

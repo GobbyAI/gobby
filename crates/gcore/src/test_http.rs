@@ -82,11 +82,12 @@ pub(crate) fn read_http_request(stream: &mut impl Read) -> io::Result<String> {
 
         if let Some(header_end) = find_header_end(&request) {
             let header = String::from_utf8_lossy(&request[..header_end]);
-            if let Some(content_length) = content_length(&header) {
-                let body_len = request.len().saturating_sub(header_end + 4);
-                if body_len >= content_length {
-                    break;
-                }
+            let Some(content_length) = content_length(&header) else {
+                break;
+            };
+            let body_len = request.len().saturating_sub(header_end + 4);
+            if body_len >= content_length {
+                break;
             }
         }
     }
@@ -109,12 +110,41 @@ fn content_length(header: &str) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::content_length;
+    use super::{content_length, read_http_request};
+    use std::io::{self, ErrorKind, Read};
 
     #[test]
     fn content_length_parses_case_and_whitespace_variants() {
         assert_eq!(content_length("CONTENT-LENGTH: 12\r\n"), Some(12));
         assert_eq!(content_length("content-length :\t7\r\n"), Some(7));
         assert_eq!(content_length("content-type: text/plain\r\n"), None);
+    }
+
+    #[test]
+    fn header_only_request_without_content_length_is_complete() {
+        struct SingleRead {
+            data: Option<&'static [u8]>,
+        }
+
+        impl Read for SingleRead {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                let Some(data) = self.data.take() else {
+                    return Err(io::Error::new(
+                        ErrorKind::Other,
+                        "reader should not be polled after complete headers",
+                    ));
+                };
+                buffer[..data.len()].copy_from_slice(data);
+                Ok(data.len())
+            }
+        }
+
+        let mut reader = SingleRead {
+            data: Some(b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+        };
+
+        let request = read_http_request(&mut reader).expect("header-only request");
+
+        assert_eq!(request, "GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n");
     }
 }

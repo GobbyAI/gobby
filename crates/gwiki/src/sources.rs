@@ -284,12 +284,16 @@ impl SourceManifest {
                 compile_status: draft.compile_status,
             };
             manifest.entries.push(record.clone());
-            manifest.write(vault_root)?;
+            manifest.write_unlocked(vault_root)?;
             Ok(record)
         })
     }
 
     pub fn write(&self, vault_root: &Path) -> Result<(), WikiError> {
+        with_manifest_lock(vault_root, || self.write_unlocked(vault_root))
+    }
+
+    fn write_unlocked(&self, vault_root: &Path) -> Result<(), WikiError> {
         let raw_dir = vault_root.join("raw");
         fs::create_dir_all(&raw_dir).map_err(|error| WikiError::Io {
             action: "create raw source directory",
@@ -316,7 +320,7 @@ impl SourceManifest {
                 return Ok(None);
             };
             let removed = manifest.entries.remove(index);
-            manifest.write(vault_root)?;
+            manifest.write_unlocked(vault_root)?;
             Ok(Some(removed))
         })
     }
@@ -328,12 +332,17 @@ impl SourceManifest {
         with_manifest_lock(vault_root, || {
             let mut manifest = Self::read(vault_root)?;
             if action(&mut manifest)? {
-                manifest.write(vault_root)?;
+                manifest.write_unlocked(vault_root)?;
             }
             Ok(())
         })
     }
 
+    /// Run an action while holding the source manifest lock.
+    ///
+    /// Callers must not invoke public APIs that acquire this same lock from inside
+    /// the action. Methods on `SourceManifest` use `write_unlocked` internally
+    /// after acquiring the lock.
     pub(crate) fn with_lock<T>(
         vault_root: &Path,
         action: impl FnOnce() -> Result<T, WikiError>,

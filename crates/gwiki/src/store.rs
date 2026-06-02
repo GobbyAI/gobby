@@ -200,7 +200,7 @@ impl WikiIndexStore for MemoryWikiStore {
 
     fn upsert_source(&mut self, source: WikiSource) -> Result<(), StoreError> {
         self.source_upserts += 1;
-        self.sources.insert(source.path.clone(), source);
+        self.sources.insert(source.document_path.clone(), source);
         Ok(())
     }
 
@@ -530,7 +530,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
     }
 
     fn upsert_source(&mut self, source: WikiSource) -> Result<(), StoreError> {
-        let id = scoped_id("source", &self.scope, &source.path, None);
+        let id = scoped_id("source", &self.scope, &source.document_path, None);
         let path = display_path(&source.path);
         let document_path = display_path(&source.document_path);
         let source_kind = document_kind_name(source.kind);
@@ -544,18 +544,19 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
 
         self.conn.execute(
             "INSERT INTO gwiki_sources (
-                id, scope_kind, scope_id, project_id, topic_name, path, source_kind,
-                content_hash, frontmatter, provenance, captured_at
-             )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, NOW())
-             ON CONFLICT (scope_kind, scope_id, path)
-             DO UPDATE SET
-                id = EXCLUDED.id,
-                project_id = EXCLUDED.project_id,
-                topic_name = EXCLUDED.topic_name,
-                source_kind = EXCLUDED.source_kind,
-                content_hash = EXCLUDED.content_hash,
-                frontmatter = EXCLUDED.frontmatter,
+				id, scope_kind, scope_id, project_id, topic_name, path, document_path, source_kind,
+				content_hash, frontmatter, provenance, captured_at
+			 )
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, NOW())
+			 ON CONFLICT (scope_kind, scope_id, document_path)
+			 DO UPDATE SET
+				id = EXCLUDED.id,
+				project_id = EXCLUDED.project_id,
+				topic_name = EXCLUDED.topic_name,
+				path = EXCLUDED.path,
+				source_kind = EXCLUDED.source_kind,
+				content_hash = EXCLUDED.content_hash,
+				frontmatter = EXCLUDED.frontmatter,
                 provenance = EXCLUDED.provenance,
                 captured_at = NOW()",
             &[
@@ -565,6 +566,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
                 &project_id,
                 &topic_name,
                 &path,
+                &document_path,
                 &source_kind,
                 &source.content_hash,
                 &frontmatter,
@@ -645,9 +647,9 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
             &params,
         )?;
         tx.execute(
-            "DELETE FROM gwiki_sources WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
-            &params,
-        )?;
+			"DELETE FROM gwiki_sources WHERE scope_kind = $1 AND scope_id = $2 AND document_path = $3",
+			&params,
+		)?;
         tx.execute(
             "DELETE FROM gwiki_documents WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
             &params,
@@ -876,5 +878,22 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn memory_store_keys_sources_by_document_path() {
+        let mut store = MemoryWikiStore::default();
+        let document_path = PathBuf::from("wiki/sources/example.md");
+        let source = WikiSource {
+            path: PathBuf::from("raw/example.md"),
+            document_path: document_path.clone(),
+            kind: WikiDocumentKind::SourceNote,
+            content_hash: "hash".to_string(),
+        };
+
+        store.upsert_source(source).expect("source upsert");
+
+        assert!(store.sources.contains_key(&document_path));
+        assert!(!store.sources.contains_key(Path::new("raw/example.md")));
     }
 }
