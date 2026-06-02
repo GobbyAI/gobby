@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -42,8 +42,14 @@ CLI_INDEXED_BATCH_COMMANDS = frozenset({"ingest-url", "refresh"})
 class WikiUpdateCoordinator:
     """Coordinates follow-up indexing for parsed gwiki write results."""
 
-    def __init__(self, gateway: GwikiIndexGateway) -> None:
+    def __init__(
+        self,
+        gateway: GwikiIndexGateway,
+        *,
+        local_gateway_factory: Callable[[str], GwikiIndexGateway] | None = None,
+    ) -> None:
         self._gateway = gateway
+        self._local_gateway_factory = local_gateway_factory
 
     async def handle_local_changes(
         self, changed_paths_by_scope: dict[str, list[Path]]
@@ -51,6 +57,9 @@ class WikiUpdateCoordinator:
         changed_paths = {
             scope: [str(path) for path in paths] for scope, paths in changed_paths_by_scope.items()
         }
+        if self._local_gateway_factory is not None:
+            return await self._handle_scoped_local_changes(changed_paths)
+
         try:
             index_result = await self._gateway.index()
         except GwikiCommandError as exc:
@@ -75,6 +84,46 @@ class WikiUpdateCoordinator:
                 "status": "indexed",
                 "changed_paths_by_scope": changed_paths,
                 "result": index_result,
+            }
+        }
+
+    async def _handle_scoped_local_changes(
+        self, changed_paths: dict[str, list[str]]
+    ) -> dict[str, Any]:
+        local_gateway_factory = self._local_gateway_factory
+        if local_gateway_factory is None:
+            raise RuntimeError("local gateway factory is required for scoped local changes")
+
+        results_by_scope: dict[str, dict[str, Any]] = {}
+        for scope in changed_paths:
+            try:
+                results_by_scope[scope] = await local_gateway_factory(scope).index()
+            except GwikiCommandError as exc:
+                return {
+                    "index_handoff": {
+                        "status": "degraded",
+                        "changed_paths_by_scope": changed_paths,
+                        "results_by_scope": results_by_scope,
+                        "failed_scope": scope,
+                        "degradation": _command_error_degradation(exc),
+                    }
+                }
+            except GwikiGatewayError as exc:
+                return {
+                    "index_handoff": {
+                        "status": "degraded",
+                        "changed_paths_by_scope": changed_paths,
+                        "results_by_scope": results_by_scope,
+                        "failed_scope": scope,
+                        "degradation": _gateway_error_degradation(exc),
+                    }
+                }
+
+        return {
+            "index_handoff": {
+                "status": "indexed",
+                "changed_paths_by_scope": changed_paths,
+                "results_by_scope": results_by_scope,
             }
         }
 

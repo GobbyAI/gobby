@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.config.bin_freshness import BinFreshnessConfig
-from gobby.config.wiki import WikiConfig
+from gobby.config.wiki import WikiConfig, WikiRootConfig
 from gobby.gwiki_gateway import GwikiGateway
 from gobby.runner_lifecycle_startup import StartupTracker
 from gobby.wiki.update_coordinator import WikiUpdateCoordinator
@@ -52,6 +53,31 @@ def _default_loops() -> dict[str, Any]:
         "expire_approval_timeouts_loop": expire_approval_timeouts_loop,
         "tmux_window_name_repair_loop": tmux_window_name_repair_loop,
     }
+
+
+def _wiki_gateway_for_local_scope(
+    wiki_config: WikiConfig,
+    roots_by_scope: dict[str, WikiRootConfig],
+) -> Callable[[str], GwikiGateway]:
+    def gateway(scope: str) -> GwikiGateway:
+        root = roots_by_scope.get(scope)
+        return GwikiGateway(
+            binary=getattr(wiki_config, "binary", None),
+            project=str(root.path) if root is not None and scope == "project" else None,
+            topic=_wiki_topic_name(scope),
+            timeout_seconds=float(getattr(wiki_config, "timeout_seconds", 30.0)),
+        )
+
+    return gateway
+
+
+def _wiki_topic_name(scope: str) -> str | None:
+    if scope == "project":
+        return None
+    if scope.startswith("topic:"):
+        topic = scope.removeprefix("topic:").strip()
+        return topic or None
+    return scope
 
 
 def start_periodic_tasks(
@@ -172,15 +198,20 @@ def start_periodic_tasks(
     runner._wiki_watcher_task = None
     wiki_config = getattr(runner.config, "wiki", None)
     if isinstance(wiki_config, WikiConfig) and wiki_config.enabled and wiki_config.roots:
+        roots_by_scope = {root.scope: root for root in wiki_config.roots if root.path.exists()}
         scopes = [
-            WikiWatchScope(name=root.scope, root=root.path)
-            for root in wiki_config.roots
-            if root.path.exists()
+            WikiWatchScope(name=root.scope, root=root.path) for root in roots_by_scope.values()
         ]
         if scopes:
             runner._wiki_watcher = WikiWatcher(
                 scopes=scopes,
-                coordinator=WikiUpdateCoordinator(GwikiGateway()),
+                coordinator=WikiUpdateCoordinator(
+                    GwikiGateway(),
+                    local_gateway_factory=_wiki_gateway_for_local_scope(
+                        wiki_config,
+                        roots_by_scope,
+                    ),
+                ),
                 debounce_interval=wiki_config.debounce_interval,
                 poll_interval=wiki_config.poll_interval,
                 ignore_globs=wiki_config.ignore_globs,

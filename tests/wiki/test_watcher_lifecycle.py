@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from gobby import runner_lifecycle_periodic
 from gobby.config.app import DaemonConfig
 from gobby.config.wiki import WikiConfig, WikiRootConfig
 from gobby.runner_lifecycle_periodic import start_periodic_tasks
@@ -69,6 +70,64 @@ async def test_startup_registers_watcher_for_configured_scopes(tmp_path: Path) -
         assert not runner._wiki_watcher_task.done()
     finally:
         await _cancel_periodic_tasks(runner)
+
+
+@pytest.mark.asyncio
+async def test_startup_indexes_local_changes_with_scoped_gateways(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "project"
+    topic_root = tmp_path / "topic"
+    project_root.mkdir()
+    topic_root.mkdir()
+    constructed_scopes: list[tuple[str | None, str | None]] = []
+
+    class FakeGwikiGateway:
+        def __init__(
+            self,
+            *,
+            binary: str | None = None,
+            project: str | Path | None = None,
+            topic: str | None = None,
+            timeout_seconds: float = 30.0,
+        ) -> None:
+            self.project = str(project) if project is not None else None
+            self.topic = topic
+
+        async def index(self) -> dict[str, Any]:
+            constructed_scopes.append((self.project, self.topic))
+            return {
+                "ok": True,
+                "payload": {"scope": {"project": self.project, "topic": self.topic}},
+            }
+
+    monkeypatch.setattr(runner_lifecycle_periodic, "GwikiGateway", FakeGwikiGateway)
+    config = DaemonConfig(
+        wiki=WikiConfig(
+            roots=[
+                WikiRootConfig(scope="project", path=project_root),
+                WikiRootConfig(scope="topic:research", path=topic_root),
+            ],
+            debounce_interval=0.01,
+            poll_interval=0.01,
+        )
+    )
+    runner = _runner(config)
+
+    start_periodic_tasks(runner, tracker=None, **_loops())
+    try:
+        assert isinstance(runner._wiki_watcher, WikiWatcher)
+        await runner._wiki_watcher.record_change(project_root / "a.md")
+        await runner._wiki_watcher.record_change(topic_root / "b.md")
+
+        result = await runner._wiki_watcher.flush_pending()
+    finally:
+        await _cancel_periodic_tasks(runner)
+
+    assert constructed_scopes == [(str(project_root), None), (None, "research")]
+    assert result is not None
+    assert set(result["index_handoff"]["results_by_scope"]) == {"project", "topic:research"}
 
 
 @pytest.mark.asyncio
