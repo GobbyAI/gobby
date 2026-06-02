@@ -3,6 +3,7 @@
 import asyncio
 import signal
 from collections.abc import Awaitable, Callable, Coroutine
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -22,6 +23,39 @@ from gobby.mcp_proxy.stdio import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+def test_wait_tool_source_stale_result_detects_changed_file(tmp_path: Path) -> None:
+    from gobby.mcp_proxy import wait_tools
+
+    source_path = tmp_path / "wait_tools.py"
+    source_path.write_text("before")
+    startup_digests = {str(source_path): wait_tools._hash_source(source_path)}
+    source_path.write_text("after")
+
+    with patch.object(wait_tools, "_MCP_WRAPPER_SOURCE_DIGESTS", startup_digests):
+        result = wait_tools.mcp_wrapper_source_stale_result("wait_for_agent")
+
+    assert result is not None
+    assert result["success"] is False
+    assert result["error_code"] == "GOBBY_MCP_WRAPPER_STALE"
+    assert result["tool_name"] == "wait_for_agent"
+    assert result["stale_source_paths"] == [str(source_path)]
+    assert result["restart_required"] is True
+
+
+def test_source_stale_result_ignores_non_wait_tool(tmp_path: Path) -> None:
+    from gobby.mcp_proxy import wait_tools
+
+    source_path = tmp_path / "wait_tools.py"
+    source_path.write_text("before")
+    startup_digests = {str(source_path): wait_tools._hash_source(source_path)}
+    source_path.write_text("after")
+
+    with patch.object(wait_tools, "_MCP_WRAPPER_SOURCE_DIGESTS", startup_digests):
+        result = wait_tools.mcp_wrapper_source_stale_result("get_task")
+
+    assert result is None
 
 
 class TestGetDaemonPid:
@@ -1416,6 +1450,32 @@ class TestMCPToolsWrapper:
             {"run_id": "run-123", "timeout_seconds": 300},
             preflight_enabled=True,
         )
+
+    @pytest.mark.asyncio
+    async def test_call_tool_returns_stale_wrapper_error_before_wait_request(self) -> None:
+        _, mock_proxy, run_tool = self._register_tools()
+        stale_result = {
+            "success": False,
+            "error_code": "GOBBY_MCP_WRAPPER_STALE",
+            "error": "restart required",
+            "tool_name": "wait_for_agent",
+            "stale_source_paths": ["/repo/src/gobby/mcp_proxy/wait_tools.py"],
+            "restart_required": True,
+        }
+
+        with patch(
+            "gobby.mcp_proxy.stdio.mcp_wrapper_source_stale_result",
+            return_value=stale_result,
+        ):
+            result = await run_tool(
+                "call_tool",
+                server_name="gobby-agents",
+                tool_name="wait_for_agent",
+                arguments={"run_id": "run-123", "timeout_seconds": 300},
+            )
+
+        assert result == stale_result
+        mock_proxy.call_tool.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_call_tool_returns_wrapper_timeout_for_stuck_wait_tool(self) -> None:
