@@ -1295,7 +1295,7 @@ class TestCompactHandoffConfig:
         """Test default compact handoff config."""
         config = CompactHandoffConfig()
         assert config.enabled is True
-        assert config.refresh_timeout_seconds == 10.0
+        assert config.refresh_timeout_seconds == 300.0
 
     def test_custom_values(self) -> None:
         """Test custom compact handoff config."""
