@@ -155,10 +155,13 @@ class _SessionCRUDMixin:
             if existing:
                 if existing.parent_session_id == existing.id:
                     repair_self_parent_session(conn, session_id=existing.id, now=now)
+                registration_parent_session_id = (
+                    None if parent_session_id == existing.id else parent_session_id
+                )
                 sanitized_parent_session_id = sanitize_parent_session_id(
                     conn,
                     child_session_id=existing.id,
-                    parent_session_id=parent_session_id,
+                    parent_session_id=registration_parent_session_id,
                     context="session registration",
                 )
                 session = update_existing_session(

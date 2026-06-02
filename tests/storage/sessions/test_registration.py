@@ -1,6 +1,7 @@
 """Focused tests for session storage behavior."""
 
 import inspect
+import logging
 from collections.abc import Sequence
 
 import pytest
@@ -373,6 +374,7 @@ class TestSessionManagerRegistration:
 
     def test_register_existing_session_ignores_self_parent(
         self,
+        caplog: pytest.LogCaptureFixture,
         session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
@@ -384,6 +386,7 @@ class TestSessionManagerRegistration:
             project_id=sample_project["id"],
         )
 
+        caplog.set_level(logging.WARNING)
         updated = session_manager.register(
             external_id="self-parent-update",
             machine_id="machine-1",
@@ -399,6 +402,7 @@ class TestSessionManagerRegistration:
             (session.id,),
         )
         assert row["parent_session_id"] is None
+        assert not any("session cannot be its own parent" in message for message in caplog.messages)
 
     def test_register_repairs_existing_self_parent_row(
         self,
