@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.storage.session_models import Session
@@ -9,6 +10,59 @@ from gobby.storage.sql_dialect import newer_than_now_expr
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
+
+
+_TERMINAL_CONTEXT_FILTER_FIELDS = (
+    "tmux_pane",
+    "tmux_socket_path",
+    "tmux_session",
+    "tty",
+    "term_session_id",
+)
+
+
+def _parse_terminal_context_value(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _normalize_context_parent_pid(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def _non_empty_text(value: Any) -> str | None:
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
+def _terminal_context_match_score(
+    requested_context: dict[str, Any],
+    stored_context: dict[str, Any],
+) -> int | None:
+    score = 0
+    for field_name in _TERMINAL_CONTEXT_FILTER_FIELDS:
+        requested_value = _non_empty_text(requested_context.get(field_name))
+        stored_value = _non_empty_text(stored_context.get(field_name))
+        if not requested_value or not stored_value:
+            continue
+        if requested_value != stored_value:
+            return None
+        score += 1
+    return score
 
 
 class _ManagerState(Protocol):
@@ -179,6 +233,49 @@ class _DiscoveryMixin:
 
         row = self.db.fetchone(query, tuple(params))
         return Session.from_row(row) if row else None
+
+    def find_active_by_terminal_context(
+        self: _ManagerState,
+        project_id: str,
+        parent_pid: Any,
+        terminal_context: dict[str, Any] | str | None = None,
+    ) -> Session | None:
+        """Find the unique active session matching project and terminal identity."""
+        normalized_parent_pid = _normalize_context_parent_pid(parent_pid)
+        if not project_id or normalized_parent_pid is None:
+            return None
+
+        rows = self.db.fetchall(
+            """
+            SELECT * FROM sessions
+            WHERE project_id = %s
+            AND status = %s
+            AND terminal_context IS NOT NULL
+            ORDER BY updated_at DESC
+            """,
+            (project_id, "active"),
+        )
+
+        requested_context = _parse_terminal_context_value(terminal_context)
+        matches: list[tuple[int, Session]] = []
+        for row in rows:
+            session = Session.from_row(row)
+            stored_context = session.terminal_context or {}
+            stored_parent_pid = _normalize_context_parent_pid(stored_context.get("parent_pid"))
+            if stored_parent_pid != normalized_parent_pid:
+                continue
+            match_score = _terminal_context_match_score(requested_context, stored_context)
+            if match_score is None:
+                continue
+
+            matches.append((match_score, session))
+
+        if not matches:
+            return None
+
+        best_score = max(score for score, _session in matches)
+        best_matches = [session for score, session in matches if score == best_score]
+        return best_matches[0] if len(best_matches) == 1 else None
 
     def find_children(self: _ManagerState, parent_session_id: str) -> list[Session]:
         """

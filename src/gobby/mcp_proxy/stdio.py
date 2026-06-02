@@ -11,7 +11,6 @@ import os
 import sys
 import time
 from collections.abc import Awaitable
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -33,6 +32,10 @@ from gobby.mcp_proxy.daemon_control import (
 from gobby.mcp_proxy.instructions import build_gobby_instructions
 from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.mcp_proxy.server_list import compact_mcp_server_list
+from gobby.mcp_proxy.session_bootstrap import (
+    read_project_id,
+    resolve_session_id_from_terminal_context,
+)
 
 
 def _strip_none(obj: Any) -> Any:
@@ -164,35 +167,21 @@ class DaemonProxy:
     def __init__(self, port: int):
         self.port = port
         self.base_url = f"http://localhost:{port}"
-        self._project_id: str | None = self._read_project_id()
+        self._project_id: str | None = read_project_id()
         self._session_id: str | None = os.environ.get("GOBBY_SESSION_ID") or None
+        self._session_bootstrap_attempted = bool(self._session_id)
         self._last_health_ok_at = 0.0
 
-    @staticmethod
-    def _read_project_id() -> str | None:
-        """Read project_id from the environment or nearest .gobby/project.json.
+    async def _resolve_session_id(self) -> str | None:
+        if self._session_id or self._session_bootstrap_attempted or not self._project_id:
+            return self._session_id
 
-        The stdio process should run under the project, but different MCP
-        clients do not agree on the exact CWD. Walk upward so subdirectory
-        launches still send the project header required for #N session refs.
-        """
-        import json as _json
-
-        env_project_id = os.environ.get("GOBBY_PROJECT_ID")
-        if env_project_id:
-            return env_project_id
-
-        for root in [Path.cwd(), *Path.cwd().parents]:
-            project_file = root / ".gobby" / "project.json"
-            if not project_file.exists():
-                continue
-            try:
-                data = _json.loads(project_file.read_text())
-            except (PermissionError, _json.JSONDecodeError, OSError):
-                return None
-            pid = data.get("id")
-            return pid if isinstance(pid, str) else None
-        return None
+        self._session_bootstrap_attempted = True
+        self._session_id = await resolve_session_id_from_terminal_context(
+            self.base_url,
+            self._project_id,
+        )
+        return self._session_id
 
     async def _request(
         self,
@@ -207,18 +196,7 @@ class DaemonProxy:
         """Make HTTP request to daemon."""
         if session_id:
             self._session_id = session_id
-
-        # Build context headers so the daemon resolves the correct project
-        headers: dict[str, str] = {}
-        effective_project_id = project_id or self._project_id
-        caller_project_id = self._project_id
-        effective_session_id = session_id or self._session_id
-        if effective_project_id:
-            headers["X-Gobby-Project-Id"] = effective_project_id
-        if caller_project_id:
-            headers["X-Gobby-Caller-Project-Id"] = caller_project_id
-        if effective_session_id:
-            headers["X-Gobby-Session-Id"] = effective_session_id
+            self._session_bootstrap_attempted = True
 
         if preflight:
             now = time.monotonic()
@@ -233,6 +211,18 @@ class DaemonProxy:
                         f"{DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS:g}s",
                     )
                 self._last_health_ok_at = time.monotonic()
+
+        # Build context headers so the daemon resolves the correct project
+        headers: dict[str, str] = {}
+        effective_project_id = project_id or self._project_id
+        caller_project_id = self._project_id
+        effective_session_id = session_id or await self._resolve_session_id()
+        if effective_project_id:
+            headers["X-Gobby-Project-Id"] = effective_project_id
+        if caller_project_id:
+            headers["X-Gobby-Caller-Project-Id"] = caller_project_id
+        if effective_session_id:
+            headers["X-Gobby-Session-Id"] = effective_session_id
 
         try:
             async with httpx.AsyncClient() as client:

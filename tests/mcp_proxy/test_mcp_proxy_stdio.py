@@ -662,12 +662,8 @@ class TestDaemonProxy:
             mock_client.request.return_value = mock_response
             mock_client_cls.return_value = mock_client
 
-            assert await proxy._request("GET", "/some/path", preflight=True) == {
-                "success": True
-            }
-            assert await proxy._request("GET", "/some/path", preflight=True) == {
-                "success": True
-            }
+            assert await proxy._request("GET", "/some/path", preflight=True) == {"success": True}
+            assert await proxy._request("GET", "/some/path", preflight=True) == {"success": True}
 
         mock_health.assert_awaited_once()
         assert mock_client.request.await_count == 2
@@ -885,6 +881,132 @@ class TestDaemonProxyMethods:
         assert result["success"] is True
         _, kwargs = mock_client.request.call_args
         assert kwargs["headers"]["X-Gobby-Session-Id"] == "session-123"
+
+    @pytest.mark.asyncio
+    async def test_request_env_session_id_skips_bootstrap_lookup(self) -> None:
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        with (
+            patch("gobby.mcp_proxy.stdio.read_project_id", return_value="project-123"),
+            patch.dict("os.environ", {"GOBBY_SESSION_ID": "env-session"}, clear=True),
+        ):
+            proxy = DaemonProxy(60887)
+
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"success": True}
+
+        with (
+            patch(
+                "gobby.mcp_proxy.stdio.resolve_session_id_from_terminal_context",
+                new_callable=AsyncMock,
+            ) as mock_bootstrap,
+            patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls,
+        ):
+            mock_client = AsyncMock()
+            mock_client.request = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value.__aenter__.return_value = mock_client
+
+            result = await proxy._request("GET", "/api/status")
+
+        assert result == {"success": True}
+        mock_bootstrap.assert_not_awaited()
+        _, kwargs = mock_client.request.call_args
+        assert kwargs["headers"]["X-Gobby-Session-Id"] == "env-session"
+
+    @pytest.mark.asyncio
+    async def test_request_missing_env_triggers_bootstrap_lookup(self) -> None:
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        with (
+            patch("gobby.mcp_proxy.stdio.read_project_id", return_value="project-123"),
+            patch.dict("os.environ", {}, clear=True),
+        ):
+            proxy = DaemonProxy(60887)
+
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"success": True}
+
+        with (
+            patch(
+                "gobby.mcp_proxy.stdio.resolve_session_id_from_terminal_context",
+                new_callable=AsyncMock,
+            ) as mock_bootstrap,
+            patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls,
+        ):
+            mock_bootstrap.return_value = "bootstrapped-session"
+            mock_client = AsyncMock()
+            mock_client.request = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value.__aenter__.return_value = mock_client
+
+            result = await proxy._request("GET", "/api/status")
+
+        assert result == {"success": True}
+        mock_bootstrap.assert_awaited_once_with("http://localhost:60887", "project-123")
+        assert proxy._session_id == "bootstrapped-session"
+        _, kwargs = mock_client.request.call_args
+        assert kwargs["headers"]["X-Gobby-Session-Id"] == "bootstrapped-session"
+
+    @pytest.mark.asyncio
+    async def test_request_successful_bootstrap_adds_session_header(self) -> None:
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        with (
+            patch("gobby.mcp_proxy.stdio.read_project_id", return_value="project-123"),
+            patch.dict("os.environ", {}, clear=True),
+        ):
+            proxy = DaemonProxy(60887)
+
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"success": True}
+
+        with (
+            patch(
+                "gobby.mcp_proxy.stdio.resolve_session_id_from_terminal_context",
+                new_callable=AsyncMock,
+                return_value="bootstrapped-session",
+            ),
+            patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls,
+        ):
+            mock_client = AsyncMock()
+            mock_client.request = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value.__aenter__.return_value = mock_client
+
+            result = await proxy._request("GET", "/api/status")
+
+        assert result == {"success": True}
+        _, kwargs = mock_client.request.call_args
+        assert kwargs["headers"]["X-Gobby-Session-Id"] == "bootstrapped-session"
+
+    @pytest.mark.asyncio
+    async def test_request_bootstrap_no_match_sends_no_session_header(self) -> None:
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        with (
+            patch("gobby.mcp_proxy.stdio.read_project_id", return_value="project-123"),
+            patch.dict("os.environ", {}, clear=True),
+        ):
+            proxy = DaemonProxy(60887)
+
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"success": True}
+
+        with (
+            patch(
+                "gobby.mcp_proxy.stdio.resolve_session_id_from_terminal_context",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls,
+        ):
+            mock_client = AsyncMock()
+            mock_client.request = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value.__aenter__.return_value = mock_client
+
+            result = await proxy._request("GET", "/api/status")
+
+        assert result == {"success": True}
+        _, kwargs = mock_client.request.call_args
+        assert "X-Gobby-Session-Id" not in kwargs["headers"]
 
     @pytest.mark.asyncio
     async def test_list_tools(self) -> None:

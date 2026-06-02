@@ -314,6 +314,40 @@ def register_lifecycle_routes(
             logger.error(f"Find parent session error: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
+    @router.post("/find_by_terminal_context")
+    async def find_session_by_terminal_context(request: Request) -> dict[str, Any]:
+        """Find the unique active session matching terminal identity."""
+        try:
+            if server.session_manager is None:
+                raise HTTPException(status_code=503, detail="Session manager not available")
+
+            body = await request.json()
+            project_id = body.get("project_id")
+            parent_pid = body.get("parent_pid")
+            terminal_context = body.get("terminal_context")
+
+            if not project_id:
+                raise HTTPException(status_code=400, detail="Required field: project_id")
+            if parent_pid is None:
+                raise HTTPException(status_code=400, detail="Required field: parent_pid")
+
+            session = server.session_manager.find_active_by_terminal_context(
+                project_id=project_id,
+                parent_pid=parent_pid,
+                terminal_context=terminal_context if isinstance(terminal_context, dict) else None,
+            )
+
+            if session is None:
+                return {"session": None}
+
+            return {"session": session.to_dict()}
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Find session by terminal context error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
     @router.post("/update_status")
     async def update_session_status(request: Request) -> dict[str, Any]:
         """

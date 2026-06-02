@@ -246,6 +246,124 @@ class TestSessionEndpoints:
         assert response.status_code == 400
         assert "source" in response.json()["detail"]
 
+    def test_find_by_terminal_context_resolves_by_project_and_parent_pid(
+        self,
+        client: TestClient,
+        session_storage: SessionManager,
+        test_project: dict,
+    ) -> None:
+        """Find the one active session matching project and parent PID."""
+        session = session_storage.register(
+            external_id="terminal-match",
+            machine_id="machine",
+            source="codex",
+            project_id=test_project["id"],
+            terminal_context={"parent_pid": 4242},
+        )
+
+        response = client.post(
+            "/api/sessions/find_by_terminal_context",
+            json={"project_id": test_project["id"], "parent_pid": 4242},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["session"]["id"] == session.id
+
+    def test_find_by_terminal_context_rejects_multiple_active_matches(
+        self,
+        client: TestClient,
+        session_storage: SessionManager,
+        test_project: dict,
+    ) -> None:
+        """Multiple active sessions for the same project and PID are ambiguous."""
+        for external_id in ("terminal-ambiguous-1", "terminal-ambiguous-2"):
+            session_storage.register(
+                external_id=external_id,
+                machine_id="machine",
+                source="codex",
+                project_id=test_project["id"],
+                terminal_context={"parent_pid": 4242},
+            )
+
+        response = client.post(
+            "/api/sessions/find_by_terminal_context",
+            json={"project_id": test_project["id"], "parent_pid": 4242},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["session"] is None
+
+    def test_find_by_terminal_context_uses_terminal_context_to_disambiguate(
+        self,
+        client: TestClient,
+        session_storage: SessionManager,
+        test_project: dict,
+    ) -> None:
+        """Optional terminal context narrows sessions sharing one parent PID."""
+        session_storage.register(
+            external_id="terminal-context-miss",
+            machine_id="machine",
+            source="codex",
+            project_id=test_project["id"],
+            terminal_context={"parent_pid": 4242, "tmux_pane": "%1"},
+        )
+        matched_session = session_storage.register(
+            external_id="terminal-context-match",
+            machine_id="machine",
+            source="codex",
+            project_id=test_project["id"],
+            terminal_context={"parent_pid": 4242, "tmux_pane": "%2"},
+        )
+
+        response = client.post(
+            "/api/sessions/find_by_terminal_context",
+            json={
+                "project_id": test_project["id"],
+                "parent_pid": 4242,
+                "terminal_context": {"tmux_pane": "%2"},
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["session"]["id"] == matched_session.id
+
+    def test_find_by_terminal_context_ignores_other_projects_and_inactive_sessions(
+        self,
+        client: TestClient,
+        session_storage: SessionManager,
+        project_storage,
+        test_project: dict,
+        tmp_path,
+    ) -> None:
+        """Lookup only considers active sessions in the requested project."""
+        other_project = project_storage.create(
+            name="other-terminal-project",
+            repo_path=str(tmp_path / "other"),
+        )
+        session_storage.register(
+            external_id="terminal-other-project",
+            machine_id="machine",
+            source="codex",
+            project_id=other_project.id,
+            terminal_context={"parent_pid": 4242},
+        )
+        inactive_session = session_storage.register(
+            external_id="terminal-inactive",
+            machine_id="machine",
+            source="codex",
+            project_id=test_project["id"],
+            terminal_context={"parent_pid": 4242},
+        )
+        session_storage.update_status(inactive_session.id, "expired")
+
+        response = client.post(
+            "/api/sessions/find_by_terminal_context",
+            json={"project_id": test_project["id"], "parent_pid": 4242},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["session"] is None
+
     def test_find_current_malformed_json(self, client: TestClient) -> None:
         """Test find_current with malformed JSON returns 500 error.
 
