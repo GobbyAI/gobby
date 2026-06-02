@@ -94,6 +94,28 @@ def test_build_coordinator_documents_compact_self_tool_path() -> None:
     assert "top-level `call_tool.session_id`" in body
 
 
+def test_build_coordinator_requires_restart_after_dispatch_affecting_fixes() -> None:
+    body = _body()
+    normalized = _normalized_body()
+
+    assert "Post-Fix Daemon Restart Gate" in body
+    assert "dispatch, spawn, build controls, stage transitions" in normalized
+    assert "worktree or clone isolation" in normalized
+    assert "assume the running daemon still has the old code" in normalized
+    assert "Stop or keep blocked the affected build targets" in normalized
+    assert "record their run IDs, task refs, workspace paths, and isolation metadata" in normalized
+    assert "Restart the daemon after notifying active agents" in normalized
+    assert "Verify daemon health, call `gobby-sessions:compact_self`" in normalized
+    assert "uses the expected isolation and workspace metadata" in normalized
+    assert "file or keep open a child build bug for stale daemon behavior" in normalized
+
+    manual_tick_idx = normalized.index("manual-ticking the dispatcher")
+    restart_gate_idx = normalized.index("Post-Fix Daemon Restart Gate")
+    compaction_idx = normalized.index("## Compaction")
+
+    assert manual_tick_idx < restart_gate_idx < compaction_idx
+
+
 def test_build_coordinator_requires_stage_normalization_and_bug_fixes() -> None:
     body = _body()
 

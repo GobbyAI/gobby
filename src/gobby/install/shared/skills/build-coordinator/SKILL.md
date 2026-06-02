@@ -1,7 +1,7 @@
 ---
 name: build-coordinator
 description: "Use when coordinating a full gobby build run for an epic or task, especially when the user assigns the current session as coordinator, asks for a coordination epic, wants build agents/worktrees monitored, or wants gobby build bugs fixed so future runs work unattended."
-version: "1.0.4"
+version: "1.0.5"
 category: core
 triggers: gobby build coordinator, epic coordinator, coordination epic, unattended build, build bugs
 metadata:
@@ -114,6 +114,30 @@ loop order is:
 Do not keep the build moving by repeatedly manual-ticking the dispatcher. A
 normal build is daemon-owned automation. Use resume or explicit ticks only after
 recording evidence that they are diagnostics or recovery for a build bug.
+
+## Post-Fix Daemon Restart Gate
+
+When you commit a daemon or build-system fix that changes dispatch, spawn, build
+controls, stage transitions, session handoff, worktree or clone isolation, or
+agent startup behavior, assume the running daemon still has the old code until
+you prove otherwise.
+
+Before releasing blockers, resuming builds, or allowing future dispatch through
+the affected path:
+
+1. Stop or keep blocked the affected build targets under the relevant child bug.
+2. Stop agents already spawned through the stale behavior and record their run
+   IDs, task refs, workspace paths, and isolation metadata.
+3. Restart the daemon after notifying active agents and giving them a short head
+   start when active agents exist.
+4. Verify daemon health, call `gobby-sessions:compact_self`, and run another
+   full status sweep.
+5. Confirm the next eligible spawned agent uses the expected isolation and
+   workspace metadata before treating the fix as effective.
+
+If an agent launches after the fix with old workspace or isolation metadata,
+file or keep open a child build bug for stale daemon behavior. Fix or document
+the automation gap before continuing the target build.
 
 If a stop hook fires while the coordination epic is still claimed, continue the
 coordinator loop above. A claimed coordination epic means the build goal is still
