@@ -28,14 +28,14 @@ class CodewikiRefreshRequest:
     ai: str = "auto"
 
 
-def codewiki_on_commit_enabled(config: object | None, config_store: object | None) -> bool:
-    """Return true when the canonical codewiki-on-commit flag is enabled."""
-    store_value = _config_store_value(config_store)
-    if store_value is not None:
-        return _coerce_bool(store_value)
+def codewiki_on_commit_enabled(config_store: object | None) -> bool:
+    """Return true when the canonical codewiki-on-commit flag is enabled.
 
-    wiki_config = getattr(config, "wiki", None)
-    return _coerce_bool(getattr(wiki_config, "codewiki_on_commit", False))
+    Reads only the live config_store key ``wiki.codewiki_on_commit``, which is
+    canonical after startup (see ``config/wiki.py``). Defaults to off when the
+    key is unset, preserving default-off plus live-toggle behavior.
+    """
+    return _coerce_bool(_config_store_value(config_store))
 
 
 def _config_store_value(config_store: object | None) -> object | None:
@@ -74,14 +74,12 @@ class CodewikiRefreshTrigger:
         self,
         *,
         loop: asyncio.AbstractEventLoop,
-        config_provider: Callable[[], object | None],
         config_store_provider: Callable[[], object | None],
         gcode_gateway_factory: Callable[[], GcodeGateway] = GcodeGateway,
         gwiki_gateway_factory: Callable[[Path], GwikiGateway] | None = None,
         debounce_seconds: float = 2.0,
     ) -> None:
         self._loop = loop
-        self._config_provider = config_provider
         self._config_store_provider = config_store_provider
         self._gcode_gateway_factory = gcode_gateway_factory
         self._gwiki_gateway_factory = gwiki_gateway_factory or (
@@ -101,7 +99,7 @@ class CodewikiRefreshTrigger:
         ai: str | None = None,
     ) -> bool:
         """Schedule a refresh when wiki.codewiki_on_commit is enabled."""
-        if not codewiki_on_commit_enabled(self._config_provider(), self._config_store_provider()):
+        if not codewiki_on_commit_enabled(self._config_store_provider()):
             return False
 
         request = CodewikiRefreshRequest(

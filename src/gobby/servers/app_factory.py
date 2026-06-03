@@ -127,7 +127,6 @@ def create_app(server: "HTTPServer") -> FastAPI:
 
                 server.services.codewiki_trigger = CodewikiRefreshTrigger(
                     loop=asyncio.get_running_loop(),
-                    config_provider=lambda: server.services.config,
                     config_store_provider=lambda: server.services.config_store,
                     debounce_seconds=2.0,
                 )

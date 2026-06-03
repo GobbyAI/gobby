@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -62,11 +61,15 @@ class FakeGwikiGateway:
         return {"status": "ok"}
 
 
-def test_codewiki_on_commit_enabled_prefers_config_store() -> None:
-    config = SimpleNamespace(wiki=SimpleNamespace(codewiki_on_commit=False))
+def test_codewiki_on_commit_enabled_reads_only_config_store() -> None:
+    assert codewiki_on_commit_enabled(FakeConfigStore(True))
+    assert not codewiki_on_commit_enabled(FakeConfigStore(False))
 
-    assert codewiki_on_commit_enabled(config, FakeConfigStore(True))
-    assert not codewiki_on_commit_enabled(config, FakeConfigStore(False))
+
+def test_codewiki_on_commit_enabled_defaults_off_when_unset() -> None:
+    # No store, or a store that has no value, defaults to off (no snapshot fallback).
+    assert not codewiki_on_commit_enabled(None)
+    assert not codewiki_on_commit_enabled(FakeConfigStore(None))
 
 
 @pytest.mark.asyncio
@@ -75,8 +78,7 @@ async def test_refresh_runs_codewiki_and_ingests_changed_docs(tmp_path: Path) ->
     gwiki = FakeGwikiGateway()
     trigger = CodewikiRefreshTrigger(
         loop=asyncio.get_running_loop(),
-        config_provider=lambda: SimpleNamespace(wiki=SimpleNamespace(codewiki_on_commit=True)),
-        config_store_provider=lambda: None,
+        config_store_provider=lambda: FakeConfigStore(True),
         gcode_gateway_factory=lambda: gcode,
         gwiki_gateway_factory=lambda _root: gwiki,
         debounce_seconds=60,
@@ -100,8 +102,7 @@ async def test_refresh_propagates_cancellation(tmp_path: Path) -> None:
     gwiki = FakeGwikiGateway()
     trigger = CodewikiRefreshTrigger(
         loop=asyncio.get_running_loop(),
-        config_provider=lambda: SimpleNamespace(wiki=SimpleNamespace(codewiki_on_commit=True)),
-        config_store_provider=lambda: None,
+        config_store_provider=lambda: FakeConfigStore(True),
         gcode_gateway_factory=CancelledGcodeGateway,
         gwiki_gateway_factory=lambda _root: gwiki,
         debounce_seconds=60,
@@ -118,8 +119,7 @@ async def test_refresh_propagates_cancellation(tmp_path: Path) -> None:
 async def test_refresh_is_not_scheduled_when_disabled(tmp_path: Path) -> None:
     trigger = CodewikiRefreshTrigger(
         loop=asyncio.get_running_loop(),
-        config_provider=lambda: SimpleNamespace(wiki=SimpleNamespace(codewiki_on_commit=False)),
-        config_store_provider=lambda: None,
+        config_store_provider=lambda: FakeConfigStore(False),
         debounce_seconds=0,
     )
 
@@ -133,8 +133,7 @@ async def test_refresh_is_not_scheduled_when_disabled(tmp_path: Path) -> None:
 async def test_flush_does_not_stack_while_root_is_running(tmp_path: Path) -> None:
     trigger = CodewikiRefreshTrigger(
         loop=asyncio.get_running_loop(),
-        config_provider=lambda: SimpleNamespace(wiki=SimpleNamespace(codewiki_on_commit=True)),
-        config_store_provider=lambda: None,
+        config_store_provider=lambda: FakeConfigStore(True),
         debounce_seconds=0,
     )
     root_key = trigger._root_key(str(tmp_path))
