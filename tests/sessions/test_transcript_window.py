@@ -17,7 +17,12 @@ from typing import Any
 
 import pytest
 
-from gobby.sessions.transcript_index import build_index_from_file
+from gobby.sessions.gzip_seek_index import (
+    GZIP_BLOCK_SEEK_MODE,
+    iter_gzip_block_raw_lines,
+    write_blocked_gzip_archive,
+)
+from gobby.sessions.transcript_index import build_index_from_file, build_index_from_raw_lines
 from gobby.sessions.transcript_renderer import RenderedMessage, render_transcript
 from gobby.sessions.transcript_window import (
     MAX_WINDOW_SPAN_BYTES,
@@ -444,3 +449,40 @@ def test_default_max_span_is_unbounded_for_small_transcripts(tmp_path) -> None:
     )
     assert result.degraded is False
     _assert_equiv(full, result.groups)
+
+
+def test_gzip_block_window_matches_full_render(tmp_path) -> None:
+    lines = [
+        _codex_msg("user", f"user {i}") if i % 2 == 0 else _codex_msg("assistant", f"reply {i}")
+        for i in range(24)
+    ]
+    plain_path = _write(tmp_path, "codex-gzip", lines)
+    archive_path = str(tmp_path / "codex-gzip.jsonl.gz")
+    gzip_index = write_blocked_gzip_archive(plain_path, archive_path, block_size=180)
+    st = os.stat(archive_path)
+    index = build_index_from_raw_lines(
+        iter_gzip_block_raw_lines(archive_path, gzip_index, 0, 0),
+        "codex",
+        SESSION,
+        seek_mode=GZIP_BLOCK_SEEK_MODE,
+        mtime_ns=st.st_mtime_ns,
+        size=st.st_size,
+        transcript_path=archive_path,
+        logical_size=gzip_index.uncompressed_size,
+    )
+    full = _full_render(CodexTranscriptParser, lines)
+
+    result = render_window(
+        archive_path,
+        "codex",
+        SESSION,
+        index,
+        limit=4,
+        offset=2,
+        order="tail",
+        gzip_index=gzip_index,
+        max_span=HUGE,
+    )
+
+    expected_start, expected_end = len(full) - 6, len(full) - 2
+    _assert_equiv(full[expected_start:expected_end], result.groups)

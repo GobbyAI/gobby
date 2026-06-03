@@ -38,6 +38,11 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from gobby.sessions.gzip_seek_index import (
+    GZIP_BLOCK_SEEK_MODE,
+    GzipBlockIndex,
+    iter_gzip_block_raw_lines,
+)
 from gobby.sessions.transcript_parsing import _get_parser
 from gobby.sessions.transcript_renderer import (
     RenderedMessage,
@@ -101,10 +106,18 @@ def _requested_range(total: int, limit: int, offset: int, order: str) -> tuple[i
 
 
 def _byte_start(boundary: GroupBoundary) -> int:
-    """Byte offset of a boundary (only valid for ``seek_mode="byte"`` indexes)."""
+    """Byte offset of a boundary in the index's logical byte space."""
     if boundary.byte_start is None:  # pragma: no cover - guarded by caller
         raise ValueError("byte selection requires a byte-seek index")
     return boundary.byte_start
+
+
+def _is_byte_seekable(seek_mode: str) -> bool:
+    return seek_mode in {"byte", GZIP_BLOCK_SEEK_MODE}
+
+
+def _logical_size(index: TranscriptIndex) -> int:
+    return index.logical_size if index.logical_size is not None else index.size
 
 
 def _resume_group(index: TranscriptIndex, g_start: int) -> int:
@@ -124,17 +137,17 @@ def _select_range(
     ``order="head"`` keeps the older edge (``g_start`` fixed, retract ``g_end``).
     A single group larger than the budget is returned alone (never sub-split).
     Line-seek indexes have no per-boundary byte offsets, so they are not size
-    truncated here (only forward extension is bounded); archive random-access is a
-    tracked follow-up.
+    truncated here; live JSONL and gzip-block indexes both use logical byte
+    offsets.
     """
-    if index.seek_mode != "byte":
+    if not _is_byte_seekable(index.seek_mode):
         return g_start_req, g_end_req
 
     total = index.total_groups
 
     def byte_at(group_index: int) -> int:
         if group_index >= total:
-            return index.size
+            return _logical_size(index)
         return _byte_start(index.boundaries[group_index])
 
     if order == "tail":
@@ -188,7 +201,7 @@ def _track_budget(
 ) -> Iterator[RawLine]:
     """Pass-through that records bytes consumed since the resume point into ``box``."""
     for raw in raws:
-        if seek_mode == "byte" and raw.byte_offset is not None:
+        if _is_byte_seekable(seek_mode) and raw.byte_offset is not None:
             box[0] = raw.byte_offset - start_byte
         else:
             box[0] += len(raw.text.encode("utf-8"))
@@ -281,12 +294,13 @@ def render_window(
     offset: int,
     order: str = "tail",
     lines: list[str] | None = None,
+    gzip_index: GzipBlockIndex | None = None,
     max_span: int = MAX_WINDOW_SPAN_BYTES,
 ) -> WindowResult:
     """Render the rendered-group window ``[g_start, g_end)`` of a transcript.
 
     Args:
-        path: Live JSONL transcript path (byte-seek) or archive path (line-seek).
+        path: Live JSONL transcript path, archive path, or native fallback path.
         source: Resolved CLI source (selects the parser).
         session_id: Session ref (drives ``RenderedMessage.id``).
         index: Cached boundary index for this snapshot.
@@ -295,6 +309,8 @@ def render_window(
         order: ``"tail"`` (newest-first paging) or ``"head"`` (oldest-first).
         lines: Decompressed archive lines, required when ``index.seek_mode`` is
             ``"line"``.
+        gzip_index: Block index required when ``index.seek_mode`` is
+            ``"gzip-block"``.
         max_span: Byte ceiling for lookback + page + forward extension.
 
     Returns:
@@ -326,6 +342,13 @@ def render_window(
         start_byte = _byte_start(resume_boundary)
         raws: Iterable[RawLine] = _iter_file_from(
             path, start_byte, resume_boundary.raw_line_start, index.size
+        )
+    elif index.seek_mode == GZIP_BLOCK_SEEK_MODE:
+        if gzip_index is None:
+            raise ValueError("gzip-block index requires a gzip block sidecar")
+        start_byte = _byte_start(resume_boundary)
+        raws = iter_gzip_block_raw_lines(
+            path, gzip_index, start_byte, resume_boundary.raw_line_start
         )
     else:
         if lines is None:

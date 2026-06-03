@@ -71,6 +71,7 @@ __all__ = [
     "TranscriptIndexAppender",
     "build_index_from_file",
     "build_index_from_lines",
+    "build_index_from_raw_lines",
     "clear_index_cache",
     "detect_source_bounded",
     "get_or_build_index",
@@ -139,6 +140,7 @@ class TranscriptIndex:
     post_pass_adjustments: list[RenderedAdjustment] = field(default_factory=list)
     parsed_boundaries: list[ParsedBoundary] = field(default_factory=list)
     role_message_counts: dict[str, int] = field(default_factory=dict)
+    logical_size: int | None = None
 
     def group_index_for_parsed_index(self, parsed_index: int) -> int | None:
         """Return the group_index whose span contains ``parsed_index`` (or None)."""
@@ -322,7 +324,9 @@ class TranscriptIndexAppender:
                 self.index.parsed_boundaries.append(
                     ParsedBoundary(
                         raw_line_start=event.raw_line_no,
-                        byte_start=event.byte_offset if self.index.seek_mode == "byte" else None,
+                        byte_start=event.byte_offset
+                        if _stores_byte_offsets(self.index.seek_mode)
+                        else None,
                         parsed_index_start=event.parsed_index,
                         message_index_start=self.index.parsed_message_count,
                         role_counts_start=dict(self._role_counts),
@@ -353,7 +357,7 @@ class TranscriptIndexAppender:
                             group_index=len(self.index.boundaries),
                             raw_line_start=event.raw_line_no,
                             byte_start=event.byte_offset
-                            if self.index.seek_mode == "byte"
+                            if _stores_byte_offsets(self.index.seek_mode)
                             else None,
                             parsed_index_start=record.index,
                             resume_safe=event.parser_safe and offset_in_event == 0,
@@ -409,6 +413,7 @@ def _build_index_core(
     session_id: str | None,
     mtime_ns: int,
     size: int,
+    logical_size: int | None = None,
 ) -> TranscriptIndex:
     """Drive the real renderer over a raw-line stream, capturing group starts.
 
@@ -424,7 +429,13 @@ def _build_index_core(
         parser=parser,
     )
     appender.append_raw_lines(raw_lines, mtime_ns=mtime_ns, size=size)
-    return appender.snapshot(mtime_ns=mtime_ns, size=size)
+    index = appender.snapshot(mtime_ns=mtime_ns, size=size)
+    index.logical_size = logical_size
+    return index
+
+
+def _stores_byte_offsets(seek_mode: str) -> bool:
+    return seek_mode in {"byte", "gzip-block"}
 
 
 def _free_resolved_tool_calls(state: RenderState) -> None:
@@ -504,6 +515,31 @@ def build_index_from_lines(
         session_id=session_id,
         mtime_ns=mtime_ns,
         size=size,
+    )
+
+
+def build_index_from_raw_lines(
+    raw_lines: Iterable[RawLine],
+    source: str,
+    session_id: str | None,
+    *,
+    seek_mode: str,
+    mtime_ns: int,
+    size: int,
+    transcript_path: str | None = None,
+    logical_size: int | None = None,
+) -> TranscriptIndex:
+    """Build an index from a caller-owned positioned raw-line stream."""
+    parser = _get_parser(source, session_id=session_id, transcript_path=transcript_path)
+    return _build_index_core(
+        raw_lines,
+        parser,
+        source=source,
+        seek_mode=seek_mode,
+        session_id=session_id,
+        mtime_ns=mtime_ns,
+        size=size,
+        logical_size=logical_size,
     )
 
 
@@ -597,6 +633,7 @@ def _index_to_payload(path: str, index: TranscriptIndex) -> dict[str, Any]:
         "total_groups": index.total_groups,
         "tool_first_open": index.tool_first_open,
         "role_message_counts": index.role_message_counts,
+        "logical_size": index.logical_size,
         "post_pass_adjustments": [
             {
                 "group_index": adjustment.group_index,
@@ -660,6 +697,9 @@ def _payload_to_index(payload: dict[str, Any]) -> TranscriptIndex:
         role_message_counts={
             str(role): int(count) for role, count in payload.get("role_message_counts", {}).items()
         },
+        logical_size=(
+            int(payload["logical_size"]) if payload.get("logical_size") is not None else None
+        ),
     )
 
 
@@ -701,7 +741,10 @@ def load_index_sidecar(
             payload, path=path, source=source, seek_mode=seek_mode, mtime_ns=mtime_ns, size=size
         ):
             return None
-        return _payload_to_index(payload)
+        index = _payload_to_index(payload)
+        if seek_mode == "gzip-block" and index.logical_size is None:
+            return None
+        return index
     except (KeyError, TypeError, ValueError) as exc:
         logger.debug("Invalid transcript index sidecar %s: %s", sidecar, exc)
         return None
@@ -760,6 +803,8 @@ async def get_or_build_index(
     *,
     seek_mode: str = "byte",
     lines: Iterable[str] | None = None,
+    raw_lines: Iterable[RawLine] | None = None,
+    logical_size: int | None = None,
     mtime_ns: int,
     size: int,
 ) -> TranscriptIndex:
@@ -767,8 +812,9 @@ async def get_or_build_index(
 
     Keyed by ``(abspath, source, seek_mode, mtime_ns, size)`` so any append
     invalidates the entry. A per-key build lock collapses concurrent first-open
-    requests into a single build. ``lines`` selects the line-seek archive build;
-    otherwise the file is streamed.
+    requests into a single build. ``lines`` selects the line-seek archive build,
+    ``raw_lines`` selects caller-owned positioned streams, otherwise the file is
+    streamed.
     """
     key: _IndexKey = (os.path.abspath(path), source, seek_mode, mtime_ns, size)
 
@@ -803,7 +849,19 @@ async def get_or_build_index(
                 _BUILD_LOCKS.pop(key, None)
             return sidecar_index
 
-        if lines is not None:
+        if raw_lines is not None:
+            index = await asyncio.to_thread(
+                build_index_from_raw_lines,
+                raw_lines,
+                source,
+                session_id,
+                seek_mode=seek_mode,
+                mtime_ns=mtime_ns,
+                size=size,
+                transcript_path=path,
+                logical_size=logical_size,
+            )
+        elif lines is not None:
             materialized = list(lines)
             index = await asyncio.to_thread(
                 build_index_from_lines,

@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.sessions.gzip_seek_index import load_gzip_block_index
 from gobby.sessions.transcript_index import clear_index_cache, get_or_build_index
 from gobby.sessions.transcript_io import TranscriptTooLargeError
 from gobby.sessions.transcript_paths import _find_transcript_on_disk, _is_recent_file
@@ -1072,6 +1073,33 @@ class TestTranscriptReaderWindowed:
         assert result.parsed_message_count == 5
         assert "msg 3" in result.groups[0].content
         assert "msg 4" in result.groups[1].content
+
+    async def test_archived_window_reblocks_and_uses_gzip_block_index(self, tmp_path: Path) -> None:
+        archive_dir = tmp_path / "archives"
+        external_id = "archived-window"
+        archive_path = _write_gzip_archive(
+            archive_dir,
+            external_id,
+            [
+                {"type": "user", "message": {"role": "user", "content": f"msg {i}"}}
+                for i in range(6)
+            ],
+        )
+        session = MagicMock()
+        session.external_id = external_id
+        session.source = "claude"
+        session.transcript_path = str(tmp_path / "missing.jsonl")
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+        reader = TranscriptReader(session_manager, archive_dir=str(archive_dir))
+
+        result = await reader.get_rendered_window("sess-1", limit=2, offset=0, order="tail")
+
+        assert result.returned_count == 2
+        assert result.total_groups == 6
+        assert "msg 4" in result.groups[0].content
+        assert "msg 5" in result.groups[1].content
+        assert load_gzip_block_index(str(archive_path)) is not None
 
     @pytest.mark.asyncio
     async def test_window_tail_offset_pages_older(self, tmp_path: Path) -> None:

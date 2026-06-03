@@ -20,6 +20,12 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from gobby.sessions.gzip_seek_index import (
+    GZIP_BLOCK_SEEK_MODE,
+    GzipBlockIndex,
+    ensure_gzip_block_index,
+    iter_gzip_block_raw_lines,
+)
 from gobby.sessions.transcript_archive import get_archive_dir
 from gobby.sessions.transcript_index import (
     SOURCE_SAMPLE_LINES,
@@ -31,7 +37,6 @@ from gobby.sessions.transcript_io import (
     TranscriptTooLargeError,
     _iter_archive_lines,
     _iter_jsonl_lines,
-    _read_archive_lines,
     _read_json_file,
     clear_archive_cache,
 )
@@ -75,9 +80,9 @@ __all__ = ["TranscriptReader", "clear_archive_cache"]
 class _Windowable:
     """A resolved transcript snapshot ready for windowed reads.
 
-    ``kind`` is ``"jsonl"`` (byte-seek), ``"archive"`` (line-seek, ``lines``
-    populated), ``"native"`` (no windowing — render whole, ``size`` set for the
-    guard), or ``"missing"``.
+    ``kind`` is ``"jsonl"`` (byte-seek), ``"archive"`` (gzip-block seek),
+    ``"native"`` (no windowing — render whole, ``size`` set for the guard), or
+    ``"missing"``.
     """
 
     kind: str
@@ -85,6 +90,7 @@ class _Windowable:
     source: str | None = None
     index: TranscriptIndex | None = None
     lines: list[str] | None = None
+    gzip_index: GzipBlockIndex | None = None
     size: int = 0
 
 
@@ -266,6 +272,7 @@ class TranscriptReader:
             offset=offset,
             order=order,
             lines=resolved.lines,
+            gzip_index=resolved.gzip_index,
             max_span=max_span,
         )
 
@@ -425,14 +432,24 @@ class TranscriptReader:
             archive_path = get_archive_dir(self._archive_dir) / f"{session.external_id}.jsonl.gz"
             if archive_path.is_file():
                 st = await asyncio.to_thread(os.stat, str(archive_path))
-                lines = await asyncio.to_thread(_read_archive_lines, str(archive_path))
-                source = self._archive_source(session, lines[:SOURCE_SAMPLE_LINES], session_id)
+                sample = await asyncio.to_thread(
+                    _read_archive_sample, str(archive_path), SOURCE_SAMPLE_LINES
+                )
+                source = self._archive_source(session, sample, session_id)
+                gzip_index = await asyncio.to_thread(
+                    ensure_gzip_block_index,
+                    str(archive_path),
+                    mtime_ns=st.st_mtime_ns,
+                    size=st.st_size,
+                )
+                st = await asyncio.to_thread(os.stat, str(archive_path))
                 index = await get_or_build_index(
                     str(archive_path),
                     source,
                     session_id,
-                    seek_mode="line",
-                    lines=lines,
+                    seek_mode=GZIP_BLOCK_SEEK_MODE,
+                    raw_lines=iter_gzip_block_raw_lines(str(archive_path), gzip_index, 0, 0),
+                    logical_size=gzip_index.uncompressed_size,
                     mtime_ns=st.st_mtime_ns,
                     size=st.st_size,
                 )
@@ -441,7 +458,7 @@ class TranscriptReader:
                     path=str(archive_path),
                     source=source,
                     index=index,
-                    lines=lines,
+                    gzip_index=gzip_index,
                     size=st.st_size,
                 )
 

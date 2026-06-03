@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from gobby.sessions.gzip_seek_index import load_gzip_block_index
 from gobby.sessions.transcript_archive import (
     backup_transcript,
     get_archive_dir,
@@ -57,6 +58,7 @@ class TestBackupTranscript:
         with gzip.open(archive_path, "rt") as f:
             content = f.read()
         assert "hello" in content
+        assert load_gzip_block_index(str(archive_path)) is not None
 
     def test_backup_missing_source_returns_none(self, archive_dir: str) -> None:
         result = backup_transcript("ext-456", "/nonexistent/file.jsonl", archive_dir)

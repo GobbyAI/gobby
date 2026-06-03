@@ -12,6 +12,8 @@ import logging
 import shutil
 from pathlib import Path
 
+from gobby.sessions.gzip_seek_index import write_blocked_gzip_archive
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_ARCHIVE_DIR = "~/.gobby/session_transcripts"
@@ -55,8 +57,7 @@ def backup_transcript(
     dest = dest_dir / f"{external_id}.jsonl.gz"
 
     try:
-        with open(source, "rb") as f_in, gzip.open(dest, "wb") as f_out:
-            shutil.copyfileobj(f_in, f_out)
+        write_blocked_gzip_archive(str(source), str(dest))
         logger.debug(f"Backed up transcript {transcript_path} -> {dest}")
         return str(dest)
     except Exception as e:
