@@ -10,7 +10,8 @@ use super::types::{ExistingVectorCollectionSchema, VectorLifecycleError};
 
 // Keep code-symbol collections compatible with the Python daemon's Qdrant schema.
 pub const VECTOR_DISTANCE_COSINE: &str = "Cosine";
-const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
+const QDRANT_DELETE_TIMEOUT_SECS_ENV: &str = "GCODE_QDRANT_DELETE_TIMEOUT_SECS";
+const DEFAULT_QDRANT_DELETE_TIMEOUT: Duration = Duration::from_secs(60);
 static QDRANT_HTTP_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
 
 pub fn collection_name(collection_prefix: &str, project_id: &str) -> String {
@@ -136,11 +137,20 @@ fn qdrant_http_client() -> Result<reqwest::blocking::Client, VectorLifecycleErro
         return Ok(client.clone());
     }
     let client = reqwest::blocking::Client::builder()
-        .timeout(HTTP_TIMEOUT)
+        .timeout(qdrant_delete_timeout())
         .build()
         .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
     let _ = QDRANT_HTTP_CLIENT.set(client.clone());
-    Ok(QDRANT_HTTP_CLIENT.get().cloned().unwrap_or(client))
+    Ok(client)
+}
+
+fn qdrant_delete_timeout() -> Duration {
+    std::env::var(QDRANT_DELETE_TIMEOUT_SECS_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(DEFAULT_QDRANT_DELETE_TIMEOUT)
 }
 
 pub(super) fn qdrant_request_for_config(
@@ -215,16 +225,15 @@ pub(super) fn delete_vectors_for_filter_excluding_ids(
             "match": {"value": file_path},
         }));
     }
-    let mut filter = json!({ "must": must });
+    let mut filter_object = serde_json::Map::new();
+    filter_object.insert("must".to_string(), Value::Array(must));
     if !keep_point_ids.is_empty() {
-        let filter = filter
-            .as_object_mut()
-            .expect("filter must be a JSON object");
-        filter.insert(
+        filter_object.insert(
             "must_not".to_string(),
             json!([{ "has_id": keep_point_ids }]),
         );
     }
+    let filter = Value::Object(filter_object);
     let count_body = json!({ "filter": filter.clone(), "exact": true });
     let resp = qdrant_request_for_config(
         client,

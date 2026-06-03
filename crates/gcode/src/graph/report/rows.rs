@@ -12,7 +12,7 @@ pub(super) fn rows_to_named_counts(rows: Vec<Row>) -> BTreeMap<String, usize> {
     rows.into_iter()
         .filter_map(|row| {
             let name = row_string(&row, &["name"])?;
-            let count = row_usize(&row, &["count"]).unwrap_or(0);
+            let count = row_usize(&row, &["count"])?;
             Some((name, count))
         })
         .collect()
@@ -82,13 +82,23 @@ fn row_usize(row: &Row, keys: &[&str]) -> Option<usize> {
         let Some(value) = row.get(*key) else {
             continue;
         };
-        // Negative i64 values are invalid counts/ranks and are intentionally
-        // discarded by the fallible conversion.
-        if let Some(value) = value
-            .as_u64()
-            .and_then(|value| usize::try_from(value).ok())
-            .or_else(|| value.as_i64().and_then(|value| usize::try_from(value).ok()))
-        {
+        if let Some(value) = value.as_u64().and_then(|value| usize::try_from(value).ok()) {
+            return Some(value);
+        }
+        if let Some(value) = value.as_i64() {
+            if value < 0 {
+                eprintln!("Warning: ignoring negative graph report value {key}={value}");
+                return None;
+            }
+            if let Ok(value) = usize::try_from(value) {
+                return Some(value);
+            }
+        }
+        if let Some(value) = value.as_f64().and_then(|value| {
+            (value >= 0.0 && value.fract() == 0.0)
+                .then_some(value as u64)
+                .and_then(|value| usize::try_from(value).ok())
+        }) {
             return Some(value);
         }
     }
@@ -127,5 +137,27 @@ mod tests {
         row.insert("second".to_string(), Value::from(7));
 
         assert_eq!(row_usize(&row, &["first", "second"]), Some(7));
+    }
+
+    #[test]
+    fn rows_to_named_counts_skips_missing_counts() {
+        let mut missing = Row::new();
+        missing.insert("name".to_string(), Value::String("missing".to_string()));
+        let mut present = Row::new();
+        present.insert("name".to_string(), Value::String("present".to_string()));
+        present.insert("count".to_string(), Value::from(3));
+
+        let counts = rows_to_named_counts(vec![missing, present]);
+
+        assert_eq!(counts.get("missing"), None);
+        assert_eq!(counts.get("present"), Some(&3));
+    }
+
+    #[test]
+    fn row_usize_rejects_negative_values() {
+        let mut row = Row::new();
+        row.insert("count".to_string(), Value::from(-1));
+
+        assert_eq!(row_usize(&row, &["count"]), None);
     }
 }

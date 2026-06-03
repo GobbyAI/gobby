@@ -131,9 +131,6 @@ pub(super) fn member_qualifier_path(
         .chars()
         .skip_while(|c| !is_identifier_start(*c));
     let first = chars.next()?;
-    if !is_identifier_start(first) {
-        return None;
-    }
 
     let mut qualifier = if is_absolute_namespace {
         "\\".to_string()

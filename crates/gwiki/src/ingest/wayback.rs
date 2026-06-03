@@ -1,13 +1,14 @@
 use std::path::Path;
 
+use encoding_rs::{Encoding, UTF_8};
 use percent_encoding::percent_decode_str;
+use regex::Regex;
 use scraper::{ElementRef, Html, Node, Selector};
 use url::Url;
 
 use crate::WikiError;
 use crate::ingest::{
-    IngestResult, markdown_metadata, markdown_title, single_line, text_from_utf8_lossy,
-    write_raw_then_index,
+    IngestResult, markdown_metadata, markdown_title, single_line, write_raw_then_index,
 };
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
@@ -27,7 +28,7 @@ pub fn ingest_capture(
     store: &mut impl WikiIndexStore,
     mut snapshot: WaybackCaptureSnapshot,
 ) -> Result<IngestResult, WikiError> {
-    let html = text_from_utf8_lossy(&snapshot.body);
+    let html = decode_wayback_html(&snapshot)?;
     let document = Html::parse_document(&html);
     let title = wayback_title(&snapshot, &document);
     let draft = SourceDraft {
@@ -44,6 +45,96 @@ pub fn ingest_capture(
     let record = SourceManifest::register(vault_root, draft)?;
     let markdown = render_wayback_markdown(&snapshot, &document, &title, &record.content_hash);
     write_raw_then_index(vault_root, store, record, &markdown, None)
+}
+
+fn decode_wayback_html(snapshot: &WaybackCaptureSnapshot) -> Result<String, WikiError> {
+    ensure_html_content_type(snapshot.content_type.as_deref())?;
+    let html = decode_html_bytes(&snapshot.body, snapshot.content_type.as_deref());
+    if !html_looks_like_document(&html) {
+        return Err(WikiError::InvalidInput {
+            field: "content_type",
+            message: "Wayback capture body is not an HTML document".to_string(),
+        });
+    }
+    Ok(html)
+}
+
+fn ensure_html_content_type(content_type: Option<&str>) -> Result<(), WikiError> {
+    match content_type_media_type(content_type).as_deref() {
+        Some("text/html" | "application/xhtml+xml") => Ok(()),
+        Some(media_type) => Err(WikiError::InvalidInput {
+            field: "content_type",
+            message: format!("Wayback capture content type {media_type} is not HTML/XHTML"),
+        }),
+        None => Err(WikiError::InvalidInput {
+            field: "content_type",
+            message: "Wayback capture content type is required".to_string(),
+        }),
+    }
+}
+
+fn decode_html_bytes(bytes: &[u8], content_type: Option<&str>) -> String {
+    if let Some(encoding) = charset_from_content_type(content_type)
+        .and_then(|charset| Encoding::for_label(charset.as_bytes()))
+    {
+        let (decoded, _, _) = encoding.decode(bytes);
+        return decoded.into_owned();
+    }
+    if let Some((encoding, bom_len)) = Encoding::for_bom(bytes) {
+        let (decoded, _, _) = encoding.decode(&bytes[bom_len..]);
+        return decoded.into_owned();
+    }
+    if let Some(encoding) =
+        charset_from_html_meta(bytes).and_then(|charset| Encoding::for_label(charset.as_bytes()))
+    {
+        let (decoded, _, _) = encoding.decode(bytes);
+        return decoded.into_owned();
+    }
+
+    let (decoded, _, _) = UTF_8.decode(bytes);
+    decoded.into_owned()
+}
+
+fn content_type_media_type(content_type: Option<&str>) -> Option<String> {
+    content_type?
+        .split(';')
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_ascii_lowercase)
+}
+
+fn charset_from_content_type(content_type: Option<&str>) -> Option<String> {
+    content_type?.split(';').skip(1).find_map(|part| {
+        let (name, value) = part.split_once('=')?;
+        (name.trim().eq_ignore_ascii_case("charset"))
+            .then(|| trim_charset_label(value))
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn charset_from_html_meta(bytes: &[u8]) -> Option<String> {
+    let scan_len = bytes.len().min(4096);
+    let head = String::from_utf8_lossy(&bytes[..scan_len]);
+    let regex = Regex::new(r#"(?i)charset\s*=\s*["']?([a-z0-9._:-]+)"#).ok()?;
+    regex
+        .captures(&head)
+        .and_then(|captures| captures.get(1))
+        .map(|value| value.as_str().to_string())
+}
+
+fn trim_charset_label(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .to_string()
+}
+
+fn html_looks_like_document(html: &str) -> bool {
+    let lower = html.trim_start().to_ascii_lowercase();
+    lower.starts_with("<!doctype html") || lower.starts_with("<html") || lower.contains("<body")
 }
 
 fn wayback_title(snapshot: &WaybackCaptureSnapshot, document: &Html) -> String {
@@ -291,7 +382,7 @@ mod tests {
     #[test]
     fn wayback_extracts_body_text_without_head_metadata() {
         let body = b"<html><head><title>Archive Shell</title></head><body><script>ignore()</script><p>Visible &amp; decoded.</p></body></html>";
-        let html = text_from_utf8_lossy(body);
+        let html = decode_html_bytes(body, Some("text/html"));
         let document = Html::parse_document(&html);
 
         let text = html_to_text(&document);
@@ -363,8 +454,44 @@ mod tests {
         assert_eq!(text, "Use &amp; literally.");
     }
 
+    #[test]
+    fn wayback_decodes_declared_charset() {
+        let snapshot = WaybackCaptureSnapshot {
+            original_url: "https://example.com/latin".to_string(),
+            capture_url: "https://web.archive.org/web/1/https://example.com/latin".to_string(),
+            capture_timestamp: "1".to_string(),
+            fetched_at: "2026-05-29T18:10:00Z".to_string(),
+            body: b"<html><body>caf\xe9</body></html>".to_vec(),
+            content_type: Some("text/html; charset=windows-1252".to_string()),
+        };
+
+        let html = decode_wayback_html(&snapshot).expect("decode html");
+
+        assert!(html.contains("caf\u{e9}"));
+    }
+
+    #[test]
+    fn wayback_rejects_non_html_content_type() {
+        let snapshot = WaybackCaptureSnapshot {
+            original_url: "https://example.com/file.pdf".to_string(),
+            capture_url: "https://web.archive.org/web/1/https://example.com/file.pdf".to_string(),
+            capture_timestamp: "1".to_string(),
+            fetched_at: "2026-05-29T18:10:00Z".to_string(),
+            body: b"%PDF-1.7".to_vec(),
+            content_type: Some("application/pdf".to_string()),
+        };
+
+        assert!(matches!(
+            decode_wayback_html(&snapshot),
+            Err(WikiError::InvalidInput {
+                field: "content_type",
+                ..
+            })
+        ));
+    }
+
     fn document_for(bytes: &[u8]) -> Html {
-        let html = text_from_utf8_lossy(bytes);
+        let html = decode_html_bytes(bytes, Some("text/html"));
         Html::parse_document(&html)
     }
 }

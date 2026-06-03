@@ -233,8 +233,8 @@ fn overwrite_guidance_names_flag() {
 #[test]
 fn standalone_setup_request_redacts_password_in_json() {
     let mut request = StandaloneSetupRequest::new(true, None, None);
-    request.falkordb_password = Some("secret".to_string());
-    request.database_url = Some("postgresql://user:secret@localhost/gcode".to_string());
+    request.falkordb_password = Some("secret".to_string()).into();
+    request.database_url = Some("postgresql://user:secret@localhost/gcode".to_string()).into();
 
     let encoded = serde_json::to_string(&request).expect("serialize request");
 
@@ -264,7 +264,7 @@ fn standalone_setup_request_debug_redacts_database_url() {
         Some("postgresql://user:secret@localhost/gcode".to_string()),
         None,
     );
-    request.falkordb_password = Some("secret2".to_string());
+    request.falkordb_password = Some("secret2".to_string()).into();
 
     let debug = format!("{request:?}");
 

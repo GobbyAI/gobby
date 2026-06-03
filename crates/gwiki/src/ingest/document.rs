@@ -1,5 +1,5 @@
 use std::fs::{self, File};
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
@@ -434,6 +434,25 @@ fn write_document_markdown_atomic(path: &Path, contents: &[u8]) -> Result<(), Wi
     }
     drop(file);
     if let Err(error) = fs::rename(&temp_path, path) {
+        if error.kind() == ErrorKind::AlreadyExists {
+            if let Err(remove_error) = fs::remove_file(path) {
+                let _ = fs::remove_file(&temp_path);
+                return Err(WikiError::Io {
+                    action: "replace existing document derived markdown",
+                    path: Some(path.to_path_buf()),
+                    source: remove_error,
+                });
+            }
+            if let Err(rename_error) = fs::rename(&temp_path, path) {
+                let _ = fs::remove_file(&temp_path);
+                return Err(WikiError::Io {
+                    action: "write document derived markdown",
+                    path: Some(path.to_path_buf()),
+                    source: rename_error,
+                });
+            }
+            return sync_parent_dir(path);
+        }
         let _ = fs::remove_file(&temp_path);
         return Err(WikiError::Io {
             action: "write document derived markdown",

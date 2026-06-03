@@ -263,6 +263,7 @@ pub(super) fn row_usize(row: &Row, keys: &[&str]) -> Option<usize> {
                 return Some(value);
             }
             log::warn!("negative graph payload integer ignored; key={key} value={value}");
+            return None;
         }
     }
     None

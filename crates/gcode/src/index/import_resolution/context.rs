@@ -102,7 +102,6 @@ pub(super) const JS_BUILTIN_MODULES: &[&str] = &[
     "dns/promises",
     "domain",
     "events",
-    "ffi",
     "fs",
     "fs/promises",
     "http",
@@ -326,16 +325,27 @@ fn rust_manifest_paths(root_path: &Path) -> Vec<PathBuf> {
     };
     for member in members.iter().filter_map(toml::Value::as_str) {
         if member.contains('*') {
-            // Cargo workspace globs can include generated or excluded crates;
-            // skip them instead of doing ad hoc filesystem expansion here.
-            log::debug!(
-                "skipping Cargo workspace glob member `{member}` under {}",
-                root_path.display()
-            );
+            let pattern = root_path.join(member).join("Cargo.toml");
+            let Some(pattern) = pattern.to_str() else {
+                continue;
+            };
+            let Ok(entries) = glob::glob(pattern) else {
+                log::debug!(
+                    "invalid Cargo workspace glob member `{member}` under {}",
+                    root_path.display()
+                );
+                continue;
+            };
+            manifests.extend(entries.flatten().filter(|path| path.is_file()));
             continue;
         }
-        manifests.push(root_path.join(member).join("Cargo.toml"));
+        let manifest = root_path.join(member).join("Cargo.toml");
+        if manifest.is_file() {
+            manifests.push(manifest);
+        }
     }
+    manifests.sort();
+    manifests.dedup();
     manifests
 }
 

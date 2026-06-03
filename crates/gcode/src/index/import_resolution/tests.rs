@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
+use std::path::Path;
 
 use tempfile::TempDir;
 
@@ -15,11 +16,18 @@ use super::predicates::{
 };
 use super::*;
 
+fn manifest_dir(root: &Path, name: &str, body: &str) {
+    let dir = root.join(name);
+    fs::create_dir_all(&dir).expect("manifest dir");
+    fs::write(dir.join("Cargo.toml"), body).expect("cargo toml");
+}
+
 #[test]
 fn loads_rust_inline_table_dependency_names() {
     let tempdir = TempDir::new().expect("tempdir");
-    fs::write(
-        tempdir.path().join("Cargo.toml"),
+    manifest_dir(
+        tempdir.path(),
+        "",
         r#"
 [package]
 name = "app"
@@ -28,8 +36,7 @@ name = "app"
 serde = { version = "1.0" }
 "tokio-util" = { version = "0.7", features = ["codec"] }
 "#,
-    )
-    .expect("cargo toml");
+    );
 
     let crates = load_rust_external_crates(tempdir.path());
 
@@ -40,8 +47,9 @@ serde = { version = "1.0" }
 #[test]
 fn loads_rust_dependency_names_from_real_toml_tables() {
     let tempdir = TempDir::new().expect("tempdir");
-    fs::write(
-        tempdir.path().join("Cargo.toml"),
+    manifest_dir(
+        tempdir.path(),
+        "",
         r#"
 [package]
 name = "app"
@@ -64,8 +72,7 @@ windows-sys = "0.52"
 [target.'cfg(target_os = "linux")'.build-dependencies]
 cc = "1"
 "#,
-    )
-    .expect("cargo toml");
+    );
 
     let crates = load_rust_external_crates(tempdir.path());
 
@@ -84,8 +91,9 @@ cc = "1"
 #[test]
 fn ignores_rust_non_dependency_toml_tables() {
     let tempdir = TempDir::new().expect("tempdir");
-    fs::write(
-        tempdir.path().join("Cargo.toml"),
+    manifest_dir(
+        tempdir.path(),
+        "",
         r#"
 [package]
 name = "app"
@@ -99,8 +107,7 @@ metadata-only = "1"
 [features]
 serde = []
 "#,
-    )
-    .expect("cargo toml");
+    );
 
     let crates = load_rust_external_crates(tempdir.path());
 
@@ -112,19 +119,59 @@ serde = []
 #[test]
 fn normalizes_rust_package_name_from_cargo_toml() {
     let tempdir = TempDir::new().expect("tempdir");
-    fs::write(
-        tempdir.path().join("Cargo.toml"),
+    manifest_dir(
+        tempdir.path(),
+        "",
         r#"
 [package]
 name = "my-crate"
 "#,
-    )
-    .expect("cargo toml");
+    );
 
     assert_eq!(
         load_rust_self_crate_name(tempdir.path()).as_deref(),
         Some("my_crate")
     );
+}
+
+#[test]
+fn loads_rust_workspace_glob_dependency_names() {
+    let tempdir = TempDir::new().expect("tempdir");
+    manifest_dir(
+        tempdir.path(),
+        "",
+        r#"
+[workspace]
+members = ["crates/*"]
+"#,
+    );
+    manifest_dir(
+        tempdir.path(),
+        "crates/app",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+serde-json = "1"
+"#,
+    );
+    manifest_dir(
+        tempdir.path(),
+        "crates/lib",
+        r#"
+[package]
+name = "lib"
+
+[dependencies]
+tokio-util = "0.7"
+"#,
+    );
+
+    let crates = load_rust_external_crates(tempdir.path());
+
+    assert!(crates.contains("serde_json"));
+    assert!(crates.contains("tokio_util"));
 }
 
 #[test]

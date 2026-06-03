@@ -20,6 +20,7 @@ const EMBEDDINGS_PATH: &str = "/api/embeddings";
 pub struct DaemonTranscriptionOptions<'a> {
     pub capability: AiCapability,
     pub language: Option<&'a str>,
+    pub target_lang: Option<&'a str>,
     pub prompt: Option<&'a str>,
 }
 
@@ -35,6 +36,7 @@ impl Default for DaemonTranscriptionOptions<'_> {
         Self {
             capability: AiCapability::AudioTranscribe,
             language: None,
+            target_lang: None,
             prompt: None,
         }
     }
@@ -58,6 +60,10 @@ pub fn transcribe_via_daemon(
         .language
         .or(binding.language.as_deref())
         .map(str::to_string);
+    let target_lang = options
+        .target_lang
+        .or(binding.target_lang.as_deref())
+        .map(str::to_string);
     let prompt = options.prompt.map(str::to_string);
     let provider = binding.provider.clone();
     let model = binding.model.clone();
@@ -72,6 +78,7 @@ pub fn transcribe_via_daemon(
             let form = add_optional_text(form, "provider", provider.as_deref());
             let form = add_optional_text(form, "model", model.as_deref());
             let form = add_optional_text(form, "language", language.as_deref());
+            let form = add_optional_text(form, "target_lang", target_lang.as_deref());
             let form = add_optional_text(form, "prompt", prompt.as_deref());
             let form = add_optional_text(form, "project_id", project_id.as_deref());
             let request = with_local_token(
@@ -171,10 +178,17 @@ pub fn embed_via_daemon(
     is_query: bool,
 ) -> Result<DaemonEmbeddingResult, AiError> {
     let capability = AiCapability::Embed;
+    let binding = cfg.binding(capability);
     let client = daemon_client()?;
     let token = read_local_cli_token()?;
     let url = daemon_url(EMBEDDINGS_PATH)?;
-    let body = embeddings_request_body(input, is_query);
+    let body = embeddings_request_body(
+        input,
+        is_query,
+        cfg.project_id.as_deref(),
+        binding.provider.as_deref(),
+        binding.model.as_deref(),
+    );
     let _permit = cfg.limiter.acquire();
 
     let value = super::retry_with_backoff(
@@ -292,13 +306,22 @@ fn text_request_body(
     Value::Object(body)
 }
 
-fn embeddings_request_body(input: &[String], is_query: bool) -> Value {
+fn embeddings_request_body(
+    input: &[String],
+    is_query: bool,
+    project_id: Option<&str>,
+    provider: Option<&str>,
+    model: Option<&str>,
+) -> Value {
     let mut body = Map::new();
     body.insert(
         "input".to_string(),
         Value::Array(input.iter().cloned().map(Value::String).collect()),
     );
     body.insert("is_query".to_string(), Value::Bool(is_query));
+    insert_optional(&mut body, "project_id", project_id);
+    insert_optional(&mut body, "provider", provider);
+    insert_optional(&mut body, "model", model);
     Value::Object(body)
 }
 
@@ -494,6 +517,9 @@ mod tests {
         assert!(has_header(&request, LOCAL_TOKEN_HEADER, "embed-token"));
         assert_eq!(body["input"], serde_json::json!(["same", "same"]));
         assert_eq!(body["is_query"], true);
+        assert_eq!(body["project_id"], "project-123");
+        assert_eq!(body["provider"], "daemon-provider");
+        assert_eq!(body["model"], "daemon-model");
         assert_eq!(result.model, "embed-model");
         assert_eq!(result.dim, 2);
         assert_eq!(result.embeddings, vec![vec![0.1, 0.2], vec![0.3, 0.4]]);
@@ -604,6 +630,7 @@ mod tests {
             DaemonTranscriptionOptions {
                 capability: AiCapability::AudioTranslate,
                 language: Some("es"),
+                target_lang: Some("en"),
                 prompt: Some("names: Gobby"),
             },
         )
@@ -618,6 +645,7 @@ mod tests {
         assert!(multipart_has_field(&request, "provider", "daemon-provider"));
         assert!(multipart_has_field(&request, "model", "daemon-model"));
         assert!(multipart_has_field(&request, "language", "es"));
+        assert!(multipart_has_field(&request, "target_lang", "en"));
         assert!(multipart_has_field(&request, "prompt", "names: Gobby"));
         assert!(!multipart_has_field(&request, "capability", "translate"));
 

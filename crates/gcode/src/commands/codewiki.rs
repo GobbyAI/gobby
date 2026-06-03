@@ -67,9 +67,10 @@ mod prompts {
             for symbol in symbols {
                 let _ = writeln!(
                     prompt,
-                    "- {} [{}] component {} lines {}-{}: {}",
+                    "- {} [{}] component {} ({}) lines {}-{}: {}",
                     symbol.name,
                     symbol.kind,
+                    symbol.component_label,
                     symbol.component_id,
                     symbol.line_start,
                     symbol.line_end,
@@ -142,6 +143,7 @@ mod prompts {
         pub name: String,
         pub kind: String,
         pub component_id: String,
+        pub component_label: String,
         pub line_start: usize,
         pub line_end: usize,
         pub purpose: String,
@@ -242,6 +244,7 @@ struct SymbolDoc {
     symbol: Symbol,
     purpose: String,
     component_id: String,
+    component_label: String,
     source_span: SourceSpan,
 }
 
@@ -948,6 +951,7 @@ fn build_file_doc(
             )
             .unwrap_or(fallback);
             let component_id = component_id(&symbol);
+            let component_label = component_label(&symbol);
             let source_span = SourceSpan::from_symbol(&symbol);
             let purpose = ground_text(
                 &generated,
@@ -958,6 +962,7 @@ fn build_file_doc(
                 symbol,
                 purpose,
                 component_id,
+                component_label,
                 source_span,
             }
         })
@@ -972,6 +977,7 @@ fn build_file_doc(
             name: symbol.symbol.qualified_name.clone(),
             kind: symbol.symbol.kind.clone(),
             component_id: symbol.component_id.clone(),
+            component_label: symbol.component_label.clone(),
             line_start: symbol.symbol.line_start,
             line_end: symbol.symbol.line_end,
             purpose: symbol.purpose.clone(),
@@ -1054,7 +1060,11 @@ fn build_module_docs(
         let component_ids = files
             .iter()
             .filter(|file| file.module == module || module_is_ancestor(&module, &file.module))
-            .flat_map(|file| file.component_ids.iter().cloned())
+            .flat_map(|file| {
+                file.symbols
+                    .iter()
+                    .map(|symbol| format!("{} ({})", symbol.component_label, symbol.component_id))
+            })
             .collect::<Vec<_>>();
         let dependency_diagram = render_module_dependency_mermaid(&module, files, graph_edges);
         let call_diagram = render_module_call_mermaid(&module, files, graph_edges);
@@ -1140,6 +1150,17 @@ fn render_module_call_mermaid(
     files: &[FileDoc],
     graph_edges: &[CodewikiGraphEdge],
 ) -> Option<String> {
+    let component_labels = files
+        .iter()
+        .flat_map(|file| {
+            file.symbols.iter().map(|symbol| {
+                (
+                    symbol.component_id.as_str(),
+                    symbol.component_label.as_str(),
+                )
+            })
+        })
+        .collect::<HashMap<_, _>>();
     let component_to_module = files
         .iter()
         .flat_map(|file| {
@@ -1194,7 +1215,12 @@ fn render_module_call_mermaid(
             diagram,
             "    participant {} as {}",
             mermaid_node_id(&component),
-            mermaid_label(&component)
+            mermaid_label(
+                component_labels
+                    .get(component.as_str())
+                    .copied()
+                    .unwrap_or(&component)
+            )
         );
     }
     for (source, target) in bounded_edges {
@@ -1464,9 +1490,10 @@ fn render_file_doc(file: &FileDoc) -> String {
     for symbol in &file.symbols {
         let _ = writeln!(
             doc,
-            "- {} ({}) component {} lines {}-{} {}",
+            "- {} ({}) component {} ({}) lines {}-{} {}",
             inline_code(&symbol.symbol.qualified_name),
             symbol.symbol.kind,
+            inline_code(&symbol.component_label),
             inline_code(&symbol.component_id),
             symbol.symbol.line_start,
             symbol.symbol.line_end,
@@ -1781,6 +1808,15 @@ fn plural(count: usize) -> &'static str {
 
 fn component_id(symbol: &Symbol) -> String {
     symbol.id.clone()
+}
+
+fn component_label(symbol: &Symbol) -> String {
+    let name = if symbol.qualified_name.is_empty() {
+        &symbol.name
+    } else {
+        &symbol.qualified_name
+    };
+    format!("{name} [{}]", symbol.kind)
 }
 
 fn is_core_file(file: &str) -> bool {

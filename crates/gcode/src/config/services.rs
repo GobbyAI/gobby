@@ -427,8 +427,14 @@ fn resolve_service_port(
         return Ok(default);
     };
     match raw_port.parse::<u16>() {
-        Ok(port) if port > 0 => Ok(port),
-        _ => {
+        Ok(0) => {
+            eprintln!(
+                "Warning: invalid service port config {key}={raw_port:?}; using default {default}"
+            );
+            Ok(default)
+        }
+        Ok(port) => Ok(port),
+        Err(_) => {
             eprintln!(
                 "Warning: invalid service port config {key}={raw_port:?}; using default {default}"
             );

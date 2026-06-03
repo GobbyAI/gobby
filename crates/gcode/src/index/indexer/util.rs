@@ -36,6 +36,9 @@ pub(super) fn filter_discovered_paths(
         Cow::Owned(root_path.join(path_filter))
     };
     let filter_canonical = filter_abs.canonicalize().ok();
+    let needs_canonical_fallback = filter_canonical
+        .as_deref()
+        .is_some_and(|canonical| canonical != filter_abs.as_ref());
 
     paths
         .into_iter()
@@ -49,6 +52,9 @@ pub(super) fn filter_discovered_paths(
                 return true;
             }
 
+            if !needs_canonical_fallback {
+                return false;
+            }
             let Some(filter_canonical) = &filter_canonical else {
                 return false;
             };

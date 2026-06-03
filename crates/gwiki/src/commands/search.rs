@@ -129,9 +129,6 @@ fn resolve_semantic_embedding(
             }
             #[cfg(not(feature = "ai"))]
             {
-                eprintln!(
-                    "warning: gwiki was built without ai support; daemon-backed embeddings are disabled"
-                );
                 None
             }
         }
@@ -147,9 +144,6 @@ fn resolve_semantic_embedding(
             }
             #[cfg(not(feature = "ai"))]
             {
-                eprintln!(
-                    "warning: gwiki was built without ai support; auto embedding route cannot use the daemon"
-                );
                 resolve_embedding_config(source)
                     .map(wiki_search::semantic::SemanticEmbedding::Direct)
             }
@@ -167,8 +161,18 @@ fn effective_embedding_route(context: &AiContext) -> AiRouting {
         match context.binding(AiCapability::Embed).routing {
             AiRouting::Off => AiRouting::Off,
             AiRouting::Direct => AiRouting::Direct,
-            AiRouting::Daemon => AiRouting::Off,
-            AiRouting::Auto => AiRouting::Auto,
+            AiRouting::Daemon => {
+                eprintln!(
+                    "warning: gwiki was built without ai support; daemon-backed embeddings are disabled"
+                );
+                AiRouting::Off
+            }
+            AiRouting::Auto => {
+                eprintln!(
+                    "warning: gwiki was built without ai support; auto embedding route cannot use the daemon"
+                );
+                AiRouting::Auto
+            }
         }
     }
 }

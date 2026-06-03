@@ -65,6 +65,10 @@ pub(super) fn is_textual_call_name_byte(byte: u8) -> bool {
 }
 
 pub(super) fn should_ignore_call_name(language: &str, name: &str) -> bool {
+    // Keep these lists aligned with language-maintained keyword/special-form
+    // references: Dart keywords (https://dart.dev/language/keywords), Elixir
+    // v1.19.5 Kernel.SpecialForms (https://hexdocs.pm/elixir/Kernel.SpecialForms.html),
+    // and Kotlin keywords (https://kotlinlang.org/docs/keyword-reference.html).
     match language {
         "dart" => matches!(
             name,

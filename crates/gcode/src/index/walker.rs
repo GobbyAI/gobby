@@ -2,6 +2,7 @@
 //! Respects .gitignore and exclude patterns.
 
 use std::collections::BTreeSet;
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 use crate::index::languages;
@@ -10,6 +11,7 @@ use crate::index::security;
 /// Maximum file size to index (10 MB).
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 const GENERATED_JS_MARKER_SCAN_BYTES: usize = 64 * 1024;
+const GENERATED_JS_ANALYSIS_READ_BYTES: u64 = 256 * 1024;
 const MINIFIED_JS_MIN_BYTES: usize = 128 * 1024;
 const MINIFIED_JS_LONG_LINE_BYTES: usize = 20 * 1024;
 const MINIFIED_JS_MAX_LINES: usize = 20;
@@ -309,18 +311,28 @@ fn is_generated_js_bundle(path: &Path) -> bool {
         return false;
     }
 
-    let Ok(bytes) = std::fs::read(path) else {
+    let Ok(metadata) = path.metadata() else {
+        return false;
+    };
+    let Ok(bytes) = read_file_prefix(path, GENERATED_JS_ANALYSIS_READ_BYTES) else {
         return false;
     };
     if contains_generated_js_marker(&bytes) {
         return true;
     }
 
-    if bytes.len() < MINIFIED_JS_MIN_BYTES {
+    if metadata.len() < MINIFIED_JS_MIN_BYTES as u64 {
         return false;
     };
 
     looks_minified_js_bundle(&bytes)
+}
+
+fn read_file_prefix(path: &Path, max_bytes: u64) -> std::io::Result<Vec<u8>> {
+    let mut file = std::fs::File::open(path)?;
+    let mut bytes = Vec::with_capacity(max_bytes.min(usize::MAX as u64) as usize);
+    file.by_ref().take(max_bytes).read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
 fn is_js_family_file(path: &Path) -> bool {

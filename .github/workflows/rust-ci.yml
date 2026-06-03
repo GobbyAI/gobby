@@ -57,6 +57,9 @@ jobs:
       - name: Test (ghook, no default features)
         run: cargo test -p gobby-hooks --no-default-features
 
+      - name: Clippy (ghook, no default features)
+        run: cargo clippy -p gobby-hooks --all-targets --no-default-features -- -D warnings
+
       # gsqz: full clippy + tests
       - name: Clippy (gsqz)
         run: cargo clippy -p gobby-squeeze -- -D warnings

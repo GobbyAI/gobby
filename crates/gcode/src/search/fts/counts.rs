@@ -277,6 +277,10 @@ fn push_pg_regex_path_filter(
 }
 
 fn glob_to_pg_regex(pattern: &str) -> Option<String> {
+    // Convert the post-query count path glob subset to PostgreSQL regex.
+    //
+    // Supported syntax is `*` for one path segment fragment, `**` for any
+    // path depth, `?` for one non-slash character, and bracket classes.
     let mut regex = String::from("^");
     let mut chars = pattern.chars().peekable();
     while let Some(ch) = chars.next() {

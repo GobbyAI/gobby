@@ -61,7 +61,8 @@ pub struct SchemaCheck {
 ///
 /// The callback receives a mutable connection because `postgres::Client`
 /// query methods require `&mut self`. `gobby-core` does not know which tables
-/// to check and never runs migrations.
+/// to check and never runs migrations. Validators have the signature
+/// `FnOnce(&mut Client) -> Vec<SchemaCheck>`.
 pub fn validate_schema(
     conn: &mut Client,
     validator: impl FnOnce(&mut Client) -> Vec<SchemaCheck>,
@@ -328,18 +329,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["domain_symbols", "domain_bm25_idx"]
         );
-    }
-
-    #[test]
-    fn validate_schema_accepts_postgres_client_validators() {
-        type ClientSchemaValidator = fn(&mut Client) -> Vec<SchemaCheck>;
-        type ValidateSchema = fn(&mut Client, ClientSchemaValidator) -> Vec<SchemaCheck>;
-
-        let _validate: ValidateSchema = validate_schema;
-        assert!(std::ptr::fn_addr_eq(
-            _validate,
-            validate_schema as ValidateSchema
-        ));
     }
 
     #[test]

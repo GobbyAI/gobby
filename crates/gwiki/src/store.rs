@@ -386,7 +386,9 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
             "DELETE FROM gwiki_chunks WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
             &[&scope.scope_kind(), &scope.scope_id(), &path_string],
         ) {
-            return Err(error.into());
+            let error = StoreError::from(error);
+            rollback_chunk_replacement(tx, &path_string);
+            return Err(error);
         }
         if chunks.is_empty() {
             tx.commit()?;
@@ -449,7 +451,9 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
                     &chunk.content,
                 ],
             ) {
-                return Err(error.into());
+                let error = StoreError::from(error);
+                rollback_chunk_replacement(tx, &path_string);
+                return Err(error);
             }
         }
 
@@ -796,6 +800,12 @@ fn has_uri_scheme(target: &str) -> bool {
 fn rollback_link_replacement(tx: Transaction<'_>, path: &str) {
     if let Err(error) = tx.rollback() {
         log::error!("failed to rollback gwiki link replacement for {path}: {error}");
+    }
+}
+
+fn rollback_chunk_replacement(tx: Transaction<'_>, path: &str) {
+    if let Err(error) = tx.rollback() {
+        log::error!("failed to rollback gwiki chunk replacement for {path}: {error}");
     }
 }
 

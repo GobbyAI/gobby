@@ -462,7 +462,7 @@ impl GrepFilters {
 
 fn sql_like_prefixes(patterns: &[String]) -> Option<Vec<String>> {
     if patterns.is_empty() {
-        return Some(Vec::new());
+        return None;
     }
     let mut prefixes = Vec::new();
     for pattern in patterns {
@@ -474,7 +474,7 @@ fn sql_like_prefixes(patterns: &[String]) -> Option<Vec<String>> {
             prefixes.push(format!("{}%", escape_like_prefix(&prefix)));
         }
     }
-    Some(prefixes)
+    (!prefixes.is_empty()).then_some(prefixes)
 }
 
 fn escape_like_prefix(value: &str) -> String {
@@ -724,6 +724,9 @@ mod tests {
             sql_like_prefixes(&globs).expect("glob prefixes"),
             vec!["src/%"]
         );
+
+        assert_eq!(sql_like_prefixes(&[]), None);
+        assert_eq!(sql_like_prefixes(&["*.rs".to_string()]), None);
     }
 
     #[test]

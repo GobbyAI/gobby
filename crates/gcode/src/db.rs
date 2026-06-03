@@ -99,7 +99,13 @@ fn resolve_database_url_from_sources_with_identity_and_reachability(
         return Ok(database_url);
     }
 
-    let gcore_database_url = resolve_database_url_from_gcore_config(home)?;
+    let gcore_database_url = match resolve_database_url_from_gcore_config(home) {
+        Ok(database_url) => database_url,
+        Err(error) => {
+            log::warn!("failed to read gcore config database URL: {error}");
+            None
+        }
+    };
 
     if let Ok(database_url) = broker_resolver(&path) {
         if let Some(database_url) = resolve_recorded_hub_database_url(

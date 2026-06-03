@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 use std::process::{Command, Output};
 
 mod common;
@@ -14,8 +15,8 @@ fn gwiki(args: &[&str]) -> Output {
             let mut command = common::gwiki_command();
             strip_db_env(&mut command)
                 .args(["init", "--topic", "rust"])
-                .env("GOBBY_WIKI_HUB", &hub)
                 .current_dir(&project);
+            apply_isolated_env(&mut command, tmp.path(), &hub);
             let output = command.output().expect("gwiki topic init runs");
             assert!(
                 output.status.success(),
@@ -27,8 +28,8 @@ fn gwiki(args: &[&str]) -> Output {
             let mut command = common::gwiki_command();
             strip_db_env(&mut command)
                 .args(["init", "--project"])
-                .env("GOBBY_WIKI_HUB", &hub)
                 .current_dir(&project);
+            apply_isolated_env(&mut command, tmp.path(), &hub);
             let output = command.output().expect("gwiki project init runs");
             assert!(
                 output.status.success(),
@@ -40,10 +41,8 @@ fn gwiki(args: &[&str]) -> Output {
     }
 
     let mut command = common::gwiki_command();
-    strip_db_env(&mut command)
-        .args(args)
-        .env("GOBBY_WIKI_HUB", &hub)
-        .current_dir(&project);
+    strip_db_env(&mut command).args(args).current_dir(&project);
+    apply_isolated_env(&mut command, tmp.path(), &hub);
     command.output().expect("gwiki binary runs")
 }
 
@@ -54,6 +53,16 @@ fn strip_db_env(command: &mut Command) -> &mut Command {
         .env_remove("GCODE_DATABASE_URL")
         .env_remove("GWIKI_POSTGRES_TEST_DATABASE_URL")
         .env_remove("GCODE_POSTGRES_TEST_DATABASE_URL")
+}
+
+fn apply_isolated_env<'a>(command: &'a mut Command, root: &Path, hub: &Path) -> &'a mut Command {
+    command
+        .env("GOBBY_WIKI_HUB", hub)
+        .env("HOME", root.join("home"))
+        .env("XDG_CONFIG_HOME", root.join("xdg-config"))
+        .env("XDG_DATA_HOME", root.join("xdg-data"))
+        .env("XDG_CACHE_HOME", root.join("xdg-cache"))
+        .env("XDG_STATE_HOME", root.join("xdg-state"))
 }
 
 #[test]

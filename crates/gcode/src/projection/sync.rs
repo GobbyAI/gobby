@@ -159,7 +159,7 @@ fn sync_graph_files(ctx: &Context, file_paths: &[String]) -> anyhow::Result<Proj
     }
 
     let mut conn = db::connect_readwrite(&ctx.database_url)?;
-    let report = code_graph::with_code_graph(ctx, |graph| {
+    let report = match code_graph::with_code_graph(ctx, |graph| {
         let mut synced_files = 0usize;
         let mut synced_symbols = 0usize;
 
@@ -179,7 +179,18 @@ fn sync_graph_files(ctx: &Context, file_paths: &[String]) -> anyhow::Result<Proj
         }
 
         Ok(ProjectionSyncReport::ok(synced_files, synced_symbols))
-    })?;
+    }) {
+        Ok(report) => report,
+        Err(error)
+            if matches!(
+                error.downcast_ref::<GraphReadError>(),
+                Some(GraphReadError::Unreachable { .. })
+            ) =>
+        {
+            return Ok(ProjectionSyncReport::degraded_from_error(&error, 0, 0));
+        }
+        Err(error) => return Err(error),
+    };
     if report.synced_files > 0
         && report.error.is_none()
         && let Err(error) = code_graph::cleanup_orphans(ctx)

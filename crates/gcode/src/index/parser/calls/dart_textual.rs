@@ -21,6 +21,7 @@ pub(super) fn extract_textual_dart_calls(
             && (trimmed.starts_with("import ")
                 || trimmed.starts_with("export ")
                 || trimmed.starts_with("class ")
+                || trimmed.starts_with("sealed class ")
                 || trimmed.starts_with("enum ")
                 || trimmed.starts_with("typedef "))
         {

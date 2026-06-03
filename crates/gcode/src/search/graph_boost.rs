@@ -25,7 +25,7 @@ pub fn graph_boost(ctx: &Context, conn: Option<&mut postgres::Client>, query: &s
         return vec![];
     };
     let mut resolved =
-        fts::search_symbols_exact_first_visible(conn, query, ctx, None, None, &[], 1);
+        fts::search_symbols_exact_first_visible(conn, query, ctx, None, None, &[], 1).results;
     let Some(symbol) = resolved.pop() else {
         return vec![];
     };

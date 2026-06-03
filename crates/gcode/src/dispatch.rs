@@ -97,10 +97,10 @@ where
             request.embedding_model = embedding_model.clone();
             request.embedding_query_prefix = embedding_query_prefix.clone();
             request.embedding_vector_dim = *embedding_vector_dim;
-            request.embedding_api_key = embedding_api_key.clone();
+            request.embedding_api_key = embedding_api_key.clone().into();
             request.falkordb_host = falkordb_host.clone();
             request.falkordb_port = *falkordb_port;
-            request.falkordb_password = falkordb_password.clone();
+            request.falkordb_password = falkordb_password.clone().into();
             request.qdrant_url = qdrant_url.clone();
             setup_runner(request, format, cli.quiet)?;
             Ok(true)

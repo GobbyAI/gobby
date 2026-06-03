@@ -379,7 +379,7 @@ fn explicit_embedding_bootstrap(
             .embedding_vector_dim
             .unwrap_or(DEFAULT_EMBEDDING_VECTOR_DIM),
         query_prefix: request.embedding_query_prefix.clone(),
-        api_key: request.embedding_api_key.clone(),
+        api_key: request.embedding_api_key.clone_inner(),
     })
 }
 

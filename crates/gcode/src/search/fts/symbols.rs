@@ -11,6 +11,28 @@ use super::common::{
     push_param, query_symbols_by_conditions, sanitize_pg_search_query,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VisibleSearchOutcome<T> {
+    pub results: Vec<T>,
+    pub degraded: bool,
+}
+
+impl<T> VisibleSearchOutcome<T> {
+    fn ok(results: Vec<T>) -> Self {
+        Self {
+            results,
+            degraded: false,
+        }
+    }
+
+    fn degraded(results: Vec<T>) -> Self {
+        Self {
+            results,
+            degraded: true,
+        }
+    }
+}
+
 pub fn search_symbols_fts(
     conn: &mut Client,
     query: &str,
@@ -175,10 +197,10 @@ pub fn search_symbols_fts_visible(
     language: Option<&str>,
     paths: &[String],
     limit: usize,
-) -> Vec<Symbol> {
+) -> VisibleSearchOutcome<Symbol> {
     let bm25_query = sanitize_pg_search_query(query);
     if bm25_query.is_empty() || limit == 0 {
-        return Vec::new();
+        return VisibleSearchOutcome::ok(Vec::new());
     }
 
     let mut params = Vec::new();
@@ -210,9 +232,9 @@ pub fn search_symbols_by_name_visible(
     language: Option<&str>,
     paths: &[String],
     limit: usize,
-) -> Vec<Symbol> {
+) -> VisibleSearchOutcome<Symbol> {
     if query.trim().is_empty() || limit == 0 {
-        return Vec::new();
+        return VisibleSearchOutcome::ok(Vec::new());
     }
     let escaped_query = escape_like(query);
     let pattern = format!("%{escaped_query}%");
@@ -245,13 +267,14 @@ pub fn search_symbols_exact_first_visible(
     language: Option<&str>,
     paths: &[String],
     limit: usize,
-) -> Vec<Symbol> {
+) -> VisibleSearchOutcome<Symbol> {
     if query.trim().is_empty() || limit == 0 {
-        return Vec::new();
+        return VisibleSearchOutcome::ok(Vec::new());
     }
 
     let mut results = Vec::new();
     let mut seen = HashSet::new();
+    let mut degraded = false;
     let filters = SymbolFilters {
         kind,
         language,
@@ -273,9 +296,10 @@ pub fn search_symbols_exact_first_visible(
         limit,
         order,
     );
-    append_unique_symbols(&mut results, &mut seen, exact, limit);
+    degraded |= exact.degraded;
+    append_unique_symbols(&mut results, &mut seen, exact.results, limit);
     if results.len() >= limit {
-        return results;
+        return VisibleSearchOutcome { results, degraded };
     }
 
     let prefix_pattern = format!("{}%", escape_like(query));
@@ -292,21 +316,24 @@ pub fn search_symbols_exact_first_visible(
         limit,
         SymbolOrder::Name,
     );
-    append_unique_symbols(&mut results, &mut seen, prefix_matches, limit);
+    degraded |= prefix_matches.degraded;
+    append_unique_symbols(&mut results, &mut seen, prefix_matches.results, limit);
     if results.len() >= limit {
-        return results;
+        return VisibleSearchOutcome { results, degraded };
     }
 
     let contains = search_symbols_by_name_visible(conn, query, ctx, kind, language, paths, limit);
-    append_unique_symbols(&mut results, &mut seen, contains, limit);
+    degraded |= contains.degraded;
+    append_unique_symbols(&mut results, &mut seen, contains.results, limit);
     if results.len() >= limit {
-        return results;
+        return VisibleSearchOutcome { results, degraded };
     }
 
     let fts = search_symbols_fts_visible(conn, query, ctx, kind, language, paths, limit);
-    append_unique_symbols(&mut results, &mut seen, fts, limit);
+    degraded |= fts.degraded;
+    append_unique_symbols(&mut results, &mut seen, fts.results, limit);
 
-    results
+    VisibleSearchOutcome { results, degraded }
 }
 
 fn query_visible_symbols_by_conditions(
@@ -317,10 +344,10 @@ fn query_visible_symbols_by_conditions(
     filters: SymbolFilters<'_>,
     limit: usize,
     order: SymbolOrder,
-) -> Vec<Symbol> {
+) -> VisibleSearchOutcome<Symbol> {
     let project_ids = visibility::visible_project_ids(ctx);
     if project_ids.is_empty() || limit == 0 {
-        return Vec::new();
+        return VisibleSearchOutcome::ok(Vec::new());
     }
     let project_placeholder = push_param(&mut params, project_ids);
     conditions.push(format!("cs.project_id = ANY({project_placeholder})"));
@@ -336,11 +363,11 @@ fn query_visible_symbols_by_conditions(
         Ok(symbols) => symbols,
         Err(error) => {
             log::error!("visible symbol filtering failed: {error}");
-            return Vec::new();
+            return VisibleSearchOutcome::degraded(Vec::new());
         }
     };
     symbols.truncate(limit);
-    symbols
+    VisibleSearchOutcome::ok(symbols)
 }
 
 /// Full-text search for symbols: BM25 with LIKE fallback.
@@ -366,10 +393,13 @@ pub fn search_text_visible(
     language: Option<&str>,
     paths: &[String],
     limit: usize,
-) -> Vec<SearchResult> {
+) -> VisibleSearchOutcome<SearchResult> {
     let mut results = search_symbols_fts_visible(conn, query, ctx, None, language, paths, limit);
-    if results.is_empty() {
+    if results.results.is_empty() {
         results = search_symbols_by_name_visible(conn, query, ctx, None, language, paths, limit);
     }
-    results.into_iter().map(|s| s.to_brief()).collect()
+    VisibleSearchOutcome {
+        results: results.results.into_iter().map(|s| s.to_brief()).collect(),
+        degraded: results.degraded,
+    }
 }

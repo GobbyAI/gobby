@@ -2,7 +2,7 @@
 //!
 //! Reusable vector projection behavior lives in `crate::vector::code_symbols`.
 
-pub use crate::vector::code_symbols::{embed_query, embed_query_with_source, vector_search};
+pub use crate::vector::code_symbols::{embed_query_with_source, vector_search};
 
 use crate::config::{CODE_SYMBOL_COLLECTION_PREFIX, Context};
 use crate::visibility;

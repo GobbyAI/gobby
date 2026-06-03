@@ -31,7 +31,7 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
     // Qdrant, and FalkorDB with deduplication, so source counts aren't additive.
     let fetch_limit = ((options.offset + options.limit) * 3).max(200);
 
-    let exact_results = fts::search_symbols_exact_first_visible(
+    let exact_outcome = fts::search_symbols_exact_first_visible(
         &mut conn,
         query,
         ctx,
@@ -40,10 +40,12 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
         &expanded_paths,
         fetch_limit,
     );
+    let mut visible_search_degraded = exact_outcome.degraded;
+    let exact_results = exact_outcome.results;
     let exact_ids: Vec<String> = exact_results.iter().map(|s| s.id.clone()).collect();
 
     // Source 1: BM25 (with LIKE fallback)
-    let mut fts_results = fts::search_symbols_fts_visible(
+    let mut fts_outcome = fts::search_symbols_fts_visible(
         &mut conn,
         query,
         ctx,
@@ -52,8 +54,10 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
         &expanded_paths,
         fetch_limit,
     );
+    visible_search_degraded |= fts_outcome.degraded;
+    let mut fts_results = fts_outcome.results;
     if fts_results.is_empty() {
-        fts_results = fts::search_symbols_by_name_visible(
+        fts_outcome = fts::search_symbols_by_name_visible(
             &mut conn,
             query,
             ctx,
@@ -62,6 +66,8 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
             &expanded_paths,
             fetch_limit,
         );
+        visible_search_degraded |= fts_outcome.degraded;
+        fts_results = fts_outcome.results;
     }
     let fts_ids: Vec<String> = fts_results.iter().map(|s| s.id.clone()).collect();
 
@@ -158,7 +164,8 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
     print_empty_diagnostic(ctx, results.is_empty(), options.offset, total);
     let literal_hint = literal_query_hint(query);
     let path_hint = fts::path_filter_falls_back(&expanded_paths).then(path_filter_fallback_hint);
-    let hint = combine_hints(literal_hint, path_hint);
+    let visibility_hint = visible_search_degraded.then(visible_search_degraded_hint);
+    let hint = combine_hints(combine_hints(literal_hint, path_hint), visibility_hint);
 
     match options.format {
         Format::Json => output::print_json(&PagedResponse {
@@ -195,7 +202,7 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
     let expanded_paths = fts::expand_paths(options.paths);
     let path_patterns = fts::compile_patterns(&expanded_paths)?;
     let fetch_limit = ((options.offset + options.limit) * 3).max(200);
-    let exact_results = fts::search_symbols_exact_first_visible(
+    let exact_outcome = fts::search_symbols_exact_first_visible(
         &mut conn,
         query,
         ctx,
@@ -204,16 +211,21 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
         &expanded_paths,
         fetch_limit,
     );
+    let visible_search_degraded = exact_outcome.degraded;
+    let exact_results = exact_outcome.results;
 
     if options.with_graph {
         return search_symbol_with_graph(
             ctx,
             query,
             options,
-            &mut conn,
-            &path_patterns,
-            &expanded_paths,
             exact_results,
+            SymbolGraphSearchContext {
+                conn: &mut conn,
+                path_patterns: &path_patterns,
+                expanded_paths: &expanded_paths,
+                visible_search_degraded,
+            },
         );
     }
 
@@ -238,7 +250,10 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
         .collect();
 
     print_empty_diagnostic(ctx, results.is_empty(), options.offset, total);
-    let hint = fts::path_filter_falls_back(&expanded_paths).then(path_filter_fallback_hint);
+    let hint = combine_hints(
+        fts::path_filter_falls_back(&expanded_paths).then(path_filter_fallback_hint),
+        visible_search_degraded.then(visible_search_degraded_hint),
+    );
 
     match options.format {
         Format::Json => {
@@ -274,15 +289,26 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
     }
 }
 
+struct SymbolGraphSearchContext<'a> {
+    conn: &'a mut postgres::Client,
+    path_patterns: &'a [glob::Pattern],
+    expanded_paths: &'a [String],
+    visible_search_degraded: bool,
+}
+
 fn search_symbol_with_graph(
     ctx: &Context,
     query: &str,
     options: SearchOptions<'_>,
-    conn: &mut postgres::Client,
-    path_patterns: &[glob::Pattern],
-    expanded_paths: &[String],
     exact_results: Vec<Symbol>,
+    graph_context: SymbolGraphSearchContext<'_>,
 ) -> anyhow::Result<()> {
+    let SymbolGraphSearchContext {
+        conn,
+        path_patterns,
+        expanded_paths,
+        visible_search_degraded,
+    } = graph_context;
     let exact_ids: Vec<String> = exact_results.iter().map(|s| s.id.clone()).collect();
     let seed_ids: Vec<String> = exact_ids.iter().take(5).cloned().collect();
     let graph_ids = graph_boost::graph_boost(ctx, Some(&mut *conn), query);
@@ -341,7 +367,10 @@ fn search_symbol_with_graph(
         .collect();
 
     print_empty_diagnostic(ctx, results.is_empty(), options.offset, total);
-    let hint = fts::path_filter_falls_back(expanded_paths).then(path_filter_fallback_hint);
+    let hint = combine_hints(
+        fts::path_filter_falls_back(expanded_paths).then(path_filter_fallback_hint),
+        visible_search_degraded.then(visible_search_degraded_hint),
+    );
 
     match options.format {
         Format::Json => output::print_json(&PagedResponse {
@@ -399,10 +428,15 @@ pub fn search_text(
         &expanded_paths,
         fetch_limit,
     );
+    let visible_search_degraded = all_results.degraded;
+    let all_results = all_results.results;
     let cap_hint = (has_path_filters && all_results.len() >= fts::FILTERED_FETCH_CAP)
         .then(filtered_fetch_cap_hint);
     let path_hint = fts::path_filter_falls_back(&expanded_paths).then(path_filter_fallback_hint);
-    let hint = combine_hints(cap_hint, path_hint);
+    let hint = combine_hints(
+        combine_hints(cap_hint, path_hint),
+        visible_search_degraded.then(visible_search_degraded_hint),
+    );
     let all_results: Vec<_> = all_results
         .into_iter()
         .filter(|r| search_result_matches_filters(&mut conn, ctx, r, language, &path_patterns))
@@ -618,6 +652,10 @@ fn filtered_fetch_cap_hint() -> String {
 fn path_filter_fallback_hint() -> String {
     "Some path filters cannot be pushed into SQL; results were post-filtered after a broader fetch."
         .to_string()
+}
+
+fn visible_search_degraded_hint() -> String {
+    "Visible-project filtering failed; results may be incomplete.".to_string()
 }
 
 fn literal_query_hint(query: &str) -> Option<String> {

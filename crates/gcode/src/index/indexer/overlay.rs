@@ -364,6 +364,8 @@ fn git_status_relative_paths(root_path: &Path) -> anyhow::Result<HashSet<String>
 }
 
 fn git_status_timeout() -> Duration {
+    // Large repos can make `git status --porcelain -z` slow; set
+    // GCODE_GIT_STATUS_TIMEOUT_SECS to raise this timeout for overlay indexing.
     let Some(raw) = std::env::var_os(GIT_STATUS_TIMEOUT_ENV) else {
         return Duration::from_secs(DEFAULT_GIT_STATUS_TIMEOUT_SECS);
     };

@@ -49,6 +49,7 @@ impl TranscriptionClient for ProductionTranscriptionClient {
                 DaemonTranscriptionOptions {
                     capability,
                     language: None,
+                    target_lang: None,
                     prompt: None,
                 },
             ),
@@ -85,6 +86,7 @@ impl TranscriptionClient for ProductionTranscriptionClient {
                 DaemonTranscriptionOptions {
                     capability,
                     language: language_hint,
+                    target_lang: Some("en"),
                     prompt: None,
                 },
             ),

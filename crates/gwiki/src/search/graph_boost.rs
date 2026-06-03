@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 use gobby_core::degradation::{DegradationKind, ServiceState};
 
@@ -312,9 +312,12 @@ pub fn rank_link_neighborhood(
             if !document_paths.contains(&link.source_path) {
                 continue;
             }
-            let Some(target_path) =
-                resolve_graph_target(&link.target_path, &document_paths, &slug_targets)
-            else {
+            let Some(target_path) = resolve_graph_target(
+                &link.source_path,
+                &link.target_path,
+                &document_paths,
+                &slug_targets,
+            ) else {
                 continue;
             };
 
@@ -394,6 +397,7 @@ fn graph_degradation(message: String) -> DegradationKind {
 }
 
 fn resolve_graph_target(
+    source_path: &Path,
     raw_target: &str,
     document_paths: &BTreeSet<PathBuf>,
     slug_targets: &BTreeMap<String, PathBuf>,
@@ -419,8 +423,31 @@ fn resolve_graph_target(
         return Some(direct);
     }
 
+    if let Some(relative) = source_path
+        .parent()
+        .map(|parent| normalize_path(parent.join(&normalized)))
+        .filter(|path| document_paths.contains(path))
+    {
+        return Some(relative);
+    }
+
     let target_slug = slugify(normalized.strip_suffix(".md").unwrap_or(&normalized));
     slug_targets.get(&target_slug).cloned()
+}
+
+fn normalize_path(path: PathBuf) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(value) => normalized.push(value),
+            Component::RootDir | Component::Prefix(_) => {}
+        }
+    }
+    normalized
 }
 
 fn slug_target_map(documents: &[GraphBoostDocument]) -> BTreeMap<String, PathBuf> {
@@ -502,6 +529,27 @@ mod tests {
         );
 
         assert_eq!(ranked, vec![(PathBuf::from("wiki/topics/low.md"), 0.8)]);
+    }
+
+    #[test]
+    fn rank_link_neighborhood_resolves_targets_relative_to_source() {
+        let documents = vec![
+            document("wiki/topics/seed.md", Some("Seed")),
+            document("wiki/topics/outbound.md", Some("Outbound")),
+        ];
+        let links = vec![link("wiki/topics/seed.md", "outbound.md")];
+
+        let ranked = rank_link_neighborhood(
+            &documents,
+            &links,
+            &[PathBuf::from("wiki/topics/seed.md")],
+            10,
+        );
+
+        assert_eq!(
+            ranked,
+            vec![(PathBuf::from("wiki/topics/outbound.md"), 1.0)]
+        );
     }
 
     #[test]

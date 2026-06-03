@@ -111,10 +111,11 @@ fn append_hotspot_section(
     lines.push(format!("## {title}"));
     for hotspot in hotspots.iter().take(top_n) {
         lines.push(format!(
-            "- {} ({}, degree {})",
+            "- {} (degree {}, in {}, out {})",
             inline_code(&hotspot.name),
-            hotspot.node_type,
-            hotspot.degree
+            hotspot.degree,
+            hotspot.incoming,
+            hotspot.outgoing
         ));
     }
 }
