@@ -215,11 +215,27 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Check whether this version is already on crates.io
+        id: published
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --no-deps --format-version=1 | jq -r '.packages[] | select(.name == "gobby-wiki") | .version')"
+          code="$(curl -sS -A 'gobby-cli release workflow' -o /dev/null -w '%{http_code}' "https://crates.io/api/v1/crates/gobby-wiki/${version}")"
+          if [ "$code" = "200" ]; then
+            echo "gobby-wiki ${version} is already on crates.io; skipping publish (binaries still attach)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "gobby-wiki ${version} not on crates.io (HTTP ${code}); will publish."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Authenticate to crates.io
         id: cargo-registry-auth
+        if: steps.published.outputs.skip != 'true'
         uses: rust-lang/crates-io-auth-action@bbd81622f20ce9e2dd9622e3218b975523e45bbe
 
       - name: Publish gobby-wiki to crates.io
+        if: steps.published.outputs.skip != 'true'
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.cargo-registry-auth.outputs.token }}
         run: cargo publish -p gobby-wiki --locked
