@@ -203,8 +203,6 @@ fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> 
     code_graph::require_graph_reads(ctx)?;
     let mut conn = db::connect_readwrite(&ctx.database_url)?;
     let file_paths = db::list_indexed_file_paths(&mut conn, &ctx.project_id)?;
-    code_graph::clear_project(ctx)?;
-    db::reset_graph_sync_for_project(&mut conn, &ctx.project_id)?;
 
     let mut files_synced = 0usize;
     let mut symbols_synced = 0usize;
@@ -244,7 +242,8 @@ fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> 
         }
         Ok(())
     })?;
-    if files_synced > 0
+    if errors.is_empty()
+        && files_synced > 0
         && let Err(err) = code_graph::cleanup_orphans(ctx)
     {
         errors.push(format!("cleanup_orphans: {err}"));

@@ -109,8 +109,72 @@ pub fn redact_database_url(database_url: &str) -> String {
             .map_or(rest, |(_, host_and_path)| host_and_path);
         format!("{scheme}://{host_and_path}")
     } else {
-        without_query.to_string()
+        redact_keyword_database_url(without_query)
     }
+}
+
+fn redact_keyword_database_url(database_url: &str) -> String {
+    split_keyword_dsn_tokens(database_url)
+        .into_iter()
+        .map(|token| {
+            let Some((key, _value)) = token.split_once('=') else {
+                return token.to_string();
+            };
+            if is_sensitive_keyword_dsn_key(key) {
+                format!("{key}=<redacted>")
+            } else {
+                token.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn split_keyword_dsn_tokens(database_url: &str) -> Vec<&str> {
+    let mut tokens = Vec::new();
+    let mut start = None;
+    let mut in_single_quote = false;
+    let mut escaped = false;
+
+    for (index, ch) in database_url.char_indices() {
+        if start.is_none() {
+            if ch.is_whitespace() {
+                continue;
+            }
+            start = Some(index);
+        }
+
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '\'' {
+            in_single_quote = !in_single_quote;
+            continue;
+        }
+        if ch.is_whitespace()
+            && !in_single_quote
+            && let Some(token_start) = start.take()
+        {
+            tokens.push(&database_url[token_start..index]);
+        }
+    }
+
+    if let Some(token_start) = start {
+        tokens.push(&database_url[token_start..]);
+    }
+    tokens
+}
+
+fn is_sensitive_keyword_dsn_key(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "password" | "passfile" | "sslpassword"
+    )
 }
 
 /// Degradation states for partial results.
@@ -274,5 +338,40 @@ mod tests {
         assert!(!encoded.contains("sslmode"));
         assert!(!encoded.contains("application_name"));
         assert!(!encoded.contains("frag"));
+    }
+
+    #[test]
+    fn keyword_database_url_redacts_sensitive_values_case_insensitively() {
+        let redacted = redact_database_url(
+            "host=localhost user=app PASSWORD='secret value' dbname=gobby sslpassword=topsecret",
+        );
+
+        assert!(redacted.contains("host=localhost"));
+        assert!(redacted.contains("user=app"));
+        assert!(redacted.contains("dbname=gobby"));
+        assert!(redacted.contains("PASSWORD=<redacted>"));
+        assert!(redacted.contains("sslpassword=<redacted>"));
+        assert!(!redacted.contains("secret value"));
+        assert!(!redacted.contains("topsecret"));
+    }
+
+    #[test]
+    fn hub_conflict_json_redacts_keyword_database_urls() {
+        let conflict = CoreError::HubConflict {
+            existing_database_url: "host=standalone user=app password=secret dbname=gobby"
+                .to_string(),
+            existing_identity: "cluster-a/gobby".to_string(),
+            daemon_database_url: "HOST=daemon USER=daemon PASSFILE='/tmp/pgpass' dbname=gobby"
+                .to_string(),
+            daemon_identity: "cluster-b/gobby".to_string(),
+        };
+
+        let encoded = serde_json::to_string(&conflict).expect("serialize hub conflict");
+
+        assert!(encoded.contains("host=standalone"));
+        assert!(encoded.contains("password=<redacted>"));
+        assert!(encoded.contains("PASSFILE=<redacted>"));
+        assert!(!encoded.contains("secret"));
+        assert!(!encoded.contains("/tmp/pgpass"));
     }
 }

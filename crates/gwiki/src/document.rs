@@ -151,6 +151,12 @@ mod tests {
                 "page_count",
             ),
             (
+                DocumentFailureMode::PdfRenderBudgetExceeded,
+                DocumentUnitCount::pages(0),
+                "pdf_render_budget_exceeded",
+                "page_count",
+            ),
+            (
                 DocumentFailureMode::PdfVisionUnavailable,
                 DocumentUnitCount::pages(2),
                 "pdf_vision_unavailable",

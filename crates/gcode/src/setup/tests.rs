@@ -321,11 +321,11 @@ fn quote_identifier_rejects_names_over_postgres_byte_limit() {
 }
 
 #[test]
-fn quote_identifier_rejects_escaped_names_over_postgres_byte_limit() {
+fn quote_identifier_accepts_raw_limit_even_when_escaping_expands() {
     let name = format!("{}\"", "a".repeat(62));
-    let error = quote_identifier(&name, "schema").expect_err("escaped identifier is too long");
+    let quoted = quote_identifier(&name, "schema").expect("raw identifier is within limit");
 
-    assert!(error.to_string().contains("at most 63 bytes"));
+    assert_eq!(quoted, format!("\"{}\"\"\"", "a".repeat(62)));
 }
 
 #[test]

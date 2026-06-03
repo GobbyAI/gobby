@@ -177,26 +177,47 @@ fn load_graph_boost_data(
     conn: &mut postgres::Client,
     scope: &SearchScope,
     config: GraphBoostConfig,
-) -> Result<GraphBoostData, postgres::Error> {
+) -> Result<GraphBoostData, SearchError> {
     let scope_kind = scope.scope_kind().to_string();
     let scope_id = scope.scope_value().to_string();
     let document_query_limit = config.document_query_limit.max(0);
     let link_query_limit = config.link_query_limit.max(0);
 
-    let mut document_rows = conn.query(
-        "SELECT path, title
+    let document_count = count_graph_boost_rows(
+        conn,
+        "gwiki_documents",
+        &scope_kind,
+        &scope_id,
+        "count graph boost documents",
+    )?;
+    if document_count > document_query_limit {
+        return Err(SearchError::Backend(format!(
+            "graph boost document count {document_count} exceeds limit {document_query_limit}; refusing partial graph boost data"
+        )));
+    }
+    let link_count = count_graph_boost_rows(
+        conn,
+        "gwiki_links",
+        &scope_kind,
+        &scope_id,
+        "count graph boost links",
+    )?;
+    if link_count > link_query_limit {
+        return Err(SearchError::Backend(format!(
+            "graph boost link count {link_count} exceeds limit {link_query_limit}; refusing partial graph boost data"
+        )));
+    }
+
+    let document_rows = conn
+        .query(
+            "SELECT path, title
              FROM gwiki_documents
              WHERE scope_kind = $1 AND scope_id = $2
              ORDER BY path
              LIMIT $3",
-        &[
-            &scope_kind,
-            &scope_id,
-            &document_query_limit.saturating_add(1),
-        ],
-    )?;
-    let documents_capped = document_rows.len() > document_query_limit as usize;
-    document_rows.truncate(document_query_limit as usize);
+            &[&scope_kind, &scope_id, &document_query_limit],
+        )
+        .map_err(|error| SearchError::Backend(format!("load graph boost documents: {error}")))?;
     let documents = document_rows
         .into_iter()
         .map(|row| GraphBoostDocument {
@@ -205,16 +226,16 @@ fn load_graph_boost_data(
         })
         .collect::<Vec<_>>();
 
-    let mut link_rows = conn.query(
-        "SELECT path, target_path
+    let link_rows = conn
+        .query(
+            "SELECT path, target_path
              FROM gwiki_links
              WHERE scope_kind = $1 AND scope_id = $2
              ORDER BY path, target_path
              LIMIT $3",
-        &[&scope_kind, &scope_id, &link_query_limit.saturating_add(1)],
-    )?;
-    let links_capped = link_rows.len() > link_query_limit as usize;
-    link_rows.truncate(link_query_limit as usize);
+            &[&scope_kind, &scope_id, &link_query_limit],
+        )
+        .map_err(|error| SearchError::Backend(format!("load graph boost links: {error}")))?;
     let links = link_rows
         .into_iter()
         .map(|row| GraphBoostLink {
@@ -226,27 +247,25 @@ fn load_graph_boost_data(
     Ok(GraphBoostData {
         documents,
         links,
-        degradation: graph_boost_cap_degradation(documents_capped, links_capped),
+        degradation: None,
     })
 }
 
-fn graph_boost_cap_degradation(
-    documents_capped: bool,
-    links_capped: bool,
-) -> Option<DegradationKind> {
-    if !documents_capped && !links_capped {
-        return None;
-    }
-    let capped = match (documents_capped, links_capped) {
-        (true, true) => "documents and links",
-        (true, false) => "documents",
-        (false, true) => "links",
-        (false, false) => unreachable!(),
-    };
-    Some(DegradationKind::PartialData {
-        component: GRAPH_SERVICE.to_string(),
-        message: format!("graph boost snapshot capped while loading {capped}"),
-    })
+fn count_graph_boost_rows(
+    conn: &mut postgres::Client,
+    table: &'static str,
+    scope_kind: &str,
+    scope_id: &str,
+    action: &'static str,
+) -> Result<i64, SearchError> {
+    let sql = format!(
+        "SELECT COUNT(*)::BIGINT AS count
+         FROM {table}
+         WHERE scope_kind = $1 AND scope_id = $2"
+    );
+    conn.query_one(&sql, &[&scope_kind, &scope_id])
+        .and_then(|row| row.try_get("count"))
+        .map_err(|error| SearchError::Backend(format!("{action}: {error}")))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

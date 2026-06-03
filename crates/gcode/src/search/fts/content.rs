@@ -47,7 +47,7 @@ pub fn search_content(
          JOIN code_indexed_files cf
            ON cf.project_id = c.project_id AND cf.file_path = c.file_path
          WHERE {}
-         ORDER BY pdb.score(c.id) DESC, c.id ASC
+         ORDER BY pg_search.score(c.id) DESC, c.id ASC
          LIMIT {limit_placeholder}",
         conditions.join(" AND ")
     );
@@ -102,7 +102,7 @@ pub fn search_content_visible(
          JOIN visible_files vf
            ON vf.project_id = c.project_id AND vf.file_path = c.file_path
          WHERE {}
-         ORDER BY pdb.score(c.id) DESC, c.project_id ASC, c.id ASC
+         ORDER BY pg_search.score(c.id) DESC, c.project_id ASC, c.id ASC
          LIMIT {limit_placeholder}",
         conditions.join(" AND ")
     );

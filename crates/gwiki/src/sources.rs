@@ -673,15 +673,18 @@ fn existing_index_without_manifest(index_path: &Path) -> Result<PreservedSourceI
     }
 
     if let Some(start) = existing.find("\n## Source manifest") {
+        let header_start = start + 1;
         return Ok(PreservedSourceIndex {
             prefix: normalize_preserved_index_prefix(&existing[..start]),
-            suffix: String::new(),
+            suffix: suffix_after_unmarked_manifest(&existing, header_start),
         });
     }
-    if existing.trim_start().starts_with("## Source manifest") {
+    if let Some(header_start) = existing.find("## Source manifest")
+        && existing[..header_start].trim().is_empty()
+    {
         return Ok(PreservedSourceIndex {
             prefix: String::from("# Raw Sources\n\n"),
-            suffix: String::new(),
+            suffix: suffix_after_unmarked_manifest(&existing, header_start),
         });
     }
 
@@ -702,6 +705,14 @@ fn normalize_preserved_index_prefix(prefix: &str) -> String {
 
 fn normalize_preserved_index_suffix(suffix: &str) -> String {
     suffix.trim_start_matches('\n').to_string()
+}
+
+fn suffix_after_unmarked_manifest(existing: &str, header_start: usize) -> String {
+    let after_header = header_start + "## Source manifest".len();
+    existing[after_header..]
+        .find("\n## ")
+        .map(|offset| normalize_preserved_index_suffix(&existing[after_header + offset + 1..]))
+        .unwrap_or_default()
 }
 
 fn write_atomic(path: &Path, contents: &[u8], action: &'static str) -> Result<(), WikiError> {
@@ -968,7 +979,7 @@ mod tests {
     }
 
     #[test]
-    fn existing_index_strips_manifest_through_following_headings() {
+    fn existing_index_strips_unmarked_manifest_until_next_heading() {
         let temp = tempfile::tempdir().expect("tempdir");
         let index_path = SourceManifest::index_path(temp.path());
         std::fs::create_dir_all(index_path.parent().expect("raw dir")).expect("raw dir");
@@ -982,8 +993,8 @@ mod tests {
 
         assert!(stripped.prefix.contains("Manual note."));
         assert!(!stripped.prefix.contains("Generated Heading"));
-        assert!(!stripped.prefix.contains("stale generated content"));
-        assert!(stripped.suffix.is_empty());
+        assert!(stripped.suffix.contains("Generated Heading"));
+        assert!(stripped.suffix.contains("stale generated content"));
     }
 
     #[test]

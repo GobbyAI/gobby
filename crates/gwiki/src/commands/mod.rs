@@ -15,7 +15,10 @@ pub(crate) mod setup;
 pub(crate) mod sources;
 pub(crate) mod status;
 
-use crate::{Command, CommandOutcome, CommandResult, ScopeIdentity, WikiError};
+use std::path::Path;
+
+use crate::support::scope::{resolve_command_scope, resolved_scope_identity};
+use crate::{Command, CommandOutcome, CommandResult, ScopeIdentity, ScopeSelection, WikiError};
 
 pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
     match command {
@@ -85,4 +88,30 @@ pub(crate) fn scoped_outcome(
         result: CommandResult { payload, text },
         exit_code: 0,
     }
+}
+
+pub(crate) fn run_analysis_command<T>(
+    command: &'static str,
+    selection: ScopeSelection,
+    serialize_action: &'static str,
+    run: impl FnOnce(&Path, ScopeIdentity) -> Result<T, WikiError>,
+    render: impl FnOnce(&T) -> String,
+) -> Result<CommandOutcome, WikiError>
+where
+    T: serde::Serialize,
+{
+    let scope = resolve_command_scope(&selection)?;
+    let output_scope = resolved_scope_identity(&scope);
+    let report = run(scope.root(), output_scope.clone())?;
+    let payload = serde_json::to_value(&report).map_err(|error| WikiError::Json {
+        action: serialize_action,
+        path: None,
+        source: error,
+    })?;
+    Ok(scoped_outcome(
+        command,
+        &output_scope,
+        payload,
+        render(&report),
+    ))
 }

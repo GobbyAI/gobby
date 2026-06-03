@@ -2,7 +2,7 @@ use std::path::PathBuf;
 #[cfg(feature = "embeddings-http")]
 use std::time::Duration;
 
-#[cfg(all(feature = "ai", feature = "embeddings-http"))]
+#[cfg(feature = "ai")]
 use gobby_core::ai::daemon;
 #[cfg(feature = "ai")]
 use gobby_core::ai_context::AiContext;
@@ -243,17 +243,7 @@ impl QueryEmbedder for OpenAiEmbeddingBackend {
         match embedding {
             SemanticEmbedding::Direct(config) => embed_direct_query(&self.client, config, query),
             #[cfg(feature = "ai")]
-            SemanticEmbedding::Daemon(context) => {
-                let input = vec![query.to_string()];
-                daemon::embed_via_daemon(context, &input, true)
-                    .map_err(|error| SearchError::Backend(error.to_string()))?
-                    .embeddings
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| {
-                        SearchError::Backend("daemon embedding response was empty".to_string())
-                    })
-            }
+            SemanticEmbedding::Daemon(context) => embed_daemon_query(context, query),
         }
     }
 }
@@ -318,7 +308,24 @@ impl OpenAiEmbeddingBackend {
     }
 }
 
-#[cfg(not(feature = "embeddings-http"))]
+#[cfg(all(not(feature = "embeddings-http"), feature = "ai"))]
+impl QueryEmbedder for OpenAiEmbeddingBackend {
+    fn embed_query(
+        &mut self,
+        embedding: &SemanticEmbedding,
+        query: &str,
+    ) -> Result<Vec<f32>, SearchError> {
+        match embedding {
+            SemanticEmbedding::Direct(_) => Err(SearchError::Backend(
+                "semantic HTTP backend unavailable; build with the `embeddings-http` feature"
+                    .to_string(),
+            )),
+            SemanticEmbedding::Daemon(context) => embed_daemon_query(context, query),
+        }
+    }
+}
+
+#[cfg(all(not(feature = "embeddings-http"), not(feature = "ai")))]
 impl QueryEmbedder for OpenAiEmbeddingBackend {
     fn embed_query(
         &mut self,
@@ -330,6 +337,17 @@ impl QueryEmbedder for OpenAiEmbeddingBackend {
                 .to_string(),
         ))
     }
+}
+
+#[cfg(feature = "ai")]
+fn embed_daemon_query(context: &AiContext, query: &str) -> Result<Vec<f32>, SearchError> {
+    let input = vec![query.to_string()];
+    daemon::embed_via_daemon(context, &input, true)
+        .map_err(|error| SearchError::Backend(error.to_string()))?
+        .embeddings
+        .into_iter()
+        .next()
+        .ok_or_else(|| SearchError::Backend("daemon embedding response was empty".to_string()))
 }
 
 #[derive(Debug, Default, Clone, Copy)]

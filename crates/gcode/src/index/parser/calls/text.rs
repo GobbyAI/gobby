@@ -1,3 +1,5 @@
+use unicode_xid::UnicodeXID;
+
 #[cfg(test)]
 pub(in crate::index::parser) fn line_terminator_len(
     text: &str,
@@ -51,11 +53,11 @@ pub(super) fn trim_identifier_token(token: &str) -> &str {
 }
 
 pub(super) fn is_identifier_start(ch: char) -> bool {
-    ch.is_ascii_alphabetic() || matches!(ch, '_' | '$')
+    UnicodeXID::is_xid_start(ch) || matches!(ch, '_' | '$')
 }
 
 pub(super) fn is_identifier_continue(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$')
+    UnicodeXID::is_xid_continue(ch) || matches!(ch, '_' | '$')
 }
 
 pub(super) fn is_textual_call_name_byte(byte: u8) -> bool {
@@ -154,5 +156,14 @@ mod tests {
         assert!(should_ignore_call_name("kotlin", "object"));
         assert!(should_ignore_call_name("elixir", "with"));
         assert!(!should_ignore_call_name("dart", "fetchUser"));
+    }
+
+    #[test]
+    fn identifier_helpers_accept_unicode_xid_characters() {
+        assert!(is_identifier_start('λ'));
+        assert!(is_identifier_continue('é'));
+        assert!(is_identifier_continue('\u{0301}'));
+        assert!(is_identifier_start('_'));
+        assert!(is_identifier_continue('$'));
     }
 }

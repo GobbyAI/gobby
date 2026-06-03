@@ -4,7 +4,9 @@ use std::path::PathBuf;
 
 use super::generation::generate_report_from_snapshot;
 use super::render::render_markdown;
-use super::types::{BridgeEdgeInput, ReportCodeEdge, ReportGraphSnapshot, ReportNode};
+use super::types::{
+    BridgeEdgeInput, GraphHotspot, ReportCodeEdge, ReportGraphSnapshot, ReportNode,
+};
 use super::*;
 
 #[test]
@@ -111,6 +113,34 @@ fn markdown_inline_code_uses_commonmark_backtick_delimiters() {
     assert!(markdown.contains("- Project: ``project`1``"));
     assert!(markdown.contains("- ``call`target`` (1)"));
     assert!(!markdown.contains("\\`"));
+}
+
+#[test]
+fn markdown_renders_high_degree_modules() {
+    let mut report = empty_report("project-1");
+    report.hotspots.high_degree_modules.push(GraphHotspot {
+        id: "mod:api".to_string(),
+        name: "api".to_string(),
+        node_type: "module".to_string(),
+        degree: 4,
+        incoming: 1,
+        outgoing: 3,
+        file_path: None,
+    });
+    let markdown = render_markdown(super::render::RenderMarkdownInput {
+        project_id: &report.project_id,
+        generated_at: &report.generated_at,
+        summary: &report.summary,
+        hotspots: &report.hotspots,
+        unresolved_targets: &[],
+        external_targets: &[],
+        bridge_summary: None,
+        degradation_details: &[],
+        top_n: 10,
+    });
+
+    assert!(markdown.contains("## High-degree modules"));
+    assert!(markdown.contains("- `api` (degree 4, in 1, out 3)"));
 }
 
 #[test]

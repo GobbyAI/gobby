@@ -61,14 +61,7 @@ impl CodeSymbolVectorLifecycle {
         embedding: impl Into<EmbeddingSource>,
         settings: CodeVectorSettings,
     ) -> Result<Self, VectorLifecycleError> {
-        if qdrant
-            .url
-            .as_deref()
-            .filter(|url| !url.trim().is_empty())
-            .is_none()
-        {
-            return Err(VectorLifecycleError::MissingQdrantConfig);
-        }
+        Self::require_qdrant_boundary_config(&qdrant)?;
 
         let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, &project_id);
         let embedding = EmbeddingBackend::new(embedding.into())?;
@@ -207,7 +200,11 @@ impl CodeSymbolVectorLifecycle {
     }
 
     fn require_qdrant_boundary(&self) -> Result<(), VectorLifecycleError> {
-        let ((), state) = gobby_core::qdrant::with_qdrant(Some(&self.qdrant), (), |_| Ok(()))
+        Self::require_qdrant_boundary_config(&self.qdrant)
+    }
+
+    fn require_qdrant_boundary_config(qdrant: &QdrantConfig) -> Result<(), VectorLifecycleError> {
+        let ((), state) = gobby_core::qdrant::with_qdrant(Some(qdrant), (), |_| Ok(()))
             .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
         match state {
             ServiceState::Available => Ok(()),

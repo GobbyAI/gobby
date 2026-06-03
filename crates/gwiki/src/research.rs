@@ -67,6 +67,12 @@ pub fn run_with_dispatcher(
     let mut session = if options.resume {
         ResearchSession::load_checkpoint(options.scope.root())?
     } else {
+        if options.agent_count == 0 {
+            return Err(WikiError::InvalidInput {
+                field: "agent_count",
+                message: "research requires at least one agent".to_string(),
+            });
+        }
         let mut session = ResearchSession::new(
             options.question.clone(),
             options.scope.clone(),
@@ -921,6 +927,32 @@ mod tests {
             outcome.session.source_constraints,
             vec!["official docs only".to_string()]
         );
+    }
+
+    #[test]
+    fn new_research_rejects_zero_agents() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let error = run_with_dispatcher(
+            ResearchOptions {
+                question: "What should be researched?".to_string(),
+                scope: ResearchScope::project(temp.path()),
+                source_constraints: Vec::new(),
+                agent_count: 0,
+                dispatch_task_id: Some("#300".to_string()),
+                resume: false,
+                accepted_notes: Vec::new(),
+            },
+            &FakeDispatcher,
+        )
+        .expect_err("zero agents should be rejected");
+
+        assert!(matches!(
+            error,
+            WikiError::InvalidInput {
+                field: "agent_count",
+                ..
+            }
+        ));
     }
 
     #[test]

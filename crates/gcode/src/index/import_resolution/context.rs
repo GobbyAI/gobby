@@ -244,9 +244,19 @@ pub(super) fn load_js_external_packages(root_path: &Path) -> HashSet<String> {
         "peerDependencies",
         "optionalDependencies",
         "bundledDependencies",
+        "bundleDependencies",
     ] {
-        if let Some(map) = json.get(field).and_then(|value| value.as_object()) {
+        let Some(value) = json.get(field) else {
+            continue;
+        };
+        if let Some(map) = value.as_object() {
             packages.extend(map.keys().cloned());
+        } else if let Some(array) = value.as_array() {
+            packages.extend(
+                array
+                    .iter()
+                    .filter_map(|value| value.as_str().map(str::to_owned)),
+            );
         }
     }
     packages

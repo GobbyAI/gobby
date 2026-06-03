@@ -84,6 +84,44 @@ pub fn initialize(scope: &ResolvedScope) -> Result<CreatedVaultPaths, WikiError>
     Ok(created)
 }
 
+pub fn cleanup_created(root: &Path, created: &CreatedVaultPaths) -> Result<(), WikiError> {
+    for file in &created.files {
+        let path = root.join(file);
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(WikiError::Io {
+                    action: "remove initialized file",
+                    path: Some(path),
+                    source,
+                });
+            }
+        }
+    }
+
+    for directory in created.directories.iter().rev() {
+        let path = root.join(directory);
+        match std::fs::remove_dir(&path) {
+            Ok(()) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+                ) => {}
+            Err(source) => {
+                return Err(WikiError::Io {
+                    action: "remove initialized directory",
+                    path: Some(path),
+                    source,
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[derive(Serialize)]
 struct ScopeFile<'a> {
     identity: &'a str,
@@ -264,5 +302,27 @@ mod tests {
         assert!(contents.contains("topic:rust"));
         assert!(!contents.contains("stale"));
         assert!(!created.files.contains(&".gwiki/scope.json".to_string()));
+    }
+
+    #[test]
+    fn cleanup_created_removes_only_created_vault_paths() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("wiki");
+        let scope = ResolvedScope::topic(
+            "rust".to_string(),
+            root.clone(),
+            temp.path().join("wikis.json"),
+        );
+        let created = initialize(&scope).expect("initialize");
+
+        cleanup_created(&root, &created).expect("cleanup created paths");
+
+        for file in created.files {
+            assert!(!root.join(file).exists());
+        }
+        for directory in created.directories {
+            assert!(!root.join(directory).exists());
+        }
+        assert!(root.exists());
     }
 }

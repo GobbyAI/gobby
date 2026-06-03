@@ -16,6 +16,7 @@ pub(super) fn extract_textual_dart_calls(
     for (row, (line_start_byte, line_bytes)) in source_line_spans(source).into_iter().enumerate() {
         let line = String::from_utf8_lossy(line_bytes);
         let trimmed = line.trim_start();
+        let line_scan = DartLineScan::new(&line, dart_state.clone());
         if dart_state.is_code()
             && (trimmed.starts_with("import ")
                 || trimmed.starts_with("export ")
@@ -23,24 +24,16 @@ pub(super) fn extract_textual_dart_calls(
                 || trimmed.starts_with("enum ")
                 || trimmed.starts_with("typedef "))
         {
-            dart_state = dart_state_after_line(&line, dart_state);
+            dart_state = line_scan.end_state;
             continue;
         }
 
         for candidate in textual_call_candidates(&line, line_start_byte, row + 1, b".") {
             let candidate_line_byte = candidate.name_byte.saturating_sub(line_start_byte);
-            if dart_textual_candidate_in_ignored_context(
-                &line,
-                candidate_line_byte,
-                dart_state.clone(),
-            ) {
+            if dart_textual_candidate_in_ignored_context(&line_scan, candidate_line_byte) {
                 continue;
             }
-            if empty_prefix_semicolon_declaration_in_class(
-                &line,
-                candidate_line_byte,
-                dart_state.clone(),
-            ) {
+            if empty_prefix_semicolon_declaration_in_class(&line, candidate_line_byte, &line_scan) {
                 continue;
             }
             if should_ignore_call_name("dart", &candidate.callee_name) {
@@ -54,7 +47,7 @@ pub(super) fn extract_textual_dart_calls(
             )?);
         }
 
-        dart_state = dart_state_after_line(&line, dart_state);
+        dart_state = line_scan.end_state;
     }
 
     Ok(calls)
@@ -257,100 +250,131 @@ struct DartStringState {
     escaped: bool,
 }
 
-fn dart_textual_candidate_in_ignored_context(
-    line: &str,
-    candidate_byte: usize,
-    state: DartScanState,
-) -> bool {
-    let (state, in_line_comment) = dart_scan_line_until(line, candidate_byte, state);
-    in_line_comment || !state.is_code()
+#[derive(Debug, Clone)]
+struct DartLineScan {
+    states_at_byte: Vec<DartScanState>,
+    line_comment_start: Option<usize>,
+    end_state: DartScanState,
 }
 
-fn dart_state_after_line(line: &str, state: DartScanState) -> DartScanState {
-    let mut state = state;
-    if state.is_code() && dart_line_starts_type_declaration(line) {
-        state.pending_class_body = true;
-    }
-    dart_scan_line_until(line, line.len(), state).0
-}
-
-fn dart_scan_line_until(
-    line: &str,
-    limit: usize,
-    mut state: DartScanState,
-) -> (DartScanState, bool) {
-    let bytes = line.as_bytes();
-    let limit = limit.min(bytes.len());
-    let mut idx = 0usize;
-
-    while idx < limit {
-        if state.in_block_comment {
-            if bytes[idx..].starts_with(b"*/") {
-                state.in_block_comment = false;
-                idx += 2;
-            } else {
-                idx += 1;
-            }
-            continue;
+impl DartLineScan {
+    fn new(line: &str, mut state: DartScanState) -> Self {
+        if state.is_code() && dart_line_starts_type_declaration(line) {
+            state.pending_class_body = true;
         }
 
-        if let Some(mut string) = state.string {
-            if string.triple
-                && bytes[idx..].starts_with(&[string.quote, string.quote, string.quote])
-            {
-                state.string = None;
-                idx += 3;
+        let bytes = line.as_bytes();
+        let mut states_at_byte = Vec::with_capacity(bytes.len() + 1);
+        let mut line_comment_start = None;
+        let mut idx = 0usize;
+
+        while idx < bytes.len() {
+            if state.in_block_comment {
+                if bytes[idx..].starts_with(b"*/") {
+                    record_scan_state(&mut states_at_byte, 2, &state);
+                    state.in_block_comment = false;
+                    idx += 2;
+                } else {
+                    record_scan_state(&mut states_at_byte, 1, &state);
+                    idx += 1;
+                }
                 continue;
             }
-            if !string.triple {
-                if !string.raw && string.escaped {
-                    string.escaped = false;
-                } else if !string.raw && bytes[idx] == b'\\' {
-                    string.escaped = true;
-                } else if bytes[idx] == string.quote {
+
+            if let Some(mut string) = state.string {
+                let before = state.clone();
+                if string.triple
+                    && bytes[idx..].starts_with(&[string.quote, string.quote, string.quote])
+                {
+                    record_scan_state(&mut states_at_byte, 3, &before);
                     state.string = None;
-                    idx += 1;
+                    idx += 3;
                     continue;
                 }
-                state.string = Some(string);
+                if !string.triple {
+                    if !string.raw && string.escaped {
+                        string.escaped = false;
+                    } else if !string.raw && bytes[idx] == b'\\' {
+                        string.escaped = true;
+                    } else if bytes[idx] == string.quote {
+                        state.string = None;
+                        record_scan_state(&mut states_at_byte, 1, &before);
+                        idx += 1;
+                        continue;
+                    }
+                    state.string = Some(string);
+                }
+                record_scan_state(&mut states_at_byte, 1, &before);
+                idx += 1;
+                continue;
             }
+
+            if bytes[idx..].starts_with(b"//") {
+                line_comment_start = Some(idx);
+                record_scan_state(&mut states_at_byte, bytes.len() - idx, &state);
+                idx = bytes.len();
+                continue;
+            }
+            if bytes[idx..].starts_with(b"/*") {
+                record_scan_state(&mut states_at_byte, 2, &state);
+                state.in_block_comment = true;
+                idx += 2;
+                continue;
+            }
+            if let Some((string, consumed)) = dart_string_start(bytes, idx) {
+                record_scan_state(&mut states_at_byte, 1, &state);
+                state.string = Some(string);
+                if consumed > 1 {
+                    record_scan_state(&mut states_at_byte, consumed - 1, &state);
+                }
+                idx += consumed;
+                continue;
+            }
+
+            let before = state.clone();
+            match bytes[idx] {
+                b'{' => {
+                    state.brace_depth = state.brace_depth.saturating_add(1);
+                    if state.pending_class_body {
+                        state.class_body_depths.push(state.brace_depth);
+                        state.pending_class_body = false;
+                    }
+                }
+                b'}' => {
+                    if state.class_body_depths.last() == Some(&state.brace_depth) {
+                        state.class_body_depths.pop();
+                    }
+                    state.brace_depth = state.brace_depth.saturating_sub(1);
+                }
+                _ => {}
+            }
+            record_scan_state(&mut states_at_byte, 1, &before);
             idx += 1;
-            continue;
         }
 
-        if bytes[idx..].starts_with(b"//") {
-            return (state, true);
+        states_at_byte.push(state.clone());
+        Self {
+            states_at_byte,
+            line_comment_start,
+            end_state: state,
         }
-        if bytes[idx..].starts_with(b"/*") {
-            state.in_block_comment = true;
-            idx += 2;
-            continue;
-        }
-        if let Some((string, consumed)) = dart_string_start(bytes, idx) {
-            state.string = Some(string);
-            idx += consumed;
-            continue;
-        }
-        match bytes[idx] {
-            b'{' => {
-                state.brace_depth = state.brace_depth.saturating_add(1);
-                if state.pending_class_body {
-                    state.class_body_depths.push(state.brace_depth);
-                    state.pending_class_body = false;
-                }
-            }
-            b'}' => {
-                if state.class_body_depths.last() == Some(&state.brace_depth) {
-                    state.class_body_depths.pop();
-                }
-                state.brace_depth = state.brace_depth.saturating_sub(1);
-            }
-            _ => {}
-        }
-        idx += 1;
     }
 
-    (state, false)
+    fn state_at(&self, byte: usize) -> &DartScanState {
+        &self.states_at_byte[byte.min(self.states_at_byte.len().saturating_sub(1))]
+    }
+
+    fn in_line_comment(&self, byte: usize) -> bool {
+        self.line_comment_start.is_some_and(|start| byte >= start)
+    }
+}
+
+fn record_scan_state(states: &mut Vec<DartScanState>, count: usize, state: &DartScanState) {
+    states.extend(std::iter::repeat_with(|| state.clone()).take(count));
+}
+
+fn dart_textual_candidate_in_ignored_context(scan: &DartLineScan, candidate_byte: usize) -> bool {
+    scan.in_line_comment(candidate_byte) || !scan.state_at(candidate_byte).is_code()
 }
 
 fn dart_line_starts_type_declaration(line: &str) -> bool {
@@ -368,7 +392,7 @@ fn dart_line_starts_type_declaration(line: &str) -> bool {
 fn empty_prefix_semicolon_declaration_in_class(
     line: &str,
     name_start: usize,
-    state: DartScanState,
+    scan: &DartLineScan,
 ) -> bool {
     if !line[..name_start].trim().is_empty() {
         return false;
@@ -388,8 +412,7 @@ fn empty_prefix_semicolon_declaration_in_class(
     if !after_args.starts_with(';') {
         return false;
     }
-    let (state, in_line_comment) = dart_scan_line_until(line, name_start, state);
-    !in_line_comment && state.in_class_member_scope()
+    !scan.in_line_comment(name_start) && scan.state_at(name_start).in_class_member_scope()
 }
 
 fn dart_string_start(bytes: &[u8], idx: usize) -> Option<(DartStringState, usize)> {

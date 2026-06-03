@@ -10,7 +10,10 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
     let scope = resolve_command_scope(&selection)?;
 
     let created_paths = vault::initialize(&scope)?;
-    registry::register_scope(scope.registry_path(), &scope)?;
+    if let Err(error) = registry::register_scope(scope.registry_path(), &scope) {
+        let _ = vault::cleanup_created(scope.root(), &created_paths);
+        return Err(error);
+    }
 
     let output_scope = resolved_scope_identity(&scope);
     Ok(render(output_scope, scope.root(), &created_paths))

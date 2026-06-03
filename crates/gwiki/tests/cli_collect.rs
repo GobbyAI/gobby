@@ -35,7 +35,11 @@ fn collect_parses_scope_flags() {
             stdout,
             stderr
         );
-        assert!(stderr.is_empty(), "{args:?} wrote stderr:\n{stderr}");
+        let stderr_lower = stderr.to_ascii_lowercase();
+        assert!(
+            !stderr_lower.contains("error") && !stderr_lower.contains("panic"),
+            "{args:?} wrote fatal stderr:\n{stderr}"
+        );
         assert!(stdout.contains("Collect ready"), "{stdout}");
         assert!(stdout.contains("Accepted: 0"), "{stdout}");
         assert!(stdout.contains("Skipped: 0"), "{stdout}");

@@ -66,25 +66,66 @@ pub(super) fn row_to_bridge_edge_hypothesis(row: &Row) -> Option<BridgeEdgeHypot
 }
 
 fn row_string(row: &Row, keys: &[&str]) -> Option<String> {
-    keys.iter()
-        .find_map(|key| row.get(*key).and_then(Value::as_str))
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
+    for key in keys {
+        let Some(value) = row.get(*key).and_then(Value::as_str) else {
+            continue;
+        };
+        if !value.is_empty() {
+            return Some(value.to_string());
+        }
+    }
+    None
 }
 
 fn row_usize(row: &Row, keys: &[&str]) -> Option<usize> {
-    keys.iter().find_map(|key| row.get(*key)).and_then(|value| {
+    for key in keys {
+        let Some(value) = row.get(*key) else {
+            continue;
+        };
         // Negative i64 values are invalid counts/ranks and are intentionally
         // discarded by the fallible conversion.
-        value
+        if let Some(value) = value
             .as_u64()
             .and_then(|value| usize::try_from(value).ok())
             .or_else(|| value.as_i64().and_then(|value| usize::try_from(value).ok()))
-    })
+        {
+            return Some(value);
+        }
+    }
+    None
 }
 
 fn row_f64(row: &Row, keys: &[&str]) -> Option<f64> {
     keys.iter()
         .find_map(|key| row.get(*key))
         .and_then(Value::as_f64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn row_string_skips_empty_candidate_keys() {
+        let mut row = Row::new();
+        row.insert("first".to_string(), Value::String(String::new()));
+        row.insert("second".to_string(), Value::String("value".to_string()));
+
+        assert_eq!(
+            row_string(&row, &["first", "second"]).as_deref(),
+            Some("value")
+        );
+    }
+
+    #[test]
+    fn row_usize_skips_invalid_candidate_keys() {
+        let mut row = Row::new();
+        row.insert(
+            "first".to_string(),
+            Value::String("not-a-number".to_string()),
+        );
+        row.insert("second".to_string(), Value::from(7));
+
+        assert_eq!(row_usize(&row, &["first", "second"]), Some(7));
+    }
 }

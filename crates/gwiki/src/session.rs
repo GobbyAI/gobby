@@ -207,8 +207,9 @@ fn validate_checkpoint_scope_root(
     loaded_root: &Path,
     checkpoint_path: &Path,
 ) -> Result<(), WikiError> {
-    let expected = comparable_path(expected_root);
-    let loaded = comparable_path(loaded_root);
+    let expected = comparable_path(expected_root, None);
+    let loaded_base = checkpoint_vault_root(checkpoint_path);
+    let loaded = comparable_path(loaded_root, loaded_base.as_deref());
     if expected == loaded {
         return Ok(());
     }
@@ -222,8 +223,23 @@ fn validate_checkpoint_scope_root(
     })
 }
 
-fn comparable_path(path: &Path) -> PathBuf {
+fn comparable_path(path: &Path, relative_base: Option<&Path>) -> PathBuf {
+    let path = if path.is_relative() {
+        relative_base
+            .map(|base| base.join(path))
+            .unwrap_or_else(|| path.to_path_buf())
+    } else {
+        path.to_path_buf()
+    };
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn checkpoint_vault_root(checkpoint_path: &Path) -> Option<PathBuf> {
+    checkpoint_path
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
 }
 
 fn new_session_id() -> Result<String, WikiError> {
@@ -322,5 +338,26 @@ mod tests {
             .expect_err("mismatched scope root is rejected");
 
         assert!(matches!(error, WikiError::InvalidScope { .. }));
+    }
+
+    #[test]
+    fn load_checkpoint_resolves_relative_scope_root_against_checkpoint_vault() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let expected = temp.path().join("expected");
+        fs::create_dir_all(expected.join(".gwiki/research")).expect("create checkpoint dir");
+        let session = ResearchSession::new(
+            "Which root?",
+            ResearchScope::project("."),
+            Vec::new(),
+            1,
+            None,
+        )
+        .expect("session created");
+        let json = serde_json::to_string_pretty(&session).expect("serialize session");
+        fs::write(ResearchSession::checkpoint_path(&expected), json).expect("write checkpoint");
+
+        let loaded = ResearchSession::load_checkpoint(&expected).expect("checkpoint loaded");
+
+        assert_eq!(loaded.scope.root(), Path::new("."));
     }
 }

@@ -117,6 +117,7 @@ impl TranscriptionClient for ProductionTranscriptionClient {
             return first;
         }
         warn_translation_batch_mismatch("first", segments.len(), &first);
+        std::thread::sleep(std::time::Duration::from_millis(150));
 
         let mut chunk_size = segments.len().div_ceil(2);
         while chunk_size > 1 {
@@ -147,7 +148,9 @@ impl TranscriptionClient for ProductionTranscriptionClient {
             })
             .collect()
     }
+}
 
+impl ProductionTranscriptionClient {
     fn translate_segment_chunks(
         &self,
         segments: &[TranscriptSegment],
@@ -171,9 +174,7 @@ impl TranscriptionClient for ProductionTranscriptionClient {
         }
         Ok(translated)
     }
-}
 
-impl ProductionTranscriptionClient {
     fn translate_segment_batch(
         &self,
         segments: &[TranscriptSegment],

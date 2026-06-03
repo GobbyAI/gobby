@@ -94,3 +94,120 @@ pub(super) fn extract_ast_calls(
 
     Ok(calls)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use crate::index::import_resolution::{
+        ExtractedImports, ImportBindings, ImportResolutionContext, parse_import_statement,
+    };
+    use crate::models::CallTargetKind;
+
+    use super::*;
+
+    fn extract_js_calls(
+        source: &str,
+        query: &'static str,
+        language: &str,
+        import_bindings: &ImportBindings,
+    ) -> Vec<CallRelation> {
+        let ts_lang = languages::get_ts_language("javascript").expect("javascript language");
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&ts_lang)
+            .expect("set javascript language");
+        let tree = parser.parse(source, None).expect("parse javascript");
+        let spec = languages::LanguageSpec {
+            extensions: &[".js"],
+            symbol_query: "",
+            import_query: "",
+            call_query: query,
+        };
+        let import_context = ImportResolutionContext::default();
+        let ctx = CallExtractionContext {
+            language,
+            ts_lang: &ts_lang,
+            rel_path: "src/app.js",
+            symbols: &[],
+            import_context: &import_context,
+            import_bindings,
+            file_path: Path::new("src/app.js"),
+            root_path: Path::new("."),
+        };
+
+        extract_ast_calls(&tree, source.as_bytes(), &spec, ctx, None).expect("extract calls")
+    }
+
+    fn js_bindings(import_text: &str) -> ImportBindings {
+        let import_context = ImportResolutionContext::default();
+        let mut extracted = ExtractedImports::default();
+        parse_import_statement(
+            "javascript",
+            import_text,
+            "src/app.js",
+            &import_context,
+            &mut extracted,
+        );
+        extracted.bindings
+    }
+
+    #[test]
+    fn skips_matches_without_name_capture() {
+        let calls = extract_js_calls(
+            "work();",
+            "(call_expression function: (identifier) @call)",
+            "javascript",
+            &ImportBindings::default(),
+        );
+
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn ignores_qualified_keyword_callee_after_split() {
+        let calls = extract_js_calls(
+            "obj.await();",
+            "(call_expression function: (member_expression) @name) @call",
+            "dart",
+            &ImportBindings::default(),
+        );
+
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn member_call_uses_qualifier_path_from_call_node() {
+        let bindings = js_bindings("import fs from 'fs';");
+        let calls = extract_js_calls(
+            "import fs from 'fs';\nfs.readFile();",
+            "(call_expression function: (member_expression property: (property_identifier) @name)) @call",
+            "javascript",
+            &bindings,
+        );
+
+        assert_eq!(calls.len(), 1);
+        let call = &calls[0];
+        assert_eq!(call.callee_name, "readFile");
+        assert_eq!(call.line, 2);
+        assert_eq!(call.callee_target_kind, CallTargetKind::External);
+        assert_eq!(call.callee_external_module.as_deref(), Some("fs"));
+    }
+
+    #[test]
+    fn bare_detected_syntax_upgrades_to_member_when_qualified_name_is_captured() {
+        let bindings = js_bindings("import fs from 'fs';");
+        let calls = extract_js_calls(
+            "import fs from 'fs';\nfs.readFile();",
+            "(call_expression function: (member_expression) @name) @call",
+            "javascript",
+            &bindings,
+        );
+
+        assert_eq!(calls.len(), 1);
+        let call = &calls[0];
+        assert_eq!(call.callee_name, "readFile");
+        assert_eq!(call.callee_target_kind, CallTargetKind::External);
+        assert_eq!(call.callee_external_module.as_deref(), Some("fs"));
+    }
+}

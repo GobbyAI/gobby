@@ -734,6 +734,9 @@ mod tests {
                 home: std::env::var_os("HOME"),
                 gobby_home: std::env::var_os("GOBBY_HOME"),
             };
+            // SAFETY: these tests serialize HOME/GOBBY_HOME mutation through
+            // TEST_ENV_LOCK, and EnvGuard restores the original values while
+            // still holding that lock.
             unsafe {
                 std::env::set_var("HOME", home);
                 std::env::set_var("GOBBY_HOME", home.join(".gobby"));
@@ -744,6 +747,9 @@ mod tests {
 
     impl Drop for EnvGuard {
         fn drop(&mut self) {
+            // SAFETY: EnvGuard owns the TEST_ENV_LOCK guard for the lifetime of
+            // the temporary HOME/GOBBY_HOME override, so restoration cannot race
+            // with another test using this helper.
             unsafe {
                 match &self.home {
                     Some(value) => std::env::set_var("HOME", value),

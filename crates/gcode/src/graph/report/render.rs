@@ -42,6 +42,12 @@ pub(super) fn render_markdown(input: RenderMarkdownInput<'_>) -> String {
     );
     append_hotspot_section(
         &mut lines,
+        "High-degree modules",
+        &input.hotspots.high_degree_modules,
+        input.top_n,
+    );
+    append_hotspot_section(
+        &mut lines,
         "High-degree symbols",
         &input.hotspots.high_degree_symbols,
         input.top_n,

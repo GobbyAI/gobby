@@ -19,26 +19,26 @@ impl Drop for ProjectCleanup {
         let database_url = self.database_url.clone();
         let project_id = self.project_id.clone();
         if std::panic::catch_unwind(move || {
-			let mut conn = match gobby_core::postgres::connect_readwrite(&database_url) {
-				Ok(conn) => conn,
-				Err(err) => {
-					eprintln!(
-						"ProjectCleanup cleanup: connect_readwrite failed for project {project_id}: {err}",
-					);
-					return;
-				}
-			};
+            let mut conn = match gobby_core::postgres::connect_readwrite(&database_url) {
+                Ok(conn) => conn,
+                Err(err) => {
+                    eprintln!(
+                        "ProjectCleanup cleanup: connect_readwrite failed for project {project_id}: {err}",
+                    );
+                    return;
+                }
+            };
 
-			if let Err(err) = cleanup_project(&mut conn, &project_id) {
-				eprintln!(
-					"ProjectCleanup cleanup: cleanup_project failed for project {project_id}: {err}",
-				);
-			}
-		})
-		.is_err()
-		{
-			eprintln!("ProjectCleanup cleanup panicked for project cleanup");
-		}
+            if let Err(err) = cleanup_project(&mut conn, &project_id) {
+                eprintln!(
+                    "ProjectCleanup cleanup: cleanup_project failed for project {project_id}: {err}",
+                );
+            }
+        })
+        .is_err()
+        {
+            eprintln!("ProjectCleanup cleanup panicked for project {project_id}");
+        }
     }
 }
 

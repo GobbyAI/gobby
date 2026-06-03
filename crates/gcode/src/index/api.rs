@@ -80,17 +80,12 @@ pub fn file_facts_exist(
     file_path: &str,
 ) -> anyhow::Result<bool> {
     let row = conn.query_one(
-        "SELECT EXISTS(
-            SELECT 1 FROM code_indexed_files WHERE project_id = $1 AND file_path = $2
-            UNION ALL
-            SELECT 1 FROM code_symbols WHERE project_id = $1 AND file_path = $2
-            UNION ALL
-            SELECT 1 FROM code_content_chunks WHERE project_id = $1 AND file_path = $2
-            UNION ALL
-            SELECT 1 FROM code_imports WHERE project_id = $1 AND source_file = $2
-            UNION ALL
-            SELECT 1 FROM code_calls WHERE project_id = $1 AND file_path = $2
-        )",
+        "SELECT
+            EXISTS(SELECT 1 FROM code_indexed_files WHERE project_id = $1 AND file_path = $2)
+            OR EXISTS(SELECT 1 FROM code_symbols WHERE project_id = $1 AND file_path = $2)
+            OR EXISTS(SELECT 1 FROM code_content_chunks WHERE project_id = $1 AND file_path = $2)
+            OR EXISTS(SELECT 1 FROM code_imports WHERE project_id = $1 AND source_file = $2)
+            OR EXISTS(SELECT 1 FROM code_calls WHERE project_id = $1 AND file_path = $2)",
         &[&project_id, &file_path],
     )?;
     Ok(row.try_get(0)?)

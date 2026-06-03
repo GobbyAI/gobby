@@ -179,10 +179,20 @@ fn markdown_destination_end(markdown: &str, start: usize) -> Option<usize> {
 }
 
 fn markdown_label_end(markdown: &str, start: usize) -> Option<usize> {
-    markdown[start..].char_indices().find_map(|(offset, ch)| {
+    let mut depth = 0usize;
+    for (offset, ch) in markdown[start..].char_indices() {
         let index = start + offset;
-        (ch == ']' && !is_escaped(markdown, index)).then_some(index)
-    })
+        if is_escaped(markdown, index) {
+            continue;
+        }
+        match ch {
+            '[' => depth += 1,
+            ']' if depth == 0 => return Some(index),
+            ']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    None
 }
 
 fn wikilink_close_start(markdown: &str, start: usize) -> Option<usize> {
@@ -345,6 +355,15 @@ mod tests {
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].target, "docs/Guide.md");
         assert_eq!(links[0].alias.as_deref(), Some(r"Escaped \] label"));
+    }
+
+    #[test]
+    fn markdown_link_labels_accept_nested_brackets() {
+        let links = extract_links("[See [note]](docs/Guide.md)", ["docs/Guide"]);
+
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target, "docs/Guide.md");
+        assert_eq!(links[0].alias.as_deref(), Some("See [note]"));
     }
 
     #[test]

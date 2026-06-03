@@ -480,8 +480,10 @@ pub fn write_incremental_doc_set(
         .keys()
         .filter(|key| !next_docs.contains_key(*key))
     {
-        match std::fs::remove_file(safe_doc_path(out_dir, stale_path)?) {
-            Ok(()) => {}
+        let target = safe_doc_path(out_dir, stale_path)?;
+        reject_symlinked_doc_path(out_dir, &target)?;
+        match std::fs::remove_file(&target) {
+            Ok(()) => prune_empty_doc_dirs(out_dir, &target)?,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => return Err(err.into()),
         }
@@ -497,10 +499,53 @@ pub fn write_incremental_doc_set(
 
 fn write_doc(out_dir: &Path, relative_path: &str, content: &str) -> anyhow::Result<()> {
     let target = safe_doc_path(out_dir, relative_path)?;
+    reject_symlinked_doc_path(out_dir, &target)?;
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(target, content)?;
+    Ok(())
+}
+
+fn reject_symlinked_doc_path(out_dir: &Path, target: &Path) -> anyhow::Result<()> {
+    let relative = target.strip_prefix(out_dir)?;
+    let mut current = out_dir.to_path_buf();
+    for component in relative.components() {
+        current.push(component);
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                anyhow::bail!(
+                    "refusing to follow symlinked codewiki path: {}",
+                    current.display()
+                );
+            }
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err.into()),
+        }
+    }
+    Ok(())
+}
+
+fn prune_empty_doc_dirs(out_dir: &Path, target: &Path) -> anyhow::Result<()> {
+    let mut current = target.parent();
+    while let Some(dir) = current {
+        if dir == out_dir {
+            break;
+        }
+        match std::fs::remove_dir(dir) {
+            Ok(()) => current = dir.parent(),
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+                ) =>
+            {
+                break;
+            }
+            Err(err) => return Err(err.into()),
+        }
+    }
     Ok(())
 }
 
@@ -1713,13 +1758,7 @@ fn plural(count: usize) -> &'static str {
 }
 
 fn component_id(symbol: &Symbol) -> String {
-    Symbol::make_id(
-        &symbol.project_id,
-        &symbol.file_path,
-        &symbol.name,
-        &symbol.kind,
-        symbol.byte_start,
-    )
+    symbol.id.clone()
 }
 
 fn is_core_file(file: &str) -> bool {
@@ -2334,6 +2373,49 @@ mod tests {
             std::fs::read_to_string(out_dir.join("_meta/codewiki.json")).expect("read final meta");
         let meta: serde_json::Value = serde_json::from_str(&meta).expect("parse final meta");
         assert!(meta["docs"].get("files/src/nested/api.rs.md").is_none());
+    }
+
+    #[test]
+    fn component_id_uses_stored_symbol_id() {
+        let mut symbol = test_symbol("src/lib.rs", "Client", "class", 1, "pub struct Client;");
+        symbol.id = "stored-symbol-id".to_string();
+        assert_eq!(component_id(&symbol), "stored-symbol-id");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn write_doc_rejects_symlinked_parent() {
+        use std::os::unix::fs::symlink;
+
+        let project = tempfile::tempdir().expect("project tempdir");
+        let out_dir = project.path().join("codewiki");
+        let outside = tempfile::tempdir().expect("outside tempdir");
+        std::fs::create_dir_all(&out_dir).expect("out dir");
+        symlink(outside.path(), out_dir.join("linked")).expect("symlink parent");
+
+        let err = write_doc(&out_dir, "linked/escape.md", "escaped")
+            .expect_err("symlink parent should be rejected");
+
+        assert!(err.to_string().contains("symlinked codewiki path"));
+        assert!(!outside.path().join("escape.md").exists());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn write_doc_rejects_symlinked_target() {
+        use std::os::unix::fs::symlink;
+
+        let project = tempfile::tempdir().expect("project tempdir");
+        let out_dir = project.path().join("codewiki");
+        let outside = tempfile::tempdir().expect("outside tempdir");
+        std::fs::create_dir_all(&out_dir).expect("out dir");
+        let outside_target = outside.path().join("target.md");
+        symlink(&outside_target, out_dir.join("target.md")).expect("symlink target");
+
+        let err = write_doc(&out_dir, "target.md", "escaped").expect_err("symlink target rejected");
+
+        assert!(err.to_string().contains("symlinked codewiki path"));
+        assert!(!outside_target.exists());
     }
 
     fn test_symbol(

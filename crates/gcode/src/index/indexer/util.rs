@@ -197,4 +197,31 @@ mod tests {
             "/tmp/project/src/lib.rs"
         );
     }
+
+    #[test]
+    #[cfg(windows)]
+    fn lexical_relative_path_preserves_cross_drive_absolute_path() {
+        let root = Path::new(r"C:\project");
+        let requested = Path::new(r"D:\other\file.rs");
+
+        assert_eq!(lexical_relative_path(root, requested), r"D:\other\file.rs");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn lexical_relative_path_handles_unc_roots() {
+        let root = Path::new(r"\\server\share\project");
+        let requested = Path::new(r"\\server\share\project\src\lib.rs");
+
+        assert_eq!(lexical_relative_path(root, requested), r"src\lib.rs");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn lexical_relative_path_handles_mixed_separators() {
+        let root = Path::new(r"C:\project");
+        let requested = Path::new(r"C:/project/src\lib.rs");
+
+        assert_eq!(lexical_relative_path(root, requested), r"src\lib.rs");
+    }
 }

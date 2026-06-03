@@ -503,7 +503,8 @@ pub fn tombstone_count(conn: &mut Client, ctx: &Context) -> usize {
     )
     .ok()
     .and_then(|row| row.try_get::<_, i64>("count").ok())
-    .unwrap_or(0) as usize
+    .and_then(|count| count.try_into().ok())
+    .unwrap_or(0)
 }
 
 #[cfg(test)]

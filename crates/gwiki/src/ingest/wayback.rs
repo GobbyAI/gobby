@@ -135,17 +135,109 @@ fn collect_visible_text(element: ElementRef<'_>, parts: &mut Vec<String>) {
     if matches!(element.value().name(), "head" | "script" | "style") {
         return;
     }
+    let mut inline = String::new();
     for child in element.children() {
         match child.value() {
-            Node::Text(text) => parts.push(text.text.to_string()),
+            Node::Text(text) => append_inline_text(&mut inline, &text.text),
             Node::Element(_) => {
                 if let Some(child_element) = ElementRef::wrap(child) {
-                    collect_visible_text(child_element, parts);
+                    let name = child_element.value().name();
+                    if name == "br" {
+                        push_text_part(parts, &mut inline);
+                    } else if is_block_boundary(name) {
+                        push_text_part(parts, &mut inline);
+                        collect_visible_text(child_element, parts);
+                    } else {
+                        collect_inline_text(child_element, parts, &mut inline);
+                    }
                 }
             }
             _ => {}
         }
     }
+    push_text_part(parts, &mut inline);
+}
+
+fn collect_inline_text(element: ElementRef<'_>, parts: &mut Vec<String>, inline: &mut String) {
+    if matches!(element.value().name(), "head" | "script" | "style") {
+        return;
+    }
+    for child in element.children() {
+        match child.value() {
+            Node::Text(text) => append_inline_text(inline, &text.text),
+            Node::Element(_) => {
+                if let Some(child_element) = ElementRef::wrap(child) {
+                    let name = child_element.value().name();
+                    if name == "br" {
+                        push_text_part(parts, inline);
+                    } else if is_block_boundary(name) {
+                        push_text_part(parts, inline);
+                        collect_visible_text(child_element, parts);
+                    } else {
+                        collect_inline_text(child_element, parts, inline);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn append_inline_text(inline: &mut String, text: &str) {
+    let text = single_line(text);
+    if text.is_empty() {
+        return;
+    }
+    if !inline.is_empty() {
+        inline.push(' ');
+    }
+    inline.push_str(&text);
+}
+
+fn push_text_part(parts: &mut Vec<String>, inline: &mut String) {
+    let text = single_line(inline);
+    inline.clear();
+    if !text.is_empty() {
+        parts.push(text);
+    }
+}
+
+fn is_block_boundary(name: &str) -> bool {
+    matches!(
+        name,
+        "address"
+            | "article"
+            | "aside"
+            | "blockquote"
+            | "div"
+            | "dl"
+            | "dt"
+            | "dd"
+            | "figcaption"
+            | "figure"
+            | "footer"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "header"
+            | "li"
+            | "main"
+            | "nav"
+            | "ol"
+            | "p"
+            | "pre"
+            | "section"
+            | "table"
+            | "tbody"
+            | "td"
+            | "th"
+            | "thead"
+            | "tr"
+            | "ul"
+    )
 }
 
 #[cfg(test)]
@@ -207,6 +299,23 @@ mod tests {
         assert_eq!(text, "Visible & decoded.");
         assert!(!text.contains("Archive Shell"));
         assert!(!text.contains("ignore()"));
+    }
+
+    #[test]
+    fn wayback_groups_inline_text_per_block() {
+        let body = br#"
+<html>
+  <body>
+    <p><span>Inline</span> <strong>siblings</strong> stay together.</p>
+    <p>Second<br>line</p>
+  </body>
+</html>
+"#;
+        let document = document_for(body);
+
+        let text = html_to_text(&document);
+
+        assert_eq!(text, "Inline siblings stay together.\n\nSecond\n\nline");
     }
 
     #[test]

@@ -6,8 +6,9 @@
 //! schema-agnostic; consumers supply any table or index validation.
 
 use anyhow::Context;
+use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 use postgres::{Client, NoTls, config::SslMode};
-use postgres_native_tls::MakeTlsConnector;
+use postgres_openssl::MakeTlsConnector;
 
 /// Connect to the PostgreSQL hub in read-only mode.
 ///
@@ -231,13 +232,9 @@ fn connect_with_tls_unverified(config: &postgres::Config) -> anyhow::Result<Clie
 }
 
 fn connect_with_tls_verify_ca(config: &postgres::Config) -> anyhow::Result<Client> {
-    let mut builder = native_tls::TlsConnector::builder();
-    builder.danger_accept_invalid_hostnames(true);
-    let connector = builder
-        .build()
-        .context("failed to build PostgreSQL TLS connector")?;
+    let connector = verified_tls_connector(false)?;
     config
-        .connect(MakeTlsConnector::new(connector))
+        .connect(connector)
         .context("failed to connect to the Gobby PostgreSQL hub")
 }
 
@@ -245,17 +242,36 @@ fn connect_with_tls_verification(
     config: &postgres::Config,
     verify: bool,
 ) -> anyhow::Result<Client> {
-    let mut builder = native_tls::TlsConnector::builder();
-    if !verify {
-        builder.danger_accept_invalid_certs(true);
-        builder.danger_accept_invalid_hostnames(true);
-    }
-    let connector = builder
-        .build()
-        .context("failed to build PostgreSQL TLS connector")?;
+    let connector = if verify {
+        verified_tls_connector(true)?
+    } else {
+        unverified_tls_connector()?
+    };
     config
-        .connect(MakeTlsConnector::new(connector))
+        .connect(connector)
         .context("failed to connect to the Gobby PostgreSQL hub")
+}
+
+fn unverified_tls_connector() -> anyhow::Result<MakeTlsConnector> {
+    let mut builder = SslConnector::builder(SslMethod::tls())
+        .context("failed to build PostgreSQL TLS connector")?;
+    builder.set_verify(SslVerifyMode::NONE);
+    Ok(MakeTlsConnector::new(builder.build()))
+}
+
+fn verified_tls_connector(verify_hostname: bool) -> anyhow::Result<MakeTlsConnector> {
+    let mut builder = SslConnector::builder(SslMethod::tls())
+        .context("failed to build PostgreSQL TLS connector")?;
+    builder.set_default_verify_paths()?;
+    builder.set_verify(SslVerifyMode::PEER);
+    let mut connector = MakeTlsConnector::new(builder.build());
+    if !verify_hostname {
+        connector.set_callback(|config, _domain| {
+            config.set_verify_hostname(false);
+            Ok(())
+        });
+    }
+    Ok(connector)
 }
 
 fn run_schema_validator<C>(

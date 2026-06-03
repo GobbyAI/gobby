@@ -259,12 +259,12 @@ pub fn write_synthesized_page(
 ) -> Result<PageWriteOutcome, WikiError> {
     ensure_synthesized_path_inside_vault(vault_root, &page.path, "synthesized_page")?;
     if let Some(parent) = page.path.parent() {
+        ensure_existing_parent_inside_vault(vault_root, parent, "synthesized_page")?;
         fs::create_dir_all(parent).map_err(|error| WikiError::Io {
             action: "create synthesized page directory",
             path: Some(parent.to_path_buf()),
             source: error,
         })?;
-        ensure_existing_parent_inside_vault(vault_root, parent, "synthesized_page")?;
     }
 
     let kind = match policy {
@@ -390,11 +390,7 @@ fn ensure_existing_parent_inside_vault(
         path: Some(vault_root.to_path_buf()),
         source: error,
     })?;
-    let parent = parent.canonicalize().map_err(|error| WikiError::Io {
-        action: "resolve synthesized page directory",
-        path: Some(parent.to_path_buf()),
-        source: error,
-    })?;
+    let parent = canonicalize_existing_prefix(parent, "resolve synthesized page directory")?;
     if parent.starts_with(root) {
         return Ok(());
     }
@@ -829,6 +825,36 @@ mod tests {
             }
         ));
         assert!(!outside.exists());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn synthesized_writer_rejects_symlinked_parent_before_create_dir_all() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let outside = tempfile::tempdir().expect("outside tempdir");
+        let link = temp.path().join("wiki").join("linked");
+        fs::create_dir_all(link.parent().expect("link parent")).expect("link parent");
+        symlink(outside.path(), &link).expect("symlink parent");
+        let page = SynthesizedPage {
+            path: link.join("nested/page.md"),
+            title: "Outside".to_string(),
+            markdown: "# Outside\n".to_string(),
+        };
+
+        let error =
+            write_synthesized_page(temp.path(), &page, WritePolicy::AllowOverwriteAfterMerge)
+                .expect_err("symlinked parent must be rejected");
+
+        assert!(matches!(
+            error,
+            WikiError::InvalidInput {
+                field: "synthesized_page",
+                ..
+            }
+        ));
+        assert!(!outside.path().join("nested/page.md").exists());
     }
 
     #[test]

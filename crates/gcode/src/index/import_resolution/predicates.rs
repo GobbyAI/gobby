@@ -183,8 +183,9 @@ fn strip_comments_and_string_literals(contents: &str) -> String {
 /// The indexer records authoritative symbols from tree-sitter; this token scan
 /// only helps decide whether an otherwise unresolved import target is local.
 pub(super) fn php_declared_symbols(contents: &str) -> Vec<String> {
+    let cleaned = strip_comments_and_string_literals(contents);
     let mut names = Vec::new();
-    let tokens: Vec<&str> = contents
+    let tokens: Vec<&str> = cleaned
         .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
         .filter(|token| !token.is_empty())
         .collect();

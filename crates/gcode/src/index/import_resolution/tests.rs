@@ -4,14 +4,14 @@ use std::fs;
 use tempfile::TempDir;
 
 use super::context::{
-    load_dart_external_packages, load_elixir_dependency_names, load_rust_external_crates,
-    load_rust_self_crate_name,
+    load_dart_external_packages, load_elixir_dependency_names, load_js_external_packages,
+    load_rust_external_crates, load_rust_self_crate_name,
 };
 use super::helpers::{extract_quoted_string, go_default_package_alias, split_top_level};
 use super::predicates::{
     bundled_elixir_dependency_roots, bundled_ruby_require_roots, csharp_declared_types,
     elixir_dependency_roots, is_external_java_class, is_external_js_module, java_declared_types,
-    ruby_require_root,
+    php_declared_symbols, ruby_require_root,
 };
 use super::*;
 
@@ -134,6 +134,48 @@ fn missing_dart_pubspec_loads_no_external_packages() {
     let packages = load_dart_external_packages(tempdir.path());
 
     assert!(packages.is_empty());
+}
+
+#[test]
+fn loads_js_bundled_dependency_arrays() {
+    let tempdir = TempDir::new().expect("tempdir");
+    fs::write(
+        tempdir.path().join("package.json"),
+        r#"
+{
+  "dependencies": {
+    "react": "18"
+  },
+  "bundledDependencies": ["left-pad"],
+  "bundleDependencies": ["legacy-pkg"]
+}
+"#,
+    )
+    .expect("package json");
+
+    let packages = load_js_external_packages(tempdir.path());
+
+    assert!(packages.contains("react"));
+    assert!(packages.contains("left-pad"));
+    assert!(packages.contains("legacy-pkg"));
+}
+
+#[test]
+fn php_declared_symbols_ignores_comments_and_strings() {
+    let symbols = php_declared_symbols(
+        r#"
+<?php
+// class Fake {}
+$message = "function hidden() {}";
+class Real {}
+function work() {}
+"#,
+    );
+
+    assert!(symbols.contains(&"Real".to_string()));
+    assert!(symbols.contains(&"work".to_string()));
+    assert!(!symbols.contains(&"Fake".to_string()));
+    assert!(!symbols.contains(&"hidden".to_string()));
 }
 
 #[test]

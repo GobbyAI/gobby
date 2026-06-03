@@ -282,8 +282,12 @@ fn glob_to_pg_regex(pattern: &str) -> Option<String> {
     while let Some(ch) = chars.next() {
         match ch {
             '*' => {
-                if chars.peek() == Some(&'*') {
+                let mut star_count = 1usize;
+                while chars.peek() == Some(&'*') {
                     chars.next();
+                    star_count += 1;
+                }
+                if star_count > 1 {
                     regex.push_str(".*");
                 } else {
                     regex.push_str("[^/]*");
@@ -488,6 +492,10 @@ mod tests {
         assert_eq!(
             glob_to_pg_regex("src/**/*.rs").as_deref(),
             Some("^src/.*/[^/]*\\.rs$")
+        );
+        assert_eq!(
+            glob_to_pg_regex("src/***/main.rs").as_deref(),
+            Some("^src/.*/main\\.rs$")
         );
         assert_eq!(glob_to_pg_regex("src/["), None);
     }

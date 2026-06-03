@@ -554,8 +554,8 @@ fn is_http_url(value: &str) -> bool {
 
 fn parse_embedded_http_url(candidate: &str) -> Option<String> {
     parse_http_url(candidate).or_else(|| {
-        parse_http_url(candidate.trim_end_matches([',', '.', ';', ')', ']']))
-            .map(|_| candidate.to_string())
+        let trimmed = candidate.trim_end_matches([',', '.', ';', ')', ']']);
+        parse_http_url(trimmed).map(|_| trimmed.to_string())
     })
 }
 
@@ -739,10 +739,10 @@ mod tests {
     }
 
     #[test]
-    fn embedded_url_parser_returns_original_candidate_when_trimmed_parse_succeeds() {
+    fn embedded_url_parser_returns_trimmed_candidate_when_trimmed_parse_succeeds() {
         assert_eq!(
             urls_from_embedded_text("See [https://example.test/research]."),
-            vec!["https://example.test/research].".to_string()]
+            vec!["https://example.test/research".to_string()]
         );
     }
 

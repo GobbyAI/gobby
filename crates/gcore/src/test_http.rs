@@ -123,24 +123,29 @@ mod tests {
     #[test]
     fn header_only_request_without_content_length_is_complete() {
         struct SingleRead {
-            data: Option<&'static [u8]>,
+            data: &'static [u8],
         }
 
         impl Read for SingleRead {
             fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-                let Some(data) = self.data.take() else {
+                if buffer.is_empty() {
+                    return Ok(0);
+                }
+                if self.data.is_empty() {
                     return Err(io::Error::new(
                         ErrorKind::Other,
                         "reader should not be polled after complete headers",
                     ));
-                };
-                buffer[..data.len()].copy_from_slice(data);
-                Ok(data.len())
+                }
+                let read = buffer.len().min(self.data.len());
+                buffer[..read].copy_from_slice(&self.data[..read]);
+                self.data = &self.data[read..];
+                Ok(read)
             }
         }
 
         let mut reader = SingleRead {
-            data: Some(b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+            data: b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n",
         };
 
         let request = read_http_request(&mut reader).expect("header-only request");
