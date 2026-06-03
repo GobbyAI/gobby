@@ -191,10 +191,81 @@ class TestSessionStartHandoff:
             {
                 "session_summary": "# Summary\nWorked on feature X",
                 "full_session_summary": "# Summary\nWorked on feature X",
+                "handoff_summary_injectable": "# Summary\nWorked on feature X",
             },
         )
         assert mock_sv_mgr.merge_variables.call_count >= 1
         assert mock_sv_mgr.merge_variables.call_args is not None
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_session_start_clear_bounds_large_summary_with_breadcrumb(
+        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+    ) -> None:
+        """A large parent summary is bounded for injection but kept full elsewhere."""
+        from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT, HANDOFF_SUMMARY_INJECT_BUDGET
+
+        mock_sv_mgr = MagicMock()
+        mock_sv_mgr.get_variables.return_value = {"auto_inject_handoff": True}
+        mock_sv_mgr_cls.return_value = mock_sv_mgr
+
+        big_summary = "# Big Summary\n\n" + ("detail paragraph.\n\n" * 1000)
+        assert len(big_summary) > HANDOFF_SUMMARY_INJECT_BUDGET
+
+        mock_parent_for_find = MagicMock()
+        mock_parent_for_find.id = "parent-sess-123"
+        mock_parent_for_find.terminal_context = {
+            "tmux_pane": "%12",
+            "tmux_socket_path": "/tmp/tmux",
+        }
+
+        mock_parent_obj = MagicMock()
+        mock_parent_obj.id = "parent-sess-123"
+        mock_parent_obj.seq_num = 42
+        mock_parent_obj.summary_markdown = big_summary
+        mock_parent_obj.terminal_context = mock_parent_for_find.terminal_context
+
+        mock_new_session = MagicMock()
+        mock_new_session.seq_num = 43
+
+        def get_session(session_id: str) -> MagicMock | None:
+            if session_id == "parent-sess-123":
+                return mock_parent_obj
+            if session_id == "new-sess-456":
+                return mock_new_session
+            return None
+
+        mock_dependencies["session_storage"].get.side_effect = get_session
+        mock_dependencies["session_storage"].find_parent.return_value = mock_parent_for_find
+        mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="ext-123",
+            data={
+                "source": "clear",
+                "cwd": "/some/dir",
+                "terminal_context": {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+            },
+            metadata={},
+        )
+
+        response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        handoff_payload = next(
+            args[1]
+            for args, _kwargs in mock_sv_mgr.merge_variables.call_args_list
+            if "handoff_summary_injectable" in args[1]
+        )
+        injectable = handoff_payload["handoff_summary_injectable"]
+        assert handoff_payload["full_session_summary"] == big_summary
+        assert injectable != big_summary
+        assert len(injectable) < len(big_summary)
+        assert len(injectable) < ADDITIONAL_CONTEXT_LIMIT
+        assert injectable.startswith("# Big Summary")
+        assert "get_handoff_context" in injectable
+        assert "#42" in injectable
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_session_start_compact_sets_compact_session_summary_variable(
@@ -252,6 +323,7 @@ class TestSessionStartHandoff:
             {
                 "session_summary": "# Compact\nContinuation of task Y",
                 "full_session_summary": "# Compact\nContinuation of task Y",
+                "handoff_summary_injectable": "# Compact\nContinuation of task Y",
             },
         )
         assert mock_sv_mgr.merge_variables.call_count >= 1
@@ -337,6 +409,7 @@ class TestSessionStartHandoff:
             {
                 "session_summary": "# Fresh\nCurrent compact handoff",
                 "full_session_summary": "# Fresh\nCurrent compact handoff",
+                "handoff_summary_injectable": "# Fresh\nCurrent compact handoff",
             },
         )
         merged_payloads = [args[1] for args, _kwargs in mock_sv_mgr.merge_variables.call_args_list]

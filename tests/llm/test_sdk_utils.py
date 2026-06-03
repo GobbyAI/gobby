@@ -6,7 +6,9 @@ import pytest
 
 from gobby.llm.sdk_utils import (
     ADDITIONAL_CONTEXT_LIMIT,
+    HANDOFF_SUMMARY_INJECT_BUDGET,
     format_exception_group,
+    head_with_breadcrumb,
     parse_server_name,
     sanitize_error,
     truncate_additional_context,
@@ -103,3 +105,46 @@ class TestTruncateAdditionalContext:
 
     def test_empty_string(self) -> None:
         assert truncate_additional_context("") == ""
+
+
+class TestHandoffSummaryBudget:
+    def test_budget_below_aggregate_limit(self) -> None:
+        # The inline summary head must leave room for other contributors and the
+        # breadcrumb under the SDK's aggregate ceiling.
+        assert HANDOFF_SUMMARY_INJECT_BUDGET < ADDITIONAL_CONTEXT_LIMIT
+
+
+class TestHeadWithBreadcrumb:
+    def test_under_budget_returned_verbatim(self) -> None:
+        text = "short summary\n\nwith paragraphs"
+        assert head_with_breadcrumb(text, budget=100, breadcrumb="MORE") == text
+
+    def test_at_budget_returned_verbatim(self) -> None:
+        text = "x" * 100
+        assert head_with_breadcrumb(text, budget=100, breadcrumb="MORE") == text
+
+    def test_over_budget_appends_breadcrumb(self) -> None:
+        text = "para one\n\n" + ("y" * 300)
+        result = head_with_breadcrumb(text, budget=50, breadcrumb="CALL get_handoff_context")
+        assert result.endswith("CALL get_handoff_context")
+
+    def test_over_budget_cuts_on_paragraph_boundary(self) -> None:
+        head = "first paragraph kept intact"
+        text = f"{head}\n\n" + ("z" * 500)
+        result = head_with_breadcrumb(text, budget=len(head) + 5, breadcrumb="MORE")
+        assert result.startswith(head)
+        # The trailing run must not survive the clean cut.
+        assert "z" not in result.replace("MORE", "")
+
+    def test_over_budget_falls_back_to_newline_boundary(self) -> None:
+        # No blank-line break in the back half -> fall back to last newline.
+        text = "alpha\nbeta\ngamma\n" + ("q" * 200)
+        result = head_with_breadcrumb(text, budget=16, breadcrumb="MORE")
+        assert result.endswith("MORE")
+        assert "q" not in result
+
+    def test_no_boundary_hard_cut_at_budget(self) -> None:
+        text = "a" * 500  # no newline anywhere
+        budget = 40
+        result = head_with_breadcrumb(text, budget=budget, breadcrumb="MORE")
+        assert result == ("a" * budget) + "\n\nMORE"

@@ -269,10 +269,16 @@ class SessionLookupService:
                             )
                             return None
 
-                        # Auto-register session if not found
-                        self._logger.warning(
-                            "Session auto-registration: external_id=%s not found in DB "
-                            "(machine_id=%s, project_id=%s, source=%s). Creating new session.",
+                        # Not in cache, composite DB lookup, or cross-source
+                        # recovery. Delegate to register_session, which re-looks-up
+                        # under a registration lock and reuses the existing row if
+                        # one exists (preserving its parent linkage via COALESCE),
+                        # otherwise creates a new session. Logged at INFO since this
+                        # path is idempotent and self-healing, not an error.
+                        self._logger.info(
+                            "Session not found via cache/DB lookup for external_id=%s "
+                            "(machine_id=%s, project_id=%s, source=%s); delegating to "
+                            "idempotent register_session (reuses existing row or creates).",
                             external_id,
                             machine_id,
                             project_id,

@@ -399,7 +399,8 @@ These are set during execution, not initialized from definitions:
 | `session_task` | string | Current task ref or UUID used by task-aware rules |
 | `baseline_dirty_files` | list | Dirty files captured as the session baseline |
 | `session_edited_files` | list | Files edited by this session |
-| `full_session_summary` | string | Previous session summary (for handoff) |
+| `full_session_summary` | string | Previous session summary (for handoff), full untruncated text |
+| `handoff_summary_injectable` | string | Budget-bounded copy of the handoff summary for inline `additionalContext` injection; carries a `get_handoff_context` breadcrumb when truncated. Rules inject this rather than `full_session_summary` to avoid Claude Code's ~10K char hard truncation. |
 | `compact_session_summary` | string | Compact session summary |
 
 ---

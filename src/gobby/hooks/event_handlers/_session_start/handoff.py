@@ -6,6 +6,7 @@ import threading
 import time
 from typing import Any
 
+from gobby.llm.sdk_utils import HANDOFF_SUMMARY_INJECT_BUDGET, head_with_breadcrumb
 from gobby.sessions.handoff_identity import terminal_context_matches_session
 from gobby.tasks.state_semantics import (
     ACTIVE_STAGE_STATES,
@@ -116,6 +117,9 @@ def populate_handoff_session_variables(
     if parent and parent.summary_markdown:
         handoff_vars["session_summary"] = parent.summary_markdown
         handoff_vars["full_session_summary"] = parent.summary_markdown
+        handoff_vars["handoff_summary_injectable"] = _bound_handoff_summary(
+            parent.summary_markdown, parent
+        )
     if handoff_vars:
         sv_mgr.merge_variables(session_id, handoff_vars)
 
@@ -124,6 +128,31 @@ def populate_handoff_session_variables(
         _preserve_compact_resume_required_skills(sv_mgr, session_id, parent_vars)
     if session_source in ("compact", "clear"):
         _preserve_task_claim_state(handler, sv_mgr, session_id, parent_session_id, parent_vars)
+
+
+def _bound_handoff_summary(summary: str, parent: Any) -> str:
+    """Bound a parent summary for inline injection, with a retrieval breadcrumb.
+
+    The full summary stays available via the get_handoff_context MCP tool; this
+    only caps the copy injected into additionalContext, which Claude Code
+    hard-limits at ~10K chars. Returns the summary unchanged when it already
+    fits within the budget.
+    """
+    if len(summary) <= HANDOFF_SUMMARY_INJECT_BUDGET:
+        return summary
+
+    seq_num = getattr(parent, "seq_num", None)
+    ref = f"#{seq_num}" if seq_num else (getattr(parent, "id", "") or "")
+    ref_clause = f' with session ref "{ref}"' if ref else ""
+    breadcrumb = (
+        "> ⚠️ This is a truncated head of the previous session's summary "
+        f"({len(summary)} chars total), shortened to fit Claude Code's "
+        "additionalContext limit. Call get_handoff_context (gobby-sessions)"
+        f"{ref_clause} or with no arguments to load the full summary."
+    )
+    return head_with_breadcrumb(
+        summary, budget=HANDOFF_SUMMARY_INJECT_BUDGET, breadcrumb=breadcrumb
+    )
 
 
 def _preserve_compact_resume_required_skills(

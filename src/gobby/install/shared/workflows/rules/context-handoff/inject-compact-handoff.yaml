@@ -13,7 +13,7 @@ rules:
           ## Continuation Context
           *Injected by Gobby session handoff*
 
-          {{ session_summary }}
+          {{ handoff_summary_injectable or session_summary or '' }}
           {% set resume_skills = variables.get('compact_resume_required_skills') or [] %}
           {% if resume_skills %}
 

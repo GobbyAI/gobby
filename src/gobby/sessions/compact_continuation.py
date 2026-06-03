@@ -19,7 +19,10 @@ logger = logging.getLogger(__name__)
 
 COMPACT_SELF_CONTINUE_VARIABLE = "compact_self_continue_pending"
 COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE = "compact_resume_required_skills"
-COMPACT_SELF_CONTINUE_PROMPT = "Continue where you last left off."
+COMPACT_SELF_CONTINUE_PROMPT = (
+    "Continue where you last left off. If you need the full prior-session "
+    "summary, call get_handoff_context (gobby-sessions)."
+)
 COMPACT_SELF_CONTINUE_FRESH_SECONDS = 600
 COMPACT_SELF_CONTINUE_SEND_DELAY_SECONDS = 1.0
 COMPACT_SELF_CONTINUE_FALLBACK_DELAY_SECONDS = 3.0

@@ -37,6 +37,33 @@ def format_exception_group(eg: ExceptionGroup) -> str:
 # We cap slightly below to avoid the ugly "... [output truncated]" suffix.
 ADDITIONAL_CONTEXT_LIMIT = 9_950
 
+# Budget for a single large handoff/summary contributor injected inline via
+# additionalContext. Kept well below ADDITIONAL_CONTEXT_LIMIT so the other
+# contributors (task context, user profile, metadata, system message) and the
+# breadcrumb still fit under the SDK's 10K aggregate ceiling. The full,
+# untruncated summary stays available on demand via the get_handoff_context
+# MCP tool, so this only bounds the inline copy — it never drops content.
+HANDOFF_SUMMARY_INJECT_BUDGET = 6_500
+
+
+def head_with_breadcrumb(text: str, *, budget: int, breadcrumb: str) -> str:
+    """Return ``text`` bounded to ``budget``, appending ``breadcrumb`` when cut.
+
+    Truncates at a clean boundary — the last blank-line break, else the last
+    newline, before ``budget`` — so the injected head never ends mid-sentence.
+    When ``text`` already fits within ``budget`` it is returned verbatim with no
+    breadcrumb. The breadcrumb should tell the reader how to retrieve the full
+    text (e.g. via the get_handoff_context MCP tool).
+    """
+    if len(text) <= budget:
+        return text
+    cut = text.rfind("\n\n", 0, budget)
+    if cut < budget // 2:
+        newline = text.rfind("\n", 0, budget)
+        cut = newline if newline > budget // 2 else budget
+    head = text[:cut].rstrip()
+    return f"{head}\n\n{breadcrumb}"
+
 
 def truncate_additional_context(
     text: str,
