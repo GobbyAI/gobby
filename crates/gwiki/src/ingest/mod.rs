@@ -12,6 +12,7 @@ pub mod url;
 pub mod video;
 pub mod wayback;
 
+use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -130,11 +131,32 @@ pub(crate) fn markdown_metadata(fields: &[(&str, String)]) -> String {
     for (key, value) in fields {
         metadata.push_str(key);
         metadata.push_str(": ");
-        metadata.push_str(&single_line(value));
+        metadata.push_str(&yaml_safe_single_line_scalar(value));
         metadata.push('\n');
     }
     metadata.push_str("---\n\n");
     metadata
+}
+
+fn yaml_safe_single_line_scalar(value: &str) -> String {
+    let value = single_line(value);
+    if yaml_plain_scalar_is_safe(&value) {
+        value
+    } else {
+        serde_json::to_string(&value).unwrap_or_else(|_| "\"\"".to_string())
+    }
+}
+
+fn yaml_plain_scalar_is_safe(value: &str) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+    !value.contains(": ")
+        && !value.contains(" #")
+        && !value.contains(['"', '\''])
+        && !value.starts_with([
+            '-', '?', '{', '}', '[', ']', ',', '&', '*', '!', '|', '>', '%', '@', '`',
+        ])
 }
 
 pub(crate) fn single_line(value: &str) -> String {
@@ -162,38 +184,34 @@ fn write_immutable(vault_root: &Path, relative: &Path, bytes: &[u8]) -> Result<(
             source: error,
         })?;
     }
-    match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-    {
-        Ok(mut file) => file.write_all(bytes).map_err(|error| WikiError::Io {
-            action: "write raw source",
-            path: Some(path),
+
+    if path.exists() {
+        return validate_existing_raw_bytes(&path, relative, bytes);
+    }
+    let mut temp_file = create_raw_temp_file(&path)?;
+    if let Err(error) = temp_file.write_all(bytes) {
+        return Err(WikiError::Io {
+            action: "write raw source temp file",
+            path: Some(temp_file.path().to_path_buf()),
             source: error,
-        }),
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            let existing_hash =
-                gobby_core::indexing::file_content_hash(&path).map_err(|error| WikiError::Io {
-                    action: "hash existing raw source",
-                    path: Some(path.clone()),
-                    source: error,
-                })?;
-            if existing_hash == gobby_core::indexing::content_hash(bytes) {
-                return Ok(());
-            }
-            Err(WikiError::InvalidInput {
-                field: "raw_path",
-                message: format!(
-                    "immutable raw source already exists at {}",
-                    relative.display()
-                ),
-            })
+        });
+    }
+    if let Err(error) = temp_file.as_file().sync_all() {
+        return Err(WikiError::Io {
+            action: "sync raw source temp file",
+            path: Some(temp_file.path().to_path_buf()),
+            source: error,
+        });
+    }
+    match temp_file.persist_noclobber(&path) {
+        Ok(_) => sync_parent_dir(&path),
+        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+            validate_existing_raw_bytes(&path, relative, bytes)
         }
         Err(error) => Err(WikiError::Io {
-            action: "create raw source",
+            action: "write raw source",
             path: Some(path),
-            source: error,
+            source: error.error,
         }),
     }
 }
@@ -202,7 +220,7 @@ fn write_immutable_file(
     vault_root: &Path,
     relative: &Path,
     source_path: &Path,
-    content_hash: &str,
+    _content_hash: &str,
 ) -> Result<(), WikiError> {
     let path = vault_root.join(relative);
     if let Some(parent) = path.parent() {
@@ -212,47 +230,140 @@ fn write_immutable_file(
             source: error,
         })?;
     }
-    match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-    {
-        Ok(mut file) => {
-            let mut source = std::fs::File::open(source_path).map_err(|error| WikiError::Io {
-                action: "open raw source",
-                path: Some(source_path.to_path_buf()),
-                source: error,
-            })?;
-            std::io::copy(&mut source, &mut file).map_err(|error| WikiError::Io {
-                action: "write raw source",
-                path: Some(path),
-                source: error,
-            })?;
-            Ok(())
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            let existing_hash =
-                gobby_core::indexing::file_content_hash(&path).map_err(|error| WikiError::Io {
-                    action: "hash existing raw source",
-                    path: Some(path.clone()),
-                    source: error,
-                })?;
-            if existing_hash == content_hash {
-                return Ok(());
-            }
-            Err(WikiError::InvalidInput {
-                field: "raw_path",
-                message: format!(
-                    "immutable raw source already exists at {}",
-                    relative.display()
-                ),
-            })
+
+    if path.exists() {
+        return validate_existing_raw_file(&path, relative, source_path);
+    }
+    let mut temp_file = create_raw_temp_file(&path)?;
+    let mut source = std::fs::File::open(source_path).map_err(|error| WikiError::Io {
+        action: "open raw source",
+        path: Some(source_path.to_path_buf()),
+        source: error,
+    })?;
+    if let Err(error) = std::io::copy(&mut source, &mut temp_file) {
+        return Err(WikiError::Io {
+            action: "write raw source temp file",
+            path: Some(temp_file.path().to_path_buf()),
+            source: error,
+        });
+    }
+    if let Err(error) = temp_file.as_file().sync_all() {
+        return Err(WikiError::Io {
+            action: "sync raw source temp file",
+            path: Some(temp_file.path().to_path_buf()),
+            source: error,
+        });
+    }
+    match temp_file.persist_noclobber(&path) {
+        Ok(_) => sync_parent_dir(&path),
+        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+            validate_existing_raw_file(&path, relative, source_path)
         }
         Err(error) => Err(WikiError::Io {
-            action: "create raw source",
+            action: "write raw source",
             path: Some(path),
-            source: error,
+            source: error.error,
         }),
+    }
+}
+
+fn validate_existing_raw_bytes(
+    path: &Path,
+    relative: &Path,
+    bytes: &[u8],
+) -> Result<(), WikiError> {
+    let existing_hash =
+        gobby_core::indexing::file_content_hash(path).map_err(|error| WikiError::Io {
+            action: "hash existing raw source",
+            path: Some(path.to_path_buf()),
+            source: error,
+        })?;
+    if existing_hash == gobby_core::indexing::content_hash(bytes) {
+        return Ok(());
+    }
+    Err(immutable_exists_error(relative))
+}
+
+fn validate_existing_raw_file(
+    path: &Path,
+    relative: &Path,
+    source_path: &Path,
+) -> Result<(), WikiError> {
+    let existing_hash =
+        gobby_core::indexing::file_content_hash(path).map_err(|error| WikiError::Io {
+            action: "hash existing raw source",
+            path: Some(path.to_path_buf()),
+            source: error,
+        })?;
+    let source_hash =
+        gobby_core::indexing::file_content_hash(source_path).map_err(|error| WikiError::Io {
+            action: "hash raw source",
+            path: Some(source_path.to_path_buf()),
+            source: error,
+        })?;
+    if existing_hash == source_hash {
+        return Ok(());
+    }
+    Err(immutable_exists_error(relative))
+}
+
+fn immutable_exists_error(relative: &Path) -> WikiError {
+    WikiError::InvalidInput {
+        field: "raw_path",
+        message: format!(
+            "immutable raw source already exists at {}",
+            relative.display()
+        ),
+    }
+}
+
+fn create_raw_temp_file(path: &Path) -> Result<tempfile::NamedTempFile, WikiError> {
+    let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    else {
+        return Err(WikiError::Io {
+            action: "create raw source temp file",
+            path: Some(path.to_path_buf()),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "raw source target has no parent directory",
+            ),
+        });
+    };
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("source");
+    tempfile::Builder::new()
+        .prefix(&format!(".{file_name}."))
+        .suffix(".tmp")
+        .tempfile_in(parent)
+        .map_err(|source| WikiError::Io {
+            action: "create raw source temp file",
+            path: Some(parent.to_path_buf()),
+            source,
+        })
+}
+
+fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(())
+    }
+    #[cfg(unix)]
+    {
+        let Some(parent) = path.parent() else {
+            return Ok(());
+        };
+        File::open(parent)
+            .and_then(|dir| dir.sync_all())
+            .map_err(|error| WikiError::Io {
+                action: "sync raw source directory",
+                path: Some(parent.to_path_buf()),
+                source: error,
+            })
     }
 }
 
@@ -291,7 +402,7 @@ fn sanitize_extension(extension: &str) -> String {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::asset_path;
+    use super::{asset_path, markdown_metadata, write_asset_from_path};
     use gobby_core::ai_context::AiContext;
     use gobby_core::config::EnvOnlySource;
     use gobby_core::indexing::content_hash;
@@ -356,6 +467,59 @@ mod tests {
             asset_path(&record, "../nested/no-extension"),
             PathBuf::from("raw/assets/source-1.bin")
         );
+    }
+
+    #[test]
+    fn markdown_metadata_quotes_yaml_sensitive_scalars() {
+        let metadata = markdown_metadata(&[
+            ("source_kind", "pdf".to_string()),
+            ("source_location", "https://example.com/a: b #c".to_string()),
+            ("draft", "true".to_string()),
+        ]);
+
+        assert!(metadata.contains("source_kind: pdf\n"));
+        assert!(metadata.contains("source_location: \"https://example.com/a: b #c\"\n"));
+        assert!(metadata.contains("draft: true\n"));
+    }
+
+    #[test]
+    fn immutable_file_existing_match_hashes_actual_source_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let record = test_source_record();
+        let first_source = temp.path().join("first.txt");
+        let second_source = temp.path().join("second.txt");
+        let different_source = temp.path().join("different.txt");
+        std::fs::write(&first_source, "same bytes").expect("write first");
+        std::fs::write(&second_source, "same bytes").expect("write second");
+        std::fs::write(&different_source, "different bytes").expect("write different");
+
+        let asset_path = write_asset_from_path(
+            temp.path(),
+            &record,
+            "source.txt",
+            &first_source,
+            "intentionally-stale-hash",
+        )
+        .expect("first asset write");
+        write_asset_from_path(
+            temp.path(),
+            &record,
+            "source.txt",
+            &second_source,
+            "another-stale-hash",
+        )
+        .expect("matching existing asset is idempotent");
+        let error = write_asset_from_path(
+            temp.path(),
+            &record,
+            "source.txt",
+            &different_source,
+            "stale-hash",
+        )
+        .expect_err("different source rejected");
+
+        assert_eq!(asset_path, PathBuf::from("raw/assets/source-1.txt"));
+        assert_eq!(error.code(), "invalid_input");
     }
 
     #[test]

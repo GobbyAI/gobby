@@ -5,13 +5,13 @@ use std::net::TcpListener;
 use std::thread;
 use std::time::Duration;
 
-pub(crate) type RequestHandle = thread::JoinHandle<io::Result<String>>;
+pub type RequestHandle = thread::JoinHandle<io::Result<String>>;
 
-pub(crate) fn spawn_json_response(body: impl Into<String>) -> io::Result<(String, RequestHandle)> {
+pub fn spawn_json_response(body: impl Into<String>) -> io::Result<(String, RequestHandle)> {
     spawn_response(200, "OK", "application/json", body.into())
 }
 
-pub(crate) fn spawn_json_response_with_status(
+pub fn spawn_json_response_with_status(
     status: u16,
     body: impl Into<String>,
 ) -> io::Result<(String, RequestHandle)> {

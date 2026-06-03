@@ -745,6 +745,8 @@ fn cleanup_sampled_temp_frame_sources(samples: &[VideoFrameSample], frame_image_
             .is_some_and(|sample| sample.source_asset.as_path() == path.as_path())
             && path.starts_with(std::env::temp_dir());
         if should_cleanup {
+            // Best-effort cleanup after the primary persistence failure has
+            // already been selected for reporting.
             let _ = std::fs::remove_file(path);
         }
     }

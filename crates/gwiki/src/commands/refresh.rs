@@ -356,11 +356,6 @@ fn refresh_changed_url_source(
     previous_paths.extend(source_asset_paths_for_id(vault_root, &previous.id)?);
 
     let result = ingest::url::ingest_snapshot_without_index(vault_root, snapshot)?;
-    SourceManifest::update(vault_root, |manifest| {
-        let before = manifest.entries.len();
-        manifest.entries.retain(|entry| entry.id != previous.id);
-        Ok(manifest.entries.len() != before)
-    })?;
 
     let mut removed_paths = Vec::new();
     for path in previous_paths {
@@ -376,6 +371,12 @@ fn refresh_changed_url_source(
             removed_paths.push(path);
         }
     }
+
+    SourceManifest::update(vault_root, |manifest| {
+        let before = manifest.entries.len();
+        manifest.entries.retain(|entry| entry.id != previous.id);
+        Ok(manifest.entries.len() != before)
+    })?;
 
     Ok(ChangedRefresh {
         result,
@@ -402,13 +403,6 @@ fn refresh_changed_local_source(
         vault_root, scope, ai_context, options, path, fetched_at,
     )?;
     let result = local_result.result;
-    if previous.id != result.record.id {
-        SourceManifest::update(vault_root, |manifest| {
-            let before = manifest.entries.len();
-            manifest.entries.retain(|entry| entry.id != previous.id);
-            Ok(manifest.entries.len() != before)
-        })?;
-    }
 
     let mut removed_paths = Vec::new();
     for path in previous_paths {
@@ -423,6 +417,14 @@ fn refresh_changed_local_source(
         if remove_relative_file(vault_root, &path)? {
             removed_paths.push(path);
         }
+    }
+
+    if previous.id != result.record.id {
+        SourceManifest::update(vault_root, |manifest| {
+            let before = manifest.entries.len();
+            manifest.entries.retain(|entry| entry.id != previous.id);
+            Ok(manifest.entries.len() != before)
+        })?;
     }
 
     Ok(ChangedRefresh {

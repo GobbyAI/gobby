@@ -19,6 +19,7 @@ qdrant = ["dep:reqwest", "dep:urlencoding"]
 indexing = ["dep:ignore", "dep:sha2"]
 search = []
 ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:httpdate", "dep:rand", "reqwest/multipart"]
+test-helpers = []
 full = ["postgres", "falkor", "qdrant", "indexing", "search", "ai"]
 
 [dependencies]

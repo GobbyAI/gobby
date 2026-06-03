@@ -523,8 +523,8 @@ mod tests {
     #[cfg(feature = "ai")]
     fn spawn_transcription_server(
         response: &'static str,
-    ) -> (String, std::thread::JoinHandle<String>) {
-        crate::test_http::spawn_json_response(response)
+    ) -> (String, gobby_core::test_http::RequestHandle) {
+        gobby_core::test_http::spawn_json_response(response).expect("spawn test server")
     }
 
     #[cfg(feature = "ai")]
@@ -595,7 +595,7 @@ mod tests {
         )
         .expect("ingest audio with production transcript");
 
-        let request = request.join().expect("request");
+        let request = request.join().expect("request").expect("request ok");
         assert!(request.starts_with("POST /v1/audio/transcriptions HTTP/1.1"));
         assert!(result.transcription_degradation.is_none());
 
@@ -628,7 +628,7 @@ mod tests {
         )
         .expect("ingest translated audio");
 
-        let request = request.join().expect("request");
+        let request = request.join().expect("request").expect("request ok");
         assert!(request.starts_with("POST /v1/audio/translations HTTP/1.1"));
         assert!(result.transcription_degradation.is_none());
 

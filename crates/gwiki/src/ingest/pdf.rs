@@ -349,7 +349,7 @@ fn sanitize_pdf_page_markdown(markdown: &str) -> String {
         .lines()
         .map(|line| {
             let trimmed = line.trim();
-            let line = if trimmed.len() >= 3 && trimmed.bytes().all(|byte| byte == b'-') {
+            let line = if is_markdown_horizontal_rule(trimmed) {
                 format!("\\{line}")
             } else {
                 line.to_string()
@@ -358,6 +358,26 @@ fn sanitize_pdf_page_markdown(markdown: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn is_markdown_horizontal_rule(trimmed: &str) -> bool {
+    let mut marker = None;
+    let mut count = 0usize;
+    for ch in trimmed.chars() {
+        if ch.is_whitespace() {
+            continue;
+        }
+        if !matches!(ch, '-' | '_' | '*') {
+            return false;
+        }
+        match marker {
+            None => marker = Some(ch),
+            Some(expected) if expected == ch => {}
+            Some(_) => return false,
+        }
+        count += 1;
+    }
+    count >= 3
 }
 
 fn merge_pdf_pages(
@@ -798,6 +818,13 @@ mod tests {
         assert_eq!(raw.matches("First page fact.").count(), 1);
         assert!(raw.contains("Visual description for guide-page-1.png."));
         assert!(raw.contains("Visual description for guide-page-2.png."));
+    }
+
+    #[test]
+    fn pdf_markdown_escapes_horizontal_rules() {
+        let sanitized = sanitize_pdf_page_markdown("---\n- - -\n___\n* * *\nnot ---");
+
+        assert_eq!(sanitized, "\\---\n\\- - -\n\\___\n\\* * *\nnot ---");
     }
 
     #[test]

@@ -311,19 +311,21 @@ fn accept_item(
     };
 
     if let Err(error) = fs::remove_file(&path) {
-        let _ = fs::remove_file(vault_root.join(&raw_path));
+        let mut cleanup_errors = Vec::new();
+        cleanup_collect_file(vault_root, &raw_path, &mut cleanup_errors);
         if let Some(asset_path) = &asset_path {
-            let _ = fs::remove_file(vault_root.join(asset_path));
+            cleanup_collect_file(vault_root, asset_path, &mut cleanup_errors);
         }
         let original_error = io_error("remove accepted inbox item", &path, error);
         if let Err(rollback_error) = previous_manifest.write(vault_root) {
             return Err(WikiError::Config {
                 detail: format!(
-                    "failed to roll back source manifest after inbox removal failed: {rollback_error}; original error: {original_error}"
+                    "failed to roll back source manifest after inbox removal failed: {rollback_error}; original error: {original_error}{}",
+                    collect_cleanup_detail(&cleanup_errors)
                 ),
             });
         }
-        return Err(original_error);
+        return collect_error_with_cleanup(original_error, cleanup_errors);
     }
     report.accepted.push(CollectAction {
         inbox_path: relative,
@@ -342,20 +344,54 @@ fn rollback_registered_collect_source<T>(
     asset_path: Option<&PathBuf>,
     original_error: WikiError,
 ) -> Result<T, WikiError> {
+    let mut cleanup_errors = Vec::new();
     if let Some(raw_path) = raw_path {
-        let _ = fs::remove_file(vault_root.join(raw_path));
+        cleanup_collect_file(vault_root, raw_path, &mut cleanup_errors);
     }
     if let Some(asset_path) = asset_path {
-        let _ = fs::remove_file(vault_root.join(asset_path));
+        cleanup_collect_file(vault_root, asset_path, &mut cleanup_errors);
     }
     if let Err(rollback_error) = previous_manifest.write(vault_root) {
         return Err(WikiError::Config {
             detail: format!(
-                "failed to roll back source manifest after collect write failure: {rollback_error}; original error: {original_error}"
+                "failed to roll back source manifest after collect write failure: {rollback_error}; original error: {original_error}{}",
+                collect_cleanup_detail(&cleanup_errors)
             ),
         });
     }
-    Err(original_error)
+    collect_error_with_cleanup(original_error, cleanup_errors)
+}
+
+fn cleanup_collect_file(vault_root: &Path, relative_path: &Path, cleanup_errors: &mut Vec<String>) {
+    let path = vault_root.join(relative_path);
+    match fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => cleanup_errors.push(format!("{}: {error}", path.display())),
+    }
+}
+
+fn collect_error_with_cleanup<T>(
+    original_error: WikiError,
+    cleanup_errors: Vec<String>,
+) -> Result<T, WikiError> {
+    if cleanup_errors.is_empty() {
+        return Err(original_error);
+    }
+    Err(WikiError::Config {
+        detail: format!(
+            "{original_error}; cleanup failures: {}",
+            cleanup_errors.join("; ")
+        ),
+    })
+}
+
+fn collect_cleanup_detail(cleanup_errors: &[String]) -> String {
+    if cleanup_errors.is_empty() {
+        String::new()
+    } else {
+        format!("; cleanup failures: {}", cleanup_errors.join("; "))
+    }
 }
 
 fn skip_item(

@@ -1,11 +1,12 @@
-use std::fs::{self, File};
-use std::io::{Cursor, ErrorKind, Read, Write};
+use std::fs::File;
+use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
 use quick_xml::Reader as XmlReader;
 use quick_xml::events::Event;
 use scraper::{ElementRef, Html, Node, Selector};
+use tempfile::{Builder, NamedTempFile};
 use zip::ZipArchive;
 
 use crate::document::{
@@ -410,69 +411,58 @@ fn write_document_derived_markdown(
 }
 
 fn write_document_markdown_atomic(path: &Path, contents: &[u8]) -> Result<(), WikiError> {
-    let temp_path = temp_sibling_path(path);
-    let mut file = File::create(&temp_path).map_err(|error| WikiError::Io {
-        action: "create document derived markdown temp file",
-        path: Some(temp_path.clone()),
-        source: error,
-    })?;
-    if let Err(error) = file.write_all(contents) {
-        let _ = fs::remove_file(&temp_path);
+    let mut temp_file = create_document_temp_file(path)?;
+    if let Err(error) = temp_file.write_all(contents) {
         return Err(WikiError::Io {
-            action: "write document derived markdown",
-            path: Some(temp_path),
+            action: "write document derived markdown temp file",
+            path: Some(temp_file.path().to_path_buf()),
             source: error,
         });
     }
-    if let Err(error) = file.sync_all() {
-        let _ = fs::remove_file(&temp_path);
+    if let Err(error) = temp_file.as_file().sync_all() {
         return Err(WikiError::Io {
             action: "sync document derived markdown temp file",
-            path: Some(temp_path),
+            path: Some(temp_file.path().to_path_buf()),
             source: error,
         });
     }
-    drop(file);
-    if let Err(error) = fs::rename(&temp_path, path) {
-        if error.kind() == ErrorKind::AlreadyExists {
-            if let Err(remove_error) = fs::remove_file(path) {
-                let _ = fs::remove_file(&temp_path);
-                return Err(WikiError::Io {
-                    action: "replace existing document derived markdown",
-                    path: Some(path.to_path_buf()),
-                    source: remove_error,
-                });
-            }
-            if let Err(rename_error) = fs::rename(&temp_path, path) {
-                let _ = fs::remove_file(&temp_path);
-                return Err(WikiError::Io {
-                    action: "write document derived markdown",
-                    path: Some(path.to_path_buf()),
-                    source: rename_error,
-                });
-            }
-            return sync_parent_dir(path);
-        }
-        let _ = fs::remove_file(&temp_path);
+    if let Err(error) = temp_file.persist(path) {
         return Err(WikiError::Io {
             action: "write document derived markdown",
             path: Some(path.to_path_buf()),
-            source: error,
+            source: error.error,
         });
     }
     sync_parent_dir(path)
 }
 
-fn temp_sibling_path(path: &Path) -> PathBuf {
+fn create_document_temp_file(path: &Path) -> Result<NamedTempFile, WikiError> {
+    let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    else {
+        return Err(WikiError::Io {
+            action: "create document derived markdown temp file",
+            path: Some(path.to_path_buf()),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "document derived markdown target has no parent directory",
+            ),
+        });
+    };
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("document.md");
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    path.with_file_name(format!(".{file_name}.{}.{nanos}.tmp", std::process::id()))
+    Builder::new()
+        .prefix(&format!(".{file_name}."))
+        .suffix(".tmp")
+        .tempfile_in(parent)
+        .map_err(|source| WikiError::Io {
+            action: "create document derived markdown temp file",
+            path: Some(parent.to_path_buf()),
+            source,
+        })
 }
 
 fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {

@@ -57,3 +57,6 @@ pdfium-render = { version = "0.8.37", default-features = false, features = ["pdf
 png = { version = "0.17", optional = true }
 quick-xml = { version = "0.38", optional = true }
 zip = { version = "4", default-features = false, features = ["deflate"], optional = true }
+
+[dev-dependencies]
+gobby-core = { path = "../gcore", version = "0.3.0", features = ["postgres", "falkor", "qdrant", "indexing", "search", "ai", "test-helpers"] }

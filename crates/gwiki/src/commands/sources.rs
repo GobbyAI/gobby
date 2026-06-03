@@ -56,7 +56,7 @@ pub(crate) fn execute_remove(
         scope.root(),
         &raw_path,
         source.raw_exists,
-        dry_run,
+        true,
         &mut path_changes,
     )?;
 
@@ -64,7 +64,7 @@ pub(crate) fn execute_remove(
         stage_source_asset(
             scope.root(),
             &asset_path,
-            dry_run,
+            true,
             keep_asset,
             &mut path_changes,
             &mut degradations,
@@ -75,9 +75,20 @@ pub(crate) fn execute_remove(
         IndexStatus::not_run()
     } else {
         match SourceManifest::remove(scope.root(), &record.id) {
-            Ok(Some(_)) => {}
-            Ok(None) => degradations.push("manifest_entry_missing_after_plan".to_string()),
-            Err(error) => degradations.push(format!("manifest_remove_failed:{error}")),
+            Ok(Some(removed)) => {
+                if let Err(error) = remove_staged_source_files(scope.root(), &mut path_changes) {
+                    rollback_removed_source(scope.root(), removed, &error)?;
+                    return Err(error);
+                }
+            }
+            Ok(None) => {
+                degradations.push("manifest_entry_missing_after_plan".to_string());
+                path_changes.removed_paths.clear();
+            }
+            Err(error) => {
+                degradations.push(format!("manifest_remove_failed:{error}"));
+                path_changes.removed_paths.clear();
+            }
         }
         match index::index_resolved_scope(&scope) {
             Ok(counts) => IndexStatus::indexed(counts),
@@ -324,6 +335,52 @@ fn stage_source_asset(
     path_changes.missing_paths.push(display_path(asset_path));
     degradations.push(format!("source_asset_missing:{}", display_path(asset_path)));
     Ok(())
+}
+
+fn remove_staged_source_files(
+    vault_root: &Path,
+    path_changes: &mut PathChanges,
+) -> Result<(), WikiError> {
+    let planned = std::mem::take(&mut path_changes.removed_paths);
+    let mut removed = Vec::with_capacity(planned.len());
+    for relative in planned {
+        let full_path = vault_root.join(&relative);
+        match fs::remove_file(&full_path) {
+            Ok(()) => removed.push(relative),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                path_changes.missing_paths.push(relative);
+            }
+            Err(source) => {
+                path_changes.removed_paths = removed;
+                return Err(WikiError::Io {
+                    action: "remove source file",
+                    path: Some(full_path),
+                    source,
+                });
+            }
+        }
+    }
+    path_changes.removed_paths = removed;
+    Ok(())
+}
+
+fn rollback_removed_source(
+    vault_root: &Path,
+    record: SourceRecord,
+    original_error: &WikiError,
+) -> Result<(), WikiError> {
+    SourceManifest::update(vault_root, |manifest| {
+        if manifest.entries.iter().any(|entry| entry.id == record.id) {
+            return Ok(false);
+        }
+        manifest.entries.push(record);
+        Ok(true)
+    })
+    .map_err(|rollback_error| WikiError::Config {
+        detail: format!(
+            "failed to roll back source manifest after source file removal failed: {rollback_error}; original error: {original_error}"
+        ),
+    })
 }
 
 fn raw_source_path(id: &str) -> Result<PathBuf, WikiError> {
