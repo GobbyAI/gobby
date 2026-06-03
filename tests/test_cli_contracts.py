@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -364,6 +366,7 @@ async def test_wiki_research_mcp_routes_d5_options_to_gateway() -> None:
 def test_gwiki_contract_documents_daemon_parsed_keys() -> None:
     contract = _contract("gwiki")
 
+    assert contract["contract_version"] == 1
     assert {"changed_paths", "citations", "raw_path", "source_path", "path"} <= _json_keys(
         contract, "ingest-file"
     )
@@ -406,16 +409,63 @@ def test_gcode_contract_covers_daemon_consumed_surface() -> None:
     assert "--allow-missing-indexed-file" in _allowed_flags(contract, "graph sync-file")
 
 
-def test_vendored_cli_contracts_match_local_gobby_cli() -> None:
-    repo = _gobby_cli_repo()
-    if not repo.exists():
-        pytest.skip(f"gobby-cli checkout not found at {repo}")
+def _installed_cli_binary(tool: str) -> Path | None:
+    """Locate an installed/managed CLI binary for contract verification."""
+    on_path = shutil.which(tool)
+    candidates = [Path(on_path)] if on_path else []
+    candidates.append(Path.home() / ".gobby" / "bin" / tool)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
 
-    contract_pairs = {
-        "gcode": repo / "crates/gcode/contract/gcode.contract.json",
-        "gwiki": repo / "crates/gwiki/contract/gwiki.contract.json",
-    }
-    for tool, source_path in contract_pairs.items():
-        if not source_path.exists():
-            pytest.skip(f"{tool} contract source not found at {source_path}")
-        assert _contract(tool) == json.loads(source_path.read_text())
+
+def _binary_contract(tool: str, binary: Path) -> dict[str, Any]:
+    """Return the live contract emitted by an installed CLI binary."""
+    result = subprocess.run(
+        [str(binary), "contract", "--format", "json"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, (
+        f"`{binary} contract --format json` failed (exit {result.returncode}): {result.stderr}"
+    )
+    value = json.loads(result.stdout)
+    assert isinstance(value, dict)
+    return value
+
+
+@pytest.mark.parametrize("tool", ["gcode", "gwiki"])
+def test_vendored_cli_contract_matches_real_cli(tool: str) -> None:
+    """The vendored contract must match the real gobby-cli contract.
+
+    Source-of-truth precedence:
+
+    1. The gobby-cli crate's pinned contract JSON when a sibling checkout
+       (or ``GOBBY_CLI_REPO``) is available. gobby-cli's own tests pin that
+       file to the shipped binary, so it is the authoritative contract.
+    2. Otherwise the installed CLI binary's live ``contract --format json``,
+       so the check still runs in CI without a sibling checkout.
+
+    Unlike the previous static compare, this never silently skips: when
+    neither source is available the test fails, and any divergence between the
+    vendored JSON and the real contract fails the test.
+    """
+    vendored = _contract(tool)
+
+    source_path = _gobby_cli_repo() / f"crates/{tool}/contract/{tool}.contract.json"
+    if source_path.exists():
+        assert vendored == json.loads(source_path.read_text()), (
+            f"vendored {tool} contract drifted from gobby-cli source {source_path}"
+        )
+        return
+
+    binary = _installed_cli_binary(tool)
+    assert binary is not None, (
+        f"cannot verify {tool} contract drift: no gobby-cli source at {source_path} "
+        f"and no installed `{tool}` binary on PATH or in ~/.gobby/bin"
+    )
+    assert vendored == _binary_contract(tool, binary), (
+        f"vendored {tool} contract drifted from the installed `{tool}` binary"
+    )
