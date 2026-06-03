@@ -163,6 +163,25 @@ def test_normalize_claude_usage_preserves_openai_total_and_cache_fields():
     }
 
 
+def test_normalize_claude_usage_counts_cache_tokens_in_computed_total():
+    assert _normalize_claude_usage(
+        {
+            "input_tokens": 100,
+            "cache_read_input_tokens": 40,
+            "cache_creation_input_tokens": 10,
+            "output_tokens": 25,
+        }
+    ) == {
+        "prompt_tokens": 100,
+        "completion_tokens": 25,
+        "total_tokens": 175,
+        "input_tokens": 100,
+        "output_tokens": 25,
+        "cache_creation_input_tokens": 10,
+        "cache_read_input_tokens": 40,
+    }
+
+
 def test_normalize_claude_usage_returns_none_without_counts():
     assert _normalize_claude_usage(None) is None
     assert _normalize_claude_usage({}) is None

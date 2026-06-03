@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -436,36 +437,73 @@ def _binary_contract(tool: str, binary: Path) -> dict[str, Any]:
     return value
 
 
+def _real_cli_contract_sources(tool: str) -> list[tuple[str, dict[str, Any]]]:
+    """Return every available source of truth for a real CLI contract."""
+    sources: list[tuple[str, dict[str, Any]]] = []
+
+    source_path = _gobby_cli_repo() / f"crates/{tool}/contract/{tool}.contract.json"
+    if source_path.exists():
+        sources.append((f"gobby-cli source {source_path}", json.loads(source_path.read_text())))
+
+    binary = _installed_cli_binary(tool)
+    if binary is not None:
+        sources.append((f"installed `{tool}` binary {binary}", _binary_contract(tool, binary)))
+
+    return sources
+
+
+def test_real_cli_contract_sources_include_binary_when_source_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A sibling gobby-cli checkout must not skip installed binary verification."""
+    tool = "gwiki"
+    source_contract = {"tool": tool, "origin": "source"}
+    binary_contract = {"tool": tool, "origin": "binary"}
+    repo = tmp_path / "gobby-cli"
+    source_path = repo / f"crates/{tool}/contract/{tool}.contract.json"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_text(json.dumps(source_contract))
+
+    binary_dir = tmp_path / "bin"
+    binary_dir.mkdir()
+    binary = binary_dir / tool
+    binary.write_text("#!/bin/sh\nexit 0\n")
+    binary.chmod(0o755)
+
+    calls: list[tuple[str, Path]] = []
+
+    def fake_binary_contract(observed_tool: str, observed_binary: Path) -> dict[str, Any]:
+        calls.append((observed_tool, observed_binary))
+        return binary_contract
+
+    monkeypatch.setenv("GOBBY_CLI_REPO", str(repo))
+    monkeypatch.setenv("PATH", str(binary_dir))
+    monkeypatch.setattr(sys.modules[__name__], "_binary_contract", fake_binary_contract)
+
+    sources = _real_cli_contract_sources(tool)
+
+    assert sources == [
+        (f"gobby-cli source {source_path}", source_contract),
+        (f"installed `{tool}` binary {binary}", binary_contract),
+    ]
+    assert calls == [(tool, binary)]
+
+
 @pytest.mark.parametrize("tool", ["gcode", "gwiki"])
 def test_vendored_cli_contract_matches_real_cli(tool: str) -> None:
     """The vendored contract must match the real gobby-cli contract.
 
-    Source-of-truth precedence:
-
-    1. The gobby-cli crate's pinned contract JSON when a sibling checkout
-       (or ``GOBBY_CLI_REPO``) is available. gobby-cli's own tests pin that
-       file to the shipped binary, so it is the authoritative contract.
-    2. Otherwise the installed CLI binary's live ``contract --format json``,
-       so the check still runs in CI without a sibling checkout.
-
-    Unlike the previous static compare, this never silently skips: when
-    neither source is available the test fails, and any divergence between the
-    vendored JSON and the real contract fails the test.
+    Every available source is checked. A sibling checkout and an installed
+    binary can catch different drift modes, so source presence must not skip
+    live binary verification.
     """
     vendored = _contract(tool)
+    sources = _real_cli_contract_sources(tool)
 
-    source_path = _gobby_cli_repo() / f"crates/{tool}/contract/{tool}.contract.json"
-    if source_path.exists():
-        assert vendored == json.loads(source_path.read_text()), (
-            f"vendored {tool} contract drifted from gobby-cli source {source_path}"
-        )
-        return
-
-    binary = _installed_cli_binary(tool)
-    assert binary is not None, (
-        f"cannot verify {tool} contract drift: no gobby-cli source at {source_path} "
+    assert sources, (
+        f"cannot verify {tool} contract drift: no gobby-cli source at "
+        f"{_gobby_cli_repo() / f'crates/{tool}/contract/{tool}.contract.json'} "
         f"and no installed `{tool}` binary on PATH or in ~/.gobby/bin"
     )
-    assert vendored == _binary_contract(tool, binary), (
-        f"vendored {tool} contract drifted from the installed `{tool}` binary"
-    )
+    for source_name, real_contract in sources:
+        assert vendored == real_contract, f"vendored {tool} contract drifted from {source_name}"

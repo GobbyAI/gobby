@@ -64,6 +64,8 @@ def _normalize_claude_usage(usage: Any) -> dict[str, int] | None:
 
     input_tokens = _coerce_int(data.get("input_tokens"))
     output_tokens = _coerce_int(data.get("output_tokens"))
+    cache_creation_input_tokens = _coerce_int(data.get("cache_creation_input_tokens"))
+    cache_read_input_tokens = _coerce_int(data.get("cache_read_input_tokens"))
     prompt_tokens = _coerce_int(data.get("prompt_tokens"))
     completion_tokens = _coerce_int(data.get("completion_tokens"))
     total_tokens = _coerce_int(data.get("total_tokens"))
@@ -72,8 +74,15 @@ def _normalize_claude_usage(usage: Any) -> dict[str, int] | None:
         prompt_tokens = input_tokens
     if completion_tokens is None:
         completion_tokens = output_tokens
-    if total_tokens is None and prompt_tokens is not None and completion_tokens is not None:
-        total_tokens = prompt_tokens + completion_tokens
+    if total_tokens is None:
+        token_parts = (
+            prompt_tokens,
+            completion_tokens,
+            cache_creation_input_tokens,
+            cache_read_input_tokens,
+        )
+        if any(value is not None for value in token_parts):
+            total_tokens = sum(value or 0 for value in token_parts)
 
     result: dict[str, int] = {}
     if prompt_tokens is not None:
@@ -86,10 +95,10 @@ def _normalize_claude_usage(usage: Any) -> dict[str, int] | None:
         result["input_tokens"] = input_tokens
     if output_tokens is not None:
         result["output_tokens"] = output_tokens
-    for field in ("cache_creation_input_tokens", "cache_read_input_tokens"):
-        value = _coerce_int(data.get(field))
-        if value is not None:
-            result[field] = value
+    if cache_creation_input_tokens is not None:
+        result["cache_creation_input_tokens"] = cache_creation_input_tokens
+    if cache_read_input_tokens is not None:
+        result["cache_read_input_tokens"] = cache_read_input_tokens
     return result or None
 
 
