@@ -11,6 +11,7 @@ from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
 from gobby.storage.projects import LocalProjectManager
 from gobby.wiki.scheduled_jobs import (
+    WIKI_RESEARCH_INTERVAL_SECONDS,
     configured_wiki_cron_scopes,
     create_wiki_audit_handler,
     create_wiki_health_handler,
@@ -29,9 +30,41 @@ class RecordingGateway:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.index_calls = 0
 
-    async def research(self, query: str | None = None) -> dict[str, Any]:
-        self.calls.append(("research", {"query": query}))
-        return _result("research", {"status": "completed", "items": 2})
+    async def research(
+        self,
+        query: str | None = None,
+        *,
+        audit: bool = False,
+        source_constraints: list[str] | None = None,
+        max_steps: int | None = None,
+        max_tokens: int | None = None,
+        max_sources: int | None = None,
+        ai: str | None = None,
+        require_ai: bool = False,
+    ) -> dict[str, Any]:
+        self.calls.append(
+            (
+                "research",
+                {
+                    "query": query,
+                    "audit": audit,
+                    "source_constraints": source_constraints,
+                    "max_steps": max_steps,
+                    "max_tokens": max_tokens,
+                    "max_sources": max_sources,
+                    "ai": ai,
+                    "require_ai": require_ai,
+                },
+            )
+        )
+        payload: dict[str, Any] = {"status": "completed", "items": 2}
+        if audit:
+            payload = {
+                "status": "completed",
+                "findings": [],
+                "changed_paths": ["audits/wiki-audit.md"],
+            }
+        return _result("research", payload)
 
     async def refresh(
         self,
@@ -157,14 +190,24 @@ async def test_scheduled_jobs_use_gateway() -> None:
             ),
         ),
         ("health", create_wiki_health_handler(gateway=gateway, scope="project:alpha")),
-        ("audit", create_wiki_audit_handler(gateway=gateway, scope="project:alpha")),
+        (
+            "audit",
+            create_wiki_audit_handler(
+                gateway=gateway,
+                coordinator=coordinator,
+                scope="project:alpha",
+            ),
+        ),
     ]
 
     for command, handler in handlers:
         output = json.loads(await handler(_job(command)))
         assert output["command"] == command
 
-    assert [call[0] for call in gateway.calls] == ["research", "refresh", "health", "audit"]
+    assert [call[0] for call in gateway.calls] == ["research", "refresh", "health", "research"]
+    assert gateway.calls[0][1]["ai"] == "daemon"
+    assert gateway.calls[-1][1]["audit"] is True
+    assert gateway.calls[-1][1]["ai"] == "daemon"
 
 
 def test_wiki_cron_handlers_registered(cron_storage: CronJobStorage, project_id: str) -> None:
@@ -204,6 +247,10 @@ def test_wiki_cron_handlers_registered(cron_storage: CronJobStorage, project_id:
     ]
     assert all(job.action_type == "handler" for job in jobs)
     assert all(job.is_system for job in jobs)
+    assert WIKI_RESEARCH_INTERVAL_SECONDS == 24 * 60 * 60
+    research_job = cron_storage.get_job_by_name("gobby:wiki-research:project:alpha")
+    assert research_job is not None
+    assert research_job.interval_seconds == WIKI_RESEARCH_INTERVAL_SECONDS
 
 
 def test_default_wiki_cron_scope_resolves_project_root(
@@ -322,7 +369,54 @@ async def test_research_job_routes_write_result_through_coordinator() -> None:
 
     output = json.loads(await handler(_job("research")))
 
-    assert gateway.calls == [("research", {"query": None})]
+    assert gateway.calls == [
+        (
+            "research",
+            {
+                "query": None,
+                "audit": False,
+                "source_constraints": None,
+                "max_steps": None,
+                "max_tokens": None,
+                "max_sources": None,
+                "ai": "daemon",
+                "require_ai": False,
+            },
+        )
+    ]
     assert len(coordinator.results) == 1
     assert coordinator.results[0]["payload"] == {"status": "completed", "items": 2}
     assert output["result"]["index_handoff"] == {"status": "completed"}
+
+
+@pytest.mark.asyncio
+async def test_audit_job_routes_through_research_audit_mode() -> None:
+    gateway = RecordingGateway()
+    coordinator = RecordingCoordinator()
+    handler = create_wiki_audit_handler(
+        gateway=gateway,
+        coordinator=coordinator,
+        scope="project:alpha",
+    )
+
+    output = json.loads(await handler(_job("audit")))
+
+    assert gateway.calls == [
+        (
+            "research",
+            {
+                "query": None,
+                "audit": True,
+                "source_constraints": None,
+                "max_steps": None,
+                "max_tokens": None,
+                "max_sources": None,
+                "ai": "daemon",
+                "require_ai": False,
+            },
+        )
+    ]
+    assert len(coordinator.results) == 1
+    assert output["command"] == "audit"
+    assert output["changed_paths"] == ["audits/wiki-audit.md"]
+    assert output["result"]["gwiki"]["command"] == "research"

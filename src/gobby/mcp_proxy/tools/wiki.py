@@ -13,6 +13,8 @@ from gobby.wiki.update_coordinator import WikiUpdateCoordinator
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
+_AI_VALUES = {"auto", "daemon", "direct", "off"}
+
 
 class GwikiGatewayFactory(Protocol):
     def __call__(
@@ -44,7 +46,8 @@ def create_wiki_registry(
         name="gobby-wiki",
         description=(
             "Wiki tools - wiki_search, wiki_ask, wiki_read, wiki_attach, wiki_ingest, "
-            "wiki_compile, wiki_audit, wiki_health, wiki_list_sources, wiki_remove_source"
+            "wiki_compile, wiki_research, wiki_audit, wiki_health, wiki_list_sources, "
+            "wiki_remove_source"
         ),
     )
 
@@ -182,6 +185,45 @@ def create_wiki_registry(
         return await _guard(lambda: write_call(project, topic, lambda gwiki: gwiki.compile(output)))
 
     @registry.tool(
+        name="wiki_research",
+        description="Run wiki research enrichment, optionally in audit mode.",
+    )
+    async def wiki_research(
+        query: str | None = None,
+        project: str | None = None,
+        topic: str | None = None,
+        audit: bool = False,
+        source_constraints: list[str] | None = None,
+        max_steps: int | None = None,
+        max_tokens: int | None = None,
+        max_sources: int | None = None,
+        ai: str = "daemon",
+        require_ai: bool = False,
+    ) -> dict[str, Any]:
+        async def call() -> dict[str, Any]:
+            ai_value = _normalize_ai(ai)
+            _validate_positive_int("max_steps", max_steps)
+            _validate_positive_int("max_tokens", max_tokens)
+            _validate_positive_int("max_sources", max_sources)
+            constraints = _string_sequence(source_constraints)
+            return await write_call(
+                project,
+                topic,
+                lambda gwiki: gwiki.research(
+                    query,
+                    audit=audit,
+                    source_constraints=constraints,
+                    max_steps=max_steps,
+                    max_tokens=max_tokens,
+                    max_sources=max_sources,
+                    ai=ai_value,
+                    require_ai=require_ai,
+                ),
+            )
+
+        return await _guard(call)
+
+    @registry.tool(
         name="wiki_audit",
         description="Run wiki audit and hand write-like audit results to the index coordinator.",
     )
@@ -299,6 +341,18 @@ def _structured_result(
 
 def _validation_error(message: str) -> dict[str, Any]:
     return {"success": False, "ok": False, "error": message}
+
+
+def _normalize_ai(value: str | None) -> str:
+    ai = (value or "daemon").strip().lower()
+    if ai not in _AI_VALUES:
+        raise ValueError("ai must be one of auto, daemon, direct, off")
+    return ai
+
+
+def _validate_positive_int(name: str, value: int | None) -> None:
+    if value is not None and value <= 0:
+        raise ValueError(f"{name} must be greater than 0")
 
 
 def _ingest_paths(path: str | None, paths: list[str] | None) -> list[str]:

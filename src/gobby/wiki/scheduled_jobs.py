@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any, Protocol
 
 from gobby.gwiki_gateway import GwikiGateway
@@ -17,14 +17,26 @@ from gobby.wiki.scope_resolution import (
 )
 from gobby.wiki.update_coordinator import WikiUpdateCoordinator
 
-WIKI_RESEARCH_INTERVAL_SECONDS = 6 * 60 * 60
+DEFAULT_RESEARCH_AI = "daemon"
+WIKI_RESEARCH_INTERVAL_SECONDS = 24 * 60 * 60
 WIKI_REFRESH_INTERVAL_SECONDS = 60 * 60
 WIKI_HEALTH_INTERVAL_SECONDS = 30 * 60
 WIKI_AUDIT_INTERVAL_SECONDS = 24 * 60 * 60
 
 
 class WikiGatewayProtocol(Protocol):
-    async def research(self, query: str | None = None) -> dict[str, Any]: ...
+    async def research(
+        self,
+        query: str | None = None,
+        *,
+        audit: bool = False,
+        source_constraints: Sequence[str] | None = None,
+        max_steps: int | None = None,
+        max_tokens: int | None = None,
+        max_sources: int | None = None,
+        ai: str | None = None,
+        require_ai: bool = False,
+    ) -> dict[str, Any]: ...
 
     async def refresh(
         self,
@@ -56,10 +68,13 @@ def create_wiki_research_handler(
 ) -> CronHandler:
     async def research_handler(job: CronJob) -> str:
         query = _string_or_none(job.action_config.get("query"))
-        result = await gateway.research(query)
+        result = await gateway.research(
+            query,
+            ai=_string_or_none(job.action_config.get("ai")) or DEFAULT_RESEARCH_AI,
+        )
         coordinated = await coordinator.handle_write_result(result)
         return _history_output(
-            purpose="Run scheduled wiki research",
+            purpose="Run nightly wiki research",
             scope=scope,
             command="research",
             gwiki_result=coordinated,
@@ -108,15 +123,23 @@ def create_wiki_health_handler(
 def create_wiki_audit_handler(
     *,
     gateway: WikiGatewayProtocol,
+    coordinator: WikiUpdateCoordinator,
     scope: str,
 ) -> CronHandler:
     async def audit_handler(job: CronJob) -> str:
-        result = await gateway.audit()
+        query = _string_or_none(job.action_config.get("query"))
+        result = await gateway.research(
+            query,
+            audit=True,
+            ai=_string_or_none(job.action_config.get("ai")) or DEFAULT_RESEARCH_AI,
+        )
+        coordinated = await coordinator.handle_write_result(result)
         return _history_output(
             purpose="Audit wiki content",
             scope=scope,
             command="audit",
-            gwiki_result=result,
+            gwiki_result=coordinated,
+            changed_paths=_changed_paths(coordinated),
         )
 
     return audit_handler
@@ -141,7 +164,7 @@ def register_wiki_cron_jobs(
         for command, purpose, interval, handler in (
             (
                 "research",
-                "Scheduled wiki research",
+                "Nightly wiki research",
                 WIKI_RESEARCH_INTERVAL_SECONDS,
                 create_wiki_research_handler(
                     gateway=gateway,
@@ -169,7 +192,11 @@ def register_wiki_cron_jobs(
                 "audit",
                 "Scheduled wiki audit",
                 WIKI_AUDIT_INTERVAL_SECONDS,
-                create_wiki_audit_handler(gateway=gateway, scope=scope),
+                create_wiki_audit_handler(
+                    gateway=gateway,
+                    coordinator=coordinator,
+                    scope=scope,
+                ),
             ),
         ):
             handler_name = wiki_handler_name(command, scope)
@@ -365,6 +392,13 @@ def _refresh_changed_paths(result: dict[str, Any]) -> list[str]:
         if isinstance(raw_path, str) and raw_path:
             paths.append(raw_path)
     return paths
+
+
+def _changed_paths(result: dict[str, Any]) -> list[str]:
+    value = _payload(result).get("changed_paths")
+    if not isinstance(value, list):
+        return []
+    return [path for path in value if isinstance(path, str)]
 
 
 def _payload(result: dict[str, Any]) -> dict[str, Any]:

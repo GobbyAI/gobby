@@ -68,6 +68,64 @@ class RecordingGwikiGateway(GwikiGateway):
         return json.dumps(payload).encode(), ""
 
 
+class RecordingResearchGateway:
+    instances: list[RecordingResearchGateway] = []
+
+    def __init__(
+        self,
+        *,
+        binary: str | None = None,
+        project_root: str | Path | None = None,
+        topic: str | None = None,
+        timeout_seconds: float = 30.0,
+    ) -> None:
+        self.project_root = project_root
+        self.topic = topic
+        self.calls: list[dict[str, Any]] = []
+        RecordingResearchGateway.instances.append(self)
+
+    async def research(
+        self,
+        query: str | None = None,
+        *,
+        audit: bool = False,
+        source_constraints: Sequence[str] | None = None,
+        max_steps: int | None = None,
+        max_tokens: int | None = None,
+        max_sources: int | None = None,
+        ai: str | None = None,
+        require_ai: bool = False,
+    ) -> dict[str, Any]:
+        self.calls.append(
+            {
+                "query": query,
+                "audit": audit,
+                "source_constraints": list(source_constraints or ()),
+                "max_steps": max_steps,
+                "max_tokens": max_tokens,
+                "max_sources": max_sources,
+                "ai": ai,
+                "require_ai": require_ai,
+            }
+        )
+        return {
+            "ok": True,
+            "command": "research",
+            "payload": {"status": "completed", "changed_paths": ["research.md"]},
+            "stderr": "",
+        }
+
+
+class RecordingResearchCoordinator:
+    def __init__(self, gateway: RecordingResearchGateway) -> None:
+        self.gateway = gateway
+
+    async def handle_write_result(self, result: dict[str, Any]) -> dict[str, Any]:
+        handled = dict(result)
+        handled["index_handoff"] = {"status": "completed"}
+        return handled
+
+
 async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
     contract = _contract("gwiki")
     gateway = RecordingGwikiGateway()
@@ -81,7 +139,20 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
         ("ingest_file", "ingest-file", lambda: gateway.ingest_file("notes.md")),
         ("ingest_url", "ingest-url", lambda: gateway.ingest_url(["https://example.com"])),
         ("collect", "collect", lambda: gateway.collect("inbox")),
-        ("research", "research", lambda: gateway.research("freshness")),
+        (
+            "research",
+            "research",
+            lambda: gateway.research(
+                "freshness",
+                audit=True,
+                source_constraints=["https://example.com"],
+                max_steps=3,
+                max_tokens=1024,
+                max_sources=2,
+                ai="daemon",
+                require_ai=True,
+            ),
+        ),
         ("compile", "compile", lambda: gateway.compile("/tmp/out.md")),
         ("audit", "audit", gateway.audit),
         ("health", "health", gateway.health),
@@ -106,6 +177,16 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
         assert "--scope" not in argv
         assert _observed_flags(argv) <= _allowed_flags(contract, cli_name)
         assert "--format" in argv
+        if cli_name == "research":
+            assert {
+                "--audit",
+                "--source-constraint",
+                "--max-steps",
+                "--max-tokens",
+                "--max-sources",
+                "--ai",
+                "--require-ai",
+            } <= _observed_flags(argv)
         if cli_name == "health":
             assert "--project" not in argv
         else:
@@ -124,6 +205,7 @@ def test_wiki_mcp_tools_are_backed_by_documented_gwiki_commands() -> None:
         "wiki_attach": "ingest-file",
         "wiki_ingest": "ingest-url",
         "wiki_compile": "compile",
+        "wiki_research": "research",
         "wiki_audit": "audit",
         "wiki_health": "health",
         "wiki_list_sources": "sources",
@@ -135,6 +217,48 @@ def test_wiki_mcp_tools_are_backed_by_documented_gwiki_commands() -> None:
 
     assert set(tool_to_command) <= tool_names
     assert set(tool_to_command.values()) <= daemon_commands
+
+
+async def test_wiki_research_mcp_routes_d5_options_to_gateway() -> None:
+    RecordingResearchGateway.instances = []
+    registry = create_wiki_registry(
+        db=None,
+        gateway_cls=RecordingResearchGateway,
+        update_coordinator_cls=RecordingResearchCoordinator,
+    )
+
+    result = await registry.call(
+        "wiki_research",
+        {
+            "topic": "freshness",
+            "query": "Fill citation gaps",
+            "audit": True,
+            "source_constraints": ["https://example.com"],
+            "max_steps": 4,
+            "max_tokens": 2048,
+            "max_sources": 3,
+            "ai": "direct",
+            "require_ai": True,
+        },
+    )
+
+    gateway = RecordingResearchGateway.instances[-1]
+    assert gateway.topic == "freshness"
+    assert gateway.calls == [
+        {
+            "query": "Fill citation gaps",
+            "audit": True,
+            "source_constraints": ["https://example.com"],
+            "max_steps": 4,
+            "max_tokens": 2048,
+            "max_sources": 3,
+            "ai": "direct",
+            "require_ai": True,
+        }
+    ]
+    assert result["success"] is True
+    assert result["paths"]["changed_paths"] == ["research.md"]
+    assert result["index_handoff"] == {"status": "completed"}
 
 
 def test_gwiki_contract_documents_daemon_parsed_keys() -> None:

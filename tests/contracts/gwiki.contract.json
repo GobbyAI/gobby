@@ -400,7 +400,7 @@
     },
     {
       "name": "research",
-      "summary": "Dispatch research workers and checkpoint wiki research state.",
+      "summary": "Run wiki research enrichment or deterministic audit checks.",
       "daemon_consumed": true,
       "positionals": [
         {
@@ -411,15 +411,23 @@
       ],
       "flags": [
         {
-          "name": "--source-constraints",
-          "takes_value": true,
-          "value_name": "TEXT",
+          "name": "--audit",
+          "takes_value": false,
+          "value_name": null,
           "allowed_values": [],
           "required": false,
           "repeatable": false
         },
         {
-          "name": "--agent-count",
+          "name": "--source-constraint",
+          "takes_value": true,
+          "value_name": "TEXT",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": true
+        },
+        {
+          "name": "--max-steps",
           "takes_value": true,
           "value_name": "N",
           "allowed_values": [],
@@ -427,15 +435,36 @@
           "repeatable": false
         },
         {
-          "name": "--task-id",
+          "name": "--max-tokens",
           "takes_value": true,
-          "value_name": "ID",
+          "value_name": "N",
           "allowed_values": [],
           "required": false,
           "repeatable": false
         },
         {
-          "name": "--resume",
+          "name": "--max-sources",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--ai",
+          "takes_value": true,
+          "value_name": "auto|daemon|direct|off",
+          "allowed_values": [
+            "auto",
+            "daemon",
+            "direct",
+            "off"
+          ],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--require-ai",
           "takes_value": false,
           "value_name": null,
           "allowed_values": [],
@@ -446,9 +475,16 @@
       "json_output_keys": [
         "command",
         "scope",
-        "question",
-        "checkpoint",
+        "query",
+        "audit",
+        "stop_reason",
+        "steps_used",
+        "tokens_used",
+        "sources_added",
         "accepted_notes",
+        "findings",
+        "gaps",
+        "warnings",
         "changed_paths",
         "status"
       ]
