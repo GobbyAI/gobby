@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - "gwiki-v*"
+  # Manual dry-run: runs `test` + `build` (incl. the windows-msvc legs) on a branch
+  # without cutting a tag. `publish` + `release` stay tag-only (see their `if:`).
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -28,6 +31,9 @@ jobs:
           components: clippy
 
       - name: Verify tag matches Cargo.toml version
+        # Tag-only: on a workflow_dispatch run GITHUB_REF is refs/heads/<branch>,
+        # which has no gwiki-v version to check against Cargo.toml.
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           set -euo pipefail
           tag="${GITHUB_REF#refs/tags/}"
@@ -128,10 +134,12 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             cross: true
-          # No Windows targets: gwiki's `documents` feature links pdfium (a
-          # native library provisioned via pdfium-auto) which does not build on
-          # the windows-msvc targets ("target was empty"). gwiki ships macOS and
-          # Linux binaries only; crates.io publishing is platform-independent.
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            cross: false
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            cross: true
 
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.target }}
@@ -159,6 +167,47 @@ jobs:
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
         with:
           arch: x64_arm64
+
+      - name: Provision pdfium (Windows)
+        # gwiki's `documents` feature embeds pdfium via pdfium-auto's `bundled`
+        # build script, which by default curl-downloads the chromium/7690 archive
+        # at build time. On the windows-msvc runners we provision it deterministically:
+        # download the pinned bblanchon archive, verify its SHA-256 (fail-closed), and
+        # point pdfium-auto at it via PDFIUM_BUNDLE_LIB — its priority-1 source — so the
+        # build never depends on the build script's own network fetch. macOS/Linux keep
+        # using pdfium-auto's auto-download (already proven in CI).
+        # Keep `version` in sync with pdfium-auto's PDFIUM_VERSION constant (now 7690).
+        if: startsWith(matrix.os, 'windows')
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          version="7690"
+          case "$TARGET" in
+            x86_64-pc-windows-msvc)
+              archive="pdfium-win-x64.tgz"
+              sha="06ef95ac4f9b8897731224639ddf0f185693cb48bc9ee650f1e92f71e0d2a94e"
+              ;;
+            aarch64-pc-windows-msvc)
+              archive="pdfium-win-arm64.tgz"
+              sha="e01a0df46347d40c591a11f2060a371004ef5c423cf890c6cb431594ccbd2b9b"
+              ;;
+            *)
+              echo "::error::Provision pdfium: unexpected Windows target '$TARGET'." >&2
+              exit 1
+              ;;
+          esac
+          dest="$RUNNER_TEMP/pdfium"
+          mkdir -p "$dest"
+          url="https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F${version}/${archive}"
+          echo "Downloading $url"
+          curl -fsSL --retry 3 -o "$dest/$archive" "$url"
+          echo "${sha}  ${dest}/${archive}" | sha256sum -c -
+          tar -xzf "$dest/$archive" -C "$dest" bin/pdfium.dll
+          lib="$(cygpath -w "$dest/bin/pdfium.dll")"
+          echo "PDFIUM_BUNDLE_LIB=${lib}" >> "$GITHUB_ENV"
+          echo "Provisioned pdfium for $TARGET at ${lib}"
 
       - name: Build gwiki
         env:
@@ -199,7 +248,11 @@ jobs:
 
   publish:
     name: Publish gobby-wiki to crates.io
-    needs: [test, build]
+    # Decoupled from `build`: crates.io publishing is platform-independent, so a
+    # single flaky binary target must never block the crate publish again (#461).
+    # Tag-only — never runs on a workflow_dispatch dry-run.
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -242,6 +295,9 @@ jobs:
 
   release:
     needs: [build, publish]
+    # Tag-only — a workflow_dispatch dry-run builds + uploads artifacts but never
+    # creates a GitHub Release.
+    if: startsWith(github.ref, 'refs/tags/')
     name: Release
     runs-on: ubuntu-latest
     permissions:
