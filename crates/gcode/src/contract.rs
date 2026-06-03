@@ -87,6 +87,37 @@ pub fn contract() -> CliContract {
                 json_output_keys: search_keys(),
             },
             CommandContract {
+                name: "grep",
+                summary: "Indexed exact pattern search over code content chunks.",
+                daemon_consumed: true,
+                positionals: vec![
+                    PositionalContract::required("PATTERN"),
+                    PositionalContract {
+                        name: "PATH",
+                        required: false,
+                        repeatable: true,
+                    },
+                ],
+                flags: grep_flags(),
+                json_output_keys: grep_keys(),
+            },
+            CommandContract {
+                name: "callers",
+                summary: "Find callers of a symbol UUID or name.",
+                daemon_consumed: true,
+                positionals: vec![PositionalContract::required("SYMBOL")],
+                flags: graph_read_flags(),
+                json_output_keys: graph_read_keys(),
+            },
+            CommandContract {
+                name: "usages",
+                summary: "Find incoming call usages of a symbol UUID or name.",
+                daemon_consumed: true,
+                positionals: vec![PositionalContract::required("SYMBOL")],
+                flags: graph_read_flags(),
+                json_output_keys: graph_read_keys(),
+            },
+            CommandContract {
                 name: "codewiki",
                 summary: "Generate vault-ready hierarchical code documentation.",
                 daemon_consumed: true,
@@ -219,6 +250,28 @@ fn search_flags() -> Vec<FlagContract> {
     ]
 }
 
+fn grep_flags() -> Vec<FlagContract> {
+    vec![
+        FlagContract::switch("--fixed-strings"),
+        FlagContract::switch("--ignore-case"),
+        FlagContract::switch("--word"),
+        FlagContract::value("--before-context", "N"),
+        FlagContract::value("--after-context", "N"),
+        FlagContract::value("--context", "N"),
+        FlagContract::repeatable_value("--glob", "GLOB"),
+        FlagContract::value("--max-count", "N"),
+        format_flag(),
+    ]
+}
+
+fn graph_read_flags() -> Vec<FlagContract> {
+    vec![
+        FlagContract::value("--limit", "N"),
+        FlagContract::value("--offset", "N"),
+        format_flag(),
+    ]
+}
+
 fn search_keys() -> Vec<&'static str> {
     vec![
         "project_id",
@@ -236,6 +289,49 @@ fn search_keys() -> Vec<&'static str> {
         "line_end",
         "signature",
         "score",
+    ]
+}
+
+fn grep_keys() -> Vec<&'static str> {
+    vec![
+        "project_id",
+        "pattern",
+        "fixed_strings",
+        "ignore_case",
+        "word",
+        "paths",
+        "globs",
+        "max_count",
+        "matched_lines",
+        "truncated",
+        "scanned_chunks",
+        "matches",
+        "path",
+        "line",
+        "text",
+        "spans",
+        "start",
+        "end",
+        "before",
+        "after",
+    ]
+}
+
+fn graph_read_keys() -> Vec<&'static str> {
+    vec![
+        "project_id",
+        "total",
+        "offset",
+        "limit",
+        "results",
+        "id",
+        "name",
+        "file_path",
+        "line",
+        "relation",
+        "distance",
+        "metadata",
+        "hint",
     ]
 }
 

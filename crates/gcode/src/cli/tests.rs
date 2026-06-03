@@ -591,12 +591,14 @@ fn parse_grep_basic() {
             paths,
             fixed_strings,
             ignore_case,
+            word,
             ..
         } => {
             assert_eq!(pattern, "needle");
             assert_eq!(paths, vec!["src"]);
             assert!(!fixed_strings);
             assert!(!ignore_case);
+            assert!(!word);
         }
         _ => panic!("expected grep command"),
     }
@@ -608,6 +610,53 @@ fn parse_grep_ignore_case() {
         .expect("grep ignore-case parses");
     match cli.command {
         Command::Grep { ignore_case, .. } => assert!(ignore_case),
+        _ => panic!("expected grep command"),
+    }
+}
+
+#[test]
+fn parse_grep_word() {
+    let cli = Cli::try_parse_from(["gcode", "grep", "-w", "note_path"]).expect("grep -w parses");
+    match cli.command {
+        Command::Grep { pattern, word, .. } => {
+            assert_eq!(pattern, "note_path");
+            assert!(word);
+        }
+        _ => panic!("expected grep command"),
+    }
+}
+
+#[test]
+fn parse_grep_word_long_with_fixed_json() {
+    let cli = Cli::try_parse_from([
+        "gcode",
+        "grep",
+        "--word",
+        "-F",
+        "note_path",
+        "src",
+        "-m",
+        "50",
+        "--format",
+        "json",
+    ])
+    .expect("grep --word with fixed-string json parses");
+    assert!(matches!(cli.format, Some(output::Format::Json)));
+    match cli.command {
+        Command::Grep {
+            pattern,
+            paths,
+            fixed_strings,
+            word,
+            max_count,
+            ..
+        } => {
+            assert_eq!(pattern, "note_path");
+            assert_eq!(paths, vec!["src"]);
+            assert!(fixed_strings);
+            assert!(word);
+            assert_eq!(max_count, Some(50));
+        }
         _ => panic!("expected grep command"),
     }
 }

@@ -292,6 +292,234 @@
       ]
     },
     {
+      "name": "grep",
+      "summary": "Indexed exact pattern search over code content chunks.",
+      "daemon_consumed": true,
+      "positionals": [
+        {
+          "name": "PATTERN",
+          "required": true,
+          "repeatable": false
+        },
+        {
+          "name": "PATH",
+          "required": false,
+          "repeatable": true
+        }
+      ],
+      "flags": [
+        {
+          "name": "--fixed-strings",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--ignore-case",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--word",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--before-context",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--after-context",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--context",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--glob",
+          "takes_value": true,
+          "value_name": "GLOB",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": true
+        },
+        {
+          "name": "--max-count",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "project_id",
+        "pattern",
+        "fixed_strings",
+        "ignore_case",
+        "word",
+        "paths",
+        "globs",
+        "max_count",
+        "matched_lines",
+        "truncated",
+        "scanned_chunks",
+        "matches",
+        "path",
+        "line",
+        "text",
+        "spans",
+        "start",
+        "end",
+        "before",
+        "after"
+      ]
+    },
+    {
+      "name": "callers",
+      "summary": "Find callers of a symbol UUID or name.",
+      "daemon_consumed": true,
+      "positionals": [
+        {
+          "name": "SYMBOL",
+          "required": true,
+          "repeatable": false
+        }
+      ],
+      "flags": [
+        {
+          "name": "--limit",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--offset",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "project_id",
+        "total",
+        "offset",
+        "limit",
+        "results",
+        "id",
+        "name",
+        "file_path",
+        "line",
+        "relation",
+        "distance",
+        "metadata",
+        "hint"
+      ]
+    },
+    {
+      "name": "usages",
+      "summary": "Find incoming call usages of a symbol UUID or name.",
+      "daemon_consumed": true,
+      "positionals": [
+        {
+          "name": "SYMBOL",
+          "required": true,
+          "repeatable": false
+        }
+      ],
+      "flags": [
+        {
+          "name": "--limit",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--offset",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "project_id",
+        "total",
+        "offset",
+        "limit",
+        "results",
+        "id",
+        "name",
+        "file_path",
+        "line",
+        "relation",
+        "distance",
+        "metadata",
+        "hint"
+      ]
+    },
+    {
       "name": "codewiki",
       "summary": "Generate vault-ready hierarchical code documentation.",
       "daemon_consumed": true,

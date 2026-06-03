@@ -131,7 +131,8 @@ gcode search-symbol "Context" crates/gcode/src
 gcode search-text "query"                 # BM25 on symbol names/signatures
 gcode search-text "query" crates/gcode/src
 gcode grep "pattern"                      # Exact indexed content grep
-gcode grep "pattern" src -m 50            # Cap matching lines globally
+gcode grep -w note_path [PATH...]         # ASCII identifier whole-word grep
+gcode grep '\bnote_path\b' src -m 50      # Rust regex word boundaries are supported
 gcode search-content "query"              # BM25 on source, comments, skill files, docs/Markdown, configs, CSS, SQL, and extensionless text
 gcode search-content "query" docs/**/*.md crates/gcode/src
 
@@ -143,8 +144,8 @@ gcode tree                                # File tree with symbol counts
 
 # Dependency graph reads (requires FalkorDB)
 gcode graph overview --limit 100          # Project overview graph
-gcode callers "handleAuth"                # Who calls this?
-gcode usages "handleAuth"                 # Incoming call sites
+gcode callers <symbol-id>                 # Who calls this symbol?
+gcode usages <symbol-id>                  # Incoming call sites for this symbol
 gcode imports src/auth.ts                 # Import graph for a file
 gcode blast-radius "handleAuth" --depth 3 # Transitive impact analysis
 
@@ -174,8 +175,12 @@ gcode search --project /path/to/app "q"   # By path
 `gcode grep` defaults to grouped text output: each matched file is printed once,
 followed by line-numbered matches and context. Other high-volume text outputs,
 including `tree`, `callers`, `usages`, and `blast-radius`, also group repeated
-paths for compact agent-readable output. JSON output keeps the stable structured
-shape.
+paths for compact agent-readable output. `gcode grep --format json` returns
+structured matches with spans and context. Regex patterns use Rust regex syntax,
+including `\b` word boundaries; use `-w/--word` for ASCII identifier whole-word
+search. For reference mapping, resolve a symbol ID first and prefer
+`gcode usages <symbol-id>` or `gcode callers <symbol-id>` over text grep when
+the graph projection is synced.
 
 ## AI CLI Skill Installation
 

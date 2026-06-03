@@ -244,6 +244,9 @@ pub(crate) enum Command {
         /// Match case-insensitively
         #[arg(short = 'i', long)]
         ignore_case: bool,
+        /// Match only standalone ASCII identifier words
+        #[arg(short = 'w', long)]
+        word: bool,
         /// Show N context lines before match
         #[arg(short = 'B', long)]
         before_context: Option<usize>,
@@ -282,7 +285,7 @@ pub(crate) enum Command {
         #[arg(short = 'v', long = "invert-match", hide = true, action = ArgAction::SetTrue)]
         unsupported_invert_match: bool,
         /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 'w', long = "word-regexp", hide = true, action = ArgAction::SetTrue)]
+        #[arg(long = "word-regexp", hide = true, action = ArgAction::SetTrue)]
         unsupported_word_regexp: bool,
         /// Unsupported: use raw rg for filesystem grep
         #[arg(short = 'e', long = "regexp", hide = true)]

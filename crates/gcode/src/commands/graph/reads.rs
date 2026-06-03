@@ -117,6 +117,21 @@ where
     lines.join("\n")
 }
 
+fn resolve_symbol_with_connection(
+    conn: &mut postgres::Client,
+    project_id: &str,
+    input: &str,
+) -> anyhow::Result<(Option<ResolvedGraphSymbol>, Vec<String>)> {
+    if let Ok(symbol_id) = uuid::Uuid::parse_str(input) {
+        return Ok((
+            fts::resolve_graph_symbol_by_id(conn, &symbol_id.to_string(), project_id)?,
+            Vec::new(),
+        ));
+    }
+
+    fts::resolve_graph_symbol(conn, input, project_id)
+}
+
 /// Resolve user input to a canonical symbol id, printing suggestions on ambiguity.
 /// Returns None and prints an error message if no match found.
 fn resolve_symbol(ctx: &Context, input: &str) -> anyhow::Result<Option<ResolvedGraphSymbol>> {
@@ -127,7 +142,8 @@ fn resolve_symbol(ctx: &Context, input: &str) -> anyhow::Result<Option<ResolvedG
             return Ok(None);
         }
     };
-    let (resolved, suggestions) = fts::resolve_graph_symbol(&mut conn, input, &ctx.project_id)?;
+    let (resolved, suggestions) =
+        resolve_symbol_with_connection(&mut conn, &ctx.project_id, input)?;
     if resolved.is_none() {
         if suggestions.is_empty() {
             eprintln!("No symbol matching '{input}' found");
@@ -382,5 +398,208 @@ pub fn blast_radius(
             }
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use postgres::Client;
+    use postgres::types::ToSql;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    const GRAPH_RESOLUTION_CHILD_TABLES: &[&str] = &[
+        "code_calls",
+        "code_imports",
+        "code_symbols",
+        "code_content_chunks",
+        "code_indexed_files",
+    ];
+
+    fn connect_graph_resolution_test_db() -> Option<Client> {
+        let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL").ok()?;
+        match gobby_core::postgres::connect_readwrite(&database_url) {
+            Ok(mut conn) => {
+                if let Err(err) = crate::schema::validate_runtime_schema(&mut conn) {
+                    eprintln!(
+                        "skipping graph resolution test: PostgreSQL schema is invalid: {err}"
+                    );
+                    return None;
+                }
+                Some(conn)
+            }
+            Err(err) => {
+                eprintln!("skipping graph resolution test: failed to connect PostgreSQL: {err}");
+                None
+            }
+        }
+    }
+
+    fn unique_uuid(label: &str) -> String {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before unix epoch")
+            .as_nanos();
+        let key = format!("graph-resolution-test:{label}:{nanos}");
+        uuid::Uuid::new_v5(&crate::models::CODE_INDEX_UUID_NAMESPACE, key.as_bytes()).to_string()
+    }
+
+    fn cleanup_graph_resolution_project(conn: &mut Client, project_id: &str) {
+        let mut tx = conn.transaction().expect("cleanup transaction");
+        for table in GRAPH_RESOLUTION_CHILD_TABLES {
+            let sql = format!("DELETE FROM {table} WHERE project_id = $1");
+            tx.execute(&sql, &[&project_id])
+                .expect("delete graph resolution child rows");
+        }
+        tx.execute(
+            "DELETE FROM code_indexed_projects WHERE id = $1",
+            &[&project_id],
+        )
+        .expect("delete graph resolution project");
+        tx.commit().expect("commit graph resolution cleanup");
+    }
+
+    fn insert_project(conn: &mut Client, project_id: &str) {
+        let root_path = format!("/tmp/gcode-graph-resolution-{project_id}");
+        conn.execute(
+            "INSERT INTO code_indexed_projects
+                (id, root_path, total_files, total_symbols, last_indexed_at, index_duration_ms)
+             VALUES ($1, $2, 0, 0, NOW(), 0)",
+            &[&project_id, &root_path],
+        )
+        .expect("insert graph resolution project");
+    }
+
+    fn insert_file(conn: &mut Client, project_id: &str, file_path: &str, symbol_count: i32) {
+        let id = format!("{project_id}:{file_path}");
+        let params: &[&(dyn ToSql + Sync)] = &[&id, &project_id, &file_path, &symbol_count];
+        conn.execute(
+            "INSERT INTO code_indexed_files
+                (id, project_id, file_path, language, content_hash, symbol_count, byte_size,
+                 graph_synced, vectors_synced, graph_sync_attempted_at, indexed_at)
+             VALUES ($1, $2, $3, 'rust', 'hash', $4, 1, false, false, NULL, NOW())",
+            params,
+        )
+        .expect("insert graph resolution file");
+    }
+
+    fn insert_symbol(
+        conn: &mut Client,
+        project_id: &str,
+        file_path: &str,
+        id: &str,
+        name: &str,
+        line_start: i32,
+    ) {
+        let params: &[&(dyn ToSql + Sync)] = &[&id, &project_id, &file_path, &name, &line_start];
+        conn.execute(
+            "INSERT INTO code_symbols
+                (id, project_id, file_path, name, qualified_name, kind, language, byte_start,
+                 byte_end, line_start, line_end, signature, docstring, parent_symbol_id,
+                 content_hash, summary, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $4, 'function', 'rust', 0, 1, $5, $5, $4, NULL, NULL,
+                     'hash', NULL, NOW(), NOW())",
+            params,
+        )
+        .expect("insert graph resolution symbol");
+    }
+
+    #[test]
+    fn uuid_input_resolves_exact_symbol_for_active_project() {
+        let Some(mut conn) = connect_graph_resolution_test_db() else {
+            return;
+        };
+        let project_id = unique_uuid("project");
+        cleanup_graph_resolution_project(&mut conn, &project_id);
+        insert_project(&mut conn, &project_id);
+        insert_file(&mut conn, &project_id, "src/target.rs", 1);
+
+        let symbol_id = unique_uuid("target-symbol");
+        insert_symbol(
+            &mut conn,
+            &project_id,
+            "src/target.rs",
+            &symbol_id,
+            "target_symbol",
+            7,
+        );
+
+        let (resolved, suggestions) =
+            resolve_symbol_with_connection(&mut conn, &project_id, &symbol_id)
+                .expect("resolve graph symbol by uuid");
+        cleanup_graph_resolution_project(&mut conn, &project_id);
+
+        assert!(suggestions.is_empty());
+        let resolved = resolved.expect("symbol should resolve");
+        assert_eq!(resolved.id, symbol_id);
+        assert_eq!(resolved.display_name, "target_symbol");
+    }
+
+    #[test]
+    fn unknown_uuid_input_does_not_fall_back_to_name_resolution() {
+        let Some(mut conn) = connect_graph_resolution_test_db() else {
+            return;
+        };
+        let project_id = unique_uuid("project");
+        cleanup_graph_resolution_project(&mut conn, &project_id);
+        insert_project(&mut conn, &project_id);
+        insert_file(&mut conn, &project_id, "src/name.rs", 1);
+
+        let uuid_shaped_name = unique_uuid("uuid-shaped-name");
+        insert_symbol(
+            &mut conn,
+            &project_id,
+            "src/name.rs",
+            &unique_uuid("different-symbol-id"),
+            &uuid_shaped_name,
+            3,
+        );
+
+        let (resolved, suggestions) =
+            resolve_symbol_with_connection(&mut conn, &project_id, &uuid_shaped_name)
+                .expect("resolve unknown uuid");
+        cleanup_graph_resolution_project(&mut conn, &project_id);
+
+        assert!(resolved.is_none());
+        assert!(suggestions.is_empty());
+    }
+
+    #[test]
+    fn ambiguous_name_behavior_remains_unchanged() {
+        let Some(mut conn) = connect_graph_resolution_test_db() else {
+            return;
+        };
+        let project_id = unique_uuid("project");
+        cleanup_graph_resolution_project(&mut conn, &project_id);
+        insert_project(&mut conn, &project_id);
+        insert_file(&mut conn, &project_id, "src/a.rs", 1);
+        insert_file(&mut conn, &project_id, "src/b.rs", 1);
+
+        insert_symbol(
+            &mut conn,
+            &project_id,
+            "src/a.rs",
+            &unique_uuid("shared-a"),
+            "shared_lookup",
+            10,
+        );
+        insert_symbol(
+            &mut conn,
+            &project_id,
+            "src/b.rs",
+            &unique_uuid("shared-b"),
+            "shared_lookup",
+            20,
+        );
+
+        let (resolved, suggestions) =
+            resolve_symbol_with_connection(&mut conn, &project_id, "shared_lookup")
+                .expect("resolve ambiguous name");
+        cleanup_graph_resolution_project(&mut conn, &project_id);
+
+        assert!(resolved.is_none());
+        assert_eq!(suggestions.len(), 2);
+        assert!(suggestions.iter().any(|item| item.contains("src/a.rs:10")));
+        assert!(suggestions.iter().any(|item| item.contains("src/b.rs:20")));
     }
 }

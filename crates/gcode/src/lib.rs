@@ -121,7 +121,12 @@ mod tests {
         assert!(config_services.contains("gobby_core::config::decode_config_value"));
         assert!(!config_root.contains("fn decode_config_value("));
 
-        let db = std::fs::read_to_string(manifest_dir.join("src/db.rs")).expect("read db.rs");
+        let db = [
+            std::fs::read_to_string(manifest_dir.join("src/db/mod.rs")).expect("read db/mod.rs"),
+            std::fs::read_to_string(manifest_dir.join("src/db/resolution.rs"))
+                .expect("read db/resolution.rs"),
+        ]
+        .join("\n");
         assert!(db.contains("gobby_core::gobby_home"));
         assert!(db.contains("gobby_core::postgres::connect_readonly"));
         assert!(db.contains("gobby_core::postgres::connect_readwrite"));

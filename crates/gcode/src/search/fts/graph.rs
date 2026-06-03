@@ -68,6 +68,15 @@ fn resolved_symbol(symbol: &Symbol) -> ResolvedGraphSymbol {
     }
 }
 
+pub fn resolve_graph_symbol_by_id(
+    conn: &mut Client,
+    symbol_id: &str,
+    project_id: &str,
+) -> anyhow::Result<Option<ResolvedGraphSymbol>> {
+    let matches = exact_symbol_matches_result(conn, project_id, "id", symbol_id, 1)?;
+    Ok(matches.first().map(resolved_symbol))
+}
+
 fn resolve_from_candidates(candidates: Vec<Symbol>) -> (Option<ResolvedGraphSymbol>, Vec<String>) {
     match candidates.len() {
         0 => (None, vec![]),

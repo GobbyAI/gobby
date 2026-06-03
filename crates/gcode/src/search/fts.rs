@@ -18,7 +18,7 @@ pub use common::{
 };
 pub use content::{search_content, search_content_visible};
 pub use counts::{count_content, count_content_visible, count_text, count_text_visible};
-pub use graph::resolve_graph_symbol;
+pub use graph::{resolve_graph_symbol, resolve_graph_symbol_by_id};
 pub use symbols::{
     VisibleSearchOutcome, search_symbols_by_name, search_symbols_by_name_visible,
     search_symbols_exact_first, search_symbols_exact_first_visible, search_symbols_fts,

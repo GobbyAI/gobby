@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+#### gcode
+
+- Added `gcode grep -w/--word` for ASCII identifier whole-word matching while
+  preserving Rust regex patterns such as `\bidentifier\b` and clear invalid
+  regex errors.
+- `gcode callers` and `gcode usages` now treat valid UUID input as an exact
+  symbol ID for the active project before falling back to name resolution.
+- Refreshed the gcode CLI contract, README, and bundled `code-index` skill docs
+  so agents prefer `gcode grep -w <identifier>` for identifier text search and
+  `gcode usages/callers <symbol-id>` for reference mapping.
+
 ## [0.2.0] — gwiki
 
 ### Added
