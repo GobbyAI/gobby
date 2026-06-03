@@ -32,6 +32,10 @@ class ChatStreamEventState:
     has_sent_text: bool = False
     pending_approval_id: str | None = None
     pending_tool_calls: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Tool results whose ToolCallEvent has not arrived yet (out-of-order ACP
+    # delivery). Buffered here and reconciled once the matching call lands so
+    # the UI shows the real tool name instead of "unknown".
+    orphan_tool_results: dict[str, ToolResultEvent] = field(default_factory=dict)
 
 
 class ChatStreamEventHandler:
@@ -167,7 +171,7 @@ class ChatStreamEventHandler:
             server_name=event.server_name,
             arguments=event.arguments,
         )
-        return await self.transport.safe_send(
+        sent = await self.transport.safe_send(
             self._msg(
                 type="tool_status",
                 tool_call_id=event.tool_call_id,
@@ -178,14 +182,33 @@ class ChatStreamEventHandler:
             )
         )
 
+        # The result may have arrived before this call (out-of-order ACP
+        # delivery). Reconcile it now that the tool name is known so the UI
+        # transitions calling -> completed in order with the real name.
+        orphan = self.state.orphan_tool_results.pop(event.tool_call_id, None)
+        if orphan is not None and sent:
+            self.state.pending_tool_calls.pop(event.tool_call_id, None)
+            return await self._apply_tool_result(orphan)
+        return sent
+
     async def _handle_tool_result(self, event: ToolResultEvent) -> bool:
         self.state.after_tool_call = True
         pending = self.state.pending_tool_calls.pop(event.tool_call_id, {})
         if not pending:
-            logger.warning(
-                "ToolResultEvent for %s arrived before ToolCallEvent (tool_name will be 'unknown')",
+            # Out-of-order ACP delivery: the result beat its ToolCallEvent.
+            # Buffer it so _handle_tool_call can reconcile against the real tool
+            # name (emitting calling -> completed in order) rather than sending
+            # an orphan "completed" the UI renders as an "unknown" tool.
+            self.state.orphan_tool_results[event.tool_call_id] = event
+            logger.debug(
+                "Buffered ToolResultEvent for %s pending its ToolCallEvent",
                 event.tool_call_id,
             )
+            return True
+        return await self._apply_tool_result(event)
+
+    async def _apply_tool_result(self, event: ToolResultEvent) -> bool:
+        """Complete the matching tool-call block and broadcast its terminal status."""
         self.assistant_blocks.complete_tool_call(
             tool_call_id=event.tool_call_id,
             success=event.success,
@@ -201,6 +224,37 @@ class ChatStreamEventHandler:
                 error=event.error,
             )
         )
+
+    async def _flush_orphan_tool_results(self) -> None:
+        """Emit buffered results whose ToolCallEvent never arrived.
+
+        Out-of-order delivery is normally reconciled in ``_handle_tool_call``.
+        If the matching call never lands before the stream ends, surface the
+        result anyway by synthesizing a provisional tool call so the work is
+        still rendered and persisted; the name is "unknown" only because the
+        backend never emitted the call event.
+        """
+        if not self.state.orphan_tool_results:
+            return
+        for call_id, result in list(self.state.orphan_tool_results.items()):
+            self.assistant_blocks.append_tool_call(
+                tool_call_id=call_id,
+                tool_name="unknown",
+                server_name="unknown",
+                arguments={},
+            )
+            await self.transport.safe_send(
+                self._msg(
+                    type="tool_status",
+                    tool_call_id=call_id,
+                    status="calling",
+                    tool_name="unknown",
+                    server_name="unknown",
+                    arguments={},
+                )
+            )
+            await self._apply_tool_result(result)
+        self.state.orphan_tool_results.clear()
 
     async def _handle_done(self, event: DoneEvent, session: Any) -> bool:
         if self.tts_pipeline:
@@ -220,6 +274,7 @@ class ChatStreamEventHandler:
                 )
                 raise
 
+        await self._flush_orphan_tool_results()
         await self.persistence.persist_current_assistant(session)
 
         done_msg = self._msg(
