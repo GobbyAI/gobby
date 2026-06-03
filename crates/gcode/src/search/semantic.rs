@@ -51,7 +51,7 @@ pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String,
             }
         })
         .collect::<Vec<_>>();
-    results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| b.1.total_cmp(&a.1));
     results.truncate(limit);
     results
 }

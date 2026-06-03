@@ -231,11 +231,9 @@ fn extract_pptx(bytes: &[u8]) -> Result<DocumentExtraction, WikiError> {
     if slide_names.is_empty() {
         return Err(document_error("pptx contained no slide XML"));
     }
+    let slides_truncated = slide_names.len() > MAX_SLIDES;
     if slide_names.len() > MAX_SLIDES {
-        return Err(document_error(format!(
-            "pptx contained {} slides; maximum supported is {MAX_SLIDES}",
-            slide_names.len()
-        )));
+        slide_names.truncate(MAX_SLIDES);
     }
 
     let mut markdown = String::new();
@@ -262,6 +260,9 @@ fn extract_pptx(bytes: &[u8]) -> Result<DocumentExtraction, WikiError> {
     }
     if markdown.trim().is_empty() {
         return Err(document_error("pptx contained no slide text"));
+    }
+    if slides_truncated {
+        markdown.push_str("_Slides truncated for bounded extraction._\n\n");
     }
     Ok(DocumentExtraction {
         title,
@@ -786,9 +787,33 @@ fn append_inline_text(output: &mut String, text: &str) {
 }
 
 fn starts_with_closing_punctuation(text: &str) -> bool {
-    text.chars()
-        .next()
-        .is_some_and(|ch| matches!(ch, '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}'))
+    text.chars().next().is_some_and(|ch| {
+        matches!(
+            ch,
+            '.' | ','
+                | ';'
+                | ':'
+                | '!'
+                | '?'
+                | ')'
+                | ']'
+                | '}'
+                | '"'
+                | '\''
+                | '\u{201d}'
+                | '\u{2019}'
+                | '\u{203a}'
+                | '\u{00bb}'
+                | '\u{3002}'
+                | '\u{ff0c}'
+                | '\u{3001}'
+                | '\u{ff09}'
+                | '\u{3011}'
+                | '\u{3015}'
+                | '\u{3017}'
+                | '\u{300b}'
+        )
+    })
 }
 
 fn push_visible_part(parts: &mut Vec<String>, inline: &mut String) {
@@ -1146,11 +1171,15 @@ mod tests {
 
     #[test]
     fn pptx_slide_count_is_bounded() {
-        let error = extract_pptx(&oversized_pptx(MAX_SLIDES + 1))
-            .expect_err("oversized slide deck rejected");
+        let extraction = extract_pptx(&oversized_pptx(MAX_SLIDES + 1))
+            .expect("oversized slide deck is truncated");
 
-        assert!(matches!(error, WikiError::InvalidInput { .. }));
-        assert!(error.to_string().contains("maximum supported"));
+        assert_eq!(extraction.units_count, MAX_SLIDES);
+        assert!(
+            extraction
+                .markdown
+                .contains("_Slides truncated for bounded extraction._")
+        );
     }
 
     #[test]
@@ -1161,5 +1190,15 @@ mod tests {
         .expect("html extracts");
 
         assert_eq!(extraction.markdown, "Hello world.\n\nNext line.");
+    }
+
+    #[test]
+    fn html_extraction_avoids_spaces_before_closing_quotes() {
+        let extraction = extract_html_document(
+            b"<html><body><p>Hello <span>world</span><span>\xe2\x80\x9d</span>.</p></body></html>",
+        )
+        .expect("html extracts");
+
+        assert_eq!(extraction.markdown, "Hello world\u{201d}.");
     }
 }

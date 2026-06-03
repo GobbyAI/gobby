@@ -63,6 +63,9 @@ pub(super) fn load_report_snapshot(
         row_to_bridge_edge_hypothesis,
     ));
 
+    // ReportGraphSnapshot is metadata-only here: summary, hotspots,
+    // unresolved_targets, external_targets, and bridge_edges are loaded in this
+    // step, while full nodes and code_edges are populated separately.
     Ok(ReportGraphSnapshot {
         nodes: vec![],
         code_edges: vec![],

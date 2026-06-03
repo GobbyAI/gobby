@@ -6,6 +6,7 @@ use crate::config::AiCapability;
 use crate::daemon_url::daemon_url;
 
 const PROBE_TIMEOUT: Duration = Duration::from_millis(750);
+const GENERIC_ENABLED_PATH: &[&str] = &["enabled"];
 
 const PROBED_CAPABILITIES: [AiCapability; 5] = [
     AiCapability::Embed,
@@ -217,7 +218,11 @@ fn status_body_advertises(capability: AiCapability, body: Option<&str>) -> Resul
     };
 
     let mut advertised = false;
-    for path in paths {
+    for path in paths
+        .iter()
+        .copied()
+        .chain(std::iter::once(GENERIC_ENABLED_PATH))
+    {
         if let Some(enabled) = bool_at_path(&value, path) {
             advertised = true;
             if enabled {
@@ -365,6 +370,18 @@ mod tests {
             Ok(true)
         );
         assert!(status_body_advertises(AiCapability::Embed, Some(r#"{}"#)).is_err());
+    }
+
+    #[test]
+    fn audio_status_body_accepts_generic_enabled_key() {
+        assert_eq!(
+            status_body_advertises(AiCapability::AudioTranscribe, Some(r#"{"enabled":true}"#)),
+            Ok(true)
+        );
+        assert_eq!(
+            status_body_advertises(AiCapability::AudioTranslate, Some(r#"{"enabled":false}"#)),
+            Ok(false)
+        );
     }
 
     #[test]

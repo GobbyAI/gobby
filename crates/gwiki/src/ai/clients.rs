@@ -118,13 +118,18 @@ impl TranscriptionClient for ProductionTranscriptionClient {
         }
         warn_translation_batch_mismatch("first", segments.len(), &first);
 
-        let second = self.translate_segment_batch(segments, source_lang, target_lang);
-        if let Ok(texts) = &second
-            && texts.len() == segments.len()
-        {
-            return second;
+        let mut chunk_size = segments.len().div_ceil(2);
+        while chunk_size > 1 {
+            let reduced =
+                self.translate_segment_chunks(segments, source_lang, target_lang, chunk_size);
+            if let Ok(texts) = &reduced
+                && texts.len() == segments.len()
+            {
+                return reduced;
+            }
+            warn_translation_batch_mismatch("second", segments.len(), &reduced);
+            chunk_size /= 2;
         }
-        warn_translation_batch_mismatch("second", segments.len(), &second);
 
         segments
             .iter()
@@ -141,6 +146,30 @@ impl TranscriptionClient for ProductionTranscriptionClient {
                 })
             })
             .collect()
+    }
+
+    fn translate_segment_chunks(
+        &self,
+        segments: &[TranscriptSegment],
+        source_lang: &str,
+        target_lang: &str,
+        chunk_size: usize,
+    ) -> Result<Vec<String>, WikiError> {
+        let mut translated = Vec::with_capacity(segments.len());
+        for chunk in segments.chunks(chunk_size) {
+            let texts = self.translate_segment_batch(chunk, source_lang, target_lang)?;
+            if texts.len() != chunk.len() {
+                return Err(WikiError::Config {
+                    detail: format!(
+                        "text translation returned {} segments for a {} segment chunk",
+                        texts.len(),
+                        chunk.len()
+                    ),
+                });
+            }
+            translated.extend(texts);
+        }
+        Ok(translated)
     }
 }
 

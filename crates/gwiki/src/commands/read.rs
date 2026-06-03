@@ -584,7 +584,7 @@ mod tests {
         assert_eq!(output.status, "found");
         assert!(output.truncated);
         assert_eq!(output.byte_len, Some("# Large\n0123456789abcdef".len()));
-        assert_eq!(output.content.as_deref(), Some("# Large\n012"));
+        assert_eq!(output.content.as_deref(), Some("# Large\n0123"));
         // SAFETY: READ_TEST_ENV_LOCK serializes this process-wide env mutation.
         unsafe {
             std::env::remove_var(READ_MAX_BYTES_ENV);

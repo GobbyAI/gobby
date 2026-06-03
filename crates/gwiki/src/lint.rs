@@ -306,6 +306,8 @@ fn page_targets(relative_path: &Path, frontmatter: &WikiFrontmatter) -> Vec<Stri
 fn ignored_target(target: &str) -> bool {
     let trimmed = target.trim();
     trimmed.starts_with('#')
+        || trimmed.starts_with("//")
+        || trimmed.starts_with("\\\\")
         || trimmed.starts_with("mailto:")
         || trimmed.contains("://")
         || trimmed.starts_with("tel:")
@@ -520,6 +522,14 @@ mod tests {
             normalize_path_components("wiki/topics", "../../../outside.md"),
             "outside.md"
         );
+    }
+
+    #[test]
+    fn ignored_target_skips_external_network_references() {
+        assert!(ignored_target("//cdn.example.test/asset.png"));
+        assert!(ignored_target(r"\\server\share\page.md"));
+        assert!(ignored_target("https://example.test/page"));
+        assert!(!ignored_target("wiki/topics/page.md"));
     }
 
     #[test]

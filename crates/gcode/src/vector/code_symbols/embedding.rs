@@ -181,10 +181,13 @@ fn resolve_embedding_ai_context(ctx: &Context) -> ResolvedEmbeddingAiContext {
 pub fn embedding_client(
     config: &EmbeddingConfig,
 ) -> Result<reqwest::blocking::Client, VectorLifecycleError> {
-    let mut clients = EMBEDDING_CLIENTS
+    let mut clients = match EMBEDDING_CLIENTS
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
-        .map_err(|err| VectorLifecycleError::EmbeddingResponse(err.to_string()))?;
+    {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
     // The blocking HTTP client is keyed only by timeout because request-specific
     // embedding endpoint, model, and auth details are applied per request.
     match clients.entry(config.timeout_seconds) {

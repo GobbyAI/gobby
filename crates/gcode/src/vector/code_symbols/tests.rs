@@ -1,11 +1,12 @@
 use super::*;
 use crate::config::{
-    CODE_SYMBOL_COLLECTION_PREFIX, CodeVectorSettings, EmbeddingConfig, QdrantConfig,
+    CODE_SYMBOL_COLLECTION_PREFIX, CodeVectorSettings, Context, EmbeddingConfig, QdrantConfig,
 };
 use crate::models::{ProjectionProvenance, SOURCE_SYSTEM_GCODE, Symbol};
 use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -83,6 +84,21 @@ fn collection_name_compatibility() {
 }
 
 #[test]
+fn search_code_symbols_reports_missing_qdrant_config() {
+    let request = CodeSymbolVectorSearchRequest {
+        project_id: "project-1".to_string(),
+        query: "run".to_string(),
+        limit: 10,
+        collection_prefix: CODE_SYMBOL_COLLECTION_PREFIX.to_string(),
+    };
+
+    let error = search_code_symbols(&test_context(None), &request)
+        .expect_err("missing Qdrant config should be surfaced");
+
+    assert_eq!(error, SearchError::MissingQdrantConfig);
+}
+
+#[test]
 fn delete_project_collection_targets_only_project_collection() {
     let (qdrant_url, handle) = spawn_http_responses(vec![(200, json!({"result": true}))]);
     let deleted = delete_project_collection(
@@ -100,6 +116,21 @@ fn delete_project_collection_targets_only_project_collection() {
     assert!(requests[0].contains("DELETE /collections/code_symbols_project-1 HTTP/1.1"));
     assert!(requests[0].contains("api-key: qdrant-key"));
     assert!(!requests[0].contains("project-2"));
+}
+
+fn test_context(qdrant: Option<QdrantConfig>) -> Context {
+    Context {
+        database_url: "postgresql://localhost/nonexistent".to_string(),
+        project_root: PathBuf::from("/nonexistent"),
+        project_id: "project-1".to_string(),
+        quiet: true,
+        falkordb: None,
+        qdrant,
+        embedding: None,
+        code_vectors: CodeVectorSettings::default(),
+        daemon_url: None,
+        index_scope: crate::config::ProjectIndexScope::Single,
+    }
 }
 
 #[test]

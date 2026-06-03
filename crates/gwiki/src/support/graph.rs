@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 use crate::{graph, search, store};
 
@@ -24,7 +24,7 @@ pub(crate) fn memory_graph_from_store(
         .values()
         .flat_map(|links| links.iter())
         .filter_map(|link| {
-            resolve_graph_target(&link.target, store, &slug_targets).map(|target| {
+            resolve_graph_target(&link.target, &link.path, store, &slug_targets).map(|target| {
                 graph::WikiGraphLink {
                     scope: scope.clone(),
                     source_path: link.path.clone(),
@@ -55,6 +55,7 @@ pub(crate) fn memory_graph_from_store(
 
 fn resolve_graph_target(
     raw_target: &str,
+    source_path: &Path,
     store: &store::MemoryWikiStore,
     slug_targets: &BTreeMap<String, PathBuf>,
 ) -> Option<graph::WikiGraphLinkTarget> {
@@ -68,23 +69,55 @@ fn resolve_graph_target(
         .next()
         .unwrap_or_default()
         .trim()
-        .trim_start_matches('/')
         .replace('\\', "/");
     if normalized.is_empty() {
         return None;
     }
 
-    let direct = PathBuf::from(&normalized);
+    let lookup = resolve_relative_graph_path(&normalized, source_path);
+    let direct = PathBuf::from(&lookup);
     if store.documents.contains_key(&direct) {
         return Some(graph::WikiGraphLinkTarget::Resolved(direct));
     }
 
-    let target_slug = slugify(normalized.strip_suffix(".md").unwrap_or(&normalized));
+    let target_slug = slugify(lookup.strip_suffix(".md").unwrap_or(&lookup));
     if let Some(path) = slug_targets.get(&target_slug) {
         return Some(graph::WikiGraphLinkTarget::Resolved(path.clone()));
     }
 
-    Some(graph::WikiGraphLinkTarget::Unresolved(normalized))
+    Some(graph::WikiGraphLinkTarget::Unresolved(lookup))
+}
+
+fn resolve_relative_graph_path(raw_target: &str, source_path: &Path) -> String {
+    let normalized = raw_target.trim_start_matches('/');
+    if raw_target.starts_with('/') || !is_path_like_target(normalized) {
+        return normalized.to_string();
+    }
+    let Some(parent) = source_path.parent() else {
+        return normalized.to_string();
+    };
+    normalize_path(parent.join(normalized))
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn is_path_like_target(target: &str) -> bool {
+    target.contains('/') || target.starts_with('.') || target.ends_with(".md")
+}
+
+fn normalize_path(path: PathBuf) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(part) => normalized.push(part),
+            Component::RootDir | Component::Prefix(_) => {}
+        }
+    }
+    normalized
 }
 
 fn slug_target_map(store: &store::MemoryWikiStore) -> BTreeMap<String, PathBuf> {
@@ -158,10 +191,16 @@ mod tests {
     fn graph_rejects_url_like_external_targets() {
         let store = MemoryWikiStore::default();
         let slug_targets = slug_target_map(&store);
+        let source = Path::new("wiki/topics/source.md");
 
-        assert!(resolve_graph_target("//cdn.example.test/page", &store, &slug_targets).is_none());
-        assert!(resolve_graph_target(r"\\server\share\page", &store, &slug_targets).is_none());
-        assert!(resolve_graph_target("custom://example", &store, &slug_targets).is_none());
+        assert!(
+            resolve_graph_target("//cdn.example.test/page", source, &store, &slug_targets)
+                .is_none()
+        );
+        assert!(
+            resolve_graph_target(r"\\server\share\page", source, &store, &slug_targets).is_none()
+        );
+        assert!(resolve_graph_target("custom://example", source, &store, &slug_targets).is_none());
     }
 
     #[test]
@@ -180,9 +219,50 @@ mod tests {
         let slug_targets = slug_target_map(&store);
 
         assert_eq!(
-            resolve_graph_target("Rust Async", &store, &slug_targets),
+            resolve_graph_target(
+                "Rust Async",
+                Path::new("wiki/topics/source.md"),
+                &store,
+                &slug_targets
+            ),
             Some(graph::WikiGraphLinkTarget::Resolved(PathBuf::from(
                 "wiki/topics/rust-async.md"
+            )))
+        );
+    }
+
+    #[test]
+    fn graph_resolves_relative_targets_from_source_document_directory() {
+        let mut store = MemoryWikiStore::default();
+        for path in [
+            "wiki/topics/nested/source.md",
+            "wiki/topics/nested/bar.md",
+            "wiki/topics/concepts/foo.md",
+        ] {
+            store.documents.insert(
+                PathBuf::from(path),
+                WikiDocument {
+                    path: PathBuf::from(path),
+                    kind: WikiDocumentKind::Topic,
+                    title: None,
+                    content_hash: "hash".to_string(),
+                    body: String::new(),
+                },
+            );
+        }
+        let slug_targets = slug_target_map(&store);
+        let source = Path::new("wiki/topics/nested/source.md");
+
+        assert_eq!(
+            resolve_graph_target("bar.md", source, &store, &slug_targets),
+            Some(graph::WikiGraphLinkTarget::Resolved(PathBuf::from(
+                "wiki/topics/nested/bar.md"
+            )))
+        );
+        assert_eq!(
+            resolve_graph_target("../concepts/foo.md", source, &store, &slug_targets),
+            Some(graph::WikiGraphLinkTarget::Resolved(PathBuf::from(
+                "wiki/topics/concepts/foo.md"
             )))
         );
     }

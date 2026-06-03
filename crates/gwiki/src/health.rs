@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -50,6 +50,7 @@ pub fn run(vault_root: &Path, scope: ScopeIdentity) -> Result<HealthReport, Wiki
     let pages = collect_pages(vault_root)?;
     let manifest = SourceManifest::read(vault_root)?;
     let provenance = load_provenance(vault_root)?;
+    let citation_index = build_citation_index(&manifest.entries, &pages, &provenance);
     let stale_pages = stale_pages(&pages);
     let stale_citations = manifest
         .entries
@@ -60,7 +61,7 @@ pub fn run(vault_root: &Path, scope: ScopeIdentity) -> Result<HealthReport, Wiki
     let uncited_sources = manifest
         .entries
         .iter()
-        .filter(|entry| !source_is_cited(entry, &pages, &provenance))
+        .filter(|entry| !citation_index.cites(&entry.id))
         .map(source_issue)
         .collect();
     let duplicate_concepts = duplicate_concepts(&pages);
@@ -181,10 +182,41 @@ fn stale_after_is_due(value: &str, now: DateTime<Utc>) -> bool {
 }
 
 fn source_citation_is_stale(source: &SourceRecord) -> bool {
+    source_citation_is_stale_at(source, Utc::now())
+}
+
+fn source_citation_is_stale_at(source: &SourceRecord, now: DateTime<Utc>) -> bool {
     let stale_years = stale_citation_years();
-    source.citation.is_some()
-        && fetched_year(&source.fetched_at)
-            .is_some_and(|year| year.saturating_add(stale_years) < approximate_current_year())
+    source.citation.is_some() && fetched_at_is_stale(&source.fetched_at, stale_years, now)
+}
+
+fn fetched_at_is_stale(value: &str, stale_years: u64, now: DateTime<Utc>) -> bool {
+    if let Some(fetched_at) = parse_fetched_at(value) {
+        let stale_seconds = stale_years.saturating_mul(AVERAGE_GREGORIAN_YEAR_SECONDS);
+        let Ok(stale_seconds) = i64::try_from(stale_seconds) else {
+            return false;
+        };
+        return fetched_at
+            .checked_add_signed(chrono::Duration::seconds(stale_seconds))
+            .is_some_and(|deadline| deadline <= now);
+    }
+    fetched_year(value)
+        .is_some_and(|year| year.saturating_add(stale_years) < approximate_current_year_at(now))
+}
+
+fn parse_fetched_at(value: &str) -> Option<DateTime<Utc>> {
+    if let Ok(parsed) = DateTime::parse_from_rfc3339(value) {
+        return Some(parsed.with_timezone(&Utc));
+    }
+    if let Ok(parsed) = NaiveDate::parse_from_str(value, "%Y-%m-%d") {
+        return parsed.and_hms_opt(0, 0, 0).map(|value| value.and_utc());
+    }
+    for format in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"] {
+        if let Ok(parsed) = NaiveDateTime::parse_from_str(value, format) {
+            return Some(parsed.and_utc());
+        }
+    }
+    None
 }
 
 fn stale_citation_years() -> u64 {
@@ -208,13 +240,10 @@ fn fetched_year(value: &str) -> Option<u64> {
         .flatten()
 }
 
-fn approximate_current_year() -> u64 {
+fn approximate_current_year_at(now: DateTime<Utc>) -> u64 {
     // Health checks only need a coarse stale-citation window; using the average
     // Gregorian year keeps this dependency-free and avoids timezone handling.
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| 1970 + duration.as_secs() / AVERAGE_GREGORIAN_YEAR_SECONDS)
-        .unwrap_or(1970)
+    1970 + u64::try_from(now.timestamp()).unwrap_or(0) / AVERAGE_GREGORIAN_YEAR_SECONDS
 }
 
 fn load_provenance(vault_root: &Path) -> Result<ProvenanceGraph, WikiError> {
@@ -226,23 +255,78 @@ fn load_provenance(vault_root: &Path) -> Result<ProvenanceGraph, WikiError> {
     }
 }
 
-fn source_is_cited(
-    source: &SourceRecord,
+#[derive(Default)]
+struct SourceCitationIndex {
+    cited_source_ids: BTreeSet<String>,
+}
+
+impl SourceCitationIndex {
+    fn cites(&self, source_id: &str) -> bool {
+        self.cited_source_ids.contains(source_id)
+    }
+}
+
+fn build_citation_index(
+    sources: &[SourceRecord],
     pages: &[crate::lint::WikiPage],
     provenance: &ProvenanceGraph,
-) -> bool {
-    if !provenance.links_for_source(&source.id).is_empty() {
-        return true;
+) -> SourceCitationIndex {
+    let mut cited_source_ids = sources
+        .iter()
+        .filter(|source| !provenance.links_for_source(&source.id).is_empty())
+        .map(|source| source.id.clone())
+        .collect::<BTreeSet<_>>();
+    let mut patterns = Vec::new();
+    let mut pattern_source_ids = Vec::new();
+    for source in sources {
+        for needle in source_reference_needles(source) {
+            for pattern in source_reference_patterns(needle) {
+                patterns.push(pattern);
+                pattern_source_ids.push(source.id.as_str());
+            }
+        }
     }
-    pages.iter().any(|page| {
-        source_reference_is_present(&page.markdown, &source.id)
-            || source_reference_is_present(&page.markdown, &source.location)
-            || source_reference_is_present(&page.markdown, &source.canonical_location)
-            || source
-                .citation
-                .as_ref()
-                .is_some_and(|citation| source_reference_is_present(&page.markdown, citation))
-    })
+    if patterns.is_empty() {
+        return SourceCitationIndex { cited_source_ids };
+    }
+    let regex_set = match regex::RegexSet::new(&patterns) {
+        Ok(regex_set) => regex_set,
+        Err(error) => {
+            log::warn!("failed to build health citation regex set: {error}");
+            return SourceCitationIndex { cited_source_ids };
+        }
+    };
+
+    for page in pages {
+        let markdown = markdown_without_fenced_code(&page.markdown);
+        for matched in regex_set.matches(&markdown) {
+            cited_source_ids.insert(pattern_source_ids[matched].to_string());
+        }
+    }
+    SourceCitationIndex { cited_source_ids }
+}
+
+fn source_reference_needles(source: &SourceRecord) -> Vec<&str> {
+    let mut needles = vec![
+        source.id.as_str(),
+        source.location.as_str(),
+        source.canonical_location.as_str(),
+    ];
+    if let Some(citation) = source.citation.as_deref() {
+        needles.push(citation);
+    }
+    needles
+}
+
+fn source_reference_patterns(needle: &str) -> Vec<String> {
+    let needle = needle.trim();
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    vec![
+        markdown_link_target_pattern(needle),
+        bounded_text_pattern(needle),
+    ]
 }
 
 fn source_reference_is_present(markdown: &str, needle: &str) -> bool {
@@ -276,17 +360,23 @@ fn markdown_without_fenced_code(markdown: &str) -> String {
 }
 
 fn markdown_link_target_matches(markdown: &str, needle: &str) -> bool {
-    let escaped = regex::escape(needle);
-    let pattern = format!(
-        r#"(?m)(\[[^\]]*\]\(\s*<?{escaped}>?(?:\s+["'][^"']*["'])?\s*\)|\[\[\s*{escaped}(?:\|[^\]]*)?\s*\]\])"#
-    );
-    cached_regex_is_match(pattern, markdown)
+    cached_regex_is_match(markdown_link_target_pattern(needle), markdown)
 }
 
 fn bounded_text_matches(markdown: &str, needle: &str) -> bool {
+    cached_regex_is_match(bounded_text_pattern(needle), markdown)
+}
+
+fn markdown_link_target_pattern(needle: &str) -> String {
     let escaped = regex::escape(needle);
-    let pattern = format!(r#"(^|[^\p{{L}}\p{{N}}_]){escaped}($|[^\p{{L}}\p{{N}}_])"#);
-    cached_regex_is_match(pattern, markdown)
+    format!(
+        r#"(?m)(\[[^\]]*\]\(\s*<?{escaped}>?(?:\s+["'][^"']*["'])?\s*\)|\[\[\s*{escaped}(?:\|[^\]]*)?\s*\]\])"#
+    )
+}
+
+fn bounded_text_pattern(needle: &str) -> String {
+    let escaped = regex::escape(needle);
+    format!(r#"(^|[^\p{{L}}\p{{N}}_]){escaped}($|[^\p{{L}}\p{{N}}_])"#)
 }
 
 fn cached_regex_is_match(pattern: String, haystack: &str) -> bool {
@@ -446,7 +536,7 @@ fn render_duplicate_concepts(text: &mut String, duplicates: &[DuplicateConcept])
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sources::{SourceDraft, SourceManifest};
+    use crate::sources::{IngestionMethod, SourceDraft, SourceKind, SourceManifest};
 
     #[test]
     fn health_checks_required_cases() {
@@ -509,6 +599,47 @@ mod tests {
     }
 
     #[test]
+    fn citation_index_marks_cited_sources_once_per_page() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let cited = SourceManifest::register(
+            root,
+            SourceDraft::url(
+                "https://example.com/cited",
+                "2026-05-29T12:00:00Z",
+                "cited source",
+            )
+            .with_citation("Cited Example"),
+        )
+        .expect("cited source registered");
+        let uncited = SourceManifest::register(
+            root,
+            SourceDraft::url(
+                "https://example.com/uncited",
+                "2026-05-29T12:00:00Z",
+                "uncited source",
+            )
+            .with_citation("Uncited Example"),
+        )
+        .expect("uncited source registered");
+        write_page(
+            root,
+            "wiki/topics/cited.md",
+            "# Cited\n\n[Cited Example](https://example.com/cited)\n",
+        );
+
+        let report = run(root, ScopeIdentity::topic("ops")).expect("health runs");
+        let uncited_ids = report
+            .uncited_sources
+            .iter()
+            .map(|issue| issue.source_id.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(!uncited_ids.contains(&cited.id.as_str()));
+        assert!(uncited_ids.contains(&uncited.id.as_str()));
+    }
+
+    #[test]
     fn cached_regex_returns_false_for_malformed_patterns() {
         assert!(!cached_regex_is_match("[".to_string(), "anything"));
     }
@@ -566,9 +697,42 @@ mod tests {
         assert_eq!(stale_citation_years_from_env("nope"), None);
     }
 
+    #[test]
+    fn stale_citation_uses_full_fetched_timestamp() {
+        let now = DateTime::parse_from_rfc3339("2026-06-02T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        assert!(source_citation_is_stale_at(
+            &source_record("2025-06-02T05:00:00Z"),
+            now
+        ));
+        assert!(!source_citation_is_stale_at(
+            &source_record("2025-06-02T18:00:00Z"),
+            now
+        ));
+    }
+
     fn write_page(root: &Path, relative: &str, markdown: &str) {
         let path = root.join(relative);
         std::fs::create_dir_all(path.parent().expect("page parent")).expect("create parent");
         std::fs::write(path, markdown).expect("write page");
+    }
+
+    fn source_record(fetched_at: &str) -> SourceRecord {
+        SourceRecord {
+            id: "source-id".to_string(),
+            location: "https://example.test/source".to_string(),
+            canonical_location: "https://example.test/source".to_string(),
+            kind: SourceKind::Url,
+            fetched_at: fetched_at.to_string(),
+            content_hash: "hash".to_string(),
+            title: None,
+            citation: Some("Example".to_string()),
+            license: None,
+            ingestion_method: IngestionMethod::Manual,
+            compile_status: CompileStatus::Compiled,
+            replay: None,
+        }
     }
 }

@@ -84,7 +84,7 @@ jobs:
           [package]
           name = "gwiki-core-precondition"
           version = "0.0.0"
-          edition = "2024"
+          edition = "2021"
 
           [dependencies]
           gobby-core = { version = "=${core_version}", features = ["ai"] }

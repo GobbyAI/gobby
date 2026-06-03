@@ -28,8 +28,7 @@ pub(super) fn quote_identifier(value: &str, label: &str) -> Result<String, Setup
             message: format!("{label} identifier must not contain NUL bytes"),
         });
     }
-    let escaped = trimmed.replace('"', "\"\"");
-    if escaped.len() > POSTGRES_IDENTIFIER_MAX_BYTES {
+    if trimmed.len() > POSTGRES_IDENTIFIER_MAX_BYTES {
         return Err(SetupError::CreationFailed {
             object: label.to_string(),
             message: format!(
@@ -37,5 +36,6 @@ pub(super) fn quote_identifier(value: &str, label: &str) -> Result<String, Setup
             ),
         });
     }
+    let escaped = trimmed.replace('"', "\"\"");
     Ok(format!("\"{escaped}\""))
 }

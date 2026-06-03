@@ -82,11 +82,11 @@ pub struct PostgresGraphBoostBackend {
 impl PostgresGraphBoostBackend {
     pub fn new(conn: &mut postgres::Client, scope: SearchScope) -> Self {
         match load_graph_boost_data(conn, &scope) {
-            Ok((documents, links)) => Self {
+            Ok(data) => Self {
                 scope,
-                documents,
-                links,
-                degradation: None,
+                documents: data.documents,
+                links: data.links,
+                degradation: data.degradation,
             },
             Err(error) => Self {
                 scope,
@@ -109,20 +109,26 @@ impl GraphBoostBackend for PostgresGraphBoostBackend {
                 degradation: None,
             });
         }
-        if let Some(degradation) = self.degradation.clone() {
+        if let Some(degradation) = self.degradation.clone()
+            && self.documents.is_empty()
+            && self.links.is_empty()
+        {
             return Ok(GraphBoostOutcome {
                 hits: Vec::new(),
                 degradation: Some(degradation),
             });
         }
         if request.scope != self.scope {
-            return Ok(degraded(format!(
-                "graph boost backend loaded for {}:{}, requested {}:{}",
-                self.scope.scope_kind(),
-                self.scope.scope_value(),
-                request.scope.scope_kind(),
-                request.scope.scope_value()
-            )));
+            return Ok(GraphBoostOutcome {
+                hits: Vec::new(),
+                degradation: Some(graph_degradation(format!(
+                    "graph boost backend loaded for {}:{}, requested {}:{}",
+                    self.scope.scope_kind(),
+                    self.scope.scope_value(),
+                    request.scope.scope_kind(),
+                    request.scope.scope_value()
+                ))),
+            });
         }
 
         let ranked_paths = rank_link_neighborhood(
@@ -133,27 +139,39 @@ impl GraphBoostBackend for PostgresGraphBoostBackend {
         );
         Ok(GraphBoostOutcome {
             hits: graph_boost_hits(request.scope, ranked_paths, request.limit),
-            degradation: None,
+            degradation: self.degradation.clone(),
         })
     }
+}
+
+struct GraphBoostData {
+    documents: Vec<GraphBoostDocument>,
+    links: Vec<GraphBoostLink>,
+    degradation: Option<DegradationKind>,
 }
 
 fn load_graph_boost_data(
     conn: &mut postgres::Client,
     scope: &SearchScope,
-) -> Result<(Vec<GraphBoostDocument>, Vec<GraphBoostLink>), postgres::Error> {
+) -> Result<GraphBoostData, postgres::Error> {
     let scope_kind = scope.scope_kind().to_string();
     let scope_id = scope.scope_value().to_string();
 
-    let documents = conn
-        .query(
-            "SELECT path, title
+    let mut document_rows = conn.query(
+        "SELECT path, title
              FROM gwiki_documents
              WHERE scope_kind = $1 AND scope_id = $2
              ORDER BY path
              LIMIT $3",
-            &[&scope_kind, &scope_id, &GRAPH_BOOST_DOCUMENT_QUERY_LIMIT],
-        )?
+        &[
+            &scope_kind,
+            &scope_id,
+            &(GRAPH_BOOST_DOCUMENT_QUERY_LIMIT + 1),
+        ],
+    )?;
+    let documents_capped = document_rows.len() > GRAPH_BOOST_DOCUMENT_QUERY_LIMIT as usize;
+    document_rows.truncate(GRAPH_BOOST_DOCUMENT_QUERY_LIMIT as usize);
+    let documents = document_rows
         .into_iter()
         .map(|row| GraphBoostDocument {
             path: PathBuf::from(row.get::<_, String>("path")),
@@ -161,15 +179,17 @@ fn load_graph_boost_data(
         })
         .collect::<Vec<_>>();
 
-    let links = conn
-        .query(
-            "SELECT path, target_path
+    let mut link_rows = conn.query(
+        "SELECT path, target_path
              FROM gwiki_links
              WHERE scope_kind = $1 AND scope_id = $2
              ORDER BY path, target_path
              LIMIT $3",
-            &[&scope_kind, &scope_id, &GRAPH_BOOST_LINK_QUERY_LIMIT],
-        )?
+        &[&scope_kind, &scope_id, &(GRAPH_BOOST_LINK_QUERY_LIMIT + 1)],
+    )?;
+    let links_capped = link_rows.len() > GRAPH_BOOST_LINK_QUERY_LIMIT as usize;
+    link_rows.truncate(GRAPH_BOOST_LINK_QUERY_LIMIT as usize);
+    let links = link_rows
         .into_iter()
         .map(|row| GraphBoostLink {
             source_path: PathBuf::from(row.get::<_, String>("path")),
@@ -177,7 +197,29 @@ fn load_graph_boost_data(
         })
         .collect::<Vec<_>>();
 
-    Ok((documents, links))
+    Ok(GraphBoostData {
+        documents,
+        links,
+        degradation: graph_boost_cap_degradation(documents_capped, links_capped),
+    })
+}
+
+fn graph_boost_cap_degradation(
+    documents_capped: bool,
+    links_capped: bool,
+) -> Option<DegradationKind> {
+    if !documents_capped && !links_capped {
+        return None;
+    }
+    let capped = match (documents_capped, links_capped) {
+        (true, true) => "documents and links",
+        (true, false) => "documents",
+        (false, true) => "links",
+        (false, false) => unreachable!(),
+    };
+    Some(graph_degradation(format!(
+        "graph boost snapshot capped while loading {capped}"
+    )))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -251,6 +293,7 @@ pub fn rank_link_neighborhood(
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| left_path.cmp(right_path))
     });
+    ranked.retain(|(path, _)| is_keyword_searchable_path(&path.to_string_lossy()));
     ranked.truncate(limit);
     ranked
 }
@@ -289,13 +332,6 @@ fn graph_result(scope: &SearchScope, path: PathBuf, score: f64) -> WikiSearchRes
         explanations: Vec::new(),
         chunk: None,
         provenance,
-    }
-}
-
-fn degraded(message: String) -> GraphBoostOutcome {
-    GraphBoostOutcome {
-        hits: Vec::new(),
-        degradation: Some(graph_degradation(message)),
     }
 }
 
@@ -373,21 +409,55 @@ mod tests {
     #[test]
     fn rank_link_neighborhood_boosts_outbound_and_backlinks() {
         let documents = vec![
-            document("seed.md", Some("Seed")),
-            document("outbound.md", Some("Outbound")),
-            document("backlink.md", Some("Backlink")),
+            document("wiki/topics/seed.md", Some("Seed")),
+            document("wiki/topics/outbound.md", Some("Outbound")),
+            document("wiki/topics/backlink.md", Some("Backlink")),
         ];
         let links = vec![
-            link("seed.md", "outbound.md"),
-            link("backlink.md", "Seed"),
-            link("outbound.md", "https://example.com"),
+            link("wiki/topics/seed.md", "wiki/topics/outbound.md"),
+            link("wiki/topics/backlink.md", "Seed"),
+            link("wiki/topics/outbound.md", "https://example.com"),
         ];
 
-        let ranked = rank_link_neighborhood(&documents, &links, &[PathBuf::from("seed.md")], 10);
+        let ranked = rank_link_neighborhood(
+            &documents,
+            &links,
+            &[PathBuf::from("wiki/topics/seed.md")],
+            10,
+        );
 
         assert_eq!(ranked.len(), 2);
-        assert_eq!(ranked[0], (PathBuf::from("outbound.md"), 1.0));
-        assert_eq!(ranked[1], (PathBuf::from("backlink.md"), 0.8));
+        assert_eq!(ranked[0], (PathBuf::from("wiki/topics/outbound.md"), 1.0));
+        assert_eq!(ranked[1], (PathBuf::from("wiki/topics/backlink.md"), 0.8));
+    }
+
+    #[test]
+    fn rank_link_neighborhood_filters_non_searchable_before_truncating() {
+        let documents = vec![
+            document("wiki/topics/seed.md", Some("Seed")),
+            document("meta/high.md", Some("High")),
+            document("wiki/topics/low.md", Some("Low")),
+        ];
+        let links = vec![
+            link("wiki/topics/seed.md", "meta/high.md"),
+            link("wiki/topics/low.md", "Seed"),
+        ];
+
+        let ranked = rank_link_neighborhood(
+            &documents,
+            &links,
+            &[PathBuf::from("wiki/topics/seed.md")],
+            1,
+        );
+
+        assert_eq!(ranked, vec![(PathBuf::from("wiki/topics/low.md"), 0.8)]);
+    }
+
+    #[test]
+    fn graph_boost_cap_degradation_reports_capped_rows() {
+        assert!(graph_boost_cap_degradation(false, false).is_none());
+        assert!(graph_boost_cap_degradation(true, false).is_some());
+        assert!(graph_boost_cap_degradation(false, true).is_some());
     }
 
     #[test]

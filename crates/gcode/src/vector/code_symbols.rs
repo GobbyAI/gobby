@@ -16,7 +16,7 @@ pub use qdrant::{
     delete_file_vectors, delete_project_collection, vector_search,
 };
 pub use repository::{fetch_symbols_for_file, fetch_symbols_for_project};
-pub use search::{search_code_symbols, semantic_search};
+pub use search::{SearchError, search_code_symbols, semantic_search};
 pub use types::{
     CodeSymbolVectorLifecycleAction, CodeSymbolVectorLifecycleOutput,
     CodeSymbolVectorLifecycleStatus, CodeSymbolVectorPayload, CodeSymbolVectorSearchHit,

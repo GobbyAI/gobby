@@ -332,6 +332,11 @@ fn ingest_video_file_with_processing_without_index(
                 error,
             )),
         }
+    } else if let TranscriptionEndpoint::Unavailable(reason) = &transcription_endpoint {
+        transcription_degradation = Some(crate::transcribe::TranscriptionDegradation {
+            reason: "unavailable".to_string(),
+            fallback: format!("{}: {}", reason.reason, reason.fallback),
+        });
     }
 
     if frame_interval_seconds != 0 {
@@ -1398,6 +1403,27 @@ mod tests {
         let vision_unavailable_doc = read_derived(temp.path(), &vision_unavailable);
         assert!(vision_unavailable_doc.contains("media_degradation: frames:vision_unavailable"));
         assert!(vision_unavailable_doc.contains("No frame samples recorded."));
+
+        let transcription_unavailable = ingest_with_media(
+            temp.path(),
+            FakeVideoMediaExtractor {
+                audio_bytes: b"extracted audio".to_vec(),
+                frames: vec![(0, b"frame-zero".to_vec())],
+                fail_audio: None,
+                fail_frames: None,
+            },
+            TranscriptionEndpoint::Unavailable(crate::transcribe::TranscriptionDegradation {
+                reason: "disabled".to_string(),
+                fallback: "skip audio".to_string(),
+            }),
+            VisionEndpoint::Available(&vision),
+            "transcription-unavailable.mp4",
+        )
+        .expect("transcription unavailable degrades");
+        let transcription_unavailable_doc = read_derived(temp.path(), &transcription_unavailable);
+        assert!(transcription_unavailable_doc.contains("transcription_status: degraded"));
+        assert!(transcription_unavailable_doc.contains("transcription_degradation: unavailable"));
+        assert!(transcription_unavailable_doc.contains("disabled: skip audio"));
 
         let stt_fail = ingest_with_media(
             temp.path(),

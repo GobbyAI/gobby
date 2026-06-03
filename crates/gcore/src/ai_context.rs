@@ -320,7 +320,10 @@ where
             };
             return primary.resolve_value(value);
         }
-        Ok(value.to_string())
+        match self.standalone.as_mut() {
+            Some(standalone) => standalone.resolve_value(value),
+            None => Ok(value.to_string()),
+        }
     }
 }
 
@@ -612,6 +615,33 @@ ai:
                 .api_base
                 .as_deref(),
             Some("http://yaml-text")
+        );
+    }
+
+    #[test]
+    fn standalone_values_expand_env_patterns_for_db_fallback() {
+        let home = tempfile::tempdir().unwrap();
+        write_gcore_yaml(
+            home.path(),
+            r#"
+ai:
+  text_generate:
+    routing: direct
+    api_base: ${GOBBY_AI_CONTEXT_TEST_MISSING:-http://expanded-text}
+"#,
+        );
+        let primary = TestSource::with_values([]);
+        let mut source =
+            AiConfigSource::with_primary_from_gobby_home(primary, home.path()).unwrap();
+
+        let context = AiContext::resolve(None, &mut source);
+
+        assert_eq!(
+            context
+                .binding(AiCapability::TextGenerate)
+                .api_base
+                .as_deref(),
+            Some("http://expanded-text")
         );
     }
 

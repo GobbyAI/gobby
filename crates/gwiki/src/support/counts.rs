@@ -24,21 +24,41 @@ pub(crate) fn postgres_index_counts(
     scope: &search::SearchScope,
 ) -> Result<IndexCounts, WikiError> {
     Ok(IndexCounts {
-        documents: postgres_count(conn, "gwiki_documents", scope)?,
-        chunks: postgres_count(conn, "gwiki_chunks", scope)?,
-        links: postgres_count(conn, "gwiki_links", scope)?,
-        sources: postgres_count(conn, "gwiki_sources", scope)?,
-        ingestions: postgres_count(conn, "gwiki_ingestions", scope)?,
+        documents: postgres_count(conn, GwikiTable::Documents, scope)?,
+        chunks: postgres_count(conn, GwikiTable::Chunks, scope)?,
+        links: postgres_count(conn, GwikiTable::Links, scope)?,
+        sources: postgres_count(conn, GwikiTable::Sources, scope)?,
+        ingestions: postgres_count(conn, GwikiTable::Ingestions, scope)?,
     })
 }
 
-// `table` must be a static gwiki-owned identifier from postgres_index_counts'
-// fixed table list. Never pass user input here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GwikiTable {
+    Documents,
+    Chunks,
+    Links,
+    Sources,
+    Ingestions,
+}
+
+impl GwikiTable {
+    fn as_identifier(self) -> &'static str {
+        match self {
+            Self::Documents => "gwiki_documents",
+            Self::Chunks => "gwiki_chunks",
+            Self::Links => "gwiki_links",
+            Self::Sources => "gwiki_sources",
+            Self::Ingestions => "gwiki_ingestions",
+        }
+    }
+}
+
 fn postgres_count(
     conn: &mut postgres::Client,
-    table: &'static str,
+    table: GwikiTable,
     scope: &search::SearchScope,
 ) -> Result<usize, WikiError> {
+    let table = table.as_identifier();
     let sql = format!("SELECT COUNT(*) FROM {table} WHERE scope_kind = $1 AND scope_id = $2");
     let count = conn
         .query_one(&sql, &[&scope.scope_kind(), &scope.scope_value()])
@@ -49,4 +69,18 @@ fn postgres_count(
     usize::try_from(count).map_err(|error| WikiError::Config {
         detail: format!("invalid PostgreSQL gwiki row count in {table}: {error}"),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gwiki_table_identifiers_are_fixed() {
+        assert_eq!(GwikiTable::Documents.as_identifier(), "gwiki_documents");
+        assert_eq!(GwikiTable::Chunks.as_identifier(), "gwiki_chunks");
+        assert_eq!(GwikiTable::Links.as_identifier(), "gwiki_links");
+        assert_eq!(GwikiTable::Sources.as_identifier(), "gwiki_sources");
+        assert_eq!(GwikiTable::Ingestions.as_identifier(), "gwiki_ingestions");
+    }
 }

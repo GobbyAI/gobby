@@ -475,6 +475,18 @@ pub fn write_incremental_doc_set(
         next_docs.insert(relative_path.clone(), doc_meta);
     }
 
+    for stale_path in previous
+        .docs
+        .keys()
+        .filter(|key| !next_docs.contains_key(*key))
+    {
+        match std::fs::remove_file(safe_doc_path(out_dir, stale_path)?) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err.into()),
+        }
+    }
+
     let meta = CodewikiMeta {
         docs: next_docs,
         generated_docs: generated_docs.clone(),
@@ -1701,7 +1713,13 @@ fn plural(count: usize) -> &'static str {
 }
 
 fn component_id(symbol: &Symbol) -> String {
-    format!("{}::{}", symbol.file_path, symbol.name)
+    Symbol::make_id(
+        &symbol.project_id,
+        &symbol.file_path,
+        &symbol.name,
+        &symbol.kind,
+        symbol.byte_start,
+    )
 }
 
 fn is_core_file(file: &str) -> bool {
@@ -1876,8 +1894,8 @@ mod tests {
                 "vendor/generated/client.rs".to_string(),
             ],
             graph_edges: vec![CodewikiGraphEdge::call(
-                "src/api/handler.rs::handle",
-                "src/domain/service.rs::Service",
+                test_component_id("src/api/handler.rs", "handle", "function"),
+                test_component_id("src/domain/service.rs", "Service", "class"),
             )],
             graph_availability: CodewikiGraphAvailability::Available,
             symbols: vec![
@@ -1928,8 +1946,16 @@ mod tests {
             .expect("graph-connected files cluster under common module");
         assert!(module.contains("[[files/src/api/handler.rs|src/api/handler.rs]]"));
         assert!(module.contains("[[files/src/domain/service.rs|src/domain/service.rs]]"));
-        assert!(module.contains("src/api/handler.rs::handle"));
-        assert!(module.contains("src/domain/service.rs::Service"));
+        assert!(module.contains(&test_component_id(
+            "src/api/handler.rs",
+            "handle",
+            "function"
+        )));
+        assert!(module.contains(&test_component_id(
+            "src/domain/service.rs",
+            "Service",
+            "class"
+        )));
         assert!(!docs_by_path.contains_key("files/tests/domain/service_test.rs.md"));
         assert!(!docs_by_path.contains_key("files/vendor/generated/client.rs.md"));
     }
@@ -2001,7 +2027,11 @@ mod tests {
             docs_by_path
                 .get("files/src/api/handler.rs.md")
                 .expect("handler file doc")
-                .contains("src/api/handler.rs::handle")
+                .contains(&test_component_id(
+                    "src/api/handler.rs",
+                    "handle",
+                    "function"
+                ))
         );
         assert!(
             docs_by_path
@@ -2034,16 +2064,16 @@ mod tests {
             ],
             graph_edges: vec![
                 CodewikiGraphEdge::import(
-                    "src/api/handler.rs::handle",
-                    "src/domain/service.rs::Service",
+                    test_component_id("src/api/handler.rs", "handle", "function"),
+                    test_component_id("src/domain/service.rs", "Service", "class"),
                 ),
                 CodewikiGraphEdge::import(
-                    "src/domain/service.rs::Service",
-                    "src/storage/repo.rs::Repo",
+                    test_component_id("src/domain/service.rs", "Service", "class"),
+                    test_component_id("src/storage/repo.rs", "Repo", "class"),
                 ),
                 CodewikiGraphEdge::import(
-                    "src/unrelated/tool.rs::Tool",
-                    "src/storage/repo.rs::Repo",
+                    test_component_id("src/unrelated/tool.rs", "Tool", "class"),
+                    test_component_id("src/storage/repo.rs", "Repo", "class"),
                 ),
             ],
             graph_availability: CodewikiGraphAvailability::Available,
@@ -2123,7 +2153,11 @@ mod tests {
 
         assert!(module.contains("degraded: graph-unavailable"));
         assert!(file.contains("API Symbols"));
-        assert!(file.contains("src/api/handler.rs::handle"));
+        assert!(file.contains(&test_component_id(
+            "src/api/handler.rs",
+            "handle",
+            "function"
+        )));
     }
 
     #[test]
@@ -2278,6 +2312,28 @@ mod tests {
                 serde_json::Value::String("files/src/lib.rs.md".to_string())
             ]
         );
+
+        let reduced_input = CodewikiInput {
+            files: vec!["src/lib.rs".to_string()],
+            graph_edges: Vec::new(),
+            graph_availability: CodewikiGraphAvailability::Available,
+            symbols: vec![test_symbol(
+                "src/lib.rs",
+                "Client",
+                "class",
+                1,
+                "pub struct Client;",
+            )],
+        };
+        let reduced_docs = generate_hierarchical_docs(&reduced_input, None);
+        write_incremental_doc_set(project.path(), &out_dir, &reduced_docs)
+            .expect("stale docs removed");
+
+        assert!(!unchanged_file_doc.exists());
+        let meta =
+            std::fs::read_to_string(out_dir.join("_meta/codewiki.json")).expect("read final meta");
+        let meta: serde_json::Value = serde_json::from_str(&meta).expect("parse final meta");
+        assert!(meta["docs"].get("files/src/nested/api.rs.md").is_none());
     }
 
     fn test_symbol(
@@ -2288,6 +2344,10 @@ mod tests {
         signature: &str,
     ) -> Symbol {
         test_symbol_with_qualified(file_path, name, name, kind, line_start, signature)
+    }
+
+    fn test_component_id(file_path: &str, name: &str, kind: &str) -> String {
+        Symbol::make_id("project-1", file_path, name, kind, 0)
     }
 
     fn test_symbol_with_qualified(

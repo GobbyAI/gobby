@@ -2,7 +2,12 @@ use sha2::{Digest, Sha256};
 
 pub fn api_key_fingerprint(api_key: &str) -> String {
     let digest = Sha256::digest(api_key.as_bytes());
-    format!("{digest:x}").chars().take(16).collect()
+    let mut fingerprint = String::with_capacity(16);
+    for byte in &digest[..8] {
+        use std::fmt::Write as _;
+        let _ = write!(fingerprint, "{byte:02x}");
+    }
+    fingerprint
 }
 
 pub fn short_id(id: &str) -> String {

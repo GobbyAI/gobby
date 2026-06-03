@@ -4,44 +4,53 @@ use super::embedding::{embed_query_with_source, embedding_source_from_context};
 use super::qdrant::{collection_name, vector_search};
 use super::types::{CodeSymbolVectorSearchHit, CodeSymbolVectorSearchRequest};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SearchError {
+    MissingQdrantConfig,
+    MissingEmbeddingConfig,
+    QueryEmbeddingFailed,
+    VectorSearch(String),
+}
+
+impl std::fmt::Display for SearchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingQdrantConfig => write!(f, "Qdrant config is missing"),
+            Self::MissingEmbeddingConfig => write!(f, "embedding config is missing"),
+            Self::QueryEmbeddingFailed => write!(f, "query embedding failed"),
+            Self::VectorSearch(error) => write!(f, "semantic vector search failed: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for SearchError {}
+
 pub fn search_code_symbols(
     ctx: &Context,
     request: &CodeSymbolVectorSearchRequest,
-) -> Vec<CodeSymbolVectorSearchHit> {
+) -> Result<Vec<CodeSymbolVectorSearchHit>, SearchError> {
     let qdrant_config = match &ctx.qdrant {
-        Some(c) => c,
-        None => {
-            eprintln!("gcode: semantic vector search skipped: Qdrant config is missing");
-            return vec![];
-        }
+        Some(config) => config,
+        None => return Err(SearchError::MissingQdrantConfig),
     };
 
     let embedding_source = match embedding_source_from_context(ctx) {
         Some(source) => source,
-        None => {
-            eprintln!("gcode: semantic vector search skipped: embedding config is missing");
-            return vec![];
-        }
+        None => return Err(SearchError::MissingEmbeddingConfig),
     };
 
     let embedding = match embed_query_with_source(&embedding_source, &request.query) {
-        Some(e) => e,
-        None => {
-            eprintln!("gcode: semantic vector search skipped: query embedding failed");
-            return vec![];
-        }
+        Some(embedding) => embedding,
+        None => return Err(SearchError::QueryEmbeddingFailed),
     };
 
     let collection = collection_name(&request.collection_prefix, &request.project_id);
     match vector_search(qdrant_config, &collection, &embedding, request.limit) {
-        Ok(hits) => hits
+        Ok(hits) => Ok(hits
             .into_iter()
             .map(|(symbol_id, score)| CodeSymbolVectorSearchHit { symbol_id, score })
-            .collect(),
-        Err(error) => {
-            eprintln!("gcode: semantic vector search failed: {error}");
-            Vec::new()
-        }
+            .collect()),
+        Err(error) => Err(SearchError::VectorSearch(error.to_string())),
     }
 }
 
@@ -56,8 +65,14 @@ pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String,
         collection_prefix: CODE_SYMBOL_COLLECTION_PREFIX.to_string(),
     };
 
-    search_code_symbols(ctx, &request)
-        .into_iter()
-        .map(|hit| (hit.symbol_id, hit.score))
-        .collect()
+    match search_code_symbols(ctx, &request) {
+        Ok(hits) => hits
+            .into_iter()
+            .map(|hit| (hit.symbol_id, hit.score))
+            .collect(),
+        Err(error) => {
+            log::warn!("semantic vector search skipped: {error}");
+            Vec::new()
+        }
+    }
 }

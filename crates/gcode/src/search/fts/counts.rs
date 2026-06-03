@@ -78,11 +78,14 @@ fn count_symbols_by_name_like(
     let mut params = Vec::new();
     let project_placeholder = push_param(&mut params, project_id.to_string());
     let name_placeholder = push_param(&mut params, pattern.clone());
-    let qualified_placeholder = push_param(&mut params, pattern);
+    let qualified_placeholder = push_param(&mut params, pattern.clone());
+    let signature_placeholder = push_param(&mut params, pattern.clone());
+    let docstring_placeholder = push_param(&mut params, pattern.clone());
+    let summary_placeholder = push_param(&mut params, pattern);
     let mut conditions = vec![
         format!("cs.project_id = {project_placeholder}"),
         format!(
-            "(cs.name LIKE {name_placeholder} ESCAPE '\\' OR cs.qualified_name LIKE {qualified_placeholder} ESCAPE '\\')"
+            "(cs.name LIKE {name_placeholder} ESCAPE '\\' OR cs.qualified_name LIKE {qualified_placeholder} ESCAPE '\\' OR cs.signature LIKE {signature_placeholder} ESCAPE '\\' OR cs.docstring LIKE {docstring_placeholder} ESCAPE '\\' OR cs.summary LIKE {summary_placeholder} ESCAPE '\\')"
         ),
     ];
     let path_filter_fallback = push_symbol_filters(
@@ -278,8 +281,15 @@ fn glob_to_pg_regex(pattern: &str) -> Option<String> {
     let mut chars = pattern.chars().peekable();
     while let Some(ch) = chars.next() {
         match ch {
-            '*' => regex.push_str(".*"),
-            '?' => regex.push('.'),
+            '*' => {
+                if chars.peek() == Some(&'*') {
+                    chars.next();
+                    regex.push_str(".*");
+                } else {
+                    regex.push_str("[^/]*");
+                }
+            }
+            '?' => regex.push_str("[^/]"),
             '[' => {
                 regex.push('[');
                 if chars.peek() == Some(&'!') {
@@ -337,9 +347,12 @@ fn count_symbols_by_name_like_visible(
     let pattern = format!("%{escaped_query}%");
     let mut params = Vec::new();
     let name_placeholder = push_param(&mut params, pattern.clone());
-    let qualified_placeholder = push_param(&mut params, pattern);
+    let qualified_placeholder = push_param(&mut params, pattern.clone());
+    let signature_placeholder = push_param(&mut params, pattern.clone());
+    let docstring_placeholder = push_param(&mut params, pattern.clone());
+    let summary_placeholder = push_param(&mut params, pattern);
     let conditions = vec![format!(
-        "(cs.name LIKE {name_placeholder} ESCAPE '\\' OR cs.qualified_name LIKE {qualified_placeholder} ESCAPE '\\')"
+        "(cs.name LIKE {name_placeholder} ESCAPE '\\' OR cs.qualified_name LIKE {qualified_placeholder} ESCAPE '\\' OR cs.signature LIKE {signature_placeholder} ESCAPE '\\' OR cs.docstring LIKE {docstring_placeholder} ESCAPE '\\' OR cs.summary LIKE {summary_placeholder} ESCAPE '\\')"
     )];
     count_visible_symbols_by_conditions(conn, ctx, conditions, params, language, paths).unwrap_or(0)
 }
@@ -463,14 +476,18 @@ mod tests {
 
     #[test]
     fn glob_to_pg_regex_anchors_and_escapes_patterns() {
-        assert_eq!(glob_to_pg_regex("*.rs").as_deref(), Some("^.*\\.rs$"));
+        assert_eq!(glob_to_pg_regex("*.rs").as_deref(), Some("^[^/]*\\.rs$"));
         assert_eq!(
             glob_to_pg_regex("src/foo?.[ch]").as_deref(),
-            Some("^src/foo.\\.[ch]$")
+            Some("^src/foo[^/]\\.[ch]$")
         );
         assert_eq!(
             glob_to_pg_regex("src/literal].rs").as_deref(),
             Some("^src/literal\\]\\.rs$")
+        );
+        assert_eq!(
+            glob_to_pg_regex("src/**/*.rs").as_deref(),
+            Some("^src/.*/[^/]*\\.rs$")
         );
         assert_eq!(glob_to_pg_regex("src/["), None);
     }

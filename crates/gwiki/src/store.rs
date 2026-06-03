@@ -730,12 +730,21 @@ fn scoped_text_id(prefix: &str, scope: &WikiStoreScope, path: &Path, suffixes: &
 }
 
 fn cap_scoped_id(id: String) -> String {
+    let hash = gobby_core::indexing::content_hash(id.as_bytes());
+    cap_scoped_id_with_hash(id, &hash)
+}
+
+fn cap_scoped_id_with_hash(id: String, hash: &str) -> String {
     if id.len() <= MAX_ID_LEN {
         return id;
     }
 
-    let hash = gobby_core::indexing::content_hash(id.as_bytes());
-    let prefix_len = MAX_ID_LEN - HASH_SUFFIX_LEN - 1;
+    let suffix = if hash.len() >= HASH_SUFFIX_LEN {
+        &hash[..HASH_SUFFIX_LEN]
+    } else {
+        hash
+    };
+    let prefix_len = MAX_ID_LEN.saturating_sub(suffix.len()).saturating_sub(1);
     let mut prefix = String::new();
     for ch in id.chars() {
         if prefix.len() + ch.len_utf8() > prefix_len {
@@ -743,7 +752,7 @@ fn cap_scoped_id(id: String) -> String {
         }
         prefix.push(ch);
     }
-    format!("{prefix}-{}", &hash[..HASH_SUFFIX_LEN])
+    format!("{prefix}-{suffix}")
 }
 
 fn document_kind_name(kind: WikiDocumentKind) -> &'static str {
@@ -767,13 +776,21 @@ fn ingestion_status(event: WikiIngestionEvent) -> &'static str {
 }
 
 pub(crate) fn link_kind(target: &str) -> &'static str {
-    // Only `://` is treated as external Markdown because bare schemes such as
-    // `mailto:` are valid wiki targets in existing vaults.
-    if target.contains("://") {
+    let trimmed = target.trim();
+    if trimmed.starts_with("//") || trimmed.starts_with("\\\\") || has_uri_scheme(trimmed) {
         "markdown"
     } else {
         "wiki"
     }
+}
+
+fn has_uri_scheme(target: &str) -> bool {
+    let Some((scheme, _rest)) = target.split_once(':') else {
+        return false;
+    };
+    let mut chars = scheme.chars();
+    chars.next().is_some_and(|ch| ch.is_ascii_alphabetic())
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '.' | '-'))
 }
 
 fn rollback_link_replacement(tx: Transaction<'_>, path: &str) {
@@ -803,8 +820,9 @@ mod tests {
     #[test]
     fn link_kind_classifies_uri_schemes_and_fragments() {
         assert_eq!(link_kind("https://example.test"), "markdown");
-        assert_eq!(link_kind("mailto:hello@example.test"), "wiki");
-        assert_eq!(link_kind("//example.test/path"), "wiki");
+        assert_eq!(link_kind("mailto:hello@example.test"), "markdown");
+        assert_eq!(link_kind("tel:+15551234567"), "markdown");
+        assert_eq!(link_kind("//example.test/path"), "markdown");
         assert_eq!(link_kind("#local-section"), "wiki");
         assert_eq!(link_kind("Concept Page"), "wiki");
     }
@@ -831,6 +849,14 @@ mod tests {
             id.rsplit_once('-')
                 .is_some_and(|(_, suffix)| suffix.len() == HASH_SUFFIX_LEN)
         );
+    }
+
+    #[test]
+    fn scoped_id_capping_tolerates_short_hashes() {
+        let id = cap_scoped_id_with_hash("x".repeat(MAX_ID_LEN + 20), "abc");
+
+        assert!(id.len() <= MAX_ID_LEN);
+        assert!(id.ends_with("-abc"));
     }
 
     #[test]
