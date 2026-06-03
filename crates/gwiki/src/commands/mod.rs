@@ -73,7 +73,7 @@ pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
         Command::Audit { scope } => audit::execute(scope),
         Command::Lint { scope } => lint::execute(scope),
         Command::Health { scope } => health::execute(scope),
-        Command::Status { scope } => Ok(status::execute(scope)),
+        Command::Status { scope } => status::execute(scope),
     }
 }
 

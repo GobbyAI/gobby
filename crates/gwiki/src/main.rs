@@ -1,3 +1,4 @@
+use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -97,11 +98,18 @@ enum CliCommand {
 
 #[derive(Debug, Args)]
 struct ScopeArgs {
-    /// Use the current Gobby project's wiki scope; default is global.
-    #[arg(long, global = true, conflicts_with = "topic")]
-    project: bool,
+    /// Use a Gobby project's wiki scope. Bare --project uses the current directory.
+    #[arg(
+        long,
+        global = true,
+        conflicts_with = "topic",
+        value_name = "ROOT",
+        num_args = 0..=1,
+        default_missing_value = ".",
+    )]
+    project: Option<PathBuf>,
 
-    /// Use a named topic wiki scope; default is global.
+    /// Use a named topic wiki scope.
     #[arg(long, global = true, value_name = "NAME")]
     topic: Option<String>,
 }
@@ -293,7 +301,7 @@ fn main() -> ExitCode {
         format,
         quiet,
         command,
-    } = Cli::parse();
+    } = Cli::parse_from(normalize_project_flag_args(std::env::args_os()));
 
     let command = match command_from_cli(command, scope.into()) {
         Ok(command) => command,
@@ -323,6 +331,53 @@ fn main() -> ExitCode {
             exit_code_for_error(&error)
         }
     }
+}
+
+fn normalize_project_flag_args<I, S>(args: I) -> Vec<OsString>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<OsString>,
+{
+    let args = args.into_iter().map(Into::into).collect::<Vec<_>>();
+    let mut normalized = Vec::with_capacity(args.len() + 1);
+    for (index, arg) in args.iter().enumerate() {
+        normalized.push(arg.clone());
+        if arg == OsStr::new("--project")
+            && args
+                .get(index + 1)
+                .and_then(|next| next.to_str())
+                .is_some_and(is_cli_subcommand)
+        {
+            normalized.push(OsString::from("."));
+        }
+    }
+    normalized
+}
+
+fn is_cli_subcommand(value: &str) -> bool {
+    matches!(
+        value,
+        "init"
+            | "setup"
+            | "index"
+            | "collect"
+            | "ingest-file"
+            | "ingest-url"
+            | "refresh"
+            | "sources"
+            | "remove-source"
+            | "search"
+            | "read"
+            | "backlinks"
+            | "link-suggest"
+            | "research"
+            | "compile"
+            | "export"
+            | "audit"
+            | "lint"
+            | "health"
+            | "status"
+    )
 }
 
 fn print_error(format: output::Format, error: &WikiError) {
@@ -494,12 +549,12 @@ impl From<ExportArgs> for gobby_wiki::exports::ExportCommand {
 
 impl From<ScopeArgs> for ScopeSelection {
     fn from(scope: ScopeArgs) -> Self {
-        if scope.project {
-            Self::project()
-        } else if let Some(topic) = scope.topic {
+        if let Some(topic) = scope.topic {
             Self::topic(topic)
+        } else if let Some(project_root) = scope.project {
+            Self::project(project_root)
         } else {
-            Self::global()
+            Self::detect()
         }
     }
 }
@@ -562,7 +617,7 @@ mod tests {
                 vision_routing: Some(AiRouting::Off),
                 text_routing: Some(AiRouting::Daemon),
             },
-            ScopeSelection::global(),
+            ScopeSelection::detect(),
         )
         .expect("map ingest-file command");
 
@@ -685,6 +740,14 @@ mod tests {
             Cli::try_parse_from(["gwiki", "refresh", "--scope", "project"]).is_err(),
             "refresh must use existing --project/--topic globals, not --scope"
         );
+
+        let bare_project =
+            Cli::try_parse_from(["gwiki", "refresh", "--project"]).expect("parse bare project");
+        assert_eq!(bare_project.scope.project, Some(PathBuf::from(".")));
+
+        let rooted_project = Cli::try_parse_from(["gwiki", "refresh", "--project", "/repo"])
+            .expect("parse explicit project root");
+        assert_eq!(rooted_project.scope.project, Some(PathBuf::from("/repo")));
     }
 
     #[test]
@@ -705,7 +768,7 @@ mod tests {
                 embedding_vector_dim: Some(1024),
                 embedding_api_key: Some("api-key".to_string()),
             }),
-            ScopeSelection::global(),
+            ScopeSelection::detect(),
         )
         .expect("map setup command");
 

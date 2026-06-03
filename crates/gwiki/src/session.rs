@@ -238,7 +238,6 @@ fn checkpoint_vault_root(checkpoint_path: &Path) -> Option<PathBuf> {
     checkpoint_path
         .parent()
         .and_then(Path::parent)
-        .and_then(Path::parent)
         .map(Path::to_path_buf)
 }
 

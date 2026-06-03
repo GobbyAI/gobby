@@ -102,13 +102,12 @@ pub fn resolve_with_source(
         return resolve_topic(topic, source);
     }
 
-    let project_root = gobby_core::project::find_project_root(cwd);
-    if selection.is_project() {
-        return resolve_project(cwd, project_root);
+    if let Some(project_root) = selection.project_root() {
+        return resolve_project_from_root(project_root);
     }
 
-    if project_root.is_some() {
-        return resolve_project(cwd, project_root);
+    if let Some(project_root) = gobby_core::project::find_project_root(cwd) {
+        return resolve_project_from_root(&project_root);
     }
 
     Err(WikiError::InvalidScope {
@@ -124,11 +123,8 @@ fn resolve_topic(topic: &str, source: &mut impl ConfigSource) -> Result<Resolved
     Ok(ResolvedScope::topic(topic, root, hub.join("wikis.json")))
 }
 
-fn resolve_project(cwd: &Path, project_root: Option<PathBuf>) -> Result<ResolvedScope, WikiError> {
-    let project_root = project_root.ok_or_else(|| WikiError::InvalidScope {
-        detail: format!("no Gobby project found from {}", cwd.display()),
-    })?;
-    let project_id = gobby_core::project::read_project_id(&project_root).map_err(|error| {
+fn resolve_project_from_root(project_root: &Path) -> Result<ResolvedScope, WikiError> {
+    let project_id = gobby_core::project::read_project_id(project_root).map_err(|error| {
         WikiError::InvalidScope {
             detail: format!(
                 "failed to read project identity from {}: {error}",
@@ -139,7 +135,11 @@ fn resolve_project(cwd: &Path, project_root: Option<PathBuf>) -> Result<Resolved
     let project_id = validate_project_id(&project_id)?;
     let root = project_root.join(".gobby").join("wiki");
 
-    Ok(ResolvedScope::project(project_id, project_root, root))
+    Ok(ResolvedScope::project(
+        project_id,
+        project_root.to_path_buf(),
+        root,
+    ))
 }
 
 fn resolve_hub_path(source: &mut impl ConfigSource) -> Result<PathBuf, WikiError> {
@@ -279,8 +279,12 @@ mod tests {
             "wiki.hub_path",
             tmp.path().join("hub").display().to_string(),
         );
-        let scope = resolve_with_source(&crate::ScopeSelection::project(), &nested, &mut config)
-            .expect("project scope resolves");
+        let scope = resolve_with_source(
+            &crate::ScopeSelection::project(&project),
+            &nested,
+            &mut config,
+        )
+        .expect("project scope resolves");
 
         assert_eq!(scope.identity(), "project:project-123");
         assert_eq!(scope.root(), project.join(".gobby").join("wiki"));

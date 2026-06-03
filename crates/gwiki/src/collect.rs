@@ -553,10 +553,21 @@ fn is_http_url(value: &str) -> bool {
 }
 
 fn parse_embedded_http_url(candidate: &str) -> Option<String> {
+    if let Some(trimmed) = trim_trailing_url_punctuation(candidate)
+        && parse_http_url(trimmed).is_some()
+    {
+        return Some(trimmed.to_string());
+    }
     parse_http_url(candidate).or_else(|| {
         let trimmed = candidate.trim_end_matches([',', '.', ';', ')', ']']);
         parse_http_url(trimmed).map(|_| trimmed.to_string())
     })
+}
+
+fn trim_trailing_url_punctuation(candidate: &str) -> Option<&str> {
+    let trimmed = candidate.trim_end_matches([',', '.', ';', ')', ']']);
+    let trailing = &candidate[trimmed.len()..];
+    (trailing.chars().count() > 1).then_some(trimmed)
 }
 
 fn parse_http_url(value: &str) -> Option<String> {

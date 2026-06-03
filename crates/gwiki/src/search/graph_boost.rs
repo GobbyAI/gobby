@@ -190,10 +190,8 @@ fn load_graph_boost_data(
         &scope_id,
         "count graph boost documents",
     )?;
-    if document_count > document_query_limit {
-        return Err(SearchError::Backend(format!(
-            "graph boost document count {document_count} exceeds limit {document_query_limit}; refusing partial graph boost data"
-        )));
+    if let Some(error) = graph_boost_cap_error("document", document_count, document_query_limit) {
+        return Err(error);
     }
     let link_count = count_graph_boost_rows(
         conn,
@@ -202,10 +200,8 @@ fn load_graph_boost_data(
         &scope_id,
         "count graph boost links",
     )?;
-    if link_count > link_query_limit {
-        return Err(SearchError::Backend(format!(
-            "graph boost link count {link_count} exceeds limit {link_query_limit}; refusing partial graph boost data"
-        )));
+    if let Some(error) = graph_boost_cap_error("link", link_count, link_query_limit) {
+        return Err(error);
     }
 
     let document_rows = conn
@@ -249,6 +245,15 @@ fn load_graph_boost_data(
         links,
         degradation: None,
     })
+}
+
+fn graph_boost_cap_error(component: &'static str, count: i64, limit: i64) -> Option<SearchError> {
+    if count <= limit {
+        return None;
+    }
+    Some(SearchError::Backend(format!(
+        "graph boost {component} count {count} exceeds limit {limit}; refusing partial graph boost data"
+    )))
 }
 
 fn count_graph_boost_rows(
@@ -500,14 +505,13 @@ mod tests {
     }
 
     #[test]
-    fn graph_boost_cap_degradation_reports_capped_rows() {
-        assert!(graph_boost_cap_degradation(false, false).is_none());
+    fn graph_boost_cap_error_reports_capped_rows() {
+        assert!(graph_boost_cap_error("document", 10, 10).is_none());
         assert!(matches!(
-            graph_boost_cap_degradation(true, false),
-            Some(DegradationKind::PartialData { component, message })
-                if component == GRAPH_SERVICE && message.contains("documents")
+            graph_boost_cap_error("document", 11, 10),
+            Some(SearchError::Backend(message)) if message.contains("document count 11")
         ));
-        assert!(graph_boost_cap_degradation(false, true).is_some());
+        assert!(graph_boost_cap_error("link", 11, 10).is_some());
     }
 
     #[test]

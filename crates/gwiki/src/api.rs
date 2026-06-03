@@ -1,5 +1,5 @@
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gobby_core::ai_context::AiContext;
 use gobby_core::config::AiRouting;
@@ -159,57 +159,55 @@ impl IngestFileOptions {
 
 /// Shared scope flags accepted by shell commands.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ScopeSelection {
-    project: bool,
-    topic: Option<String>,
+pub enum ScopeSelection {
+    Detect,
+    ProjectRoot(PathBuf),
+    Topic(String),
 }
 
 impl ScopeSelection {
-    pub fn global() -> Self {
-        Self {
-            project: false,
-            topic: None,
-        }
+    pub fn detect() -> Self {
+        Self::Detect
     }
 
-    pub fn project() -> Self {
-        Self {
-            project: true,
-            topic: None,
-        }
+    pub fn project(root: impl Into<PathBuf>) -> Self {
+        Self::ProjectRoot(root.into())
     }
 
     pub fn topic(topic: impl Into<String>) -> Self {
-        Self {
-            project: false,
-            topic: Some(topic.into()),
-        }
+        Self::Topic(topic.into())
     }
 
     pub fn identity(&self) -> ScopeIdentity {
-        if let Some(topic) = &self.topic {
-            return ScopeIdentity::topic(topic.clone());
-        }
-
-        if self.project {
-            ScopeIdentity::project("current")
-        } else {
-            ScopeIdentity::global()
+        match self {
+            Self::Detect => ScopeIdentity::global(),
+            Self::ProjectRoot(root) => ScopeIdentity::project(root.display().to_string()),
+            Self::Topic(topic) => ScopeIdentity::topic(topic.clone()),
         }
     }
 
     pub fn is_project(&self) -> bool {
-        self.project
+        matches!(self, Self::ProjectRoot(_))
+    }
+
+    pub fn project_root(&self) -> Option<&Path> {
+        match self {
+            Self::ProjectRoot(root) => Some(root.as_path()),
+            Self::Detect | Self::Topic(_) => None,
+        }
     }
 
     pub fn topic_name(&self) -> Option<&str> {
-        self.topic.as_deref()
+        match self {
+            Self::Topic(topic) => Some(topic.as_str()),
+            Self::Detect | Self::ProjectRoot(_) => None,
+        }
     }
 }
 
 impl Default for ScopeSelection {
     fn default() -> Self {
-        Self::global()
+        Self::detect()
     }
 }
 
@@ -287,16 +285,17 @@ mod tests {
 
     #[test]
     fn scope_selection_constructors_express_allowed_states() {
-        let global = ScopeSelection::global();
-        assert!(!global.is_project());
-        assert_eq!(global.topic_name(), None);
-        assert_eq!(ScopeSelection::default(), global);
-        assert_eq!(global.identity(), crate::ScopeIdentity::global());
+        let detect = ScopeSelection::detect();
+        assert!(!detect.is_project());
+        assert_eq!(detect.topic_name(), None);
+        assert_eq!(ScopeSelection::default(), detect);
+        assert_eq!(detect.identity(), crate::ScopeIdentity::global());
 
-        let project = ScopeSelection::project();
+        let project = ScopeSelection::project("/repo");
         assert!(project.is_project());
         assert_eq!(project.topic_name(), None);
-        assert_eq!(project.identity(), crate::ScopeIdentity::project("current"));
+        assert_eq!(project.project_root(), Some(std::path::Path::new("/repo")));
+        assert_eq!(project.identity(), crate::ScopeIdentity::project("/repo"));
 
         let topic = ScopeSelection::topic("ops");
         assert!(!topic.is_project());
