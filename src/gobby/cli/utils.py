@@ -14,6 +14,7 @@ import click
 import psutil
 
 from gobby.config.app import DaemonConfig, load_config
+from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.config.ui import UIConfig
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
@@ -363,7 +364,7 @@ def kill_all_gobby_daemons() -> int:
     except Exception:
         # Fallback to defaults if config can't be loaded
         http_port = 60887
-        ws_port = 60888
+        ws_port = DEFAULT_WEBSOCKET_PORT
 
     killed_count = 0
     current_pid = os.getpid()
@@ -631,7 +632,7 @@ def spawn_ui_server(
     web_dir: Path,
     log_file: Path,
     daemon_port: int = 60887,
-    ws_port: int = 60888,
+    ws_port: int = DEFAULT_WEBSOCKET_PORT,
 ) -> int | None:
     """Spawn the UI dev server as a detached subprocess.
 

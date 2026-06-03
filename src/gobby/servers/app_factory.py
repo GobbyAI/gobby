@@ -21,6 +21,7 @@ from starlette.datastructures import Headers
 from websockets.typing import Subprotocol
 
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
+from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.hooks.hook_manager import HookManager
 from gobby.servers.exception_handlers import register_exception_handlers
 from gobby.utils.version import get_version
@@ -674,7 +675,7 @@ def _mount_ws_proxy(app: FastAPI, server: "HTTPServer") -> None:
     separate port.  This proxy bridges the two so that clients only need to
     know about the HTTP port.
     """
-    ws_port = 60888
+    ws_port = DEFAULT_WEBSOCKET_PORT
     cfg = server.services.config
     if cfg and hasattr(cfg, "websocket") and cfg.websocket:
         ws_port = cfg.websocket.port

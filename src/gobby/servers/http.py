@@ -13,6 +13,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.hooks.broadcaster import HookEventBroadcaster
 from gobby.llm import create_llm_service
 from gobby.mcp_proxy.registries import setup_internal_registries
@@ -124,7 +125,7 @@ class HTTPServer:
         """Initialize MCP proxy, internal registries, and semantic search."""
         assert services.mcp_manager is not None, "caller must check services.mcp_manager"
         # Determine WebSocket port
-        ws_port = 60888
+        ws_port = DEFAULT_WEBSOCKET_PORT
         cfg = services.config
         if cfg and hasattr(cfg, "websocket") and cfg.websocket:
             ws_port = cfg.websocket.port

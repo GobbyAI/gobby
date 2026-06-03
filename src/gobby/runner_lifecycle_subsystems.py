@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable, Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.config.persistence import is_falkordb_enabled
 from gobby.runner_lifecycle_agents import (
     _reconcile_agent_runs_after_restart,
@@ -446,7 +447,7 @@ def _maybe_start_ui_dev_server(runner: GobbyRunner) -> None:
             web_dir,
             ui_log,
             daemon_port=runner.config.daemon_port,
-            ws_port=runner.config.websocket.port if runner.config.websocket else 60888,
+            ws_port=runner.config.websocket.port if runner.config.websocket else DEFAULT_WEBSOCKET_PORT,
         )
         if ui_pid:
             logger.info(

@@ -18,7 +18,11 @@ from urllib.parse import urlparse
 
 import click
 
-from gobby.config.bootstrap import DEFAULT_DAEMON_PORT, BootstrapConfigError
+from gobby.config.bootstrap import (
+    DEFAULT_DAEMON_PORT,
+    DEFAULT_WEBSOCKET_PORT,
+    BootstrapConfigError,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 from gobby.utils.project_init import initialize_project
@@ -185,7 +189,7 @@ def _run_install_preflight(
             "git was not found on PATH; project initialization and hooks may be limited."
         )
 
-    for port in (DEFAULT_DAEMON_PORT, 60888):
+    for port in (DEFAULT_DAEMON_PORT, DEFAULT_WEBSOCKET_PORT):
         if not _port_available(port):
             warnings.append(f"Port {port} is already in use.")
 

@@ -24,6 +24,7 @@ from urllib.request import Request, urlopen
 
 import click
 
+from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.install.distribution import (
     HomebrewDistributionError,
     is_homebrew_distribution,
@@ -238,7 +239,7 @@ def ensure_daemon_config() -> dict[str, Any]:
         "postgres_install_mode": "docker",
         "daemon_port": 60887,
         "bind_host": "localhost",
-        "websocket_port": 60888,
+        "websocket_port": DEFAULT_WEBSOCKET_PORT,
         "ui_port": 60889,
     }
     with open(bootstrap_path, "w") as f:

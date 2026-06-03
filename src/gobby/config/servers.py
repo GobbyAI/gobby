@@ -12,6 +12,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
+
 __all__ = ["WebSocketSettings", "MCPClientProxyConfig"]
 
 
@@ -23,7 +25,7 @@ class WebSocketSettings(BaseModel):
         description="Enable WebSocket server for real-time communication",
     )
     port: int = Field(
-        default=60888,
+        default=DEFAULT_WEBSOCKET_PORT,
         description="Port for WebSocket server to listen on",
     )
     ping_interval: int = Field(
