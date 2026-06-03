@@ -730,14 +730,44 @@ class TestRepairMissingSessionTitle:
     """Tests for the repair-sweep transcript-heuristic title synthesis (Step 3)."""
 
     @staticmethod
-    def _write_claude_transcript(path: Any) -> None:
+    def _write_claude_transcript(
+        path: Any,
+        opening: str = "Fix the Vite HMR websocket subprotocol bug",
+    ) -> None:
+        """Write a parser-valid Claude transcript with ``opening`` as the first prompt.
+
+        The transcript parser requires the full Claude envelope (top-level
+        ``type``/``uuid``/``timestamp``), not a bare ``{"message": {...}}``
+        record, so these fixtures mirror a real ``.jsonl`` transcript.
+        """
         turns = [
-            {"message": {"role": "user", "content": "Fix the Vite HMR websocket subprotocol bug"}},
             {
+                "parentUuid": None,
+                "isSidechain": False,
+                "userType": "external",
+                "cwd": "/work/repo",
+                "sessionId": "623b04fc-96b2-44e5-b420-942ef1638b4f",
+                "version": "2.1.160",
+                "gitBranch": "0.5.0",
+                "type": "user",
+                "message": {"role": "user", "content": opening},
+                "uuid": "11111111-1111-1111-1111-111111111111",
+                "timestamp": "2026-06-01T10:00:00.000Z",
+            },
+            {
+                "parentUuid": "11111111-1111-1111-1111-111111111111",
+                "isSidechain": False,
+                "userType": "external",
+                "cwd": "/work/repo",
+                "sessionId": "623b04fc-96b2-44e5-b420-942ef1638b4f",
+                "version": "2.1.160",
+                "type": "assistant",
                 "message": {
                     "role": "assistant",
                     "content": [{"type": "text", "text": "Investigating the proxy handshake."}],
-                }
+                },
+                "uuid": "22222222-2222-2222-2222-222222222222",
+                "timestamp": "2026-06-01T10:00:05.000Z",
             },
         ]
         path.write_text("\n".join(json.dumps(t) for t in turns))
@@ -771,7 +801,13 @@ class TestRepairMissingSessionTitle:
         )
 
     @pytest.mark.asyncio
-    async def test_skips_session_without_turns(self, tmp_path) -> None:
+    async def test_synthesizes_title_for_turnless_session(self, tmp_path) -> None:
+        """A session with ``turn_count == 0`` but a usable transcript still gets a title.
+
+        The repair sweep guards on the transcript, not ``turn_count``: a session's
+        title comes from its first user prompt, which can exist before any
+        assistant text turn lands (so ``turn_count`` is still 0).
+        """
         from gobby.workflows.summary_actions import repair_missing_session_title
 
         transcript = tmp_path / "transcript.jsonl"
@@ -779,6 +815,7 @@ class TestRepairMissingSessionTitle:
 
         session = MagicMock()
         session.id = "sess-1"
+        session.ref = "#42"
         session.source = "claude"
         session.title = ""
         session.title_source = None
@@ -786,9 +823,16 @@ class TestRepairMissingSessionTitle:
         session.transcript_path = str(transcript)
 
         manager = MagicMock()
+        manager.update_title.return_value = session
 
-        assert await repair_missing_session_title(manager, session) is None
-        manager.update_title.assert_not_called()
+        result = await repair_missing_session_title(manager, session)
+
+        assert result == "Fix the Vite HMR websocket subprotocol bug"
+        manager.update_title.assert_called_once_with(
+            "sess-1",
+            "Fix the Vite HMR websocket subprotocol bug",
+            title_source="heuristic",
+        )
 
     @pytest.mark.asyncio
     async def test_skips_session_with_existing_title(self, tmp_path) -> None:
@@ -834,9 +878,10 @@ class TestRepairMissingSessionTitle:
     async def test_returns_none_when_no_usable_prompt(self, tmp_path) -> None:
         from gobby.workflows.summary_actions import repair_missing_session_title
 
-        # Transcript with only a lifecycle command yields no heuristic title.
+        # Transcript whose only user text is a lifecycle command yields no title:
+        # the parser surfaces the record, and the lifecycle filter rejects it.
         transcript = tmp_path / "transcript.jsonl"
-        transcript.write_text(json.dumps({"message": {"role": "user", "content": "/clear"}}))
+        self._write_claude_transcript(transcript, opening="/clear")
 
         session = MagicMock()
         session.id = "sess-1"

@@ -514,24 +514,29 @@ async def enforce_window_name_if_unmanaged(session: Any) -> bool:
 
 
 async def repair_missing_session_title(session_manager: Any, session: Any) -> str | None:
-    """Synthesize and persist a heuristic title for a title-less session with turns.
+    """Synthesize and persist a heuristic title for a title-less session.
 
     The provider-agnostic backstop for the repair sweep: when a tracked session
-    has had turns (``turn_count > 0``) but still carries no title — because the
-    per-turn heuristic and LLM digest paths both missed (notably interactive
-    Claude, whose stops are perpetually blocked so the digest title never lands)
-    — derive a cheap title from the transcript (no LLM) and persist it with
+    still carries no title — because the per-turn heuristic and LLM digest paths
+    both missed (e.g. a session interrupted before ``turn_end``, or one whose
+    hooks were mis-routed before the routing fix) — derive a cheap title from the
+    transcript's opening user prompt (no LLM) and persist it with
     ``title_source="heuristic"``.
+
+    The transcript is the guard, not a DB stat. ``_heuristic_title_from_transcript``
+    returns ``None`` when there is no usable opening prompt, so the backstop stays
+    robust even when ``turn_count`` lags at 0: a session's title comes from its
+    first user prompt, which can exist with ``turn_count == 0`` (assistant
+    mid-turn, or only tool-use/thinking blocks so far). Gating on ``turn_count``
+    would skip exactly those sessions.
 
     Persisting routes through ``session_manager.update_title``, whose
     title-change side effects schedule the tmux window rename, so the window
     stops showing the empty-title fallback. Returns the persisted title, or
-    ``None`` when no synthesis was applicable (no turns, an existing or manual
-    title, or no usable transcript prompt).
+    ``None`` when no synthesis was applicable (an existing or manual title, a
+    missing session id, or no usable transcript prompt).
     """
     if not session_manager or session is None:
-        return None
-    if (getattr(session, "turn_count", 0) or 0) <= 0:
         return None
     if str(getattr(session, "title", "") or "").strip():
         return None
