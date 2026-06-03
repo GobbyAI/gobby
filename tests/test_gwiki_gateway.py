@@ -111,7 +111,7 @@ async def test_ask_uses_read_only_cli_args(monkeypatch: pytest.MonkeyPatch) -> N
         binary="/bin/gwiki",
         project_root="/repo",
         timeout_seconds=1.0,
-    ).ask("How do hooks work?", llm=True)
+    ).ask("How do hooks work?", llm=True, ai="direct", require_ai=True)
 
     assert result["payload"] == payload
     assert calls == [
@@ -120,6 +120,44 @@ async def test_ask_uses_read_only_cli_args(monkeypatch: pytest.MonkeyPatch) -> N
             "ask",
             "How do hooks work?",
             "--llm",
+            "--ai",
+            "direct",
+            "--require-ai",
+            "--project",
+            "/repo",
+            "--format",
+            "json",
+        )
+    ]
+
+
+async def test_ask_ignores_ai_flags_without_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {
+        "command": "ask",
+        "query": "How do hooks work?",
+        "status": "retrieved",
+        "hits": [],
+        "related_pages": [],
+        "sources": [],
+        "gaps": [],
+        "stale_candidates": [],
+        "suggested_questions": [],
+        "warnings": [],
+    }
+    calls = _patch_subprocess(monkeypatch, [FakeProcess(stdout=_json_bytes(payload))])
+
+    result = await GwikiGateway(
+        binary="/bin/gwiki",
+        project_root="/repo",
+        timeout_seconds=1.0,
+    ).ask("How do hooks work?", ai="direct", require_ai=True)
+
+    assert result["payload"] == payload
+    assert calls == [
+        (
+            "/bin/gwiki",
+            "ask",
+            "How do hooks work?",
             "--project",
             "/repo",
             "--format",

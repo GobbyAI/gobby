@@ -171,6 +171,8 @@ class CodewikiRefreshTrigger:
                 root,
                 len(changed_paths),
             )
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
             logger.warning(
                 "codewiki refresh failed for %s: %s",

@@ -36,6 +36,18 @@ class FakeGcodeGateway:
         return self.result
 
 
+class CancelledGcodeGateway:
+    async def codewiki(
+        self,
+        _project_root: Path,
+        _out_dir: Path,
+        *,
+        ai: str | None = None,
+    ) -> dict:
+        _ = ai
+        raise asyncio.CancelledError
+
+
 class FakeGwikiGateway:
     def __init__(self) -> None:
         self.ingested: list[Path] = []
@@ -81,6 +93,25 @@ async def test_refresh_runs_codewiki_and_ingests_changed_docs(tmp_path: Path) ->
         tmp_path / "codewiki" / "files/src/lib.rs.md",
     ]
     assert gwiki.index_count == 1
+
+
+@pytest.mark.asyncio
+async def test_refresh_propagates_cancellation(tmp_path: Path) -> None:
+    gwiki = FakeGwikiGateway()
+    trigger = CodewikiRefreshTrigger(
+        loop=asyncio.get_running_loop(),
+        config_provider=lambda: SimpleNamespace(wiki=SimpleNamespace(codewiki_on_commit=True)),
+        config_store_provider=lambda: None,
+        gcode_gateway_factory=CancelledGcodeGateway,
+        gwiki_gateway_factory=lambda _root: gwiki,
+        debounce_seconds=60,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await trigger._run_refresh(CodewikiRefreshRequest(root_path=str(tmp_path)))
+
+    assert gwiki.ingested == []
+    assert gwiki.index_count == 0
 
 
 @pytest.mark.asyncio

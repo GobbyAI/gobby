@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 GatewayCall = Callable[[GwikiGateway], Awaitable[dict[str, Any]]]
 UPLOAD_CHUNK_SIZE = 64 * 1024
+_AI_VALUES = {"auto", "daemon", "direct", "off"}
 
 
 def create_wiki_router(server: HTTPServer) -> APIRouter:
@@ -59,15 +60,23 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
         q: str | None = Query(None),
         query: str | None = Query(None),
         llm: bool = Query(False),
+        ai: str | None = Query(None),
+        require_ai: bool = Query(False),
         project: str | None = Query(None),
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
         ask_query = _one_query(q, query)
+        ai_value = _normalize_ai(ai) if ai is not None else None
         return await _read(
             server,
             project,
             topic,
-            lambda gateway: gateway.ask(ask_query, llm=llm),
+            lambda gateway: gateway.ask(
+                ask_query,
+                llm=llm,
+                ai=ai_value,
+                require_ai=require_ai,
+            ),
         )
 
     @router.get("/read")
@@ -288,6 +297,13 @@ def _one_query(q: str | None, query: str | None) -> str:
     value = q if q is not None else query
     assert value is not None
     return value
+
+
+def _normalize_ai(value: str) -> str:
+    ai = value.strip().lower()
+    if ai not in _AI_VALUES:
+        raise HTTPException(status_code=400, detail="ai must be one of auto, daemon, direct, off")
+    return ai
 
 
 def _required_string(value: Any, detail: str) -> str:

@@ -47,7 +47,10 @@ class WikiConfig(BaseModel):
     )
     codewiki_on_commit: bool = Field(
         default=False,
-        description="Refresh generated codewiki docs after post-commit code indexing.",
+        description=(
+            "Refresh generated codewiki docs after post-commit code indexing. Runtime "
+            "config key wiki.codewiki_on_commit is canonical after startup."
+        ),
     )
 
     @field_validator("debounce_interval", "poll_interval")

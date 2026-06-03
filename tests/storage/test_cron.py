@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from gobby.storage import cron as cron_module
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
 
@@ -194,6 +195,27 @@ def test_reconcile_refuses_non_system_row(cron_storage: CronJobStorage) -> None:
         cron_storage.reconcile_system_job_definition(
             job.id, action_type="handler", action_config={}
         )
+
+
+def test_reconcile_identity_refuses_non_system_row(cron_storage: CronJobStorage) -> None:
+    job = _job(cron_storage, is_system=False)
+
+    with pytest.raises(ValueError, match="non-system"):
+        cron_storage.reconcile_system_job_identity(job.id, name="renamed")
+
+
+def test_reconcile_identity_updates_system_name_and_timestamp(
+    cron_storage: CronJobStorage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = _job(cron_storage, is_system=True)
+    monkeypatch.setattr(cron_module, "_utc_now_iso", lambda: "2030-01-01T00:00:00+00:00")
+
+    updated = cron_storage.reconcile_system_job_identity(job.id, name="renamed")
+
+    assert updated is not None
+    assert updated.name == "renamed"
+    assert updated.updated_at == "2030-01-01T00:00:00+00:00"
 
 
 def test_reconcile_no_op_when_action_in_sync(cron_storage: CronJobStorage) -> None:

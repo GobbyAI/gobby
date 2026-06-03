@@ -406,6 +406,36 @@ class CronJobStorage:
 
         return self._update_job_fields(job_id, **update_fields)
 
+    def reconcile_system_job_identity(
+        self,
+        job_id: str,
+        *,
+        name: str | _Unset = UNSET,
+        enabled: bool | _Unset = UNSET,
+        next_run_at: str | None | _Unset = UNSET,
+    ) -> CronJob | None:
+        """Repair identity fields on an existing system cron job."""
+        job = self.get_job(job_id)
+        if job is None:
+            return None
+        if not job.is_system:
+            raise SystemRowProtected(
+                f"Cron row {job_id} is non-system; reconcile_system_job_identity "
+                "is reserved for gobby-managed system cron rows."
+            )
+
+        fields = {
+            "name": name,
+            "enabled": enabled,
+            "next_run_at": next_run_at,
+        }
+        update_fields = {key: value for key, value in fields.items() if value is not UNSET}
+        if not update_fields:
+            return job
+
+        update_fields["updated_at"] = _utc_now_iso()
+        return self._update_job_fields(job_id, **update_fields)
+
     def park_system_job(self, job_id: str) -> CronJob | None:
         """Park an enabled system cron row by clearing its next scheduled run."""
         job = self.get_job(job_id)

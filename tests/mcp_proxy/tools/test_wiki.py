@@ -50,8 +50,15 @@ class FakeGateway:
         }
         return self._result("search", payload)
 
-    async def ask(self, query: str, *, llm: bool = False) -> dict[str, Any]:
-        self.calls.append(("ask", {"query": query, "llm": llm}))
+    async def ask(
+        self,
+        query: str,
+        *,
+        llm: bool = False,
+        ai: str | None = None,
+        require_ai: bool = False,
+    ) -> dict[str, Any]:
+        self.calls.append(("ask", {"query": query, "llm": llm, "ai": ai, "require_ai": require_ai}))
         payload = {
             "command": "ask",
             "query": query,
@@ -207,7 +214,7 @@ async def test_tool_schemas() -> None:
     assert search_schema["required"] == ["query"]
 
     ask_schema = _schema("wiki_ask")
-    assert {"query", "project", "topic", "llm"} <= set(ask_schema["properties"])
+    assert {"query", "project", "topic", "llm", "ai", "require_ai"} <= set(ask_schema["properties"])
     assert ask_schema["required"] == ["query"]
 
     remove_schema = _schema("wiki_remove_source")
@@ -226,11 +233,25 @@ async def test_tool_schemas() -> None:
 
     ask_result = await registry.call(
         "wiki_ask",
-        {"query": "How do hooks work?", "llm": True, "topic": "docs"},
+        {
+            "query": "How do hooks work?",
+            "llm": True,
+            "ai": "direct",
+            "require_ai": True,
+            "topic": "docs",
+        },
     )
     assert ask_result["payload"]["synthesis"]["answer"] == "Hooks run at turn boundaries."
     assert FakeGateway.instances[-1].calls == [
-        ("ask", {"query": "How do hooks work?", "llm": True}),
+        (
+            "ask",
+            {
+                "query": "How do hooks work?",
+                "llm": True,
+                "ai": "direct",
+                "require_ai": True,
+            },
+        ),
     ]
 
 

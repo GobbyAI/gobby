@@ -52,9 +52,23 @@ class FakeGateway:
         self.calls.append(("search", {"query": query, "limit": limit}))
         return self._result("search", payload={"query": query, "limit": limit})
 
-    async def ask(self, query: str, *, llm: bool = False) -> dict[str, Any]:
-        self.calls.append(("ask", {"query": query, "llm": llm}))
-        return self._result("ask", payload={"query": query, "llm": llm, "status": "retrieved"})
+    async def ask(
+        self,
+        query: str,
+        *,
+        llm: bool = False,
+        ai: str | None = None,
+        require_ai: bool = False,
+    ) -> dict[str, Any]:
+        payload = {
+            "query": query,
+            "llm": llm,
+            "ai": ai,
+            "require_ai": require_ai,
+            "status": "retrieved",
+        }
+        self.calls.append(("ask", payload))
+        return self._result("ask", payload=payload)
 
     async def read(
         self,
@@ -209,15 +223,37 @@ def test_status_search_read_and_gateway_scope(client: TestClient) -> None:
     assert FakeGateway.instances[-1].project is None
     assert FakeGateway.instances[-1].topic == "t"
 
-    ask = client.get("/api/wiki/ask", params={"q": "hooks?", "llm": True, "topic": "t"})
+    ask = client.get(
+        "/api/wiki/ask",
+        params={
+            "q": "hooks?",
+            "llm": True,
+            "ai": "direct",
+            "require_ai": True,
+            "topic": "t",
+        },
+    )
     assert ask.status_code == 200
     assert ask.json()["payload"] == {
         "command": "ask",
         "query": "hooks?",
         "llm": True,
+        "ai": "direct",
+        "require_ai": True,
         "status": "retrieved",
     }
-    assert FakeGateway.instances[-1].calls == [("ask", {"query": "hooks?", "llm": True})]
+    assert FakeGateway.instances[-1].calls == [
+        (
+            "ask",
+            {
+                "query": "hooks?",
+                "llm": True,
+                "ai": "direct",
+                "require_ai": True,
+                "status": "retrieved",
+            },
+        )
+    ]
 
     no_selector = client.get("/api/wiki/read")
     both_selectors = client.get("/api/wiki/read", params={"path": "a.md", "title": "A"})

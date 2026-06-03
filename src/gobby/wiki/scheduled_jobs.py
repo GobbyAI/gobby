@@ -338,9 +338,9 @@ def reconcile_stale_wiki_cron_scopes(
         canonical_name = wiki_job_name(command, canonical_scope)
         canonical = cron_storage.get_job_by_name(canonical_name)
         if canonical is None:
-            cron_storage._update_job_fields(legacy.id, name=canonical_name)
+            cron_storage.reconcile_system_job_identity(legacy.id, name=canonical_name)
         else:
-            cron_storage._update_job_fields(
+            cron_storage.reconcile_system_job_identity(
                 legacy.id,
                 enabled=False,
                 next_run_at=None,

@@ -133,7 +133,11 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
         ("status", "status", gateway.status),
         ("index", "index", gateway.index),
         ("search", "search", lambda: gateway.search("ownership", limit=5)),
-        ("ask", "ask", lambda: gateway.ask("ownership", llm=True)),
+        (
+            "ask",
+            "ask",
+            lambda: gateway.ask("ownership", llm=True, ai="direct", require_ai=True),
+        ),
         ("read", "read", lambda: gateway.read(path="docs/wiki.md")),
         ("backlinks", "backlinks", lambda: gateway.backlinks("Home")),
         ("ingest_file", "ingest-file", lambda: gateway.ingest_file("notes.md")),
@@ -187,6 +191,8 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
                 "--ai",
                 "--require-ai",
             } <= _observed_flags(argv)
+        if cli_name == "ask":
+            assert {"--llm", "--ai", "--require-ai"} <= _observed_flags(argv)
         if cli_name == "health":
             assert "--project" not in argv
         else:

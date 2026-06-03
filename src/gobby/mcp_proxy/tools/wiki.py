@@ -109,9 +109,21 @@ def create_wiki_registry(
         project: str | None = None,
         topic: str | None = None,
         llm: bool = False,
+        ai: str | None = None,
+        require_ai: bool = False,
     ) -> dict[str, Any]:
+        ai_value = _normalize_ai(ai) if ai is not None else None
         return await _guard(
-            lambda: read_call(project, topic, lambda gwiki: gwiki.ask(query, llm=llm))
+            lambda: read_call(
+                project,
+                topic,
+                lambda gwiki: gwiki.ask(
+                    query,
+                    llm=llm,
+                    ai=ai_value,
+                    require_ai=require_ai,
+                ),
+            )
         )
 
     @registry.tool(
