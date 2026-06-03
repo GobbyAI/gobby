@@ -261,7 +261,11 @@ fn unix_timestamp_ms() -> Result<u64, WikiError> {
     })
 }
 
-fn research_prompt(question: &str, source_constraints: &[String], agent_count: usize) -> String {
+pub(crate) fn research_prompt(
+    question: &str,
+    source_constraints: &[String],
+    agent_count: usize,
+) -> String {
     let mut prompt = format!(
         "Research question: {question}\nWorkers: {agent_count}\nReturn source-grounded notes suitable for raw/research/."
     );

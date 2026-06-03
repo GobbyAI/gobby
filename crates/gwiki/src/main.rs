@@ -260,14 +260,23 @@ struct ResearchArgs {
     #[arg(long = "source-constraint", value_name = "TEXT")]
     source_constraints: Vec<String>,
 
-    #[arg(long, default_value_t = 3, value_name = "N")]
-    agent_count: usize,
-
-    #[arg(long, value_name = "TASK")]
-    task_id: Option<String>,
-
     #[arg(long)]
-    resume: bool,
+    audit: bool,
+
+    #[arg(long = "max-steps", default_value_t = 12, value_name = "N")]
+    max_steps: usize,
+
+    #[arg(long = "max-tokens", default_value_t = 24_000, value_name = "N")]
+    max_tokens: usize,
+
+    #[arg(long = "max-sources", default_value_t = 8, value_name = "N")]
+    max_sources: usize,
+
+    #[arg(long, default_value = "auto", value_name = "auto|daemon|direct|off")]
+    ai: AiRouting,
+
+    #[arg(long = "require-ai")]
+    require_ai: bool,
 }
 
 #[derive(Debug, Args)]
@@ -530,13 +539,13 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             limit: args.limit,
         }),
         CliCommand::Research(args) => {
-            let question = match (args.resume, args.question) {
-                (true, question) => question.unwrap_or_default(),
-                (false, Some(question)) => question,
+            let question = match (args.audit, args.question) {
+                (_, Some(question)) => question,
+                (true, None) => "Audit wiki scope".to_string(),
                 (false, None) => {
                     return Err(WikiError::InvalidInput {
                         field: "research",
-                        message: "QUESTION is required unless --resume is set".to_string(),
+                        message: "QUESTION is required unless --audit is set".to_string(),
                     });
                 }
             };
@@ -545,9 +554,12 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
                 question,
                 scope: research_scope,
                 source_constraints: args.source_constraints,
-                agent_count: args.agent_count,
-                dispatch_task_id: args.task_id,
-                resume: args.resume,
+                audit: args.audit,
+                max_steps: args.max_steps,
+                max_tokens: args.max_tokens,
+                max_sources: args.max_sources,
+                ai: args.ai,
+                require_ai: args.require_ai,
                 accepted_notes: Vec::new(),
             }))
         }

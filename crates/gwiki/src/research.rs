@@ -4,12 +4,13 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
+use gobby_core::config::AiRouting;
 use serde::Serialize;
 
 use crate::compile::index_lock_timeout;
 use crate::events::{EventMonitor, SessionEvent};
 use crate::scope::{self, ScopeKind};
-use crate::session::{AcceptedResearchNote, DaemonDispatch, ResearchScope, ResearchSession};
+use crate::session::{AcceptedResearchNote, ResearchScope, ResearchSession, research_prompt};
 use crate::{ScopeSelection, WikiError};
 
 const MAX_RESEARCH_NOTE_SUFFIX_ATTEMPTS: usize = 1000;
@@ -33,239 +34,278 @@ pub struct ResearchOptions {
     pub question: String,
     pub scope: ResearchScope,
     pub source_constraints: Vec<String>,
-    pub agent_count: usize,
-    pub dispatch_task_id: Option<String>,
-    pub resume: bool,
+    pub audit: bool,
+    pub max_steps: usize,
+    pub max_tokens: usize,
+    pub max_sources: usize,
+    pub ai: AiRouting,
+    pub require_ai: bool,
     pub accepted_notes: Vec<AcceptedNoteDraft>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResearchOutcome {
     pub session: ResearchSession,
+    pub audit: bool,
+    pub status: ResearchStatus,
+    pub stop_reason: ResearchStopReason,
+    pub steps_used: usize,
+    pub tokens_used: usize,
+    pub sources_added: Vec<String>,
+    pub findings: Vec<AuditFinding>,
+    pub gaps: Vec<ResearchGap>,
+    pub warnings: Vec<String>,
+    pub changed_paths: Vec<PathBuf>,
     pub message: String,
 }
 
-pub trait ResearchDispatcher {
-    fn dispatch(&self, session: &ResearchSession) -> Result<DaemonDispatch, WikiError>;
-
-    fn teardown(&self, _dispatch: &DaemonDispatch) {}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResearchStatus {
+    Ok,
+    Partial,
+    Failed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GobbyDaemonResearchDispatcher {
-    pub base_url: String,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResearchStopReason {
+    Finish,
+    BudgetExhausted,
+    NoProgress,
+    DuplicateFrontier,
+    SourceBlocked,
+    WriteConflict,
+    AiUnavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AuditFinding {
+    pub fingerprint: String,
+    pub severity: AuditSeverity,
+    pub kind: String,
+    pub message: String,
+    pub evidence: Vec<PathBuf>,
+    pub validation_status: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditSeverity {
+    Info,
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ResearchGap {
+    pub reason: String,
+    pub evidence: Vec<PathBuf>,
 }
 
 pub fn run(options: ResearchOptions) -> Result<ResearchOutcome, WikiError> {
-    run_with_dispatcher(options, &GobbyDaemonResearchDispatcher::default())
-}
-
-pub fn run_with_dispatcher(
-    options: ResearchOptions,
-    dispatcher: &impl ResearchDispatcher,
-) -> Result<ResearchOutcome, WikiError> {
-    let mut session = if options.resume {
-        ResearchSession::load_checkpoint(options.scope.root())?
-    } else {
-        if options.agent_count == 0 {
-            return Err(WikiError::InvalidInput {
-                field: "agent_count",
-                message: "research requires at least one agent".to_string(),
-            });
-        }
-        let mut session = ResearchSession::new(
-            options.question.clone(),
-            options.scope.clone(),
-            options.source_constraints.clone(),
-            options.agent_count,
-            options.dispatch_task_id.clone(),
-        )?;
-        session.dispatch = Some(dispatcher.dispatch(&session)?);
-        session
-    };
-
-    let should_teardown_on_error = !options.resume;
-    let result = (|| -> Result<(), WikiError> {
-        let monitor = EventMonitor::for_vault(session.scope.root());
-        monitor.append_event(&SessionEvent {
-            session_id: session.session_id.clone(),
-            dispatch_id: session
-                .dispatch
-                .as_ref()
-                .map(|dispatch| dispatch.dispatch_id.clone()),
-            kind: if options.resume {
-                "research_resumed".to_string()
-            } else {
-                "research_dispatched".to_string()
-            },
-            message: "research session active".to_string(),
-            timestamp_ms: unix_timestamp_ms()?,
-        })?;
-
-        for note in &options.accepted_notes {
-            let accepted = write_accepted_note(session.scope.root(), &session.session_id, note)?;
-            if accepted.created {
-                monitor.append_event(&SessionEvent {
-                    session_id: session.session_id.clone(),
-                    dispatch_id: session
-                        .dispatch
-                        .as_ref()
-                        .map(|dispatch| dispatch.dispatch_id.clone()),
-                    kind: "note_accepted".to_string(),
-                    message: format!("accepted research note {}", accepted.note.title),
-                    timestamp_ms: unix_timestamp_ms()?,
-                })?;
-            }
-            if !session
-                .accepted_notes
-                .iter()
-                .any(|note| note.path == accepted.note.path)
-            {
-                session.accepted_notes.push(accepted.note);
-            }
-        }
-
-        session.save_checkpoint()
-    })();
-    if let Err(error) = result {
-        if should_teardown_on_error && let Some(dispatch) = session.dispatch.as_ref() {
-            dispatcher.teardown(dispatch);
-        }
-        return Err(error);
+    if !options.audit && options.ai == AiRouting::Off {
+        return Err(WikiError::InvalidInput {
+            field: "ai",
+            message: "research enrichment requires AI; use --audit for deterministic checks"
+                .to_string(),
+        });
     }
+    if options.audit && options.require_ai && matches!(options.ai, AiRouting::Auto | AiRouting::Off)
+    {
+        return Err(WikiError::InvalidInput {
+            field: "require_ai",
+            message: "model-assisted audit checks are unavailable for the selected AI route"
+                .to_string(),
+        });
+    }
+
+    let mut session = load_or_create_session(&options)?;
+    let mut warnings = Vec::new();
+    if options.audit && matches!(options.ai, AiRouting::Off | AiRouting::Auto) {
+        warnings.push("ai_unavailable: model-assisted audit checks skipped".to_string());
+    }
+
+    let monitor = EventMonitor::for_vault(session.scope.root());
+    monitor.append_event(&SessionEvent {
+        session_id: session.session_id.clone(),
+        dispatch_id: None,
+        kind: if options.audit {
+            "research_audit_started".to_string()
+        } else {
+            "research_started".to_string()
+        },
+        message: "research session active".to_string(),
+        timestamp_ms: unix_timestamp_ms()?,
+    })?;
+
+    let findings = if options.audit {
+        deterministic_audit_findings(session.scope.root(), &session)?
+    } else {
+        Vec::new()
+    };
+    let mut changed_paths = Vec::new();
+
+    for note in &options.accepted_notes {
+        let accepted = write_accepted_note(session.scope.root(), &session.session_id, note)?;
+        if accepted.created {
+            changed_paths.push(accepted.note.path.clone());
+            monitor.append_event(&SessionEvent {
+                session_id: session.session_id.clone(),
+                dispatch_id: None,
+                kind: "note_accepted".to_string(),
+                message: format!("accepted research note {}", accepted.note.title),
+                timestamp_ms: unix_timestamp_ms()?,
+            })?;
+        }
+        if !session
+            .accepted_notes
+            .iter()
+            .any(|note| note.path == accepted.note.path)
+        {
+            session.accepted_notes.push(accepted.note);
+        }
+    }
+
+    session.save_checkpoint()?;
+    changed_paths.push(ResearchSession::checkpoint_path(session.scope.root()));
+
+    let stop_reason = if !warnings.is_empty()
+        && options.audit
+        && matches!(options.ai, AiRouting::Off | AiRouting::Auto)
+    {
+        ResearchStopReason::AiUnavailable
+    } else {
+        ResearchStopReason::Finish
+    };
+    let status = if stop_reason == ResearchStopReason::AiUnavailable {
+        ResearchStatus::Partial
+    } else {
+        ResearchStatus::Ok
+    };
 
     Ok(ResearchOutcome {
         session,
-        message: "research session checkpointed".to_string(),
+        audit: options.audit,
+        status,
+        stop_reason,
+        steps_used: usize::from(options.audit),
+        tokens_used: 0,
+        sources_added: Vec::new(),
+        findings,
+        gaps: Vec::new(),
+        warnings,
+        changed_paths,
+        message: if options.audit {
+            "research audit completed".to_string()
+        } else {
+            "research session checkpointed".to_string()
+        },
     })
 }
 
-impl Default for GobbyDaemonResearchDispatcher {
-    fn default() -> Self {
-        Self {
-            base_url: gobby_core::daemon_url::daemon_url(),
-        }
-    }
+fn load_or_create_session(options: &ResearchOptions) -> Result<ResearchSession, WikiError> {
+    let checkpoint_path = ResearchSession::checkpoint_path(options.scope.root());
+    let mut session = if checkpoint_path.exists() {
+        ResearchSession::load_checkpoint(options.scope.root())?
+    } else {
+        ResearchSession::new(
+            options.question.clone(),
+            options.scope.clone(),
+            options.source_constraints.clone(),
+            1,
+            None,
+        )?
+    };
+    session.question = options.question.clone();
+    session.source_constraints = options.source_constraints.clone();
+    session.agent_count = 1;
+    session.dispatch_task_id = None;
+    session.dispatch = None;
+    session.prompt = research_prompt(&session.question, &session.source_constraints, 1);
+    Ok(session)
 }
 
-impl ResearchDispatcher for GobbyDaemonResearchDispatcher {
-    fn dispatch(&self, session: &ResearchSession) -> Result<DaemonDispatch, WikiError> {
-        let endpoint = "/api/agents/spawn";
-        let url = format!("{}{}", self.base_url.trim_end_matches('/'), endpoint);
-        let task_id =
-            session
-                .dispatch_task_id
-                .as_deref()
-                .ok_or_else(|| WikiError::InvalidInput {
-                    field: "task_id",
-                    message: "daemon research dispatch requires a Gobby task id".to_string(),
-                })?;
-        let mut agent_run_ids = Vec::with_capacity(session.agent_count);
-        let mut dispatch_id = None;
-
-        for worker_number in 1..=session.agent_count {
-            let payload = serde_json::json!({
-                "task_id": task_id,
-                "agent_name": "researcher",
-                "prompt": worker_prompt(session, worker_number),
-                "workflow": "gwiki_research",
-                "isolation": "none",
+fn deterministic_audit_findings(
+    vault_root: &Path,
+    session: &ResearchSession,
+) -> Result<Vec<AuditFinding>, WikiError> {
+    let research_dir = vault_root.join("raw").join("research");
+    let entries = match fs::read_dir(&research_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(WikiError::Io {
+                action: "read raw research directory",
+                path: Some(research_dir),
+                source: error,
             });
-            let response = ureq::post(&url)
-                .timeout(Duration::from_secs(30))
-                .set("Content-Type", "application/json")
-                .send_string(&payload.to_string())
-                .map_err(|error| daemon_error(endpoint, error));
-            let response = match response {
-                Ok(response) => response,
-                Err(error) => {
-                    stop_spawned_agents(&self.base_url, &agent_run_ids);
-                    return Err(error);
-                }
-            };
-            let response_body = match response.into_string() {
-                Ok(body) => body,
-                Err(error) => {
-                    stop_spawned_agents(&self.base_url, &agent_run_ids);
-                    return Err(WikiError::Io {
-                        action: "read daemon agent dispatch response",
-                        path: None,
-                        source: error,
-                    });
-                }
-            };
-            let response: AgentSpawnResponse = match serde_json::from_str(&response_body) {
-                Ok(response) => response,
-                Err(error) => {
-                    stop_spawned_agents(&self.base_url, &agent_run_ids);
-                    return Err(WikiError::Json {
-                        action: "parse daemon agent dispatch response",
-                        path: None,
-                        source: error,
-                    });
-                }
-            };
-
-            if response.success == Some(false) {
-                stop_spawned_agents(&self.base_url, &agent_run_ids);
-                return Err(WikiError::Daemon {
-                    endpoint,
-                    message: response
-                        .error
-                        .unwrap_or_else(|| "daemon rejected research dispatch".to_string()),
-                });
-            }
-
-            let run_id = match response
-                .run_id
-                .clone()
-                .or_else(|| response.child_session_id.clone())
-                .or_else(|| response.conversation_id.clone())
-            {
-                Some(run_id) => run_id,
-                None => {
-                    stop_spawned_agents(&self.base_url, &agent_run_ids);
-                    return Err(WikiError::Daemon {
-                        endpoint,
-                        message: "daemon dispatch response did not include a run id".to_string(),
-                    });
-                }
-            };
-
-            dispatch_id.get_or_insert_with(|| {
-                response
-                    .dispatch_id
-                    .clone()
-                    .unwrap_or_else(|| run_id.clone())
-            });
-            agent_run_ids.push(run_id);
         }
+    };
 
-        Ok(DaemonDispatch {
-            dispatch_id: dispatch_id.unwrap_or_else(|| session.session_id.clone()),
-            daemon_base_url: self.base_url.clone(),
-            agent_run_ids,
-        })
+    let mut note_paths = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| WikiError::Io {
+            action: "read raw research directory entry",
+            path: Some(research_dir.clone()),
+            source: error,
+        })?;
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("md") {
+            note_paths.push(path);
+        }
     }
+    note_paths.sort();
 
-    fn teardown(&self, dispatch: &DaemonDispatch) {
-        stop_spawned_agents(&dispatch.daemon_base_url, &dispatch.agent_run_ids);
-    }
-}
-
-fn stop_spawned_agents(base_url: &str, run_ids: &[String]) {
-    let endpoint = "/api/mcp/gobby-agents/tools/stop_agent";
-    let url = format!("{}{}", base_url.trim_end_matches('/'), endpoint);
-    for run_id in run_ids {
-        let payload = serde_json::json!({ "run_id": run_id });
-        if let Err(error) = ureq::post(&url)
-            .timeout(Duration::from_secs(10))
-            .set("Content-Type", "application/json")
-            .send_string(&payload.to_string())
+    let accepted_paths = session
+        .accepted_notes
+        .iter()
+        .map(|note| note.path.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut findings = Vec::new();
+    for path in note_paths {
+        let contents = fs::read_to_string(&path).map_err(|error| WikiError::Io {
+            action: "read raw research note for audit",
+            path: Some(path.clone()),
+            source: error,
+        })?;
+        let Some(frontmatter) = frontmatter_block(&contents) else {
+            continue;
+        };
+        if yaml_field_eq(frontmatter, "research_status", "materializing")
+            && materializing_marker_is_stale(&path)
         {
-            log::warn!("failed to stop spawned research agent run {run_id} at {url}: {error}");
+            findings.push(AuditFinding {
+                fingerprint: audit_fingerprint("stale-materializing", &path),
+                severity: AuditSeverity::Warning,
+                kind: "orphaned_raw_research_note".to_string(),
+                message: "materializing research note marker is stale".to_string(),
+                evidence: vec![path.clone()],
+                validation_status: "deterministic".to_string(),
+            });
+            continue;
+        }
+        if yaml_field_eq(frontmatter, "research_status", "completed")
+            && !accepted_paths.contains(&path)
+        {
+            findings.push(AuditFinding {
+                fingerprint: audit_fingerprint("untracked-completed-note", &path),
+                severity: AuditSeverity::Info,
+                kind: "orphaned_raw_research_note".to_string(),
+                message: "completed research note is not listed in the active checkpoint"
+                    .to_string(),
+                evidence: vec![path],
+                validation_status: "deterministic".to_string(),
+            });
         }
     }
+
+    Ok(findings)
+}
+
+fn audit_fingerprint(kind: &str, path: &Path) -> String {
+    let input = format!("{kind}:{}", path.display());
+    uuid::Uuid::new_v5(&RESEARCH_NOTE_NAMESPACE, input.as_bytes()).to_string()
 }
 
 pub fn resolve_scope(selection: &ScopeSelection) -> Result<ResearchScope, WikiError> {
@@ -285,16 +325,6 @@ pub fn research_scope_from_resolved(scope: &scope::ResolvedScope) -> ResearchSco
     }
 }
 
-#[derive(Debug, serde::Deserialize)]
-struct AgentSpawnResponse {
-    success: Option<bool>,
-    dispatch_id: Option<String>,
-    run_id: Option<String>,
-    child_session_id: Option<String>,
-    conversation_id: Option<String>,
-    error: Option<String>,
-}
-
 #[derive(Serialize)]
 struct AcceptedNoteFrontmatter<'a> {
     title: &'a str,
@@ -309,33 +339,6 @@ struct AcceptedNoteFrontmatter<'a> {
 struct AcceptedNoteWrite {
     note: AcceptedResearchNote,
     created: bool,
-}
-
-fn worker_prompt(session: &ResearchSession, worker_number: usize) -> String {
-    format!(
-        "{}\n\nWorker {worker_number} of {}. Record findings as concise source notes.",
-        session.prompt, session.agent_count
-    )
-}
-
-fn daemon_error(endpoint: &'static str, error: ureq::Error) -> WikiError {
-    match error {
-        ureq::Error::Status(status, response) => {
-            let body = response.into_string().unwrap_or_default();
-            WikiError::Daemon {
-                endpoint,
-                message: if body.is_empty() {
-                    format!("daemon returned HTTP {status}")
-                } else {
-                    format!("daemon returned HTTP {status}: {body}")
-                },
-            }
-        }
-        ureq::Error::Transport(error) => WikiError::Daemon {
-            endpoint,
-            message: error.to_string(),
-        },
-    }
 }
 
 fn write_accepted_note(
@@ -833,37 +836,20 @@ fn unix_timestamp_ms() -> Result<u64, WikiError> {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
-
     use super::*;
 
-    struct FakeDispatcher;
-
-    impl ResearchDispatcher for FakeDispatcher {
-        fn dispatch(&self, _session: &ResearchSession) -> Result<DaemonDispatch, WikiError> {
-            Ok(DaemonDispatch {
-                dispatch_id: "dispatch-123".to_string(),
-                daemon_base_url: "http://daemon.test".to_string(),
-                agent_run_ids: vec!["run-1".to_string(), "run-2".to_string()],
-            })
-        }
-    }
-
-    struct RecordingDispatcher {
-        teardown_count: Cell<usize>,
-    }
-
-    impl ResearchDispatcher for RecordingDispatcher {
-        fn dispatch(&self, _session: &ResearchSession) -> Result<DaemonDispatch, WikiError> {
-            Ok(DaemonDispatch {
-                dispatch_id: "dispatch-123".to_string(),
-                daemon_base_url: "http://daemon.test".to_string(),
-                agent_run_ids: vec!["run-1".to_string()],
-            })
-        }
-
-        fn teardown(&self, _dispatch: &DaemonDispatch) {
-            self.teardown_count.set(self.teardown_count.get() + 1);
+    fn default_options(question: &str, scope: ResearchScope) -> ResearchOptions {
+        ResearchOptions {
+            question: question.to_string(),
+            scope,
+            source_constraints: Vec::new(),
+            audit: false,
+            max_steps: 12,
+            max_tokens: 24_000,
+            max_sources: 8,
+            ai: AiRouting::Direct,
+            require_ai: false,
+            accepted_notes: Vec::new(),
         }
     }
 
@@ -877,7 +863,7 @@ mod tests {
     }
 
     #[test]
-    fn resume_reloads_checkpoint() {
+    fn research_reloads_checkpoint_without_daemon_dispatch() {
         let temp = tempfile::tempdir().expect("tempdir");
         let scope = ResearchScope::project(temp.path());
         let checkpoint = ResearchSession {
@@ -888,7 +874,7 @@ mod tests {
             source_constraints: vec!["official docs only".to_string()],
             agent_count: 2,
             dispatch_task_id: Some("#300".to_string()),
-            dispatch: Some(DaemonDispatch {
+            dispatch: Some(crate::session::DaemonDispatch {
                 dispatch_id: "dispatch-existing".to_string(),
                 daemon_base_url: "http://daemon.test".to_string(),
                 agent_run_ids: vec!["run-a".to_string(), "run-b".to_string()],
@@ -898,61 +884,27 @@ mod tests {
         };
         checkpoint.save_checkpoint().expect("checkpoint saved");
 
-        let outcome = run_with_dispatcher(
-            ResearchOptions {
-                question: "ignored on resume".to_string(),
-                scope,
-                source_constraints: Vec::new(),
-                agent_count: 99,
-                dispatch_task_id: None,
-                resume: true,
-                accepted_notes: Vec::new(),
-            },
-            &FakeDispatcher,
-        )
-        .expect("research resumed");
+        let outcome = run(default_options("What should be refreshed?", scope))
+            .expect("research checkpoint loaded");
 
         assert_eq!(outcome.session.session_id, "research-existing");
-        assert_eq!(outcome.session.agent_count, 2);
-        assert_eq!(outcome.session.dispatch_task_id.as_deref(), Some("#300"));
-        assert_eq!(
-            outcome
-                .session
-                .dispatch
-                .as_ref()
-                .map(|dispatch| dispatch.dispatch_id.as_str()),
-            Some("dispatch-existing")
-        );
-        assert_eq!(
-            outcome.session.source_constraints,
-            vec!["official docs only".to_string()]
-        );
+        assert_eq!(outcome.session.agent_count, 1);
+        assert_eq!(outcome.session.dispatch_task_id, None);
+        assert_eq!(outcome.session.dispatch, None);
+        assert_eq!(outcome.session.question, "What should be refreshed?");
     }
 
     #[test]
-    fn new_research_rejects_zero_agents() {
+    fn enrichment_rejects_ai_off() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let error = run_with_dispatcher(
-            ResearchOptions {
-                question: "What should be researched?".to_string(),
-                scope: ResearchScope::project(temp.path()),
-                source_constraints: Vec::new(),
-                agent_count: 0,
-                dispatch_task_id: Some("#300".to_string()),
-                resume: false,
-                accepted_notes: Vec::new(),
-            },
-            &FakeDispatcher,
-        )
-        .expect_err("zero agents should be rejected");
+        let mut options = default_options(
+            "What should be researched?",
+            ResearchScope::project(temp.path()),
+        );
+        options.ai = AiRouting::Off;
+        let error = run(options).expect_err("AI off should be rejected for enrichment");
 
-        assert!(matches!(
-            error,
-            WikiError::InvalidInput {
-                field: "agent_count",
-                ..
-            }
-        ));
+        assert!(matches!(error, WikiError::InvalidInput { field: "ai", .. }));
     }
 
     #[test]
@@ -960,30 +912,21 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let scope = ResearchScope::project(temp.path());
 
-        let outcome = run_with_dispatcher(
-            ResearchOptions {
-                question: "How should events be monitored?".to_string(),
-                scope: scope.clone(),
-                source_constraints: vec!["source-linked notes".to_string()],
-                agent_count: 2,
-                dispatch_task_id: Some("#300".to_string()),
-                resume: false,
-                accepted_notes: vec![AcceptedNoteDraft {
-                    title: "Session event monitoring".to_string(),
-                    body: "Durable event logs are appended as JSONL.".to_string(),
-                    source: Some("daemon session stream".to_string()),
-                }],
-            },
-            &FakeDispatcher,
-        )
-        .expect("research ran");
+        let mut options = default_options("How should events be monitored?", scope.clone());
+        options.source_constraints = vec!["source-linked notes".to_string()];
+        options.accepted_notes = vec![AcceptedNoteDraft {
+            title: "Session event monitoring".to_string(),
+            body: "Durable event logs are appended as JSONL.".to_string(),
+            source: Some("daemon session stream".to_string()),
+        }];
+        let outcome = run(options).expect("research ran");
 
         let note = outcome
             .session
             .accepted_notes
             .first()
             .expect("accepted note recorded");
-        assert_eq!(outcome.session.dispatch_task_id.as_deref(), Some("#300"));
+        assert_eq!(outcome.session.dispatch_task_id, None);
         assert!(note.path.starts_with(scope.root().join("raw/research")));
         assert_eq!(
             note.path.file_name().and_then(|name| name.to_str()),
@@ -1097,55 +1040,55 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_tears_down_agents_on_post_dispatch_persistence_failure() {
+    fn deterministic_audit_reports_untracked_completed_note() {
         let temp = tempfile::tempdir().expect("tempdir");
-        std::fs::write(temp.path().join(".gwiki"), "not a directory").expect("block .gwiki");
-        let dispatcher = RecordingDispatcher {
-            teardown_count: Cell::new(0),
-        };
-
-        let error = run_with_dispatcher(
-            ResearchOptions {
-                question: "How should failed dispatch clean up?".to_string(),
-                scope: ResearchScope::project(temp.path()),
-                source_constraints: Vec::new(),
-                agent_count: 1,
-                dispatch_task_id: Some("#300".to_string()),
-                resume: false,
-                accepted_notes: Vec::new(),
-            },
-            &dispatcher,
+        let root = temp.path();
+        let research_dir = root.join("raw/research");
+        std::fs::create_dir_all(&research_dir).expect("research dir");
+        let note_path = research_dir.join("orphan.md");
+        std::fs::write(
+            &note_path,
+            "---\nresearch_note_id: orphan\nresearch_status: completed\n---\n\nBody\n",
         )
-        .expect_err("persistence should fail");
+        .expect("orphan note");
 
-        assert!(matches!(error, WikiError::Io { .. }));
-        assert_eq!(dispatcher.teardown_count.get(), 1);
+        let mut options = default_options("Audit wiki scope", ResearchScope::project(root));
+        options.audit = true;
+        options.ai = AiRouting::Off;
+        let outcome = run(options).expect("audit ran");
+
+        assert_eq!(outcome.audit, true);
+        assert_eq!(outcome.status, ResearchStatus::Partial);
+        assert_eq!(outcome.stop_reason, ResearchStopReason::AiUnavailable);
+        assert_eq!(outcome.findings.len(), 1);
+        assert_eq!(outcome.findings[0].evidence, vec![note_path]);
+        assert_eq!(
+            outcome.findings[0].kind,
+            "orphaned_raw_research_note".to_string()
+        );
+        assert_eq!(
+            outcome.warnings,
+            vec!["ai_unavailable: model-assisted audit checks skipped".to_string()]
+        );
     }
 
     #[test]
-    fn daemon_dispatch_requires_task_id() {
+    fn deterministic_audit_uses_checkpoint_inventory() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let session = ResearchSession::new(
-            "What should workers read?",
-            ResearchScope::project(temp.path()),
-            Vec::new(),
-            1,
-            None,
-        )
-        .expect("session");
+        let scope = ResearchScope::project(temp.path());
+        let mut options = default_options("Record accepted note", scope.clone());
+        options.accepted_notes = vec![AcceptedNoteDraft {
+            title: "Tracked note".to_string(),
+            body: "Tracked body.".to_string(),
+            source: None,
+        }];
+        run(options).expect("accepted note written");
 
-        let error = GobbyDaemonResearchDispatcher {
-            base_url: "http://127.0.0.1:1".to_string(),
-        }
-        .dispatch(&session)
-        .expect_err("missing task id is rejected before network dispatch");
+        let mut audit_options = default_options("Audit wiki scope", scope);
+        audit_options.audit = true;
+        audit_options.ai = AiRouting::Off;
+        let outcome = run(audit_options).expect("audit ran");
 
-        assert!(matches!(
-            error,
-            WikiError::InvalidInput {
-                field: "task_id",
-                ..
-            }
-        ));
+        assert!(outcome.findings.is_empty());
     }
 }

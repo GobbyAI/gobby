@@ -1046,13 +1046,16 @@ fn public_cli_smoke_uses_gwiki_modules() {
         &hub,
         tmp.path(),
         &[
-            "--format", "json", "--topic", "rust", "research", "--resume",
+            "--format", "json", "--topic", "rust", "research", "--audit", "--ai", "off",
         ],
     );
     assert_success(&research, "research");
     let research_payload = json_output(&research);
     assert_eq!(research_payload["command"], "research");
-    assert_json_path(&research_payload["session"]["scope"]["root"], &vault);
+    assert_eq!(research_payload["audit"], true);
+    assert_eq!(research_payload["stop_reason"], "ai_unavailable");
+    assert_eq!(research_payload["scope"]["kind"], "topic");
+    assert_eq!(research_payload["scope"]["id"], "rust");
 
     let compile = gwiki(
         &hub,
@@ -1133,7 +1136,7 @@ fn public_cli_smoke_continues_research_compile_audit_in_topic_scope() {
         &hub,
         tmp.path(),
         &[
-            "--format", "json", "--topic", "rust", "research", "--resume",
+            "--format", "json", "--topic", "rust", "research", "--audit", "--ai", "off",
         ],
     );
     assert_success(&research, "research");
@@ -1141,6 +1144,8 @@ fn public_cli_smoke_continues_research_compile_audit_in_topic_scope() {
     assert_eq!(research_payload["command"], "research");
     assert_eq!(research_payload["scope"]["kind"], "topic");
     assert_eq!(research_payload["scope"]["id"], "rust");
+    assert_eq!(research_payload["audit"], true);
+    assert_eq!(research_payload["stop_reason"], "ai_unavailable");
     assert!(vault.join(".gwiki/session-events.jsonl").exists());
 
     let compile = gwiki(
