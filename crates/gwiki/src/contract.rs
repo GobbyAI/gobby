@@ -175,6 +175,8 @@ pub fn contract() -> CliContract {
                     "max_steps",
                     "max_tokens",
                     "max_sources",
+                    "max_wall_time_seconds",
+                    "max_note_bytes",
                     "write_conflict",
                     "sources_added",
                     "accepted_notes",

@@ -24,6 +24,10 @@ use crate::session::{AcceptedResearchNote, ResearchScope, ResearchSession, resea
 use crate::{CommandOutcome, IngestFileOptions, ReadTarget, ScopeSelection, WikiError};
 
 const MAX_RESEARCH_NOTE_SUFFIX_ATTEMPTS: usize = 1000;
+/// Enforced research-loop budgets, echoed in JSON output so callers see every
+/// limit that can stop a run.
+const RESEARCH_MAX_WALL_TIME_SECONDS: u64 = 900;
+const RESEARCH_MAX_NOTE_BYTES: usize = 24_000;
 const RESEARCH_NOTE_MARKER_STALE_AFTER: Duration = Duration::from_secs(15 * 60);
 const RESEARCH_NOTE_MATERIALIZE_TIMEOUT: Duration = Duration::from_secs(10);
 const RESEARCH_NOTE_MATERIALIZE_INITIAL_DELAY: Duration = Duration::from_millis(25);
@@ -90,6 +94,8 @@ pub struct ResearchOutcome {
     pub max_steps: usize,
     pub max_tokens: usize,
     pub max_sources: usize,
+    pub max_wall_time_seconds: u64,
+    pub max_note_bytes: usize,
     pub write_conflict: bool,
     pub sources_added: Vec<String>,
     pub findings: Vec<AuditFinding>,
@@ -210,6 +216,8 @@ pub fn run(options: ResearchOptions) -> Result<ResearchOutcome, WikiError> {
             max_steps: options.max_steps,
             max_tokens: options.max_tokens,
             max_sources: options.max_sources,
+            max_wall_time_seconds: RESEARCH_MAX_WALL_TIME_SECONDS,
+            max_note_bytes: RESEARCH_MAX_NOTE_BYTES,
             write_conflict: loop_result.write_conflict,
             sources_added: loop_result.sources_added,
             findings: Vec::new(),
@@ -247,6 +255,8 @@ pub fn run(options: ResearchOptions) -> Result<ResearchOutcome, WikiError> {
         max_steps: options.max_steps,
         max_tokens: options.max_tokens,
         max_sources: options.max_sources,
+        max_wall_time_seconds: RESEARCH_MAX_WALL_TIME_SECONDS,
+        max_note_bytes: RESEARCH_MAX_NOTE_BYTES,
         write_conflict: false,
         sources_added: Vec::new(),
         findings,
@@ -290,8 +300,8 @@ fn run_enrichment_loop(
             max_steps: options.max_steps,
             max_tokens: options.max_tokens,
             max_sources: options.max_sources,
-            max_wall_time: Duration::from_secs(900),
-            max_note_bytes: 24_000,
+            max_wall_time: Duration::from_secs(RESEARCH_MAX_WALL_TIME_SECONDS),
+            max_note_bytes: RESEARCH_MAX_NOTE_BYTES,
         },
         ResearchLoopDeps {
             model: &mut model,
