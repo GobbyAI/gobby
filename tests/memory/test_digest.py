@@ -12,9 +12,7 @@ import pytest
 
 from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.digest import (
-    _build_heuristic_title,
     _get_next_turn_number,
-    _heuristic_title_from_transcript,
     _parse_turn_record_response,
     _read_last_turn_from_transcript,
     _read_undigested_turns,
@@ -25,6 +23,7 @@ from gobby.memory.digest import (
     memory_sync_export,
     memory_sync_import,
 )
+from gobby.memory.title_heuristics import _build_heuristic_title, _heuristic_title_from_transcript
 from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit

@@ -52,6 +52,10 @@ class FakeGateway:
         self.calls.append(("search", {"query": query, "limit": limit}))
         return self._result("search", payload={"query": query, "limit": limit})
 
+    async def ask(self, query: str, *, llm: bool = False) -> dict[str, Any]:
+        self.calls.append(("ask", {"query": query, "llm": llm}))
+        return self._result("ask", payload={"query": query, "llm": llm, "status": "retrieved"})
+
     async def read(
         self,
         *,
@@ -204,6 +208,16 @@ def test_status_search_read_and_gateway_scope(client: TestClient) -> None:
     assert search.json()["payload"] == {"command": "search", "query": "hooks", "limit": 3}
     assert FakeGateway.instances[-1].project is None
     assert FakeGateway.instances[-1].topic == "t"
+
+    ask = client.get("/api/wiki/ask", params={"q": "hooks?", "llm": True, "topic": "t"})
+    assert ask.status_code == 200
+    assert ask.json()["payload"] == {
+        "command": "ask",
+        "query": "hooks?",
+        "llm": True,
+        "status": "retrieved",
+    }
+    assert FakeGateway.instances[-1].calls == [("ask", {"query": "hooks?", "llm": True})]
 
     no_selector = client.get("/api/wiki/read")
     both_selectors = client.get("/api/wiki/read", params={"path": "a.md", "title": "A"})

@@ -86,6 +86,12 @@ class GwikiGateway:
             args.extend(["--limit", str(limit)])
         return await self._run_json("search", args)
 
+    async def ask(self, query: str, *, llm: bool = False) -> dict[str, Any]:
+        args = ["ask", query]
+        if llm:
+            args.append("--llm")
+        return await self._run_json("ask", args)
+
     async def read(
         self,
         *,

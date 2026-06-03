@@ -75,6 +75,7 @@ async def test_gateway_exposes_expected_methods() -> None:
         "status",
         "index",
         "search",
+        "ask",
         "read",
         "backlinks",
         "ingest_file",
@@ -89,6 +90,42 @@ async def test_gateway_exposes_expected_methods() -> None:
         "refresh",
     ):
         assert callable(getattr(gateway, method_name))
+
+
+async def test_ask_uses_read_only_cli_args(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {
+        "command": "ask",
+        "query": "How do hooks work?",
+        "status": "retrieved",
+        "hits": [],
+        "related_pages": [],
+        "sources": [],
+        "gaps": [],
+        "stale_candidates": [],
+        "suggested_questions": [],
+        "warnings": [],
+    }
+    calls = _patch_subprocess(monkeypatch, [FakeProcess(stdout=_json_bytes(payload))])
+
+    result = await GwikiGateway(
+        binary="/bin/gwiki",
+        project_root="/repo",
+        timeout_seconds=1.0,
+    ).ask("How do hooks work?", llm=True)
+
+    assert result["payload"] == payload
+    assert calls == [
+        (
+            "/bin/gwiki",
+            "ask",
+            "How do hooks work?",
+            "--llm",
+            "--project",
+            "/repo",
+            "--format",
+            "json",
+        )
+    ]
 
 
 async def test_resolve_binary_serializes_concurrent_resolution(

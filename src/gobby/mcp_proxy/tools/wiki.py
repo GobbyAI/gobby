@@ -43,7 +43,7 @@ def create_wiki_registry(
     registry = InternalToolRegistry(
         name="gobby-wiki",
         description=(
-            "Wiki tools - wiki_search, wiki_read, wiki_attach, wiki_ingest, "
+            "Wiki tools - wiki_search, wiki_ask, wiki_read, wiki_attach, wiki_ingest, "
             "wiki_compile, wiki_audit, wiki_health, wiki_list_sources, wiki_remove_source"
         ),
     )
@@ -95,6 +95,20 @@ def create_wiki_registry(
     ) -> dict[str, Any]:
         return await _guard(
             lambda: read_call(project, topic, lambda gwiki: gwiki.search(query, limit=limit))
+        )
+
+    @registry.tool(
+        name="wiki_ask",
+        description="Ask a question about the wiki. Read-only; optionally request LLM synthesis.",
+    )
+    async def wiki_ask(
+        query: str,
+        project: str | None = None,
+        topic: str | None = None,
+        llm: bool = False,
+    ) -> dict[str, Any]:
+        return await _guard(
+            lambda: read_call(project, topic, lambda gwiki: gwiki.ask(query, llm=llm))
         )
 
     @registry.tool(

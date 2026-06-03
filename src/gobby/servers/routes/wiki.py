@@ -54,6 +54,22 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
             lambda gateway: gateway.search(search_query, limit=limit),
         )
 
+    @router.get("/ask")
+    async def ask(
+        q: str | None = Query(None),
+        query: str | None = Query(None),
+        llm: bool = Query(False),
+        project: str | None = Query(None),
+        topic: str | None = Query(None),
+    ) -> dict[str, Any]:
+        ask_query = _one_query(q, query)
+        return await _read(
+            server,
+            project,
+            topic,
+            lambda gateway: gateway.ask(ask_query, llm=llm),
+        )
+
     @router.get("/read")
     async def read(
         path: str | None = Query(None),

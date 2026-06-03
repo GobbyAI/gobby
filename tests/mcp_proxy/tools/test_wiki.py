@@ -50,6 +50,25 @@ class FakeGateway:
         }
         return self._result("search", payload)
 
+    async def ask(self, query: str, *, llm: bool = False) -> dict[str, Any]:
+        self.calls.append(("ask", {"query": query, "llm": llm}))
+        payload = {
+            "command": "ask",
+            "query": query,
+            "status": "retrieved",
+            "hits": [],
+            "related_pages": [],
+            "sources": [],
+            "gaps": [],
+            "stale_candidates": [],
+            "suggested_questions": [],
+            "warnings": [],
+        }
+        if llm:
+            payload["ai"] = {"requested": True, "route": "direct", "status": "available"}
+            payload["synthesis"] = {"answer": "Hooks run at turn boundaries."}
+        return self._result("ask", payload)
+
     async def read(
         self,
         *,
@@ -172,6 +191,7 @@ async def test_tool_schemas() -> None:
 
     assert {
         "wiki_search",
+        "wiki_ask",
         "wiki_read",
         "wiki_attach",
         "wiki_ingest",
@@ -186,6 +206,10 @@ async def test_tool_schemas() -> None:
     assert {"query", "project", "topic", "limit"} <= set(search_schema["properties"])
     assert search_schema["required"] == ["query"]
 
+    ask_schema = _schema("wiki_ask")
+    assert {"query", "project", "topic", "llm"} <= set(ask_schema["properties"])
+    assert ask_schema["required"] == ["query"]
+
     remove_schema = _schema("wiki_remove_source")
     assert remove_schema["required"] == ["id"]
     assert {"dry_run", "yes", "keep_asset"} <= set(remove_schema["properties"])
@@ -198,6 +222,15 @@ async def test_tool_schemas() -> None:
     assert read_result["scope"] == {"identity": "topic:docs", "project": None, "topic": "docs"}
     assert FakeGateway.instances[-1].calls == [
         ("read", {"path": None, "title": "Page"}),
+    ]
+
+    ask_result = await registry.call(
+        "wiki_ask",
+        {"query": "How do hooks work?", "llm": True, "topic": "docs"},
+    )
+    assert ask_result["payload"]["synthesis"]["answer"] == "Hooks run at turn boundaries."
+    assert FakeGateway.instances[-1].calls == [
+        ("ask", {"query": "How do hooks work?", "llm": True}),
     ]
 
 

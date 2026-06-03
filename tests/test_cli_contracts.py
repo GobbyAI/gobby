@@ -75,6 +75,7 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
         ("status", "status", gateway.status),
         ("index", "index", gateway.index),
         ("search", "search", lambda: gateway.search("ownership", limit=5)),
+        ("ask", "ask", lambda: gateway.ask("ownership", llm=True)),
         ("read", "read", lambda: gateway.read(path="docs/wiki.md")),
         ("backlinks", "backlinks", lambda: gateway.backlinks("Home")),
         ("ingest_file", "ingest-file", lambda: gateway.ingest_file("notes.md")),
@@ -118,6 +119,7 @@ def test_wiki_mcp_tools_are_backed_by_documented_gwiki_commands() -> None:
     }
     tool_to_command = {
         "wiki_search": "search",
+        "wiki_ask": "ask",
         "wiki_read": "read",
         "wiki_attach": "ingest-file",
         "wiki_ingest": "ingest-url",
@@ -145,6 +147,7 @@ def test_gwiki_contract_documents_daemon_parsed_keys() -> None:
         contract, "ingest-url"
     )
     assert {"path", "raw_path", "source_path"} <= _json_keys(contract, "sources")
+    assert {"hits", "related_pages", "sources", "warnings"} <= _json_keys(contract, "ask")
     assert {"changed_paths"} <= _json_keys(contract, "refresh")
     assert {"root", "text_path"} <= _json_keys(contract, "health")
 

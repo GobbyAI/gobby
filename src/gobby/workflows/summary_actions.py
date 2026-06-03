@@ -10,7 +10,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
 import aiofiles
 
@@ -542,7 +542,7 @@ async def repair_missing_session_title(session_manager: Any, session: Any) -> st
     if not session_id:
         return None
 
-    from gobby.memory.digest import _heuristic_title_from_transcript
+    from gobby.memory.title_heuristics import _heuristic_title_from_transcript
 
     title = await _heuristic_title_from_transcript(
         getattr(session, "transcript_path", None),
@@ -558,7 +558,7 @@ async def repair_missing_session_title(session_manager: Any, session: Any) -> st
         "Repair sweep synthesized heuristic title for session %s",
         getattr(session, "ref", session_id),
     )
-    return cast(str, updated)
+    return title
 
 
 async def generate_summary(
