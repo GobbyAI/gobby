@@ -21,7 +21,7 @@ from claude_agent_sdk import (
 )
 
 from gobby.config.app import DaemonConfig
-from gobby.llm.base import LLMProvider, LLMProviderCancellation
+from gobby.llm.base import LLMProvider, LLMProviderCancellation, LLMTextResult
 from gobby.utils.json_helpers import extract_json_from_text
 
 # Headless settings file — zeroes out all hooks so internal LLM calls
@@ -29,6 +29,68 @@ from gobby.utils.json_helpers import extract_json_from_text
 _HEADLESS_SETTINGS = Path.home() / ".gobby" / "settings" / "headless.json"
 
 logger = logging.getLogger(__name__)
+
+
+def _coerce_int(value: Any) -> int | None:
+    """Return ``value`` if it is a non-bool integer, else ``None``."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _normalize_claude_usage(usage: Any) -> dict[str, int] | None:
+    """Normalize a Claude Agent SDK usage payload into canonical token counts.
+
+    Maps Anthropic ``input_tokens``/``output_tokens`` onto the OpenAI-style
+    ``prompt_tokens``/``completion_tokens``/``total_tokens`` shape the rest of
+    the daemon expects, preserving the native and cache fields when present.
+    Returns ``None`` when no integer token counts are available.
+    """
+    if usage is None:
+        return None
+    if isinstance(usage, dict):
+        data: dict[str, Any] = usage
+    elif hasattr(usage, "model_dump"):
+        data = usage.model_dump()
+    else:
+        fields = (
+            "input_tokens",
+            "output_tokens",
+            "cache_creation_input_tokens",
+            "cache_read_input_tokens",
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+        )
+        data = {field: getattr(usage, field, None) for field in fields}
+
+    input_tokens = _coerce_int(data.get("input_tokens"))
+    output_tokens = _coerce_int(data.get("output_tokens"))
+    prompt_tokens = _coerce_int(data.get("prompt_tokens"))
+    completion_tokens = _coerce_int(data.get("completion_tokens"))
+    total_tokens = _coerce_int(data.get("total_tokens"))
+
+    if prompt_tokens is None:
+        prompt_tokens = input_tokens
+    if completion_tokens is None:
+        completion_tokens = output_tokens
+    if total_tokens is None and prompt_tokens is not None and completion_tokens is not None:
+        total_tokens = prompt_tokens + completion_tokens
+
+    result: dict[str, int] = {}
+    if prompt_tokens is not None:
+        result["prompt_tokens"] = prompt_tokens
+    if completion_tokens is not None:
+        result["completion_tokens"] = completion_tokens
+    if total_tokens is not None:
+        result["total_tokens"] = total_tokens
+    if input_tokens is not None:
+        result["input_tokens"] = input_tokens
+    if output_tokens is not None:
+        result["output_tokens"] = output_tokens
+    for field in ("cache_creation_input_tokens", "cache_read_input_tokens"):
+        value = _coerce_int(data.get(field))
+        if value is not None:
+            result[field] = value
+    return result or None
 
 
 class ClaudeSDKProviderFailure(RuntimeError):
@@ -439,6 +501,26 @@ class ClaudeLLMProvider(LLMProvider):
 
         Uses Claude Agent SDK via CLI.
         """
+        return (
+            await self.generate_text_result(
+                prompt,
+                system_prompt=system_prompt,
+                model=model,
+                max_tokens=max_tokens,
+                caller=caller,
+            )
+        ).text
+
+    async def generate_text_result(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        *,
+        caller: str | None = None,
+    ) -> LLMTextResult:
+        """Generate text and surface Anthropic token usage when available."""
         cli_path = await self._verify_cli_path()
         if cli_path:
             return await self._generate_text_sdk(
@@ -458,7 +540,7 @@ class ClaudeLLMProvider(LLMProvider):
         max_tokens: int | None = None,
         *,
         caller: str | None = None,
-    ) -> str:
+    ) -> LLMTextResult:
         """Generate text using Claude Agent SDK (subscription mode)."""
         cli_path = await self._verify_cli_path()
         if not cli_path:
@@ -477,7 +559,10 @@ class ClaudeLLMProvider(LLMProvider):
             cli_path=cli_path,
         )
 
+        captured_usage: dict[str, int] | None = None
+
         async def _run_query() -> str:
+            nonlocal captured_usage
             result_text = ""
             message_count = 0
             async for message in query(prompt=prompt, options=options):
@@ -498,6 +583,9 @@ class ClaudeLLMProvider(LLMProvider):
                     )
                     if message.result:
                         result_text = message.result
+                    usage = _normalize_claude_usage(getattr(message, "usage", None))
+                    if usage is not None:
+                        captured_usage = usage
             if message_count == 0:
                 self.logger.warning("generate_text: No messages received from Claude SDK")
             elif not result_text:
@@ -509,7 +597,7 @@ class ClaudeLLMProvider(LLMProvider):
         # SDK doesn't support max_tokens directly; post-truncate if needed
         if max_tokens and len(result) > max_tokens * 4:
             result = result[: max_tokens * 4]
-        return result
+        return LLMTextResult(text=result, usage=captured_usage)
 
     async def generate_with_tools(
         self,

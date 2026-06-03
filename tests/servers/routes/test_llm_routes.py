@@ -190,6 +190,48 @@ def test_generate_includes_usage_when_available(
     }
 
 
+def test_generate_returns_real_usage_for_claude_path(
+    client: TestClient,
+    server_with_llm: MagicMock,
+) -> None:
+    usage = {
+        "prompt_tokens": 120,
+        "completion_tokens": 30,
+        "total_tokens": 150,
+        "input_tokens": 120,
+        "output_tokens": 30,
+    }
+    adapter = _FakeTextAdapter(usage=usage)
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                available=True,
+                models=("claude-sonnet-4-5",),
+            )
+        ]
+    )
+    service = TextGenerationService(registry, {"claude": adapter})
+
+    with patch(
+        "gobby.servers.routes.llm.build_daemon_text_generation_service",
+        return_value=service,
+    ):
+        response = client.post(
+            "/api/llm/generate",
+            json={"prompt": "Summarize this", "provider": "claude", "max_tokens": 64},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provider"] == "claude"
+    assert body["usage"] == usage
+    # The caller's max_tokens is forwarded to the provider.
+    assert adapter.requests[0].max_tokens == 64
+
+
 def test_generate_returns_deterministic_unavailable_error(client: TestClient) -> None:
     registry = AICapabilityRegistry(
         [

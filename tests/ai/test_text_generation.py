@@ -259,6 +259,44 @@ async def test_llm_provider_adapter_forwards_text_generation_request() -> None:
     assert response.usage is None
 
 
+class FakeUsageLLMProvider(FakeLLMProvider):
+    """Provider that surfaces usage from generate_text_result, like Claude."""
+
+    async def generate_text_result(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        *,
+        caller: str | None = None,
+    ) -> LLMTextResult:
+        return LLMTextResult(
+            text=f"{system_prompt}:{prompt}:{model}:{max_tokens}:{caller}",
+            usage={"prompt_tokens": 11, "completion_tokens": 4, "total_tokens": 15},
+        )
+
+
+@pytest.mark.asyncio
+async def test_llm_provider_adapter_forwards_usage_and_max_tokens() -> None:
+    adapter = LLMProviderTextGenerateAdapter(FakeUsageLLMProvider())
+
+    response = await adapter.generate(
+        TextGenerationRequest(
+            prompt="hello",
+            system_prompt="system",
+            model="model-a",
+            max_tokens=42,
+            caller="test",
+        )
+    )
+
+    # max_tokens (42) is forwarded into generate_text_result and the provider
+    # usage flows back through unchanged.
+    assert response.text == "system:hello:model-a:42:test"
+    assert response.usage == {"prompt_tokens": 11, "completion_tokens": 4, "total_tokens": 15}
+
+
 class FakeACPClient:
     def __init__(self) -> None:
         self.started: dict[str, object] | None = None

@@ -9,7 +9,7 @@ import pytest
 from gobby.config.app import DaemonConfig
 from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
 from gobby.config.sessions import SessionSummaryConfig
-from gobby.llm.claude import ClaudeLLMProvider
+from gobby.llm.claude import ClaudeLLMProvider, _normalize_claude_usage
 
 pytestmark = pytest.mark.unit
 
@@ -22,8 +22,9 @@ class MockAssistantMessage:
 
 
 class MockResultMessage:
-    def __init__(self, result=None):
+    def __init__(self, result=None, usage=None):
         self.result = result
+        self.usage = usage
 
 
 class MockTextBlock:
@@ -134,6 +135,74 @@ async def test_generate_text(claude_config):
         provider = ClaudeLLMProvider(claude_config)
         text = await provider.generate_text("prompt")
         assert text == "Generated text"
+
+
+def test_normalize_claude_usage_maps_anthropic_fields():
+    assert _normalize_claude_usage({"input_tokens": 10, "output_tokens": 5}) == {
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "total_tokens": 15,
+        "input_tokens": 10,
+        "output_tokens": 5,
+    }
+
+
+def test_normalize_claude_usage_preserves_openai_total_and_cache_fields():
+    assert _normalize_claude_usage(
+        {
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "total_tokens": 99,
+            "cache_read_input_tokens": 4,
+        }
+    ) == {
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "total_tokens": 99,
+        "cache_read_input_tokens": 4,
+    }
+
+
+def test_normalize_claude_usage_returns_none_without_counts():
+    assert _normalize_claude_usage(None) is None
+    assert _normalize_claude_usage({}) is None
+    assert _normalize_claude_usage({"foo": "bar"}) is None
+
+
+@pytest.mark.asyncio
+async def test_generate_text_result_surfaces_anthropic_usage(claude_config):
+    async def mock_query(prompt, options):
+        yield MockAssistantMessage([MockTextBlock("Generated text")])
+        yield MockResultMessage(
+            result="Generated text",
+            usage={"input_tokens": 120, "output_tokens": 30},
+        )
+
+    with mock_claude_sdk(mock_query):
+        provider = ClaudeLLMProvider(claude_config)
+        result = await provider.generate_text_result("prompt")
+
+    assert result.text == "Generated text"
+    assert result.usage == {
+        "prompt_tokens": 120,
+        "completion_tokens": 30,
+        "total_tokens": 150,
+        "input_tokens": 120,
+        "output_tokens": 30,
+    }
+
+
+@pytest.mark.asyncio
+async def test_generate_text_result_usage_none_without_result_message(claude_config):
+    async def mock_query(prompt, options):
+        yield MockAssistantMessage([MockTextBlock("Generated text")])
+
+    with mock_claude_sdk(mock_query):
+        provider = ClaudeLLMProvider(claude_config)
+        result = await provider.generate_text_result("prompt")
+
+    assert result.text == "Generated text"
+    assert result.usage is None
 
 
 @pytest.mark.asyncio
