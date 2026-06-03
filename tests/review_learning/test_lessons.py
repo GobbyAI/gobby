@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from gobby.review_learning.file_paths import path_tag
 from gobby.review_learning.fingerprint import build_occurrence_key
 from gobby.review_learning.lessons import (
     derive_lesson_identity,
@@ -62,8 +63,31 @@ def test_normalized_lesson_uses_bounded_tags_and_full_content() -> None:
     assert "source:coderabbit" in lesson.tags
     assert any(tag.startswith("fingerprint:") for tag in lesson.tags)
     assert any(tag.startswith("occurrence:") for tag in lesson.tags)
+    assert path_tag("src/gobby/storage/example.py") in lesson.tags
     assert "Use psycopg %s placeholders in Gobby storage code" in lesson.content
     assert '"commit": "abc123"' in lesson.content
+
+
+def test_normalized_lesson_tags_evidence_paths() -> None:
+    lesson = normalize_lesson(
+        source_kind="review_comment",
+        source="coderabbit",
+        source_review="review-1",
+        decision="confirmed",
+        finding={
+            "title": "Evidence path only",
+            "pattern_id": "evidence-path-only",
+            "principle": "Use evidence paths for lookup",
+        },
+        evidence={"changed_files": ["src/gobby/review_learning/service.py"]},
+        finding_fingerprint="native-1",
+        occurrence_key=build_occurrence_key("review-1", "native-1"),
+        repo="josh/gobby",
+        language="python",
+        risk="medium",
+    )
+
+    assert path_tag("src/gobby/review_learning/service.py") in lesson.tags
 
 
 @pytest.mark.parametrize(

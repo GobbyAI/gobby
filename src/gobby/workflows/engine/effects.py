@@ -31,6 +31,8 @@ def _is_empty_inject_payload(result: Any) -> bool:
         return True
     if content_keys == {"memories"} and not result.get("memories"):
         return True
+    if content_keys <= {"lessons", "message"} and not result.get("lessons"):
+        return True
     return False
 
 
@@ -156,6 +158,15 @@ class EffectsMixin:
                             effect.tool,
                         ) == ("gobby-memory", "search_memories") and isinstance(raw_result, dict):
                             formatted = self._format_search_memories_result(
+                                raw_result,
+                                platform_session_id,
+                                variables,
+                            )
+                        elif (effect.server, effect.tool) == (
+                            "gobby-review-learning",
+                            "recall_review_lessons_for_files",
+                        ) and isinstance(raw_result, dict):
+                            formatted = self._format_review_lessons_result(
                                 raw_result,
                                 platform_session_id,
                                 variables,
@@ -374,6 +385,32 @@ class EffectsMixin:
             {"tool": "search_memories", "result": {"memories": new_memories}}
         )
 
+    def _format_review_lessons_result(
+        self,
+        result: dict[str, Any],
+        platform_session_id: str | None,
+        variables: dict[str, Any],
+    ) -> str | None:
+        """Inline pipeline for file-scoped review lesson results."""
+        del variables
+        from gobby.hooks.dispatchers.mcp import format_discovery_result
+
+        if _is_empty_inject_payload(result):
+            return None
+
+        lessons = result.get("lessons") or []
+        if not lessons:
+            return None
+        new_lessons = self._filter_and_track_new_review_lessons(lessons, platform_session_id)
+        if not new_lessons:
+            return None
+        return format_discovery_result(
+            {
+                "tool": "recall_review_lessons_for_files",
+                "result": {"lessons": new_lessons, "count": len(new_lessons)},
+            }
+        )
+
     def _filter_and_track_new_memories(
         self,
         memories: list[Any],
@@ -425,6 +462,52 @@ class EffectsMixin:
                 logger.debug("Failed to append injected_memory_ids: %s", exc)
 
         return new_memories
+
+    def _filter_and_track_new_review_lessons(
+        self,
+        lessons: list[Any],
+        platform_session_id: str | None,
+    ) -> list[dict[str, Any]]:
+        """Filter already-injected review lesson memory ids."""
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        new_lessons: list[dict[str, Any]] = []
+        if not lessons:
+            return new_lessons
+
+        sv_mgr = SessionVariableManager(self.db) if platform_session_id else None
+        already: set[str] = set()
+        if sv_mgr is not None and platform_session_id:
+            try:
+                existing_vars = sv_mgr.get_variables(platform_session_id)
+                already = set(existing_vars.get("injected_review_lesson_ids", []) or [])
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Failed to read injected_review_lesson_ids for dedup: %s", exc)
+
+        seen: set[str] = set()
+        for lesson in lessons:
+            if not isinstance(lesson, dict):
+                continue
+            memory_id = lesson.get("memory_id")
+            if not isinstance(memory_id, str) or not memory_id:
+                continue
+            if memory_id in seen or memory_id in already:
+                continue
+            seen.add(memory_id)
+            new_lessons.append(lesson)
+
+        new_ids = [lesson["memory_id"] for lesson in new_lessons if lesson.get("memory_id")]
+        if new_ids and sv_mgr is not None and platform_session_id:
+            try:
+                sv_mgr.append_to_set_variable(
+                    platform_session_id,
+                    "injected_review_lesson_ids",
+                    new_ids,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Failed to append injected_review_lesson_ids: %s", exc)
+
+        return new_lessons
 
     def _effect_matches_event(self, effect: Any, event: HookEvent) -> bool:
         """Check whether an effect's tool and command selectors match this event."""

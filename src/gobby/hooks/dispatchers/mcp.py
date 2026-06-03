@@ -15,6 +15,7 @@ from typing import Any
 
 from gobby.hooks.events import HookEvent
 from gobby.mcp_proxy.server_list import compact_mcp_server_list
+from gobby.review_learning.guidance import format_review_lesson_guidance
 from gobby.skills.formatting import skill_fetch_directive
 
 
@@ -171,6 +172,12 @@ def format_discovery_result(dr: dict[str, Any]) -> str:
                 lines.append(f"- {content}{suffix}")
         lines.append("</project-memory>")
         return "\n".join(lines)
+
+    elif tool == "recall_review_lessons_for_files":
+        lessons = result.get("lessons", [])
+        if not lessons:
+            return ""
+        return format_review_lesson_guidance(lessons)
 
     elif tool == "search_skills":
         results = result.get("results", [])

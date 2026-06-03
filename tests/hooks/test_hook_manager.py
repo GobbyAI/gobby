@@ -522,6 +522,31 @@ class TestFormatDiscoveryResult:
         assert "create_task" in result
         assert "Schema" in result
 
+    def test_format_recall_review_lessons_for_files(self) -> None:
+        """Formats review lesson recall as compact guidance."""
+        dr = {
+            "tool": "recall_review_lessons_for_files",
+            "result": {
+                "lessons": [
+                    {
+                        "memory_id": "mem-1",
+                        "pattern_id": "service-config-propagate-db-errors",
+                        "matched_file_path": "crates/gcode/src/config/services.rs",
+                        "do": "Propagate database read failures.",
+                        "avoid": "Collapsing database read failures into None.",
+                    }
+                ]
+            },
+        }
+
+        result = HookManager._format_discovery_result(dr)
+
+        assert "<review-guidance>" in result
+        assert "service-config-propagate-db-errors" in result
+        assert "Do: Propagate database read failures" in result
+        assert "Avoid: Collapsing database read failures into None" in result
+        assert "```json" not in result
+
     def test_format_unknown_tool(self) -> None:
         """Formats unknown tool result as JSON."""
         dr = {

@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
+from gobby.review_learning.file_paths import extract_lesson_file_paths, path_tag
 from gobby.review_learning.fingerprint import fingerprint_tag, occurrence_tag, short_hash
 
 SourceKind = Literal[
@@ -173,6 +174,7 @@ def build_tags(
     decision: Decision,
     identity: LessonIdentity,
     finding: dict[str, Any],
+    evidence: dict[str, Any],
     finding_fingerprint: str,
     occurrence_key: str,
     repo: str | None,
@@ -191,6 +193,9 @@ def build_tags(
         f"guardrail:{guardrail_status}",
     ]
     tags.extend(_optional_tags(finding=finding, repo=repo, language=language))
+    tags.extend(
+        path_tag(path) for path in extract_lesson_file_paths(finding=finding, evidence=evidence)
+    )
     if not identity.promotable:
         tags.append("non-promotable")
     return _dedupe(tags)
@@ -221,6 +226,7 @@ def normalize_lesson(
         decision=validated_decision,
         identity=identity,
         finding=finding,
+        evidence=evidence,
         finding_fingerprint=finding_fingerprint,
         occurrence_key=occurrence_key,
         repo=repo,

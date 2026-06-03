@@ -48,6 +48,30 @@ def create_review_learning_registry(
             return {"success": False, "error": str(exc)}
 
     @registry.tool(
+        name="recall_review_lessons_for_files",
+        description="Recall compact confirmed review lessons relevant to touched files.",
+    )
+    async def recall_review_lessons_for_files(
+        file_paths: list[str] | str | None = None,
+        file_paths_json: str | None = None,
+        project_id: str | None = None,
+        session_id: str | None = None,
+        limit: int = 3,
+    ) -> dict[str, Any]:
+        """Recall compact guidance for file-scoped guardrail injection."""
+        try:
+            result = await service.recall_review_lessons_for_files(
+                file_paths=file_paths,
+                file_paths_json=file_paths_json,
+                project_id=project_id,
+                session_id=session_id,
+                limit=limit,
+            )
+            return {"success": True, **result}
+        except (TypeError, ValueError, RuntimeError, OSError) as exc:
+            return {"success": False, "error": str(exc)}
+
+    @registry.tool(
         name="record_review_lesson",
         description="Record a confirmed review lesson and promote repeated patterns.",
     )

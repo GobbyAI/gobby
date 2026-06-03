@@ -202,7 +202,11 @@ class TestReviewLearningMCP:
 
         tools = mcp_client.list_tools(REVIEW_LEARNING_SERVER)
         tool_names = {tool["name"] for tool in tools}
-        expected_tools = {"recall_review_context", "record_review_lesson"}
+        expected_tools = {
+            "recall_review_context",
+            "recall_review_lessons_for_files",
+            "record_review_lesson",
+        }
         assert expected_tools.issubset(tool_names)
 
         for tool_name in expected_tools:

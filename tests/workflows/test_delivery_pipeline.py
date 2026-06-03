@@ -334,6 +334,53 @@ def test_search_memories_formatter_dedup(engine: RuleEngine, db: HubDatabase) ->
     assert engine._format_search_memories_result({"memories": []}, "plat-Y", _variables()) is None
 
 
+def test_review_lesson_formatter_dedup(engine: RuleEngine, db: HubDatabase) -> None:
+    first = engine._format_review_lessons_result(
+        {
+            "lessons": [
+                {
+                    "memory_id": "lesson-1",
+                    "pattern_id": "pattern-a",
+                    "matched_file_path": "src/app.py",
+                    "do": "Keep the coordinator boundary.",
+                }
+            ]
+        },
+        "plat-Y",
+        _variables(),
+    )
+
+    assert first is not None
+    assert "pattern-a" in first
+    assert _vars(db, "plat-Y")["injected_review_lesson_ids"] == ["lesson-1"]
+
+    second = engine._format_review_lessons_result(
+        {
+            "lessons": [
+                {
+                    "memory_id": "lesson-1",
+                    "pattern_id": "pattern-a",
+                    "matched_file_path": "src/app.py",
+                    "do": "Keep the coordinator boundary.",
+                },
+                {
+                    "memory_id": "lesson-2",
+                    "pattern_id": "pattern-b",
+                    "matched_file_path": "src/other.py",
+                    "do": "Propagate read errors.",
+                },
+            ]
+        },
+        "plat-Y",
+        _variables(),
+    )
+
+    assert second is not None
+    assert "pattern-a" not in second
+    assert "pattern-b" in second
+    assert _vars(db, "plat-Y")["injected_review_lesson_ids"] == ["lesson-1", "lesson-2"]
+
+
 @pytest.mark.asyncio
 async def test_apply_effect_dispatch_switch_cancel_stale_helpers_no_op(
     db: HubDatabase,

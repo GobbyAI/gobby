@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any, Protocol
 
+from gobby.review_learning.file_paths import (
+    extract_file_paths_from_mapping,
+    normalize_lesson_file_path,
+    path_tag,
+    paths_match,
+)
 from gobby.review_learning.fingerprint import (
     build_occurrence_key,
     derive_finding_fingerprint,
 )
+from gobby.review_learning.guidance import format_review_lesson_guidance
 from gobby.review_learning.lessons import (
     CI_SOURCE_KINDS,
     has_verified_fix,
@@ -29,6 +37,8 @@ from gobby.utils.session_context import get_current_session_id
 logger = logging.getLogger(__name__)
 
 _SPACE_RE = re.compile(r"\s+")
+_LESSON_FIELD_RE = re.compile(r"^-\s+(?P<key>[a-zA-Z_]+):\s*(?P<value>.*)$")
+_LEGACY_SCAN_LIMIT = 200
 
 
 class ReviewLearningMemoryManager(PromotionMemoryManager, Protocol):
@@ -97,6 +107,49 @@ class ReviewLearningService:
             grouped.append({"finding_index": index, "matches": matches})
             flat_matches.extend(matches)
         return {"findings": grouped, "matches": flat_matches}
+
+    async def recall_review_lessons_for_files(
+        self,
+        *,
+        file_paths: Any | None = None,
+        file_paths_json: str | None = None,
+        project_id: str | None = None,
+        session_id: str | None = None,
+        limit: int = 3,
+    ) -> dict[str, Any]:
+        """Recall confirmed review lessons with deterministic file-path matching."""
+        resolved_project_id = project_id or self._resolve_scope(session_id)[0]
+        normalized_paths = _coerce_file_paths(
+            file_paths=file_paths, file_paths_json=file_paths_json
+        )
+        bounded_limit = max(1, min(int(limit or 3), 10))
+        if not normalized_paths:
+            return {"count": 0, "lessons": [], "message": ""}
+
+        memories = self._candidate_lesson_memories(
+            project_id=resolved_project_id,
+            touched_paths=normalized_paths,
+            limit=bounded_limit,
+        )
+        lessons: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for memory, tagged_path in memories:
+            memory_id = str(getattr(memory, "id", "") or "")
+            if not memory_id or memory_id in seen:
+                continue
+            lesson = _build_file_lesson(memory, normalized_paths, tagged_path)
+            if lesson is None:
+                continue
+            seen.add(memory_id)
+            lessons.append(lesson)
+            if len(lessons) >= bounded_limit:
+                break
+
+        return {
+            "count": len(lessons),
+            "lessons": lessons,
+            "message": format_review_lesson_guidance(lessons),
+        }
 
     async def record(
         self,
@@ -261,6 +314,44 @@ class ReviewLearningService:
             )
             return project_id, None
 
+    def _candidate_lesson_memories(
+        self,
+        *,
+        project_id: str,
+        touched_paths: list[str],
+        limit: int,
+    ) -> list[tuple[Any, str | None]]:
+        tagged_paths = {path_tag(path): path for path in touched_paths}
+        candidates: list[tuple[Any, str | None]] = []
+        seen: set[str] = set()
+
+        for tag, touched_path in tagged_paths.items():
+            for memory in self.memory_manager.list_memories(
+                project_id=project_id,
+                memory_type="pattern",
+                limit=limit,
+                tags_all=["review-lesson", "confirmed", tag],
+            ):
+                memory_id = str(getattr(memory, "id", "") or "")
+                if not memory_id or memory_id in seen:
+                    continue
+                seen.add(memory_id)
+                candidates.append((memory, touched_path))
+
+        for memory in self.memory_manager.list_memories(
+            project_id=project_id,
+            memory_type="pattern",
+            limit=max(_LEGACY_SCAN_LIMIT, limit),
+            tags_all=["review-lesson", "confirmed"],
+        ):
+            memory_id = str(getattr(memory, "id", "") or "")
+            if not memory_id or memory_id in seen:
+                continue
+            seen.add(memory_id)
+            candidates.append((memory, None))
+
+        return candidates
+
 
 def build_recall_queries(
     *,
@@ -315,3 +406,148 @@ def _snippet(content: str, length: int = 240) -> str:
     if len(compact) <= length:
         return compact
     return f"{compact[: length - 3]}..."
+
+
+def _coerce_file_paths(*, file_paths: Any | None, file_paths_json: str | None) -> list[str]:
+    values: list[Any] = []
+    if file_paths is not None:
+        values.extend(_coerce_path_input(file_paths))
+    if file_paths_json:
+        values.extend(_coerce_path_input(_parse_path_json(file_paths_json)))
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        path = normalize_lesson_file_path(value)
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        normalized.append(path)
+    return normalized
+
+
+def _coerce_path_input(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    if isinstance(value, str):
+        parsed = _parse_path_json(value)
+        if parsed is not value:
+            return _coerce_path_input(parsed)
+        return [item.strip() for item in value.split(",") if item.strip()]
+    return [value]
+
+
+def _parse_path_json(value: str) -> Any:
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return value
+
+
+def _build_file_lesson(
+    memory: Any,
+    touched_paths: list[str],
+    tagged_path: str | None,
+) -> dict[str, Any] | None:
+    content = str(getattr(memory, "content", "") or "")
+    tags = list(getattr(memory, "tags", []) or [])
+    if "review-lesson" not in tags or "confirmed" not in tags:
+        return None
+
+    fields, evidence_paths = _parse_lesson_content(content)
+    matched_path, evidence_path = _match_evidence_path(
+        touched_paths=touched_paths,
+        evidence_paths=evidence_paths,
+        tagged_path=tagged_path,
+    )
+    if matched_path is None:
+        return None
+
+    prevention = fields.get("prevention", "")
+    principle = fields.get("principle", "")
+    avoid = _extract_avoid_text(prevention)
+    do_text = _extract_do_text(prevention)
+    return {
+        "memory_id": str(getattr(memory, "id", "")),
+        "pattern_id": fields.get("pattern_id") or _pattern_id_from_tags(tags),
+        "matched_file_path": matched_path,
+        "evidence_path": evidence_path or matched_path,
+        "principle": principle,
+        "prevention": prevention,
+        "do": do_text or prevention or principle,
+        "avoid": avoid,
+    }
+
+
+def _parse_lesson_content(content: str) -> tuple[dict[str, str], list[str]]:
+    fields: dict[str, str] = {}
+    for raw_line in content.splitlines():
+        match = _LESSON_FIELD_RE.match(raw_line.strip())
+        if not match:
+            continue
+        key = match.group("key")
+        if key in {"pattern_id", "principle", "prevention", "path"}:
+            fields[key] = match.group("value").strip()
+
+    evidence_paths: list[str] = []
+    if fields.get("path"):
+        evidence_paths.append(fields["path"])
+
+    evidence = _parse_evidence(content)
+    if isinstance(evidence, dict):
+        evidence_paths.extend(extract_file_paths_from_mapping(evidence))
+
+    return fields, evidence_paths
+
+
+def _parse_evidence(content: str) -> Any | None:
+    marker = "## Evidence"
+    if marker not in content:
+        return None
+    raw = content.split(marker, 1)[1].strip()
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+
+
+def _match_evidence_path(
+    *,
+    touched_paths: list[str],
+    evidence_paths: list[str],
+    tagged_path: str | None,
+) -> tuple[str | None, str | None]:
+    for touched_path in touched_paths:
+        for evidence_path in evidence_paths:
+            if paths_match(touched_path, evidence_path):
+                return touched_path, normalize_lesson_file_path(evidence_path)
+    if tagged_path:
+        return tagged_path, tagged_path
+    return None, None
+
+
+def _pattern_id_from_tags(tags: list[str]) -> str:
+    for tag in tags:
+        if tag.startswith("pattern:"):
+            return tag.removeprefix("pattern:")
+    return ""
+
+
+def _extract_do_text(prevention: str) -> str:
+    if "; avoid " in prevention.lower():
+        index = prevention.lower().find("; avoid ")
+        return prevention[:index].strip(" ;.")
+    return prevention
+
+
+def _extract_avoid_text(prevention: str) -> str:
+    lower = prevention.lower()
+    marker = "avoid "
+    if marker not in lower:
+        return ""
+    index = lower.find(marker) + len(marker)
+    return prevention[index:].strip(" ;.")
