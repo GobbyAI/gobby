@@ -128,12 +128,10 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             cross: true
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            cross: false
-          - target: aarch64-pc-windows-msvc
-            os: windows-latest
-            cross: true
+          # No Windows targets: gwiki's `documents` feature links pdfium (a
+          # native library provisioned via pdfium-auto) which does not build on
+          # the windows-msvc targets ("target was empty"). gwiki ships macOS and
+          # Linux binaries only; crates.io publishing is platform-independent.
 
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.target }}
