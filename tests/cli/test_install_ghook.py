@@ -305,7 +305,7 @@ class TestInstallGhook:
         bin_dir = tmp_path / ".gobby" / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
         _write_fake_native_ghook_binary(bin_dir)
-        (bin_dir / _GHOOK_VERSION_STAMP).write_text("0.4.2\n")
+        (bin_dir / _GHOOK_VERSION_STAMP).write_text(f"{MANAGED_BIN_VERSION_PINS['ghook']}\n")
 
         with (
             patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
@@ -314,7 +314,7 @@ class TestInstallGhook:
         ):
             result = _install_ghook()
 
-        assert result == {"installed": False, "skipped": True, "version": "0.4.2"}
+        assert result == {"installed": False, "skipped": True, "version": MANAGED_BIN_VERSION_PINS["ghook"]}
         mock_latest.assert_not_called()
         mock_github.assert_not_called()
 

@@ -230,7 +230,7 @@ class TestInstallGloc:
         bin_dir = tmp_path / ".gobby" / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
         (bin_dir / "gloc").write_bytes(b"\x00")
-        (bin_dir / _GLOC_VERSION_STAMP).write_text("0.1.2\n")
+        (bin_dir / _GLOC_VERSION_STAMP).write_text(f"{MANAGED_BIN_VERSION_PINS['gloc']}\n")
 
         with (
             patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
@@ -239,6 +239,6 @@ class TestInstallGloc:
         ):
             result = _install_gloc()
 
-        assert result == {"installed": False, "skipped": True, "version": "0.1.2"}
+        assert result == {"installed": False, "skipped": True, "version": MANAGED_BIN_VERSION_PINS["gloc"]}
         mock_latest.assert_not_called()
         mock_github.assert_not_called()
