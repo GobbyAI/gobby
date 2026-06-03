@@ -396,6 +396,41 @@ describe("SessionsTab", () => {
     expect(screen.queryByText("#205: Handoff Terminal")).toBeNull();
   });
 
+  it("orders session entries by ref (#N) descending, not by recency", async () => {
+    // Higher seq (#310) is the OLDER session; lower seq (#305) is newer. Sorting
+    // by ref must still place #310 first, proving ref order beats recency.
+    const olderHigherSeq = makeSession({
+      id: "older-higher",
+      ref: "#310",
+      title: "Older Higher Seq",
+      seq_num: 310,
+      updated_at: "2026-04-08T12:00:00Z",
+    });
+    const newerLowerSeq = makeSession({
+      id: "newer-lower",
+      ref: "#305",
+      title: "Newer Lower Seq",
+      seq_num: 305,
+      updated_at: "2026-04-08T13:00:00Z",
+    });
+
+    render(
+      <SessionsTab
+        sessions={[newerLowerSeq, olderHigherSeq]}
+        focusSessionId="no-such-session"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("#310: Older Higher Seq")).toBeInTheDocument();
+    });
+
+    const seqs = Array.from(document.querySelectorAll(".session-entry"))
+      .map((row) => row.textContent?.match(/#(\d+):/)?.[1])
+      .filter((seq): seq is string => Boolean(seq));
+    expect(seqs).toEqual(["310", "305"]);
+  });
+
   it("does not show the web chat currently rendered in the main chat", async () => {
     render(
       <SessionsTab

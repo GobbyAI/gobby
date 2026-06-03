@@ -44,16 +44,18 @@ describe("CommandPalette", () => {
       value: vi.fn(),
     });
     const onDeleteSession = vi.fn();
+    // Sessions render in #N-descending order, so the terminal session (#21)
+    // sits at index 0 and the web-chat session (#20) at index 1.
     const terminalSession = makeSession({
       id: "terminal-1",
-      ref: "#20",
-      seq_num: 20,
+      ref: "#21",
+      seq_num: 21,
       session_type: "terminal",
     });
     const webSession = makeSession({
       id: "web-1",
-      ref: "#21",
-      seq_num: 21,
+      ref: "#20",
+      seq_num: 20,
       session_type: "web_chat",
     });
 
@@ -87,5 +89,35 @@ describe("CommandPalette", () => {
         delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
       }
     }
+  });
+
+  it("orders sessions by ref (#N) descending", () => {
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const sessions = [
+      makeSession({ id: "a", ref: "#5", seq_num: 5 }),
+      makeSession({ id: "b", ref: "#42", seq_num: 42 }),
+      makeSession({ id: "c", ref: "#13", seq_num: 13 }),
+    ];
+
+    render(
+      <CommandPalette
+        isOpen={true}
+        onClose={vi.fn()}
+        sessions={sessions}
+        activeSessionId={null}
+        onSelectSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        actions={[]}
+      />,
+    );
+
+    const refs = screen
+      .getAllByRole("option")
+      .map((el) => el.querySelector(".command-palette-item-ref")?.textContent)
+      .filter((text): text is string => Boolean(text));
+    expect(refs).toEqual(["#42", "#13", "#5"]);
   });
 });

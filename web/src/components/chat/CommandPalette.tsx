@@ -59,13 +59,16 @@ export function CommandPalette({
 
     const filteredSessions = showOnlyActions
       ? []
-      : sessions.filter((s) => {
-          if (!searchTerm) return true
-          const title = (s.title || '').toLowerCase()
-          const ref = (s.ref ?? '').toLowerCase()
-          const seq = s.seq_num != null ? `#${s.seq_num}` : ''
-          return title.includes(searchTerm) || ref.includes(searchTerm) || seq.includes(searchTerm)
-        })
+      : sessions
+          .filter((s) => {
+            if (!searchTerm) return true
+            const title = (s.title || '').toLowerCase()
+            const ref = (s.ref ?? '').toLowerCase()
+            const seq = s.seq_num != null ? `#${s.seq_num}` : ''
+            return title.includes(searchTerm) || ref.includes(searchTerm) || seq.includes(searchTerm)
+          })
+          // Order by ref (#N) descending so each recency bucket lists newest first.
+          .sort((a, b) => (b.seq_num ?? 0) - (a.seq_num ?? 0))
 
     const filteredActions = showOnlySessions
       ? []

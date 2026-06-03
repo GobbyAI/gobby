@@ -343,9 +343,14 @@ export const SessionsTab = memo(function SessionsTab({
         isLocal: resolveLocalFlag(session.is_local, session.source, session.model),
       }));
 
-    return [...agentEntries, ...sessionEntries].sort(
-      (a, b) => entryTimestamp(b) - entryTimestamp(a),
-    );
+    return [...agentEntries, ...sessionEntries].sort((a, b) => {
+      // Sort by ref (#N) descending. Entries without a seq (some agent rows)
+      // fall to the bottom and tiebreak by recency among themselves.
+      const aSeq = a.seqNum ?? -1;
+      const bSeq = b.seqNum ?? -1;
+      if (bSeq !== aSeq) return bSeq - aSeq;
+      return entryTimestamp(b) - entryTimestamp(a);
+    });
   }, [agents, statusMode, visibleSessions]);
 
   const isLoading = isLoadingSessions || agentsLoading;
