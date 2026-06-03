@@ -72,7 +72,7 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
                 provider=payload.provider,
                 model=payload.model,
             )
-            text = await service.generate(
+            result = await service.generate_result(
                 TextGenerationRequest(
                     prompt=payload.prompt,
                     provider=payload.provider,
@@ -83,12 +83,15 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
                     cwd=payload.cwd,
                 )
             )
-            return {
-                "text": text,
+            response: dict[str, Any] = {
+                "text": result.text,
                 "capability": AICapability.TEXT_GENERATE.value,
                 "provider": binding.provider,
                 "model": payload.model or next(iter(binding.models), None),
             }
+            if result.usage is not None:
+                response["usage"] = result.usage
+            return response
         except CapabilityUnavailableError as e:
             logger.info("Text generation capability unavailable: %s", e)
             return JSONResponse(status_code=400, content=_capability_error_detail(e))

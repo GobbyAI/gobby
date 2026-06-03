@@ -14,7 +14,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from gobby.llm.base import AuthMode, LLMProvider
+from gobby.llm.base import AuthMode, LLMProvider, LLMTextResult
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,31 @@ _CLOUD_MODEL_ALIASES: frozenset[str] = frozenset(
         "o4-mini",
     }
 )
+_USAGE_FIELDS = (
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "input_tokens",
+    "output_tokens",
+)
+
+
+def _usage_dict(usage: Any) -> dict[str, int] | None:
+    if usage is None:
+        return None
+    if isinstance(usage, dict):
+        data = usage
+    elif hasattr(usage, "model_dump"):
+        data = usage.model_dump()
+    else:
+        data = {field: getattr(usage, field, None) for field in _USAGE_FIELDS}
+
+    result = {
+        field: value
+        for field, value in data.items()
+        if isinstance(field, str) and isinstance(value, int) and not isinstance(value, bool)
+    }
+    return result or None
 
 
 class LocalLLMProvider(LLMProvider):
@@ -132,6 +157,25 @@ class LocalLLMProvider(LLMProvider):
         *,
         caller: str | None = None,
     ) -> str:
+        return (
+            await self.generate_text_result(
+                prompt,
+                system_prompt=system_prompt,
+                model=model,
+                max_tokens=max_tokens,
+                caller=caller,
+            )
+        ).text
+
+    async def generate_text_result(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        *,
+        caller: str | None = None,
+    ) -> LLMTextResult:
         if not self._client:
             raise RuntimeError("Local LLM client not initialised")
 
@@ -149,7 +193,10 @@ class LocalLLMProvider(LLMProvider):
             ],
             max_tokens=max_tokens or 8000,
         )
-        return response.choices[0].message.content or ""
+        return LLMTextResult(
+            text=response.choices[0].message.content or "",
+            usage=_usage_dict(getattr(response, "usage", None)),
+        )
 
     async def generate_json(
         self,

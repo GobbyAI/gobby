@@ -23,7 +23,7 @@ from gobby.ai import (
 )
 from gobby.config.app import DaemonConfig
 from gobby.config.local import LocalConfig
-from gobby.llm.base import LLMProvider
+from gobby.llm.base import LLMProvider, LLMTextResult
 
 pytestmark = pytest.mark.unit
 
@@ -36,6 +36,18 @@ class RecordingAdapter:
     async def generate(self, request: TextGenerationRequest) -> str:
         self.requests.append(request)
         return f"{self.provider}:{request.prompt}"
+
+
+class UsageAdapter:
+    def __init__(self) -> None:
+        self.requests: list[TextGenerationRequest] = []
+
+    async def generate(self, request: TextGenerationRequest) -> LLMTextResult:
+        self.requests.append(request)
+        return LLMTextResult(
+            text="Generated text",
+            usage={"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+        )
 
 
 @pytest.mark.asyncio
@@ -69,6 +81,30 @@ async def test_text_generation_service_selects_available_registry_binding() -> N
         )
         assert response == f"{provider}:summarize"
         assert adapters[provider].requests[-1].provider == provider
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_generate_result_preserves_usage() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+            )
+        ]
+    )
+    adapter = UsageAdapter()
+    service = TextGenerationService(registry, {"local": adapter})
+
+    result = await service.generate_result(
+        TextGenerationRequest(prompt="summarize", provider="local")
+    )
+
+    assert result.text == "Generated text"
+    assert result.usage == {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}
+    assert adapter.requests[-1].prompt == "summarize"
 
 
 @pytest.mark.asyncio
@@ -219,7 +255,8 @@ async def test_llm_provider_adapter_forwards_text_generation_request() -> None:
         )
     )
 
-    assert response == "system:hello:model-a:42:test"
+    assert response.text == "system:hello:model-a:42:test"
+    assert response.usage is None
 
 
 class FakeACPClient:

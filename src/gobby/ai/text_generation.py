@@ -21,7 +21,7 @@ from gobby.ai.registry import (
     build_daemon_ai_capability_registry,
 )
 from gobby.config.app import DaemonConfig
-from gobby.llm.base import LLMProvider
+from gobby.llm.base import LLMProvider, LLMTextResult
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -40,7 +40,7 @@ class TextGenerationRequest:
 class TextGenerateAdapter(Protocol):
     """Adapter for one provider's text_generate execution path."""
 
-    async def generate(self, request: TextGenerationRequest) -> str:
+    async def generate(self, request: TextGenerationRequest) -> str | LLMTextResult:
         """Generate text for the request."""
 
 
@@ -67,6 +67,10 @@ class TextGenerationService:
 
     async def generate(self, request: TextGenerationRequest) -> str:
         """Select a text_generate binding and invoke its adapter."""
+        return (await self.generate_result(request)).text
+
+    async def generate_result(self, request: TextGenerationRequest) -> LLMTextResult:
+        """Select a text_generate binding and invoke its adapter with usage."""
         binding = self._registry.select(
             AICapability.TEXT_GENERATE,
             provider=request.provider,
@@ -90,7 +94,10 @@ class TextGenerationService:
                     f"text_generate adapter factory for provider {binding.provider!r} returned None"
                 )
             self._adapters[binding.provider] = adapter
-        return await adapter.generate(request)
+        result = await adapter.generate(request)
+        if isinstance(result, LLMTextResult):
+            return result
+        return LLMTextResult(text=result)
 
 
 class LLMProviderTextGenerateAdapter:
@@ -99,8 +106,8 @@ class LLMProviderTextGenerateAdapter:
     def __init__(self, provider: LLMProvider) -> None:
         self._provider = provider
 
-    async def generate(self, request: TextGenerationRequest) -> str:
-        return await self._provider.generate_text(
+    async def generate(self, request: TextGenerationRequest) -> LLMTextResult:
+        return await self._provider.generate_text_result(
             request.prompt,
             system_prompt=request.system_prompt,
             model=request.model,

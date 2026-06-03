@@ -23,6 +23,7 @@ from gobby.ai import (
 )
 from gobby.config.app import DaemonConfig
 from gobby.config.local import LocalConfig
+from gobby.llm.base import LLMTextResult
 from gobby.servers.routes.llm import create_llm_router
 
 pytestmark = pytest.mark.unit
@@ -45,11 +46,14 @@ class _FakeVisionService:
 
 
 class _FakeTextAdapter:
-    def __init__(self) -> None:
+    def __init__(self, usage: dict[str, int] | None = None) -> None:
         self.requests: list[TextGenerationRequest] = []
+        self.usage = usage
 
-    async def generate(self, request: TextGenerationRequest) -> str:
+    async def generate(self, request: TextGenerationRequest) -> str | LLMTextResult:
         self.requests.append(request)
+        if self.usage is not None:
+            return LLMTextResult(text="Generated text", usage=self.usage)
         return "Generated text"
 
 
@@ -145,6 +149,45 @@ def test_generate_selects_acp_backed_provider(
             cwd="/tmp/project",
         )
     ]
+
+
+def test_generate_includes_usage_when_available(
+    client: TestClient,
+    server_with_llm: MagicMock,
+) -> None:
+    usage = {"prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16}
+    adapter = _FakeTextAdapter(usage=usage)
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("local-model",),
+            )
+        ]
+    )
+    service = TextGenerationService(registry, {"local": adapter})
+
+    with patch(
+        "gobby.servers.routes.llm.build_daemon_text_generation_service",
+        return_value=service,
+    ) as build_service:
+        response = client.post(
+            "/api/llm/generate",
+            json={"prompt": "Summarize this", "provider": "local"},
+        )
+
+    assert response.status_code == 200
+    build_service.assert_called_once_with(server_with_llm.config)
+    assert response.json() == {
+        "text": "Generated text",
+        "capability": "text_generate",
+        "provider": "local",
+        "model": "local-model",
+        "usage": usage,
+    }
 
 
 def test_generate_returns_deterministic_unavailable_error(client: TestClient) -> None:

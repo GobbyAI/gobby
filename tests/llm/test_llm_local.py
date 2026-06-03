@@ -138,6 +138,27 @@ class TestGenerateText:
         assert call_kwargs["model"] == "qwen2.5-coder-7b"
 
     @pytest.mark.asyncio
+    async def test_result_includes_usage_when_available(self, provider: LocalLLMProvider) -> None:
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "Fix Auth Bug"
+        mock_response.usage = {
+            "prompt_tokens": 12,
+            "completion_tokens": 4,
+            "total_tokens": 16,
+        }
+        provider._client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        result = await provider.generate_text_result("Fix the auth bug")
+
+        assert result.text == "Fix Auth Bug"
+        assert result.usage == {
+            "prompt_tokens": 12,
+            "completion_tokens": 4,
+            "total_tokens": 16,
+        }
+
+    @pytest.mark.asyncio
     async def test_model_override(self, provider: LocalLLMProvider) -> None:
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]

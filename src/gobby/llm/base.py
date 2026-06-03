@@ -3,10 +3,19 @@ Abstract base class for LLM providers.
 """
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, Literal
 
 # Auth mode type for providers
 AuthMode = Literal["subscription", "api_key", "adc"]
+
+
+@dataclass(frozen=True, kw_only=True)
+class LLMTextResult:
+    """Generated text plus optional provider usage accounting."""
+
+    text: str
+    usage: dict[str, int] | None = None
 
 
 class LLMProviderCancellation(RuntimeError):
@@ -89,6 +98,25 @@ class LLMProvider(ABC):
             Generated text response
         """
         pass
+
+    async def generate_text_result(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        *,
+        caller: str | None = None,
+    ) -> LLMTextResult:
+        """Generate text and include provider usage when available."""
+        text = await self.generate_text(
+            prompt,
+            system_prompt=system_prompt,
+            model=model,
+            max_tokens=max_tokens,
+            caller=caller,
+        )
+        return LLMTextResult(text=text)
 
     @abstractmethod
     async def generate_json(
