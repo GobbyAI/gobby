@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from gobby.code_index.gcode_gateway import GcodeGateway
 from gobby.gwiki_gateway import GwikiGateway
 from gobby.mcp_proxy.tools.wiki import create_wiki_registry
 
@@ -16,6 +20,13 @@ def _contract(tool: str) -> dict[str, Any]:
         value = json.load(handle)
     assert isinstance(value, dict)
     return value
+
+
+def _gobby_cli_repo() -> Path:
+    configured = os.environ.get("GOBBY_CLI_REPO")
+    if configured:
+        return Path(configured)
+    return Path(__file__).resolve().parents[2] / "gobby-cli"
 
 
 def _command(contract: dict[str, Any], name: str) -> dict[str, Any]:
@@ -66,6 +77,27 @@ class RecordingGwikiGateway(GwikiGateway):
         if command_name == "health":
             payload = {"command": "health", "root": "/tmp/project", "text_path": "health.md"}
         return json.dumps(payload).encode(), ""
+
+
+class RecordingGcodeGateway(GcodeGateway):
+    def __init__(self) -> None:
+        super().__init__(
+            binary="gcode",
+            timeout_seconds=30.0,
+        )
+        self._checked_version = "999.0.0"
+        self.argv_by_command: dict[str, list[str]] = {}
+
+    async def _run_command(
+        self,
+        command: Sequence[str],
+        *,
+        timeout: float | None = None,
+        check_version: bool = True,
+    ) -> tuple[bytes, bytes]:
+        command_key = " ".join(command[1:3]) if command[1] == "graph" else command[1]
+        self.argv_by_command[command_key] = list(command)
+        return json.dumps({"command": command_key}).encode(), b""
 
 
 class RecordingResearchGateway:
@@ -199,6 +231,68 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
             assert "--project" in argv
 
 
+async def test_gcode_gateway_argv_conforms_to_vendored_contract() -> None:
+    contract = _contract("gcode")
+    gateway = RecordingGcodeGateway()
+    project_root = Path("/tmp/project")
+    calls: list[tuple[str, str, Callable[[], Awaitable[dict[str, Any]]]]] = [
+        (
+            "graph sync-file",
+            "graph sync-file",
+            lambda: gateway.graph_sync_file(project_root, "src/main.py"),
+        ),
+        (
+            "graph overview",
+            "graph overview",
+            lambda: gateway.graph_overview(project_root, limit=25),
+        ),
+        (
+            "graph file",
+            "graph file",
+            lambda: gateway.graph_file(project_root, "src/main.py"),
+        ),
+        (
+            "graph neighbors",
+            "graph neighbors",
+            lambda: gateway.graph_neighbors(project_root, "symbol-1", limit=12),
+        ),
+        (
+            "graph blast-radius",
+            "graph blast-radius",
+            lambda: gateway.graph_blast_radius(
+                project_root, symbol_id="symbol-1", depth=2, limit=9
+            ),
+        ),
+        (
+            "graph clear",
+            "graph clear",
+            lambda: gateway.graph_clear("project-1"),
+        ),
+        (
+            "graph rebuild",
+            "graph rebuild",
+            lambda: gateway.graph_rebuild(project_root),
+        ),
+    ]
+
+    for _command_key, _cli_name, call in calls:
+        await call()
+
+    for command_key, cli_name, _call in calls:
+        command_contract = _command(contract, cli_name)
+        assert command_contract["daemon_consumed"] is True
+        argv = gateway.argv_by_command[command_key]
+        assert argv[0] == "gcode"
+        assert argv[1:3] == cli_name.split()
+        assert _observed_flags(argv) <= _allowed_flags(contract, cli_name)
+        assert "--format" in argv
+        if cli_name == "graph clear":
+            assert "--project-id" in argv
+            assert "--project" not in argv
+        else:
+            assert "--project" in argv
+
+
 def test_wiki_mcp_tools_are_backed_by_documented_gwiki_commands() -> None:
     contract = _contract("gwiki")
     daemon_commands = {
@@ -287,8 +381,41 @@ def test_gcode_contract_covers_daemon_consumed_surface() -> None:
     commands = {command["name"] for command in contract["commands"]}
 
     assert contract["contract_version"] == 1
-    assert {"index", "search", "codewiki"} <= commands
+    assert {
+        "index",
+        "search",
+        "codewiki",
+        "graph sync-file",
+        "graph overview",
+        "graph file",
+        "graph neighbors",
+        "graph blast-radius",
+        "graph clear",
+        "graph rebuild",
+    } <= commands
     assert "--project" in _flag_names(contract["global_flags"])
     assert {"project_id", "results"} <= _json_keys(contract, "search")
     assert {"project_id", "project_root", "changed_paths"} <= _json_keys(contract, "codewiki")
     assert "--ai" in _allowed_flags(contract, "codewiki")
+    assert {"nodes", "links", "summary"} <= _json_keys(contract, "graph overview")
+    assert {"nodes", "links", "summary"} <= _json_keys(contract, "graph file")
+    assert {"nodes", "links", "summary"} <= _json_keys(contract, "graph neighbors")
+    assert {"nodes", "links", "summary"} <= _json_keys(contract, "graph blast-radius")
+    assert {"status", "project_id", "summary"} <= _json_keys(contract, "graph clear")
+    assert {"status", "project_id", "summary"} <= _json_keys(contract, "graph rebuild")
+    assert "--allow-missing-indexed-file" in _allowed_flags(contract, "graph sync-file")
+
+
+def test_vendored_cli_contracts_match_local_gobby_cli() -> None:
+    repo = _gobby_cli_repo()
+    if not repo.exists():
+        pytest.skip(f"gobby-cli checkout not found at {repo}")
+
+    contract_pairs = {
+        "gcode": repo / "crates/gcode/contract/gcode.contract.json",
+        "gwiki": repo / "crates/gwiki/contract/gwiki.contract.json",
+    }
+    for tool, source_path in contract_pairs.items():
+        if not source_path.exists():
+            pytest.skip(f"{tool} contract source not found at {source_path}")
+        assert _contract(tool) == json.loads(source_path.read_text())
