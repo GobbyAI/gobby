@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -169,6 +170,75 @@ def _extract_binary_from_release_archive(
     return False
 
 
+def _parse_sha256_digest(text: str) -> str | None:
+    """Extract a lowercase SHA-256 hex digest from checksum-file text.
+
+    Accepts both a bare digest and the ``sha256sum`` line format
+    (``<digest>  <filename>``). Returns ``None`` when no valid 64-character
+    hex digest is present.
+    """
+    for line in text.splitlines():
+        parts = line.strip().split()
+        if not parts:
+            continue
+        candidate = parts[0].lower()
+        if len(candidate) == 64 and all(c in "0123456789abcdef" for c in candidate):
+            return candidate
+    return None
+
+
+def _fetch_release_checksum(checksum_url: str, *, label: str) -> str | None:
+    """Fetch and parse the published SHA-256 digest for a release asset.
+
+    Returns the lowercase hex digest, or ``None`` when the checksum file
+    cannot be retrieved or parsed; the caller treats ``None`` as a
+    verification failure (fail-closed).
+    """
+    try:
+        req = Request(checksum_url, headers={"User-Agent": "gobby-installer/1.0"})
+        with _urlopen_https(req, timeout=30) as resp:
+            text = resp.read().decode("utf-8")
+    except (URLError, OSError, ValueError) as e:
+        logger.warning("%s: could not fetch checksum %s: %s", label, checksum_url, e)
+        return None
+    return _parse_sha256_digest(text)
+
+
+def _verify_release_artifact(
+    archive_bytes: bytes,
+    *,
+    checksum_url: str,
+    label: str,
+) -> bool:
+    """Verify downloaded artifact bytes against the published SHA-256.
+
+    Fetches the per-asset ``.sha256`` file at ``checksum_url``, parses the
+    expected digest, and compares it to the SHA-256 of ``archive_bytes``.
+    Returns ``False`` — fail-closed — when the checksum cannot be fetched or
+    parsed, or when the digests differ, so the caller falls through to the
+    next install method instead of executing an unverified binary.
+    """
+    expected = _fetch_release_checksum(checksum_url, label=label)
+    if expected is None:
+        logger.warning(
+            "%s: no published checksum at %s; refusing unverified download",
+            label,
+            checksum_url,
+        )
+        return False
+    actual = hashlib.sha256(archive_bytes).hexdigest()
+    if actual != expected:
+        logger.warning(
+            "%s: checksum mismatch for %s (expected %s, got %s)",
+            label,
+            checksum_url,
+            expected,
+            actual,
+        )
+        return False
+    return True
+
+
 def _download_release_binary(
     bin_dir: Path,
     *,
@@ -196,6 +266,12 @@ def _download_release_binary(
         req = Request(url, headers={"User-Agent": "gobby-installer/1.0"})
         with _urlopen_https(req, timeout=30) as resp:
             archive_bytes = resp.read()
+        if not _verify_release_artifact(
+            archive_bytes,
+            checksum_url=f"{url}.sha256",
+            label=label,
+        ):
+            return False
         return _extract_binary_from_release_archive(
             archive_bytes,
             archive_ext=archive_ext,

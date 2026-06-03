@@ -143,6 +143,7 @@ class TestInstallGhookFromGithub:
                 "gobby.cli.install_setup._resolve_latest_release_tag",
                 return_value="ghook-v0.1.1",
             ),
+            patch("gobby.cli.install_setup._verify_release_artifact", return_value=True),
         ):
             assert _install_ghook_from_github(tmp_path, "aarch64-apple-darwin") is True
         assert (tmp_path / "ghook").exists()
@@ -154,7 +155,10 @@ class TestInstallGhookFromGithub:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gobby.cli.install_setup.urlopen", return_value=mock_resp) as mock_urlopen:
+        with (
+            patch("gobby.cli.install_setup.urlopen", return_value=mock_resp) as mock_urlopen,
+            patch("gobby.cli.install_setup._verify_release_artifact", return_value=True),
+        ):
             assert _install_ghook_from_github(tmp_path, "aarch64-apple-darwin", "0.1.1") is True
         url_called = mock_urlopen.call_args[0][0]
         if hasattr(url_called, "full_url"):
@@ -175,6 +179,7 @@ class TestInstallGhookFromGithub:
                 return_value="ghook-v0.1.1",
             ),
             patch("gobby.cli.install_setup._GHOOK_BIN_NAME", "ghook.exe"),
+            patch("gobby.cli.install_setup._verify_release_artifact", return_value=True),
         ):
             assert _install_ghook_from_github(tmp_path, "x86_64-pc-windows-msvc") is True
         assert (tmp_path / "ghook.exe").exists()

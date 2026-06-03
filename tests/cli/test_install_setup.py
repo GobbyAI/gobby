@@ -1,5 +1,6 @@
 """Tests for gobby.cli.install_setup."""
 
+import hashlib
 import json
 import tarfile
 from io import BytesIO
@@ -10,7 +11,9 @@ from urllib.error import URLError
 import pytest
 
 from gobby.cli.install_setup import (
+    _download_release_binary,
     _ensure_gobby_bin_on_path,
+    _fetch_release_checksum,
     _get_installed_gcode_version,
     _get_installed_gsqz_version,
     _get_installed_gwiki_version,
@@ -30,8 +33,10 @@ from gobby.cli.install_setup import (
     _install_gwiki_from_cargo_git,
     _install_gwiki_from_cargo_install,
     _install_gwiki_from_github,
+    _parse_sha256_digest,
     _resolve_latest_release_tag,
     _run_npm_install,
+    _verify_release_artifact,
     _write_gcode_version_stamp,
     _write_gsqz_version_stamp,
     _write_gwiki_version_stamp,
@@ -345,9 +350,12 @@ class TestGsqzHelpers:
         fake_resp.__enter__.return_value = fake_resp
         mock_urlopen.return_value = fake_resp
 
-        with patch(
-            "gobby.cli.install_setup._resolve_latest_release_tag",
-            return_value="gsqz-v1.2.3",
+        with (
+            patch(
+                "gobby.cli.install_setup._resolve_latest_release_tag",
+                return_value="gsqz-v1.2.3",
+            ),
+            patch("gobby.cli.install_setup._verify_release_artifact", return_value=True),
         ):
             res = _install_gsqz_from_github(tmp_path, "target-triple")
         assert res is True
@@ -655,7 +663,8 @@ class TestGcodeHelpers:
         fake_resp.__enter__.return_value = fake_resp
         mock_urlopen.return_value = fake_resp
 
-        assert _install_gcode_from_github(tmp_path, "aarch64-apple-darwin", "0.2.3") is True
+        with patch("gobby.cli.install_setup._verify_release_artifact", return_value=True):
+            assert _install_gcode_from_github(tmp_path, "aarch64-apple-darwin", "0.2.3") is True
         url_called = mock_urlopen.call_args[0][0]
         if hasattr(url_called, "full_url"):
             url_called = url_called.full_url
@@ -820,7 +829,8 @@ class TestGwikiHelpers:
         fake_resp.__enter__.return_value = fake_resp
         mock_urlopen.return_value = fake_resp
 
-        assert _install_gwiki_from_github(tmp_path, "aarch64-apple-darwin", GWIKI_PIN) is True
+        with patch("gobby.cli.install_setup._verify_release_artifact", return_value=True):
+            assert _install_gwiki_from_github(tmp_path, "aarch64-apple-darwin", GWIKI_PIN) is True
         url_called = mock_urlopen.call_args[0][0]
         if hasattr(url_called, "full_url"):
             url_called = url_called.full_url
@@ -881,3 +891,142 @@ class TestEnsurePath:
         # Second run should skip
         res2 = _ensure_gobby_bin_on_path()
         assert res2["added"] is False
+
+
+def _checksum_resp(text: str) -> MagicMock:
+    resp = MagicMock()
+    resp.read.return_value = text.encode()
+    resp.__enter__.return_value = resp
+    resp.__exit__ = MagicMock(return_value=False)
+    return resp
+
+
+def _release_tarball(bin_name: str = "gsqz", payload: bytes = b"fake-binary") -> bytes:
+    buf = BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        info = tarfile.TarInfo(name=bin_name)
+        info.size = len(payload)
+        tar.addfile(info, BytesIO(payload))
+    buf.seek(0)
+    return buf.read()
+
+
+def _archive_resp(data: bytes) -> MagicMock:
+    resp = MagicMock()
+    resp.read.return_value = data
+    resp.__enter__.return_value = resp
+    resp.__exit__ = MagicMock(return_value=False)
+    return resp
+
+
+class TestParseSha256Digest:
+    def test_bare_digest(self):
+        digest = "a" * 64
+        assert _parse_sha256_digest(f"{digest}\n") == digest
+
+    def test_sha256sum_line_format(self):
+        digest = "b" * 64
+        assert _parse_sha256_digest(f"{digest}  gsqz-aarch64-apple-darwin.tar.gz\n") == digest
+
+    def test_uppercase_is_normalized(self):
+        assert _parse_sha256_digest("C" * 64) == "c" * 64
+
+    def test_no_valid_digest_returns_none(self):
+        assert _parse_sha256_digest("not-a-checksum\n") is None
+        assert _parse_sha256_digest("") is None
+        assert _parse_sha256_digest("abc123\n") is None
+
+
+class TestFetchReleaseChecksum:
+    def test_success(self):
+        digest = "d" * 64
+        with patch("gobby.cli.install_setup.urlopen", return_value=_checksum_resp(f"{digest}\n")):
+            result = _fetch_release_checksum("https://example.com/x.sha256", label="gsqz")
+        assert result == digest
+
+    def test_network_error_returns_none(self):
+        with patch("gobby.cli.install_setup.urlopen", side_effect=URLError("boom")):
+            result = _fetch_release_checksum("https://example.com/x.sha256", label="gsqz")
+        assert result is None
+
+    def test_unparseable_body_returns_none(self):
+        with patch("gobby.cli.install_setup.urlopen", return_value=_checksum_resp("garbage\n")):
+            result = _fetch_release_checksum("https://example.com/x.sha256", label="gsqz")
+        assert result is None
+
+
+class TestVerifyReleaseArtifact:
+    def test_matching_digest_passes(self):
+        data = b"payload-bytes"
+        digest = hashlib.sha256(data).hexdigest()
+        with patch("gobby.cli.install_setup._fetch_release_checksum", return_value=digest):
+            assert (
+                _verify_release_artifact(data, checksum_url="https://x/.sha256", label="gsqz")
+                is True
+            )
+
+    def test_mismatched_digest_fails(self):
+        with patch("gobby.cli.install_setup._fetch_release_checksum", return_value="0" * 64):
+            assert (
+                _verify_release_artifact(
+                    b"payload-bytes", checksum_url="https://x/.sha256", label="gsqz"
+                )
+                is False
+            )
+
+    def test_missing_checksum_fails_closed(self):
+        with patch("gobby.cli.install_setup._fetch_release_checksum", return_value=None):
+            assert (
+                _verify_release_artifact(
+                    b"payload-bytes", checksum_url="https://x/.sha256", label="gsqz"
+                )
+                is False
+            )
+
+
+class TestDownloadReleaseBinaryChecksum:
+    """Integration: _download_release_binary verifies before placement."""
+
+    def _download(self, bin_dir: Path):
+        return _download_release_binary(
+            bin_dir,
+            binary_name="gsqz",
+            artifact_name="gsqz",
+            target="aarch64-apple-darwin",
+            version="0.1.0",
+            tag_prefix="gsqz-v",
+            label="gsqz",
+        )
+
+    def test_places_binary_when_checksum_matches(self, tmp_path):
+        archive = _release_tarball("gsqz")
+        digest = hashlib.sha256(archive).hexdigest()
+        # urlopen order: archive download, then checksum fetch.
+        with patch(
+            "gobby.cli.install_setup.urlopen",
+            side_effect=[_archive_resp(archive), _checksum_resp(f"{digest}\n")],
+        ):
+            result = self._download(tmp_path)
+        assert result is True
+        assert (tmp_path / "gsqz").exists()
+        assert (tmp_path / "gsqz").read_bytes() == b"fake-binary"
+
+    def test_rejects_and_skips_placement_on_mismatch(self, tmp_path):
+        archive = _release_tarball("gsqz")
+        with patch(
+            "gobby.cli.install_setup.urlopen",
+            side_effect=[_archive_resp(archive), _checksum_resp(("0" * 64) + "\n")],
+        ):
+            result = self._download(tmp_path)
+        assert result is False
+        assert not (tmp_path / "gsqz").exists()
+
+    def test_rejects_and_skips_placement_on_missing_checksum(self, tmp_path):
+        archive = _release_tarball("gsqz")
+        with patch(
+            "gobby.cli.install_setup.urlopen",
+            side_effect=[_archive_resp(archive), URLError("no checksum published")],
+        ):
+            result = self._download(tmp_path)
+        assert result is False
+        assert not (tmp_path / "gsqz").exists()
