@@ -52,10 +52,12 @@ fn cargo_features_define_public_boundary() {
         );
     }
 
-    let gloc_gcore_dependency = r#"gobby-core = { path = "../gcore", default-features = false }"#;
+    let gloc_gcore_dependency =
+        r#"gobby-core = { path = "../gcore", version = "0.3.0", default-features = false }"#;
     assert!(
         gloc_manifest.contains(gloc_gcore_dependency),
-        "gloc must not enable the heavier gobby-core/ai feature"
+        "gloc must keep default-features = false (no heavier gobby-core/ai feature); \
+         the explicit version is required for crates.io publishing"
     );
 }
 
