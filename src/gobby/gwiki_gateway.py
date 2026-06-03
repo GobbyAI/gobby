@@ -125,7 +125,9 @@ class GwikiGateway:
         return await self._run_json("audit", ["audit"])
 
     async def health(self) -> dict[str, Any]:
-        return await self._run_json("health", ["health"], include_scope=False)
+        result = await self._run_json("health", ["health"], include_scope=False)
+        self._normalize_health_report_heading(result)
+        return result
 
     async def sources(self) -> dict[str, Any]:
         return await self._run_json("sources", ["sources"])
@@ -315,3 +317,27 @@ class GwikiGateway:
                 "message": "gwiki command timed out",
             },
         }
+
+    def _normalize_health_report_heading(self, result: dict[str, Any]) -> None:
+        payload = result.get("payload")
+        if not isinstance(payload, dict):
+            return
+        root = payload.get("root")
+        text_path = payload.get("text_path")
+        if not isinstance(root, str) or not isinstance(text_path, str):
+            return
+        report_path = Path(root) / text_path
+        try:
+            text = report_path.read_text()
+        except OSError:
+            return
+        lines = text.splitlines(keepends=True)
+        if not lines:
+            return
+        first_line = lines[0].rstrip("\r\n")
+        if first_line == "# Wiki health report":
+            return
+        if first_line == "Wiki health report":
+            newline = lines[0][len(first_line) :]
+            lines[0] = f"# Wiki health report{newline}"
+            report_path.write_text("".join(lines))

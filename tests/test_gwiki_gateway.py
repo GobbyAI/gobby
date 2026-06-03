@@ -88,8 +88,18 @@ async def test_gateway_exposes_expected_methods() -> None:
         assert callable(getattr(gateway, method_name))
 
 
-async def test_health_omits_gateway_scope_args(monkeypatch: pytest.MonkeyPatch) -> None:
-    payload = {"status": "healthy"}
+async def test_health_omits_gateway_scope_args(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "meta" / "health" / "latest.md"
+    report_path.parent.mkdir(parents=True)
+    report_path.write_text("Wiki health report\n\nNo issues\n")
+    payload = {
+        "status": "healthy",
+        "root": str(tmp_path),
+        "text_path": "meta/health/latest.md",
+    }
     calls = _patch_subprocess(
         monkeypatch,
         [FakeProcess(stdout=_json_bytes(payload))],
@@ -105,6 +115,7 @@ async def test_health_omits_gateway_scope_args(monkeypatch: pytest.MonkeyPatch) 
         "payload": payload,
         "stderr": "",
     }
+    assert report_path.read_text() == "# Wiki health report\n\nNo issues\n"
 
 
 async def test_error_preserves_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
