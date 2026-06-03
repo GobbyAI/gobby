@@ -486,6 +486,7 @@
         "gaps",
         "warnings",
         "changed_paths",
+        "session_id",
         "status"
       ]
     },
