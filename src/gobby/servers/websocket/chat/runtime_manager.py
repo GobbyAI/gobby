@@ -44,6 +44,11 @@ class WebChatRuntimeManager:
     ) -> None:
         self._sandbox_config = web_chat_sandbox_config(daemon_config)
         self._sandbox_policy_hash = web_chat_sandbox_policy_hash(daemon_config)
+        # The embeddings backend's configured credential doubles as the token
+        # for the shared local OpenAI-compatible endpoint (LM Studio), used as a
+        # fallback when the Qwen provider config only carries the dummy
+        # placeholder token.
+        local_openai_api_key = daemon_config.embeddings.api_key if daemon_config else None
         self._claude_backend = ClaudeWebChatBackend(
             sandbox_config=self._sandbox_config.model_copy(deep=True)
         )
@@ -61,7 +66,8 @@ class WebChatRuntimeManager:
             sandbox_config=self._sandbox_config.model_copy(deep=True)
         )
         self._qwen_backend = QwenWebChatBackend(
-            sandbox_config=self._sandbox_config.model_copy(deep=True)
+            sandbox_config=self._sandbox_config.model_copy(deep=True),
+            local_openai_api_key=local_openai_api_key,
         )
         self._droid_backend = DroidWebChatBackend(
             sandbox_config=self._sandbox_config.model_copy(deep=True)

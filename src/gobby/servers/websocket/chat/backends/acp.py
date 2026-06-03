@@ -45,6 +45,7 @@ class ACPWebChatBackend:
         client: ACPClient | None = None,
         default_model: str | None = None,
         sandbox_config: SandboxConfig | None = None,
+        local_openai_api_key: str | None = None,
     ) -> None:
         if not self.provider or not self.display_name:
             raise TypeError(
@@ -52,6 +53,9 @@ class ACPWebChatBackend:
             )
 
         self._sandbox_config = sandbox_config
+        # Gobby-configured fallback token for the local OpenAI-compatible
+        # endpoint (e.g. LM Studio). Only the Qwen backend consumes it.
+        self._local_openai_api_key = local_openai_api_key
         # Gemini-compatible CLI ACP bootstrap currently hangs on macOS when launched
         # with daemon-wide Seatbelt flags. Keep daemon-owned ACP startup unsandboxed
         # and let the upstream CLI's own tool sandboxing handle tool execution.

@@ -354,7 +354,7 @@ class TestQwenBackend:
         client.is_started = True
         client.create_session = AsyncMock(return_value={"sessionId": "sess-qwen"})
 
-        backend = QwenWebChatBackend(client=client)
+        backend = QwenWebChatBackend(client=client, local_openai_api_key="embeddings-token")
         backend._health.available = True
         backend.start = AsyncMock()
 
@@ -371,6 +371,7 @@ class TestQwenBackend:
         mock_warmup.assert_awaited_once_with(
             "qwen3.6-35b-a3b-q8-local(openai)",
             project_path="/tmp/project",
+            local_api_key_fallback="embeddings-token",
         )
         assert mock_warmup.await_count == 1
         assert mock_warmup.await_args is not None
