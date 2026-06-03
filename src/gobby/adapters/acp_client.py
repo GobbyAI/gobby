@@ -39,6 +39,14 @@ ACP_PROMPT_TIMEOUT_ENV_GEMINI = "GOBBY_GEMINI_ACP_PROMPT_TIMEOUT_SECONDS"
 ACP_PROMPT_TIMEOUT_ENV_QWEN = "GOBBY_QWEN_ACP_PROMPT_TIMEOUT_SECONDS"
 ACP_PROMPT_TIMEOUT_ENV_GROK = "GOBBY_GROK_ACP_PROMPT_TIMEOUT_SECONDS"
 
+# asyncio's subprocess StreamReader defaults to a 64 KiB buffer. A single
+# JSON-RPC line larger than that raises LimitOverrunError ("Separator is found,
+# but chunk is longer than limit") out of readline(), which kills the ACP
+# session. ACP agents routinely emit larger frames (big tool results, long
+# assistant turns), so widen the stdout/stderr reader limit. 16 MiB covers any
+# realistic single-line frame.
+ACP_STREAM_READER_LIMIT_BYTES = 16 * 1024 * 1024
+
 
 def _make_id() -> int:
     return next(_next_id)
@@ -254,6 +262,7 @@ class ACPClient:
             stderr=asyncio.subprocess.PIPE,
             cwd=self._cwd,
             env=env,
+            limit=ACP_STREAM_READER_LIMIT_BYTES,
         )
         self._started = True
         logger.debug("%s ACP client started (pid=%s)", self.display_name, self._process.pid)
