@@ -161,3 +161,4 @@ def test_gcode_contract_covers_daemon_consumed_surface() -> None:
     assert "--project" in _flag_names(contract["global_flags"])
     assert {"project_id", "results"} <= _json_keys(contract, "search")
     assert {"project_id", "project_root", "changed_paths"} <= _json_keys(contract, "codewiki")
+    assert "--ai" in _allowed_flags(contract, "codewiki")

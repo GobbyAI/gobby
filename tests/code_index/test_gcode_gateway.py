@@ -160,6 +160,37 @@ async def test_gateway_builds_clear_and_rebuild_args(
     ]
 
 
+@pytest.mark.asyncio
+async def test_gateway_builds_codewiki_args(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    out_dir = tmp_path / "codewiki"
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(stdout=b'{"changed_paths": ["repo.md"]}'),
+    ]
+    calls = _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    result = await gateway.codewiki(tmp_path, out_dir, ai="auto")
+
+    assert result == {"changed_paths": ["repo.md"]}
+    assert calls[1] == (
+        "/tmp/gcode",
+        "codewiki",
+        "--project",
+        str(tmp_path),
+        "--out",
+        str(out_dir),
+        "--ai",
+        "auto",
+        "--format",
+        "json",
+        "--quiet",
+    )
+
+
 async def test_gateway_builds_graph_read_args(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -238,6 +238,24 @@ class GcodeGateway:
             timeout=self._rebuild_timeout_seconds,
         )
 
+    async def codewiki(
+        self,
+        project_root: Path,
+        out_dir: Path,
+        *,
+        ai: str | None = None,
+    ) -> dict[str, Any]:
+        args = [
+            "codewiki",
+            "--project",
+            str(project_root),
+            "--out",
+            str(out_dir),
+        ]
+        if ai is not None:
+            args.extend(["--ai", ai])
+        return await self._run_json(args, timeout=self._rebuild_timeout_seconds)
+
     async def _run_json(
         self,
         args: Sequence[str],

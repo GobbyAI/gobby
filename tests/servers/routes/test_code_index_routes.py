@@ -54,6 +54,7 @@ def mock_server() -> MagicMock:
     code_indexer.storage.search_symbols_by_name = MagicMock(return_value=[_make_symbol()])
     code_indexer.storage.get_project_stats = MagicMock(return_value=MagicMock())
     server.services.code_indexer = code_indexer
+    server.services.codewiki_trigger = None
     return server
 
 
@@ -76,6 +77,58 @@ def test_graph_overview_returns_data(client: TestClient, mock_server: MagicMock)
         "proj-1",
         limit=25,
     )
+
+
+def test_codewiki_refresh_schedules_trigger(client: TestClient, mock_server: MagicMock) -> None:
+    trigger = MagicMock()
+    trigger.request_refresh.return_value = True
+    mock_server.services.codewiki_trigger = trigger
+
+    response = client.post(
+        "/api/code-index/codewiki/refresh",
+        params={"root_path": "/repo", "project_id": "proj-1", "ai": "daemon"},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["accepted"] is True
+    trigger.request_refresh.assert_called_once_with(
+        root_path="/repo",
+        project_id="proj-1",
+        out_dir=None,
+        ai="daemon",
+    )
+
+
+def test_codewiki_refresh_reports_disabled(client: TestClient, mock_server: MagicMock) -> None:
+    trigger = MagicMock()
+    trigger.request_refresh.return_value = False
+    mock_server.services.codewiki_trigger = trigger
+
+    response = client.post("/api/code-index/codewiki/refresh", params={"root_path": "/repo"})
+
+    assert response.status_code == 202
+    assert response.json()["accepted"] is False
+    assert response.json()["reason"] == "wiki.codewiki_on_commit disabled"
+
+
+def test_codewiki_refresh_requires_trigger(client: TestClient) -> None:
+    response = client.post("/api/code-index/codewiki/refresh", params={"root_path": "/repo"})
+
+    assert response.status_code == 503
+
+
+def test_codewiki_refresh_validates_ai(client: TestClient, mock_server: MagicMock) -> None:
+    trigger = MagicMock()
+    trigger.request_refresh.side_effect = ValueError("ai must be one of auto, daemon, direct, off")
+    mock_server.services.codewiki_trigger = trigger
+
+    response = client.post(
+        "/api/code-index/codewiki/refresh",
+        params={"root_path": "/repo", "ai": "bad"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "ai must be one of auto, daemon, direct, off"
 
 
 def test_graph_file_delegates(client: TestClient, mock_server: MagicMock) -> None:

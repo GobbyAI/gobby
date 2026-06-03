@@ -45,6 +45,10 @@ class WikiConfig(BaseModel):
         default_factory=lambda: ["outputs/**", "meta/health/**"],
         description="Root-relative file globs ignored by the watcher.",
     )
+    codewiki_on_commit: bool = Field(
+        default=False,
+        description="Refresh generated codewiki docs after post-commit code indexing.",
+    )
 
     @field_validator("debounce_interval", "poll_interval")
     @classmethod

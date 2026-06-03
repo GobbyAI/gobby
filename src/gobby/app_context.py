@@ -94,6 +94,7 @@ class ServiceContainer:
 
     # Code Index
     code_indexer: Any | None = None  # CodeIndexContext
+    codewiki_trigger: Any | None = None  # CodewikiRefreshTrigger
 
     # Config
     config_store: Any | None = None  # ConfigStore

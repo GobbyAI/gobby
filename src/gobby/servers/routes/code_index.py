@@ -362,4 +362,40 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         await code_indexer.invalidate(project_id)
         return JSONResponse(content={"status": "ok", "project_id": project_id})
 
+    @router.post("/codewiki/refresh", status_code=202)
+    async def refresh_codewiki(
+        root_path: str = Query(..., description="Project root path"),
+        project_id: str | None = Query(None, description="Project ID"),
+        out_dir: str | None = Query(None, description="Optional codewiki output directory"),
+        ai: str = Query("auto", description="AI route: auto, daemon, direct, or off"),
+    ) -> dict[str, Any]:
+        """Schedule a debounced codewiki refresh after post-commit indexing."""
+        root_value = root_path.strip()
+        if not root_value:
+            raise HTTPException(status_code=400, detail="root_path is required")
+
+        trigger = getattr(server.services, "codewiki_trigger", None)
+        request_refresh = getattr(trigger, "request_refresh", None)
+        if not callable(request_refresh):
+            raise HTTPException(status_code=503, detail="Codewiki refresh trigger not available")
+
+        try:
+            accepted = bool(
+                request_refresh(
+                    root_path=root_value,
+                    project_id=project_id,
+                    out_dir=out_dir,
+                    ai=ai,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return {
+            "accepted": accepted,
+            "root_path": root_value,
+            "project_id": project_id,
+            "reason": None if accepted else "wiki.codewiki_on_commit disabled",
+        }
+
     return router

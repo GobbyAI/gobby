@@ -149,7 +149,17 @@ CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)
 if [ -n "$CHANGED_FILES" ]; then
     GCODE="$HOME/.gobby/bin/gcode"
     if [ -x "$GCODE" ]; then
-        echo "$CHANGED_FILES" | tr '\n' '\0' | xargs -0 "$GCODE" index --quiet --files >/dev/null 2>&1 &
+        (
+            if echo "$CHANGED_FILES" | tr '\n' '\0' | xargs -0 "$GCODE" index --quiet --files >/dev/null 2>&1; then
+                ROOT_PATH=$(git rev-parse --show-toplevel 2>/dev/null)
+                if [ -n "$ROOT_PATH" ] && command -v curl >/dev/null 2>&1; then
+                    DAEMON_PORT="${GOBBY_DAEMON_PORT:-60887}"
+                    curl -fsS -X POST --get \
+                        --data-urlencode "root_path=$ROOT_PATH" \
+                        "http://localhost:${DAEMON_PORT}/api/code-index/codewiki/refresh" >/dev/null 2>&1 || true
+                fi
+            fi
+        ) &
     fi
 fi
 """,

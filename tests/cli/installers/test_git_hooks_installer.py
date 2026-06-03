@@ -922,7 +922,10 @@ class TestHookTemplates:
         content = HOOK_TEMPLATES["post-commit"]
         assert "\0" not in content
         assert r"tr '\n' '\0'" in content
-        assert 'xargs -0 "$GCODE" index --quiet --files >/dev/null 2>&1 &' in content
+        assert 'xargs -0 "$GCODE" index --quiet --files >/dev/null 2>&1; then' in content
+        assert "curl -fsS -X POST --get \\" in content
+        assert '--data-urlencode "root_path=$ROOT_PATH"' in content
+        assert "/api/code-index/codewiki/refresh" in content
 
         git_dir = tmp_path / ".git"
         git_dir.mkdir()
@@ -935,7 +938,10 @@ class TestHookTemplates:
         installed = (hooks_dir / "post-commit").read_text()
         assert "\0" not in installed
         assert r"tr '\n' '\0'" in installed
-        assert 'xargs -0 "$GCODE" index --quiet --files >/dev/null 2>&1 &' in installed
+        assert 'xargs -0 "$GCODE" index --quiet --files >/dev/null 2>&1; then' in installed
+        assert "curl -fsS -X POST --get \\" in installed
+        assert '--data-urlencode "root_path=$ROOT_PATH"' in installed
+        assert "/api/code-index/codewiki/refresh" in installed
 
     def test_templates_do_not_import_jsonl(self) -> None:
         """No installed hook template automatically imports JSONL."""

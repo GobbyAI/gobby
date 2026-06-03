@@ -121,6 +121,18 @@ def create_app(server: "HTTPServer") -> FastAPI:
             except Exception as e:
                 logger.warning(f"Failed to create CodeIndexTrigger: {e}")
 
+            try:
+                from gobby.code_index.codewiki_trigger import CodewikiRefreshTrigger
+
+                server.services.codewiki_trigger = CodewikiRefreshTrigger(
+                    loop=asyncio.get_running_loop(),
+                    config_provider=lambda: server.services.config,
+                    config_store_provider=lambda: server.services.config_store,
+                    debounce_seconds=2.0,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create CodewikiRefreshTrigger: {e}")
+
         if server.services.config:
             # Pass full log file path from config
             hook_manager_kwargs["log_file"] = server.services.config.telemetry.log_file_hook_manager
