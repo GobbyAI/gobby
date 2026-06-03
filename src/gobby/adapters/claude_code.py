@@ -151,9 +151,14 @@ class ClaudeCodeAdapter(BaseAdapter):
         hook_type = native_event.get("hook_type", "")
         input_data = native_event.get("input_data") or {}
 
-        # Map Claude hook type to unified event type
-        # Fall back to NOTIFICATION for unknown types (fail-open)
-        event_type = self.EVENT_MAP.get(hook_type, HookEventType.NOTIFICATION)
+        # Resolve the hook contract from either the native kebab name or the
+        # PascalCase hook event name. Claude Code's settings.json keys are
+        # PascalCase and some installs pass that token through to ``--type``;
+        # resolving via the contract keeps event routing correct instead of
+        # silently dropping to NOTIFICATION. Unknown types still fall back to
+        # NOTIFICATION (fail-open).
+        contract = get_claude_contract(hook_type)
+        event_type = contract.event_type if contract is not None else HookEventType.NOTIFICATION
 
         # Extract session_id (Claude calls it session_id but it's the external_id)
         session_id = input_data.get("session_id", "")
@@ -162,8 +167,13 @@ class ClaudeCodeAdapter(BaseAdapter):
         # so that is_error detection (Phase 3) runs before we build metadata
         normalized_data = self._normalize_event_data(input_data)
 
-        # Check for failure: explicit hook type OR inferred from tool output
-        is_failure = hook_type == "post-tool-use-failure" or normalized_data.get("is_error", False)
+        # Check for failure: explicit hook type OR inferred from tool output.
+        # Compare against the resolved native name so a PascalCase
+        # ``PostToolUseFailure`` token is recognized too.
+        native_hook_name = contract.native_name if contract is not None else hook_type
+        is_failure = native_hook_name == "post-tool-use-failure" or normalized_data.get(
+            "is_error", False
+        )
         metadata = {"is_failure": is_failure} if is_failure else {}
         self._copy_platform_session_metadata(native_event, metadata)
 

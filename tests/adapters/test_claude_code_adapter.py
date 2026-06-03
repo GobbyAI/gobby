@@ -200,6 +200,44 @@ class TestTranslateToHookEvent:
         event = adapter.translate_to_hook_event(native)
         assert event.event_type == HookEventType.NOTIFICATION
 
+    @pytest.mark.parametrize(
+        "hook_type,expected_event_type",
+        [
+            ("UserPromptSubmit", HookEventType.BEFORE_AGENT),
+            ("PreToolUse", HookEventType.BEFORE_TOOL),
+            ("PostToolUse", HookEventType.AFTER_TOOL),
+            ("Stop", HookEventType.STOP),
+            ("SessionStart", HookEventType.SESSION_START),
+        ],
+    )
+    def test_pascalcase_hook_types_route_to_lifecycle_events(
+        self, hook_type: str, expected_event_type: HookEventType
+    ) -> None:
+        """PascalCase hook event names must route like their kebab natives.
+
+        Claude settings.json keys are PascalCase; an install that passes the
+        PascalCase token through to ``--type`` must still route correctly instead
+        of silently dropping to NOTIFICATION.
+        """
+        adapter = ClaudeCodeAdapter()
+        native = {"hook_type": hook_type, "input_data": {"session_id": "ext-1"}}
+        event = adapter.translate_to_hook_event(native)
+        assert event.event_type == expected_event_type
+
+    def test_pascalcase_post_tool_use_failure_sets_is_failure(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        native = {
+            "hook_type": "PostToolUseFailure",
+            "input_data": {
+                "session_id": "ext-789",
+                "tool_name": "Bash",
+                "tool_result": "error output",
+            },
+        }
+        event = adapter.translate_to_hook_event(native)
+        assert event.event_type == HookEventType.AFTER_TOOL
+        assert event.metadata["is_failure"] is True
+
     def test_missing_input_data(self) -> None:
         adapter = ClaudeCodeAdapter()
         native = {"hook_type": "session-start"}

@@ -56,11 +56,26 @@ def test_build_stop_hook_command_uses_raw_ghook() -> None:
     assert command == "ghook --gobby-owned --cli=codex --type=Stop"
 
 
-def test_rewrite_hook_template_commands_updates_nested_entries() -> None:
+def test_rewrite_preserves_kebab_type_under_pascalcase_key() -> None:
+    """The rewrite swaps only the ghook prefix and keeps the template ``--type``.
+
+    Claude settings keys are PascalCase but the native ``--type`` token is kebab;
+    re-deriving ``--type`` from the PascalCase key is what dropped Claude hooks to
+    NOTIFICATION. The kebab token must survive the rewrite.
+    """
     config = {
         "hooks": {
-            "SessionStart": [
-                {"hooks": [{"type": "command", "command": "legacy"}]},
+            "UserPromptSubmit": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": (
+                                "ghook --gobby-owned --cli=claude --type=user-prompt-submit"
+                            ),
+                        }
+                    ]
+                },
             ]
         }
     }
@@ -73,8 +88,88 @@ def test_rewrite_hook_template_commands_updates_nested_entries() -> None:
     )
 
     assert (
-        config["hooks"]["SessionStart"][0]["hooks"][0]["command"]
-        == "/Users/test/.gobby/bin/ghook --gobby-owned --cli=claude --type=SessionStart"
+        config["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
+        == "/Users/test/.gobby/bin/ghook --gobby-owned --cli=claude --type=user-prompt-submit"
+    )
+
+
+def test_rewrite_fills_droid_placeholder_from_key() -> None:
+    """Bare ``__GOBBY_HOOK_COMMAND__`` placeholders (Droid) build from the hook key."""
+    config = {
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": "*",
+                    "hooks": [{"type": "command", "command": "__GOBBY_HOOK_COMMAND__"}],
+                },
+            ]
+        }
+    }
+
+    rewrite_hook_template_commands(
+        config,
+        cli_name="droid",
+        hooks_dir=Path("/tmp/hooks"),
+        ghook_bin="/Users/test/.gobby/bin/ghook",
+    )
+
+    assert (
+        config["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        == "/Users/test/.gobby/bin/ghook --gobby-owned --cli=droid --type=PreToolUse"
+    )
+
+
+def test_rewrite_swaps_ghook_prefix_but_keeps_flags() -> None:
+    """Only the executable prefix is rewritten; ``--cli``/``--type`` are preserved."""
+    config = {
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": (
+                                "old-ghook --gobby-owned --cli=claude --type=pre-tool-use"
+                            ),
+                        }
+                    ]
+                },
+            ]
+        }
+    }
+
+    rewrite_hook_template_commands(
+        config,
+        cli_name="claude",
+        hooks_dir=Path("/tmp/hooks"),
+        ghook_bin="/new/path/ghook",
+    )
+
+    assert (
+        config["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        == "/new/path/ghook --gobby-owned --cli=claude --type=pre-tool-use"
+    )
+
+
+def test_rewrite_leaves_foreign_commands_untouched() -> None:
+    """Non-Gobby commands (no ``--gobby-owned`` marker, not a placeholder) are kept."""
+    config = {
+        "hooks": {
+            "SessionStart": [
+                {"hooks": [{"type": "command", "command": "some-user-script --foo"}]},
+            ]
+        }
+    }
+
+    rewrite_hook_template_commands(
+        config,
+        cli_name="claude",
+        hooks_dir=Path("/tmp/hooks"),
+        ghook_bin="/Users/test/.gobby/bin/ghook",
+    )
+
+    assert (
+        config["hooks"]["SessionStart"][0]["hooks"][0]["command"] == "some-user-script --foo"
     )
 
 

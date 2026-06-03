@@ -66,6 +66,9 @@ def build_hook_command(
     return f"{prefix} --cli={cli_name} --type={hook_type}"
 
 
+_GOBBY_HOOK_COMMAND_PLACEHOLDER = "__GOBBY_HOOK_COMMAND__"
+
+
 def rewrite_hook_template_commands(
     hooks_config: dict[str, Any],
     *,
@@ -73,36 +76,71 @@ def rewrite_hook_template_commands(
     hooks_dir: Path,
     ghook_bin: str | None = None,
 ) -> dict[str, Any]:
-    """Rewrite all template command hooks to the current preferred hook command."""
+    """Rewrite Gobby hook commands to the current ghook executable.
+
+    The rewrite normalizes only the ``ghook --gobby-owned`` executable prefix so
+    the resolved absolute binary is used. It deliberately **preserves each
+    command's existing flags** (notably ``--cli`` and ``--type``): the template
+    already encodes the correct native ``--type`` token for every CLI, and
+    re-deriving ``--type`` from the PascalCase settings key is exactly what made
+    Claude hooks resolve to ``NOTIFICATION``. Bare ``__GOBBY_HOOK_COMMAND__``
+    placeholders (the Droid template) carry no flags, so they are filled from the
+    template hook key via :func:`build_hook_command`. Non-Gobby commands are left
+    untouched.
+    """
     hooks = hooks_config.get("hooks")
     if not isinstance(hooks, dict):
         return hooks_config
 
+    prefix = build_hook_command_prefix(hooks_dir, ghook_bin=ghook_bin)
     for hook_type, hook_config in hooks.items():
-        command = build_hook_command(
+        placeholder_command = build_hook_command(
             cli_name,
             hook_type,
             hooks_dir,
             ghook_bin=ghook_bin,
         )
-        _rewrite_commands(hook_config, command)
+        _rewrite_commands(
+            hook_config,
+            prefix=prefix,
+            placeholder_command=placeholder_command,
+        )
 
     return hooks_config
 
 
-def _rewrite_commands(node: Any, command: str) -> None:
-    """Recursively replace command entries inside a hook template fragment."""
+def _rewrite_command_string(command: str, *, prefix: str, placeholder_command: str) -> str:
+    """Rewrite a single command string while preserving its flags."""
+    if command.strip() == _GOBBY_HOOK_COMMAND_PLACEHOLDER:
+        # Bare placeholder (Droid template) — build the full command from the key.
+        return placeholder_command
+    if _GOBBY_OWNED_MARKER not in command:
+        # Foreign / non-Gobby command — leave untouched.
+        return command
+    # Keep everything after the --gobby-owned marker (--cli, --type, and any
+    # future flags); swap only the executable prefix up to and including it.
+    suffix = command.split(_GOBBY_OWNED_MARKER, 1)[1]
+    return f"{prefix}{suffix}"
+
+
+def _rewrite_commands(node: Any, *, prefix: str, placeholder_command: str) -> None:
+    """Recursively rewrite command entries inside a hook template fragment."""
     if isinstance(node, list):
         for item in node:
-            _rewrite_commands(item, command)
+            _rewrite_commands(item, prefix=prefix, placeholder_command=placeholder_command)
         return
 
     if not isinstance(node, dict):
         return
 
     for field in ("command", "cmd", "script"):
-        if isinstance(node.get(field), str):
-            node[field] = command
+        value = node.get(field)
+        if isinstance(value, str):
+            node[field] = _rewrite_command_string(
+                value,
+                prefix=prefix,
+                placeholder_command=placeholder_command,
+            )
 
     for value in node.values():
-        _rewrite_commands(value, command)
+        _rewrite_commands(value, prefix=prefix, placeholder_command=placeholder_command)

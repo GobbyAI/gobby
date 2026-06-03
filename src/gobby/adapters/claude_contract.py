@@ -223,11 +223,21 @@ CLAUDE_ADDITIONAL_CONTEXT_EVENT_NAMES: frozenset[str] = frozenset(
 
 
 def get_claude_contract(hook_type: str | None) -> ClaudeHookContract | None:
-    """Look up the contract for a Claude native hook name."""
+    """Look up the contract for a Claude hook name.
+
+    Accepts either the native kebab name (``user-prompt-submit``) or the
+    PascalCase hook event name (``UserPromptSubmit``). Claude Code requires
+    PascalCase keys in ``settings.json``; tolerating both here means an installed
+    config that passes the PascalCase token through to ``--type`` still resolves
+    to the correct contract instead of silently degrading to ``NOTIFICATION``.
+    """
 
     if not hook_type:
         return None
-    return CLAUDE_HOOK_CONTRACTS_BY_NATIVE.get(hook_type)
+    contract = CLAUDE_HOOK_CONTRACTS_BY_NATIVE.get(hook_type)
+    if contract is not None:
+        return contract
+    return CLAUDE_HOOK_CONTRACTS_BY_EVENT_NAME.get(hook_type)
 
 
 def build_graceful_error_hook_response(error_msg: str) -> HookResponse:
