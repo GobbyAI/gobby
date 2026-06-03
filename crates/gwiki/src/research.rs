@@ -4,14 +4,24 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
-use gobby_core::config::AiRouting;
+use gobby_core::ai::{daemon, effective_route, text};
+use gobby_core::ai_context::{AiConfigSource, AiContext, AiContextOptions};
+use gobby_core::config::{AiCapability, AiRouting};
 use serde::Serialize;
+use serde_json::Value;
 
+use crate::commands::{ask, index, read, search};
 use crate::compile::index_lock_timeout;
 use crate::events::{EventMonitor, SessionEvent};
+use crate::research_loop::{
+    ModelDecision, ModelRequest, NoteWriteOutcome, ResearchLoop, ResearchLoopConfig,
+    ResearchLoopDeps, ResearchLoopEvent, ResearchLoopInput, ResearchLoopResult, ResearchModel,
+    ResearchModelError, ResearchNoteWriter, ResearchObservation, SourceIngestor, WikiAsk, WikiRead,
+    WikiSearch, model_system_prompt, parse_model_action, render_model_prompt,
+};
 use crate::scope::{self, ScopeKind};
 use crate::session::{AcceptedResearchNote, ResearchScope, ResearchSession, research_prompt};
-use crate::{ScopeSelection, WikiError};
+use crate::{CommandOutcome, IngestFileOptions, ReadTarget, ScopeSelection, WikiError};
 
 const MAX_RESEARCH_NOTE_SUFFIX_ATTEMPTS: usize = 1000;
 const RESEARCH_NOTE_MARKER_STALE_AFTER: Duration = Duration::from_secs(15 * 60);
@@ -22,11 +32,37 @@ const RESEARCH_NOTE_NAMESPACE: uuid::Uuid = uuid::Uuid::from_bytes([
     0x9c, 0x51, 0x3a, 0x5b, 0x35, 0x92, 0x4d, 0x6d, 0x8e, 0x5f, 0x42, 0x1f, 0x20, 0xb7, 0x8a, 0xe4,
 ]);
 
+#[cfg(test)]
+static MATERIALIZING_WAIT_SIGNAL: std::sync::OnceLock<
+    std::sync::Mutex<Option<std::sync::mpsc::Sender<()>>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+fn set_materializing_wait_signal(sender: std::sync::mpsc::Sender<()>) {
+    let signal = MATERIALIZING_WAIT_SIGNAL.get_or_init(|| std::sync::Mutex::new(None));
+    *signal.lock().expect("materializing wait signal lock") = Some(sender);
+}
+
+#[cfg(test)]
+fn notify_materializing_wait_observed() {
+    if let Some(signal) = MATERIALIZING_WAIT_SIGNAL.get()
+        && let Some(sender) = signal
+            .lock()
+            .expect("materializing wait signal lock")
+            .take()
+    {
+        let _ = sender.send(());
+    }
+}
+
+#[cfg(not(test))]
+fn notify_materializing_wait_observed() {}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AcceptedNoteDraft {
     pub title: String,
     pub body: String,
-    pub source: Option<String>,
+    pub sources: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,33 +175,42 @@ pub fn run(options: ResearchOptions) -> Result<ResearchOutcome, WikiError> {
         timestamp_ms: unix_timestamp_ms()?,
     })?;
 
+    let mut changed_paths = Vec::new();
     let findings = if options.audit {
         deterministic_audit_findings(session.scope.root(), &session)?
     } else {
-        Vec::new()
-    };
-    let mut changed_paths = Vec::new();
+        let loop_result = run_enrichment_loop(&options, &session)?;
+        append_loop_events(&monitor, &session.session_id, &loop_result.events)?;
+        for note in &loop_result.accepted_notes {
+            if !session
+                .accepted_notes
+                .iter()
+                .any(|accepted| accepted.path == note.path)
+            {
+                session.accepted_notes.push(note.clone());
+            }
+        }
+        changed_paths.extend(loop_result.changed_paths.clone());
+        warnings.extend(loop_result.warnings.clone());
 
-    for note in &options.accepted_notes {
-        let accepted = write_accepted_note(session.scope.root(), &session.session_id, note)?;
-        if accepted.created {
-            changed_paths.push(accepted.note.path.clone());
-            monitor.append_event(&SessionEvent {
-                session_id: session.session_id.clone(),
-                dispatch_id: None,
-                kind: "note_accepted".to_string(),
-                message: format!("accepted research note {}", accepted.note.title),
-                timestamp_ms: unix_timestamp_ms()?,
-            })?;
-        }
-        if !session
-            .accepted_notes
-            .iter()
-            .any(|note| note.path == accepted.note.path)
-        {
-            session.accepted_notes.push(accepted.note);
-        }
-    }
+        session.save_checkpoint()?;
+        changed_paths.push(ResearchSession::checkpoint_path(session.scope.root()));
+
+        return Ok(ResearchOutcome {
+            session,
+            audit: false,
+            status: enrichment_status(loop_result.stop_reason, loop_result.made_progress()),
+            stop_reason: loop_result.stop_reason,
+            steps_used: loop_result.steps_used,
+            tokens_used: loop_result.tokens_used,
+            sources_added: loop_result.sources_added,
+            findings: Vec::new(),
+            gaps: loop_result.gaps,
+            warnings,
+            changed_paths,
+            message: loop_result.message,
+        });
+    };
 
     session.save_checkpoint()?;
     changed_paths.push(ResearchSession::checkpoint_path(session.scope.root()));
@@ -202,6 +247,341 @@ pub fn run(options: ResearchOptions) -> Result<ResearchOutcome, WikiError> {
             "research session checkpointed".to_string()
         },
     })
+}
+
+fn run_enrichment_loop(
+    options: &ResearchOptions,
+    session: &ResearchSession,
+) -> Result<ResearchLoopResult, WikiError> {
+    let selection = scope_selection_from_research_scope(&session.scope);
+    let mut model = GcoreResearchModel {
+        requested_route: options.ai,
+        require_ai: options.require_ai,
+    };
+    let mut ask = CommandAsk {
+        selection: selection.clone(),
+    };
+    let mut search = CommandSearch {
+        selection: selection.clone(),
+    };
+    let mut read = CommandRead {
+        selection: selection.clone(),
+    };
+    let mut ingest = CommandIngestor { selection };
+    let mut note_writer = AcceptedNoteWriter {
+        root: session.scope.root(),
+        session_id: &session.session_id,
+    };
+    let mut loop_ = ResearchLoop::new(
+        session.scope.root(),
+        ResearchLoopConfig {
+            max_steps: options.max_steps,
+            max_tokens: options.max_tokens,
+            max_sources: options.max_sources,
+            max_wall_time: Duration::from_secs(900),
+            max_note_bytes: 24_000,
+        },
+        ResearchLoopDeps {
+            model: &mut model,
+            ask: &mut ask,
+            search: &mut search,
+            read: &mut read,
+            ingest: &mut ingest,
+            note_writer: &mut note_writer,
+        },
+    );
+
+    loop_.run(ResearchLoopInput {
+        question: &session.question,
+        source_constraints: &session.source_constraints,
+        initial_notes: &options.accepted_notes,
+    })
+}
+
+fn append_loop_events(
+    monitor: &EventMonitor,
+    session_id: &str,
+    events: &[ResearchLoopEvent],
+) -> Result<(), WikiError> {
+    for event in events {
+        monitor.append_event(&SessionEvent {
+            session_id: session_id.to_string(),
+            dispatch_id: None,
+            kind: event.kind.clone(),
+            message: event.message.clone(),
+            timestamp_ms: unix_timestamp_ms()?,
+        })?;
+    }
+    Ok(())
+}
+
+fn enrichment_status(stop_reason: ResearchStopReason, made_progress: bool) -> ResearchStatus {
+    match stop_reason {
+        ResearchStopReason::Finish => ResearchStatus::Ok,
+        ResearchStopReason::WriteConflict => ResearchStatus::Failed,
+        ResearchStopReason::SourceBlocked if !made_progress => ResearchStatus::Failed,
+        ResearchStopReason::AiUnavailable
+        | ResearchStopReason::BudgetExhausted
+        | ResearchStopReason::NoProgress
+        | ResearchStopReason::DuplicateFrontier
+        | ResearchStopReason::SourceBlocked => ResearchStatus::Partial,
+    }
+}
+
+struct GcoreResearchModel {
+    requested_route: AiRouting,
+    require_ai: bool,
+}
+
+impl GcoreResearchModel {
+    fn ai_unavailable<T>(&self, message: String) -> Result<T, ResearchModelError> {
+        if self.require_ai {
+            return Err(WikiError::Config { detail: message }.into());
+        }
+        Err(ResearchModelError::AiUnavailable(message))
+    }
+}
+
+impl ResearchModel for GcoreResearchModel {
+    fn next_action(
+        &mut self,
+        request: ModelRequest<'_>,
+    ) -> Result<ModelDecision, ResearchModelError> {
+        let mut source = research_ai_config_source()?;
+        let context = AiContext::resolve_with_options(
+            None,
+            &mut source,
+            AiContextOptions {
+                no_ai: false,
+                forced_routing: Some(self.requested_route),
+            },
+        );
+        let route = effective_route(&context, AiCapability::TextGenerate);
+        let prompt = render_model_prompt(&request);
+        let result = match route {
+            AiRouting::Direct => {
+                text::generate_text(&context, &prompt, Some(model_system_prompt()))
+            }
+            AiRouting::Daemon => {
+                daemon::generate_via_daemon(&context, &prompt, Some(model_system_prompt()))
+            }
+            AiRouting::Auto | AiRouting::Off => {
+                return self
+                    .ai_unavailable(format!("text generation route '{route:?}' is unavailable"));
+            }
+        };
+
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => return self.ai_unavailable(error.to_string()),
+        };
+        let action =
+            parse_model_action(&result.text).map_err(ResearchModelError::InvalidResponse)?;
+        Ok(ModelDecision {
+            action,
+            tokens_used: estimate_tokens(&prompt).saturating_add(estimate_tokens(&result.text)),
+        })
+    }
+}
+
+fn research_ai_config_source() -> Result<AiConfigSource, WikiError> {
+    let gobby_home = gobby_core::gobby_home().map_err(|error| WikiError::Config {
+        detail: format!("failed to resolve Gobby home for gwiki research config: {error}"),
+    })?;
+    AiConfigSource::from_gobby_home(&gobby_home).map_err(|error| WikiError::Config {
+        detail: format!("failed to resolve AI config for gwiki research: {error}"),
+    })
+}
+
+struct CommandAsk {
+    selection: ScopeSelection,
+}
+
+impl WikiAsk for CommandAsk {
+    fn ask(&mut self, query: &str) -> Result<ResearchObservation, WikiError> {
+        let outcome = ask::execute(
+            query.to_string(),
+            self.selection.clone(),
+            false,
+            AiRouting::Off,
+            false,
+        )?;
+        Ok(observation_from_outcome("ask", &outcome))
+    }
+}
+
+struct CommandSearch {
+    selection: ScopeSelection,
+}
+
+impl WikiSearch for CommandSearch {
+    fn search(&mut self, query: &str, limit: usize) -> Result<ResearchObservation, WikiError> {
+        let output = search::retrieve(query.to_string(), self.selection.clone(), limit, true)?;
+        let mut sources = Vec::new();
+        for result in &output.results {
+            sources.push(result.source_path.display().to_string());
+            sources.extend(result.sources.iter().cloned());
+        }
+        Ok(ResearchObservation::new(
+            "search",
+            format!("{} search hit(s) for {query}", output.results.len()),
+        )
+        .with_sources(dedup_strings(sources)))
+    }
+}
+
+struct CommandRead {
+    selection: ScopeSelection,
+}
+
+impl WikiRead for CommandRead {
+    fn read(&mut self, path: &Path) -> Result<ResearchObservation, WikiError> {
+        let outcome = read::execute(ReadTarget::Path(path.to_path_buf()), self.selection.clone())?;
+        let mut observation = observation_from_outcome("read", &outcome);
+        observation.sources.push(path.display().to_string());
+        observation.sources = dedup_strings(observation.sources);
+        Ok(observation)
+    }
+}
+
+struct CommandIngestor {
+    selection: ScopeSelection,
+}
+
+impl SourceIngestor for CommandIngestor {
+    fn ingest_url(&mut self, url: &str) -> Result<ResearchObservation, WikiError> {
+        let outcome = index::execute_ingest_url(vec![url.to_string()], self.selection.clone())?;
+        let mut observation = observation_from_outcome("ingest_url", &outcome);
+        if outcome.exit_code == 0 && !observation.sources.iter().any(|source| source == url) {
+            observation.sources.push(url.to_string());
+        }
+        observation.sources = dedup_strings(observation.sources);
+        Ok(observation)
+    }
+
+    fn ingest_file(&mut self, path: &Path) -> Result<ResearchObservation, WikiError> {
+        let outcome = index::execute_ingest_file(
+            path.to_path_buf(),
+            self.selection.clone(),
+            IngestFileOptions::default(),
+        )?;
+        let mut observation = observation_from_outcome("ingest_file", &outcome);
+        let path_string = path.display().to_string();
+        if !observation
+            .sources
+            .iter()
+            .any(|source| source == &path_string)
+        {
+            observation.sources.push(path_string);
+        }
+        observation.sources = dedup_strings(observation.sources);
+        Ok(observation)
+    }
+}
+
+struct AcceptedNoteWriter<'a> {
+    root: &'a Path,
+    session_id: &'a str,
+}
+
+impl ResearchNoteWriter for AcceptedNoteWriter<'_> {
+    fn write_note(&mut self, note: &AcceptedNoteDraft) -> Result<NoteWriteOutcome, WikiError> {
+        let accepted = write_accepted_note(self.root, self.session_id, note)?;
+        Ok(NoteWriteOutcome {
+            note: accepted.note,
+            created: accepted.created,
+        })
+    }
+}
+
+fn observation_from_outcome(action: &str, outcome: &CommandOutcome) -> ResearchObservation {
+    ResearchObservation::new(action, outcome.result.text.clone())
+        .with_sources(outcome_sources(&outcome.result.payload))
+        .with_changed_paths(outcome_changed_paths(&outcome.result.payload))
+}
+
+fn outcome_sources(payload: &Value) -> Vec<String> {
+    const SOURCE_KEYS: &[&str] = &[
+        "absolute_path",
+        "asset_path",
+        "final_url",
+        "location",
+        "raw_path",
+        "requested_url",
+        "source_path",
+        "sources",
+        "wiki_path",
+    ];
+    let mut sources = Vec::new();
+    collect_keyed_strings(payload, SOURCE_KEYS, &mut sources);
+    dedup_strings(sources)
+}
+
+fn outcome_changed_paths(payload: &Value) -> Vec<PathBuf> {
+    const PATH_KEYS: &[&str] = &["absolute_path", "asset_path", "raw_path", "wiki_path"];
+    let mut paths = Vec::new();
+    collect_keyed_strings(payload, PATH_KEYS, &mut paths);
+    dedup_strings(paths)
+        .into_iter()
+        .map(PathBuf::from)
+        .collect()
+}
+
+fn collect_keyed_strings(value: &Value, keys: &[&str], out: &mut Vec<String>) {
+    match value {
+        Value::Object(map) => {
+            for (key, value) in map {
+                if keys.iter().any(|candidate| candidate == key) {
+                    collect_strings(value, out);
+                }
+                collect_keyed_strings(value, keys, out);
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                collect_keyed_strings(value, keys, out);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+}
+
+fn collect_strings(value: &Value, out: &mut Vec<String>) {
+    match value {
+        Value::String(value) if !value.trim().is_empty() => out.push(value.trim().to_string()),
+        Value::Array(values) => {
+            for value in values {
+                collect_strings(value, out);
+            }
+        }
+        Value::Object(map) => {
+            for value in map.values() {
+                collect_strings(value, out);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+}
+
+fn dedup_strings(values: Vec<String>) -> Vec<String> {
+    let mut deduped = Vec::new();
+    for value in values {
+        if !deduped.iter().any(|existing| existing == &value) {
+            deduped.push(value);
+        }
+    }
+    deduped
+}
+
+fn scope_selection_from_research_scope(scope: &ResearchScope) -> ScopeSelection {
+    match scope {
+        ResearchScope::Project { root } => ScopeSelection::project(root.clone()),
+        ResearchScope::Topic { name, .. } => ScopeSelection::topic(name.clone()),
+    }
+}
+
+fn estimate_tokens(text: &str) -> usize {
+    text.split_whitespace().count()
 }
 
 fn load_or_create_session(options: &ResearchOptions) -> Result<ResearchSession, WikiError> {
@@ -332,8 +712,7 @@ struct AcceptedNoteFrontmatter<'a> {
     research_note_id: &'a str,
     research_status: &'a str,
     indexable: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    source: Option<&'a str>,
+    sources: &'a [String],
 }
 
 struct AcceptedNoteWrite {
@@ -423,7 +802,7 @@ fn render_accepted_note_body(
         research_note_id: draft_id,
         research_status: status,
         indexable,
-        source: note.source.as_deref(),
+        sources: &note.sources,
     })
     .map_err(|error| WikiError::Yaml {
         action: "serialize accepted research note frontmatter",
@@ -541,6 +920,7 @@ fn wait_for_materializing_research_note(
                         ),
                     });
                 }
+                notify_materializing_wait_observed();
                 thread::sleep(delay);
                 delay = delay
                     .saturating_mul(2)
@@ -556,8 +936,9 @@ fn accepted_note_draft_id(note: &AcceptedNoteDraft) -> String {
     key.push('\0');
     key.push_str(note.body.trim());
     key.push('\0');
-    if let Some(source) = &note.source {
+    for source in &note.sources {
         key.push_str(source.trim());
+        key.push('\0');
     }
     uuid::Uuid::new_v5(&RESEARCH_NOTE_NAMESPACE, key.as_bytes()).to_string()
 }
@@ -914,10 +1295,11 @@ mod tests {
 
         let mut options = default_options("How should events be monitored?", scope.clone());
         options.source_constraints = vec!["source-linked notes".to_string()];
+        options.max_steps = 0;
         options.accepted_notes = vec![AcceptedNoteDraft {
             title: "Session event monitoring".to_string(),
             body: "Durable event logs are appended as JSONL.".to_string(),
-            source: Some("daemon session stream".to_string()),
+            sources: vec!["raw/source.md".to_string()],
         }];
         let outcome = run(options).expect("research ran");
 
@@ -937,6 +1319,8 @@ mod tests {
         assert!(note_text.contains("title: Session event monitoring"));
         assert!(note_text.contains("research_status: completed"));
         assert!(note_text.contains("research_note_id:"));
+        assert!(note_text.contains("sources:"));
+        assert!(note_text.contains("raw/source.md"));
         assert!(note_text.contains("Durable event logs are appended as JSONL."));
 
         let index = std::fs::read_to_string(scope.root().join("raw/INDEX.md"))
@@ -954,7 +1338,7 @@ mod tests {
             &AcceptedNoteDraft {
                 title: "Same title".to_string(),
                 body: "first".to_string(),
-                source: None,
+                sources: Vec::new(),
             },
         )
         .expect("first note");
@@ -964,7 +1348,7 @@ mod tests {
             &AcceptedNoteDraft {
                 title: "Same title".to_string(),
                 body: "second".to_string(),
-                source: None,
+                sources: Vec::new(),
             },
         )
         .expect("second note");
@@ -986,7 +1370,7 @@ mod tests {
         let draft = AcceptedNoteDraft {
             title: "Same title".to_string(),
             body: "same body".to_string(),
-            source: Some("same source".to_string()),
+            sources: vec!["same-source.md".to_string()],
         };
 
         let first = write_accepted_note(root, "research-1", &draft).expect("first note");
@@ -1009,7 +1393,7 @@ mod tests {
         let draft = AcceptedNoteDraft {
             title: "Shared note".to_string(),
             body: "same body".to_string(),
-            source: None,
+            sources: Vec::new(),
         };
         let draft_id = accepted_note_draft_id(&draft);
         let path = research_dir.join("shared-note.md");
@@ -1020,8 +1404,10 @@ mod tests {
         let completed_path = path.clone();
         let completed_draft = draft.clone();
         let completed_id = draft_id.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(50));
+        let (wait_observed_tx, wait_observed_rx) = std::sync::mpsc::channel();
+        set_materializing_wait_signal(wait_observed_tx);
+        let completer = std::thread::spawn(move || {
+            wait_observed_rx.recv().expect("wait observed");
             let body = render_accepted_note_body(
                 "research-1",
                 &completed_draft,
@@ -1034,6 +1420,7 @@ mod tests {
         });
 
         let accepted = write_accepted_note(root, "research-1", &draft).expect("accepted note");
+        completer.join().expect("completed marker writer joined");
 
         assert!(!accepted.created);
         assert_eq!(accepted.note.path, path);
@@ -1077,10 +1464,11 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let scope = ResearchScope::project(temp.path());
         let mut options = default_options("Record accepted note", scope.clone());
+        options.max_steps = 0;
         options.accepted_notes = vec![AcceptedNoteDraft {
             title: "Tracked note".to_string(),
             body: "Tracked body.".to_string(),
-            source: None,
+            sources: vec!["raw/source.md".to_string()],
         }];
         run(options).expect("accepted note written");
 

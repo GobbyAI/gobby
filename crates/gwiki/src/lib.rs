@@ -53,6 +53,7 @@ pub(crate) mod provenance;
 #[allow(dead_code)]
 pub(crate) mod registry;
 pub mod research;
+pub(crate) mod research_loop;
 #[allow(dead_code)]
 pub(crate) mod schema;
 #[allow(dead_code)]
