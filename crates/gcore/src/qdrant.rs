@@ -508,6 +508,7 @@ mod tests {
                     Some("PUT /collections/collection/points?wait=true")
                 );
             }
+            Some(other) => panic!("expected QdrantError::OperationStatus, got {other:?}"),
             None => panic!("expected QdrantError::OperationStatus, got {err}"),
         }
     }
@@ -602,6 +603,7 @@ mod tests {
                     Some("POST /collections/collection/points/search")
                 );
             }
+            Some(other) => panic!("expected QdrantError::HttpStatus, got {other:?}"),
             None => panic!("expected QdrantError, got {err}"),
         }
 
@@ -641,6 +643,7 @@ mod tests {
                     Some("PUT /collections/collection/points?wait=true")
                 );
             }
+            Some(other) => panic!("expected QdrantError::HttpStatus, got {other:?}"),
             None => panic!("expected QdrantError, got {err}"),
         }
     }

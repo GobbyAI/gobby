@@ -61,6 +61,13 @@ where
             commands::init::run(&root, format, cli.quiet)?;
             Ok(true)
         }
+        Command::Contract => {
+            match format {
+                output::Format::Json => output::print_json(&gobby_code::contract::contract())?,
+                output::Format::Text => output::print_text("gcode CLI contract v1")?,
+            }
+            Ok(true)
+        }
         Command::Setup {
             standalone,
             database_url,
@@ -163,7 +170,11 @@ fn run() -> anyhow::Result<()> {
     match cli.command {
         // These commands are handled before Context::resolve(); this arm keeps the
         // exhaustive match explicit if the early-dispatch block returns normally.
-        Command::Init | Command::Setup { .. } | Command::Projects | Command::Prune { .. } => Ok(()),
+        Command::Contract
+        | Command::Init
+        | Command::Setup { .. }
+        | Command::Projects
+        | Command::Prune { .. } => Ok(()),
         Command::Index {
             path,
             files,

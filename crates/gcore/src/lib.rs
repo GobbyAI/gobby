@@ -7,6 +7,7 @@
 
 // Always available - existing modules.
 pub mod bootstrap;
+pub mod cli_contract;
 pub mod daemon_url;
 pub mod project;
 pub mod provisioning;

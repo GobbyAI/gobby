@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod config;
+pub mod contract;
 pub mod db;
 pub mod falkor;
 pub mod freshness;

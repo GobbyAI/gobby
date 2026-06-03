@@ -18,6 +18,7 @@ impl Drop for ProjectCleanup {
     fn drop(&mut self) {
         let database_url = self.database_url.clone();
         let project_id = self.project_id.clone();
+        let panic_project_id = project_id.clone();
         if std::panic::catch_unwind(move || {
             let mut conn = match gobby_core::postgres::connect_readwrite(&database_url) {
                 Ok(conn) => conn,
@@ -37,7 +38,7 @@ impl Drop for ProjectCleanup {
         })
         .is_err()
         {
-            eprintln!("ProjectCleanup cleanup panicked for project {project_id}");
+            eprintln!("ProjectCleanup cleanup panicked for project {panic_project_id}");
         }
     }
 }

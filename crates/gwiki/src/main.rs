@@ -27,6 +27,9 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum CliCommand {
+    /// Emit the CLI contract for daemon conformance tests.
+    Contract,
+
     /// Initialize a wiki vault.
     Init,
     /// Create gwiki-owned derived storage.
@@ -303,6 +306,21 @@ fn main() -> ExitCode {
         command,
     } = Cli::parse_from(normalize_project_flag_args(std::env::args_os()));
 
+    if matches!(&command, CliCommand::Contract) {
+        let mut stdout = std::io::stdout().lock();
+        let result = match format {
+            output::Format::Json => {
+                output::print_json(&mut stdout, &gobby_wiki::contract::contract())
+            }
+            output::Format::Text => output::print_text(&mut stdout, "gwiki CLI contract v1"),
+        };
+        if let Err(error) = result {
+            eprintln!("gwiki: {error}");
+            return ExitCode::from(1);
+        }
+        return ExitCode::SUCCESS;
+    }
+
     let command = match command_from_cli(command, scope.into()) {
         Ok(command) => command,
         Err(error) => {
@@ -358,6 +376,7 @@ fn is_cli_subcommand(value: &str) -> bool {
     matches!(
         value,
         "init"
+            | "contract"
             | "setup"
             | "index"
             | "collect"
@@ -398,6 +417,7 @@ fn print_error(format: output::Format, error: &WikiError) {
 
 fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Command, WikiError> {
     match command {
+        CliCommand::Contract => unreachable!("contract command is handled before runtime dispatch"),
         CliCommand::Init => Ok(Command::Init { scope }),
         CliCommand::Setup(args) => Ok(Command::Setup {
             scope,

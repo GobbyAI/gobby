@@ -412,6 +412,9 @@ pub fn vector_text_for_symbol(symbol: &Symbol) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::{EmbeddingSource, embedding_source_from_resolved_ai_context};
+    use crate::config::EmbeddingConfig;
+    use gobby_core::ai_context::AiContext;
     use gobby_core::config::{ConfigSource, ai_keys, embedding_keys};
     use std::collections::HashMap;
 

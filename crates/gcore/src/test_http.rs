@@ -111,7 +111,7 @@ fn content_length(header: &str) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::{content_length, read_http_request};
-    use std::io::{self, ErrorKind, Read};
+    use std::io::{self, Read};
 
     #[test]
     fn content_length_parses_case_and_whitespace_variants() {
@@ -132,8 +132,7 @@ mod tests {
                     return Ok(0);
                 }
                 if self.data.is_empty() {
-                    return Err(io::Error::new(
-                        ErrorKind::Other,
+                    return Err(io::Error::other(
                         "reader should not be polled after complete headers",
                     ));
                 }

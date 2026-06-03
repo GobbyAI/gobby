@@ -18,6 +18,7 @@ pub(crate) mod collect;
 pub(crate) mod commands;
 #[allow(dead_code)]
 pub(crate) mod compile;
+pub mod contract;
 #[allow(dead_code)]
 pub(crate) mod credibility;
 #[allow(dead_code)]

@@ -1,0 +1,299 @@
+use gobby_core::cli_contract::{
+    CliContract, CommandContract, FlagContract, PositionalContract, ScopeContract,
+};
+
+pub fn contract() -> CliContract {
+    CliContract {
+        tool: "gwiki",
+        contract_version: 1,
+        summary: "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
+        global_flags: vec![format_flag(), FlagContract::switch("--quiet")],
+        scope: Some(ScopeContract {
+            flags: vec![
+                FlagContract::value("--project", "ROOT"),
+                FlagContract::value("--topic", "NAME"),
+            ],
+            default: "detect project from current working directory; bare --project uses current directory",
+            identity_keys: vec!["kind", "id"],
+        }),
+        commands: vec![
+            CommandContract {
+                name: "contract",
+                summary: "Emit this CLI contract.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![format_flag()],
+                json_output_keys: contract_keys(),
+            },
+            CommandContract {
+                name: "index",
+                summary: "Index markdown and source notes in the selected scope.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![],
+                json_output_keys: scoped_keys(vec!["status", "indexed_pages", "indexed_sources"]),
+            },
+            CommandContract {
+                name: "search",
+                summary: "Search wiki documents in the selected scope.",
+                daemon_consumed: true,
+                positionals: vec![PositionalContract::required("QUERY")],
+                flags: vec![
+                    FlagContract::value("--limit", "N"),
+                    FlagContract::switch("--no-semantic"),
+                ],
+                json_output_keys: scoped_keys(vec![
+                    "query",
+                    "limit",
+                    "results",
+                    "degradations",
+                    "path",
+                    "title",
+                    "summary",
+                    "score",
+                ]),
+            },
+            CommandContract {
+                name: "read",
+                summary: "Read a wiki page or document in the selected scope.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![
+                    FlagContract::value("--path", "PATH"),
+                    FlagContract::value("--title", "TITLE"),
+                ],
+                json_output_keys: scoped_keys(vec![
+                    "path",
+                    "title",
+                    "content",
+                    "frontmatter",
+                    "citations",
+                ]),
+            },
+            CommandContract {
+                name: "refresh",
+                summary: "Refresh URL-backed raw source records.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![
+                    FlagContract::repeatable_value("--id", "SOURCE_ID"),
+                    FlagContract::switch("--dry-run"),
+                ],
+                json_output_keys: scoped_keys(vec![
+                    "status",
+                    "results",
+                    "changed_paths",
+                    "refreshed",
+                    "failed",
+                ]),
+            },
+            CommandContract {
+                name: "ingest-file",
+                summary: "Capture a local source file into the wiki inbox.",
+                daemon_consumed: true,
+                positionals: vec![PositionalContract::required("PATH")],
+                flags: ingest_file_flags(),
+                json_output_keys: scoped_keys(vec![
+                    "path",
+                    "raw_path",
+                    "source_path",
+                    "source_asset",
+                    "changed_paths",
+                    "citations",
+                ]),
+            },
+            CommandContract {
+                name: "ingest-url",
+                summary: "Fetch URL sources into the wiki inbox.",
+                daemon_consumed: true,
+                positionals: vec![PositionalContract::repeatable("URL")],
+                flags: vec![],
+                json_output_keys: scoped_keys(vec![
+                    "results",
+                    "path",
+                    "raw_path",
+                    "raw_paths",
+                    "source_path",
+                    "changed_paths",
+                    "citations",
+                    "url",
+                    "status",
+                ]),
+            },
+            CommandContract {
+                name: "collect",
+                summary: "Collect recognized inbox drops into raw storage.",
+                daemon_consumed: true,
+                positionals: vec![optional_positional("QUERY", false)],
+                flags: vec![],
+                json_output_keys: scoped_keys(vec!["results", "changed_paths", "status"]),
+            },
+            CommandContract {
+                name: "research",
+                summary: "Dispatch research workers and checkpoint wiki research state.",
+                daemon_consumed: true,
+                positionals: vec![optional_positional("QUESTION", false)],
+                flags: vec![
+                    FlagContract::value("--source-constraints", "TEXT"),
+                    FlagContract::value("--agent-count", "N"),
+                    FlagContract::value("--task-id", "ID"),
+                    FlagContract::switch("--resume"),
+                ],
+                json_output_keys: scoped_keys(vec![
+                    "question",
+                    "checkpoint",
+                    "accepted_notes",
+                    "changed_paths",
+                    "status",
+                ]),
+            },
+            CommandContract {
+                name: "compile",
+                summary: "Compile accepted research notes into wiki articles.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![
+                    FlagContract::value("--topic", "TOPIC"),
+                    FlagContract::value("--outline", "PATH"),
+                    FlagContract::value("--target", "PATH"),
+                    FlagContract::value("--kind", "article|stub"),
+                    FlagContract::value("--output", "PATH"),
+                ],
+                json_output_keys: scoped_keys(vec![
+                    "topic",
+                    "target_page",
+                    "written_path",
+                    "changed_paths",
+                    "status",
+                ]),
+            },
+            CommandContract {
+                name: "audit",
+                summary: "Report claims that lack source support.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![],
+                json_output_keys: scoped_keys(vec!["findings", "changed_paths", "status"]),
+            },
+            CommandContract {
+                name: "health",
+                summary: "Write wiki health snapshots under meta/health.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![],
+                json_output_keys: vec!["command", "root", "text_path", "json_path", "status"],
+            },
+            CommandContract {
+                name: "sources",
+                summary: "List raw source manifest entries in the selected scope.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![],
+                json_output_keys: scoped_keys(vec![
+                    "sources",
+                    "id",
+                    "url",
+                    "path",
+                    "raw_path",
+                    "source_path",
+                ]),
+            },
+            CommandContract {
+                name: "backlinks",
+                summary: "Show backlinks for a wiki page.",
+                daemon_consumed: true,
+                positionals: vec![PositionalContract::required("PAGE")],
+                flags: vec![],
+                json_output_keys: scoped_keys(vec!["page", "backlinks", "path", "title"]),
+            },
+            CommandContract {
+                name: "status",
+                summary: "Show shell readiness.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![],
+                json_output_keys: scoped_keys(vec!["status", "root", "vault"]),
+            },
+            CommandContract {
+                name: "remove-source",
+                summary: "Remove a raw source, its manifest entry, and its raw asset.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![
+                    FlagContract::value("--id", "SOURCE_ID").required(),
+                    FlagContract::switch("--dry-run"),
+                    FlagContract::switch("--yes"),
+                    FlagContract::switch("--keep-asset"),
+                ],
+                json_output_keys: scoped_keys(vec![
+                    "id",
+                    "removed_manifest",
+                    "removed_raw_asset",
+                    "changed_paths",
+                ]),
+            },
+        ],
+        error_codes: vec![
+            "not_implemented",
+            "invalid_scope",
+            "config",
+            "io",
+            "json",
+            "yaml",
+            "registry",
+            "daemon",
+            "invalid_input",
+            "not_found",
+            "index",
+            "search",
+            "setup",
+        ],
+    }
+}
+
+fn format_flag() -> FlagContract {
+    FlagContract::value("--format", "json|text").allowed(vec!["json", "text"])
+}
+
+fn ingest_file_flags() -> Vec<FlagContract> {
+    vec![
+        FlagContract::switch("--no-ai"),
+        FlagContract::switch("--translate"),
+        FlagContract::value("--target-lang", "LANG"),
+        FlagContract::value("--video-frame-interval", "SECONDS"),
+        ai_flag("--transcription-routing"),
+        ai_flag("--vision-routing"),
+        ai_flag("--text-routing"),
+    ]
+}
+
+fn ai_flag(name: &'static str) -> FlagContract {
+    FlagContract::value(name, "auto|daemon|direct|off")
+        .allowed(vec!["auto", "daemon", "direct", "off"])
+}
+
+fn optional_positional(name: &'static str, repeatable: bool) -> PositionalContract {
+    PositionalContract {
+        name,
+        required: false,
+        repeatable,
+    }
+}
+
+fn scoped_keys(mut keys: Vec<&'static str>) -> Vec<&'static str> {
+    let mut scoped = vec!["command", "scope"];
+    scoped.append(&mut keys);
+    scoped
+}
+
+fn contract_keys() -> Vec<&'static str> {
+    vec![
+        "tool",
+        "contract_version",
+        "summary",
+        "global_flags",
+        "scope",
+        "commands",
+        "error_codes",
+    ]
+}
