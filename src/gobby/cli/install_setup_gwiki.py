@@ -133,9 +133,7 @@ def install_gwiki_from_submodule(module: Any, bin_dir: Path) -> bool:
         return False
 
 
-def install_gwiki_from_cargo_git(
-    module: Any, bin_dir: Path, version: str | None = None
-) -> bool:
+def install_gwiki_from_cargo_git(module: Any, bin_dir: Path, version: str | None = None) -> bool:
     """Install gwiki from source via ``cargo install --git``, pinned to a tag.
 
     Without a tag, ``cargo install --git`` builds the repository HEAD — the one

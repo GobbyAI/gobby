@@ -447,7 +447,9 @@ def _maybe_start_ui_dev_server(runner: GobbyRunner) -> None:
             web_dir,
             ui_log,
             daemon_port=runner.config.daemon_port,
-            ws_port=runner.config.websocket.port if runner.config.websocket else DEFAULT_WEBSOCKET_PORT,
+            ws_port=runner.config.websocket.port
+            if runner.config.websocket
+            else DEFAULT_WEBSOCKET_PORT,
         )
         if ui_pid:
             logger.info(

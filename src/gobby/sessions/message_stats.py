@@ -43,7 +43,10 @@ def compute_message_stats(messages: list[Any]) -> MessageStats:
 
     for msg in messages:
         message_count += 1
-        if getattr(msg, "role", None) == "assistant" and getattr(msg, "content_type", None) == "text":
+        if (
+            getattr(msg, "role", None) == "assistant"
+            and getattr(msg, "content_type", None) == "text"
+        ):
             turn_count += 1
             content = getattr(msg, "content", None)
             if isinstance(content, str) and content.strip():
