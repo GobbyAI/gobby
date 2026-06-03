@@ -127,7 +127,7 @@ class TestSessionEndReasonEnum:
 
     def test_all_reasons_defined(self) -> None:
         """Test that all session end reasons are defined."""
-        expected = {"CLEAR", "LOGOUT", "PROMPT_INPUT_EXIT", "OTHER"}
+        expected = {"CLEAR", "RESUME", "COMPACT", "LOGOUT", "PROMPT_INPUT_EXIT", "OTHER"}
         actual = {r.name for r in SessionEndReason}
         assert actual == expected
 
@@ -253,6 +253,16 @@ class TestSessionEndInput:
         """Test custom reason."""
         input_data = SessionEndInput(external_id="key", reason=SessionEndReason.LOGOUT)
         assert input_data.reason == SessionEndReason.LOGOUT
+
+    def test_runtime_resume_reason(self) -> None:
+        """Test runtime resume reason emitted by Codex thread lifecycle events."""
+        input_data = SessionEndInput(external_id="key", reason="resume")
+        assert input_data.reason == SessionEndReason.RESUME
+
+    def test_runtime_compact_reason(self) -> None:
+        """Test runtime compact reason emitted for handoff-preserving exits."""
+        input_data = SessionEndInput(external_id="key", reason="compact")
+        assert input_data.reason == SessionEndReason.COMPACT
 
 
 class TestUserPromptSubmitInput:

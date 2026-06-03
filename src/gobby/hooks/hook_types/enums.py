@@ -118,6 +118,12 @@ class SessionEndReason(str, Enum):
     CLEAR = "clear"
     """User cleared the session"""
 
+    RESUME = "resume"
+    """Session ended because another session resumed or replaced it"""
+
+    COMPACT = "compact"
+    """Session ended because context was compacted for handoff"""
+
     LOGOUT = "logout"
     """User logged out"""
 
