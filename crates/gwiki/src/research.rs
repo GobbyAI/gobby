@@ -1444,7 +1444,7 @@ mod tests {
         options.ai = AiRouting::Off;
         let outcome = run(options).expect("audit ran");
 
-        assert_eq!(outcome.audit, true);
+        assert!(outcome.audit);
         assert_eq!(outcome.status, ResearchStatus::Partial);
         assert_eq!(outcome.stop_reason, ResearchStopReason::AiUnavailable);
         assert_eq!(outcome.findings.len(), 1);
