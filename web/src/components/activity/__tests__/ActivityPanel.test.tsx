@@ -28,17 +28,6 @@ vi.mock('../PlansTab', () => ({
   PlansTab: () => <div>Plans Tab</div>,
 }))
 
-vi.mock('../ArtifactsTab', () => ({
-  ArtifactsTab: ({ artifacts }: { artifacts: Map<string, { id: string; title: string }> }) => (
-    <div>
-      <div>Artifacts Tab</div>
-      {Array.from(artifacts.values()).map((artifact) => (
-        <span key={artifact.id}>{artifact.title}</span>
-      ))}
-    </div>
-  ),
-}))
-
 vi.mock('../FileChangesTab', () => ({
   FileChangesTab: () => <div>Changes Tab</div>,
 }))
@@ -293,42 +282,6 @@ describe('ActivityPanel', () => {
         value: previousWidth,
       })
     }
-  })
-
-  it('renders generated artifacts under the Artifacts tab', () => {
-    render(
-      <ActivityPanel
-        mode={"split"}
-        onToggleChat={vi.fn()}
-        panelWidth={320}
-        onWidthChange={vi.fn()}
-        activeTab="artifacts"
-        onTabChange={vi.fn()}
-        artifacts={new Map([
-          [
-            'artifact-1',
-            {
-              id: 'artifact-1',
-              type: 'image',
-              title: 'logo.png',
-              language: 'png',
-              versions: [{ content: 'data:image/png;base64,abc', timestamp: new Date() }],
-              currentVersionIndex: 0,
-            },
-          ],
-        ])}
-        activeArtifact={null}
-        onOpenArtifact={vi.fn()}
-        onCloseArtifact={vi.fn()}
-        onSetArtifactVersion={vi.fn()}
-        canvasState={null}
-        onCloseCanvas={vi.fn()}
-        isMobile={false}
-      />,
-    )
-
-    expect(screen.getByText('Artifacts Tab')).toBeInTheDocument()
-    expect(screen.getByText('logo.png')).toBeInTheDocument()
   })
 
   it('renders file diffs under the Changes tab', () => {

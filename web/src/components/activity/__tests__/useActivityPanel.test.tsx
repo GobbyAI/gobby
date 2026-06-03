@@ -274,12 +274,12 @@ describe('useActivityPanel — tab persistence', () => {
     expect(localStorage.getItem(LEGACY_TAB_KEY)).toBeNull()
   })
 
-  it('keeps the new artifacts tab as generated artifacts', () => {
+  it('migrates a stored v2 artifacts tab to changes after removal', () => {
     localStorage.setItem(TAB_KEY, 'artifacts')
 
     const { result } = renderHook(() => useActivityPanel(false))
 
-    expect(result.current.activeTab).toBe('artifacts')
+    expect(result.current.activeTab).toBe('changes')
   })
 
   it('keeps the MCP tab as a persisted activity tab', () => {

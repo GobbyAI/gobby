@@ -103,20 +103,21 @@ export function useChatPageArtifacts({
     lastPlanArtifactContentRef.current = null;
   }, [conversationSwitchKey, clearArtifacts]);
 
+  // createArtifact already opens the inline chat artifact panel, so these only
+  // need to create the artifact — the removed activity Artifacts tab was a
+  // redundant second surface.
   const openCodeAsArtifact = useCallback(
     (language: string, content: string, title?: string) => {
       createArtifact("code", content, language, title);
-      showTab("artifacts");
     },
-    [createArtifact, showTab],
+    [createArtifact],
   );
 
   const openFileAsArtifact = useCallback(
     (type: ArtifactType, language: string, content: string, title?: string) => {
       createArtifact(type, content, language, title);
-      showTab("artifacts");
     },
-    [createArtifact, showTab],
+    [createArtifact],
   );
 
   const onPlanReady = useCallback(
@@ -183,11 +184,11 @@ export function useChatPageArtifacts({
   const onArtifactEvent = useCallback(
     (type: string, content: string, language?: string, title?: string) => {
       if (VALID_ARTIFACT_TYPES.has(type)) {
+        // createArtifact opens the inline panel; no activity tab switch needed.
         createArtifact(type as ArtifactType, content, language, title);
-        showTab("artifacts");
       }
     },
-    [createArtifact, showTab],
+    [createArtifact],
   );
 
   useEffect(() => {

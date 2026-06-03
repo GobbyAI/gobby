@@ -400,7 +400,7 @@ export const useArtifactsMockFactory = () => ({
 
 export const useActivityPanelMockFactory = () => ({
   useActivityPanel: (_isMobile: boolean) => ({
-    activeTab: "artifacts",
+    activeTab: "plans",
     closeIfAutoOpened: vi.fn(),
     dismissOnMobile: dismissOnMobileSpy,
     effectiveMode: effectiveModeState.value,

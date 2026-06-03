@@ -600,7 +600,9 @@ describe("useChatPageArtifacts", () => {
       expect(result.current.artifacts.size).toBe(1);
       expect(result.current.activeArtifact?.title).toBe("Image");
     });
-    expect(showTab).toHaveBeenCalledWith("artifacts");
+    // The artifact surfaces inline (activeArtifact set); the removed activity
+    // Artifacts tab must not be selected.
+    expect(showTab).not.toHaveBeenCalledWith("artifacts");
   });
 });
 

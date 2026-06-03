@@ -6,7 +6,6 @@ import {
 } from "react";
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { PlansTab } from "./PlansTab";
-import { ArtifactsTab } from "./ArtifactsTab";
 import { FileChangesTab } from "./FileChangesTab";
 import { CanvasTab } from "./CanvasTab";
 import { SessionsTab } from "./SessionsTab";
@@ -311,20 +310,6 @@ export function ActivityPanel({
       case "plans":
         return (
           <PlansTab
-            artifacts={artifacts}
-            artifact={activeArtifact}
-            onOpenArtifact={onOpenArtifact}
-            onClose={onCloseArtifact}
-            onUpdateContent={onUpdateArtifactContent}
-            onSetVersion={onSetArtifactVersion}
-            planPendingApproval={planPendingApproval}
-            onApprovePlan={onApprovePlan}
-            onRequestPlanChanges={onRequestPlanChanges}
-          />
-        );
-      case "artifacts":
-        return (
-          <ArtifactsTab
             artifacts={artifacts}
             artifact={activeArtifact}
             onOpenArtifact={onOpenArtifact}

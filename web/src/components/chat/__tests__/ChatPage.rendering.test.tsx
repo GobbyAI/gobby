@@ -204,7 +204,7 @@ describe("ChatPage – rendering", () => {
     expect(voiceStatus).toHaveAttribute("data-recording", "true");
   });
 
-  it("opens the Artifacts tab when a show_file artifact event arrives", async () => {
+  it("surfaces a show_file artifact inline without switching the activity tab", async () => {
     let artifactEvent:
       | ((
           type: string,
@@ -239,7 +239,9 @@ describe("ChatPage – rendering", () => {
       "png",
       "Generated image",
     );
-    expect(showTabSpy).toHaveBeenCalledWith("artifacts");
+    // createArtifact opens the inline panel; the removed Artifacts tab must not
+    // be selected.
+    expect(showTabSpy).not.toHaveBeenCalledWith("artifacts");
   });
 
   it("does not create duplicate plan artifacts for identical plan-ready content", async () => {

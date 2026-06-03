@@ -10,7 +10,6 @@ export type ActivityTab =
   | "tasks"
   | "files"
   | "plans"
-  | "artifacts"
   | "changes"
   | "canvas";
 
@@ -88,17 +87,6 @@ export const ACTIVITY_PANEL_TABS: ActivityPanelTab[] = [
         <line x1="16" y1="13" x2="8" y2="13" />
         <line x1="16" y1="17" x2="8" y2="17" />
         <polyline points="10 9 9 9 8 9" />
-      </svg>
-    ),
-  },
-  {
-    id: "artifacts",
-    label: "Artifacts",
-    icon: (
-      <svg {...iconProps}>
-        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-        <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
-        <line x1="12" y1="22.08" x2="12" y2="12" />
       </svg>
     ),
   },

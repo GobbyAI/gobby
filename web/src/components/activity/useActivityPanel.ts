@@ -12,7 +12,6 @@ const VALID_TABS: ActivityTab[] = [
   'mcp',
   'tasks',
   'plans',
-  'artifacts',
   'changes',
   'files',
   'canvas',
@@ -54,8 +53,10 @@ function reduceMobileToggle(view: MobileView): MobileView {
   return view === 'panel' ? 'chat' : 'panel'
 }
 
-function normalizeStoredTab(value: string | null, legacy = false): ActivityTab | null {
-  if (legacy && value === 'artifacts') return 'changes'
+function normalizeStoredTab(value: string | null): ActivityTab | null {
+  // The Artifacts tab was removed; any stored value (legacy v1 or v2) lands on
+  // Changes so existing users never resolve to a missing tab.
+  if (value === 'artifacts') return 'changes'
   if (value && VALID_TABS.includes(value as ActivityTab)) return value as ActivityTab
   return null
 }
@@ -65,7 +66,7 @@ function loadActiveTab(): ActivityTab {
     const stored = normalizeStoredTab(localStorage.getItem(STORAGE_KEY_TAB))
     if (stored) return stored
 
-    const legacy = normalizeStoredTab(localStorage.getItem(LEGACY_STORAGE_KEY_TAB), true)
+    const legacy = normalizeStoredTab(localStorage.getItem(LEGACY_STORAGE_KEY_TAB))
     if (legacy) {
       localStorage.removeItem(LEGACY_STORAGE_KEY_TAB)
       return legacy

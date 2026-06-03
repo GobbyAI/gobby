@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest'
 import { render } from '@testing-library/react'
 import {
   ActivityPanelEmpty,
-  ArtifactsEmptyIcon,
   CanvasEmptyIcon,
   ChangesEmptyIcon,
   PlansEmptyIcon,
@@ -40,8 +39,8 @@ describe('ActivityPanelEmpty (#14246)', () => {
     const { container } = render(
       <ActivityPanelEmpty
         icon={<svg />}
-        heading="Artifacts"
-        body="Artifacts appear here when code, text, or plans are generated"
+        heading="Changes"
+        body="File changes appear here as the agent edits the working tree"
       />,
     )
 
@@ -52,7 +51,6 @@ describe('ActivityPanelEmpty (#14246)', () => {
   it('exposes one icon per panel using consistent stroke styling', () => {
     const renders = [
       render(<PlansEmptyIcon />),
-      render(<ArtifactsEmptyIcon />),
       render(<ChangesEmptyIcon />),
       render(<CanvasEmptyIcon />),
     ]
@@ -78,17 +76,6 @@ describe('ActivityPanelEmpty (#14246)', () => {
       )
       expect(source).not.toMatch(/No plans yet/)
       expect(source).not.toMatch(/text-xs text-muted-foreground mt-1/)
-    })
-
-    it('ArtifactsTab uses ActivityPanelEmpty with the spec heading + body', () => {
-      const source = readSource('src/components/activity/ArtifactsTab.tsx')
-      expect(source).toContain('ActivityPanelEmpty')
-      expect(source).toContain('ArtifactsEmptyIcon')
-      expect(source).toContain('heading="Artifacts"')
-      expect(source).toContain(
-        'body="Artifacts appear here when code, text, or plans are generated"',
-      )
-      expect(source).not.toMatch(/No artifacts found/)
     })
 
     it('FileChangesTab uses ActivityPanelEmpty with the spec heading + body', () => {
@@ -117,7 +104,6 @@ describe('ActivityPanelEmpty (#14246)', () => {
     it('strips the trailing period from every empty-state body line', () => {
       const sources = [
         readSource('src/components/activity/PlansTab.tsx'),
-        readSource('src/components/activity/ArtifactsTab.tsx'),
         readSource('src/components/activity/FileChangesTab.tsx'),
         readSource('src/components/activity/CanvasTab.tsx'),
       ]
@@ -159,7 +145,6 @@ describe('ActivityPanelEmpty (#14246)', () => {
         readSource('src/components/activity/TracesTab.tsx'),
         readSource('src/components/activity/FileChangesTab.tsx'),
         readSource('src/components/activity/PlansTab.tsx'),
-        readSource('src/components/activity/ArtifactsTab.tsx'),
         readSource('src/components/activity/CanvasTab.tsx'),
       ]
       for (const source of sources) {
