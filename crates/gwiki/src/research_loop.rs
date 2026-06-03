@@ -233,8 +233,8 @@ impl<'a> ResearchLoop<'a> {
         let started = Instant::now();
         let mut state = LoopState::default();
 
-        if self.write_initial_notes(&mut state, input.initial_notes)? {
-            return Ok(state.finish(ResearchStopReason::SourceBlocked));
+        if let Some(reason) = self.write_initial_notes(&mut state, input.initial_notes)? {
+            return Ok(state.finish(reason));
         }
 
         let mut last_fingerprint: Option<String> = None;
@@ -328,14 +328,19 @@ impl<'a> ResearchLoop<'a> {
         &mut self,
         state: &mut LoopState,
         notes: &[AcceptedNoteDraft],
-    ) -> Result<bool, WikiError> {
+    ) -> Result<Option<ResearchStopReason>, WikiError> {
         for note in notes {
             let Some(validated) = self.validated_note(note.clone(), None, state) else {
-                return Ok(true);
+                return Ok(Some(ResearchStopReason::SourceBlocked));
             };
-            self.write_validated_note(state, &validated)?;
+            if matches!(
+                self.write_validated_note(state, &validated)?,
+                NoteWriteResult::Conflict
+            ) {
+                return Ok(Some(ResearchStopReason::WriteConflict));
+            }
         }
-        Ok(false)
+        Ok(None)
     }
 
     fn execute_action(
@@ -393,8 +398,12 @@ impl<'a> ResearchLoop<'a> {
                 else {
                     return Ok(StepOutcome::Stop(ResearchStopReason::SourceBlocked));
                 };
-                let progress = self.write_validated_note(state, &validated)?;
-                Ok(StepOutcome::Continue { progress })
+                match self.write_validated_note(state, &validated)? {
+                    NoteWriteResult::Conflict => {
+                        Ok(StepOutcome::Stop(ResearchStopReason::WriteConflict))
+                    }
+                    NoteWriteResult::Written { progress } => Ok(StepOutcome::Continue { progress }),
+                }
             }
             ResearchAction::RecordGap { reason, evidence } => {
                 let reason = reason.trim();
@@ -428,12 +437,25 @@ impl<'a> ResearchLoop<'a> {
         &mut self,
         state: &mut LoopState,
         note: &AcceptedNoteDraft,
-    ) -> Result<bool, WikiError> {
+    ) -> Result<NoteWriteResult, WikiError> {
         let outcome = self.note_writer.write_note(note)?;
+        if outcome.write_conflict {
+            // The target note changed since draft validation. Per the research
+            // contract, record the conflict and exit without overwriting or
+            // recording a partial note body.
+            state.write_conflict = true;
+            state.events.push(ResearchLoopEvent {
+                kind: "research_write_conflict".to_string(),
+                message: format!(
+                    "write conflict for research note {}; exiting without overwriting",
+                    outcome.note.title
+                ),
+            });
+            return Ok(NoteWriteResult::Conflict);
+        }
         if outcome.created {
             state.changed_paths.push(outcome.note.path.clone());
         }
-        state.write_conflict |= outcome.write_conflict;
         if !state
             .accepted_notes
             .iter()
@@ -445,7 +467,9 @@ impl<'a> ResearchLoop<'a> {
             kind: "note_accepted".to_string(),
             message: format!("accepted research note {}", outcome.note.title),
         });
-        Ok(outcome.created)
+        Ok(NoteWriteResult::Written {
+            progress: outcome.created,
+        })
     }
 
     fn validated_note(
@@ -603,6 +627,14 @@ impl LoopState {
 enum StepOutcome {
     Continue { progress: bool },
     Stop(ResearchStopReason),
+}
+
+/// Result of attempting to write a validated note. A genuine write conflict
+/// (the target note changed since draft validation) halts the run without
+/// overwriting; a successful write reports whether it created a new note.
+enum NoteWriteResult {
+    Written { progress: bool },
+    Conflict,
 }
 
 pub(crate) fn parse_model_action(response: &str) -> Result<ResearchAction, String> {
@@ -868,6 +900,7 @@ mod tests {
     #[derive(Default)]
     struct FakeWriter {
         notes: Vec<AcceptedNoteDraft>,
+        conflict: bool,
     }
 
     impl ResearchNoteWriter for FakeWriter {
@@ -878,8 +911,8 @@ mod tests {
                     title: note.title.clone(),
                     path: PathBuf::from(format!("raw/research/{}.md", note.title)),
                 },
-                created: true,
-                write_conflict: false,
+                created: !self.conflict,
+                write_conflict: self.conflict,
             })
         }
     }
@@ -946,6 +979,59 @@ mod tests {
         assert_eq!(result.stop_reason, ResearchStopReason::Finish);
         assert_eq!(writer.notes.len(), 1);
         assert_eq!(writer.notes[0].sources, vec!["raw/source.md".to_string()]);
+    }
+
+    #[test]
+    fn write_conflict_stops_the_run_without_recording_the_note() {
+        let mut model = FakeModel::new(vec![
+            ModelDecision {
+                action: ResearchAction::Search {
+                    query: "events".to_string(),
+                },
+                tokens_used: 10,
+            },
+            ModelDecision {
+                action: ResearchAction::AcceptNote {
+                    title: "Event notes".to_string(),
+                    body: "Events are persisted.".to_string(),
+                    sources: vec!["raw/source.md".to_string()],
+                },
+                tokens_used: 12,
+            },
+        ]);
+
+        let mut ask = FakeAsk;
+        let mut search = FakeSearch;
+        let mut read = FakeRead;
+        let mut ingest = FakeIngest;
+        let mut writer = FakeWriter {
+            conflict: true,
+            ..Default::default()
+        };
+        let mut loop_ = ResearchLoop::new(
+            Path::new("/tmp/wiki"),
+            config(),
+            ResearchLoopDeps {
+                model: &mut model,
+                ask: &mut ask,
+                search: &mut search,
+                read: &mut read,
+                ingest: &mut ingest,
+                note_writer: &mut writer,
+            },
+        );
+        let result = loop_
+            .run(ResearchLoopInput {
+                question: "How are events persisted?",
+                source_constraints: &[],
+                initial_notes: &[],
+            })
+            .expect("loop runs");
+        assert_eq!(result.stop_reason, ResearchStopReason::WriteConflict);
+        assert!(result.write_conflict);
+        // The run halts without recording or overwriting the note.
+        assert!(result.accepted_notes.is_empty());
+        assert!(result.changed_paths.is_empty());
     }
 
     #[test]

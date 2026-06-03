@@ -763,14 +763,15 @@ fn write_accepted_note(
     })?;
 
     let draft_id = accepted_note_draft_id(note);
-    if let Some(path) = find_completed_accepted_note(&research_dir, &draft_id)? {
+    let expected_body = note.body.trim();
+    if let Some(found) = find_completed_accepted_note(&research_dir, &draft_id, expected_body)? {
         return Ok(AcceptedNoteWrite {
             note: AcceptedResearchNote {
                 title: note.title.clone(),
-                path,
+                path: found.path,
             },
             created: false,
-            write_conflict: false,
+            write_conflict: found.write_conflict,
         });
     }
 
@@ -824,7 +825,13 @@ enum AcceptedNoteSlot {
 enum ResearchNoteFileState {
     Missing,
     CompletedMatching,
-    MaterializingMatching { stale: bool },
+    /// A completed note carries our draft id but its on-disk body differs from
+    /// the validated draft — a concurrent writer changed it. The run must stop
+    /// without overwriting rather than dedup to tampered content.
+    CompletedConflict,
+    MaterializingMatching {
+        stale: bool,
+    },
     Occupied,
 }
 
@@ -865,7 +872,7 @@ fn create_materializing_research_note(
 ) -> Result<AcceptedNoteSlot, WikiError> {
     let title = &note.title;
     let slug = slugify(title);
-    let mut write_conflict = false;
+    let expected_body = note.body.trim();
     for attempt in 1..=MAX_RESEARCH_NOTE_SUFFIX_ATTEMPTS {
         let file_name = if attempt == 1 {
             format!("{slug}.md")
@@ -873,11 +880,17 @@ fn create_materializing_research_note(
             format!("{slug}-{attempt}.md")
         };
         let path = research_dir.join(file_name);
-        match research_note_file_state(&path, draft_id)? {
+        match research_note_file_state(&path, draft_id, expected_body)? {
             ResearchNoteFileState::CompletedMatching => {
                 return Ok(AcceptedNoteSlot::Existing {
                     path,
-                    write_conflict,
+                    write_conflict: false,
+                });
+            }
+            ResearchNoteFileState::CompletedConflict => {
+                return Ok(AcceptedNoteSlot::Existing {
+                    path,
+                    write_conflict: true,
                 });
             }
             ResearchNoteFileState::MaterializingMatching { stale } if stale => {
@@ -888,7 +901,9 @@ fn create_materializing_research_note(
                 })?;
             }
             ResearchNoteFileState::MaterializingMatching { .. } => {
-                if let Some(path) = wait_for_materializing_research_note(&path, draft_id, title)? {
+                if let Some((path, write_conflict)) =
+                    wait_for_materializing_research_note(&path, draft_id, expected_body, title)?
+                {
                     return Ok(AcceptedNoteSlot::Existing {
                         path,
                         write_conflict,
@@ -896,8 +911,9 @@ fn create_materializing_research_note(
                 }
                 continue;
             }
+            // A different note occupying this title slug is a legitimate
+            // collision, not a write conflict — bump the numeric suffix.
             ResearchNoteFileState::Occupied => {
-                write_conflict = true;
                 continue;
             }
             ResearchNoteFileState::Missing => {}
@@ -924,11 +940,12 @@ fn create_materializing_research_note(
                 }
                 return Ok(AcceptedNoteSlot::Materializing {
                     path,
-                    write_conflict,
+                    write_conflict: false,
                 });
             }
+            // Another writer created this marker between our check and create —
+            // a slot race, not a content conflict. Try the next suffix.
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                write_conflict = true;
                 continue;
             }
             Err(error) => {
@@ -949,13 +966,19 @@ fn create_materializing_research_note(
 fn wait_for_materializing_research_note(
     path: &Path,
     draft_id: &str,
+    expected_body: &str,
     title: &str,
-) -> Result<Option<PathBuf>, WikiError> {
+) -> Result<Option<(PathBuf, bool)>, WikiError> {
     let started = Instant::now();
     let mut delay = RESEARCH_NOTE_MATERIALIZE_INITIAL_DELAY;
     loop {
-        match research_note_file_state(path, draft_id)? {
-            ResearchNoteFileState::CompletedMatching => return Ok(Some(path.to_path_buf())),
+        match research_note_file_state(path, draft_id, expected_body)? {
+            ResearchNoteFileState::CompletedMatching => {
+                return Ok(Some((path.to_path_buf(), false)));
+            }
+            ResearchNoteFileState::CompletedConflict => {
+                return Ok(Some((path.to_path_buf(), true)));
+            }
             ResearchNoteFileState::Missing | ResearchNoteFileState::Occupied => return Ok(None),
             ResearchNoteFileState::MaterializingMatching { stale } if stale => {
                 fs::remove_file(path).map_err(|error| WikiError::Io {
@@ -998,10 +1021,16 @@ fn accepted_note_draft_id(note: &AcceptedNoteDraft) -> String {
     uuid::Uuid::new_v5(&RESEARCH_NOTE_NAMESPACE, key.as_bytes()).to_string()
 }
 
+struct CompletedAcceptedNote {
+    path: PathBuf,
+    write_conflict: bool,
+}
+
 fn find_completed_accepted_note(
     research_dir: &Path,
     draft_id: &str,
-) -> Result<Option<PathBuf>, WikiError> {
+    expected_body: &str,
+) -> Result<Option<CompletedAcceptedNote>, WikiError> {
     let entries = match fs::read_dir(research_dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
@@ -1024,11 +1053,20 @@ fn find_completed_accepted_note(
         if path.extension().and_then(|value| value.to_str()) != Some("md") {
             continue;
         }
-        if matches!(
-            research_note_file_state(&path, draft_id)?,
-            ResearchNoteFileState::CompletedMatching
-        ) {
-            return Ok(Some(path));
+        match research_note_file_state(&path, draft_id, expected_body)? {
+            ResearchNoteFileState::CompletedMatching => {
+                return Ok(Some(CompletedAcceptedNote {
+                    path,
+                    write_conflict: false,
+                }));
+            }
+            ResearchNoteFileState::CompletedConflict => {
+                return Ok(Some(CompletedAcceptedNote {
+                    path,
+                    write_conflict: true,
+                }));
+            }
+            _ => continue,
         }
     }
     Ok(None)
@@ -1037,6 +1075,7 @@ fn find_completed_accepted_note(
 fn research_note_file_state(
     path: &Path,
     draft_id: &str,
+    expected_body: &str,
 ) -> Result<ResearchNoteFileState, WikiError> {
     let contents = match fs::read_to_string(path) {
         Ok(contents) => contents,
@@ -1058,7 +1097,10 @@ fn research_note_file_state(
         return Ok(ResearchNoteFileState::Occupied);
     }
     if yaml_field_eq(frontmatter, "research_status", "completed") {
-        return Ok(ResearchNoteFileState::CompletedMatching);
+        if research_note_body_matches(&contents, expected_body) {
+            return Ok(ResearchNoteFileState::CompletedMatching);
+        }
+        return Ok(ResearchNoteFileState::CompletedConflict);
     }
     if yaml_field_eq(frontmatter, "research_status", "materializing") {
         return Ok(ResearchNoteFileState::MaterializingMatching {
@@ -1074,6 +1116,26 @@ fn frontmatter_block(markdown: &str) -> Option<&str> {
         .or_else(|| markdown.strip_prefix("---\r\n"))?;
     let end = rest.find("\n---").or_else(|| rest.find("\r\n---"))?;
     Some(&rest[..end])
+}
+
+/// Extract the markdown body (the content after the frontmatter fence) of an
+/// accepted research note, trimmed. Returns `None` for malformed notes that
+/// lack a closing fence.
+fn research_note_body(markdown: &str) -> Option<&str> {
+    let rest = markdown
+        .strip_prefix("---\n")
+        .or_else(|| markdown.strip_prefix("---\r\n"))?;
+    let end = rest.find("\n---").or_else(|| rest.find("\r\n---"))?;
+    let after_fence = rest[end..].trim_start_matches(['\r', '\n']);
+    let body = after_fence.strip_prefix("---")?;
+    Some(body.trim())
+}
+
+/// Whether an on-disk completed note's body matches the validated draft body.
+/// A malformed note (no extractable body) is treated as a mismatch so the run
+/// stops rather than dedups to tampered content.
+fn research_note_body_matches(contents: &str, expected_body: &str) -> bool {
+    research_note_body(contents).is_some_and(|body| body == expected_body.trim())
 }
 
 fn yaml_field_eq(frontmatter: &str, key: &str, value: &str) -> bool {
@@ -1420,8 +1482,49 @@ mod tests {
             second.note.path.file_name().and_then(|name| name.to_str()),
             Some("same-title-2.md")
         );
+        // A different note sharing the title slug is a legitimate numeric-suffix
+        // collision, not a write conflict.
         assert!(!first.write_conflict);
-        assert!(second.write_conflict);
+        assert!(!second.write_conflict);
+    }
+
+    #[test]
+    fn accepted_note_draft_collision_with_changed_body_is_write_conflict() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let research_dir = root.join("raw/research");
+        std::fs::create_dir_all(&research_dir).expect("research dir");
+
+        let draft = AcceptedNoteDraft {
+            title: "Concurrent note".to_string(),
+            body: "the validated draft body".to_string(),
+            sources: Vec::new(),
+        };
+        let draft_id = accepted_note_draft_id(&draft);
+        // Simulate a concurrent writer: a completed note carrying our draft id
+        // but a body that changed since draft validation.
+        let tampered = AcceptedNoteDraft {
+            title: draft.title.clone(),
+            body: "a different body written by another process".to_string(),
+            sources: draft.sources.clone(),
+        };
+        let path = research_dir.join("concurrent-note.md");
+        let on_disk =
+            render_accepted_note_body("research-other", &tampered, &draft_id, "completed", true)
+                .expect("tampered note body");
+        std::fs::write(&path, &on_disk).expect("write tampered note");
+
+        let result = write_accepted_note(root, "research-1", &draft).expect("write result");
+
+        assert!(result.write_conflict);
+        assert!(!result.created);
+        assert_eq!(result.note.path, path);
+        // The existing note is not overwritten and no suffix-bumped note is made.
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("note still present"),
+            on_disk
+        );
+        assert!(!research_dir.join("concurrent-note-2.md").exists());
     }
 
     #[test]
