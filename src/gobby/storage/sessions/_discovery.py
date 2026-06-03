@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any, Protocol
 from gobby.storage.session_models import Session
 from gobby.storage.sql_dialect import newer_than_now_expr
 
+MAX_ACTIVE_SESSION_SCAN = 250
+
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
@@ -252,8 +254,9 @@ class _DiscoveryMixin:
             AND status = %s
             AND terminal_context IS NOT NULL
             ORDER BY updated_at DESC
+            LIMIT %s
             """,
-            (project_id, "active"),
+            (project_id, "active", MAX_ACTIVE_SESSION_SCAN),
         )
 
         requested_context = _parse_terminal_context_value(terminal_context)

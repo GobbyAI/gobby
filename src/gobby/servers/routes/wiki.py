@@ -171,10 +171,10 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
         request = body or {}
         source_id = _required_string(request.get("id"), "id is required")
         yes = bool(request.get("yes", False))
-        dry_run_requested = bool(request.get("dry_run", False))
-        if dry_run_requested and yes:
+        explicit_dry_run = bool(request.get("dry_run", False))
+        if explicit_dry_run and yes:
             raise HTTPException(status_code=400, detail="dry_run and yes cannot both be true")
-        dry_run = dry_run_requested or not yes
+        dry_run = explicit_dry_run or not yes
         keep_asset = bool(request.get("keep_asset", False))
         return await _write_call(
             server,

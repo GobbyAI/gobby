@@ -69,17 +69,11 @@ def test_coderabbit_skill_requires_exact_findings_table_contract() -> None:
     body = _body()
     normalized_body = " ".join(body.split())
 
-    assert (
-        "| # | Decision | Path/File Name | Relevant Memory/Lesson | Reason/Planned Fix |"
-        in body
-    )
+    assert "| # | Decision | Path/File Name | Relevant Memory/Lesson | Reason/Planned Fix |" in body
     assert "|---|---|---|---|---|" in body
     assert "`Path/File Name`: repo-relative path or report/artifact path" in body
     assert "use comma-separated paths for multi-file findings" in body
-    assert (
-        "`Reason/Planned Fix`: planned fix for `fix`; reason/evidence for `no-fix`"
-        in body
-    )
+    assert "`Reason/Planned Fix`: planned fix for `fix`; reason/evidence for `no-fix`" in body
     assert "checked file, symbol, or behavior" not in normalized_body.lower()
     assert "Reason for the decision" not in body
 

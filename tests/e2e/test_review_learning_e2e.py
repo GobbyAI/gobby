@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from collections.abc import Generator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -87,7 +88,9 @@ def fake_embedding_api() -> Generator[str]:
     finally:
         server.shutdown()
         server.server_close()
-        thread.join(timeout=2)
+        deadline = time.monotonic() + 10
+        while thread.is_alive() and time.monotonic() < deadline:
+            thread.join(timeout=0.25)
 
 
 @pytest.fixture

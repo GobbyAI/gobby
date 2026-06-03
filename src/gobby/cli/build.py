@@ -25,6 +25,7 @@ from gobby.build.dispatch_tick import kick_dispatcher_tick as _kick_dispatcher_t
 from gobby.build.profiles import BuildProfileError
 from gobby.config.build import Isolation
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 
 from . import _build_daemon as _build_daemon_helpers
 from . import _build_options as _build_options_helpers
@@ -83,7 +84,12 @@ def _resolve_build_project_context(
     caller_project_id = resolve_project_ref(None, exit_on_not_found=False) if explicit else None
     project_id = resolve_project_id(project_ref)
     if not explicit:
-        return _BuildProjectContext(project_id=project_id, cwd=caller_cwd, explicit=False)
+        return _BuildProjectContext(
+            project_id=project_id,
+            cwd=caller_cwd,
+            explicit=False,
+            caller_project_id=project_id,
+        )
     return _BuildProjectContext(
         project_id=project_id,
         cwd=_project_repo_path(project_id),
@@ -361,14 +367,14 @@ def _coordinator_session_ref(
             raise click.ClickException(f"Could not resolve current coordinator: {exc}") from exc
     codex_thread_id = (os.environ.get("CODEX_THREAD_ID") or "").strip()
     if codex_thread_id:
-        from gobby.storage.sessions import SessionManager
-
         db = _open_database()
         try:
             session = SessionManager(db).find_active_by_external_id(codex_thread_id, "codex")
         finally:
             db.close()
-        if session:
+        if session and (
+            caller_project_id is None or getattr(session, "project_id", None) == caller_project_id
+        ):
             return session.id
     raise click.ClickException(
         "--coordinator needs an active Gobby session; pass --coordinator SESSION explicitly"
@@ -400,10 +406,6 @@ def build_resume_command(input_ref: str | None, project_ref: str | None) -> None
 
 
 def _run_build_stop(input_ref: str | None = None, *, project_ref: str | None = None) -> None:
-    if input_ref is None and project_ref is None:
-        raise click.ClickException(
-            "Task tree required for build stop; pass a task ref or --project for project-scoped stop."
-        )
     project_context = _resolve_build_project_context(project_ref, Path.cwd())
     project_id = project_context.project_id
     cwd = str(project_context.cwd)

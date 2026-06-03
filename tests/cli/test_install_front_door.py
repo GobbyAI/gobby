@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -69,8 +68,8 @@ def test_maybe_start_daemon_skips_in_no_interactive(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    run = MagicMock()
-    monkeypatch.setattr(install_module.subprocess, "run", run)
+    popen = MagicMock()
+    monkeypatch.setattr(install_module.subprocess, "Popen", popen)
     monkeypatch.setattr(install_module, "_daemon_url", lambda: "http://localhost:60887/")
 
     install_module._maybe_start_daemon_after_install(no_interactive=True)
@@ -78,20 +77,23 @@ def test_maybe_start_daemon_skips_in_no_interactive(
     output = capsys.readouterr().out
     assert "Gobby UI: http://localhost:60887/" in output
     assert "/gobby intro" in output
-    run.assert_not_called()
+    popen.assert_not_called()
 
 
 def test_maybe_start_daemon_starts_and_opens_browser(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    run = MagicMock(return_value=subprocess.CompletedProcess(["gobby"], 0, "", ""))
+    process = MagicMock()
+    process.poll.return_value = None
+    popen = MagicMock(return_value=process)
     open_browser = MagicMock(return_value=True)
     monkeypatch.setattr(install_module, "_ci_environment", lambda: False)
     monkeypatch.setattr(install_module, "_headless_or_remote", lambda: False)
-    monkeypatch.setattr(install_module, "_daemon_already_running", lambda: False)
+    daemon_running = iter([False, True])
+    monkeypatch.setattr(install_module, "_daemon_already_running", lambda: next(daemon_running))
     monkeypatch.setattr(install_module, "_daemon_url", lambda: "http://localhost:60887/")
-    monkeypatch.setattr(install_module.subprocess, "run", run)
+    monkeypatch.setattr(install_module.subprocess, "Popen", popen)
     monkeypatch.setattr(install_module.webbrowser, "open", open_browser)
 
     install_module._maybe_start_daemon_after_install(no_interactive=False)
@@ -100,5 +102,5 @@ def test_maybe_start_daemon_starts_and_opens_browser(
     assert "Starting Gobby daemon" in output
     assert "Gobby daemon started: http://localhost:60887/" in output
     assert "/gobby intro" in output
-    run.assert_called_once()
+    popen.assert_called_once()
     open_browser.assert_called_once_with("http://localhost:60887/")

@@ -495,6 +495,7 @@ export function useSessionDetail(sessionId: string | null) {
           if (
             pendingSessionId &&
             sessionIdRef.current === pendingSessionId &&
+            detailLoadVersionRef.current === refreshVersion &&
             messageSourceRef.current === 'session'
           ) {
             scheduleTailRefreshRef.current(pendingSessionId)

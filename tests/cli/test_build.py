@@ -376,11 +376,12 @@ def test_build_cli_bare_coordinator_uses_codex_thread_session(
     with (
         patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
         patch("gobby.cli.build._open_database") as open_db,
-        patch("gobby.storage.sessions.SessionManager") as manager_cls,
+        patch("gobby.cli.build.SessionManager") as manager_cls,
         patch("gobby.cli.build._try_daemon_build", return_value=build_result) as daemon,
     ):
         manager_cls.return_value.find_active_by_external_id.return_value = SimpleNamespace(
-            id="session-from-codex"
+            id="session-from-codex",
+            project_id="project-1",
         )
         result = CliRunner().invoke(cli, ["build", str(plan_file), "--coordinator", "current"])
 
@@ -615,7 +616,7 @@ def test_build_cli_without_input_invokes_interactive_build_skill() -> None:
     invoke_skill.assert_called_once()
 
 
-def test_build_stop_cli_requires_task_ref_or_project() -> None:
+def test_build_stop_cli_uses_cwd_project_when_no_ref() -> None:
     from gobby.cli import cli
 
     with (
@@ -624,10 +625,11 @@ def test_build_stop_cli_requires_task_ref_or_project() -> None:
     ):
         result = CliRunner().invoke(cli, ["build", "stop"])
 
-    assert result.exit_code != 0
-    assert "Task tree required for build stop" in result.output
-    open_db.assert_not_called()
-    build_stop.assert_not_called()
+    assert result.exit_code == 0
+    build_stop.assert_called_once()
+    assert build_stop.call_args.kwargs["db"] is open_db.return_value
+    assert build_stop.call_args.kwargs["project_id"]
+    open_db.return_value.close.assert_called_once_with()
 
 
 def test_build_resume_cli_kicks_dispatcher() -> None:

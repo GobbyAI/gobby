@@ -102,6 +102,7 @@ class NullBackend:
         memory_type: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        tags_all: list[str] | None = None,
     ) -> list[MemoryRecord]:
         """List memories (always returns empty list)."""
         return []

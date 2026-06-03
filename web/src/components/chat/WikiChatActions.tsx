@@ -99,6 +99,7 @@ function parseLines(value: string): string[] {
 
 function buildIngestRequest(value: string): WikiIngestRequest {
   const entries = parseLines(value);
+  if (entries.length === 0) return {};
   const urls = entries.filter((entry) => /^https?:\/\//i.test(entry));
   if (urls.length) return { urls };
   return entries.length > 1 ? { paths: entries } : { path: entries[0] };

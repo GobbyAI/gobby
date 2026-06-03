@@ -8,6 +8,8 @@ import pytest
 from gobby.gwiki_gateway import GwikiCommandError
 from gobby.wiki.status import collect_wiki_status
 
+pytestmark = pytest.mark.unit
+
 
 class RecordingGateway:
     def __init__(self) -> None:

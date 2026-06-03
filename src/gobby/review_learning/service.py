@@ -191,7 +191,7 @@ class ReviewLearningService:
             risk=risk,
         )
 
-        existing = self.memory_manager.list_memories(
+        existing = await self.memory_manager.alist_memories(
             project_id=project_id,
             memory_type="pattern",
             limit=1,
@@ -231,7 +231,7 @@ class ReviewLearningService:
             source_session_id=source_session_id,
             tags=normalized.tags,
         )
-        promotion = promote_lesson(
+        promotion = await promote_lesson(
             lesson=normalized,
             evidence_memory_id=memory.id,
             memory_manager=self.memory_manager,

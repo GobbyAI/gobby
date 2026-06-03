@@ -16,9 +16,11 @@ def normalize_identity_text(value: Any) -> str:
 
 
 def short_hash(value: str, length: int = 12) -> str:
-    """Return a deterministic short hash for bounded tags and labels."""
+    """Return a deterministic short hash of length 4..64 for bounded tags and labels."""
     if length < 4:
         raise ValueError("short_hash length must be at least 4")
+    if length > 64:
+        raise ValueError("short_hash length must be at most 64")
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:length]
 
 

@@ -700,7 +700,11 @@ async def _proxy_websocket(websocket: WebSocket, target: str) -> None:
                     while True:
                         data = await websocket.receive_text()
                         await backend.send(data)
-                except WebSocketDisconnect:
+                except (WebSocketDisconnect, websockets.exceptions.ConnectionClosed):
+                    pass
+                except asyncio.CancelledError:
+                    raise
+                finally:
                     await backend.close()
 
             async def backend_to_client() -> None:
@@ -710,10 +714,32 @@ async def _proxy_websocket(websocket: WebSocket, target: str) -> None:
                             await websocket.send_text(message)
                         else:
                             await websocket.send_bytes(message)
-                except websockets.exceptions.ConnectionClosed:
-                    await websocket.close()
+                except (WebSocketDisconnect, websockets.exceptions.ConnectionClosed):
+                    pass
+                except asyncio.CancelledError:
+                    raise
+                finally:
+                    try:
+                        await websocket.close()
+                    except Exception:
+                        pass
 
-            await asyncio.gather(client_to_backend(), backend_to_client())
+            client_task = asyncio.create_task(client_to_backend())
+            backend_task = asyncio.create_task(backend_to_client())
+            done, pending = await asyncio.wait(
+                {client_task, backend_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+            for task in done:
+                if task.cancelled():
+                    continue
+                exc = task.exception()
+                if exc is not None:
+                    raise exc
     except Exception as e:
         logger.debug(f"WebSocket proxy error: {e}")
         try:

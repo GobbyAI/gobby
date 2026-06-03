@@ -138,7 +138,7 @@ class GwikiGateway:
         yes: bool,
         keep_asset: bool,
     ) -> dict[str, Any]:
-        if dry_run == yes:
+        if not (dry_run ^ yes):
             raise ValueError("Provide exactly one of dry_run or yes")
         args = ["remove-source", "--id", source_id]
         args.append("--dry-run" if dry_run else "--yes")

@@ -93,6 +93,22 @@ class FakeMemoryManager:
             ]
         return memories[offset : offset + limit]
 
+    async def alist_memories(
+        self,
+        project_id: str | None = None,
+        memory_type: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        tags_all: list[str] | None = None,
+    ) -> list[FakeMemory]:
+        return self.list_memories(
+            project_id=project_id,
+            memory_type=memory_type,
+            limit=limit,
+            offset=offset,
+            tags_all=tags_all,
+        )
+
     async def search_memories(
         self,
         query: str | None = None,

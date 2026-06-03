@@ -230,7 +230,6 @@ async def _read_undigested_turns(
         from gobby.sessions.transcripts import get_parser
 
         parser = get_parser(source)
-        import asyncio
 
         def _read_lines() -> list[str]:
             with open(transcript_file, encoding="utf-8") as f:

@@ -29,7 +29,10 @@ const statusPayload = {
     },
     recent_searches: [{ query: "hooks", result_count: 3 }],
     indexed_paths: ["docs/wiki/hooks.md"],
-    page_links: [{ title: "Hooks", url: "/wiki/hooks" }],
+    page_links: [
+      { title: "Hooks", url: "https://example.test/wiki/hooks" },
+      { title: "Relative hooks", url: "/wiki/hooks" },
+    ],
   },
 };
 
@@ -51,7 +54,7 @@ const sourcesPayload = {
         title: "Hooks source",
         path: "raw/hooks.md",
         wiki_path: "docs/wiki/hooks.md",
-        page_url: "/wiki/hooks",
+        page_url: "https://example.test/wiki/hooks",
       },
     ],
   },
@@ -119,7 +122,11 @@ describe("WikiTab", () => {
     expect(screen.getAllByText("docs/wiki/hooks.md").length).toBeGreaterThan(0);
     expect(screen.getByText("raw/missing.md")).toBeInTheDocument();
     expect(screen.getAllByText("Hooks source").length).toBeGreaterThan(0);
-    expect(screen.getByRole("link", { name: "Hooks" })).toHaveAttribute("href", "/wiki/hooks");
+    expect(screen.getByRole("link", { name: "Hooks" })).toHaveAttribute(
+      "href",
+      "https://example.test/wiki/hooks",
+    );
+    expect(screen.queryByText("Relative hooks")).not.toBeInTheDocument();
   });
 
   it("source removal requires dry-run confirmation", async () => {

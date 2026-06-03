@@ -4,12 +4,15 @@ This module keeps daemon-owned LLMProvider binding config. CLI/app-server
 providers such as Codex own their authentication and model configuration.
 """
 
+import logging
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 __all__ = ["LLMProviderConfig", "LLMProvidersConfig"]
 
+
+logger = logging.getLogger(__name__)
 
 _OBSOLETE_CLI_PROVIDER_KEYS = frozenset({"codex", "gemini", "grok", "qwen"})
 
@@ -60,6 +63,9 @@ class LLMProvidersConfig(BaseModel):
         """Ignore removed CLI/app-server provider entries from older configs."""
         if not isinstance(data, dict):
             return data
+        dropped = sorted(key for key in data if key in _OBSOLETE_CLI_PROVIDER_KEYS)
+        if dropped:
+            logger.warning("Ignored deprecated provider config: %s", ", ".join(dropped))
         return {key: value for key, value in data.items() if key not in _OBSOLETE_CLI_PROVIDER_KEYS}
 
     default_model: str | None = Field(

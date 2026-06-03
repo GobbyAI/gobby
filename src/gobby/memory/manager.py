@@ -625,6 +625,7 @@ class MemoryManager:
         memory_type: str | None = None,
         limit: int = DEFAULT_LIST_LIMIT,
         offset: int = 0,
+        tags_all: list[str] | None = None,
     ) -> list[Memory]:
         """List memories via backend (async)."""
         records = await self._backend.list_memories(
@@ -632,6 +633,7 @@ class MemoryManager:
             memory_type=memory_type,
             limit=limit,
             offset=offset,
+            tags_all=tags_all,
         )
         return [self._record_to_memory(r) for r in records]
 

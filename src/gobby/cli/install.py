@@ -9,6 +9,7 @@ import shutil
 import socket
 import subprocess  # nosec B404 # fixed install preflight/start commands
 import sys
+import time
 import webbrowser
 from collections.abc import Callable
 from pathlib import Path
@@ -126,7 +127,7 @@ def _docker_daemon_available() -> bool:
     return result.returncode == 0
 
 
-def _port_available(port: int, host: str = "localhost") -> bool:
+def _port_available(port: int, host: str = "0.0.0.0") -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.2)
         try:
@@ -259,27 +260,41 @@ def _maybe_start_daemon_after_install(*, no_interactive: bool) -> None:
 
     click.echo("Starting Gobby daemon...")
     try:
-        result = subprocess.run(  # nosec B603 # command uses current interpreter/module
+        process = subprocess.Popen(  # nosec B603 # command uses current interpreter/module
             [sys.executable, "-m", "gobby.cli", "start"],
-            text=True,
-            capture_output=True,
-            timeout=90,
-            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
-    except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as exc:
+    except (OSError, subprocess.SubprocessError) as exc:
         click.echo(f"Warning: failed to start daemon automatically: {exc}")
         click.echo(f"Start manually with `gobby start`, then open {url}")
         return
 
-    if result.returncode != 0:
-        detail = result.stderr.strip() or result.stdout.strip() or "no details"
-        click.echo(f"Warning: failed to start daemon automatically: {detail}")
-        click.echo(f"Start manually with `gobby start`, then open {url}")
-        return
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if _daemon_already_running():
+            click.echo(f"Gobby daemon started: {url}")
+            if not webbrowser.open(url):
+                click.echo(f"Open {url}")
+            click.echo("Run `/gobby intro` in your first agent session.")
+            return
+        returncode = process.poll()
+        if returncode is not None:
+            if returncode != 0:
+                click.echo(f"Warning: failed to start daemon automatically: exited {returncode}")
+                click.echo(f"Start manually with `gobby start`, then open {url}")
+                return
+            break
+        time.sleep(0.25)
 
-    click.echo(f"Gobby daemon started: {url}")
-    if not webbrowser.open(url):
-        click.echo(f"Open {url}")
+    if _daemon_already_running():
+        click.echo(f"Gobby daemon started: {url}")
+        if not webbrowser.open(url):
+            click.echo(f"Open {url}")
+    else:
+        click.echo("Warning: daemon did not become healthy automatically.")
+        click.echo(f"Start manually with `gobby start`, then open {url}")
     click.echo("Run `/gobby intro` in your first agent session.")
 
 

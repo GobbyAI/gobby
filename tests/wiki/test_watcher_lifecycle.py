@@ -14,6 +14,8 @@ from gobby.runner_lifecycle_periodic import start_periodic_tasks
 from gobby.runner_lifecycle_shutdown import _cancel_periodic_tasks
 from gobby.wiki.watcher import WikiWatcher, WikiWatchScope
 
+pytestmark = pytest.mark.unit
+
 
 async def _idle_loop(*args: Any, **kwargs: Any) -> None:
     await asyncio.Event().wait()

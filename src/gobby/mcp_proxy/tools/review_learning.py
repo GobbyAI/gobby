@@ -5,12 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.review_learning.service import ReviewLearningService
+from gobby.review_learning.promotion import PromotionTaskManager
+from gobby.review_learning.service import ReviewLearningMemoryManager, ReviewLearningService
 
 
 def create_review_learning_registry(
-    memory_manager: Any,
-    task_manager: Any,
+    memory_manager: ReviewLearningMemoryManager,
+    task_manager: PromotionTaskManager,
 ) -> InternalToolRegistry:
     """Create the review-learning MCP registry."""
     service = ReviewLearningService(memory_manager=memory_manager, task_manager=task_manager)
@@ -44,7 +45,7 @@ def create_review_learning_registry(
                 language=language,
             )
             return {"success": True, **result}
-        except (TypeError, ValueError, RuntimeError, OSError) as exc:
+        except (AttributeError, ValueError, RuntimeError, OSError) as exc:
             return {"success": False, "error": str(exc)}
 
     @registry.tool(
@@ -68,7 +69,7 @@ def create_review_learning_registry(
                 limit=limit,
             )
             return {"success": True, **result}
-        except (TypeError, ValueError, RuntimeError, OSError) as exc:
+        except (AttributeError, ValueError, RuntimeError, OSError) as exc:
             return {"success": False, "error": str(exc)}
 
     @registry.tool(
@@ -102,7 +103,7 @@ def create_review_learning_registry(
                 risk=risk,
             )
             return {"success": True, **result}
-        except (TypeError, ValueError, RuntimeError, OSError) as exc:
+        except (AttributeError, ValueError, RuntimeError, OSError) as exc:
             return {"success": False, "error": str(exc)}
 
     return registry

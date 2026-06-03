@@ -56,11 +56,9 @@ def uninstall_postgres(
     remove_data: bool = False,
 ) -> dict[str, Any]:
     """Uninstall or disconnect PostgreSQL according to the recorded install mode."""
-    if mode != "docker":
-        raise click.ClickException(
-            f"Unsupported PostgreSQL install mode: {mode}. Docker is the only supported mode."
-        )
-    return _uninstall_docker(gobby_home=gobby_home, remove_data=remove_data)
+    if mode == "docker":
+        return _uninstall_docker(gobby_home=gobby_home, remove_data=remove_data)
+    return _cleanup_legacy_install(mode=str(mode), gobby_home=gobby_home, remove_data=remove_data)
 
 
 def _install_docker(*, gobby_home: Path | None, port: int) -> dict[str, Any]:
@@ -254,6 +252,27 @@ def _uninstall_docker(*, gobby_home: Path | None, remove_data: bool) -> dict[str
         "message": (
             "PostgreSQL Docker service cleanup completed; runtime bootstrap preserved "
             "because PostgreSQL is the only supported hub backend."
+        ),
+    }
+
+
+def _cleanup_legacy_install(
+    *, mode: str, gobby_home: Path | None, remove_data: bool
+) -> dict[str, Any]:
+    home = gobby_home or _bootstrap.default_gobby_home()
+    logger.warning(
+        "Cleaning up legacy PostgreSQL install mode '%s' without removing services", mode
+    )
+    _preserve_required_postgres_runtime(home)
+    if remove_data:
+        logger.warning("Ignoring --remove-data for legacy PostgreSQL install mode '%s'", mode)
+    return {
+        "success": True,
+        "mode": mode,
+        "data_removed": False,
+        "message": (
+            "Legacy PostgreSQL install state cleaned up; runtime bootstrap preserved because "
+            "PostgreSQL is the only supported hub backend."
         ),
     }
 

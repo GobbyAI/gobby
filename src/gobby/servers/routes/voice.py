@@ -254,10 +254,7 @@ def _with_audio_capability_flags(
         return result
 
     registry = _cached_audio_registry(config)
-    if registry is None:
-        result.setdefault("transcription_enabled", False)
-        result.setdefault("translation_enabled", False)
-        return result
+    assert registry is not None
     result["transcription_enabled"] = registry.status(AICapability.AUDIO_TRANSCRIBE).available
     result["translation_enabled"] = registry.status(AICapability.AUDIO_TRANSLATE).available
     return result

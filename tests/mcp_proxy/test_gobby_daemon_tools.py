@@ -350,8 +350,11 @@ class TestGobbyDaemonToolsCallTool:
             "mcp_wrapper_timeout": True,
             "background_call_continues": True,
             "tool_name": "wait_for_agent",
-            "requested_timeout_seconds": 600.0,
-            "wait_timeout_capped_by_mcp_wrapper": True,
+            "_mcp_metadata": {
+                "requested_timeout_seconds": 600.0,
+                "effective_timeout_seconds": 0.02,
+                "wait_timeout_capped_by_mcp_wrapper": True,
+            },
         }
         tools_handler.tool_proxy.call_tool.assert_awaited_once_with(
             "gobby-agents",

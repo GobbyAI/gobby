@@ -144,6 +144,7 @@ class StorageAdapter:
         memory_type: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        tags_all: list[str] | None = None,
     ) -> list[MemoryRecord]:
         memories = await self._run_storage(
             self._storage.list_memories,
@@ -151,6 +152,7 @@ class StorageAdapter:
             memory_type=memory_type,
             limit=limit,
             offset=offset,
+            tags_all=tags_all,
         )
         return [self._to_record(m) for m in memories]
 

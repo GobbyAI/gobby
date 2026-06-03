@@ -115,6 +115,7 @@ def cron_storage(temp_db: Any, project_id: str) -> CronJobStorage:
     return CronJobStorage(temp_db)
 
 
+@pytest.mark.asyncio
 async def test_cron_history_is_user_visible() -> None:
     gateway = RecordingGateway()
     handler = create_wiki_refresh_handler(
@@ -134,6 +135,7 @@ async def test_cron_history_is_user_visible() -> None:
     assert output["result"]["gwiki"]["command"] == "refresh"
 
 
+@pytest.mark.asyncio
 async def test_scheduled_jobs_use_gateway() -> None:
     gateway = RecordingGateway()
     coordinator = WikiUpdateCoordinator(gateway)
@@ -203,6 +205,7 @@ def test_wiki_cron_handlers_registered(cron_storage: CronJobStorage, project_id:
     assert all(job.is_system for job in jobs)
 
 
+@pytest.mark.asyncio
 async def test_refresh_job_uses_gateway_and_avoids_duplicate_index() -> None:
     gateway = RecordingGateway()
     handler = create_wiki_refresh_handler(
@@ -225,6 +228,7 @@ async def test_refresh_job_uses_gateway_and_avoids_duplicate_index() -> None:
     }
 
 
+@pytest.mark.asyncio
 async def test_research_job_routes_write_result_through_coordinator() -> None:
     gateway = RecordingGateway()
     coordinator = RecordingCoordinator()

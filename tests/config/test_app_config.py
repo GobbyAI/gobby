@@ -377,17 +377,21 @@ class TestLLMProvidersConfig:
         providers = config.get_enabled_providers()
         assert providers == ["claude"]
 
-    def test_removed_cli_provider_configs_are_ignored(self) -> None:
+    def test_removed_cli_provider_configs_are_ignored(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """CLI/app-server providers do not become LLMProvider config entries."""
-        config = LLMProvidersConfig(
-            codex=LLMProviderConfig(models="removed"),
-            gemini=LLMProviderConfig(models="removed"),
-            grok=LLMProviderConfig(models="removed"),
-            qwen=LLMProviderConfig(models="removed"),
-        )
+        with caplog.at_level("WARNING", logger="gobby.config.llm_providers"):
+            config = LLMProvidersConfig(
+                codex=LLMProviderConfig(models="removed"),
+                gemini=LLMProviderConfig(models="removed"),
+                grok=LLMProviderConfig(models="removed"),
+                qwen=LLMProviderConfig(models="removed"),
+            )
 
         assert config.get_enabled_providers() == ["claude"]
         assert not hasattr(config, "codex")
+        assert "Ignored deprecated provider config: codex, gemini, grok, qwen" in caplog.text
 
     def test_unknown_provider_configs_are_rejected(self) -> None:
         """Unknown provider keys still fail validation."""

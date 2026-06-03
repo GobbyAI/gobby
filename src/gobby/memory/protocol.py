@@ -419,6 +419,7 @@ class MemoryBackendProtocol(Protocol):
         memory_type: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        tags_all: list[str] | None = None,
     ) -> list[MemoryRecord]:
         """List memories with optional filtering.
 

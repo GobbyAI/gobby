@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -40,6 +41,15 @@ class PromotionMemoryManager(Protocol):
         tags_all: list[str],
     ) -> list[Any]: ...
 
+    async def alist_memories(
+        self,
+        *,
+        project_id: str,
+        memory_type: str,
+        limit: int,
+        tags_all: list[str],
+    ) -> list[Any]: ...
+
 
 class PromotionTaskManager(Protocol):
     def list_tasks(
@@ -53,7 +63,21 @@ class PromotionTaskManager(Protocol):
 
     def update_task(self, task_id: str, **kwargs: Any) -> Any: ...
 
-    def create_task(self, **kwargs: Any) -> Any: ...
+    def create_task(
+        self,
+        project_id: str,
+        title: str,
+        description: str | None = ...,
+        *,
+        created_in_session_id: str | None = ...,
+        priority: int = ...,
+        task_type: str = ...,
+        labels: list[str] | None = ...,
+        category: str | None = ...,
+        validation_criteria: str | None = ...,
+        implementation_domain: str | None = ...,
+        **kwargs: Any,
+    ) -> Any: ...
 
 
 def resolve_promotion(
@@ -90,7 +114,7 @@ def resolve_promotion(
     return PromotionDecision("skipped", occurrence_count, None, None, False)
 
 
-def promote_lesson(
+async def promote_lesson(
     *,
     lesson: NormalizedLesson,
     evidence_memory_id: str,
@@ -100,7 +124,7 @@ def promote_lesson(
     source_session_id: str | None,
 ) -> dict[str, Any]:
     """Create or update a guardrail implementation task when thresholds cross."""
-    occurrence_memories = memory_manager.list_memories(
+    occurrence_memories = await memory_manager.alist_memories(
         project_id=project_id,
         memory_type="pattern",
         limit=500,
@@ -116,7 +140,8 @@ def promote_lesson(
     if not decision.should_create_task or decision.guardrail_target is None:
         return result
 
-    task = _create_or_update_task(
+    task = await asyncio.to_thread(
+        _create_or_update_task,
         lesson=lesson,
         evidence_memory_id=evidence_memory_id,
         evidence_memories=occurrence_memories,

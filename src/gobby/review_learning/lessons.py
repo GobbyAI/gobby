@@ -121,7 +121,8 @@ def slugify(value: Any, *, max_length: int = 48, hashed: bool = False) -> str:
     if not slug:
         slug = "unknown"
     if hashed or len(slug) > max_length:
-        prefix = slug[: max_length - 13].strip("-") or "value"
+        prefix_len = max(0, max_length - 13)
+        prefix = slug[:prefix_len].strip("-") or "value"
         slug = f"{prefix}-{short_hash(text)}"
     return slug[:max_length].strip("-")
 

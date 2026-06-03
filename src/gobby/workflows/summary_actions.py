@@ -10,7 +10,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import aiofiles
 
@@ -558,7 +558,7 @@ async def repair_missing_session_title(session_manager: Any, session: Any) -> st
         "Repair sweep synthesized heuristic title for session %s",
         getattr(session, "ref", session_id),
     )
-    return title
+    return cast(str, updated)
 
 
 async def generate_summary(

@@ -132,6 +132,9 @@ export function useWiki(options: UseWikiOptions = {}) {
       setHealth(nextHealth);
       setSourcesEnvelope(nextSources);
     } catch (nextError) {
+      setStatus(null);
+      setHealth(null);
+      setSourcesEnvelope(null);
       setError(String(nextError));
     } finally {
       setIsLoading(false);

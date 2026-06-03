@@ -265,9 +265,8 @@ class GobbyDaemonTools:
         # ref would re-poison workflow checks and tool filters.
         effective_session_id = tokens.resolved_session_id
 
-        guard = prepare_client_guard(tool_name=tool_name, arguments=arguments)
-
         try:
+            guard = prepare_client_guard(tool_name=tool_name, arguments=arguments)
             result = await call_with_wait_heartbeat(
                 self.tool_proxy.call_tool(
                     server_name,
@@ -283,9 +282,16 @@ class GobbyDaemonTools:
             reset_seeded_contexts(tokens)
 
         if isinstance(result, dict) and guard.wait_timeout_capped:
-            result["requested_timeout_seconds"] = guard.requested_timeout_seconds
-            result["effective_timeout_seconds"] = guard.effective_timeout_seconds
-            result["wait_timeout_capped_by_mcp_wrapper"] = True
+            metadata = result.get("_mcp_metadata")
+            metadata = dict(metadata) if isinstance(metadata, dict) else {}
+            metadata.update(
+                {
+                    "requested_timeout_seconds": guard.requested_timeout_seconds,
+                    "effective_timeout_seconds": guard.effective_timeout_seconds,
+                    "wait_timeout_capped_by_mcp_wrapper": True,
+                }
+            )
+            result["_mcp_metadata"] = metadata
 
         # Check if result indicates an error:
         # - Old pattern: {"success": False, "error": ...}

@@ -675,6 +675,8 @@ class VectorStore:
         """Rebuild the collection from a list of memories.
 
         Re-embeds the provided memory list and removes stale existing points.
+        If stale deletion fails partway through, some stale points may remain;
+        retrying rebuild is safe.
 
         Args:
             memories: List of dicts with at least 'id' and 'content' keys.
@@ -730,6 +732,7 @@ class VectorStore:
     ) -> None:
         offset = None
         stale_batch: list[str] = []
+        deleted_count = 0
         while True:
             try:
                 points, next_offset = await asyncio.to_thread(
@@ -750,12 +753,15 @@ class VectorStore:
                 stale_batch.append(point_id)
                 if len(stale_batch) >= batch_size:
                     await self.delete_many(stale_batch)
+                    deleted_count += len(stale_batch)
                     stale_batch = []
             if next_offset is None:
                 break
             offset = next_offset
         if stale_batch:
             await self.delete_many(stale_batch)
+            deleted_count += len(stale_batch)
+        logger.info("Deleted %s stale points from '%s'", deleted_count, self._collection_name)
 
     async def scroll_ids(self, batch_size: int = 1000) -> list[str]:
         """Return all point IDs in the collection."""

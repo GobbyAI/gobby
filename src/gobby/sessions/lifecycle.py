@@ -576,8 +576,9 @@ class SessionLifecycleManager:
                 )
             except _TRANSCRIPT_INDEX_ERRORS:
                 logger.warning(
-                    "Failed to finalize transcript index for %s",
+                    "Failed to finalize transcript index for session %s at %s",
                     session_id,
+                    transcript_path,
                     exc_info=True,
                 )
 

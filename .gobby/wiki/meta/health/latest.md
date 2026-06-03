@@ -1,4 +1,4 @@
-Wiki health report
+# Wiki health report
 Scope: project:d45545c5-ded5-4335-b115-0245752edacf
 
 Stale pages:

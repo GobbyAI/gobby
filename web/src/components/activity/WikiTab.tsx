@@ -77,6 +77,16 @@ function uniqueStrings(items: string[]): string[] {
   return Array.from(new Set(items));
 }
 
+function safeHttpUrl(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 function watcherStateText(active: boolean | null, running: boolean | null): string {
   if (active === false) return "inactive";
   if (running === true) return "running";
@@ -94,11 +104,11 @@ function sourcePath(source: WikiSourceRecord): string | null {
 
 function sourceLinks(source: WikiSourceRecord): WikiLink[] {
   const links: WikiLink[] = [];
-  const pageUrl = stringValue(source.page_url);
+  const pageUrl = safeHttpUrl(stringValue(source.page_url));
   if (pageUrl) {
     links.push({ label: String(source.title || source.wiki_path || "Wiki page"), href: pageUrl });
   }
-  const sourceUrl = stringValue(source.source_url || source.url);
+  const sourceUrl = safeHttpUrl(stringValue(source.source_url || source.url));
   if (sourceUrl) {
     links.push({ label: "Source", href: sourceUrl });
   }
@@ -109,7 +119,7 @@ function pageLinks(payload: WikiJson): WikiLink[] {
   return asArray(payload.page_links || payload.pages || payload.links)
     .map((item) => {
       const record = asRecord(item);
-      const href = stringValue(record.url || record.href || record.page_url);
+      const href = safeHttpUrl(stringValue(record.url || record.href || record.page_url));
       if (!href) return null;
       return {
         label: fieldText(record, ["title", "label", "path"]) || href,
@@ -206,6 +216,7 @@ export function WikiTab({ projectId, refreshSignal = 0 }: WikiTabProps) {
   const [removalError, setRemovalError] = useState<string | null>(null);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
+  const removalPreviewRequestRef = useRef(0);
   const lastRefreshSignalRef = useRef(refreshSignal);
 
   useEffect(() => {
@@ -252,18 +263,34 @@ export function WikiTab({ projectId, refreshSignal = 0 }: WikiTabProps) {
   const gatewayStatusText = fieldText(gatewayPayload, ["status", "state"]) || "unknown";
 
   const openRemoval = async (source: WikiSourceRecord) => {
+    const requestId = removalPreviewRequestRef.current + 1;
+    removalPreviewRequestRef.current = requestId;
     setRemovingSource(source);
     setPreview(null);
     setRemovalError(null);
     setIsPreviewLoading(true);
     try {
       const nextPreview = await removeSource({ id: source.id, dry_run: true });
-      setPreview(nextPreview);
+      if (removalPreviewRequestRef.current === requestId) {
+        setPreview(nextPreview);
+      }
     } catch (nextError) {
-      setRemovalError(String(nextError));
+      if (removalPreviewRequestRef.current === requestId) {
+        setRemovalError(String(nextError));
+      }
     } finally {
-      setIsPreviewLoading(false);
+      if (removalPreviewRequestRef.current === requestId) {
+        setIsPreviewLoading(false);
+      }
     }
+  };
+
+  const closeRemoval = () => {
+    removalPreviewRequestRef.current += 1;
+    setRemovingSource(null);
+    setPreview(null);
+    setRemovalError(null);
+    setIsPreviewLoading(false);
   };
 
   const confirmRemoval = async ({ keep_asset }: { keep_asset: boolean }) => {
@@ -272,8 +299,7 @@ export function WikiTab({ projectId, refreshSignal = 0 }: WikiTabProps) {
     setRemovalError(null);
     try {
       await removeSource({ id: removingSource.id, yes: true, keep_asset });
-      setRemovingSource(null);
-      setPreview(null);
+      closeRemoval();
       await refresh();
     } catch (nextError) {
       setRemovalError(String(nextError));
@@ -390,7 +416,7 @@ export function WikiTab({ projectId, refreshSignal = 0 }: WikiTabProps) {
         isPreviewLoading={isPreviewLoading}
         isConfirming={isConfirming}
         error={removalError}
-        onCancel={() => setRemovingSource(null)}
+        onCancel={closeRemoval}
         onConfirm={(options) => void confirmRemoval(options)}
       />
     </div>
