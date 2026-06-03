@@ -1,7 +1,7 @@
 use clap::Parser as _;
 use gobby_code::{commands, config, freshness, output, setup};
 
-use crate::cli::{self, Cli, Command, EmbeddingsCommand, GraphCommand, VectorCommand};
+use crate::cli::{self, AiRouteArg, Cli, Command, EmbeddingsCommand, GraphCommand, VectorCommand};
 
 fn ensure_project_fresh(ctx: &config::Context, disabled: bool) -> anyhow::Result<()> {
     if !disabled {
@@ -425,9 +425,9 @@ fn run() -> anyhow::Result<()> {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::symbols::tree(&ctx, format)
         }
-        Command::Codewiki { out, scope } => {
+        Command::Codewiki { out, scope, ai } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
-            commands::codewiki::run(&ctx, out, scope, format)
+            commands::codewiki::run(&ctx, out, scope, ai.map(AiRouteArg::into), format)
         }
 
         Command::Callers {

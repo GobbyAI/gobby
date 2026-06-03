@@ -511,6 +511,23 @@ fn test_parse_no_freshness_global_flag() {
 }
 
 #[test]
+fn parse_codewiki_ai_flag() {
+    for (raw, expected) in [
+        ("auto", AiRouteArg::Auto),
+        ("daemon", AiRouteArg::Daemon),
+        ("direct", AiRouteArg::Direct),
+        ("off", AiRouteArg::Off),
+    ] {
+        let cli =
+            Cli::try_parse_from(["gcode", "codewiki", "--ai", raw]).expect("codewiki --ai parses");
+        match cli.command {
+            Command::Codewiki { ai, .. } => assert_eq!(ai, Some(expected)),
+            _ => panic!("expected codewiki command"),
+        }
+    }
+}
+
+#[test]
 fn parse_setup_standalone() {
     let cli = Cli::try_parse_from([
         "gcode",

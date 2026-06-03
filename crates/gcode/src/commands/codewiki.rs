@@ -3,7 +3,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use gobby_core::ai::{daemon::generate_via_daemon, effective_route, text::generate_text};
-use gobby_core::ai_context::{AiConfigSource, AiContext, PostgresAiConfigSource};
+use gobby_core::ai_context::{AiConfigSource, AiContext, AiContextOptions, PostgresAiConfigSource};
 use gobby_core::config::{AiCapability, AiRouting};
 use serde::{Deserialize, Serialize};
 
@@ -281,7 +281,13 @@ struct SourceSpan {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CodewikiRunSummary {
+    pub command: &'static str,
+    pub project_id: String,
+    pub project_root: String,
     pub out_dir: String,
+    pub generated_pages: usize,
+    pub changed_paths: Vec<String>,
+    pub skipped: usize,
     pub files: usize,
     pub modules: usize,
     pub symbols: usize,
@@ -305,6 +311,7 @@ pub fn run(
     ctx: &Context,
     out: Option<String>,
     scope_args: Vec<String>,
+    ai: Option<AiRouting>,
     format: Format,
 ) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
@@ -329,7 +336,7 @@ pub fn run(
         graph_availability: graph.availability,
         symbols,
     };
-    let mut generator = resolve_text_generator(ctx);
+    let mut generator = resolve_text_generator(ctx, ai);
     let ai_enabled = generator.is_some();
     let docs = match generator.as_deref_mut() {
         Some(generate) => generate_hierarchical_docs(&input, Some(generate)),
@@ -349,10 +356,18 @@ pub fn run(
         .filter(|symbol| is_core_file(&symbol.file_path))
         .count();
     let out_dir = out.unwrap_or_else(|| DEFAULT_OUT_DIR.to_string());
-    write_incremental_doc_set(&ctx.project_root, Path::new(&out_dir), &docs)?;
+    let changed_paths = write_incremental_doc_set(&ctx.project_root, Path::new(&out_dir), &docs)?;
+    let generated_pages = docs.len();
+    let skipped = generated_pages.saturating_sub(changed_paths.len());
 
     let summary = CodewikiRunSummary {
+        command: "codewiki",
+        project_id: ctx.project_id.clone(),
+        project_root: ctx.project_root.display().to_string(),
         out_dir,
+        generated_pages,
+        changed_paths,
+        skipped,
         files: file_count,
         modules: module_count,
         symbols: symbol_count,
@@ -1471,8 +1486,11 @@ fn render_file_doc(file: &FileDoc) -> String {
     doc
 }
 
-fn resolve_text_generator(ctx: &Context) -> Option<Box<TextGenerator<'static>>> {
-    let ai_context = resolve_ai_context(ctx).ok()?;
+fn resolve_text_generator(
+    ctx: &Context,
+    ai: Option<AiRouting>,
+) -> Option<Box<TextGenerator<'static>>> {
+    let ai_context = resolve_ai_context(ctx, ai).ok()?;
     let route = effective_route(&ai_context, AiCapability::TextGenerate);
     if matches!(route, AiRouting::Off | AiRouting::Auto) {
         return None;
@@ -1499,14 +1517,18 @@ fn resolve_text_generator(ctx: &Context) -> Option<Box<TextGenerator<'static>>> 
     }))
 }
 
-fn resolve_ai_context(ctx: &Context) -> anyhow::Result<AiContext> {
+fn resolve_ai_context(ctx: &Context, ai: Option<AiRouting>) -> anyhow::Result<AiContext> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let standalone = config::read_standalone_config_optional();
     let primary = PostgresAiConfigSource::new(&mut conn, secrets::resolve_config_value);
     let mut source = AiConfigSource::with_primary(primary, standalone);
-    Ok(AiContext::resolve(
+    Ok(AiContext::resolve_with_options(
         Some(ctx.project_id.clone()),
         &mut source,
+        AiContextOptions {
+            no_ai: false,
+            forced_routing: ai,
+        },
     ))
 }
 
@@ -2076,13 +2098,21 @@ mod tests {
             docs_by_path
                 .get("files/src/domain/service.rs.md")
                 .expect("service file doc")
-                .contains("src/domain/service.rs::Service")
+                .contains(&test_component_id(
+                    "src/domain/service.rs",
+                    "Service",
+                    "class"
+                ))
         );
         assert!(
             docs_by_path
                 .get("files/src/domain/service.rs.md")
                 .expect("service file doc")
-                .contains("src/domain/service.rs::new")
+                .contains(&test_component_id(
+                    "src/domain/service.rs",
+                    "new",
+                    "function"
+                ))
         );
         assert!(
             !docs_by_path
@@ -2373,6 +2403,32 @@ mod tests {
             std::fs::read_to_string(out_dir.join("_meta/codewiki.json")).expect("read final meta");
         let meta: serde_json::Value = serde_json::from_str(&meta).expect("parse final meta");
         assert!(meta["docs"].get("files/src/nested/api.rs.md").is_none());
+    }
+
+    #[test]
+    fn run_summary_serializes_daemon_contract_keys() {
+        let summary = CodewikiRunSummary {
+            command: "codewiki",
+            project_id: "project-1".to_string(),
+            project_root: "/repo".to_string(),
+            out_dir: "/repo/codewiki".to_string(),
+            generated_pages: 3,
+            changed_paths: vec!["repo.md".to_string()],
+            skipped: 2,
+            files: 1,
+            modules: 1,
+            symbols: 4,
+            ai_enabled: false,
+        };
+
+        let value = serde_json::to_value(summary).expect("summary json");
+
+        assert_eq!(value["command"], "codewiki");
+        assert_eq!(value["project_id"], "project-1");
+        assert_eq!(value["project_root"], "/repo");
+        assert_eq!(value["changed_paths"][0], "repo.md");
+        assert_eq!(value["skipped"], 2);
+        assert_eq!(value["ai_enabled"], false);
     }
 
     #[test]

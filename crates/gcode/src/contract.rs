@@ -94,6 +94,7 @@ pub fn contract() -> CliContract {
                 flags: vec![
                     FlagContract::value("--out", "DIR"),
                     FlagContract::repeatable_value("--scope", "PATH"),
+                    ai_flag(),
                 ],
                 json_output_keys: vec![
                     "command",
@@ -103,6 +104,10 @@ pub fn contract() -> CliContract {
                     "generated_pages",
                     "changed_paths",
                     "skipped",
+                    "files",
+                    "modules",
+                    "symbols",
+                    "ai_enabled",
                 ],
             },
         ],
@@ -118,6 +123,11 @@ pub fn contract() -> CliContract {
 
 fn format_flag() -> FlagContract {
     FlagContract::value("--format", "json|text").allowed(vec!["json", "text"])
+}
+
+fn ai_flag() -> FlagContract {
+    FlagContract::value("--ai", "auto|daemon|direct|off")
+        .allowed(vec!["auto", "daemon", "direct", "off"])
 }
 
 fn search_flags() -> Vec<FlagContract> {

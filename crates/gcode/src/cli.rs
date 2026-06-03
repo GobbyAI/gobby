@@ -1,5 +1,6 @@
-use clap::{ArgAction, ArgGroup, Parser, Subcommand};
+use clap::{ArgAction, ArgGroup, Parser, Subcommand, ValueEnum};
 use gobby_code::output;
+use gobby_core::config::AiRouting;
 
 #[derive(Parser)]
 #[command(
@@ -35,6 +36,25 @@ pub(crate) struct Cli {
 
     #[command(subcommand)]
     pub(crate) command: Command,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(crate) enum AiRouteArg {
+    Auto,
+    Daemon,
+    Direct,
+    Off,
+}
+
+impl From<AiRouteArg> for AiRouting {
+    fn from(value: AiRouteArg) -> Self {
+        match value {
+            AiRouteArg::Auto => AiRouting::Auto,
+            AiRouteArg::Daemon => AiRouting::Daemon,
+            AiRouteArg::Direct => AiRouting::Direct,
+            AiRouteArg::Off => AiRouting::Off,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -311,6 +331,9 @@ pub(crate) enum Command {
         /// Limit docs to indexed files under one or more paths
         #[arg(long, num_args = 1.., value_name = "PATH")]
         scope: Vec<String>,
+        /// Override AI routing for generated summaries
+        #[arg(long, value_enum)]
+        ai: Option<AiRouteArg>,
     },
 
     // ── Dependency Graph (requires graph backend) ──────────────────────
