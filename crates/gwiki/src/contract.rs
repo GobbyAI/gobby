@@ -178,6 +178,7 @@ pub fn contract() -> CliContract {
                     "gaps",
                     "warnings",
                     "changed_paths",
+                    "session_id",
                     "status",
                 ]),
             },
