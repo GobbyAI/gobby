@@ -8,6 +8,13 @@ from gobby.gwiki_gateway import GwikiGateway
 from gobby.scheduler.executor import CronHandler
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.wiki.scope_resolution import (
+    ResolvedWikiScope,
+    normalize_scope_identity,
+    project_scope,
+    resolve_scope_identity,
+)
 from gobby.wiki.update_coordinator import WikiUpdateCoordinator
 
 WIKI_RESEARCH_INTERVAL_SECONDS = 6 * 60 * 60
@@ -22,7 +29,6 @@ class WikiGatewayProtocol(Protocol):
     async def refresh(
         self,
         *,
-        scope: str | None = None,
         source_ids: list[str] | None = None,
         dry_run: bool = False,
     ) -> dict[str, Any]: ...
@@ -38,7 +44,8 @@ class CronRegistrationProtocol(Protocol):
     def register_handler(self, name: str, handler: CronHandler) -> None: ...
 
 
-GatewayFactory = Callable[[str], WikiGatewayProtocol]
+GatewayFactory = Callable[[ResolvedWikiScope], WikiGatewayProtocol]
+WIKI_CRON_COMMANDS = ("research", "refresh", "health", "audit")
 
 
 def create_wiki_research_handler(
@@ -68,7 +75,7 @@ def create_wiki_refresh_handler(
     scope: str,
 ) -> CronHandler:
     async def refresh_handler(job: CronJob) -> str:
-        result = await gateway.refresh(scope=scope, source_ids=None)
+        result = await gateway.refresh(source_ids=None)
         coordinated = await coordinator.handle_write_result(result)
         return _history_output(
             purpose="Refresh wiki sources",
@@ -120,13 +127,15 @@ def register_wiki_cron_jobs(
     cron_storage: CronJobStorage,
     cron_executor: CronRegistrationProtocol,
     project_id: str,
+    db: HubDatabase | None = None,
     scopes: Iterable[str] | None = None,
     gateway_factory: GatewayFactory | None = None,
 ) -> int:
     """Register wiki cron handlers and reconcile one cron row per scope and command."""
+    reconcile_stale_wiki_cron_scopes(cron_storage=cron_storage, project_id=project_id)
     registered = 0
     for scope in _configured_scopes(scopes, project_id):
-        gateway = _create_gateway(scope, gateway_factory)
+        gateway = _create_gateway(scope, db, gateway_factory)
         coordinator = WikiUpdateCoordinator(gateway)
 
         for command, purpose, interval, handler in (
@@ -181,7 +190,7 @@ def register_wiki_cron_jobs(
 
 def configured_wiki_cron_scopes(config: object | None, project_id: str) -> list[str]:
     if config is None:
-        return [project_id]
+        return [project_scope(project_id)]
 
     wiki_config = getattr(config, "wiki", None)
     scopes = _scopes_from_config_value(getattr(wiki_config, "scheduled_scopes", None))
@@ -189,7 +198,7 @@ def configured_wiki_cron_scopes(config: object | None, project_id: str) -> list[
         return scopes
 
     scopes = _scopes_from_config_value(getattr(config, "wiki_scheduled_scopes", None))
-    return scopes or [project_id]
+    return scopes or [project_scope(project_id)]
 
 
 def wiki_handler_name(command: str, scope: str) -> str:
@@ -200,10 +209,19 @@ def wiki_job_name(command: str, scope: str) -> str:
     return f"gobby:wiki-{command}:{scope}"
 
 
-def _create_gateway(scope: str, gateway_factory: GatewayFactory | None) -> WikiGatewayProtocol:
+def _create_gateway(
+    scope: str,
+    db: HubDatabase | None,
+    gateway_factory: GatewayFactory | None,
+) -> WikiGatewayProtocol:
+    resolved = resolve_scope_identity(
+        db,
+        scope,
+        require_project_root=gateway_factory is None,
+    )
     if gateway_factory is not None:
-        return gateway_factory(scope)
-    return GwikiGateway(project=scope)
+        return gateway_factory(resolved)
+    return GwikiGateway(project_root=resolved.project_root, topic=resolved.topic)
 
 
 def _ensure_wiki_cron_job(
@@ -265,9 +283,43 @@ def _ensure_wiki_cron_job(
 
 
 def _configured_scopes(scopes: Iterable[str] | None, project_id: str) -> list[str]:
-    values = list(scopes) if scopes is not None else [project_id]
-    normalized = [scope.strip() for scope in values if scope and scope.strip()]
-    return list(dict.fromkeys(normalized)) or [project_id]
+    default_scope = project_scope(project_id) if project_id else None
+    values = list(scopes) if scopes is not None else ([default_scope] if default_scope else [])
+    normalized = [normalize_scope_identity(scope) for scope in values if scope and scope.strip()]
+    if normalized:
+        return list(dict.fromkeys(normalized))
+    return [default_scope] if default_scope else []
+
+
+def reconcile_stale_wiki_cron_scopes(
+    *,
+    cron_storage: CronJobStorage,
+    project_id: str,
+) -> int:
+    """Replace/disable legacy bare-project wiki cron rows with project:<id> rows."""
+    legacy_scope = project_id.strip()
+    if not legacy_scope or legacy_scope.startswith(("project:", "topic:")):
+        return 0
+
+    repaired = 0
+    canonical_scope = project_scope(legacy_scope)
+    for command in WIKI_CRON_COMMANDS:
+        legacy = cron_storage.get_job_by_name(wiki_job_name(command, legacy_scope))
+        if legacy is None:
+            continue
+
+        canonical_name = wiki_job_name(command, canonical_scope)
+        canonical = cron_storage.get_job_by_name(canonical_name)
+        if canonical is None:
+            cron_storage._update_job_fields(legacy.id, name=canonical_name)
+        else:
+            cron_storage._update_job_fields(
+                legacy.id,
+                enabled=False,
+                next_run_at=None,
+            )
+        repaired += 1
+    return repaired
 
 
 def _history_output(

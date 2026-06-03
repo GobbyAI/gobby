@@ -11,6 +11,7 @@ from starlette.testclient import TestClient
 from gobby.config.app import DaemonConfig
 from gobby.gwiki_gateway import GwikiCommandError
 from gobby.servers.routes.wiki import create_wiki_router
+from gobby.storage.projects import LocalProjectManager
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -25,12 +26,12 @@ class FakeGateway:
         self,
         *,
         binary: str | None = None,
-        project: str | Path | None = None,
+        project_root: str | Path | None = None,
         topic: str | None = None,
         timeout_seconds: float = 30.0,
     ) -> None:
         self.binary = binary
-        self.project = str(project) if project is not None else None
+        self.project = str(project_root) if project_root is not None else None
         self.topic = topic
         self.timeout_seconds = timeout_seconds
         self.calls: list[tuple[str, Any]] = []
@@ -185,7 +186,9 @@ def reset_fakes(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture
 def client() -> TestClient:
     app = FastAPI()
-    server = SimpleNamespace(services=SimpleNamespace(config=SimpleNamespace()))
+    server = SimpleNamespace(
+        services=SimpleNamespace(config=SimpleNamespace(), database=None, project_id=None)
+    )
     app.include_router(create_wiki_router(server))
     return TestClient(app)
 
@@ -195,10 +198,11 @@ def test_status_search_read_and_gateway_scope(client: TestClient) -> None:
     assert invalid_scope.status_code == 400
     assert invalid_scope.json()["detail"] == "Provide project or topic scope, not both"
 
-    search = client.get("/api/wiki/search", params={"query": "hooks", "limit": 3, "project": "p"})
+    search = client.get("/api/wiki/search", params={"query": "hooks", "limit": 3, "topic": "t"})
     assert search.status_code == 200
     assert search.json()["payload"] == {"command": "search", "query": "hooks", "limit": 3}
-    assert FakeGateway.instances[-1].project == "p"
+    assert FakeGateway.instances[-1].project is None
+    assert FakeGateway.instances[-1].topic == "t"
 
     no_selector = client.get("/api/wiki/read")
     both_selectors = client.get("/api/wiki/read", params={"path": "a.md", "title": "A"})
@@ -209,6 +213,25 @@ def test_status_search_read_and_gateway_scope(client: TestClient) -> None:
     assert read.status_code == 200
     assert read.json()["payload"]["content"] == "# Page\n\nBody"
     assert FakeGateway.instances[-1].calls == [("read", {"path": None, "title": "A"})]
+
+
+def test_project_scope_resolves_to_repo_path(temp_db: Any, tmp_path: Path) -> None:
+    project = LocalProjectManager(temp_db).create(name="wiki-route", repo_path=str(tmp_path))
+    app = FastAPI()
+    server = SimpleNamespace(
+        services=SimpleNamespace(
+            config=SimpleNamespace(),
+            database=temp_db,
+            project_id=project.id,
+        )
+    )
+    app.include_router(create_wiki_router(server))
+    client = TestClient(app)
+
+    response = client.get("/api/wiki/search", params={"query": "hooks", "project": project.id})
+
+    assert response.status_code == 200
+    assert FakeGateway.instances[-1].project == str(tmp_path.resolve())
 
 
 def test_backlinks_health_and_sources_passthrough(client: TestClient) -> None:
@@ -283,19 +306,37 @@ def test_remove_source_error_mapping(client: TestClient) -> None:
 
 
 def test_ingest_url_batch_routes_to_gateway(client: TestClient) -> None:
-    mixed = client.post(
-        "/api/wiki/ingest", json={"path": "a.md", "urls": ["https://example.test/a"]}
-    )
     response = client.post(
         "/api/wiki/ingest",
         json={"urls": ["https://example.test/a", "https://example.test/b"]},
     )
 
-    assert mixed.status_code == 400
     assert response.status_code == 200
     assert response.json()["payload"]["accepted"][0]["requested_url"] == "https://example.test/a"
     assert FakeGateway.instances[-1].calls == [
         ("ingest_url", ["https://example.test/a", "https://example.test/b"])
+    ]
+
+
+def test_ingest_mixed_urls_and_paths_routes_to_gateway(client: TestClient) -> None:
+    response = client.post(
+        "/api/wiki/ingest",
+        json={"path": "docs/path with spaces.md", "urls": ["https://example.test/a"]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["payload"]["changed_paths"] == ["docs/path with spaces.md"]
+    assert body["payload"]["results"][0]["payload"]["accepted"][0]["requested_url"] == (
+        "https://example.test/a"
+    )
+    assert FakeGateway.instances[-1].calls == [
+        ("ingest_url", ["https://example.test/a"]),
+        (
+            "ingest_file",
+            {"path": "docs/path with spaces.md", "exists": False},
+        ),
+        ("index", None),
     ]
 
 

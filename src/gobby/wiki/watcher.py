@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
+
+logger = logging.getLogger(__name__)
 
 
 class WikiLocalChangeCoordinator(Protocol):
@@ -47,12 +50,14 @@ class WikiWatcher:
         self._stop_event = asyncio.Event()
         self._lock = asyncio.Lock()
         self._flush_lock = asyncio.Lock()
-        self._snapshots = {scope.name: self._snapshot(scope) for scope in self._scopes}
+        self._snapshots: dict[str, dict[Path, tuple[int, int]]] = {}
+        self._snapshots_initialized = False
 
     async def run(self) -> None:
         self._running = True
         self._stop_event.clear()
         try:
+            await self._initialize_snapshots()
             while not self._stop_event.is_set():
                 await self._scan_once()
                 if self._debounce_elapsed():
@@ -115,6 +120,21 @@ class WikiWatcher:
             "pending_debounce": pending_changes > 0,
             "pending_changes": pending_changes,
         }
+
+    async def _initialize_snapshots(self) -> None:
+        async with self._lock:
+            if self._snapshots_initialized:
+                return
+            try:
+                snapshots = await asyncio.to_thread(
+                    lambda: {scope.name: self._snapshot(scope) for scope in self._scopes}
+                )
+            except Exception:
+                logger.warning("Failed to initialize wiki watcher snapshots", exc_info=True)
+                self._snapshots = {}
+            else:
+                self._snapshots = snapshots
+            self._snapshots_initialized = True
 
     async def _scan_once(self) -> None:
         for scope in self._scopes:

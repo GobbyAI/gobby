@@ -34,7 +34,7 @@ async def test_workflow_calls_evaluate_with_full_scope(
     result = await case["registry"].call("run_expansion_qa_coverage", call_args(case))
 
     assert result["ok"] is True
-    assert captured["plan_path"] == case["plan_path"]
+    assert captured["plan_path"] == case["plan_path"].resolve()
     assert captured["plan_id"] == "task-qa-plan"
     assert captured["plan_hash"] == case["plan_hash"]
     assert captured["root_task_ref"] == case["root_task"]

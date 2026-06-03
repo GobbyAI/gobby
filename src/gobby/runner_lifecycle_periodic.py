@@ -59,13 +59,13 @@ def _wiki_gateway_for_local_scope(
     wiki_config: WikiConfig,
     roots_by_scope: dict[str, WikiRootConfig],
 ) -> Callable[[str], GwikiGateway]:
-    _ = wiki_config
+    # Keep wiki_config in this factory API for future per-root gateway options.
 
     def gateway(scope: str) -> GwikiGateway:
         root = roots_by_scope.get(scope)
         return GwikiGateway(
             binary=None,
-            project=str(root.path) if root is not None and scope == "project" else None,
+            project_root=str(root.path) if root is not None and scope == "project" else None,
             topic=_wiki_topic_name(scope),
             timeout_seconds=30.0,
         )

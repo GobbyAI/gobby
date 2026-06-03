@@ -102,7 +102,11 @@ class LLMService:
 
         provider_config = getattr(self._config.llm_providers, name, None)
         if not provider_config:
-            enabled = self._config.llm_providers.get_enabled_providers()
+            enabled = ", ".join(
+                f"{provider!r}" for provider in self._config.llm_providers.get_enabled_providers()
+            )
+            if not enabled:
+                enabled = "<none>"
             raise ValueError(f"Provider '{name}' is not configured. Available providers: {enabled}")
 
         if name == "claude":
@@ -112,7 +116,8 @@ class LLMService:
             logger.debug("Initialized Claude provider")
 
         else:
-            raise ValueError(f"Unknown provider '{name}'. Supported providers: claude, local")
+            supported = ", ".join(f"{provider!r}" for provider in ("claude", "local"))
+            raise ValueError(f"Unknown provider '{name}'. Supported providers: {supported}")
 
         self._providers[name] = provider
         self._initialized_providers.add(name)

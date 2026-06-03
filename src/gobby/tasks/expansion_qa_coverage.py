@@ -56,11 +56,14 @@ def run_expansion_qa_coverage(
     root_task = _resolve_root_task(task_manager, root_task_ref, project_id, run)
     artifact_manager = TaskArtifactManager(task_manager.db)
     artifacts = artifact_manager.get_artifacts(root_task.id)
-    repo_root = Path(artifacts.worktree_path or artifacts.clone_path or repo_path or Path.cwd())
+    artifact_repo_path = getattr(artifacts, "worktree_path", None) or getattr(
+        artifacts, "clone_path", None
+    )
+    repo_root = Path(artifact_repo_path or repo_path or Path.cwd()).resolve()
     resolved_plan_path = _resolve_path(repo_root, plan_path)
     actual_plan_hash = _sha256_file(resolved_plan_path)
 
-    expected_hash = artifacts.plan_file_hash or plan_hash
+    expected_hash = getattr(artifacts, "plan_file_hash", None) or plan_hash
     if actual_plan_hash != expected_hash or plan_hash != expected_hash:
         return _fail_plan_hash_drift(
             task_manager=task_manager,
@@ -118,7 +121,7 @@ def run_expansion_qa_coverage(
             "task_id": root_task.id,
             "plan_file_path": plan_path,
             "plan_file_hash": actual_plan_hash,
-            "base_commit_sha": artifacts.base_commit_sha,
+            "base_commit_sha": getattr(artifacts, "base_commit_sha", None),
             "expansion_run_id": run.id,
         },
     }

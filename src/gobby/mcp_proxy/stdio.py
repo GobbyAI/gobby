@@ -131,11 +131,13 @@ class DaemonProxy:
         if self._session_id or self._session_bootstrap_attempted or not self._project_id:
             return self._session_id
 
-        self._session_bootstrap_attempted = True
-        self._session_id = await resolve_session_id_from_terminal_context(
+        resolved_session_id = await resolve_session_id_from_terminal_context(
             self.base_url,
             self._project_id,
         )
+        if resolved_session_id is not None:
+            self._session_id = resolved_session_id
+            self._session_bootstrap_attempted = True
         return self._session_id
 
     async def _request(

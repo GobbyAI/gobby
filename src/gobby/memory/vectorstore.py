@@ -731,8 +731,7 @@ class VectorStore:
         batch_size: int,
     ) -> None:
         offset = None
-        stale_batch: list[str] = []
-        deleted_count = 0
+        stale_ids: list[str] = []
         while True:
             try:
                 points, next_offset = await asyncio.to_thread(
@@ -750,18 +749,13 @@ class VectorStore:
                 point_id = str(point.id)
                 if point_id in incoming_ids:
                     continue
-                stale_batch.append(point_id)
-                if len(stale_batch) >= batch_size:
-                    await self.delete_many(stale_batch)
-                    deleted_count += len(stale_batch)
-                    stale_batch = []
+                stale_ids.append(point_id)
             if next_offset is None:
                 break
             offset = next_offset
-        if stale_batch:
-            await self.delete_many(stale_batch)
-            deleted_count += len(stale_batch)
-        logger.info("Deleted %s stale points from '%s'", deleted_count, self._collection_name)
+        for index in range(0, len(stale_ids), batch_size):
+            await self.delete_many(stale_ids[index : index + batch_size])
+        logger.info("Deleted %s stale points from '%s'", len(stale_ids), self._collection_name)
 
     async def scroll_ids(self, batch_size: int = 1000) -> list[str]:
         """Return all point IDs in the collection."""

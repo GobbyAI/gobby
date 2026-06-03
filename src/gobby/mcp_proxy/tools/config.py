@@ -78,6 +78,7 @@ def _add_restart_metadata(
 
 
 def _storage_config_key_to_public_key(key: str) -> str:
+    """Return the key name exposed to callers for a persisted config key."""
     return key
 
 
@@ -456,9 +457,15 @@ def create_config_registry(
             return {"success": True, "count": len(keys), "keys": keys}
         except ValueError as e:
             return {"success": False, "error": str(e)}
-        except Exception:
+        except Exception as exc:
             logger.exception("Failed to list config keys")
-            return {"success": False, "error": "config store unavailable"}
+            message = str(exc).strip() or exc.__class__.__name__
+            return {
+                "success": False,
+                "error": "config store unavailable",
+                "error_type": exc.__class__.__name__,
+                "message": message,
+            }
 
     @registry.tool(
         name="ensure_defaults",

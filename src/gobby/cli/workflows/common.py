@@ -53,9 +53,7 @@ def close_session_var_manager() -> None:
     _db_instance = None
     _session_var_manager_instance = None
     if db is not None:
-        close_fn = getattr(db, "close", None)
-        if callable(close_fn):
-            close_fn()
+        db.close()
 
 
 def _reset_session_var_manager_for_tests() -> None:

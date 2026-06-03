@@ -9,6 +9,7 @@ from fastapi import APIRouter, Body, File, HTTPException, Query, UploadFile
 
 from gobby.gwiki_gateway import GwikiCommandError, GwikiGateway, GwikiGatewayError
 from gobby.wiki import WikiUpdateCoordinator
+from gobby.wiki.scope_resolution import WikiScopeResolutionError, resolve_wiki_scope
 from gobby.wiki.status import collect_wiki_status
 
 if TYPE_CHECKING:
@@ -114,13 +115,13 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
         request = body or {}
         urls = _string_sequence(request.get("urls"))
         paths = _ingest_paths(request)
-        if urls and paths:
-            raise HTTPException(status_code=400, detail="Provide file paths or URLs, not both")
         if not urls and not paths:
             raise HTTPException(status_code=400, detail="Provide path, paths, or urls")
 
         gateway = _gateway(server, project, topic)
-        if urls:
+        if urls and paths:
+            result = await _ingest_mixed(gateway, urls, paths)
+        elif urls:
             result = await _map_gateway_errors(lambda: gateway.ingest_url(urls))
         elif len(paths) == 1:
             result = await _map_gateway_errors(lambda: gateway.ingest_file(paths[0]))
@@ -218,14 +219,22 @@ async def _write(gateway: GwikiGateway, result: dict[str, Any]) -> dict[str, Any
 
 
 def _gateway(server: HTTPServer, project: str | None, topic: str | None) -> GwikiGateway:
-    _ = server
-    if project is not None and topic is not None:
-        raise HTTPException(status_code=400, detail="Provide project or topic scope, not both")
+    # Keep server in the helper signature for route factory compatibility.
+    services = getattr(server, "services", None)
+    try:
+        resolved = resolve_wiki_scope(
+            getattr(services, "database", None),
+            project=project,
+            topic=topic,
+            default_project_id=getattr(services, "project_id", None),
+        )
+    except WikiScopeResolutionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return GwikiGateway(
         binary=None,
-        project=project,
-        topic=topic,
+        project_root=resolved.project_root,
+        topic=resolved.topic,
         timeout_seconds=30.0,
     )
 
@@ -298,6 +307,19 @@ async def _ingest_many(gateway: GwikiGateway, paths: list[str]) -> dict[str, Any
     results = []
     for path in paths:
         results.append(await _map_gateway_awaitable(gateway.ingest_file(path)))
+    return _aggregate_ingest_results(results, command="ingest_file")
+
+
+async def _ingest_mixed(gateway: GwikiGateway, urls: list[str], paths: list[str]) -> dict[str, Any]:
+    results = [await _map_gateway_awaitable(gateway.ingest_url(urls))]
+    if len(paths) == 1:
+        results.append(await _map_gateway_awaitable(gateway.ingest_file(paths[0])))
+    else:
+        results.append(await _ingest_many(gateway, paths))
+    return _aggregate_ingest_results(results, command="ingest_file")
+
+
+def _aggregate_ingest_results(results: list[dict[str, Any]], *, command: str) -> dict[str, Any]:
     changed_paths: list[str] = []
     stderr: list[str] = []
     for result in results:
@@ -308,7 +330,7 @@ async def _ingest_many(gateway: GwikiGateway, paths: list[str]) -> dict[str, Any
             stderr.append(result["stderr"])
     return {
         "ok": all(bool(result.get("ok", False)) for result in results),
-        "command": "ingest_file",
+        "command": command,
         "payload": {
             "command": "ingest-file",
             "results": results,

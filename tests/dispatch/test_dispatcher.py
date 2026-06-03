@@ -885,7 +885,7 @@ async def test_spawn_action_skips_stale_candidate_with_active_run_mutex(
         agent_slug="backend-developer",
         prompt="go",
     )
-    spawned: list[str] = []
+    spawned: list[tuple[str, str, str]] = []
     monkeypatch.setattr(dispatcher, "list_automation_candidates", lambda *args, **kwargs: [task])
     monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     monkeypatch.setattr(
@@ -3385,17 +3385,36 @@ async def test_heartbeat_preserves_no_run_mutex_with_live_lease(
     monkeypatch.setattr(
         dispatcher,
         "spawn_agent",
-        lambda action, **kwargs: spawned.append(action.task_id) or "run-duplicate",
+        lambda action, **kwargs: spawned.append(
+            (action.task_id, action.task_ref, action.agent_slug)
+        )
+        or "run-duplicate",
     )
 
-    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+    first = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
-    assert result.executed == 0
-    assert result.skipped == 0
+    assert first.executed == 0
+    assert first.skipped == 0
     assert spawned == []
     mutex = storage.get_mutex(task.id)
     assert mutex is not None
     assert mutex.run_id is None
+
+    assert storage.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="heartbeat",
+        ttl_seconds=1,
+        now=old_acquired_at,
+    )
+
+    second = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    assert second.executed == 1
+    assert spawned == [(task.id, f"#{task.seq_num}", "backend-developer")]
+    mutex = storage.get_mutex(task.id)
+    assert mutex is not None
+    assert mutex.run_id == "run-duplicate"
 
 
 @pytest.mark.asyncio

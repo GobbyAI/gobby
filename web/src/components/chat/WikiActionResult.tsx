@@ -1,3 +1,5 @@
+import type { JSX } from "react";
+
 import type { WikiEnvelope, WikiJson } from "../../hooks/useWiki";
 
 export type WikiActionKind =
@@ -138,7 +140,13 @@ function contentPreview(payload: WikiJson): string | null {
   return stringValue(payload.content);
 }
 
-function ResultSection({ title, items }: { title: string; items: LabelValue[] }) {
+function ResultSection({
+  title,
+  items,
+}: {
+  title: string;
+  items: LabelValue[];
+}): JSX.Element | null {
   if (!items.length) return null;
   return (
     <section className="space-y-1">
@@ -155,7 +163,13 @@ function ResultSection({ title, items }: { title: string; items: LabelValue[] })
   );
 }
 
-function TextSection({ title, items }: { title: string; items: string[] }) {
+function TextSection({
+  title,
+  items,
+}: {
+  title: string;
+  items: string[];
+}): JSX.Element | null {
   if (!items.length) return null;
   return (
     <section className="space-y-1">
@@ -171,7 +185,7 @@ function TextSection({ title, items }: { title: string; items: string[] }) {
   );
 }
 
-export function WikiActionResult({ result }: WikiActionResultProps) {
+export function WikiActionResult({ result }: WikiActionResultProps): JSX.Element {
   const payload = asRecord(result.envelope.payload);
   const preview = contentPreview(payload);
 

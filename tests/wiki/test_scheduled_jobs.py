@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -10,6 +11,7 @@ from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
 from gobby.storage.projects import LocalProjectManager
 from gobby.wiki.scheduled_jobs import (
+    configured_wiki_cron_scopes,
     create_wiki_audit_handler,
     create_wiki_health_handler,
     create_wiki_refresh_handler,
@@ -34,13 +36,10 @@ class RecordingGateway:
     async def refresh(
         self,
         *,
-        scope: str | None = None,
         source_ids: list[str] | None = None,
         dry_run: bool = False,
     ) -> dict[str, Any]:
-        self.calls.append(
-            ("refresh", {"scope": scope, "source_ids": source_ids, "dry_run": dry_run})
-        )
+        self.calls.append(("refresh", {"source_ids": source_ids, "dry_run": dry_run}))
         return _result(
             "refresh",
             {
@@ -176,12 +175,14 @@ def test_wiki_cron_handlers_registered(cron_storage: CronJobStorage, project_id:
         cron_executor=executor,
         project_id=project_id,
         scopes=["project:alpha"],
+        gateway_factory=lambda _scope: RecordingGateway(),
     )
     repeated = register_wiki_cron_jobs(
         cron_storage=cron_storage,
         cron_executor=executor,
         project_id=project_id,
         scopes=["project:alpha"],
+        gateway_factory=lambda _scope: RecordingGateway(),
     )
 
     expected_handlers = {
@@ -205,6 +206,89 @@ def test_wiki_cron_handlers_registered(cron_storage: CronJobStorage, project_id:
     assert all(job.is_system for job in jobs)
 
 
+def test_default_wiki_cron_scope_resolves_project_root(
+    cron_storage: CronJobStorage,
+    project_id: str,
+    temp_db: Any,
+) -> None:
+    executor = RecordingExecutor(handlers={})
+    resolved_scopes = []
+
+    register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=executor,
+        project_id=project_id,
+        db=temp_db,
+        scopes=configured_wiki_cron_scopes(None, project_id),
+        gateway_factory=lambda scope: resolved_scopes.append(scope) or RecordingGateway(),
+    )
+
+    assert {scope.identity for scope in resolved_scopes} == {f"project:{project_id}"}
+    assert {scope.project_root for scope in resolved_scopes} == {Path("/tmp/wiki").resolve()}
+    assert sorted(job.name for job in cron_storage.list_jobs(project_id=project_id)) == [
+        f"gobby:wiki-audit:project:{project_id}",
+        f"gobby:wiki-health:project:{project_id}",
+        f"gobby:wiki-refresh:project:{project_id}",
+        f"gobby:wiki-research:project:{project_id}",
+    ]
+
+
+def test_wiki_cron_registration_reconciles_bare_uuid_rows(
+    cron_storage: CronJobStorage,
+    project_id: str,
+) -> None:
+    legacy_refresh = cron_storage.create_job(
+        project_id=project_id,
+        name=f"gobby:wiki-refresh:{project_id}",
+        description="legacy refresh",
+        schedule_type="interval",
+        interval_seconds=3600,
+        action_type="handler",
+        action_config={"handler": f"wiki:refresh:{project_id}"},
+        enabled=True,
+        is_system=True,
+    )
+    canonical_refresh = cron_storage.create_job(
+        project_id=project_id,
+        name=f"gobby:wiki-refresh:project:{project_id}",
+        description="canonical refresh",
+        schedule_type="interval",
+        interval_seconds=3600,
+        action_type="handler",
+        action_config={"handler": f"wiki:refresh:project:{project_id}"},
+        enabled=True,
+        is_system=True,
+    )
+    cron_storage.create_job(
+        project_id=project_id,
+        name=f"gobby:wiki-research:{project_id}",
+        description="legacy research",
+        schedule_type="interval",
+        interval_seconds=3600,
+        action_type="handler",
+        action_config={"handler": f"wiki:research:{project_id}"},
+        enabled=True,
+        is_system=True,
+    )
+
+    register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=RecordingExecutor(handlers={}),
+        project_id=project_id,
+        scopes=[f"project:{project_id}"],
+        gateway_factory=lambda _scope: RecordingGateway(),
+    )
+
+    disabled_refresh = cron_storage.get_job(legacy_refresh.id)
+    assert disabled_refresh is not None
+    assert disabled_refresh.name == f"gobby:wiki-refresh:{project_id}"
+    assert disabled_refresh.enabled is False
+    assert disabled_refresh.next_run_at is None
+    assert cron_storage.get_job(canonical_refresh.id) is not None
+    assert cron_storage.get_job_by_name(f"gobby:wiki-research:{project_id}") is None
+    assert cron_storage.get_job_by_name(f"gobby:wiki-research:project:{project_id}") is not None
+
+
 @pytest.mark.asyncio
 async def test_refresh_job_uses_gateway_and_avoids_duplicate_index() -> None:
     gateway = RecordingGateway()
@@ -216,9 +300,7 @@ async def test_refresh_job_uses_gateway_and_avoids_duplicate_index() -> None:
 
     output = json.loads(await handler(_job("refresh")))
 
-    assert gateway.calls == [
-        ("refresh", {"scope": "project:alpha", "source_ids": None, "dry_run": False})
-    ]
+    assert gateway.calls == [("refresh", {"source_ids": None, "dry_run": False})]
     assert gateway.index_calls == 0
     assert output["changed_paths"] == ["raw/changed.md"]
     assert output["result"]["indexed"] == {"documents": 1, "chunks": 3}

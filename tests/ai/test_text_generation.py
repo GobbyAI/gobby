@@ -99,9 +99,41 @@ async def test_text_generation_service_resolves_only_selected_adapter() -> None:
     )
 
     response = await service.generate(TextGenerationRequest(prompt="summarize", provider="codex"))
+    second_response = await service.generate(
+        TextGenerationRequest(prompt="summarize again", provider="codex")
+    )
 
     assert response == "codex:summarize"
+    assert second_response == "codex:summarize again"
     assert created == ["codex"]
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_rejects_none_factory_result() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+            )
+        ]
+    )
+    calls = 0
+
+    def none_factory() -> Any:
+        nonlocal calls
+        calls += 1
+        return None
+
+    service = TextGenerationService(registry, adapter_factories={"codex": none_factory})
+
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="returned None"):
+            await service.generate(TextGenerationRequest(prompt="summarize", provider="codex"))
+
+    assert calls == 2
 
 
 def test_build_daemon_text_generation_service_defers_adapter_instantiation() -> None:
@@ -124,8 +156,13 @@ def test_build_daemon_text_generation_service_defers_adapter_instantiation() -> 
     )
 
     assert service.registry is registry
-    assert service._adapters == {}
-    assert set(service._adapter_factories) == set(providers)
+    assert {
+        binding.provider
+        for binding in service.registry.bindings_for(
+            AICapability.TEXT_GENERATE,
+            include_unavailable=False,
+        )
+    } == set(providers)
 
 
 class FakeLLMProvider(LLMProvider):

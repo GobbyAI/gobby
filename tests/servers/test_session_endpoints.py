@@ -2,6 +2,8 @@
 
 from collections.abc import Iterator
 from datetime import UTC
+from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -9,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
 from gobby.servers.http import HTTPServer
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
@@ -21,7 +24,7 @@ class TestSessionEndpoints:
         self,
         client: TestClient,
         session_storage: SessionManager,
-        test_project: dict,
+        test_project: dict[str, Any],
     ) -> None:
         """Test getting a session by ID."""
         # Register a session first
@@ -57,7 +60,7 @@ class TestSessionEndpoints:
         self,
         client: TestClient,
         session_storage: SessionManager,
-        test_project: dict,
+        test_project: dict[str, Any],
     ) -> None:
         """Test updating session status."""
         session = session_storage.register(
@@ -95,7 +98,7 @@ class TestSessionEndpoints:
         self,
         client: TestClient,
         session_storage: SessionManager,
-        test_project: dict,
+        test_project: dict[str, Any],
     ) -> None:
         """Test updating session summary."""
         session = session_storage.register(
@@ -133,7 +136,7 @@ class TestSessionEndpoints:
         self,
         client: TestClient,
         session_storage: SessionManager,
-        test_project: dict,
+        test_project: dict[str, Any],
     ) -> None:
         """Test listing sessions."""
         # Create a few sessions
@@ -163,7 +166,7 @@ class TestSessionEndpoints:
         self,
         client: TestClient,
         session_storage: SessionManager,
-        test_project: dict,
+        test_project: dict[str, Any],
     ) -> None:
         """Test listing sessions with query filters."""
         session_storage.register(
@@ -250,7 +253,7 @@ class TestSessionEndpoints:
         self,
         client: TestClient,
         session_storage: SessionManager,
-        test_project: dict,
+        test_project: dict[str, Any],
     ) -> None:
         """Find the one active session matching project and parent PID."""
         session = session_storage.register(
@@ -273,7 +276,7 @@ class TestSessionEndpoints:
         self,
         client: TestClient,
         session_storage: SessionManager,
-        test_project: dict,
+        test_project: dict[str, Any],
     ) -> None:
         """Multiple active sessions for the same project and PID are ambiguous."""
         for external_id in ("terminal-ambiguous-1", "terminal-ambiguous-2"):
@@ -297,7 +300,7 @@ class TestSessionEndpoints:
         self,
         client: TestClient,
         session_storage: SessionManager,
-        test_project: dict,
+        test_project: dict[str, Any],
     ) -> None:
         """Optional terminal context narrows sessions sharing one parent PID."""
         session_storage.register(
@@ -331,9 +334,9 @@ class TestSessionEndpoints:
         self,
         client: TestClient,
         session_storage: SessionManager,
-        project_storage,
-        test_project: dict,
-        tmp_path,
+        project_storage: LocalProjectManager,
+        test_project: dict[str, Any],
+        tmp_path: Path,
     ) -> None:
         """Lookup only considers active sessions in the requested project."""
         other_project = project_storage.create(
@@ -363,6 +366,21 @@ class TestSessionEndpoints:
 
         assert response.status_code == 200
         assert response.json()["session"] is None
+
+    @pytest.mark.parametrize("parent_pid", [0, -1, True])
+    def test_find_by_terminal_context_rejects_non_positive_parent_pid(
+        self,
+        client: TestClient,
+        test_project: dict[str, Any],
+        parent_pid: object,
+    ) -> None:
+        response = client.post(
+            "/api/sessions/find_by_terminal_context",
+            json={"project_id": test_project["id"], "parent_pid": parent_pid},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "parent_pid must be a positive integer"
 
     def test_find_current_malformed_json(self, client: TestClient) -> None:
         """Test find_current with malformed JSON returns 500 error.

@@ -6,6 +6,7 @@ import importlib
 import json
 import logging
 import time
+import weakref
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
@@ -32,15 +33,64 @@ logger = logging.getLogger(__name__)
 _AUDIO_REGISTRY_CACHE_TTL_SECONDS = 2.0
 _AUDIO_REGISTRY_CACHE_MAX_SIZE = 8
 _AUDIO_REGISTRY_CACHE: OrderedDict[str, tuple[float, AICapabilityRegistry]] = OrderedDict()
+_AUDIO_CONFIG_SIGNATURE_CACHE: weakref.WeakKeyDictionary[Any, tuple[tuple[Any, ...], str]] = (
+    weakref.WeakKeyDictionary()
+)
 
 
 def _config_signature(config: Any) -> str:
-    model_dump = getattr(config, "model_dump", None)
-    if callable(model_dump):
-        payload = model_dump(mode="json", exclude_none=True)
-    else:
-        payload = repr(config)
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    marker = _audio_config_marker(config)
+    try:
+        cached = _AUDIO_CONFIG_SIGNATURE_CACHE.get(config)
+    except TypeError:
+        cached = None
+    if cached is not None and cached[0] == marker:
+        return cached[1]
+
+    signature = json.dumps(marker, sort_keys=True, separators=(",", ":"), default=str)
+    try:
+        _AUDIO_CONFIG_SIGNATURE_CACHE[config] = (marker, signature)
+    except TypeError:
+        pass
+    return signature
+
+
+def _audio_config_marker(config: Any) -> tuple[Any, ...]:
+    voice = getattr(config, "voice", None)
+    if voice is None:
+        return (None,)
+    bindings = getattr(voice, "openai_compatible_audio", []) or []
+    return (
+        getattr(voice, "enabled", None),
+        getattr(voice, "tts_enabled", None),
+        getattr(voice, "tts_provider", None),
+        getattr(voice, "tts_reference_audio", None),
+        getattr(voice, "tts_reference_text", None),
+        getattr(voice, "tts_temperature", None),
+        getattr(voice, "tts_chatterbox_max_generation_tokens", None),
+        getattr(voice, "tts_clause_max_chars", None),
+        getattr(voice, "tts_device", None),
+        getattr(voice, "stt_enabled", None),
+        getattr(voice, "transcription_timeout_seconds", None),
+        getattr(voice, "whisper_model_size", None),
+        getattr(voice, "whisper_device", None),
+        getattr(voice, "whisper_compute_type", None),
+        getattr(voice, "whisper_prompt", None),
+        tuple(getattr(voice, "whisper_vocabulary", []) or []),
+        tuple(_audio_binding_marker(binding) for binding in bindings),
+    )
+
+
+def _audio_binding_marker(binding: Any) -> tuple[Any, ...]:
+    return (
+        getattr(binding, "provider", None),
+        getattr(binding, "url", None),
+        getattr(binding, "model", None),
+        getattr(binding, "api_key", None),
+        getattr(binding, "transcription_enabled", None),
+        getattr(binding, "translation_enabled", None),
+        getattr(binding, "timeout_seconds", None),
+    )
 
 
 def _cached_audio_registry(config: Any) -> AICapabilityRegistry | None:

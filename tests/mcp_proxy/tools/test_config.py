@@ -329,13 +329,7 @@ class TestListConfigKeys:
         self, config_registry: InternalToolRegistry, config_store: ConfigStore
     ) -> None:
         config_store.set(AI_EMBEDDING_MODEL_KEY, "bge-m3")
-        config_store.db.execute(
-            """
-            INSERT INTO config_store (key, value, source, updated_at)
-            VALUES (%s, %s, %s, %s)
-            """,
-            ("embeddings.dim", "1024", "test", "2026-01-01T00:00:00+00:00"),
-        )
+        config_store.set(AI_EMBEDDING_DIM_KEY, "1024", source="test")
 
         tool = config_registry.get_tool("list_config_keys")
         result = tool()
@@ -366,6 +360,8 @@ class TestListConfigKeys:
 
         assert result["success"] is False
         assert result["error"] == "config store unavailable"
+        assert result["error_type"] == "RuntimeError"
+        assert result["message"] == "config store unavailable"
 
 
 class TestEnsureDefaults:

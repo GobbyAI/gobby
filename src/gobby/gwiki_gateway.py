@@ -64,12 +64,12 @@ class GwikiGateway:
         self,
         *,
         binary: str | None = None,
-        project: str | Path | None = None,
+        project_root: str | Path | None = None,
         topic: str | None = None,
         timeout_seconds: float = 30.0,
     ) -> None:
         self._binary = binary
-        self._project = str(project) if project is not None else None
+        self._project_root = str(project_root) if project_root is not None else None
         self._topic = topic
         self._timeout_seconds = timeout_seconds
 
@@ -151,13 +151,10 @@ class GwikiGateway:
     async def refresh(
         self,
         *,
-        scope: str | None = None,
         source_ids: Sequence[str] | None = None,
         dry_run: bool = False,
     ) -> dict[str, Any]:
         args = ["refresh"]
-        if scope is not None:
-            args.extend(["--scope", scope])
         for source_id in source_ids or ():
             args.extend(["--id", source_id])
         if dry_run:
@@ -193,8 +190,8 @@ class GwikiGateway:
 
     def _scope_args(self) -> list[str]:
         args: list[str] = []
-        if self._project is not None:
-            args.extend(["--project", self._project])
+        if self._project_root is not None:
+            args.extend(["--project", self._project_root])
         if self._topic is not None:
             args.extend(["--topic", self._topic])
         return args

@@ -48,7 +48,7 @@ Every gateway call carries explicit scope:
 | `gwiki health --format json` | Scope flags | Read-only | Scheduled health checks are read-only status/report jobs. |
 | `gwiki sources --format json` | Scope flags | Read-only | CLI owns source record schema and missing-raw degradations. |
 | `gwiki remove-source --id <SOURCE_ID> --format json [--dry-run\|--yes] [--keep-asset]` | `--id`; one of preview or confirmation intent | Explicit write | `--dry-run` previews only; `--yes` confirms mutation; `--keep-asset` preserves raw asset files. |
-| `gwiki refresh --format json [--scope project\|topic] [--id <SOURCE_ID>...] [--dry-run]` | Optional scope override, repeated source IDs, optional dry-run | Scheduled write | May be explicit when user-triggered; CLI owns re-fetch, hashing, writes, failures, and changed-source batch indexing. |
+| `gwiki refresh --format json [--id <SOURCE_ID>...] [--dry-run]` | Repeated source IDs, optional dry-run, and normal `--project <root>` / `--topic <name>` scope flags | Scheduled write | May be explicit when user-triggered; CLI owns re-fetch, hashing, writes, failures, and changed-source batch indexing. |
 
 ## Common JSON Rules
 
@@ -318,7 +318,7 @@ Required request fields:
 
 | Field | Requirement |
 | :--- | :--- |
-| `--scope project\|topic` | Optional CLI scope selector when the caller supplies one explicitly. |
+| `--project <root>` / `--topic <name>` | Normal CLI scope flags when the caller supplies one explicitly. |
 | `--id <SOURCE_ID>` | Optional repeated source IDs to refresh. |
 | `--dry-run` | Return planned refresh set without fetching or writing. |
 

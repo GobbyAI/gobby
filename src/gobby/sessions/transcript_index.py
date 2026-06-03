@@ -542,7 +542,11 @@ def _encode_adjustment_value(value: Any) -> Any:
     try:
         json.dumps(value)
     except TypeError:
-        logger.debug("Skipping non-serializable transcript index adjustment value")
+        logger.warning(
+            "Skipping non-serializable transcript index adjustment value %r of type %s",
+            value,
+            type(value).__name__,
+        )
         return None
     return value
 

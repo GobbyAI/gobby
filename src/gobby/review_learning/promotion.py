@@ -184,8 +184,10 @@ def _create_or_update_task(
     project_id: str,
     source_session_id: str | None,
 ) -> Any:
-    assert decision.guardrail_target is not None
-    assert decision.category is not None
+    if decision.guardrail_target is None:
+        raise ValueError("promotion decision requires guardrail_target")
+    if decision.category is None:
+        raise ValueError("promotion decision requires category")
     existing = _find_existing_task(task_manager, project_id, lesson.identity.pattern_key)
     labels = _task_labels(
         lesson=lesson,

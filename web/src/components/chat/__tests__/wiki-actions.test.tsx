@@ -130,6 +130,33 @@ describe("wiki chat actions", () => {
     expect(screen.getByText("blocked")).toBeInTheDocument();
   });
 
+  it("test_mixed_ingest_preserves_paths_with_spaces", async () => {
+    const user = userEvent.setup();
+    render(<ChatInput {...defaultProps} projectId="demo" />);
+
+    await user.click(screen.getByRole("button", { name: "Wiki actions" }));
+    await user.click(screen.getByRole("button", { name: "Ingest URLs" }));
+    await user.type(
+      screen.getByLabelText("Wiki action input"),
+      "https://example.test/a\n/Users/josh/My Notes/wiki page.md",
+    );
+    await user.click(screen.getByRole("button", { name: "Run wiki write" }));
+    await user.click(screen.getByRole("button", { name: "Run wiki action" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/api/wiki/ingest?project=demo"),
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            urls: ["https://example.test/a"],
+            path: "/Users/josh/My Notes/wiki page.md",
+          }),
+        }),
+      );
+    });
+  });
+
   it("test_action_links_back_to_wiki_panel", async () => {
     const user = userEvent.setup();
     render(

@@ -330,6 +330,11 @@ def register_lifecycle_routes(
                 raise HTTPException(status_code=400, detail="Required field: project_id")
             if parent_pid is None:
                 raise HTTPException(status_code=400, detail="Required field: parent_pid")
+            if isinstance(parent_pid, bool) or not isinstance(parent_pid, int) or parent_pid <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="parent_pid must be a positive integer",
+                )
 
             session = server.session_manager.find_active_by_terminal_context(
                 project_id=project_id,

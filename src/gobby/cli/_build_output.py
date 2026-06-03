@@ -48,7 +48,7 @@ def _echo_build_control_result(result: BuildControlResult) -> None:
 
 
 def _echo_target_control_result(payload: dict[str, object]) -> None:
-    action = str(payload["action"])
+    action = str(payload.get("action", "<unknown>"))
     click.echo(f"Build {action}: task-scoped")
     click.echo(f"Root task: {payload['root_task_id']}")
     affected = payload.get("affected_tasks")

@@ -300,18 +300,30 @@ def _resolve_database_url(gobby_home: Path) -> str:
 def _require_managed_docker_postgres(*, database_url: str, mode: InstallMode | str) -> None:
     if mode != "docker":
         raise click.ClickException(
-            "PostgreSQL backup and restore only support Gobby-managed Docker PostgreSQL."
+            "PostgreSQL backup and restore require the Gobby-managed Docker database "
+            f"(postgres_install_mode=docker); got mode={mode!s}."
         )
     parsed = urlparse(database_url)
     host = (parsed.hostname or "").lower()
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    user = _dsn_user(database_url)
+    database = _dsn_db(database_url)
     if (
         host not in {"localhost", "127.0.0.1", "::1"}
-        or parsed.port != 60891
-        or _dsn_user(database_url) != DEFAULT_POSTGRES_USER
-        or _dsn_db(database_url) != DEFAULT_POSTGRES_DB
+        or port != 60891
+        or user != DEFAULT_POSTGRES_USER
+        or database != DEFAULT_POSTGRES_DB
     ):
         raise click.ClickException(
-            "PostgreSQL backup and restore only support Gobby-managed Docker PostgreSQL."
+            "PostgreSQL backup and restore require the Gobby-managed Docker database "
+            "(postgres_install_mode=docker, host=localhost/127.0.0.1/::1, "
+            f"port=60891, user={DEFAULT_POSTGRES_USER}, database={DEFAULT_POSTGRES_DB}); "
+            f"got mode={mode!s}, host={host or '<missing>'}, "
+            f"port={port if port is not None else '<missing or invalid>'}, "
+            f"user={user or '<missing>'}, database={database or '<missing>'}."
         )
 
 

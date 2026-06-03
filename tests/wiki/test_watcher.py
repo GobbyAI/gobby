@@ -66,6 +66,7 @@ async def test_debounce_groups_scope_changes(tmp_path: Path) -> None:
 
     task = asyncio.create_task(watcher.run())
     try:
+        await _eventually(lambda: watcher._snapshots_initialized)
         (project_root / "a.md").write_text("a", encoding="utf-8")
         (topic_root / "b.md").write_text("b", encoding="utf-8")
 
@@ -77,6 +78,37 @@ async def test_debounce_groups_scope_changes(tmp_path: Path) -> None:
             await task
 
     assert coordinator.calls == [{"project": ["a.md"], "topic:notes": ["b.md"]}]
+
+
+@pytest.mark.asyncio
+async def test_initial_snapshot_is_populated_when_watcher_runs(tmp_path: Path) -> None:
+    existing = tmp_path / "existing.md"
+    existing.write_text("before", encoding="utf-8")
+    coordinator = RecordingCoordinator()
+    watcher = WikiWatcher(
+        scopes=[WikiWatchScope(name="project", root=tmp_path)],
+        coordinator=coordinator,
+        debounce_interval=0.01,
+        poll_interval=0.01,
+    )
+
+    task = asyncio.create_task(watcher.run())
+    try:
+        await _eventually(lambda: watcher.health()["running"] is True)
+        await watcher._scan_once()
+        assert coordinator.calls == []
+
+        existing.write_text("after", encoding="utf-8")
+
+        await watcher._scan_once()
+        await watcher.flush_pending()
+    finally:
+        await watcher.stop()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    assert coordinator.calls == [{"project": ["existing.md"]}]
 
 
 @pytest.mark.asyncio

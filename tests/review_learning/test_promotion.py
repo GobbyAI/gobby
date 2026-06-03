@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+from gobby.review_learning.lessons import normalize_lesson
+from gobby.review_learning.promotion import PromotionDecision, _create_or_update_task
 from gobby.review_learning.service import ReviewLearningService
 
 pytestmark = pytest.mark.unit
@@ -141,3 +143,43 @@ async def test_non_promotable_lessons_never_create_tasks(
     assert result["promotable"] is False
     assert result["guardrail_target"] is None
     assert fake_task_manager.created == []
+
+
+def test_create_or_update_task_rejects_incomplete_promotion_decision(
+    fake_task_manager,
+) -> None:
+    lesson = normalize_lesson(
+        source_kind="agent_review",
+        source="code-reviewer",
+        source_review="review-1",
+        decision="confirmed",
+        finding=_finding(),
+        evidence={"commit": "abc"},
+        finding_fingerprint="fingerprint",
+        occurrence_key="occurrence",
+        repo=None,
+        language=None,
+        risk="medium",
+    )
+
+    with pytest.raises(ValueError, match="guardrail_target"):
+        _create_or_update_task(
+            lesson=lesson,
+            evidence_memory_id="mem-1",
+            evidence_memories=[],
+            decision=PromotionDecision("broken", 2, None, "test", True),
+            task_manager=fake_task_manager,
+            project_id="project",
+            source_session_id=None,
+        )
+
+    with pytest.raises(ValueError, match="category"):
+        _create_or_update_task(
+            lesson=lesson,
+            evidence_memory_id="mem-1",
+            evidence_memories=[],
+            decision=PromotionDecision("broken", 2, "test", None, True),
+            task_manager=fake_task_manager,
+            project_id="project",
+            source_session_id=None,
+        )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -13,10 +14,40 @@ install_module = importlib.import_module("gobby.cli.install")
 pytestmark = pytest.mark.unit
 
 
+def test_source_checkout_install_requires_repo_marker(tmp_path: Path) -> None:
+    false_positive_install = tmp_path / "site-packages" / "src" / "gobby" / "install"
+    false_positive_install.mkdir(parents=True)
+
+    assert install_module._is_source_checkout_install(false_positive_install) is False
+
+    checkout = tmp_path / "checkout"
+    source_install = checkout / "src" / "gobby" / "install"
+    source_install.mkdir(parents=True)
+    (checkout / "pyproject.toml").write_text("[project]\nname = 'gobby'\n", encoding="utf-8")
+
+    assert install_module._is_source_checkout_install(source_install) is True
+
+
+def test_docker_daemon_available_handles_subprocess_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(install_module.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(
+        install_module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            subprocess.SubprocessError("docker failed")
+        ),
+    )
+
+    assert install_module._docker_daemon_available() is False
+
+
 def test_full_preflight_requires_docker_cli_tmux_and_source_uv(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(install_module, "_docker_daemon_available", lambda: False)
+    monkeypatch.setattr(install_module, "_is_source_checkout_install", lambda _path: True)
     monkeypatch.setattr(install_module, "_port_available", lambda _port: True)
     monkeypatch.setattr(install_module.shutil, "which", lambda _name: None)
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -126,7 +127,7 @@ class ReviewLearningService:
         if not normalized_paths:
             return {"count": 0, "lessons": [], "message": ""}
 
-        memories = self._candidate_lesson_memories(
+        memories = await self._candidate_lesson_memories(
             project_id=resolved_project_id,
             touched_paths=normalized_paths,
             limit=bounded_limit,
@@ -314,7 +315,7 @@ class ReviewLearningService:
             )
             return project_id, None
 
-    def _candidate_lesson_memories(
+    async def _candidate_lesson_memories(
         self,
         *,
         project_id: str,
@@ -326,24 +327,28 @@ class ReviewLearningService:
         seen: set[str] = set()
 
         for tag, touched_path in tagged_paths.items():
-            for memory in self.memory_manager.list_memories(
+            tagged_memories = await asyncio.to_thread(
+                self.memory_manager.list_memories,
                 project_id=project_id,
                 memory_type="pattern",
                 limit=limit,
                 tags_all=["review-lesson", "confirmed", tag],
-            ):
+            )
+            for memory in tagged_memories:
                 memory_id = str(getattr(memory, "id", "") or "")
                 if not memory_id or memory_id in seen:
                     continue
                 seen.add(memory_id)
                 candidates.append((memory, touched_path))
 
-        for memory in self.memory_manager.list_memories(
+        legacy_memories = await asyncio.to_thread(
+            self.memory_manager.list_memories,
             project_id=project_id,
             memory_type="pattern",
             limit=max(_LEGACY_SCAN_LIMIT, limit),
             tags_all=["review-lesson", "confirmed"],
-        ):
+        )
+        for memory in legacy_memories:
             memory_id = str(getattr(memory, "id", "") or "")
             if not memory_id or memory_id in seen:
                 continue

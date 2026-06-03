@@ -69,7 +69,10 @@ def read_bootstrap_database_url(gobby_home: Path) -> str | None:
 
 
 def active_install_mode(*, gobby_home: Path | None = None) -> InstallMode:
-    _ = gobby_home
+    """Return the active PostgreSQL install mode.
+
+    ``gobby_home`` is retained for API compatibility; PostgreSQL always runs in Docker.
+    """
     return "docker"
 
 

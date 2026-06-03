@@ -133,8 +133,12 @@ def test_create_backup_rejects_non_docker_install_mode(
 
     _patch_common(monkeypatch, backup, mode="bogus")
 
-    with pytest.raises(click.ClickException, match="Gobby-managed Docker PostgreSQL"):
+    with pytest.raises(click.ClickException) as exc_info:
         backup.create_postgres_backup(output_dir=tmp_path / "backup", gobby_home=tmp_path)
+
+    message = str(exc_info.value)
+    assert "postgres_install_mode=docker" in message
+    assert "mode=bogus" in message
 
 
 def test_postgres_backup_configured_only_swallows_bootstrap_read_errors(
@@ -214,8 +218,15 @@ def test_restore_rejects_unmanaged_dsn(
         database_url="postgresql://gobby:secret@db.example.test:5432/gobby",
     )
 
-    with pytest.raises(click.ClickException, match="Gobby-managed Docker PostgreSQL"):
+    with pytest.raises(click.ClickException) as exc_info:
         backup.restore_postgres_backup(tmp_path / "missing", gobby_home=tmp_path)
+
+    message = str(exc_info.value)
+    assert "host=db.example.test" in message
+    assert "port=5432" in message
+    assert "user=gobby" in message
+    assert "database=gobby" in message
+    assert "mode=docker" in message
 
 
 def test_restore_rejects_checksum_mismatch(

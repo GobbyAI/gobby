@@ -90,11 +90,11 @@ async def test_startup_indexes_local_changes_with_scoped_gateways(
             self,
             *,
             binary: str | None = None,
-            project: str | Path | None = None,
+            project_root: str | Path | None = None,
             topic: str | None = None,
             timeout_seconds: float = 30.0,
         ) -> None:
-            self.project = str(project) if project is not None else None
+            self.project = str(project_root) if project_root is not None else None
             self.topic = topic
 
         async def index(self) -> dict[str, Any]:

@@ -239,7 +239,11 @@ def setup_internal_registries(
     # Initialize wiki registry (always available; gateway availability is checked per call)
     from gobby.mcp_proxy.tools.wiki import create_wiki_registry
 
-    wiki_registry = create_wiki_registry(config=_config)
+    wiki_registry = create_wiki_registry(
+        _config=_config,
+        db=db,
+        default_project_id=project_id,
+    )
     manager.add_registry(wiki_registry)
     logger.debug("Wiki registry initialized")
 

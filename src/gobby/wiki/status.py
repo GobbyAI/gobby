@@ -95,7 +95,10 @@ def _watcher_health(watcher: object | None) -> dict[str, Any] | None:
     health_call = getattr(watcher, "health", None)
     if not callable(health_call):
         return None
-    value = health_call()
+    try:
+        value = health_call()
+    except Exception:
+        return None
     return value if isinstance(value, dict) else None
 
 

@@ -46,7 +46,7 @@ def test_acquire_release_round_trip(
         ttl_seconds=60,
         now=now + timedelta(seconds=10),
     )
-    assert not manager.acquire_mutex(
+    assert manager.acquire_mutex(
         task.id,
         holder="state-dispatcher:1",
         kind="lifecycle",
@@ -59,7 +59,7 @@ def test_acquire_release_round_trip(
     assert mutex is not None
     assert mutex.lease_holder == "state-dispatcher:1"
     assert mutex.action_kind == "lifecycle"
-    assert datetime.fromisoformat(mutex.lease_until) == now + timedelta(seconds=60)
+    assert datetime.fromisoformat(mutex.lease_until) == now + timedelta(seconds=130)
 
     assert manager.release_mutex(task.id, holder="state-dispatcher:1")
     assert manager.get_mutex(task.id) is None
@@ -113,6 +113,40 @@ def test_active_mutex_cannot_be_replaced_by_same_holder_with_different_run(
     assert mutex is not None
     assert mutex.run_id == "run-1"
     assert datetime.fromisoformat(mutex.lease_until) == now + timedelta(seconds=140)
+
+
+def test_same_holder_can_attach_run_to_no_run_mutex(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="No-run mutex task",
+    )
+    manager = _manager_class()(temp_db)
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+
+    assert manager.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="heartbeat",
+        run_id=None,
+        ttl_seconds=60,
+        now=now,
+    )
+    assert manager.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="heartbeat",
+        run_id="run-1",
+        ttl_seconds=120,
+        now=now + timedelta(seconds=15),
+    )
+
+    mutex = manager.get_mutex(task.id)
+    assert mutex is not None
+    assert mutex.run_id == "run-1"
+    assert datetime.fromisoformat(mutex.lease_until) == now + timedelta(seconds=135)
 
 
 def test_expired_mutex_can_be_reacquired_by_new_holder(temp_db, sample_project) -> None:

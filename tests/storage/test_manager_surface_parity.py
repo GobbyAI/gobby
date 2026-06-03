@@ -28,7 +28,10 @@ pytestmark = pytest.mark.unit
 def _scoped_postgres_url(database_url: str, schema: str) -> str:
     parsed = urllib.parse.urlsplit(database_url)
     query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
-    query.append(("options", f"-csearch_path={schema}"))
+    existing_options = [value for key, value in query if key == "options"]
+    query = [(key, value) for key, value in query if key != "options"]
+    options = " ".join([*existing_options, f"-csearch_path={schema}"])
+    query.append(("options", options))
     return urllib.parse.urlunsplit(parsed._replace(query=urllib.parse.urlencode(query)))
 
 
@@ -43,6 +46,18 @@ def test_scoped_postgres_url_preserves_existing_query_params() -> None:
     assert urllib.parse.parse_qs(parsed.query) == {
         "sslmode": ["disable"],
         "options": ["-csearch_path=gobby_test_schema"],
+    }
+
+
+def test_scoped_postgres_url_merges_existing_options() -> None:
+    scoped = _scoped_postgres_url(
+        "postgresql://user:pass@localhost:5432/gobby?options=-cstatement_timeout%3D5000",
+        "gobby_test_schema",
+    )
+
+    parsed = urllib.parse.urlsplit(scoped)
+    assert urllib.parse.parse_qs(parsed.query) == {
+        "options": ["-cstatement_timeout=5000 -csearch_path=gobby_test_schema"],
     }
 
 

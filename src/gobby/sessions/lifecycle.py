@@ -562,6 +562,7 @@ class SessionLifecycleManager:
             return
 
         if not transcript_path.endswith(".json"):
+            # Index sidecars are a seek optimization; transcript token processing must continue.
             try:
                 st = os.stat(transcript_path)
                 session_source = session.source if isinstance(session.source, str) else None

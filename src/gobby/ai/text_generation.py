@@ -85,6 +85,10 @@ class TextGenerationService:
                 raise RuntimeError(
                     f"Failed to initialize text_generate adapter for provider {binding.provider!r}"
                 ) from exc
+            if adapter is None:
+                raise RuntimeError(
+                    f"text_generate adapter factory for provider {binding.provider!r} returned None"
+                )
             self._adapters[binding.provider] = adapter
         return await adapter.generate(request)
 

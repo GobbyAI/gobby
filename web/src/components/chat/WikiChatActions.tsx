@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { type JSX, useMemo, useRef, useState } from "react";
 
 import {
   useWiki,
@@ -23,6 +23,8 @@ interface WikiActionDefinition {
   requiresInput: boolean;
   requiresIntent: boolean;
 }
+
+type Selector = { path: string } | { title: string };
 
 const ACTIONS: WikiActionDefinition[] = [
   {
@@ -92,7 +94,7 @@ const ACTIONS: WikiActionDefinition[] = [
 
 function parseLines(value: string): string[] {
   return value
-    .split(/\s+/)
+    .split(/\r?\n/)
     .map((item) => item.trim())
     .filter(Boolean);
 }
@@ -101,8 +103,12 @@ function buildIngestRequest(value: string): WikiIngestRequest {
   const entries = parseLines(value);
   if (entries.length === 0) return {};
   const urls = entries.filter((entry) => /^https?:\/\//i.test(entry));
-  if (urls.length) return { urls };
-  return entries.length > 1 ? { paths: entries } : { path: entries[0] };
+  const paths = entries.filter((entry) => !/^https?:\/\//i.test(entry));
+  return {
+    ...(urls.length ? { urls } : {}),
+    ...(paths.length > 1 ? { paths } : {}),
+    ...(paths.length === 1 ? { path: paths[0] } : {}),
+  };
 }
 
 function buildCompileRequest(value: string): WikiCompileRequest {
@@ -110,7 +116,7 @@ function buildCompileRequest(value: string): WikiCompileRequest {
   return output ? { output } : {};
 }
 
-function readSelector(value: string) {
+function readSelector(value: string): Selector {
   const selector = value.trim();
   return selector.includes("/") || selector.endsWith(".md")
     ? { path: selector }
@@ -121,7 +127,7 @@ export function WikiChatActions({
   projectId,
   disabled = false,
   onActionComplete,
-}: WikiChatActionsProps) {
+}: WikiChatActionsProps): JSX.Element {
   const wiki = useWiki({ projectId });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -138,7 +144,7 @@ export function WikiChatActions({
     [activeKind],
   );
 
-  const selectAction = (action: WikiActionDefinition) => {
+  const selectAction = (action: WikiActionDefinition): void => {
     setActiveKind(action.kind);
     setInput("");
     setSelectedFile(null);
@@ -147,12 +153,15 @@ export function WikiChatActions({
     setResult(null);
   };
 
-  const complete = async (action: WikiActionDefinition, envelope: WikiEnvelope) => {
+  const complete = async (
+    action: WikiActionDefinition,
+    envelope: WikiEnvelope,
+  ): Promise<void> => {
     setResult({ kind: action.kind, title: action.title, envelope });
     await onActionComplete?.();
   };
 
-  const runAction = async () => {
+  const runAction = async (): Promise<void> => {
     if (!activeAction || isRunning) return;
     if (activeAction.requiresIntent && pendingIntent) {
       setPendingIntent(false);

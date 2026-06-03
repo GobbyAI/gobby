@@ -108,7 +108,14 @@ def _raise_graph_backend_removed() -> None:
 
 
 def _is_source_checkout_install(install_dir: Path) -> bool:
-    return "src/gobby/install" in install_dir.as_posix()
+    resolved = install_dir.expanduser().resolve()
+    for candidate in (resolved, *resolved.parents):
+        install_package = candidate / "src" / "gobby" / "install"
+        if install_package.is_dir() and (
+            (candidate / "pyproject.toml").is_file() or (candidate / ".git").exists()
+        ):
+            return True
+    return False
 
 
 def _docker_daemon_available() -> bool:
@@ -122,7 +129,7 @@ def _docker_daemon_available() -> bool:
             timeout=10,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.SubprocessError):
         return False
     return result.returncode == 0
 
@@ -566,7 +573,7 @@ def install(
 
     # Get install directory info
     install_dir = get_install_dir()
-    is_dev_mode = "src" in str(install_dir)
+    is_dev_mode = _is_source_checkout_install(install_dir)
 
     preflight_errors, preflight_warnings = _run_install_preflight(
         is_full_install=is_full_install,

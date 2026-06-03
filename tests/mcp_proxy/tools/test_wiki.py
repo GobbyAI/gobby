@@ -9,6 +9,7 @@ from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.wiki import create_wiki_registry
+from gobby.storage.projects import LocalProjectManager
 
 
 class FakeGateway:
@@ -19,12 +20,12 @@ class FakeGateway:
         self,
         *,
         binary: str | None = None,
-        project: str | Path | None = None,
+        project_root: str | Path | None = None,
         topic: str | None = None,
         timeout_seconds: float = 30.0,
     ) -> None:
         self.binary = binary
-        self.project = str(project) if project is not None else None
+        self.project = str(project_root) if project_root is not None else None
         self.topic = topic
         self.timeout_seconds = timeout_seconds
         self.calls: list[tuple[str, Any]] = []
@@ -150,7 +151,7 @@ def reset_fakes() -> None:
 
 def _registry() -> InternalToolRegistry:
     return create_wiki_registry(
-        config=DaemonConfig(wiki={"binary": "/bin/gwiki", "timeout_seconds": 4}),
+        _config=DaemonConfig(wiki={"binary": "/bin/gwiki", "timeout_seconds": 4}),
         gateway_cls=FakeGateway,
         update_coordinator_cls=RecordingCoordinator,
     )
@@ -162,6 +163,7 @@ def _schema(name: str) -> dict[str, Any]:
     return schema["inputSchema"]
 
 
+@pytest.mark.asyncio
 async def test_tool_schemas() -> None:
     registry = _registry()
     tool_names = {tool["name"] for tool in registry.list_tools()}
@@ -188,27 +190,50 @@ async def test_tool_schemas() -> None:
 
     read_result = await registry.call(
         "wiki_read",
-        {"title": "Page", "project": "/repo"},
+        {"title": "Page", "topic": "docs"},
     )
     assert read_result["content"] == "# Page\n\nBody"
-    assert read_result["scope"] == {"project": "/repo", "topic": None}
+    assert read_result["scope"] == {"identity": "topic:docs", "project": None, "topic": "docs"}
     assert FakeGateway.instances[-1].calls == [
         ("read", {"path": None, "title": "Page"}),
     ]
 
 
+@pytest.mark.asyncio
 async def test_degradation_passthrough() -> None:
     result = await _registry().call("wiki_search", {"query": "needle", "topic": "docs"})
 
     assert result["ok"] is True
-    assert result["scope"] == {"project": None, "topic": "docs"}
+    assert result["scope"] == {"identity": "topic:docs", "project": None, "topic": "docs"}
     assert result["payload"]["degradation"] == {"status": "partial"}
     assert result["citations"] == [{"path": "raw/result.md", "title": "Result"}]
     assert result["paths"] == {"raw_paths": ["raw/result.md"], "changed_paths": []}
 
 
+@pytest.mark.asyncio
+async def test_project_scope_resolves_to_repo_path(temp_db: Any, tmp_path: Path) -> None:
+    project = LocalProjectManager(temp_db).create(name="wiki-mcp", repo_path=str(tmp_path))
+    registry = create_wiki_registry(
+        _config=DaemonConfig(wiki={"binary": "/bin/gwiki", "timeout_seconds": 4}),
+        db=temp_db,
+        default_project_id=project.id,
+        gateway_cls=FakeGateway,
+        update_coordinator_cls=RecordingCoordinator,
+    )
+
+    result = await registry.call("wiki_search", {"query": "needle", "project": project.id})
+
+    assert result["scope"] == {
+        "identity": f"project:{project.id}",
+        "project": project.id,
+        "topic": None,
+    }
+    assert FakeGateway.instances[-1].project == str(tmp_path.resolve())
+
+
+@pytest.mark.asyncio
 async def test_source_lifecycle_passthrough() -> None:
-    sources = await _registry().call("wiki_list_sources", {"project": "/repo"})
+    sources = await _registry().call("wiki_list_sources", {"topic": "docs"})
     assert sources["payload"] == {"sources": [{"id": "src-1"}]}
 
     preview = await _registry().call(
@@ -241,6 +266,7 @@ async def test_source_lifecycle_passthrough() -> None:
     assert "dry_run and yes cannot both be true" in conflict["error"]
 
 
+@pytest.mark.asyncio
 async def test_wiki_ingest_url_batch_passthrough() -> None:
     result = await _registry().call(
         "wiki_ingest",
@@ -259,6 +285,7 @@ async def test_wiki_ingest_url_batch_passthrough() -> None:
     assert result["payload"]["indexed"] == {"documents": 1, "chunks": 2, "links": 3, "sources": 1}
 
 
+@pytest.mark.asyncio
 async def test_wiki_ingest_file_batch_aggregates_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -300,6 +327,7 @@ def test_wiki_registry_registered_and_discoverable() -> None:
     assert {"wiki_search", "wiki_read", "wiki_list_sources", "wiki_remove_source"} <= tool_names
 
 
+@pytest.mark.asyncio
 async def test_write_tools_delegate_to_coordinator() -> None:
     registry = _registry()
 

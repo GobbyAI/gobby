@@ -386,6 +386,25 @@ class TestProviderModelsRoute:
             "gpt-5.2",
         ]
 
+    def test_current_catalog_preserves_configured_non_claude_models(self) -> None:
+        """Configured model lists apply to every provider, not only Claude."""
+        app = FastAPI()
+        config = SimpleNamespace(
+            llm_providers=SimpleNamespace(
+                codex=LLMProviderConfig(models="gpt-custom"),
+                model_fields_set={"codex"},
+            ),
+            local=None,
+        )
+        server = SimpleNamespace(services=SimpleNamespace(config=config))
+        app.include_router(create_providers_router(server))
+        client = TestClient(app)
+
+        response = client.get("/api/providers/models")
+        providers = {p["provider"]: p for p in response.json()["providers"]}
+
+        assert providers["codex"]["models"][0]["value"] == "gpt-custom"
+
     def test_current_catalog_uses_static_gemini_preview_models(self) -> None:
         """Gemini models come from current provider catalog, not llm_providers config."""
         app = FastAPI()

@@ -299,6 +299,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
                     cron_storage=runner.cron_storage,
                     cron_executor=cron_executor,
                     project_id=runner.project_id,
+                    db=runner.database,
                     scopes=configured_wiki_cron_scopes(runner.config, runner.project_id),
                 )
                 logger.debug("Wiki cron handlers registered: %s", registered)

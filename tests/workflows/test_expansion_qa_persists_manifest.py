@@ -80,7 +80,7 @@ async def test_manifest_written_in_worktree_artifact_workspace(
         / "task-qa-plan.coverage.yaml"
     )
     assert result["manifest_path"] == str(expected.relative_to(worktree_root))
-    assert result["qa_result"]["scope"]["plan_path"] == str(worktree_plan)
+    assert result["qa_result"]["scope"]["plan_path"] == str(worktree_plan.resolve())
     assert expected.exists()
     assert not coordinator_manifest.exists()
 

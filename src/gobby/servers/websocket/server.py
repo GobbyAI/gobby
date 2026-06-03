@@ -32,7 +32,6 @@ from gobby.servers.websocket.voice import VoiceMixin
 
 logger = logging.getLogger(__name__)
 websockets_logger = logging.getLogger("websockets.server")
-websockets_logger.setLevel(logging.WARNING)
 
 
 if TYPE_CHECKING:

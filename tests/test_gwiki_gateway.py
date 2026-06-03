@@ -55,6 +55,8 @@ def _patch_subprocess(
 
     async def fake_create_subprocess_exec(*args: str, **_kwargs: Any) -> FakeProcess:
         calls.append(args)
+        if not processes:
+            raise AssertionError(f"no fake process available for command: {args!r}")
         return processes.pop(0)
 
     monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create_subprocess_exec)
@@ -62,7 +64,7 @@ def _patch_subprocess(
 
 
 def _gateway() -> GwikiGateway:
-    return GwikiGateway(binary="/bin/gwiki", project=Path("/repo"), topic="docs")
+    return GwikiGateway(binary="/bin/gwiki", project_root=Path("/repo"), topic="docs")
 
 
 async def test_gateway_exposes_expected_methods() -> None:
@@ -176,15 +178,11 @@ async def test_error_parses_structured_stderr_when_stdout_is_empty(
     with pytest.raises(GwikiCommandError) as exc_info:
         await _gateway().status()
 
-    stderr_text = (
-        '{"status": "failed", "error": {"code": "bad_scope", '
-        '"guidance": "Create the docs topic before querying status."}}'
-    )
     assert exc_info.value.returncode == 2
-    assert exc_info.value.stderr == stderr_text
+    assert json.loads(exc_info.value.stderr) == payload
     assert exc_info.value.payload == payload
     assert exc_info.value.to_envelope()["payload"] == payload
-    assert exc_info.value.to_envelope()["stderr"] == stderr_text
+    assert json.loads(exc_info.value.to_envelope()["stderr"]) == payload
 
 
 async def test_timeout_degrades(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -417,7 +415,7 @@ async def test_ingest_url_preserves_partial_and_all_failed_errors(
     assert exc_info.value.to_envelope()["payload"] == all_failed_payload
 
 
-async def test_refresh_passes_scope_and_preserves_payload(
+async def test_refresh_uses_gateway_scope_and_preserves_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     payload = {
@@ -447,13 +445,11 @@ async def test_refresh_passes_scope_and_preserves_payload(
     )
     gateway = _gateway()
 
-    result = await gateway.refresh(scope="topic", source_ids=["src_1", "src_2"], dry_run=True)
+    result = await gateway.refresh(source_ids=["src_1", "src_2"], dry_run=True)
 
     assert calls[0] == (
         "/bin/gwiki",
         "refresh",
-        "--scope",
-        "topic",
         "--id",
         "src_1",
         "--id",
@@ -474,7 +470,7 @@ async def test_refresh_passes_scope_and_preserves_payload(
     }
 
     with pytest.raises(GwikiCommandError) as exc_info:
-        await gateway.refresh(scope="topic", source_ids=["src_3"])
+        await gateway.refresh(source_ids=["src_3"])
 
     assert exc_info.value.payload == failed_payload
     assert exc_info.value.stderr == "all failed"

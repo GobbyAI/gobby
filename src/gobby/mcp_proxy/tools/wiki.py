@@ -2,12 +2,16 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.config.app import DaemonConfig
 from gobby.gwiki_gateway import GwikiCommandError, GwikiGateway, GwikiGatewayError
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.wiki.scope_resolution import ResolvedWikiScope, resolve_wiki_scope
 from gobby.wiki.update_coordinator import WikiUpdateCoordinator
+
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
 
 
 class GwikiGatewayFactory(Protocol):
@@ -15,7 +19,7 @@ class GwikiGatewayFactory(Protocol):
         self,
         *,
         binary: str | None = None,
-        project: str | Path | None = None,
+        project_root: str | Path | None = None,
         topic: str | None = None,
         timeout_seconds: float = 30.0,
     ) -> GwikiGateway: ...
@@ -29,12 +33,13 @@ GatewayCall = Callable[[GwikiGateway], Awaitable[dict[str, Any]]]
 
 
 def create_wiki_registry(
-    config: DaemonConfig | None = None,
+    _config: DaemonConfig | None = None,
     *,
+    db: HubDatabase | None = None,
+    default_project_id: str | None = None,
     gateway_cls: GwikiGatewayFactory = GwikiGateway,
     update_coordinator_cls: WikiUpdateCoordinatorFactory = WikiUpdateCoordinator,
 ) -> InternalToolRegistry:
-    _ = config
     registry = InternalToolRegistry(
         name="gobby-wiki",
         description=(
@@ -43,32 +48,40 @@ def create_wiki_registry(
         ),
     )
 
-    def gateway(project: str | None = None, topic: str | None = None) -> GwikiGateway:
-        if project is not None and topic is not None:
-            raise ValueError("Provide project or topic scope, not both")
-        return gateway_cls(
-            binary=None,
+    def gateway(
+        project: str | None = None,
+        topic: str | None = None,
+    ) -> tuple[GwikiGateway, ResolvedWikiScope]:
+        resolved = resolve_wiki_scope(
+            db,
             project=project,
             topic=topic,
+            default_project_id=default_project_id,
+        )
+        gwiki = gateway_cls(
+            binary=None,
+            project_root=resolved.project_root,
+            topic=resolved.topic,
             timeout_seconds=30.0,
         )
+        return gwiki, resolved
 
     async def read_call(
         project: str | None, topic: str | None, call: GatewayCall
     ) -> dict[str, Any]:
-        gwiki = gateway(project, topic)
+        gwiki, scope = gateway(project, topic)
         result = await _map_gateway_errors(lambda: call(gwiki))
-        return _structured_result(result, project=project, topic=topic)
+        return _structured_result(result, scope=scope)
 
     async def write_call(
         project: str | None,
         topic: str | None,
         call: GatewayCall,
     ) -> dict[str, Any]:
-        gwiki = gateway(project, topic)
+        gwiki, scope = gateway(project, topic)
         result = await _map_gateway_errors(lambda: call(gwiki))
         handled = await update_coordinator_cls(gwiki).handle_write_result(result)
-        return _structured_result(handled, project=project, topic=topic)
+        return _structured_result(handled, scope=scope)
 
     @registry.tool(
         name="wiki_search",
@@ -246,8 +259,7 @@ async def _map_gateway_awaitable(awaitable: Awaitable[dict[str, Any]]) -> dict[s
 def _structured_result(
     result: dict[str, Any],
     *,
-    project: str | None,
-    topic: str | None,
+    scope: ResolvedWikiScope,
 ) -> dict[str, Any]:
     payload = result.get("payload")
     if not isinstance(payload, dict):
@@ -255,7 +267,11 @@ def _structured_result(
 
     structured = dict(result)
     structured["success"] = bool(result.get("ok", False))
-    structured["scope"] = {"project": project, "topic": topic}
+    structured["scope"] = {
+        "identity": scope.identity,
+        "project": scope.project_id,
+        "topic": scope.topic,
+    }
     structured["payload"] = payload
     structured["citations"] = _citations(payload)
     structured["paths"] = {
