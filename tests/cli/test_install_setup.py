@@ -870,6 +870,32 @@ class TestGwikiHelpers:
         assert "-p" in cmd
         assert "gobby-wiki" in cmd
 
+    @patch("shutil.which", return_value="/usr/bin/cargo")
+    @patch("subprocess.run")
+    @patch("gobby.cli.install_setup.click")
+    def test_install_gwiki_from_cargo_git_pins_default_pin_tag(
+        self, mock_click, mock_run, mock_which, tmp_path
+    ):
+        # The cargo-git fallback must not build HEAD: with no explicit version
+        # it pins --tag gwiki-v<managed pin>.
+        mock_run.return_value = MagicMock(returncode=0)
+        assert _install_gwiki_from_cargo_git(tmp_path) is True
+        cmd = mock_run.call_args[0][0]
+        assert "--tag" in cmd
+        assert cmd[cmd.index("--tag") + 1] == f"gwiki-v{GWIKI_PIN}"
+
+    @patch("shutil.which", return_value="/usr/bin/cargo")
+    @patch("subprocess.run")
+    @patch("gobby.cli.install_setup.click")
+    def test_install_gwiki_from_cargo_git_pins_explicit_version_tag(
+        self, mock_click, mock_run, mock_which, tmp_path
+    ):
+        mock_run.return_value = MagicMock(returncode=0)
+        assert _install_gwiki_from_cargo_git(tmp_path, "9.9.9") is True
+        cmd = mock_run.call_args[0][0]
+        assert "--tag" in cmd
+        assert cmd[cmd.index("--tag") + 1] == "gwiki-v9.9.9"
+
 
 class TestEnsurePath:
     @patch("gobby.cli.install_setup.sys.platform", "linux")

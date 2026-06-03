@@ -143,10 +143,21 @@ def install_gwiki_from_submodule(module: Any, bin_dir: Path) -> bool:
         return False
 
 
-def install_gwiki_from_cargo_git(module: Any, bin_dir: Path) -> bool:
-    """Install gwiki from source via cargo install --git."""
+def install_gwiki_from_cargo_git(
+    module: Any, bin_dir: Path, version: str | None = None
+) -> bool:
+    """Install gwiki from source via ``cargo install --git``, pinned to a tag.
+
+    Without a tag, ``cargo install --git`` builds the repository HEAD — the one
+    install path that ignores the managed version pin. Pin it to the
+    ``gwiki-v<version>`` release tag (defaulting to
+    ``MANAGED_BIN_VERSION_PINS['gwiki']``) so every fallback resolves the same
+    version as the GitHub and cargo-binstall/cargo-install paths.
+    """
     if not module.shutil.which("cargo"):
         return False
+    target_version = version or MANAGED_BIN_VERSION_PINS["gwiki"]
+    tag = f"{module._GWIKI_RELEASE_TAG_PREFIX}{target_version}"
     try:
         module.click.echo("  Compiling gwiki from source (this may take 30-60 seconds)...")
         result = module.subprocess.run(
@@ -155,6 +166,8 @@ def install_gwiki_from_cargo_git(module: Any, bin_dir: Path) -> bool:
                 "install",
                 "--git",
                 "https://github.com/GobbyAI/gobby-cli",
+                "--tag",
+                tag,
                 "-p",
                 "gobby-wiki",
                 "--root",
@@ -261,7 +274,7 @@ def install_gwiki(module: Any, force: bool = False) -> dict[str, Any]:
         method = "cargo-binstall"
     elif module._install_gwiki_from_cargo_install(bin_dir, target_version):
         method = "cargo-install"
-    elif module._install_gwiki_from_cargo_git(bin_dir):
+    elif module._install_gwiki_from_cargo_git(bin_dir, target_version):
         method = "cargo-git"
     else:
         return {"installed": False, "skipped": False, "reason": "all installation methods failed"}

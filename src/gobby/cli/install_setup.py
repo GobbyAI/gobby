@@ -773,8 +773,8 @@ def _install_gwiki_from_submodule(bin_dir: Path) -> bool:
     return _gwiki_impl.install_gwiki_from_submodule(_module(), bin_dir)
 
 
-def _install_gwiki_from_cargo_git(bin_dir: Path) -> bool:
-    return _gwiki_impl.install_gwiki_from_cargo_git(_module(), bin_dir)
+def _install_gwiki_from_cargo_git(bin_dir: Path, version: str | None = None) -> bool:
+    return _gwiki_impl.install_gwiki_from_cargo_git(_module(), bin_dir, version)
 
 
 def _install_gwiki_from_cargo_binstall(bin_dir: Path, version: str | None = None) -> bool:
