@@ -238,7 +238,10 @@ export function applyTailRefreshTranscriptPage<TMessage extends TranscriptWindow
   const replaced = replaceExisting(state.messages, refreshedMessages)
   const ids = currentIds(state.messages)
   const tailContiguous = state.windowEnd >= state.renderedTotal
-  const shouldAppend = tailContiguous && atBottom
+  // Append refreshed tail rows whenever the window reaches the tail, regardless
+  // of whether the viewport is pinned. Gating the append on `atBottom` stalled
+  // rendering after a burst pushed the viewport off-bottom.
+  const shouldAppend = tailContiguous
   const appendedMessages = shouldAppend
     ? refreshedMessages.filter((message) => !ids.has(message.id))
     : []
@@ -246,7 +249,9 @@ export function applyTailRefreshTranscriptPage<TMessage extends TranscriptWindow
     appendedMessages.length > 0
       ? [...replaced.messages, ...appendedMessages]
       : replaced.messages
-  const trimmedHeadCount = Math.max(0, untrimmedMessages.length - maxGroups)
+  // Trim the head only while pinned to the bottom; a scrolled-up user keeps the
+  // grown window until they return to the tail.
+  const trimmedHeadCount = atBottom ? Math.max(0, untrimmedMessages.length - maxGroups) : 0
   const messages =
     trimmedHeadCount > 0 ? untrimmedMessages.slice(trimmedHeadCount) : untrimmedMessages
   const renderedTotal = Math.max(
@@ -294,7 +299,7 @@ export function applyLiveTranscriptMessage<TMessage extends TranscriptWindowMess
 
   const renderedTotal = state.renderedTotal + 1
   const tailContiguous = state.windowEnd >= state.renderedTotal
-  if (!tailContiguous || !atBottom) {
+  if (!tailContiguous) {
     const nextState = { ...state, renderedTotal }
     return updateResult({
       state: nextState,
@@ -303,8 +308,14 @@ export function applyLiveTranscriptMessage<TMessage extends TranscriptWindowMess
     })
   }
 
+  // Append whenever the window reaches the tail, regardless of whether the
+  // viewport is pinned to the bottom. Gating the append on `atBottom` meant a
+  // burst that pushed the viewport off-bottom stopped rendering new rows
+  // entirely, so nothing could ever pull it back. Auto-scroll stays the sole
+  // responsibility of Virtuoso's `followOutput`. Trim the head only while
+  // pinned, so a user scrolled up into the loaded window is not evicted.
   const untrimmedMessages = [...state.messages, message]
-  const trimmedHeadCount = Math.max(0, untrimmedMessages.length - maxGroups)
+  const trimmedHeadCount = atBottom ? Math.max(0, untrimmedMessages.length - maxGroups) : 0
   const messages =
     trimmedHeadCount > 0 ? untrimmedMessages.slice(trimmedHeadCount) : untrimmedMessages
   const windowStart = state.windowStart + trimmedHeadCount

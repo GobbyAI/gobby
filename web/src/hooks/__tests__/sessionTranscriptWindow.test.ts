@@ -159,4 +159,86 @@ describe('sessionTranscriptWindow', () => {
     expect(update.appendedCount).toBe(0)
     expect(update.addedCount).toBe(1)
   })
+
+  it('appends a live tail row while at the tail but not pinned to bottom', () => {
+    const tail = createTailTranscriptWindow(page(5, 10, 10), START_INDEX, 5)
+
+    const update = applyLiveTranscriptMessage(tail, message(10), false, 5)
+
+    // Tail-contiguous: the row must render even though atBottom is false; the
+    // window is allowed to grow past maxGroups because the head is not trimmed.
+    expect(update.appendedCount).toBe(1)
+    expect(update.trimmedHeadCount).toBe(0)
+    expect(update.state.messages.map((item) => item.id)).toEqual([
+      'msg-5',
+      'msg-6',
+      'msg-7',
+      'msg-8',
+      'msg-9',
+      'msg-10',
+    ])
+    expect(update.state.windowEnd).toBe(11)
+    expect(update.state.renderedTotal).toBe(11)
+    expect(update.state.firstItemIndex).toBe(START_INDEX)
+  })
+
+  it('keeps rendering through a burst while not pinned, then re-trims on return', () => {
+    let state = createTailTranscriptWindow(page(5, 10, 10), START_INDEX, 5)
+
+    // A burst arrives while the viewport is off-bottom — every row still renders.
+    for (const index of [10, 11, 12]) {
+      const update = applyLiveTranscriptMessage(state, message(index), false, 5)
+      expect(update.appendedCount).toBe(1)
+      expect(update.trimmedHeadCount).toBe(0)
+      state = update.state
+    }
+
+    expect(state.messages.map((item) => item.id)).toEqual([
+      'msg-5',
+      'msg-6',
+      'msg-7',
+      'msg-8',
+      'msg-9',
+      'msg-10',
+      'msg-11',
+      'msg-12',
+    ])
+    expect(state.windowEnd).toBe(13)
+    expect(state.renderedTotal).toBe(13)
+
+    // Returning to the bottom trims the head back down to maxGroups.
+    const repinned = applyLiveTranscriptMessage(state, message(13), true, 5)
+    expect(repinned.trimmedHeadCount).toBe(4)
+    expect(repinned.state.messages.map((item) => item.id)).toEqual([
+      'msg-9',
+      'msg-10',
+      'msg-11',
+      'msg-12',
+      'msg-13',
+    ])
+  })
+
+  it('appends refreshed tail rows even when the viewport is not pinned', () => {
+    const state = createTailTranscriptWindow(page(5, 10, 10), START_INDEX, 5)
+
+    const update = applyTailRefreshTranscriptPage(
+      state,
+      { messages: [message(9), message(10), message(11)], renderedTotal: 12, returnedCount: 3 },
+      false,
+      5,
+    )
+
+    expect(update.appendedCount).toBe(2)
+    expect(update.trimmedHeadCount).toBe(0)
+    expect(update.state.messages.map((item) => item.id)).toEqual([
+      'msg-5',
+      'msg-6',
+      'msg-7',
+      'msg-8',
+      'msg-9',
+      'msg-10',
+      'msg-11',
+    ])
+    expect(update.state.windowEnd).toBe(12)
+  })
 })
