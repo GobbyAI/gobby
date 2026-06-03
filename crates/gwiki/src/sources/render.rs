@@ -1,0 +1,223 @@
+use std::fs;
+use std::path::Path;
+
+use crate::WikiError;
+
+use super::types::SourceRecord;
+use super::{
+    GENERATED_SOURCE_MANIFEST_END, GENERATED_SOURCE_MANIFEST_START, SOURCE_ID_HASH_PREFIX_LEN,
+    SOURCE_MARKER,
+};
+
+pub(crate) fn render_entry(entry: &SourceRecord, index: &mut String) -> Result<(), WikiError> {
+    let title = entry.title.as_deref().unwrap_or(&entry.location);
+    index.push_str("- [");
+    index.push_str(&escape_markdown_text(title));
+    index.push_str("](");
+    index.push_str(&escape_markdown_destination(&entry.location));
+    index.push_str(")\n");
+    index.push_str("  - id: `");
+    index.push_str(&entry.id);
+    index.push_str("`\n");
+    index.push_str("  - canonical: `");
+    index.push_str(&entry.canonical_location);
+    index.push_str("`\n");
+    index.push_str("  - kind: `");
+    index.push_str(&entry.kind.to_string());
+    index.push_str("`\n");
+    index.push_str("  - fetched_at: `");
+    index.push_str(&entry.fetched_at);
+    index.push_str("`\n");
+    index.push_str("  - hash: `");
+    index.push_str(&entry.content_hash);
+    index.push_str("`\n");
+    if let Some(citation) = &entry.citation {
+        index.push_str("  - citation: ");
+        index.push_str(&inline_text(citation));
+        index.push('\n');
+    }
+    if let Some(license) = &entry.license {
+        index.push_str("  - license: ");
+        index.push_str(&inline_text(license));
+        index.push('\n');
+    }
+    index.push_str("  - ingestion_method: `");
+    index.push_str(&entry.ingestion_method.to_string());
+    index.push_str("`\n");
+    index.push_str("  - compile_status: `");
+    index.push_str(&entry.compile_status.to_string());
+    index.push_str("`\n");
+
+    let metadata = serde_json::to_string(entry).map_err(|error| WikiError::Json {
+        action: "serialize raw source index marker",
+        path: None,
+        source: error,
+    })?;
+    index.push_str("  - ");
+    index.push_str(SOURCE_MARKER);
+    index.push_str(&metadata);
+    index.push_str(" -->\n");
+    Ok(())
+}
+
+pub(crate) fn canonicalize_location(location: &str) -> String {
+    let without_fragment = location.trim().split('#').next().unwrap_or("").trim();
+    let canonical = lower_url_scheme_and_authority(without_fragment);
+    let (mut base, query) = split_sorted_query(&canonical);
+    while base.ends_with('/') && base != "/" && !base.ends_with("://") {
+        base.pop();
+    }
+    match query {
+        Some(query) if !query.is_empty() => format!("{base}?{query}"),
+        _ => base,
+    }
+}
+
+fn split_sorted_query(location: &str) -> (String, Option<String>) {
+    let Some((base, query)) = location.split_once('?') else {
+        return (location.to_string(), None);
+    };
+    let mut params = query
+        .split('&')
+        .filter(|param| !param.is_empty())
+        .collect::<Vec<_>>();
+    params.sort_unstable();
+    (base.to_string(), Some(params.join("&")))
+}
+
+pub(crate) struct PreservedSourceIndex {
+    pub(crate) prefix: String,
+    pub(crate) suffix: String,
+}
+
+pub(crate) fn existing_index_without_manifest(
+    index_path: &Path,
+) -> Result<PreservedSourceIndex, WikiError> {
+    if !index_path.exists() {
+        return Ok(PreservedSourceIndex {
+            prefix: String::from("# Raw Sources\n\n"),
+            suffix: String::new(),
+        });
+    }
+
+    let existing = fs::read_to_string(index_path).map_err(|error| WikiError::Io {
+        action: "read raw source index",
+        path: Some(index_path.to_path_buf()),
+        source: error,
+    })?;
+
+    if let Some(start) = existing.find(GENERATED_SOURCE_MANIFEST_START) {
+        let search_from = start + GENERATED_SOURCE_MANIFEST_START.len();
+        if let Some(relative_end) = existing[search_from..].find(GENERATED_SOURCE_MANIFEST_END) {
+            let end = search_from + relative_end + GENERATED_SOURCE_MANIFEST_END.len();
+            return Ok(PreservedSourceIndex {
+                prefix: normalize_preserved_index_prefix(&existing[..start]),
+                suffix: normalize_preserved_index_suffix(&existing[end..]),
+            });
+        }
+    }
+
+    if let Some(start) = existing.find("\n## Source manifest") {
+        let header_start = start + 1;
+        return Ok(PreservedSourceIndex {
+            prefix: normalize_preserved_index_prefix(&existing[..start]),
+            suffix: suffix_after_unmarked_manifest(&existing, header_start),
+        });
+    }
+    if let Some(header_start) = existing.find("## Source manifest")
+        && existing[..header_start].trim().is_empty()
+    {
+        return Ok(PreservedSourceIndex {
+            prefix: String::from("# Raw Sources\n\n"),
+            suffix: suffix_after_unmarked_manifest(&existing, header_start),
+        });
+    }
+
+    Ok(PreservedSourceIndex {
+        prefix: normalize_preserved_index_prefix(&existing),
+        suffix: String::new(),
+    })
+}
+
+fn normalize_preserved_index_prefix(prefix: &str) -> String {
+    let mut prefix = prefix.trim_end_matches('\n').to_string();
+    if prefix.trim().is_empty() {
+        prefix.push_str("# Raw Sources");
+    }
+    prefix.push_str("\n\n");
+    prefix
+}
+
+fn normalize_preserved_index_suffix(suffix: &str) -> String {
+    suffix.trim_start_matches('\n').to_string()
+}
+
+fn suffix_after_unmarked_manifest(existing: &str, header_start: usize) -> String {
+    let after_header = header_start + "## Source manifest".len();
+    existing[after_header..]
+        .find("\n## ")
+        .map(|offset| normalize_preserved_index_suffix(&existing[after_header + offset + 1..]))
+        .unwrap_or_default()
+}
+
+fn lower_url_scheme_and_authority(location: &str) -> String {
+    let Some((scheme, rest)) = location.split_once("://") else {
+        return location.replace('\\', "/");
+    };
+    let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+    if path.is_empty() {
+        format!(
+            "{}://{}",
+            scheme.to_ascii_lowercase(),
+            authority.to_ascii_lowercase()
+        )
+    } else {
+        format!(
+            "{}://{}/{}",
+            scheme.to_ascii_lowercase(),
+            authority.to_ascii_lowercase(),
+            path
+        )
+    }
+}
+
+pub(crate) fn source_id(canonical_location: &str, content_hash: &str) -> String {
+    // Sixteen hex chars gives a 64-bit collision space while keeping source IDs
+    // readable in Markdown manifests.
+    let hash_prefix = &content_hash[..content_hash.len().min(SOURCE_ID_HASH_PREFIX_LEN)];
+    let mut slug = String::new();
+    let mut last_was_dash = false;
+    for ch in canonical_location.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch);
+            last_was_dash = false;
+        } else if !last_was_dash && !slug.is_empty() {
+            slug.push('-');
+            last_was_dash = true;
+        }
+        if slug.len() >= 48 {
+            break;
+        }
+    }
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+
+    if slug.is_empty() {
+        format!("src-{hash_prefix}")
+    } else {
+        format!("src-{hash_prefix}-{slug}")
+    }
+}
+
+fn escape_markdown_text(text: &str) -> String {
+    text.replace('[', "\\[").replace(']', "\\]")
+}
+
+fn escape_markdown_destination(destination: &str) -> String {
+    destination.replace('(', "\\(").replace(')', "\\)")
+}
+
+fn inline_text(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
