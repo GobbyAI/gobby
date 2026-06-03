@@ -15,6 +15,7 @@ from typing import Any
 
 from gobby.hooks.events import HookEvent
 from gobby.mcp_proxy.server_list import compact_mcp_server_list
+from gobby.memory.context import format_memory_metadata_suffix
 from gobby.review_learning.guidance import format_review_lesson_guidance
 from gobby.skills.formatting import skill_fetch_directive
 
@@ -160,15 +161,12 @@ def format_discovery_result(dr: dict[str, Any]) -> str:
         for m in memories:
             content = m.get("content", "").strip()
             if content:
+                memory_id = m.get("id")
+                if memory_id is not None:
+                    memory_id = str(memory_id)
                 score = m.get("similarity")
                 via = m.get("search_via")
-                if score is not None:
-                    suffix = f" (score: {score:.4f}"
-                    if via:
-                        suffix += f", via: {via}"
-                    suffix += ")"
-                else:
-                    suffix = ""
+                suffix = format_memory_metadata_suffix(memory_id, score=score, via=via)
                 lines.append(f"- {content}{suffix}")
         lines.append("</project-memory>")
         return "\n".join(lines)

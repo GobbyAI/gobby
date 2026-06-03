@@ -522,6 +522,49 @@ class TestFormatDiscoveryResult:
         assert "create_task" in result
         assert "Schema" in result
 
+    def test_format_search_memories_adds_memory_id_with_metadata(self) -> None:
+        """Formats injected memory search results with one memory ID suffix."""
+        dr = {
+            "tool": "search_memories",
+            "result": {
+                "memories": [
+                    {
+                        "id": "mm-abc123",
+                        "content": "Use task-linked commits.",
+                        "similarity": 0.92634,
+                        "search_via": "keyword",
+                    }
+                ]
+            },
+        }
+
+        result = HookManager._format_discovery_result(dr)
+
+        assert "<project-memory>" in result
+        assert (
+            "- Use task-linked commits. (memory_id: mm-abc123, score: 0.9263, via: keyword)"
+        ) in result
+        assert result.count("memory_id: mm-abc123") == 1
+
+    def test_format_memory_json_fallback_does_not_add_memory_id(self) -> None:
+        """Leaves raw memory tool JSON results on their existing id field."""
+        dr = {
+            "tool": "list_memories",
+            "result": {
+                "memories": [
+                    {
+                        "id": "mm-abc123",
+                        "content": "Use task-linked commits.",
+                    }
+                ]
+            },
+        }
+
+        result = HookManager._format_discovery_result(dr)
+
+        assert '"id": "mm-abc123"' in result
+        assert "memory_id" not in result
+
     def test_format_recall_review_lessons_for_files(self) -> None:
         """Formats review lesson recall as compact guidance."""
         dr = {

@@ -27,6 +27,28 @@ def _strip_leading_bullet(content: str) -> str:
     return result.strip()
 
 
+def format_memory_metadata_suffix(
+    memory_id: str | None,
+    *,
+    score: object | None = None,
+    via: str | None = None,
+) -> str:
+    """Format prompt-visible metadata for rendered project memories."""
+    fields = []
+    if memory_id:
+        fields.append(f"memory_id: {memory_id}")
+    if score is not None:
+        if isinstance(score, int | float) and not isinstance(score, bool):
+            fields.append(f"score: {score:.4f}")
+        else:
+            fields.append(f"score: {score}")
+    if via:
+        fields.append(f"via: {via}")
+    if not fields:
+        return ""
+    return f" ({', '.join(fields)})"
+
+
 def build_memory_context(memories: list[Memory]) -> str:
     """
     Build a formatted markdown context string from memories.
@@ -52,7 +74,7 @@ def build_memory_context(memories: list[Memory]) -> str:
     if context_memories:
         parts.append("## Project Context")
         for mem in context_memories:
-            parts.append(mem.content)
+            parts.append(f"{mem.content}{format_memory_metadata_suffix(mem.id)}")
         parts.append("")
 
     # 2. Preferences
@@ -61,7 +83,7 @@ def build_memory_context(memories: list[Memory]) -> str:
         for mem in pref_memories:
             content = _strip_leading_bullet(mem.content)
             if content:  # Skip empty content
-                parts.append(f"- {content}")
+                parts.append(f"- {content}{format_memory_metadata_suffix(mem.id)}")
         parts.append("")
 
     # 3. Patterns
@@ -70,7 +92,7 @@ def build_memory_context(memories: list[Memory]) -> str:
         for mem in pattern_memories:
             content = _strip_leading_bullet(mem.content)
             if content:  # Skip empty content
-                parts.append(f"- {content}")
+                parts.append(f"- {content}{format_memory_metadata_suffix(mem.id)}")
         parts.append("")
 
     # 4. Facts/Other
@@ -79,7 +101,7 @@ def build_memory_context(memories: list[Memory]) -> str:
         for mem in fact_memories:
             content = _strip_leading_bullet(mem.content)
             if content:  # Skip empty content
-                parts.append(f"- {content}")
+                parts.append(f"- {content}{format_memory_metadata_suffix(mem.id)}")
         parts.append("")
 
     parts.append("</project-memory>")

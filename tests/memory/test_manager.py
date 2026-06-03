@@ -510,8 +510,10 @@ class TestSearchMemoriesAsContext:
         """Test search_memories_as_context returns properly formatted context string."""
         manager = MemoryManager(db=db, config=memory_config)
 
-        await manager.create_memory(content="Test preference", memory_type="preference")
-        await manager.create_memory(content="Test fact", memory_type="fact")
+        preference = await manager.create_memory(
+            content="Test preference", memory_type="preference"
+        )
+        fact = await manager.create_memory(content="Test fact", memory_type="fact")
 
         context = await manager.search_memories_as_context()
 
@@ -520,6 +522,8 @@ class TestSearchMemoriesAsContext:
         assert "</project-memory>" in context
         assert "Test preference" in context
         assert "Test fact" in context
+        assert context.count(f"memory_id: {preference.id}") == 1
+        assert context.count(f"memory_id: {fact.id}") == 1
 
     @pytest.mark.asyncio
     async def test_search_memories_as_context_empty_memories(self, db, memory_config):

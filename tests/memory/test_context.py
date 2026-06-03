@@ -5,6 +5,7 @@ import pytest
 from gobby.memory.context import (
     _strip_leading_bullet,
     build_memory_context,
+    format_memory_metadata_suffix,
 )
 from gobby.storage.memories import Memory
 
@@ -54,6 +55,20 @@ class TestStripLeadingBullet:
         assert _strip_leading_bullet("use foo-bar") == "use foo-bar"
 
 
+class TestFormatMemoryMetadataSuffix:
+    """Tests for memory metadata suffix formatting."""
+
+    def test_memory_id_only(self) -> None:
+        """Formats memory ID metadata."""
+        assert format_memory_metadata_suffix("m1") == " (memory_id: m1)"
+
+    def test_memory_id_with_search_metadata(self) -> None:
+        """Formats memory ID with search score and source."""
+        result = format_memory_metadata_suffix("m1", score=0.92634, via="keyword")
+
+        assert result == " (memory_id: m1, score: 0.9263, via: keyword)"
+
+
 class TestBuildMemoryContext:
     """Tests for build_memory_context function."""
 
@@ -72,7 +87,8 @@ class TestBuildMemoryContext:
         )
         result = build_memory_context([mem])
         assert "## Preferences" in result
-        assert "- Use TypeScript" in result
+        assert "- Use TypeScript (memory_id: m1)" in result
+        assert result.count("memory_id: m1") == 1
         # Should not have double bullets
         assert "- - " not in result
 
@@ -103,9 +119,10 @@ class TestBuildMemoryContext:
         ]
         result = build_memory_context(memories)
         # All should be normalized to "- "
-        assert "- dash item" in result
-        assert "- asterisk item" in result
-        assert "- bullet item" in result
+        assert "- dash item (memory_id: m1)" in result
+        assert "- asterisk item (memory_id: m2)" in result
+        assert "- bullet item (memory_id: m3)" in result
+        assert result.count("memory_id:") == 3
         # No double bullets
         assert "- - " not in result
         assert "- * " not in result
@@ -158,6 +175,10 @@ class TestBuildMemoryContext:
         assert "Use Python 3.11+" in result
         assert "Follow PEP 8 style" in result
         assert "Database uses PostgreSQL" in result
+        assert result.count("memory_id: m1") == 1
+        assert result.count("memory_id: m2") == 1
+        assert result.count("memory_id: m3") == 1
+        assert result.count("memory_id: m4") == 1
 
     def test_context_type_no_bullet_stripping(self) -> None:
         """Test that context type content is not bullet-stripped."""
@@ -170,7 +191,8 @@ class TestBuildMemoryContext:
         )
         result = build_memory_context([mem])
         # Context type preserves original formatting
-        assert "- This is context with dash" in result
+        assert "- This is context with dash (memory_id: m1)" in result
+        assert result.count("memory_id: m1") == 1
 
     def test_mixed_types_ordering(self) -> None:
         """Test that sections appear in correct order."""
@@ -218,6 +240,8 @@ class TestBuildMemoryContext:
         result = build_memory_context(memories)
         # Should only have one preference item (the valid one)
         assert result.count("- Valid content") == 1
+        assert "memory_id: m1" not in result
+        assert result.count("memory_id: m2") == 1
         # Should not have empty bullet lines
         lines = result.split("\n")
         bullet_lines = [line for line in lines if line.strip() == "-"]
