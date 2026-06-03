@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from gobby import runner_lifecycle_periodic
+from gobby import runner_lifecycle_periodic, runner_lifecycle_shutdown
 from gobby.config.app import DaemonConfig
 from gobby.config.wiki import WikiConfig, WikiRootConfig
 from gobby.runner_lifecycle_periodic import start_periodic_tasks
@@ -166,6 +166,26 @@ async def test_shutdown_stops_watcher(tmp_path: Path) -> None:
     assert runner._wiki_watcher is None
     assert runner._wiki_watcher_task is None
     assert watcher.health()["running"] is False
+
+
+@pytest.mark.asyncio
+async def test_shutdown_continues_when_watcher_stop_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class HangingWatcher:
+        async def stop(self) -> None:
+            await asyncio.Event().wait()
+
+    runner = SimpleNamespace(
+        _wiki_watcher=HangingWatcher(),
+        _wiki_watcher_task=None,
+    )
+    monkeypatch.setattr(runner_lifecycle_shutdown, "WIKI_WATCHER_STOP_TIMEOUT_SECONDS", 0.01)
+
+    await _cancel_periodic_tasks(runner)
+
+    assert runner._wiki_watcher is None
+    assert runner._wiki_watcher_task is None
 
 
 def test_watcher_health_accessor(tmp_path: Path) -> None:

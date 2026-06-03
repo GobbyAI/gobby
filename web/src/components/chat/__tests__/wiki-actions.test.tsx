@@ -58,10 +58,15 @@ describe("wiki chat actions", () => {
     vi.unstubAllGlobals();
   });
 
-  it("test_actions_mounted_in_chat_input", () => {
+  it("test_actions_mounted_in_chat_input", async () => {
     render(<ChatInput {...defaultProps} projectId="demo" />);
 
     expect(screen.getByRole("button", { name: "Wiki actions" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/api/wiki/sources?project=demo"),
+      );
+    });
   });
 
   it("test_writes_require_explicit_intent", async () => {

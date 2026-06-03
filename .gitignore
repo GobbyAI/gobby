@@ -234,6 +234,7 @@ __marimo__/
 .gobby/plugins/
 .gobby/prompts/
 .gobby/docs/
+.gobby/wiki/
 .gobby/screenshots/
 .gobby/session_summaries/
 screenshots/

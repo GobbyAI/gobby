@@ -325,7 +325,13 @@ def _aggregate_ingest_results(results: list[dict[str, Any]], *, command: str) ->
     for result in results:
         payload = result.get("payload")
         if isinstance(payload, dict):
-            changed_paths.extend(_string_sequence(payload.get("changed_paths")))
+            raw_changed_paths = payload.get("changed_paths", [])
+            if isinstance(raw_changed_paths, Sequence) and not isinstance(
+                raw_changed_paths, (str, bytes)
+            ):
+                changed_paths.extend(
+                    item for item in raw_changed_paths if isinstance(item, str) and item
+                )
         if isinstance(result.get("stderr"), str) and result["stderr"]:
             stderr.append(result["stderr"])
     return {
@@ -346,7 +352,16 @@ async def _map_gateway_awaitable(awaitable: Awaitable[dict[str, Any]]) -> dict[s
 
 async def _stage_upload(file: UploadFile) -> Path:
     suffix = Path(file.filename or "").suffix
-    with tempfile.NamedTemporaryFile(prefix="gobby-wiki-", suffix=suffix, delete=False) as staged:
-        while chunk := await file.read(UPLOAD_CHUNK_SIZE):
-            staged.write(chunk)
-        return Path(staged.name)
+    staged_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix="gobby-wiki-", suffix=suffix, delete=False
+        ) as staged:
+            staged_path = Path(staged.name)
+            while chunk := await file.read(UPLOAD_CHUNK_SIZE):
+                staged.write(chunk)
+            return staged_path
+    except Exception:
+        if staged_path is not None:
+            staged_path.unlink(missing_ok=True)
+        raise

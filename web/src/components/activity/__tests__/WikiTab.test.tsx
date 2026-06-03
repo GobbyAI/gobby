@@ -129,6 +129,23 @@ describe("WikiTab", () => {
     expect(screen.queryByText("Relative hooks")).not.toBeInTheDocument();
   });
 
+  it("reports malformed JSON responses", async () => {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/wiki/status")) {
+        return new Response("{bad", {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return Response.json(healthPayload);
+    });
+
+    render(<WikiTab projectId="demo" />);
+
+    expect(await screen.findByText(/HTTP 200 returned invalid JSON/)).toBeInTheDocument();
+  });
+
   it("source removal requires dry-run confirmation", async () => {
     const user = userEvent.setup();
     render(<WikiTab projectId="demo" />);

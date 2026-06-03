@@ -69,6 +69,7 @@ class GwikiGateway:
         timeout_seconds: float = 30.0,
     ) -> None:
         self._binary = binary
+        self._binary_lock = asyncio.Lock()
         self._project_root = str(project_root) if project_root is not None else None
         self._topic = topic
         self._timeout_seconds = timeout_seconds
@@ -182,11 +183,14 @@ class GwikiGateway:
     async def _resolve_binary(self) -> str:
         if self._binary is not None:
             return self._binary
-        binary = await asyncio.to_thread(resolve_native_bin, "gwiki")
-        if binary is None:
-            raise GwikiUnavailableError("gwiki is not installed")
-        self._binary = binary
-        return binary
+        async with self._binary_lock:
+            if self._binary is not None:
+                return self._binary
+            binary = await asyncio.to_thread(resolve_native_bin, "gwiki")
+            if binary is None:
+                raise GwikiUnavailableError("gwiki is not installed")
+            self._binary = binary
+            return binary
 
     def _scope_args(self) -> list[str]:
         args: list[str] = []

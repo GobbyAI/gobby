@@ -67,15 +67,38 @@ function scopeQuery({ projectId, topic }: UseWikiOptions): string {
   return query ? `?${query}` : "";
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function parseWikiResponse(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch (error) {
+    throw new Error(`HTTP ${response.status} returned invalid JSON: ${String(error)}`);
+  }
+}
+
+function wikiErrorMessage(data: unknown, status: number): string {
+  if (isRecord(data)) {
+    const detail = data.detail;
+    if (typeof detail === "string") return detail;
+    if (isRecord(detail) && "stderr" in detail) {
+      return String(detail.stderr ?? `HTTP ${status}`);
+    }
+  }
+  return `HTTP ${status}`;
+}
+
 async function readWikiEnvelope<TPayload = WikiJson>(
   path: string,
 ): Promise<WikiEnvelope<TPayload>> {
   const response = await fetch(`${getBaseUrl()}${path}`);
-  const data = await response.json().catch(() => ({}));
+  const data = await parseWikiResponse(response);
   if (!response.ok) {
-    throw new Error(typeof data.detail === "string" ? data.detail : `HTTP ${response.status}`);
+    throw new Error(wikiErrorMessage(data, response.status));
   }
-  return data;
+  return data as WikiEnvelope<TPayload>;
 }
 
 async function postWikiEnvelope<TPayload = WikiJson>(
@@ -88,15 +111,11 @@ async function postWikiEnvelope<TPayload = WikiJson>(
     headers: isFormData ? undefined : { "Content-Type": "application/json" },
     body: isFormData ? body : JSON.stringify(body ?? {}),
   });
-  const data = await response.json().catch(() => ({}));
+  const data = await parseWikiResponse(response);
   if (!response.ok) {
-    const detail = data.detail;
-    if (detail && typeof detail === "object" && "stderr" in detail) {
-      throw new Error(String((detail as { stderr?: unknown }).stderr));
-    }
-    throw new Error(typeof detail === "string" ? detail : `HTTP ${response.status}`);
+    throw new Error(wikiErrorMessage(data, response.status));
   }
-  return data;
+  return data as WikiEnvelope<TPayload>;
 }
 
 function sourceRecordsFromEnvelope(envelope: WikiEnvelope): WikiSourceRecord[] {
@@ -213,6 +232,7 @@ export function useWiki(options: UseWikiOptions = {}) {
   );
 
   useEffect(() => {
+    // Let the initial render commit before refresh toggles loading/error state.
     const timer = window.setTimeout(() => {
       void refresh();
     }, 0);

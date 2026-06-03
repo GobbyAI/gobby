@@ -9,6 +9,8 @@ import pytest
 
 from gobby.wiki.watcher import WikiWatcher, WikiWatchScope
 
+pytestmark = pytest.mark.unit
+
 
 class RecordingCoordinator:
     def __init__(self) -> None:
@@ -190,6 +192,74 @@ def test_snapshot_skips_transient_file_errors(
     snapshot = watcher._snapshot(WikiWatchScope(name="project", root=tmp_path))
 
     assert snapshot == {}
+
+
+@pytest.mark.asyncio
+async def test_scan_once_continues_after_scope_snapshot_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failed_root = tmp_path / "failed"
+    good_root = tmp_path / "good"
+    failed_root.mkdir()
+    good_root.mkdir()
+    (good_root / "note.md").write_text("note", encoding="utf-8")
+    coordinator = RecordingCoordinator()
+    watcher = WikiWatcher(
+        scopes=[
+            WikiWatchScope(name="failed", root=failed_root),
+            WikiWatchScope(name="good", root=good_root),
+        ],
+        coordinator=coordinator,
+        debounce_interval=0.01,
+        poll_interval=0.01,
+    )
+    original_snapshot = watcher._snapshot
+
+    def flaky_snapshot(scope: WikiWatchScope) -> dict[Path, tuple[int, int]]:
+        if scope.name == "failed":
+            raise OSError("scope vanished")
+        return original_snapshot(scope)
+
+    monkeypatch.setattr(watcher, "_snapshot", flaky_snapshot)
+
+    await watcher._scan_once()
+    await watcher.flush_pending()
+
+    assert "failed" not in watcher._snapshots
+    assert "good" in watcher._snapshots
+    assert coordinator.calls == [{"good": ["note.md"]}]
+
+
+@pytest.mark.asyncio
+async def test_scan_once_continues_after_record_change_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = tmp_path / "first.md"
+    second = tmp_path / "second.md"
+    coordinator = RecordingCoordinator()
+    watcher = WikiWatcher(
+        scopes=[WikiWatchScope(name="project", root=tmp_path)],
+        coordinator=coordinator,
+        debounce_interval=0.01,
+        poll_interval=0.01,
+    )
+    watcher._snapshots["project"] = {}
+    monkeypatch.setattr(watcher, "_snapshot", lambda _scope: {first: (1, 1), second: (2, 2)})
+    calls: list[Path] = []
+
+    async def record_change(path: Path) -> None:
+        calls.append(path)
+        if len(calls) == 1:
+            raise RuntimeError("record failed")
+
+    monkeypatch.setattr(watcher, "record_change", record_change)
+
+    await watcher._scan_once()
+
+    assert set(calls) == {first, second}
+    assert watcher._snapshots["project"] == {first: (1, 1), second: (2, 2)}
 
 
 @pytest.mark.asyncio

@@ -139,14 +139,29 @@ class WikiWatcher:
     async def _scan_once(self) -> None:
         for scope in self._scopes:
             previous = self._snapshots.get(scope.name, {})
-            current = self._snapshot(scope)
+            try:
+                current = self._snapshot(scope)
+            except (OSError, RuntimeError):
+                logger.warning(
+                    "Failed to scan wiki watcher scope %s",
+                    scope.name,
+                    exc_info=True,
+                )
+                continue
             changed = {
                 path for path, signature in current.items() if previous.get(path) != signature
             }
             changed.update(path for path in previous if path not in current)
             self._snapshots[scope.name] = current
             for path in changed:
-                await self.record_change(path)
+                try:
+                    await self.record_change(path)
+                except Exception:
+                    logger.warning(
+                        "Failed to record wiki watcher change for %s",
+                        path,
+                        exc_info=True,
+                    )
 
     def _debounce_elapsed(self) -> bool:
         return self._pending_since is not None and (

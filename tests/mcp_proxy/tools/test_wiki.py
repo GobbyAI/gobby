@@ -11,6 +11,8 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.wiki import create_wiki_registry
 from gobby.storage.projects import LocalProjectManager
 
+pytestmark = pytest.mark.unit
+
 
 class FakeGateway:
     instances: list[FakeGateway] = []

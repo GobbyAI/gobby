@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -88,6 +89,26 @@ async def test_gateway_exposes_expected_methods() -> None:
         "refresh",
     ):
         assert callable(getattr(gateway, method_name))
+
+
+async def test_resolve_binary_serializes_concurrent_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def fake_resolve_native_bin(name: str) -> str:
+        nonlocal calls
+        calls += 1
+        assert name == "gwiki"
+        return "/bin/gwiki"
+
+    monkeypatch.setattr("gobby.gwiki_gateway.resolve_native_bin", fake_resolve_native_bin)
+    gateway = GwikiGateway()
+
+    results = await asyncio.gather(*(gateway._resolve_binary() for _ in range(10)))
+
+    assert results == ["/bin/gwiki"] * 10
+    assert calls == 1
 
 
 async def test_health_omits_gateway_scope_args(

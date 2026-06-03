@@ -10,7 +10,8 @@ from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
 from gobby.gwiki_gateway import GwikiCommandError
-from gobby.servers.routes.wiki import create_wiki_router
+from gobby.servers.routes import wiki as wiki_routes
+from gobby.servers.routes.wiki import _stage_upload, create_wiki_router
 from gobby.storage.projects import LocalProjectManager
 from tests.servers.conftest import create_http_server
 
@@ -340,6 +341,25 @@ def test_ingest_mixed_urls_and_paths_routes_to_gateway(client: TestClient) -> No
     ]
 
 
+def test_ingest_mixed_ignores_invalid_gateway_changed_paths(client: TestClient) -> None:
+    FakeGateway.next_result = {
+        "command": "ingest-url",
+        "changed_paths": ["raw/url.md", "", None, 42, "raw/url.md"],
+    }
+
+    response = client.post(
+        "/api/wiki/ingest",
+        json={"path": "docs/path with spaces.md", "urls": ["https://example.test/a"]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["payload"]["changed_paths"] == [
+        "raw/url.md",
+        "docs/path with spaces.md",
+    ]
+
+
 def test_ingest_url_batch_passthrough_and_indexing(client: TestClient) -> None:
     response = client.post(
         "/api/wiki/ingest",
@@ -429,3 +449,38 @@ def _handled_results() -> list[dict[str, Any]]:
     for coordinator in RecordingCoordinator.instances:
         results.extend(coordinator.results)
     return results
+
+
+@pytest.mark.asyncio
+async def test_stage_upload_unlinks_temp_file_on_read_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created_paths: list[Path] = []
+    original_named_temporary_file = wiki_routes.tempfile.NamedTemporaryFile
+
+    def named_temporary_file(*args: Any, **kwargs: Any):
+        kwargs["dir"] = tmp_path
+        staged = original_named_temporary_file(*args, **kwargs)
+        created_paths.append(Path(staged.name))
+        return staged
+
+    class FailingUpload:
+        filename = "note.md"
+
+        def __init__(self) -> None:
+            self.reads = 0
+
+        async def read(self, _size: int) -> bytes:
+            self.reads += 1
+            if self.reads == 1:
+                return b"partial"
+            raise RuntimeError("upload read failed")
+
+    monkeypatch.setattr(wiki_routes.tempfile, "NamedTemporaryFile", named_temporary_file)
+
+    with pytest.raises(RuntimeError, match="upload read failed"):
+        await _stage_upload(FailingUpload())
+
+    assert created_paths
+    assert created_paths[0].exists() is False
