@@ -46,7 +46,42 @@ jobs:
       - name: Verify published gobby-core supports ai
         run: |
           set -euo pipefail
-          core_version="$(python3 .github/scripts/verify-gwiki-deps.py)"
+          core_version="$(
+            cargo metadata --no-deps --format-version=1 |
+              jq -er '
+                def fail($message): "::error::\($message)" | halt_error(1);
+                def has_feature($features; $name): (($features // []) | index($name)) != null;
+
+                (.packages[] | select(.name == "gobby-wiki")) as $wiki
+                | ([ $wiki.dependencies[]? | select(.name == "gobby-core" and (.kind == null)) ] | first) as $core
+                | if $core == null then
+                    fail("gobby-wiki must depend on gobby-core.")
+                  else
+                    .
+                  end
+                | if $core.source == null and (($core.path | type) == "string") and (($core.path | length) > 0) then
+                    .
+                  else
+                    fail("gobby-wiki must depend on gobby-core as a local path dependency.")
+                  end
+                | if (($core.req // "") | test("^\\^?[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$")) then
+                    .
+                  else
+                    fail("gobby-wiki gobby-core dependency must use a bare semver version requirement.")
+                  end
+                | if has_feature($wiki.features.default; "ai") then
+                    .
+                  else
+                    fail("gobby-wiki default features must include ai for release builds.")
+                  end
+                | if has_feature($wiki.features.ai; "gobby-core/ai") then
+                    .
+                  else
+                    fail("gobby-wiki ai feature must enable gobby-core/ai.")
+                  end
+                | $core.req | ltrimstr("^")
+              '
+          )"
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
           mkdir -p "$tmp/src"

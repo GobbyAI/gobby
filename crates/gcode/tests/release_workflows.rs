@@ -50,3 +50,17 @@ fn release_workflows_have_one_default_and_one_no_default_check() {
         );
     }
 }
+
+#[test]
+fn release_gwiki_validates_dependencies_without_python_helper() {
+    let workflow = include_str!("../../../.github/workflows/release-gwiki.yml");
+
+    assert!(
+        !workflow.contains("python3"),
+        "release-gwiki.yml should validate dependencies inline without python3"
+    );
+    assert!(
+        !workflow.contains(".github/scripts/verify-gwiki-deps.py"),
+        "release-gwiki.yml should not reference the removed dependency helper"
+    );
+}
