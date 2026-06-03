@@ -554,6 +554,17 @@
   gap: 0.625rem;
 }
 
+/* Size the composer to its content via the browser's native field-sizing so it
+   grows/shrinks without JS reading layout. This removes the per-keystroke
+   forced reflow (height='0' -> scrollHeight) that dominated typing latency on
+   slower/remote devices. The 200px ceiling matches the JS fallback used where
+   field-sizing is unsupported; min-height comes from the inline control-row
+   variable. */
+.chat-input-textarea {
+  field-sizing: content;
+  max-height: 200px;
+}
+
 /* Mode (Plan|Act|YOLO) sits on its own row between the textarea row and the
    model controls row so chat input lays out as a clean 4-row grid even at
 /* Container for chat-column-scoped responsive behavior. Used by AgentStatusBar

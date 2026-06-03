@@ -217,45 +217,79 @@ export function useSessionCatalog(
     }, [refreshPageOne]),
   );
 
+  // Coalesce session_usage_updated bursts into one render per animation frame.
+  // The backend touches usage every ~2s per active session and these arrive
+  // batched over Tailscale; without coalescing each event re-maps the whole list
+  // and re-renders. Accumulate the latest snapshot per session id, then apply
+  // them all in a single setSessions on the next frame.
+  const pendingUsageRef = useRef<Map<string, Record<string, unknown>>>(new Map());
+  const usageFrameRef = useRef<number | null>(null);
+
+  useEffect(
+    () => () => {
+      if (usageFrameRef.current !== null) {
+        cancelAnimationFrame(usageFrameRef.current);
+      }
+    },
+    [],
+  );
+
+  const flushUsageUpdates = useCallback(() => {
+    usageFrameRef.current = null;
+    const pending = pendingUsageRef.current;
+    if (pending.size === 0) {
+      return;
+    }
+    pendingUsageRef.current = new Map();
+    setSessions((prev) =>
+      prev.map((session) => {
+        const data = pending.get(session.id);
+        if (!data) {
+          return session;
+        }
+        return {
+          ...session,
+          usage_input_tokens:
+            typeof data.usage_input_tokens === "number"
+              ? data.usage_input_tokens
+              : session.usage_input_tokens,
+          usage_output_tokens:
+            typeof data.usage_output_tokens === "number"
+              ? data.usage_output_tokens
+              : session.usage_output_tokens,
+          usage_cache_creation_tokens:
+            typeof data.usage_cache_creation_tokens === "number"
+              ? data.usage_cache_creation_tokens
+              : session.usage_cache_creation_tokens,
+          usage_cache_read_tokens:
+            typeof data.usage_cache_read_tokens === "number"
+              ? data.usage_cache_read_tokens
+              : session.usage_cache_read_tokens,
+          context_window:
+            typeof data.context_window === "number"
+              ? data.context_window
+              : session.context_window,
+          model: typeof data.model === "string" ? data.model : session.model,
+        };
+      }),
+    );
+  }, []);
+
   useWebSocketEvent(
     "session_usage_updated",
-    useCallback((data: Record<string, unknown>) => {
-      const sessionId = typeof data.session_id === "string" ? data.session_id : null;
-      if (!sessionId) {
-        return;
-      }
-      setSessions((prev) =>
-        prev.map((session) =>
-          session.id === sessionId
-            ? {
-                ...session,
-                usage_input_tokens:
-                  typeof data.usage_input_tokens === "number"
-                    ? data.usage_input_tokens
-                    : session.usage_input_tokens,
-                usage_output_tokens:
-                  typeof data.usage_output_tokens === "number"
-                    ? data.usage_output_tokens
-                    : session.usage_output_tokens,
-                usage_cache_creation_tokens:
-                  typeof data.usage_cache_creation_tokens === "number"
-                    ? data.usage_cache_creation_tokens
-                    : session.usage_cache_creation_tokens,
-                usage_cache_read_tokens:
-                  typeof data.usage_cache_read_tokens === "number"
-                    ? data.usage_cache_read_tokens
-                    : session.usage_cache_read_tokens,
-                context_window:
-                  typeof data.context_window === "number"
-                    ? data.context_window
-                    : session.context_window,
-                model:
-                  typeof data.model === "string" ? data.model : session.model,
-              }
-            : session,
-        ),
-      );
-    }, []),
+    useCallback(
+      (data: Record<string, unknown>) => {
+        const sessionId = typeof data.session_id === "string" ? data.session_id : null;
+        if (!sessionId) {
+          return;
+        }
+        pendingUsageRef.current.set(sessionId, data);
+        if (usageFrameRef.current === null) {
+          usageFrameRef.current = requestAnimationFrame(flushUsageUpdates);
+        }
+      },
+      [flushUsageUpdates],
+    ),
   );
 
   // Sort by seq_num DESC for stability across token-usage updates. The

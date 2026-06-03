@@ -121,6 +121,21 @@ function shouldHandleSlashCommandLocally(input: string): boolean {
   return LOCAL_ONLY_SLASH_COMMANDS.has(topLevelCommand)
 }
 
+let fieldSizingSupport: boolean | null = null
+// Chromium auto-sizes a textarea with `field-sizing: content`, so the composer
+// needs no JS layout reads at all there. Cache the one-time capability check.
+function supportsFieldSizing(): boolean {
+  if (fieldSizingSupport === null) {
+    fieldSizingSupport =
+      typeof CSS !== 'undefined' &&
+      typeof CSS.supports === 'function' &&
+      CSS.supports('field-sizing', 'content')
+  }
+  return fieldSizingSupport
+}
+
+const MAX_TEXTAREA_HEIGHT = 200
+
 export function ChatInput({
   onSend,
   onStop,
@@ -190,6 +205,7 @@ export function ChatInput({
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [queuedFiles, setQueuedFiles] = useState<QueuedFile[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const lastTextareaHeightRef = useRef<number>(-1)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const paletteRef = useRef<HTMLDivElement>(null)
   const primaryButtonRef = useRef<HTMLButtonElement>(null)
@@ -279,12 +295,25 @@ export function ChatInput({
 
   useEffect(() => {
     const textarea = textareaRef.current
-    if (textarea) {
-      textarea.style.height = '0'
-      textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`
-      // Keep cursor visible when content exceeds max height
+    if (!textarea) return
+    // Chromium sizes the textarea to content via CSS `field-sizing`, so no JS
+    // layout read is needed — this avoids the forced synchronous reflow that
+    // ran on every keystroke. Only fall back to JS measurement where
+    // field-sizing is unsupported, and run it in a rAF (after the keystroke
+    // paints) so the measurement never adds to input latency. Guard the write
+    // so an unchanged height doesn't commit a redundant layout.
+    if (supportsFieldSizing()) return
+    const frame = requestAnimationFrame(() => {
+      textarea.style.height = 'auto'
+      const next = Math.min(textarea.scrollHeight, MAX_TEXTAREA_HEIGHT)
+      if (next !== lastTextareaHeightRef.current) {
+        lastTextareaHeightRef.current = next
+        textarea.style.height = `${next}px`
+      }
+      // Keep the cursor visible when content exceeds the max height.
       textarea.scrollTop = textarea.scrollHeight
-    }
+    })
+    return () => cancelAnimationFrame(frame)
   }, [input])
 
   useEffect(() => { setSelectedIndex(0) }, [paletteItems])
@@ -870,7 +899,7 @@ export function ChatInput({
             <textarea
               ref={textareaRef}
               style={{ minHeight: 'var(--control-row-height)' }}
-              className="flex-1 bg-muted rounded-lg px-3 py-2 text-sm leading-5 text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-accent min-h-[36px]"
+              className="chat-input-textarea flex-1 bg-muted rounded-lg px-3 py-2 text-sm leading-5 text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-accent min-h-[36px]"
               value={input}
               onChange={(e) => handleChange(e.target.value)}
               onKeyDown={handleKeyDown}

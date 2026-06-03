@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  memo,
   useCallback,
   useLayoutEffect,
   useMemo,
@@ -137,7 +138,9 @@ function DegradedNotice() {
   );
 }
 
-export function WatchingTranscript({
+// Memoized so usage/activity WebSocket bursts that re-render the surrounding
+// SessionsTab don't re-render the watched transcript when its props are stable.
+export const WatchingTranscript = memo(function WatchingTranscript({
   sessionId,
   messages,
   isLoading,
@@ -320,4 +323,4 @@ export function WatchingTranscript({
       components={components}
     />
   );
-}
+});

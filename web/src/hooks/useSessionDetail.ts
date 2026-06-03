@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { GobbySession } from '../types/sessions'
 import { useWebSocketEvent } from './useWebSocketEvent'
+import { useRafCoalescedHandler } from './useRafCoalescedHandler'
 import type { ContentBlock, TokenUsage, ToolCall } from '../types/chat'
 import {
   START_INDEX,
@@ -705,8 +706,10 @@ export function useSessionDetail(sessionId: string | null) {
     }
   }, [applyTranscriptWindow, setMessageSource]))
 
-  useWebSocketEvent('session_usage_updated', useCallback((data: Record<string, unknown>) => {
+  const applyUsageUpdate = useCallback((data: Record<string, unknown>) => {
     const updatedSessionId = typeof data.session_id === 'string' ? data.session_id : null
+    // Re-validate at flush time: the watched session may have changed within the
+    // coalescing frame, so a stale snapshot must be dropped here too.
     if (!updatedSessionId || updatedSessionId !== sessionIdRef.current) return
 
     setSession((prev) =>
@@ -791,7 +794,23 @@ export function useSessionDetail(sessionId: string | null) {
           }
         : prev,
     )
-  }, []))
+  }, [])
+
+  // Coalesce session_usage_updated bursts (common over Tailscale) into a single
+  // render per animation frame. Pre-filter to the watched session so keep-latest
+  // never discards a relevant update in favor of another session's burst event.
+  const enqueueUsageUpdate = useRafCoalescedHandler(applyUsageUpdate)
+  useWebSocketEvent(
+    'session_usage_updated',
+    useCallback(
+      (data: Record<string, unknown>) => {
+        const updatedSessionId = typeof data.session_id === 'string' ? data.session_id : null
+        if (!updatedSessionId || updatedSessionId !== sessionIdRef.current) return
+        enqueueUsageUpdate(data)
+      },
+      [enqueueUsageUpdate],
+    ),
+  )
 
   useWebSocketEvent('session_event', useCallback((data: Record<string, unknown>) => {
     const event = typeof data.event === 'string' ? data.event : null

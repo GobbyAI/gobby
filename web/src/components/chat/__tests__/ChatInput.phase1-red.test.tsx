@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { ChatInput } from '../ChatInput'
 
 describe('ChatInput Phase 1 sizing contract', () => {
@@ -15,7 +15,7 @@ describe('ChatInput Phase 1 sizing contract', () => {
     expect(sendButton).not.toHaveClass('h-[52px]', 'w-[52px]', 'self-start')
   })
 
-  it('keeps textarea auto-grow capped at 200px', () => {
+  it('keeps textarea auto-grow capped at 200px', async () => {
     render(<ChatInput onSend={vi.fn()} />)
 
     const textarea = screen.getByRole('textbox', { name: 'Message input' })
@@ -26,7 +26,10 @@ describe('ChatInput Phase 1 sizing contract', () => {
 
     fireEvent.change(textarea, { target: { value: 'one\ntwo\nthree\nfour\nfive' } })
 
-    expect(textarea).toHaveStyle({ height: '200px' })
+    // jsdom can't do layout, so the JS fallback (where CSS field-sizing is
+    // unsupported) applies the 200px cap. It now runs in a rAF off the input
+    // path, so the height settles asynchronously.
+    await waitFor(() => expect(textarea).toHaveStyle({ height: '200px' }))
   })
 
   it('keeps speaker and microphone controls in the toolbar', () => {

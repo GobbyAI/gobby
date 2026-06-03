@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useImperativeHandle,
   useLayoutEffect,
@@ -40,8 +41,11 @@ export interface MessageListHandle {
   scrollToBottom: () => void;
 }
 
-export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
-  function MessageList(
+// Memoized so a WebSocket-driven re-render of an ancestor (usage/activity
+// bursts) doesn't re-render the whole transcript when its own props are
+// unchanged.
+export const MessageList = memo(
+  forwardRef<MessageListHandle, MessageListProps>(function MessageList(
     {
       messages,
       isStreaming,
@@ -320,7 +324,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
         components={virtuosoComponents}
       />
     );
-  },
+  }),
 );
 
 function ChatEmptyIcon() {
