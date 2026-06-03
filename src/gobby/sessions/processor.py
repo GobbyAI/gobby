@@ -46,6 +46,7 @@ from gobby.sessions.context_usage import (
     snapshot_from_token_usage,
     snapshot_from_window_metadata,
 )
+from gobby.sessions.message_stats import compute_message_stats
 from gobby.sessions.transcript_index import TranscriptIndexAppender, persist_index_sidecar
 from gobby.sessions.transcript_renderer import RenderState, render_incremental
 from gobby.sessions.transcripts import get_parser
@@ -220,7 +221,13 @@ class SessionMessageProcessor:
         )
 
     def _accumulate_stats(self, session_id: str, messages: list[Any]) -> dict[str, Any]:
-        """Accumulate incremental stats from parsed messages."""
+        """Accumulate incremental stats from parsed messages.
+
+        Per-batch counts come from the shared :func:`compute_message_stats`
+        predicate (also used by the lifecycle expiry path) and are folded into
+        the running per-session totals so the live and batch writers cannot
+        drift.
+        """
         stats = self._stats.get(
             session_id,
             {
@@ -230,14 +237,12 @@ class SessionMessageProcessor:
                 "last_assistant_content": None,
             },
         )
-        for msg in messages:
-            stats["message_count"] = stats.get("message_count", 0) + 1
-            if msg.role == "assistant" and msg.content_type == "text":
-                stats["turn_count"] = stats.get("turn_count", 0) + 1
-                if isinstance(msg.content, str) and msg.content.strip():
-                    stats["last_assistant_content"] = msg.content.strip()[-500:]
-            if msg.tool_name:
-                stats["tool_call_count"] = stats.get("tool_call_count", 0) + 1
+        batch = compute_message_stats(messages)
+        stats["message_count"] = stats.get("message_count", 0) + batch["message_count"]
+        stats["turn_count"] = stats.get("turn_count", 0) + batch["turn_count"]
+        stats["tool_call_count"] = stats.get("tool_call_count", 0) + batch["tool_call_count"]
+        if batch["last_assistant_content"] is not None:
+            stats["last_assistant_content"] = batch["last_assistant_content"]
         self._stats[session_id] = stats
         return stats
 

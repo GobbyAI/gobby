@@ -25,6 +25,7 @@ from gobby.sessions.context_usage import (
     snapshot_from_token_usage,
     snapshot_from_window_metadata,
 )
+from gobby.sessions.message_stats import compute_message_stats
 from gobby.sessions.summarize import TURN_PATTERN
 from gobby.sessions.summary_validity import is_summary_markdown_valid
 from gobby.sessions.transcript_archive import backup_transcript
@@ -560,6 +561,26 @@ class SessionLifecycleManager:
 
         if not messages:
             return
+
+        # Persist session stats from the full transcript before any token-usage
+        # early return, so sessions the live processor never tailed before expiry
+        # still record real message/turn/tool counts instead of phantom zeros.
+        # Same predicate as the live path via compute_message_stats.
+        try:
+            stats = compute_message_stats(messages)
+            self.session_manager.update_stats(
+                session_id,
+                message_count=stats["message_count"],
+                turn_count=stats["turn_count"],
+                tool_call_count=stats["tool_call_count"],
+                last_assistant_content=stats["last_assistant_content"],
+            )
+        except Exception:
+            logger.warning(
+                "Failed to persist transcript stats for session %s",
+                session_id,
+                exc_info=True,
+            )
 
         if not transcript_path.endswith(".json"):
             # Index sidecars are a seek optimization; transcript token processing must continue.

@@ -246,6 +246,52 @@ class TestSessionLifecycleManager:
             assert manager.session_manager.update_usage.call_count == 0
 
     @pytest.mark.asyncio
+    async def test_process_session_transcript_writes_stats(self, tmp_path, manager):
+        """The expiry path persists message/turn/tool stats via update_stats.
+
+        Sessions the live processor never tailed before expiry must still record
+        real counts; the predicate matches the live path (compute_message_stats).
+        """
+        from gobby.sessions.transcripts.base import ParsedMessage
+
+        transcript_path = tmp_path / "transcript.jsonl"
+        transcript_path.write_text('{"type": "message"}\n')
+
+        session = MagicMock()
+        session.source = "claude"
+        manager.session_manager.get.return_value = session
+
+        def _mk(role, content_type, content="", tool_name=None):
+            # spec=ParsedMessage so the lifecycle path's ParsedToolEvent filter keeps it.
+            m = MagicMock(spec=ParsedMessage)
+            m.role = role
+            m.content_type = content_type
+            m.content = content
+            m.tool_name = tool_name
+            m.model = None
+            m.usage = None
+            return m
+
+        messages = [
+            _mk("user", "text", "Add pagination to the search endpoint"),
+            _mk("assistant", "text", "Working on it"),
+            _mk("assistant", "tool_use", "", tool_name="Read"),
+            _mk("assistant", "text", "Done"),
+        ]
+
+        with patch("gobby.sessions.lifecycle.ClaudeTranscriptParser") as MockParser:
+            MockParser.return_value.parse_lines.return_value = messages
+            await manager._process_session_transcript("s1", str(transcript_path))
+
+        manager.session_manager.update_stats.assert_called_once_with(
+            "s1",
+            message_count=4,
+            turn_count=2,
+            tool_call_count=1,
+            last_assistant_content="Done",
+        )
+
+    @pytest.mark.asyncio
     async def test_process_session_transcript_missing_file(self, manager):
         """Test handling of missing file."""
         await manager._process_session_transcript("s1", "/non/existent/file.jsonl")
