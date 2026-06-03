@@ -1,0 +1,183 @@
+{
+  "tool": "gwiki",
+  "contract_version": 1,
+  "summary": "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
+  "global_flags": [
+    {"name": "--format", "takes_value": true, "value_name": "json|text", "allowed_values": ["json", "text"], "required": false, "repeatable": false},
+    {"name": "--quiet", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false}
+  ],
+  "scope": {
+    "flags": [
+      {"name": "--project", "takes_value": true, "value_name": "ROOT", "allowed_values": [], "required": false, "repeatable": false},
+      {"name": "--topic", "takes_value": true, "value_name": "NAME", "allowed_values": [], "required": false, "repeatable": false}
+    ],
+    "default": "detect project from current working directory; bare --project uses current directory",
+    "identity_keys": ["kind", "id"]
+  },
+  "commands": [
+    {
+      "name": "contract",
+      "summary": "Emit this CLI contract.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {"name": "--format", "takes_value": true, "value_name": "json|text", "allowed_values": ["json", "text"], "required": false, "repeatable": false}
+      ],
+      "json_output_keys": ["tool", "contract_version", "summary", "global_flags", "scope", "commands", "error_codes"]
+    },
+    {
+      "name": "index",
+      "summary": "Index markdown and source notes in the selected scope.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [],
+      "json_output_keys": ["command", "scope", "status", "indexed_pages", "indexed_sources"]
+    },
+    {
+      "name": "search",
+      "summary": "Search wiki documents in the selected scope.",
+      "daemon_consumed": true,
+      "positionals": [{"name": "QUERY", "required": true, "repeatable": false}],
+      "flags": [
+        {"name": "--limit", "takes_value": true, "value_name": "N", "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--no-semantic", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false}
+      ],
+      "json_output_keys": ["command", "scope", "query", "limit", "results", "degradations", "path", "title", "summary", "score"]
+    },
+    {
+      "name": "read",
+      "summary": "Read a wiki page or document in the selected scope.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {"name": "--path", "takes_value": true, "value_name": "PATH", "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--title", "takes_value": true, "value_name": "TITLE", "allowed_values": [], "required": false, "repeatable": false}
+      ],
+      "json_output_keys": ["command", "scope", "path", "title", "content", "frontmatter", "citations"]
+    },
+    {
+      "name": "refresh",
+      "summary": "Refresh URL-backed raw source records.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {"name": "--id", "takes_value": true, "value_name": "SOURCE_ID", "allowed_values": [], "required": false, "repeatable": true},
+        {"name": "--dry-run", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false}
+      ],
+      "json_output_keys": ["command", "scope", "status", "results", "changed_paths", "refreshed", "failed"]
+    },
+    {
+      "name": "ingest-file",
+      "summary": "Capture a local source file into the wiki inbox.",
+      "daemon_consumed": true,
+      "positionals": [{"name": "PATH", "required": true, "repeatable": false}],
+      "flags": [
+        {"name": "--no-ai", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--translate", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--target-lang", "takes_value": true, "value_name": "LANG", "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--video-frame-interval", "takes_value": true, "value_name": "SECONDS", "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--transcription-routing", "takes_value": true, "value_name": "auto|daemon|direct|off", "allowed_values": ["auto", "daemon", "direct", "off"], "required": false, "repeatable": false},
+        {"name": "--vision-routing", "takes_value": true, "value_name": "auto|daemon|direct|off", "allowed_values": ["auto", "daemon", "direct", "off"], "required": false, "repeatable": false},
+        {"name": "--text-routing", "takes_value": true, "value_name": "auto|daemon|direct|off", "allowed_values": ["auto", "daemon", "direct", "off"], "required": false, "repeatable": false}
+      ],
+      "json_output_keys": ["command", "scope", "path", "raw_path", "source_path", "source_asset", "changed_paths", "citations"]
+    },
+    {
+      "name": "ingest-url",
+      "summary": "Fetch URL sources into the wiki inbox.",
+      "daemon_consumed": true,
+      "positionals": [{"name": "URL", "required": true, "repeatable": true}],
+      "flags": [],
+      "json_output_keys": ["command", "scope", "results", "path", "raw_path", "raw_paths", "source_path", "changed_paths", "citations", "url", "status"]
+    },
+    {
+      "name": "collect",
+      "summary": "Collect recognized inbox drops into raw storage.",
+      "daemon_consumed": true,
+      "positionals": [{"name": "QUERY", "required": false, "repeatable": false}],
+      "flags": [],
+      "json_output_keys": ["command", "scope", "results", "changed_paths", "status"]
+    },
+    {
+      "name": "research",
+      "summary": "Dispatch research workers and checkpoint wiki research state.",
+      "daemon_consumed": true,
+      "positionals": [{"name": "QUESTION", "required": false, "repeatable": false}],
+      "flags": [
+        {"name": "--source-constraints", "takes_value": true, "value_name": "TEXT", "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--agent-count", "takes_value": true, "value_name": "N", "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--task-id", "takes_value": true, "value_name": "ID", "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--resume", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false}
+      ],
+      "json_output_keys": ["command", "scope", "question", "checkpoint", "accepted_notes", "changed_paths", "status"]
+    },
+    {
+      "name": "compile",
+      "summary": "Compile accepted research notes into wiki articles.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {"name": "--topic", "takes_value": true, "value_name": "TOPIC", "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--outline", "takes_value": true, "value_name": "PATH", "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--target", "takes_value": true, "value_name": "PATH", "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--kind", "takes_value": true, "value_name": "article|stub", "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--output", "takes_value": true, "value_name": "PATH", "allowed_values": [], "required": false, "repeatable": false}
+      ],
+      "json_output_keys": ["command", "scope", "topic", "target_page", "written_path", "changed_paths", "status"]
+    },
+    {
+      "name": "audit",
+      "summary": "Report claims that lack source support.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [],
+      "json_output_keys": ["command", "scope", "findings", "changed_paths", "status"]
+    },
+    {
+      "name": "health",
+      "summary": "Write wiki health snapshots under meta/health.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [],
+      "json_output_keys": ["command", "root", "text_path", "json_path", "status"]
+    },
+    {
+      "name": "sources",
+      "summary": "List raw source manifest entries in the selected scope.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [],
+      "json_output_keys": ["command", "scope", "sources", "id", "url", "path", "raw_path", "source_path"]
+    },
+    {
+      "name": "backlinks",
+      "summary": "Show backlinks for a wiki page.",
+      "daemon_consumed": true,
+      "positionals": [{"name": "PAGE", "required": true, "repeatable": false}],
+      "flags": [],
+      "json_output_keys": ["command", "scope", "page", "backlinks", "path", "title"]
+    },
+    {
+      "name": "status",
+      "summary": "Show shell readiness.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [],
+      "json_output_keys": ["command", "scope", "status", "root", "vault"]
+    },
+    {
+      "name": "remove-source",
+      "summary": "Remove a raw source, its manifest entry, and its raw asset.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {"name": "--id", "takes_value": true, "value_name": "SOURCE_ID", "allowed_values": [], "required": true, "repeatable": false},
+        {"name": "--dry-run", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--yes", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--keep-asset", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false}
+      ],
+      "json_output_keys": ["command", "scope", "id", "removed_manifest", "removed_raw_asset", "changed_paths"]
+    }
+  ],
+  "error_codes": ["not_implemented", "invalid_scope", "config", "io", "json", "yaml", "registry", "daemon", "invalid_input", "not_found", "index", "search", "setup"]
+}

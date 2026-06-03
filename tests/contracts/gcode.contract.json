@@ -1,0 +1,91 @@
+{
+  "tool": "gcode",
+  "contract_version": 1,
+  "summary": "Fast code index CLI for Gobby.",
+  "global_flags": [
+    {"name": "--project", "takes_value": true, "value_name": "ROOT", "allowed_values": [], "required": false, "repeatable": false},
+    {"name": "--format", "takes_value": true, "value_name": "json|text", "allowed_values": ["json", "text"], "required": false, "repeatable": false},
+    {"name": "--quiet", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false},
+    {"name": "--verbose", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false},
+    {"name": "--no-freshness", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false}
+  ],
+  "scope": {
+    "flags": [
+      {"name": "--project", "takes_value": true, "value_name": "ROOT", "allowed_values": [], "required": false, "repeatable": false}
+    ],
+    "default": "detect project from current working directory",
+    "identity_keys": ["project_id", "project_root"]
+  },
+  "commands": [
+    {
+      "name": "contract",
+      "summary": "Emit this CLI contract.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {"name": "--format", "takes_value": true, "value_name": "json|text", "allowed_values": ["json", "text"], "required": false, "repeatable": false}
+      ],
+      "json_output_keys": ["tool", "contract_version", "summary", "global_flags", "scope", "commands", "error_codes"]
+    },
+    {
+      "name": "index",
+      "summary": "Index a directory or specific files into the code index.",
+      "daemon_consumed": true,
+      "positionals": [
+        {"name": "PATH", "required": false, "repeatable": false}
+      ],
+      "flags": [
+        {"name": "--files", "takes_value": true, "value_name": "FILE", "allowed_values": [], "required": false, "repeatable": true},
+        {"name": "--full", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--require-cpp-semantics", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--sync-projections", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false}
+      ],
+      "json_output_keys": ["project_id", "root", "indexed_files", "indexed_symbols", "skipped_files", "errors"]
+    },
+    {
+      "name": "search",
+      "summary": "Hybrid symbol and content search over the code index.",
+      "daemon_consumed": true,
+      "positionals": [
+        {"name": "QUERY", "required": true, "repeatable": false},
+        {"name": "PATH", "required": false, "repeatable": true}
+      ],
+      "flags": [
+        {"name": "--limit", "takes_value": true, "value_name": "N", "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--offset", "takes_value": true, "value_name": "N", "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--kind", "takes_value": true, "value_name": "KIND", "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--language", "takes_value": true, "value_name": "LANG", "allowed_values": [], "required": false, "repeatable": false}
+      ],
+      "json_output_keys": ["project_id", "total", "offset", "limit", "results", "id", "name", "qualified_name", "kind", "language", "file_path", "line_start", "line_end", "signature", "score"]
+    },
+    {
+      "name": "search-symbol",
+      "summary": "Exact-first symbol/name search with deterministic ranking.",
+      "daemon_consumed": true,
+      "positionals": [
+        {"name": "QUERY", "required": true, "repeatable": false},
+        {"name": "PATH", "required": false, "repeatable": true}
+      ],
+      "flags": [
+        {"name": "--limit", "takes_value": true, "value_name": "N", "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--offset", "takes_value": true, "value_name": "N", "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--kind", "takes_value": true, "value_name": "KIND", "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--language", "takes_value": true, "value_name": "LANG", "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--with-graph", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false}
+      ],
+      "json_output_keys": ["project_id", "total", "offset", "limit", "results", "id", "name", "qualified_name", "kind", "language", "file_path", "line_start", "line_end", "signature", "score"]
+    },
+    {
+      "name": "codewiki",
+      "summary": "Generate vault-ready hierarchical code documentation.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {"name": "--out", "takes_value": true, "value_name": "DIR", "allowed_values": [], "required": false, "repeatable": false},
+        {"name": "--scope", "takes_value": true, "value_name": "PATH", "allowed_values": [], "required": false, "repeatable": true}
+      ],
+      "json_output_keys": ["command", "project_id", "project_root", "out_dir", "generated_pages", "changed_paths", "skipped"]
+    }
+  ],
+  "error_codes": ["invalid_input", "missing_project", "backend_unavailable", "index_unavailable", "contract_violation"]
+}
