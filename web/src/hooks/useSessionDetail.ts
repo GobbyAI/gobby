@@ -2,6 +2,18 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import type { GobbySession } from '../types/sessions'
 import { useWebSocketEvent } from './useWebSocketEvent'
 import type { ContentBlock, TokenUsage, ToolCall } from '../types/chat'
+import {
+  START_INDEX,
+  TRANSCRIPT_PAGE_SIZE,
+  applyLiveTranscriptMessage,
+  applyTailRefreshTranscriptPage,
+  appendNewerTranscriptPage,
+  createEmptyTranscriptWindow,
+  createTailTranscriptWindow,
+  prependOlderTranscriptPage,
+  type TranscriptWindowState,
+  type TranscriptWindowUpdate,
+} from './sessionTranscriptWindow'
 
 export interface SessionMessage {
   id: string
@@ -42,9 +54,7 @@ interface MessageLoadResult {
 }
 
 // Tail-first paging: load the newest page, then prepend older pages on scroll-up.
-const PAGE = 50
-// Virtuoso prepend anchor — large so it can decrement as older pages load.
-const START_INDEX = 1_000_000
+const PAGE = TRANSCRIPT_PAGE_SIZE
 const TAIL_REFRESH_DEBOUNCE_MS = 500
 
 function getBaseUrl(): string {
@@ -183,22 +193,36 @@ async function fetchTranscriptStatus(sessionId: string): Promise<TranscriptStatu
   return (await statusRes.json()) as TranscriptStatus
 }
 
+function toTranscriptWindowPage(result: MessageLoadResult) {
+  return {
+    messages: result.mapped,
+    renderedTotal: result.renderedTotal,
+    returnedCount: result.returnedCount,
+  }
+}
+
 export function useSessionDetail(sessionId: string | null) {
   const [session, setSession] = useState<GobbySession | null>(null)
   const [messages, setMessages] = useState<SessionMessage[]>([])
   const [transcriptStatus, setTranscriptStatus] = useState<TranscriptStatus | null>(null)
   const [sessionError, setSessionError] = useState<string | null>(null)
+  const [messageSource, setMessageSourceState] = useState<'session' | 'chat' | null>(null)
   const [totalMessages, setTotalMessages] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
   // Rendered-group pagination state (group counts, not parsed-message counts).
-  const [loadedCount, setLoadedCount] = useState(0)
+  const [windowStart, setWindowStart] = useState(0)
+  const [windowEnd, setWindowEnd] = useState(0)
   const [renderedTotal, setRenderedTotal] = useState(0)
   const [isLoadingOlder, setIsLoadingOlder] = useState(false)
+  const [isLoadingNewer, setIsLoadingNewer] = useState(false)
   const [firstItemIndex, setFirstItemIndex] = useState(START_INDEX)
   const [transcriptDegradedReason, setTranscriptDegradedReason] = useState<string | null>(null)
 
   const messageSourceRef = useRef<'session' | 'chat' | null>(null)
   const messagesRef = useRef<SessionMessage[]>([])
+  const transcriptWindowRef = useRef<TranscriptWindowState<SessionMessage>>(
+    createEmptyTranscriptWindow<SessionMessage>(),
+  )
   const sessionIdRef = useRef(sessionId)
   const sessionRef = useRef<GobbySession | null>(null)
   const detailPollCleanupRef = useRef<(() => void) | null>(null)
@@ -208,10 +232,9 @@ export function useSessionDetail(sessionId: string | null) {
   const scheduleTailRefreshRef = useRef<(activeSessionId: string) => void>(() => {})
   const tailWindowVersionRef = useRef(0)
   const detailLoadVersionRef = useRef(0)
-  // Mirrors of paging state read synchronously by loadMore / live append.
-  const loadedCountRef = useRef(0)
-  const renderedTotalRef = useRef(0)
+  const transcriptAtBottomRef = useRef(true)
   const loadingOlderRef = useRef(false)
+  const loadingNewerRef = useRef(false)
 
   useEffect(() => {
     sessionIdRef.current = sessionId
@@ -220,14 +243,6 @@ export function useSessionDetail(sessionId: string | null) {
   useEffect(() => {
     sessionRef.current = session
   }, [session])
-
-  useEffect(() => {
-    loadedCountRef.current = loadedCount
-  }, [loadedCount])
-
-  useEffect(() => {
-    renderedTotalRef.current = renderedTotal
-  }, [renderedTotal])
 
   const clearDetailPolling = useCallback(() => {
     detailPollCleanupRef.current?.()
@@ -242,16 +257,39 @@ export function useSessionDetail(sessionId: string | null) {
     tailRefreshPendingSessionRef.current = null
   }, [])
 
+  const setMessageSource = useCallback((source: 'session' | 'chat' | null) => {
+    messageSourceRef.current = source
+    setMessageSourceState(source)
+  }, [])
+
+  const applyTranscriptWindow = useCallback((
+    update: TranscriptWindowState<SessionMessage> | TranscriptWindowUpdate<SessionMessage>,
+  ) => {
+    const nextWindow = 'state' in update ? update.state : update
+    transcriptWindowRef.current = nextWindow
+    messagesRef.current = nextWindow.messages
+    tailWindowVersionRef.current += 1
+    setMessages(nextWindow.messages)
+    setWindowStart(nextWindow.windowStart)
+    setWindowEnd(nextWindow.windowEnd)
+    setRenderedTotal(nextWindow.renderedTotal)
+    setFirstItemIndex(nextWindow.firstItemIndex)
+  }, [])
+
   const resetPaging = useCallback(() => {
-    setLoadedCount(0)
+    const emptyWindow = createEmptyTranscriptWindow<SessionMessage>()
+    transcriptWindowRef.current = emptyWindow
+    setWindowStart(0)
+    setWindowEnd(0)
     setRenderedTotal(0)
-    loadedCountRef.current = 0
-    renderedTotalRef.current = 0
     loadingOlderRef.current = false
+    loadingNewerRef.current = false
+    transcriptAtBottomRef.current = true
     tailRefreshInFlightRef.current = false
     tailRefreshPendingSessionRef.current = null
     tailWindowVersionRef.current += 1
     setIsLoadingOlder(false)
+    setIsLoadingNewer(false)
     setFirstItemIndex(START_INDEX)
     setTranscriptDegradedReason(null)
   }, [])
@@ -264,9 +302,9 @@ export function useSessionDetail(sessionId: string | null) {
     setSessionError(error)
     setTotalMessages(0)
     setIsLoading(false)
-    messageSourceRef.current = null
+    setMessageSource(null)
     resetPaging()
-  }, [resetPaging])
+  }, [resetPaging, setMessageSource])
 
   const resetSessionDetail = useCallback((error: string | null) => {
     detailLoadVersionRef.current += 1
@@ -331,7 +369,7 @@ export function useSessionDetail(sessionId: string | null) {
         const chatResult = await fetchChatSessionMessages(activeSessionId)
         if (!isCurrent()) return
 
-        messageSourceRef.current = 'chat'
+        setMessageSource('chat')
         setTranscriptStatus(null)
         messagesRef.current = chatResult.mapped
         setMessages(chatResult.mapped)
@@ -376,14 +414,12 @@ export function useSessionDetail(sessionId: string | null) {
         return
       }
 
-      messageSourceRef.current = 'session'
-      messagesRef.current = renderedResult.mapped
-      setMessages(renderedResult.mapped)
+      setMessageSource('session')
+      const initialWindow = createTailTranscriptWindow(
+        toTranscriptWindowPage(renderedResult),
+      )
+      applyTranscriptWindow(initialWindow)
       setTotalMessages(renderedResult.totalCount)
-      setLoadedCount(renderedResult.returnedCount)
-      setRenderedTotal(renderedResult.renderedTotal)
-      loadedCountRef.current = renderedResult.returnedCount
-      renderedTotalRef.current = renderedResult.renderedTotal
       setTranscriptDegradedReason(renderedResult.degradedReason)
       if (renderedResult.mapped.length === 0) {
         const nextTranscriptStatus = await fetchTranscriptStatus(activeSessionId)
@@ -405,54 +441,32 @@ export function useSessionDetail(sessionId: string | null) {
         setIsLoading(false)
       }
     }
-  }, [applyClearedDetail, clearDetailPolling, clearTailRefresh, resetPaging])
+  }, [
+    applyClearedDetail,
+    applyTranscriptWindow,
+    clearDetailPolling,
+    clearTailRefresh,
+    resetPaging,
+    setMessageSource,
+  ])
 
   const applyRefreshedTailMessages = useCallback((result: MessageLoadResult) => {
     if (loadingOlderRef.current) return
 
-    const currentMessages = messagesRef.current
-    const currentIds = new Set(currentMessages.map((message) => message.id))
-    const refreshedById = new Map(result.mapped.map((message) => [message.id, message]))
-    let overlapCount = 0
-
-    const replacedMessages = currentMessages.map((message) => {
-      const refreshed = refreshedById.get(message.id)
-      if (!refreshed) return message
-      overlapCount += 1
-      return refreshed
-    })
-    const appendedMessages = result.mapped.filter((message) => !currentIds.has(message.id))
-    const nextMessages =
-      appendedMessages.length > 0
-        ? [...replacedMessages, ...appendedMessages]
-        : replacedMessages
-    const appendedCount = appendedMessages.length
-
-    if (overlapCount === 0 && appendedCount === 0) {
-      return
-    }
-
-    messagesRef.current = nextMessages
-    tailWindowVersionRef.current += 1
-    setMessages(nextMessages)
-    setTotalMessages((prev) => Math.max(result.totalCount, prev + appendedCount))
-
-    const preservedLoadedCount = Math.max(loadedCountRef.current - overlapCount, 0)
-    const nextLoadedCount = preservedLoadedCount + result.returnedCount
-    const nextRenderedTotal = Math.max(
-      result.renderedTotal,
-      renderedTotalRef.current + appendedCount,
-      nextLoadedCount,
+    const update = applyTailRefreshTranscriptPage(
+      transcriptWindowRef.current,
+      toTranscriptWindowPage(result),
+      transcriptAtBottomRef.current,
     )
-    loadedCountRef.current = nextLoadedCount
-    renderedTotalRef.current = nextRenderedTotal
-    setLoadedCount(nextLoadedCount)
-    setRenderedTotal(nextRenderedTotal)
+    if (update.changed) {
+      applyTranscriptWindow(update)
+    }
+    setTotalMessages((prev) => Math.max(result.totalCount, prev + update.addedCount))
     setTranscriptDegradedReason(result.degradedReason)
-    if (nextMessages.length > 0) {
+    if (update.state.messages.length > 0) {
       setTranscriptStatus(null)
     }
-  }, [])
+  }, [applyTranscriptWindow])
 
   const scheduleTailRefresh = useCallback((activeSessionId: string) => {
     if (messageSourceRef.current !== 'session') return
@@ -465,7 +479,7 @@ export function useSessionDetail(sessionId: string | null) {
         tailRefreshPendingSessionRef.current = activeSessionId
         return
       }
-      if (loadingOlderRef.current) return
+      if (loadingOlderRef.current || loadingNewerRef.current) return
 
       const refreshVersion = detailLoadVersionRef.current
       const tailWindowVersion = tailWindowVersionRef.current
@@ -478,6 +492,7 @@ export function useSessionDetail(sessionId: string | null) {
             detailLoadVersionRef.current !== refreshVersion ||
             tailWindowVersionRef.current !== tailWindowVersion ||
             loadingOlderRef.current ||
+            loadingNewerRef.current ||
             messageSourceRef.current !== 'session' ||
             !result.ok
           ) {
@@ -548,11 +563,16 @@ export function useSessionDetail(sessionId: string | null) {
     const activeSessionId = sessionIdRef.current
     if (!activeSessionId) return
     if (messageSourceRef.current !== 'session') return
-    if (loadingOlderRef.current) return
-    if (loadedCountRef.current >= renderedTotalRef.current) return
+    if (loadingOlderRef.current || loadingNewerRef.current) return
+
+    const currentWindow = transcriptWindowRef.current
+    if (currentWindow.windowStart <= 0) return
 
     const loadVersion = detailLoadVersionRef.current
-    const requestedOffset = loadedCountRef.current
+    const windowVersion = tailWindowVersionRef.current
+    const requestedOffset = currentWindow.renderedTotal - currentWindow.windowStart
+    if (requestedOffset <= 0) return
+
     loadingOlderRef.current = true
     setIsLoadingOlder(true)
     try {
@@ -561,32 +581,23 @@ export function useSessionDetail(sessionId: string | null) {
         requestedOffset,
         'tail',
       )
-      if (sessionIdRef.current !== activeSessionId || detailLoadVersionRef.current !== loadVersion) {
+      if (
+        sessionIdRef.current !== activeSessionId ||
+        detailLoadVersionRef.current !== loadVersion ||
+        tailWindowVersionRef.current !== windowVersion
+      ) {
         return
       }
-      if (!result.ok || result.mapped.length === 0) return
+      if (!result.ok) return
 
-      const currentMessages = messagesRef.current
-      const currentIds = new Set(currentMessages.map((message) => message.id))
-      const olderMessages = result.mapped.filter((message) => !currentIds.has(message.id))
-      if (olderMessages.length === 0) {
-        const nextTotal = Math.max(renderedTotalRef.current, result.renderedTotal)
-        renderedTotalRef.current = nextTotal
-        setRenderedTotal(nextTotal)
-        return
+      const update = prependOlderTranscriptPage(
+        transcriptWindowRef.current,
+        toTranscriptWindowPage(result),
+      )
+      if (update.changed) {
+        applyTranscriptWindow(update)
       }
-
-      const next = [...olderMessages, ...currentMessages]
-      messagesRef.current = next
-      tailWindowVersionRef.current += 1
-      setMessages(next)
-      setFirstItemIndex((prev) => prev - olderMessages.length)
-      const nextLoaded = loadedCountRef.current + olderMessages.length
-      const nextTotal = Math.max(renderedTotalRef.current, result.renderedTotal)
-      loadedCountRef.current = nextLoaded
-      renderedTotalRef.current = nextTotal
-      setLoadedCount(nextLoaded)
-      setRenderedTotal(nextTotal)
+      setTotalMessages((prev) => Math.max(prev, result.totalCount))
       if (result.degradedReason) {
         setTranscriptDegradedReason(result.degradedReason)
       }
@@ -596,7 +607,56 @@ export function useSessionDetail(sessionId: string | null) {
         setIsLoadingOlder(false)
       }
     }
-  }, [])
+  }, [applyTranscriptWindow])
+
+  const loadNewer = useCallback(async () => {
+    const activeSessionId = sessionIdRef.current
+    if (!activeSessionId) return
+    if (messageSourceRef.current !== 'session') return
+    if (loadingOlderRef.current || loadingNewerRef.current) return
+
+    const currentWindow = transcriptWindowRef.current
+    if (currentWindow.windowEnd >= currentWindow.renderedTotal) return
+
+    const loadVersion = detailLoadVersionRef.current
+    const windowVersion = tailWindowVersionRef.current
+    const requestedOffset = currentWindow.windowEnd
+
+    loadingNewerRef.current = true
+    setIsLoadingNewer(true)
+    try {
+      const result = await fetchRenderedSessionMessages(
+        activeSessionId,
+        requestedOffset,
+        'head',
+      )
+      if (
+        sessionIdRef.current !== activeSessionId ||
+        detailLoadVersionRef.current !== loadVersion ||
+        tailWindowVersionRef.current !== windowVersion
+      ) {
+        return
+      }
+      if (!result.ok) return
+
+      const update = appendNewerTranscriptPage(
+        transcriptWindowRef.current,
+        toTranscriptWindowPage(result),
+      )
+      if (update.changed) {
+        applyTranscriptWindow(update)
+      }
+      setTotalMessages((prev) => Math.max(prev, result.totalCount))
+      if (result.degradedReason) {
+        setTranscriptDegradedReason(result.degradedReason)
+      }
+    } finally {
+      loadingNewerRef.current = false
+      if (sessionIdRef.current === activeSessionId) {
+        setIsLoadingNewer(false)
+      }
+    }
+  }, [applyTranscriptWindow])
 
   // Fetch session detail and the newest page of messages
   useEffect(() => {
@@ -615,9 +675,10 @@ export function useSessionDetail(sessionId: string | null) {
   }, [clearDetailPolling, clearTailRefresh, loadSessionDetail, resetSessionDetail, sessionId])
 
   // Subscribe to real-time session_message events via WebSocket.
-  // Broadcasts are RenderedMessage-shaped with content_blocks. Upsert by id;
-  // a genuinely new group is appended at the tail and advances the loaded/total
-  // group counts so the next tail page request doesn't overlap.
+  // Broadcasts are RenderedMessage-shaped with content_blocks. Upsert by id.
+  // New tail groups append only while the loaded window reaches the tail and
+  // the viewer is at bottom; otherwise only counts advance so scrolling down
+  // refetches the missing edge.
   useWebSocketEvent('session_message', useCallback((data: Record<string, unknown>) => {
     const msgSessionId = data.session_id as string | undefined
     if (!msgSessionId || msgSessionId !== sessionIdRef.current) return
@@ -625,37 +686,24 @@ export function useSessionDetail(sessionId: string | null) {
     const msg = data.message as Record<string, unknown> | undefined
     if (!msg) return
 
-    messageSourceRef.current = 'session'
+    setMessageSource('session')
     const newMessage = mapRenderedRecordToSessionMessage(msg)
+    const update = applyLiveTranscriptMessage(
+      transcriptWindowRef.current,
+      newMessage,
+      transcriptAtBottomRef.current,
+    )
 
-    setMessages((prev) => {
-      const existingIdx = prev.findIndex((m) => m.id === newMessage.id)
-      if (existingIdx >= 0) {
-        // Upsert: replace existing message (in-progress turn update)
-        const updated = [...prev]
-        updated[existingIdx] = newMessage
-        messagesRef.current = updated
-        tailWindowVersionRef.current += 1
-        return updated
-      }
-      // Genuinely new group: bump parsed total and the rendered-group counts.
-      setTotalMessages((p) => p + 1)
-      setLoadedCount((p) => {
-        const next = p + 1
-        loadedCountRef.current = next
-        return next
-      })
-      setRenderedTotal((p) => {
-        const next = p + 1
-        renderedTotalRef.current = next
-        return next
-      })
-      const next = [...prev, newMessage]
-      messagesRef.current = next
-      tailWindowVersionRef.current += 1
-      return next
-    })
-  }, []))
+    if (update.changed) {
+      applyTranscriptWindow(update)
+    }
+    if (update.addedCount > 0) {
+      setTotalMessages((prev) => prev + update.addedCount)
+    }
+    if (update.state.messages.length > 0) {
+      setTranscriptStatus(null)
+    }
+  }, [applyTranscriptWindow, setMessageSource]))
 
   useWebSocketEvent('session_usage_updated', useCallback((data: Record<string, unknown>) => {
     const updatedSessionId = typeof data.session_id === 'string' ? data.session_id : null
@@ -774,7 +822,12 @@ export function useSessionDetail(sessionId: string | null) {
 
   // Chat-backed sessions never set these counts (they stay 0), so this is false
   // for chat and true for transcript-backed sessions with older pages remaining.
-  const hasMore = loadedCount < renderedTotal
+  const hasMore = messageSource === 'session' && windowStart > 0
+  const hasNewer = messageSource === 'session' && windowEnd < renderedTotal
+
+  const setTranscriptAtBottom = useCallback((atBottom: boolean) => {
+    transcriptAtBottomRef.current = atBottom
+  }, [])
 
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false)
 
@@ -815,7 +868,11 @@ export function useSessionDetail(sessionId: string | null) {
     totalMessages,
     hasMore,
     loadMore,
+    hasNewer,
+    loadNewer,
     isLoadingOlder,
+    isLoadingNewer,
+    setTranscriptAtBottom,
     firstItemIndex,
     transcriptDegradedReason,
     generateSummary,

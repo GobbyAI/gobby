@@ -459,7 +459,11 @@ export const SessionsTab = memo(function SessionsTab({
     transcriptStatus,
     hasMore: hasMoreMessages,
     loadMore: loadMoreMessages,
+    hasNewer: hasNewerMessages,
+    loadNewer: loadNewerMessages,
     isLoadingOlder,
+    isLoadingNewer,
+    setTranscriptAtBottom,
     firstItemIndex,
     transcriptDegradedReason,
   } = useSessionDetail(selectedSessionId);
@@ -879,7 +883,11 @@ export const SessionsTab = memo(function SessionsTab({
                 emptyStateMessage={transcriptEmptyStateMessage}
                 hasMore={hasMoreMessages}
                 loadMore={loadMoreMessages}
+                hasNewer={hasNewerMessages}
+                loadNewer={loadNewerMessages}
                 isLoadingOlder={isLoadingOlder}
+                isLoadingNewer={isLoadingNewer}
+                setTranscriptAtBottom={setTranscriptAtBottom}
                 firstItemIndex={firstItemIndex}
                 transcriptDegradedReason={transcriptDegradedReason}
               />

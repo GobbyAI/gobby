@@ -26,7 +26,11 @@ interface WatchingTranscriptProps {
   emptyStateMessage: string;
   hasMore: boolean;
   loadMore: () => void;
+  hasNewer: boolean;
+  loadNewer: () => void;
   isLoadingOlder: boolean;
+  isLoadingNewer: boolean;
+  setTranscriptAtBottom: (atBottom: boolean) => void;
   firstItemIndex: number;
   transcriptDegradedReason: string | null;
 }
@@ -140,7 +144,11 @@ export function WatchingTranscript({
   emptyStateMessage,
   hasMore,
   loadMore,
+  hasNewer,
+  loadNewer,
   isLoadingOlder,
+  isLoadingNewer,
+  setTranscriptAtBottom,
   firstItemIndex,
   transcriptDegradedReason,
 }: WatchingTranscriptProps) {
@@ -220,7 +228,8 @@ export function WatchingTranscript({
 
   const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
     atBottomRef.current = atBottom;
-  }, []);
+    setTranscriptAtBottom(atBottom);
+  }, [setTranscriptAtBottom]);
 
   // Reverse infinite scroll: fetch the next older page when the top is reached.
   const handleStartReached = useCallback(() => {
@@ -228,6 +237,12 @@ export function WatchingTranscript({
       loadMore();
     }
   }, [hasMore, loadMore]);
+
+  const handleEndReached = useCallback(() => {
+    if (hasNewer && !isLoadingNewer) {
+      loadNewer();
+    }
+  }, [hasNewer, isLoadingNewer, loadNewer]);
 
   const itemContent = useCallback(
     (_index: number, message: ChatMessage) => (
@@ -296,6 +311,7 @@ export function WatchingTranscript({
       itemContent={itemContent}
       computeItemKey={computeItemKey}
       startReached={handleStartReached}
+      endReached={handleEndReached}
       followOutput={(atBottom) => (atBottom ? "auto" : false)}
       atBottomThreshold={400}
       atBottomStateChange={handleAtBottomStateChange}

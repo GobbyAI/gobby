@@ -441,7 +441,106 @@ describe('useSessionDetail', () => {
     expect(result.current.hasMore).toBe(false)
   })
 
-  it('counts concurrent live appends when an older page finishes loading', async () => {
+  it('evicts far transcript pages and refetches newer pages on downward scroll', async () => {
+    await loadModule()
+
+    const total = 350
+    const makeMessages = (start: number, end: number) =>
+      Array.from({ length: end - start }, (_, offset) => {
+        const index = start + offset
+        return {
+          id: `sess-msg-${index}`,
+          role: 'assistant',
+          content: `Output ${index}`,
+          timestamp: `2026-04-09T00:00:${String(index % 60).padStart(2, '0')}Z`,
+        }
+      })
+
+    mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url
+
+      if (/\/api\/sessions\/sess-window$/.test(url)) {
+        return new Response(
+          JSON.stringify({
+            session: {
+              id: 'sess-window',
+              external_id: 'window-ext-1',
+              session_type: 'terminal',
+              status: 'active',
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      const messagesMatch = url.match(
+        /\/api\/sessions\/sess-window\/messages\?limit=50&offset=(\d+)&order=(head|tail)/,
+      )
+      if (messagesMatch) {
+        const offset = Number(messagesMatch[1])
+        const order = messagesMatch[2]
+        const start =
+          order === 'tail' ? Math.max(0, total - offset - 50) : offset
+        const end =
+          order === 'tail' ? Math.max(0, total - offset) : Math.min(total, offset + 50)
+        const messages = makeMessages(start, end)
+        return new Response(
+          JSON.stringify({
+            messages,
+            total_count: total,
+            rendered_count: total,
+            returned_count: messages.length,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+
+    const { result } = renderHook(() => useSessionDetail('sess-window'))
+    act(() => mockWs.instances[0]?.simulateOpen())
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    for (let i = 0; i < 5; i += 1) {
+      await act(async () => {
+        await result.current.loadMore()
+      })
+    }
+
+    expect(result.current.messages).toHaveLength(250)
+    expect(result.current.messages[0].id).toBe('sess-msg-50')
+    expect(result.current.messages[result.current.messages.length - 1]?.id).toBe(
+      'sess-msg-299',
+    )
+    expect(new Set(result.current.messages.map((message) => message.id)).size).toBe(250)
+    expect(result.current.hasMore).toBe(true)
+    expect(result.current.hasNewer).toBe(true)
+
+    await act(async () => {
+      await result.current.loadNewer()
+    })
+
+    expect(result.current.messages).toHaveLength(250)
+    expect(result.current.messages[0].id).toBe('sess-msg-100')
+    expect(result.current.messages[result.current.messages.length - 1]?.id).toBe(
+      'sess-msg-349',
+    )
+    expect(new Set(result.current.messages.map((message) => message.id)).size).toBe(250)
+    expect(result.current.hasMore).toBe(true)
+    expect(result.current.hasNewer).toBe(false)
+  })
+
+  it('ignores an older page made stale by a concurrent live append', async () => {
     await loadModule()
 
     let resolveOlderPage: ((response: Response) => void) | null = null
@@ -498,6 +597,25 @@ describe('useSessionDetail', () => {
         })
       }
 
+      if (url.includes('/api/sessions/sess-cli/messages?limit=50&offset=3&order=tail')) {
+        return new Response(
+          JSON.stringify({
+            messages: [
+              {
+                id: 'sess-msg-1',
+                role: 'assistant',
+                content: 'Older output 1',
+                timestamp: '2026-04-09T00:00:01Z',
+              },
+            ],
+            total_count: 4,
+            rendered_count: 4,
+            returned_count: 1,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
       return new Response(JSON.stringify({ error: 'no mock route matched' }), {
         status: 404,
         headers: { 'Content-Type': 'application/json' },
@@ -550,6 +668,17 @@ describe('useSessionDetail', () => {
         ),
       )
       await loadMorePromise
+    })
+
+    expect(result.current.messages.map((message) => message.content)).toEqual([
+      'Tail output 2',
+      'Tail output 3',
+      'Tail output 4',
+    ])
+    expect(result.current.hasMore).toBe(true)
+
+    await act(async () => {
+      await result.current.loadMore()
     })
 
     expect(result.current.messages.map((message) => message.content)).toEqual([
@@ -688,6 +817,213 @@ describe('useSessionDetail', () => {
       'Tail output 3',
     ])
     expect(result.current.hasMore).toBe(false)
+  })
+
+  it('updates transcript totals without appending refreshed tail while away from tail', async () => {
+    await loadModule()
+
+    const makeMessages = (start: number, end: number) =>
+      Array.from({ length: end - start }, (_, offset) => {
+        const index = start + offset
+        return {
+          id: `sess-msg-${index}`,
+          role: 'assistant',
+          content: `Output ${index}`,
+          timestamp: `2026-04-09T00:00:${String(index % 60).padStart(2, '0')}Z`,
+        }
+      })
+
+    let tailFetchCount = 0
+    mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url
+
+      if (/\/api\/sessions\/sess-window$/.test(url)) {
+        return new Response(
+          JSON.stringify({
+            session: {
+              id: 'sess-window',
+              external_id: 'window-ext-1',
+              session_type: 'terminal',
+              status: 'active',
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      const tailMatch = url.match(
+        /\/api\/sessions\/sess-window\/messages\?limit=50&offset=(\d+)&order=tail/,
+      )
+      if (tailMatch) {
+        const offset = Number(tailMatch[1])
+        const total = tailFetchCount === 0 || offset > 0 ? 350 : 351
+        tailFetchCount += offset === 0 ? 1 : 0
+        const start = Math.max(0, total - offset - 50)
+        const end = Math.max(0, total - offset)
+        const messages = makeMessages(start, end)
+        return new Response(
+          JSON.stringify({
+            messages,
+            total_count: total,
+            rendered_count: total,
+            returned_count: messages.length,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+
+    const { result } = renderHook(() => useSessionDetail('sess-window'))
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    for (let i = 0; i < 5; i += 1) {
+      await act(async () => {
+        await result.current.loadMore()
+      })
+    }
+    act(() => result.current.setTranscriptAtBottom(false))
+    expect(result.current.messages[0].id).toBe('sess-msg-50')
+    expect(result.current.messages[result.current.messages.length - 1]?.id).toBe(
+      'sess-msg-299',
+    )
+
+    vi.useFakeTimers()
+    act(() => {
+      ws.simulateMessage({
+        type: 'session_event',
+        event: 'session_updated',
+        session_id: 'sess-window',
+      })
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(500)
+    })
+
+    expect(result.current.messages).toHaveLength(250)
+    expect(result.current.messages[0].id).toBe('sess-msg-50')
+    expect(result.current.messages[result.current.messages.length - 1]?.id).toBe(
+      'sess-msg-299',
+    )
+    expect(result.current.totalMessages).toBe(351)
+    expect(result.current.hasNewer).toBe(true)
+  })
+
+  it('merges refreshed tail messages at bottom and trims the head', async () => {
+    await loadModule()
+
+    const makeMessages = (start: number, end: number) =>
+      Array.from({ length: end - start }, (_, offset) => {
+        const index = start + offset
+        return {
+          id: `sess-msg-${index}`,
+          role: 'assistant',
+          content: `Output ${index}`,
+          timestamp: `2026-04-09T00:00:${String(index % 60).padStart(2, '0')}Z`,
+        }
+      })
+
+    let tailFetchCount = 0
+    mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url
+
+      if (/\/api\/sessions\/sess-window$/.test(url)) {
+        return new Response(
+          JSON.stringify({
+            session: {
+              id: 'sess-window',
+              external_id: 'window-ext-1',
+              session_type: 'terminal',
+              status: 'active',
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      const tailMatch = url.match(
+        /\/api\/sessions\/sess-window\/messages\?limit=50&offset=(\d+)&order=tail/,
+      )
+      if (tailMatch) {
+        const offset = Number(tailMatch[1])
+        const isRefresh = offset === 0 && tailFetchCount > 0
+        const total = isRefresh ? 251 : 250
+        tailFetchCount += offset === 0 ? 1 : 0
+        const start = Math.max(0, total - offset - 50)
+        const end = Math.max(0, total - offset)
+        const messages = makeMessages(start, end)
+        return new Response(
+          JSON.stringify({
+            messages,
+            total_count: total,
+            rendered_count: total,
+            returned_count: messages.length,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+
+    const { result } = renderHook(() => useSessionDetail('sess-window'))
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    for (let i = 0; i < 4; i += 1) {
+      await act(async () => {
+        await result.current.loadMore()
+      })
+    }
+    expect(result.current.messages[0].id).toBe('sess-msg-0')
+    expect(result.current.messages[result.current.messages.length - 1]?.id).toBe(
+      'sess-msg-249',
+    )
+
+    vi.useFakeTimers()
+    act(() => {
+      ws.simulateMessage({
+        type: 'session_event',
+        event: 'session_updated',
+        session_id: 'sess-window',
+      })
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(500)
+    })
+
+    expect(result.current.messages).toHaveLength(250)
+    expect(result.current.messages[0].id).toBe('sess-msg-1')
+    expect(result.current.messages[result.current.messages.length - 1]?.id).toBe(
+      'sess-msg-250',
+    )
+    expect(result.current.totalMessages).toBe(251)
+    expect(result.current.hasMore).toBe(true)
+    expect(result.current.hasNewer).toBe(false)
   })
 
   it('ignores pending transcript tail refreshes after session change or unmount', async () => {

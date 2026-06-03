@@ -25,7 +25,11 @@ type SessionDetailMock = {
   transcriptStatus: { content_state: string } | null;
   hasMore?: boolean;
   loadMore?: () => void;
+  hasNewer?: boolean;
+  loadNewer?: () => void;
   isLoadingOlder?: boolean;
+  isLoadingNewer?: boolean;
+  setTranscriptAtBottom?: (atBottom: boolean) => void;
   firstItemIndex?: number;
   transcriptDegradedReason?: string | null;
 };
@@ -41,7 +45,11 @@ const mockUseSessionDetail = vi.fn<
   transcriptStatus: null,
   hasMore: false,
   loadMore: vi.fn(),
+  hasNewer: false,
+  loadNewer: vi.fn(),
   isLoadingOlder: false,
+  isLoadingNewer: false,
+  setTranscriptAtBottom: vi.fn(),
   firstItemIndex: 1_000_000,
   transcriptDegradedReason: null,
 }));
@@ -58,6 +66,8 @@ vi.mock("react-virtuoso", async () => {
         itemContent,
         computeItemKey,
         components,
+        startReached,
+        endReached,
       }: {
         className?: string;
         data?: unknown[];
@@ -71,6 +81,8 @@ vi.mock("react-virtuoso", async () => {
             style?: React.CSSProperties;
           }>;
         };
+        startReached?: () => void;
+        endReached?: () => void;
       },
       _ref: React.ForwardedRef<unknown>,
     ) {
@@ -80,6 +92,18 @@ vi.mock("react-virtuoso", async () => {
       return (
         <Scroller className={className} style={{ overflowY: "auto" }}>
           {Header ? <Header /> : null}
+          <button
+            type="button"
+            data-testid="virtuoso-start-reached"
+            aria-label="start reached"
+            onClick={() => startReached?.()}
+          />
+          <button
+            type="button"
+            data-testid="virtuoso-end-reached"
+            aria-label="end reached"
+            onClick={() => endReached?.()}
+          />
           {items.map((item, index) => (
             <div key={computeItemKey ? computeItemKey(index, item) : index}>
               {itemContent(index, item)}
@@ -315,6 +339,10 @@ describe("SessionsTab", () => {
       ],
       isLoading: false,
       transcriptStatus: null,
+      hasNewer: false,
+      loadNewer: vi.fn(),
+      isLoadingNewer: false,
+      setTranscriptAtBottom: vi.fn(),
     });
     mockFetch = createMockFetch();
     mockFetch.mockJsonResponse("/api/agents/running", { agents: [] });
@@ -776,6 +804,82 @@ describe("SessionsTab", () => {
         screen.getByText("Transcript output for live-1"),
       ).toBeInTheDocument();
     });
+  });
+
+  it("loads newer transcript pages from the Virtuoso end edge when available", async () => {
+    const loadNewer = vi.fn();
+    mockUseSessionDetail.mockReturnValue({
+      session: PAUSED_SESSION,
+      sessionError: null,
+      clearSessionError: vi.fn(),
+      messages: [
+        {
+          id: "msg-1",
+          role: "assistant",
+          content: "Transcript output",
+          timestamp: "2026-04-08T12:11:00Z",
+        },
+      ],
+      isLoading: false,
+      transcriptStatus: null,
+      hasMore: false,
+      loadMore: vi.fn(),
+      hasNewer: true,
+      loadNewer,
+      isLoadingOlder: false,
+      isLoadingNewer: false,
+      setTranscriptAtBottom: vi.fn(),
+      firstItemIndex: 1_000_000,
+      transcriptDegradedReason: null,
+    });
+
+    render(<SessionsTab sessions={[PAUSED_SESSION]} focusSessionId="paused-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Transcript output")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("virtuoso-end-reached"));
+
+    expect(loadNewer).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not load newer transcript pages when the window is already at the tail", async () => {
+    const loadNewer = vi.fn();
+    mockUseSessionDetail.mockReturnValue({
+      session: PAUSED_SESSION,
+      sessionError: null,
+      clearSessionError: vi.fn(),
+      messages: [
+        {
+          id: "msg-1",
+          role: "assistant",
+          content: "Transcript output",
+          timestamp: "2026-04-08T12:11:00Z",
+        },
+      ],
+      isLoading: false,
+      transcriptStatus: null,
+      hasMore: false,
+      loadMore: vi.fn(),
+      hasNewer: false,
+      loadNewer,
+      isLoadingOlder: false,
+      isLoadingNewer: false,
+      setTranscriptAtBottom: vi.fn(),
+      firstItemIndex: 1_000_000,
+      transcriptDegradedReason: null,
+    });
+
+    render(<SessionsTab sessions={[PAUSED_SESSION]} focusSessionId="paused-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Transcript output")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("virtuoso-end-reached"));
+
+    expect(loadNewer).not.toHaveBeenCalled();
   });
 
   it("re-renders the watching transcript when the last message grows in place", async () => {
