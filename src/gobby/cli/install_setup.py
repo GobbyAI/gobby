@@ -34,6 +34,7 @@ from . import install_setup_gcode as _gcode_impl
 from . import install_setup_ghook as _ghook_impl
 from . import install_setup_gloc as _gloc_impl
 from . import install_setup_gsqz as _gsqz_impl
+from . import install_setup_gwiki as _gwiki_impl
 from .utils import get_install_dir
 
 logger = logging.getLogger(__name__)
@@ -432,6 +433,24 @@ def _run_managed_native_binary_installs() -> None:
     except Exception as e:
         click.echo(f"Warning: Failed to install gloc: {e}")
 
+    try:
+        gwiki_result = _install_gwiki()
+        if gwiki_result.get("installed"):
+            verb = "Upgraded" if gwiki_result.get("upgraded") else "Installed"
+            click.echo(
+                f"{verb} gwiki {gwiki_result.get('version', '')} "
+                f"via {gwiki_result.get('method', 'unknown')} (wiki CLI)"
+            )
+        elif gwiki_result.get("skipped"):
+            reason = gwiki_result.get("reason", "")
+            suffix = f" ({reason})" if reason else ""
+            click.echo(f"gwiki already installed and up to date{suffix}")
+        else:
+            reason = gwiki_result.get("reason", "unknown error")
+            click.echo(f"Warning: Failed to install gwiki: {reason}")
+    except Exception as e:
+        click.echo(f"Warning: Failed to install gwiki: {e}")
+
 
 _GSQZ_RELEASE_TAG_PREFIX = "gsqz-v"
 _GSQZ_CRATES_API = "https://crates.io/api/v1/crates/gobby-squeeze"
@@ -648,3 +667,50 @@ def _probe_gloc_version(gloc_path: Path) -> str | None:
 
 def _install_gloc(force: bool = False) -> dict[str, Any]:
     return _gloc_impl.install_gloc(_module(), force)
+
+
+_GWIKI_RELEASE_TAG_PREFIX = "gwiki-v"
+_GWIKI_VERSION_STAMP = ".gwiki-version"
+_GWIKI_BIN_NAME = "gwiki.exe" if sys.platform == "win32" else "gwiki"
+_GWIKI_TARGETS = _PLATFORM_TARGETS
+_GWIKI_CRATES_API = "https://crates.io/api/v1/crates/gobby-wiki"
+
+
+def _get_latest_gwiki_version() -> str | None:
+    return _gwiki_impl.get_latest_gwiki_version(_module())
+
+
+def _get_installed_gwiki_version(bin_dir: Path) -> str | None:
+    return _gwiki_impl.get_installed_gwiki_version(_module(), bin_dir)
+
+
+def _write_gwiki_version_stamp(bin_dir: Path, version: str) -> None:
+    return _gwiki_impl.write_gwiki_version_stamp(_module(), bin_dir, version)
+
+
+def _install_gwiki_from_github(bin_dir: Path, target: str, version: str | None = None) -> bool:
+    return _gwiki_impl.install_gwiki_from_github(_module(), bin_dir, target, version)
+
+
+def _install_gwiki_from_submodule(bin_dir: Path) -> bool:
+    return _gwiki_impl.install_gwiki_from_submodule(_module(), bin_dir)
+
+
+def _install_gwiki_from_cargo_git(bin_dir: Path) -> bool:
+    return _gwiki_impl.install_gwiki_from_cargo_git(_module(), bin_dir)
+
+
+def _install_gwiki_from_cargo_binstall(bin_dir: Path, version: str | None = None) -> bool:
+    return _gwiki_impl.install_gwiki_from_cargo_binstall(_module(), bin_dir, version)
+
+
+def _install_gwiki_from_cargo_install(bin_dir: Path, version: str | None = None) -> bool:
+    return _gwiki_impl.install_gwiki_from_cargo_install(_module(), bin_dir, version)
+
+
+def _probe_gwiki_version(gwiki_path: Path) -> str | None:
+    return _gwiki_impl.probe_gwiki_version(_module(), gwiki_path)
+
+
+def _install_gwiki(force: bool = False) -> dict[str, Any]:
+    return _gwiki_impl.install_gwiki(_module(), force)

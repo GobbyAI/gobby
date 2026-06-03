@@ -77,7 +77,7 @@ def test_homebrew_helper_detection_accepts_valid_local_helpers_before_stale_path
 ) -> None:
     bin_dir = tmp_path / ".gobby" / "bin"
     bin_dir.mkdir(parents=True)
-    for binary in ("gcode", "gsqz", "ghook", "gloc"):
+    for binary in ("gcode", "gsqz", "ghook", "gloc", "gwiki"):
         helper = bin_dir / binary
         helper.write_text("")
         helper.chmod(0o755)
@@ -103,6 +103,7 @@ def test_homebrew_helper_detection_accepts_valid_local_helpers_before_stale_path
         str(bin_dir / "gsqz"),
         str(bin_dir / "ghook"),
         str(bin_dir / "gloc"),
+        str(bin_dir / "gwiki"),
     ]
     assert all(status.ok for status in statuses)
 
@@ -126,5 +127,5 @@ def test_homebrew_helper_detection_accepts_pinned_versions(tmp_path: Path) -> No
     ):
         statuses = verify_homebrew_managed_bins()
 
-    assert [status.name for status in statuses] == ["gcode", "gsqz", "ghook", "gloc"]
+    assert [status.name for status in statuses] == ["gcode", "gsqz", "ghook", "gloc", "gwiki"]
     assert all(status.ok for status in statuses)

@@ -209,11 +209,20 @@ class TestInstallGloc:
 
         with (
             patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
-            patch("gobby.cli.install_setup._get_latest_gloc_version", return_value=pinned_version),
+            patch("gobby.cli.install_setup._get_latest_gloc_version") as mock_latest,
+            patch("gobby.cli.install_setup._install_gloc_from_github") as mock_github,
+            patch("gobby.cli.install_setup._install_gloc_from_cargo_binstall") as mock_binstall,
+            patch("gobby.cli.install_setup._install_gloc_from_cargo_install") as mock_install,
         ):
             result = _install_gloc()
 
         assert result == {"installed": False, "skipped": True, "version": pinned_version}
+        assert (bin_dir / "gloc").read_bytes() == b"\x00"
+        assert (bin_dir / _GLOC_VERSION_STAMP).read_text() == f"{pinned_version}\n"
+        mock_latest.assert_not_called()
+        mock_github.assert_not_called()
+        mock_binstall.assert_not_called()
+        mock_install.assert_not_called()
 
     def test_newer_installed_version_skips_when_latest_is_lower(
         self, tmp_path: Path, _patch_platform: None
@@ -225,10 +234,11 @@ class TestInstallGloc:
 
         with (
             patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
-            patch("gobby.cli.install_setup._get_latest_gloc_version", return_value="0.1.1"),
+            patch("gobby.cli.install_setup._get_latest_gloc_version") as mock_latest,
             patch("gobby.cli.install_setup._install_gloc_from_github") as mock_github,
         ):
             result = _install_gloc()
 
         assert result == {"installed": False, "skipped": True, "version": "0.1.2"}
+        mock_latest.assert_not_called()
         mock_github.assert_not_called()

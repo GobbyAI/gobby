@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
+from gobby.install.bin_freshness_models import compare_versions
+from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 
 
 def get_latest_gsqz_version(module: Any) -> str | None:
@@ -21,15 +23,41 @@ def get_latest_gsqz_version(module: Any) -> str | None:
 
 
 def get_installed_gsqz_version(module: Any, bin_dir: Path) -> str | None:
-    """Read installed gsqz version from stamp file."""
-    stamp = bin_dir / module._GSQZ_VERSION_STAMP
+    """Read installed gsqz version, preferring the binary over the stamp."""
     binary = bin_dir / module._GSQZ_BIN_NAME
+    if binary.exists():
+        probed_version = probe_gsqz_version(module, binary)
+        if probed_version:
+            return probed_version
+
+    stamp = bin_dir / module._GSQZ_VERSION_STAMP
     if stamp.exists():
         content = stamp.read_text().strip()
         return content if content else None
     if binary.exists():
         return "unknown"
     return None
+
+
+def probe_gsqz_version(module: Any, gsqz_path: Path) -> str | None:
+    """Probe gsqz binary for a version string."""
+    try:
+        result = module.subprocess.run(
+            [str(gsqz_path), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (module.subprocess.SubprocessError, OSError) as e:
+        module.logger.warning("gsqz: failed running --version probe: %s", e)
+        return None
+
+    if result.returncode != 0:
+        module.logger.warning("gsqz: --version probe failed: %s", result.stderr.strip())
+        return None
+
+    output = (result.stdout or result.stderr).strip()
+    return output.split()[-1] if output else None
 
 
 def write_gsqz_version_stamp(module: Any, bin_dir: Path, version: str) -> None:
@@ -195,13 +223,16 @@ def install_gsqz(module: Any, force: bool = False) -> dict[str, Any]:
         }
 
     installed_version = module._get_installed_gsqz_version(bin_dir)
-    latest_version = module._get_latest_gsqz_version()
+    pinned_version = MANAGED_BIN_VERSION_PINS["gsqz"]
 
     if gsqz_path.exists() and not force:
-        if managed_version_satisfies_pin("gsqz", installed_version):
+        if installed_version and managed_version_satisfies_pin("gsqz", installed_version):
+            module._write_gsqz_version_stamp(bin_dir, installed_version)
             return {"installed": False, "skipped": True, "version": installed_version}
 
-    target_version = latest_version
+    target_version = pinned_version
+    if compare_versions(installed_version, pinned_version) == 1:
+        target_version = installed_version
     bin_dir.mkdir(parents=True, exist_ok=True)
     method = None
 
@@ -215,7 +246,7 @@ def install_gsqz(module: Any, force: bool = False) -> dict[str, Any]:
         return {"installed": False, "skipped": False, "reason": "all installation methods failed"}
 
     gsqz_path.chmod(0o755)
-    resolved_version = target_version or "unknown"
+    resolved_version = probe_gsqz_version(module, gsqz_path) or target_version or "unknown"
     module._write_gsqz_version_stamp(bin_dir, resolved_version)
 
     path_result = module._ensure_gobby_bin_on_path()

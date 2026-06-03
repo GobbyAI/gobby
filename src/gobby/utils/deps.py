@@ -69,20 +69,15 @@ def _extract_version_token(output: str) -> str | None:
 
 
 def _get_native_binary_version(binary_name: str, stamp_name: str | None = None) -> str | None:
-    """Get a managed native binary version from a stamp file or resolved CLI."""
-    if stamp_name:
-        stamped_version = _read_version_stamp(stamp_name)
-        if stamped_version:
-            return stamped_version
+    """Get a managed native binary version, preferring the resolved CLI over stamps."""
 
     binary_path = resolve_native_bin(binary_name)
-    if not binary_path:
-        return None
+    if binary_path:
+        output = _run_cmd([binary_path, "--version"])
+        if output:
+            return _extract_version_token(output)
 
-    output = _run_cmd([binary_path, "--version"])
-    if output:
-        return _extract_version_token(output)
-    return None
+    return _read_version_stamp(stamp_name) if stamp_name else None
 
 
 def get_gcode_version() -> str | None:
@@ -103,6 +98,11 @@ def get_ghook_version() -> str | None:
 def get_gloc_version() -> str | None:
     """Get gloc version from stamp file or CLI."""
     return _get_native_binary_version("gloc", ".gloc-version")
+
+
+def get_gwiki_version() -> str | None:
+    """Get gwiki version from stamp file or CLI."""
+    return _get_native_binary_version("gwiki", ".gwiki-version")
 
 
 # ---------------------------------------------------------------------------
@@ -558,6 +558,8 @@ def collect_all_deps() -> dict[str, Any]:
             "ghook_path": _local_binary_path("ghook"),
             "gloc": get_gloc_version(),
             "gloc_path": _local_binary_path("gloc"),
+            "gwiki": get_gwiki_version(),
+            "gwiki_path": _local_binary_path("gwiki"),
         },
         "coding_clis": {
             "claude": get_claude_code_version(),

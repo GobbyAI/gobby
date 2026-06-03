@@ -13,8 +13,10 @@ from gobby.cli.install_setup import (
     _ensure_gobby_bin_on_path,
     _get_installed_gcode_version,
     _get_installed_gsqz_version,
+    _get_installed_gwiki_version,
     _get_latest_gcode_version,
     _get_latest_gsqz_version,
+    _get_latest_gwiki_version,
     _install_gcode,
     _install_gcode_from_cargo_binstall,
     _install_gcode_from_cargo_install,
@@ -23,10 +25,16 @@ from gobby.cli.install_setup import (
     _install_gsqz_from_cargo_binstall,
     _install_gsqz_from_cargo_install,
     _install_gsqz_from_github,
+    _install_gwiki,
+    _install_gwiki_from_cargo_binstall,
+    _install_gwiki_from_cargo_git,
+    _install_gwiki_from_cargo_install,
+    _install_gwiki_from_github,
     _resolve_latest_release_tag,
     _run_npm_install,
     _write_gcode_version_stamp,
     _write_gsqz_version_stamp,
+    _write_gwiki_version_stamp,
     ensure_daemon_config,
     run_daemon_setup,
 )
@@ -36,6 +44,7 @@ from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 
 pytestmark = pytest.mark.unit
 GCODE_PIN: str = MANAGED_BIN_VERSION_PINS["gcode"]
+GWIKI_PIN: str = MANAGED_BIN_VERSION_PINS["gwiki"]
 
 
 class TestEnsureDaemonConfig:
@@ -482,6 +491,7 @@ class TestGcodeHelpers:
 
         assert res == {"installed": False, "skipped": True, "version": GCODE_PIN}
         assert (bin_dir / "gcode").exists()
+        mock_latest.assert_not_called()
         mock_submodule.assert_not_called()
 
     @patch("gobby.cli.install_setup.sys.platform", "darwin")
@@ -687,6 +697,168 @@ class TestGcodeHelpers:
         cmd = mock_run.call_args[0][0]
         assert "--version" in cmd
         assert "0.2.3" in cmd
+
+
+class TestGwikiHelpers:
+    def test_get_installed_gwiki_version(self, tmp_path):
+        assert _get_installed_gwiki_version(tmp_path) is None
+        (tmp_path / ".gwiki-version").write_text("0.1.0")
+        assert _get_installed_gwiki_version(tmp_path) == "0.1.0"
+
+    @patch("gobby.cli.install_setup.subprocess.run")
+    def test_get_installed_gwiki_version_prefers_binary_over_stamp(self, mock_run, tmp_path):
+        (tmp_path / "gwiki").write_bytes(b"fake")
+        (tmp_path / ".gwiki-version").write_text("0.0.1")
+        mock_run.return_value = MagicMock(returncode=0, stdout="gwiki 0.1.0\n", stderr="")
+
+        assert _get_installed_gwiki_version(tmp_path) == "0.1.0"
+
+        mock_run.assert_called_once_with(
+            [str(tmp_path / "gwiki"), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+    def test_write_gwiki_version_stamp(self, tmp_path):
+        _write_gwiki_version_stamp(tmp_path, GWIKI_PIN)
+        assert (tmp_path / ".gwiki-version").read_text() == f"{GWIKI_PIN}\n"
+
+    @patch("gobby.cli.install_setup.sys.platform", "darwin")
+    @patch("gobby.cli.install_setup.platform.machine", return_value="arm64")
+    @patch("gobby.cli.install_setup._get_latest_gwiki_version")
+    @patch("gobby.cli.install_setup._get_installed_gwiki_version", return_value=GWIKI_PIN)
+    @patch("gobby.cli.install_setup._install_gwiki_from_submodule")
+    @patch("gobby.cli.install_setup._install_gwiki_from_github")
+    @patch("gobby.cli.install_setup._install_gwiki_from_cargo_binstall")
+    @patch("gobby.cli.install_setup._install_gwiki_from_cargo_install")
+    @patch("gobby.cli.install_setup._install_gwiki_from_cargo_git")
+    def test_install_gwiki_skips_when_installed_version_satisfies_pin(
+        self,
+        mock_cargo_git,
+        mock_cargo_install,
+        mock_binstall,
+        mock_github,
+        mock_submodule,
+        mock_installed,
+        mock_latest,
+        mock_machine,
+        tmp_path,
+    ):
+        with patch("gobby.cli.install_setup.Path.home", return_value=tmp_path):
+            bin_dir = tmp_path / ".gobby" / "bin"
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            (bin_dir / "gwiki").write_bytes(b"\x00")
+
+            res = _install_gwiki()
+
+        assert res == {"installed": False, "skipped": True, "version": GWIKI_PIN}
+        assert (bin_dir / ".gwiki-version").read_text() == f"{GWIKI_PIN}\n"
+        mock_latest.assert_not_called()
+        mock_submodule.assert_not_called()
+        mock_github.assert_not_called()
+        mock_binstall.assert_not_called()
+        mock_cargo_install.assert_not_called()
+        mock_cargo_git.assert_not_called()
+
+    def test_install_gwiki_uses_managed_pin_for_download_and_cargo_paths(self, tmp_path):
+        with (
+            patch("gobby.cli.install_setup.sys.platform", "darwin"),
+            patch("gobby.cli.install_setup.platform.machine", return_value="arm64"),
+            patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
+            patch("gobby.cli.install_setup._get_installed_gwiki_version", return_value="0.0.1"),
+            patch("gobby.cli.install_setup._install_gwiki_from_submodule", return_value=False),
+            patch(
+                "gobby.cli.install_setup._install_gwiki_from_github", return_value=False
+            ) as github,
+            patch(
+                "gobby.cli.install_setup._install_gwiki_from_cargo_binstall",
+                return_value=False,
+            ) as binstall,
+            patch(
+                "gobby.cli.install_setup._install_gwiki_from_cargo_install",
+                return_value=True,
+            ) as cargo_install,
+            patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}),
+        ):
+            bin_dir = tmp_path / ".gobby" / "bin"
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            (bin_dir / "gwiki").write_bytes(b"\x00")
+
+            res = _install_gwiki()
+
+        assert res["installed"] is True
+        assert res["version"] == GWIKI_PIN
+        github.assert_called_once_with(bin_dir, "aarch64-apple-darwin", GWIKI_PIN)
+        binstall.assert_called_once_with(bin_dir, GWIKI_PIN)
+        cargo_install.assert_called_once_with(bin_dir, GWIKI_PIN)
+
+    @patch("gobby.cli.install_setup.urlopen")
+    def test_get_latest_gwiki_version(self, mock_url):
+        fake_resp = MagicMock()
+        fake_resp.read.return_value = json.dumps({"crate": {"max_version": GWIKI_PIN}}).encode()
+        fake_resp.__enter__.return_value = fake_resp
+        mock_url.return_value = fake_resp
+
+        assert _get_latest_gwiki_version() == GWIKI_PIN
+
+    @patch("gobby.cli.install_setup.urlopen", side_effect=URLError("timeout"))
+    def test_get_latest_gwiki_version_fail(self, mock_url):
+        assert _get_latest_gwiki_version() is None
+
+    @patch("gobby.cli.install_setup.urlopen")
+    def test_install_gwiki_from_github_uses_wiki_tag_prefix(self, mock_urlopen, tmp_path):
+        buf = BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            info = tarfile.TarInfo(name="gwiki")
+            info.size = 5
+            tar.addfile(info, BytesIO(b"fake!"))
+
+        buf.seek(0)
+        fake_resp = MagicMock()
+        fake_resp.read.return_value = buf.read()
+        fake_resp.__enter__.return_value = fake_resp
+        mock_urlopen.return_value = fake_resp
+
+        assert _install_gwiki_from_github(tmp_path, "aarch64-apple-darwin", GWIKI_PIN) is True
+        url_called = mock_urlopen.call_args[0][0]
+        if hasattr(url_called, "full_url"):
+            url_called = url_called.full_url
+        assert f"gwiki-v{GWIKI_PIN}" in url_called
+        assert (tmp_path / "gwiki").read_bytes() == b"fake!"
+
+    @patch("shutil.which", return_value="/usr/bin/cargo-binstall")
+    @patch("subprocess.run")
+    def test_install_gwiki_from_cargo_binstall_with_version(self, mock_run, mock_which, tmp_path):
+        mock_run.return_value = MagicMock(returncode=0)
+        assert _install_gwiki_from_cargo_binstall(tmp_path, GWIKI_PIN) is True
+        cmd = mock_run.call_args[0][0]
+        assert f"gobby-wiki@{GWIKI_PIN}" in cmd
+
+    @patch("shutil.which", return_value="/usr/bin/cargo")
+    @patch("subprocess.run")
+    @patch("gobby.cli.install_setup.click")
+    def test_install_gwiki_from_cargo_install_with_version(
+        self, mock_click, mock_run, mock_which, tmp_path
+    ):
+        mock_run.return_value = MagicMock(returncode=0)
+        assert _install_gwiki_from_cargo_install(tmp_path, GWIKI_PIN) is True
+        cmd = mock_run.call_args[0][0]
+        assert "gobby-wiki" in cmd
+        assert "--version" in cmd
+        assert GWIKI_PIN in cmd
+
+    @patch("shutil.which", return_value="/usr/bin/cargo")
+    @patch("subprocess.run")
+    @patch("gobby.cli.install_setup.click")
+    def test_install_gwiki_from_cargo_git_uses_wiki_package(
+        self, mock_click, mock_run, mock_which, tmp_path
+    ):
+        mock_run.return_value = MagicMock(returncode=0)
+        assert _install_gwiki_from_cargo_git(tmp_path) is True
+        cmd = mock_run.call_args[0][0]
+        assert "-p" in cmd
+        assert "gobby-wiki" in cmd
 
 
 class TestEnsurePath:

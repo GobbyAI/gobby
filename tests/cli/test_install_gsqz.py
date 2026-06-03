@@ -338,9 +338,9 @@ class TestInstallGsqz:
             yield
 
     def test_fresh_install_github(self, tmp_path: Path, _patch_platform: None) -> None:
+        pinned_version = MANAGED_BIN_VERSION_PINS["gsqz"]
         with (
             patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
-            patch("gobby.cli.install_setup._get_latest_gsqz_version", return_value="0.1.0"),
             patch("gobby.cli.install_setup._install_gsqz_from_github", return_value=True),
             patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}),
         ):
@@ -353,7 +353,7 @@ class TestInstallGsqz:
 
         assert result["installed"] is True
         assert result["method"] == "github"
-        assert result["version"] == "0.1.0"
+        assert result["version"] == pinned_version
 
     def test_already_up_to_date(self, tmp_path: Path, _patch_platform: None) -> None:
         bin_dir = tmp_path / ".gobby" / "bin"
@@ -364,13 +364,20 @@ class TestInstallGsqz:
 
         with (
             patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
-            patch("gobby.cli.install_setup._get_latest_gsqz_version", return_value=pinned_version),
+            patch("gobby.cli.install_setup._get_latest_gsqz_version") as mock_latest,
+            patch("gobby.cli.install_setup._install_gsqz_from_github") as mock_github,
+            patch("gobby.cli.install_setup._install_gsqz_from_cargo_binstall") as mock_binstall,
+            patch("gobby.cli.install_setup._install_gsqz_from_cargo_install") as mock_install,
         ):
             result = _install_gsqz()
 
         assert result["installed"] is False
         assert result["skipped"] is True
         assert result["version"] == pinned_version
+        mock_latest.assert_not_called()
+        mock_github.assert_not_called()
+        mock_binstall.assert_not_called()
+        mock_install.assert_not_called()
 
     def test_newer_installed_version_skips_when_latest_is_lower(
         self, tmp_path: Path, _patch_platform: None
@@ -382,15 +389,17 @@ class TestInstallGsqz:
 
         with (
             patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
-            patch("gobby.cli.install_setup._get_latest_gsqz_version", return_value="0.4.2"),
+            patch("gobby.cli.install_setup._get_latest_gsqz_version") as mock_latest,
             patch("gobby.cli.install_setup._install_gsqz_from_github") as mock_github,
         ):
             result = _install_gsqz()
 
         assert result == {"installed": False, "skipped": True, "version": "0.4.3"}
+        mock_latest.assert_not_called()
         mock_github.assert_not_called()
 
     def test_upgrade_available(self, tmp_path: Path, _patch_platform: None) -> None:
+        pinned_version = MANAGED_BIN_VERSION_PINS["gsqz"]
         bin_dir = tmp_path / ".gobby" / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
         (bin_dir / "gsqz").write_bytes(b"\x00")
@@ -398,7 +407,6 @@ class TestInstallGsqz:
 
         with (
             patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
-            patch("gobby.cli.install_setup._get_latest_gsqz_version", return_value="0.2.0"),
             patch("gobby.cli.install_setup._install_gsqz_from_github", return_value=True),
             patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}),
         ):
@@ -406,9 +414,10 @@ class TestInstallGsqz:
 
         assert result["installed"] is True
         assert result["upgraded"] is True
-        assert result["version"] == "0.2.0"
+        assert result["version"] == pinned_version
 
     def test_force_reinstall(self, tmp_path: Path, _patch_platform: None) -> None:
+        pinned_version = MANAGED_BIN_VERSION_PINS["gsqz"]
         bin_dir = tmp_path / ".gobby" / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
         (bin_dir / "gsqz").write_bytes(b"\x00")
@@ -416,14 +425,13 @@ class TestInstallGsqz:
 
         with (
             patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
-            patch("gobby.cli.install_setup._get_latest_gsqz_version", return_value="0.1.0"),
             patch("gobby.cli.install_setup._install_gsqz_from_github", return_value=True),
             patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}),
         ):
             result = _install_gsqz(force=True)
 
         assert result["installed"] is True
-        assert result["version"] == "0.1.0"
+        assert result["version"] == pinned_version
 
     def test_github_fails_cargo_binstall_succeeds(
         self, tmp_path: Path, _patch_platform: None
@@ -479,12 +487,13 @@ class TestInstallGsqz:
 
         with (
             patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
-            patch("gobby.cli.install_setup._get_latest_gsqz_version", return_value=None),
+            patch("gobby.cli.install_setup._get_latest_gsqz_version") as mock_latest,
         ):
             result = _install_gsqz()
 
         assert result["skipped"] is True
         assert result["version"] == pinned_version
+        mock_latest.assert_not_called()
 
 
 class TestEnsureGobbyBinOnPath:

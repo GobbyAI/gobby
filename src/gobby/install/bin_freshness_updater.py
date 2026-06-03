@@ -28,6 +28,7 @@ from gobby.install.bin_freshness_models import (
     ManagedBinSpec,
     ReleaseAsset,
     compare_versions,
+    is_at_least_version,
     managed_bin_specs,
 )
 from gobby.storage.bin_update_state import BinUpdateRecord, BinUpdateStateStore, BinUpdateStatus
@@ -112,6 +113,17 @@ def update_managed_bin(
             )
 
         target: str | None = None
+        if is_at_least_version(inspection.installed_version, spec.floor_version):
+            return _record_state(
+                store,
+                inspection=inspection,
+                latest_version=inspection.installed_version,
+                target=platform_target(),
+                status="up_to_date",
+                error=inspection.sidecar_error,
+                source_url=None,
+            )
+
         release_client = client or GithubReleaseClient(
             timeout_seconds=config.github_timeout_seconds
         )

@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
+from gobby.install.bin_freshness_models import compare_versions
+from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 
 _NATIVE_GHOOK_BINARY_MAGICS = (
     b"\x7fELF",
@@ -34,9 +36,14 @@ def get_latest_ghook_version(module: Any) -> str | None:
 
 
 def get_installed_ghook_version(module: Any, bin_dir: Path) -> str | None:
-    """Read installed ghook version from stamp file."""
-    stamp = bin_dir / module._GHOOK_VERSION_STAMP
+    """Read installed ghook version, preferring the binary over the stamp."""
     binary = bin_dir / module._GHOOK_BIN_NAME
+    if binary.exists():
+        probed_version = probe_ghook_version(module, binary)
+        if probed_version:
+            return probed_version
+
+    stamp = bin_dir / module._GHOOK_VERSION_STAMP
     if stamp.exists():
         content = stamp.read_text().strip()
         return content if content else None
@@ -286,9 +293,7 @@ def install_ghook(module: Any, force: bool = False) -> dict[str, Any]:
         }
 
     installed_version = module._get_installed_ghook_version(bin_dir)
-    requested_version = module._get_ghook_version_override()
-    target_version = requested_version or module._get_latest_ghook_version()
-    method_override = module._get_ghook_method_override()
+    pinned_version = MANAGED_BIN_VERSION_PINS["ghook"]
 
     if ghook_path.exists() and not force:
         if not module._is_native_ghook_binary(ghook_path):
@@ -296,8 +301,15 @@ def install_ghook(module: Any, force: bool = False) -> dict[str, Any]:
                 "ghook: existing %s is not a native executable; reinstalling",
                 ghook_path,
             )
-        elif managed_version_satisfies_pin("ghook", installed_version):
+        elif installed_version and managed_version_satisfies_pin("ghook", installed_version):
+            module._write_ghook_version_stamp(bin_dir, installed_version)
             return {"installed": False, "skipped": True, "version": installed_version}
+
+    requested_version = module._get_ghook_version_override()
+    target_version = requested_version or pinned_version
+    if requested_version is None and compare_versions(installed_version, pinned_version) == 1:
+        target_version = installed_version
+    method_override = module._get_ghook_method_override()
 
     bin_dir.mkdir(parents=True, exist_ok=True)
     method = None

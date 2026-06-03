@@ -284,12 +284,20 @@ class TestInstallGhook:
 
         with (
             patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
-            patch("gobby.cli.install_setup._get_latest_ghook_version", return_value=pinned_version),
+            patch("gobby.cli.install_setup._get_latest_ghook_version") as mock_latest,
+            patch("gobby.cli.install_setup._install_ghook_from_github") as mock_github,
+            patch("gobby.cli.install_setup._install_ghook_from_cargo_binstall") as mock_binstall,
+            patch("gobby.cli.install_setup._install_ghook_from_cargo_install") as mock_install,
         ):
             result = _install_ghook()
 
         assert result["installed"] is False
         assert result["skipped"] is True
+        assert result["version"] == pinned_version
+        mock_latest.assert_not_called()
+        mock_github.assert_not_called()
+        mock_binstall.assert_not_called()
+        mock_install.assert_not_called()
 
     def test_newer_installed_version_skips_when_latest_is_lower(
         self, tmp_path: Path, _patch_platform: None
@@ -301,12 +309,13 @@ class TestInstallGhook:
 
         with (
             patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
-            patch("gobby.cli.install_setup._get_latest_ghook_version", return_value="0.4.1"),
+            patch("gobby.cli.install_setup._get_latest_ghook_version") as mock_latest,
             patch("gobby.cli.install_setup._install_ghook_from_github") as mock_github,
         ):
             result = _install_ghook()
 
         assert result == {"installed": False, "skipped": True, "version": "0.4.2"}
+        mock_latest.assert_not_called()
         mock_github.assert_not_called()
 
     def test_replaces_shell_wrapper_even_when_version_stamp_satisfies_pin(

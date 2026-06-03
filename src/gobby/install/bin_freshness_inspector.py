@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess  # nosec B404 # bounded local --version probes for managed helpers
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -42,19 +43,44 @@ def _mtime_iso(path: Path) -> str | None:
         return None
 
 
+def _extract_version_token(output: str) -> str | None:
+    parts = output.split()
+    return parts[-1] if parts else None
+
+
+def _probe_binary_version(binary_path: Path) -> str | None:
+    try:
+        result = subprocess.run(  # noqa: S603
+            [str(binary_path), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    output = (result.stdout or result.stderr).strip()
+    return _extract_version_token(output)
+
+
 def inspect_managed_bin(spec: ManagedBinSpec, *, bin_dir: Path | None = None) -> BinInspection:
-    """Inspect one managed native binary without invoking it or using the network."""
+    """Inspect one managed native binary without using the network."""
     root = bin_dir or native_bin_dir()
     binary_path = root / spec.binary_name
     stamp_path = root / spec.stamp_name
     sidecar_path = root / spec.sidecar_name
 
-    installed_version = _read_text(stamp_path)
     sidecar, sidecar_error = _read_sidecar(sidecar_path)
     installed_at = (
         sidecar.get("installed_at") if isinstance(sidecar.get("installed_at"), str) else None
     )
     binary_exists = binary_path.exists() and binary_path.is_file()
+    is_dev = binary_path.is_symlink()
+    probed_version = _probe_binary_version(binary_path) if binary_exists and not is_dev else None
+    installed_version = probed_version or _read_text(stamp_path)
     if installed_at is None and binary_exists:
         installed_at = _mtime_iso(binary_path)
 
@@ -62,7 +88,7 @@ def inspect_managed_bin(spec: ManagedBinSpec, *, bin_dir: Path | None = None) ->
         spec=spec,
         binary_path=str(binary_path),
         binary_exists=binary_exists,
-        is_dev=binary_path.is_symlink(),
+        is_dev=is_dev,
         installed_version=installed_version,
         installed_at=installed_at,
         sidecar_error=sidecar_error,

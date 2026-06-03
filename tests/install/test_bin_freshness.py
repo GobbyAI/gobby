@@ -131,6 +131,22 @@ class TestBinInspector:
         assert inspection.installed_at == "2026-05-04T00:00:00+00:00"
         assert inspection.floor_drift is False
 
+    def test_current_binary_prefers_probed_version_over_stale_stamp(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        spec = _spec()
+        _write_binary(tmp_path, spec)
+        _write_stamp(tmp_path, spec, "0.4.0")
+        monkeypatch.setattr(
+            "gobby.install.bin_freshness_inspector._probe_binary_version",
+            lambda _path: "0.4.1",
+        )
+
+        inspection = inspect_managed_bin(spec, bin_dir=tmp_path)
+
+        assert inspection.installed_version == "0.4.1"
+        assert inspection.floor_drift is False
+
     def test_stale_stamp_marks_floor_drift(self, tmp_path: Path) -> None:
         spec = _spec()
         _write_binary(tmp_path, spec)
@@ -181,6 +197,30 @@ class TestBinInspector:
 
 
 class TestBinUpdater:
+    def test_local_pinned_binary_records_without_github_lookup(
+        self, tmp_path: Path, postgres_db: HubDatabase
+    ) -> None:
+        db = postgres_db
+        bin_dir = tmp_path / "bin"
+        spec = _spec()
+        _write_binary(bin_dir, spec)
+        _write_stamp(bin_dir, spec, "0.4.1")
+        client = FakeClient(resolve_error=AssertionError("github should not be queried"))
+
+        record = update_managed_bin(
+            db,
+            spec,
+            BinFreshnessConfig(),
+            bin_dir=bin_dir,
+            client=client,
+        )
+
+        assert record is not None
+        assert record.last_status == "up_to_date"
+        assert record.latest_version == "0.4.1"
+        assert record.source_url is None
+        assert client.downloads == 0
+
     def test_github_up_to_date_records_without_downloading(
         self, tmp_path: Path, postgres_db: HubDatabase
     ) -> None:
@@ -201,6 +241,7 @@ class TestBinUpdater:
 
         assert record is not None
         assert record.last_status == "up_to_date"
+        assert record.source_url is None
         assert client.downloads == 0
 
     def test_github_newer_installed_version_records_without_downloading(
@@ -262,7 +303,7 @@ class TestBinUpdater:
         bin_dir = tmp_path / "bin"
         spec = _spec()
         _write_binary(bin_dir, spec, b"old")
-        _write_stamp(bin_dir, spec, "0.4.1")
+        _write_stamp(bin_dir, spec, "0.4.0")
         client = FakeClient(resolve_error=GithubAPIError("api down"))
 
         record = update_managed_bin(
@@ -277,7 +318,7 @@ class TestBinUpdater:
         assert record.last_status == "failed"
         assert (bin_dir / spec.binary_name).read_bytes() == b"old"
 
-    def test_missing_release_tag_records_source_unavailable_at_floor(
+    def test_missing_release_tag_is_ignored_when_installed_at_floor(
         self, tmp_path: Path, postgres_db: HubDatabase
     ) -> None:
         db = postgres_db
@@ -296,10 +337,10 @@ class TestBinUpdater:
         )
 
         assert record is not None
-        assert record.last_status == "source_unavailable"
-        assert "missing release tag" in (record.last_error or "")
+        assert record.last_status == "up_to_date"
+        assert record.last_error is None
 
-    def test_missing_platform_asset_records_source_unavailable_at_floor(
+    def test_missing_platform_asset_is_ignored_when_installed_at_floor(
         self, tmp_path: Path, postgres_db: HubDatabase
     ) -> None:
         db = postgres_db
@@ -318,8 +359,8 @@ class TestBinUpdater:
         )
 
         assert record is not None
-        assert record.last_status == "source_unavailable"
-        assert "missing platform asset" in (record.last_error or "")
+        assert record.last_status == "up_to_date"
+        assert record.last_error is None
 
     def test_atomic_promotion_failure_keeps_existing_binary(
         self, tmp_path: Path, postgres_db: HubDatabase
@@ -328,7 +369,7 @@ class TestBinUpdater:
         bin_dir = tmp_path / "bin"
         spec = _spec()
         _write_binary(bin_dir, spec, b"old")
-        _write_stamp(bin_dir, spec, "0.4.1")
+        _write_stamp(bin_dir, spec, "0.4.0")
         client = FakeClient(asset=_asset(spec, "0.4.2"), archive=_tar_with_binary(spec, b"new"))
 
         original_replace = os.replace

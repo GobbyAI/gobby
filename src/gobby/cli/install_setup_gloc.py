@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
+from gobby.install.bin_freshness_models import compare_versions
+from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 
 
 def get_latest_gloc_version(module: Any) -> str | None:
@@ -21,9 +23,14 @@ def get_latest_gloc_version(module: Any) -> str | None:
 
 
 def get_installed_gloc_version(module: Any, bin_dir: Path) -> str | None:
-    """Read installed gloc version from stamp file."""
-    stamp = bin_dir / module._GLOC_VERSION_STAMP
+    """Read installed gloc version, preferring the binary over the stamp."""
     binary = bin_dir / module._GLOC_BIN_NAME
+    if binary.exists():
+        probed_version = probe_gloc_version(module, binary)
+        if probed_version:
+            return probed_version
+
+    stamp = bin_dir / module._GLOC_VERSION_STAMP
     if stamp.exists():
         content = stamp.read_text().strip()
         return content if content else None
@@ -164,12 +171,16 @@ def install_gloc(module: Any, force: bool = False) -> dict[str, Any]:
         }
 
     installed_version = module._get_installed_gloc_version(bin_dir)
-    target_version = module._get_latest_gloc_version()
+    pinned_version = MANAGED_BIN_VERSION_PINS["gloc"]
 
     if gloc_path.exists() and not force:
-        if managed_version_satisfies_pin("gloc", installed_version):
+        if installed_version and managed_version_satisfies_pin("gloc", installed_version):
+            module._write_gloc_version_stamp(bin_dir, installed_version)
             return {"installed": False, "skipped": True, "version": installed_version}
 
+    target_version = pinned_version
+    if compare_versions(installed_version, pinned_version) == 1:
+        target_version = installed_version
     bin_dir.mkdir(parents=True, exist_ok=True)
     method = None
 
