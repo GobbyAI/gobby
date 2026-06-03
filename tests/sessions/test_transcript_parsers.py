@@ -16,6 +16,8 @@ from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.sessions.transcripts.droid import DroidTranscriptParser
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
+from gobby.sessions.transcripts.grok import GrokTranscriptParser
+from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 
 pytestmark = pytest.mark.unit
 
@@ -1787,6 +1789,83 @@ class TestGeminiTranscriptParser:
         assert msg.usage.input_tokens == 100
         assert msg.usage.output_tokens == 50
 
+    def test_gemini_extract_usage_splits_cached_content_and_thought_tokens(
+        self,
+        parser,
+    ) -> None:
+        line = json.dumps(
+            {
+                "type": "message",
+                "role": "model",
+                "content": "Response",
+                "usageMetadata": {
+                    "promptTokenCount": 1_000,
+                    "cachedContentTokenCount": 750,
+                    "candidatesTokenCount": 80,
+                    "thoughtsTokenCount": 20,
+                },
+            }
+        )
+
+        msg = parser.parse_line(line, 0)
+
+        assert msg is not None
+        assert msg.usage is not None
+        assert msg.usage.input_tokens == 250
+        assert msg.usage.cache_read_tokens == 750
+        assert msg.usage.output_tokens == 100
+
+    def test_qwen_uses_gemini_compatible_usage_mapping(self) -> None:
+        parser = QwenTranscriptParser()
+        line = json.dumps(
+            {
+                "type": "message",
+                "role": "model",
+                "content": "Qwen response",
+                "usageMetadata": {
+                    "promptTokenCount": 800,
+                    "cachedContentTokenCount": 300,
+                    "candidatesTokenCount": 60,
+                },
+            }
+        )
+
+        msg = parser.parse_line(line, 0)
+
+        assert msg is not None
+        assert msg.usage is not None
+        assert msg.usage.input_tokens == 500
+        assert msg.usage.cache_read_tokens == 300
+        assert msg.usage.output_tokens == 60
+
+    def test_gemini_parse_session_json_consumes_usage_once(self, parser) -> None:
+        data = {
+            "sessionId": "abc-123",
+            "messages": [
+                {
+                    "id": "msg-1",
+                    "timestamp": "2024-01-01T10:00:00Z",
+                    "type": "gemini",
+                    "content": "I'll inspect it.",
+                    "thoughts": [{"subject": "Plan", "description": "Check files"}],
+                    "toolCalls": [{"name": "read_file", "args": {"path": "a.py"}}],
+                    "usageMetadata": {
+                        "promptTokenCount": 1_000,
+                        "cachedContentTokenCount": 400,
+                        "candidatesTokenCount": 100,
+                    },
+                },
+            ],
+        }
+
+        messages = parser.parse_session_json(data)
+        usage_messages = [msg for msg in messages if msg.usage is not None]
+
+        assert len(messages) == 3
+        assert len(usage_messages) == 1
+        assert usage_messages[0].usage is not None
+        assert usage_messages[0].usage.input_tokens == 600
+
     def test_gemini_extract_usage_no_usage(self, parser) -> None:
         """Test _extract_usage returns None without usageMetadata."""
         line = json.dumps({"type": "message", "role": "model", "content": "Response"})
@@ -2064,6 +2143,41 @@ class TestGeminiTranscriptParser:
         assert msgs[1].tool_name == "read_file"
 
 
+class TestGrokTranscriptParser:
+    """Tests for Grok transcript parser."""
+
+    def test_grok_usage_splits_cache_from_prompt_footprint(self) -> None:
+        parser = GrokTranscriptParser(session_id="grok-session")
+        line = json.dumps(
+            {
+                "timestamp": "2024-01-01T10:00:00Z",
+                "params": {
+                    "update": {
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": {"text": "Done"},
+                        "usage": {
+                            "inputTokens": 10_000,
+                            "cachedInputTokens": 8_000,
+                            "cacheCreationTokens": 500,
+                            "outputTokens": 250,
+                        },
+                        "totalContextTokens": 512_000,
+                    }
+                },
+            }
+        )
+
+        msg = parser.parse_line(line, 0)
+
+        assert msg is not None
+        assert msg.usage is not None
+        assert msg.usage.input_tokens == 1_500
+        assert msg.usage.cache_read_tokens == 8_000
+        assert msg.usage.cache_creation_tokens == 500
+        assert msg.usage.output_tokens == 250
+        assert msg.raw_json["params"]["update"]["totalContextTokens"] == 512_000
+
+
 class TestParserRegistry:
     """Tests for the parser registry and get_parser function."""
 
@@ -2071,6 +2185,8 @@ class TestParserRegistry:
         """Verify each source maps to the correct parser class."""
         assert PARSER_REGISTRY["claude"] is ClaudeTranscriptParser
         assert PARSER_REGISTRY["gemini"] is GeminiTranscriptParser
+        assert PARSER_REGISTRY["grok"] is GrokTranscriptParser
+        assert PARSER_REGISTRY["qwen"] is QwenTranscriptParser
         assert PARSER_REGISTRY["codex"] is CodexTranscriptParser
         assert PARSER_REGISTRY["droid"] is DroidTranscriptParser
 
@@ -2078,6 +2194,8 @@ class TestParserRegistry:
         """get_parser should return instances of the correct parser class."""
         assert isinstance(get_parser("claude"), ClaudeTranscriptParser)
         assert isinstance(get_parser("gemini"), GeminiTranscriptParser)
+        assert isinstance(get_parser("grok"), GrokTranscriptParser)
+        assert isinstance(get_parser("qwen"), QwenTranscriptParser)
         assert isinstance(get_parser("codex"), CodexTranscriptParser)
         assert isinstance(get_parser("droid"), DroidTranscriptParser)
 

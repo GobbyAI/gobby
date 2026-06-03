@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -18,7 +17,6 @@ ContextUsageSource = Literal[
     "web_chat",
 ]
 ContextUsageConfidence = Literal["reported", "estimated", "unknown"]
-CodexTokenUsage = Mapping[str, Any]
 
 
 @dataclass(frozen=True)
@@ -109,177 +107,6 @@ class ContextUsageSnapshot:
         )
 
     @classmethod
-    def from_claude(
-        cls,
-        context_window: int | None,
-        input_tokens: int | None,
-        uncached_input_tokens: int | None,
-        cache_read_tokens: int | None,
-        cache_creation_tokens: int | None,
-        output_tokens: int | None,
-        model: str | None = None,
-    ) -> ContextUsageSnapshot:
-        """Create snapshot from Claude provider usage."""
-        return cls.from_token_breakdown(
-            source="claude",
-            model=model,
-            context_window=context_window,
-            uncached_prompt_tokens=(
-                uncached_input_tokens if uncached_input_tokens is not None else input_tokens
-            ),
-            cache_read_tokens=cache_read_tokens,
-            cache_creation_tokens=cache_creation_tokens,
-            output_tokens=output_tokens,
-        )
-
-    @classmethod
-    def from_codex(
-        cls,
-        context_window: int | None,
-        last_token_usage: CodexTokenUsage | None,
-        total_token_usage: CodexTokenUsage | None,
-        char_fallback: str | None,
-        model: str | None = None,
-    ) -> ContextUsageSnapshot:
-        """Create snapshot from Codex provider usage."""
-        confidence: ContextUsageConfidence = "unknown"
-        input_tokens: int | None = None
-        output_tokens: int | None = None
-        cache_read_tokens: int | None = None
-        cache_creation_tokens: int | None = None
-        context_used: int | None = None
-
-        usage_data = last_token_usage or total_token_usage
-        if usage_data:
-            input_tokens = _first_token_count(
-                usage_data,
-                "input_tokens",
-                "inputTokens",
-                "prompt_tokens",
-                "promptTokens",
-            )
-            output_tokens = _first_token_count(
-                usage_data,
-                "output_tokens",
-                "outputTokens",
-                "completion_tokens",
-                "completionTokens",
-            )
-            reasoning_tokens = _first_token_count(
-                usage_data,
-                "reasoning_output_tokens",
-                "reasoningOutputTokens",
-                "reasoning_tokens",
-                "reasoningTokens",
-            )
-            cache_read_tokens = _first_token_count(
-                usage_data,
-                "cached_input_tokens",
-                "cachedInputTokens",
-                "cache_read_input_tokens",
-                "cacheReadInputTokens",
-            )
-            cache_creation_tokens = _first_token_count(
-                usage_data,
-                "cache_creation_input_tokens",
-                "cacheCreationInputTokens",
-            )
-            if input_tokens is not None:
-                context_used = input_tokens
-                if cache_read_tokens is not None or cache_creation_tokens is not None:
-                    input_tokens = max(
-                        0,
-                        input_tokens - (cache_read_tokens or 0) - (cache_creation_tokens or 0),
-                    )
-                output_tokens = (output_tokens or 0) + (reasoning_tokens or 0)
-                confidence = "reported"
-
-        if context_used is None and char_fallback:
-            context_used = max(0, int(len(char_fallback) / 4))
-            input_tokens = context_used
-            confidence = "estimated"
-
-        ratio = cls.calculate_ratio(context_used, context_window)
-        return cls(
-            source="codex",
-            model=model,
-            context_window=context_window,
-            context_used_tokens=context_used,
-            context_usage_ratio=ratio,
-            confidence=confidence,
-            timestamp=_now_iso(),
-            raw_prompt_footprint=context_used,
-            uncached_prompt_tokens=input_tokens,
-            cache_read_tokens=cache_read_tokens,
-            cache_creation_tokens=cache_creation_tokens,
-            output_tokens=output_tokens,
-        )
-
-    @classmethod
-    def from_gemini(
-        cls,
-        context_window: int | None,
-        prompt_tokens: int | None,
-        cached_content_tokens: int | None,
-        output_tokens: int | None,
-        reasoning_tokens: int | None,
-        model: str | None = None,
-    ) -> ContextUsageSnapshot:
-        """Create snapshot from Gemini provider usage."""
-        cache_read_tokens = _coerce_nonnegative_int(cached_content_tokens)
-        uncached_prompt_tokens = _coerce_nonnegative_int(prompt_tokens)
-        if uncached_prompt_tokens is not None and cache_read_tokens is not None:
-            uncached_prompt_tokens = max(0, uncached_prompt_tokens - cache_read_tokens)
-        return cls.from_token_breakdown(
-            source="gemini",
-            model=model,
-            context_window=context_window,
-            uncached_prompt_tokens=uncached_prompt_tokens,
-            cache_read_tokens=cache_read_tokens,
-            output_tokens=(output_tokens or 0) + (reasoning_tokens or 0),
-        )
-
-    @classmethod
-    def from_qwen(
-        cls,
-        context_window: int | None,
-        prompt_tokens: int | None,
-        cached_content_tokens: int | None,
-        output_tokens: int | None,
-        model: str | None = None,
-    ) -> ContextUsageSnapshot:
-        """Create snapshot from Qwen provider usage (Gemini-compatible)."""
-        cache_read_tokens = _coerce_nonnegative_int(cached_content_tokens)
-        uncached_prompt_tokens = _coerce_nonnegative_int(prompt_tokens)
-        if uncached_prompt_tokens is not None and cache_read_tokens is not None:
-            uncached_prompt_tokens = max(0, uncached_prompt_tokens - cache_read_tokens)
-        return cls.from_token_breakdown(
-            source="qwen",
-            model=model,
-            context_window=context_window,
-            uncached_prompt_tokens=uncached_prompt_tokens,
-            cache_read_tokens=cache_read_tokens,
-            output_tokens=output_tokens,
-        )
-
-    @classmethod
-    def from_droid(
-        cls,
-        context_window: int | None,
-        input_tokens: int | None,
-        output_tokens: int | None,
-        model: str | None = None,
-    ) -> ContextUsageSnapshot:
-        """Create snapshot from Droid provider usage."""
-        return cls.from_token_breakdown(
-            source="droid",
-            model=model,
-            context_window=context_window,
-            uncached_prompt_tokens=input_tokens,
-            output_tokens=output_tokens,
-        )
-
-    @classmethod
     def from_agy(
         cls,
         context_window: int | None,
@@ -291,40 +118,6 @@ class ContextUsageSnapshot:
         transcripts expose reliable per-turn usage. For v1, record window-only metadata.
         """
         return cls.window_only(source="agy", model=model, context_window=context_window)
-
-    @classmethod
-    def from_grok(
-        cls,
-        context_window: int | None,
-        input_tokens: int | None,
-        output_tokens: int | None,
-        model: str | None = None,
-    ) -> ContextUsageSnapshot:
-        """Create snapshot from Grok provider."""
-        return cls.from_token_breakdown(
-            source="grok",
-            model=model,
-            context_window=context_window,
-            uncached_prompt_tokens=input_tokens,
-            output_tokens=output_tokens,
-        )
-
-    @classmethod
-    def from_web_chat(
-        cls,
-        context_window: int | None,
-        input_tokens: int | None,
-        output_tokens: int | None,
-        model: str | None = None,
-    ) -> ContextUsageSnapshot:
-        """Create snapshot from web chat provider."""
-        return cls.from_token_breakdown(
-            source="web_chat",
-            model=model,
-            context_window=context_window,
-            uncached_prompt_tokens=input_tokens,
-            output_tokens=output_tokens,
-        )
 
 
 def _now_iso() -> str:
@@ -340,16 +133,3 @@ def _coerce_nonnegative_int(value: Any) -> int | None:
         return max(0, int(value))
     except (TypeError, ValueError):
         return None
-
-
-def _first_token_count(data: Mapping[str, Any], *keys: str) -> int | None:
-    for key in keys:
-        value = data.get(key)
-        # bool is an int subclass; token counters must ignore true/false flags.
-        if value is None or isinstance(value, bool):
-            continue
-        try:
-            return max(0, int(value))
-        except (TypeError, ValueError):
-            continue
-    return None

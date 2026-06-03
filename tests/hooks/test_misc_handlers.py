@@ -456,6 +456,41 @@ class TestGeminiHandlerEdgeCases:
 
         assert response.decision == "allow"
 
+    def test_after_model_de_overlaps_cached_and_thinking_tokens(
+        self, mock_dependencies: dict
+    ) -> None:
+        """Live Gemini usage must de-overlap cached input and fold thinking into output."""
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.AFTER_MODEL,
+            source="gemini",
+            data={
+                "response": {
+                    "usageMetadata": {
+                        "promptTokenCount": 1_000,
+                        "cachedContentTokenCount": 750,
+                        "candidatesTokenCount": 80,
+                        "thoughtsTokenCount": 20,
+                    }
+                },
+                "model_name": "gemini-2.5-pro",
+            },
+            metadata={"_platform_session_id": "sess-123"},
+        )
+
+        with patch("gobby.hooks.event_handlers._misc.get_app_context", return_value=None):
+            response = handlers.handle_after_model(event)
+
+        assert response.decision == "allow"
+        mock_dependencies["session_manager"].update_usage.assert_called_once_with(
+            session_id="sess-123",
+            input_tokens=250,
+            output_tokens=100,
+            cache_creation_tokens=0,
+            cache_read_tokens=750,
+            model="gemini-2.5-pro",
+        )
+
 
 class TestSubagentHandlerWithSessionId:
     """Test SUBAGENT handlers with session_id for log coverage."""

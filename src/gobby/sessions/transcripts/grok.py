@@ -48,6 +48,7 @@ class GrokTranscriptParser(BaseTranscriptParser):
         update_type = str(update.get("sessionUpdate") or update.get("type") or "")
         content = _extract_text(update.get("content"))
         message_id = _message_id("grok", self.session_id, index, update.get("messageId"))
+        usage = _extract_usage(update)
 
         if update_type == "user_message_chunk":
             return _message(
@@ -58,6 +59,7 @@ class GrokTranscriptParser(BaseTranscriptParser):
                 timestamp,
                 data,
                 message_id=message_id,
+                usage=usage,
             )
         if update_type == "agent_message_chunk":
             return _message(
@@ -68,6 +70,7 @@ class GrokTranscriptParser(BaseTranscriptParser):
                 timestamp,
                 data,
                 message_id=message_id,
+                usage=usage,
             )
         if update_type == "agent_thought_chunk":
             return _message(
@@ -78,6 +81,7 @@ class GrokTranscriptParser(BaseTranscriptParser):
                 timestamp,
                 data,
                 message_id=message_id,
+                usage=usage,
             )
         if update_type == "tool_call":
             tool_name = update.get("title") or update.get("name") or "tool"
@@ -95,6 +99,7 @@ class GrokTranscriptParser(BaseTranscriptParser):
                 tool_name=str(tool_name),
                 tool_input=tool_input,
                 tool_use_id=tool_use_id,
+                usage=usage,
             )
         if update_type == "tool_call_update":
             call_id = str(update.get("toolCallId") or _tool_use_id(index, "tool"))
@@ -108,6 +113,7 @@ class GrokTranscriptParser(BaseTranscriptParser):
                 data,
                 tool_result=result,
                 tool_use_id=call_id,
+                usage=usage,
             )
         if update_type == "hook_execution":
             hook_name = str(update.get("hook") or update.get("hookName") or "hook")
@@ -122,6 +128,7 @@ class GrokTranscriptParser(BaseTranscriptParser):
                 tool_name=hook_name,
                 tool_result=result,
                 tool_use_id=str(update.get("id") or _tool_use_id(index, hook_name)),
+                usage=usage,
             )
 
         return None
@@ -171,6 +178,7 @@ def _message(
     tool_result: dict[str, Any] | None = None,
     tool_use_id: str | None = None,
     message_id: str | None = None,
+    usage: TokenUsage | None = None,
 ) -> ParsedMessage:
     return ParsedMessage(
         index=index,
@@ -182,10 +190,58 @@ def _message(
         tool_result=tool_result,
         timestamp=timestamp,
         raw_json=raw_json,
-        usage=TokenUsage(),
+        usage=usage,
         tool_use_id=tool_use_id,
         message_id=message_id,
     )
+
+
+def _extract_usage(update: dict[str, Any]) -> TokenUsage | None:
+    usage = update.get("usage") or update.get("tokenUsage") or update.get("token_usage")
+    if not isinstance(usage, dict):
+        usage = update
+
+    input_tokens = _count(
+        usage.get("input_tokens")
+        or usage.get("inputTokens")
+        or usage.get("prompt_tokens")
+        or usage.get("promptTokens")
+    )
+    output_tokens = _count(
+        usage.get("output_tokens")
+        or usage.get("outputTokens")
+        or usage.get("completion_tokens")
+        or usage.get("completionTokens")
+    )
+    cache_read = _count(
+        usage.get("cache_read_tokens")
+        or usage.get("cacheReadTokens")
+        or usage.get("cached_input_tokens")
+        or usage.get("cachedInputTokens")
+    )
+    cache_creation = _count(
+        usage.get("cache_creation_tokens")
+        or usage.get("cacheCreationTokens")
+        or usage.get("cache_creation_input_tokens")
+        or usage.get("cacheCreationInputTokens")
+    )
+    if input_tokens == output_tokens == cache_read == cache_creation == 0:
+        return None
+    return TokenUsage(
+        input_tokens=max(0, input_tokens - cache_read - cache_creation),
+        output_tokens=output_tokens,
+        cache_creation_tokens=cache_creation,
+        cache_read_tokens=cache_read,
+    )
+
+
+def _count(value: Any) -> int:
+    if isinstance(value, bool) or value is None:
+        return 0
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _parse_timestamp(data: dict[str, Any]) -> datetime:

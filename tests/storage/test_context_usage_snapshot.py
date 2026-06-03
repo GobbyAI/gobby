@@ -43,43 +43,6 @@ def test_token_breakdown_counts_cache_toward_prompt_footprint() -> None:
     assert snapshot.timestamp.endswith("Z")
 
 
-def test_codex_snapshot_treats_reported_input_as_raw_prompt_footprint() -> None:
-    snapshot = ContextUsageSnapshot.from_codex(
-        context_window=200_000,
-        last_token_usage={
-            "input_tokens": 50_000,
-            "cached_input_tokens": 45_000,
-            "cache_creation_input_tokens": 2_000,
-            "output_tokens": 900,
-            "reasoning_output_tokens": 100,
-        },
-        total_token_usage=None,
-        char_fallback=None,
-        model="gpt-5.3-codex",
-    )
-
-    assert snapshot.context_used_tokens == 50_000
-    assert snapshot.raw_prompt_footprint == 50_000
-    assert snapshot.uncached_prompt_tokens == 3_000
-    assert snapshot.cache_read_tokens == 45_000
-    assert snapshot.cache_creation_tokens == 2_000
-    assert snapshot.output_tokens == 1_000
-    assert snapshot.context_usage_ratio == 0.25
-
-
-def test_codex_char_fallback_is_estimated() -> None:
-    snapshot = ContextUsageSnapshot.from_codex(
-        context_window=1_000,
-        last_token_usage=None,
-        total_token_usage=None,
-        char_fallback="x" * 400,
-    )
-
-    assert snapshot.context_used_tokens == 100
-    assert snapshot.context_usage_ratio == 0.1
-    assert snapshot.confidence == "estimated"
-
-
 def test_window_only_snapshot_keeps_pressure_unknown() -> None:
     snapshot = ContextUsageSnapshot.window_only(
         source="grok",

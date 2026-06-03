@@ -792,6 +792,98 @@ class TestModelExtraction:
         mock_ws.broadcast_token_event.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_process_session_records_grok_token_snapshot(
+        self,
+        mock_db,
+        tmp_path,
+        monkeypatch,
+    ) -> None:
+        """Grok messages with real usage select snapshot_from_token_usage, not window-only."""
+
+        class FakeTokenEventStore:
+            def __init__(self, _db):
+                pass
+
+            def get_session_totals(self, _session_id):
+                return {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cache_creation_tokens": 0,
+                    "cache_read_tokens": 0,
+                }
+
+            def record(self, _event):
+                return True
+
+        monkeypatch.setattr(
+            "gobby.sessions.processor.TokenEventStore",
+            lambda _db: FakeTokenEventStore(_db),
+        )
+
+        from gobby.sessions import context_usage as _ctx
+
+        token_spy = MagicMock(side_effect=_ctx.snapshot_from_token_usage)
+        window_spy = MagicMock(side_effect=_ctx.snapshot_from_window_metadata)
+        monkeypatch.setattr("gobby.sessions.processor.snapshot_from_token_usage", token_spy)
+        monkeypatch.setattr("gobby.sessions.processor.snapshot_from_window_metadata", window_spy)
+
+        mock_session_manager = MagicMock()
+        session = MagicMock()
+        session.project_id = "proj-1"
+        session.source = "grok"
+        session.context_window = None
+        session.model = None
+        mock_session_manager.get.return_value = session
+        mock_ws = MagicMock()
+        mock_ws.broadcast = AsyncMock()
+        mock_ws.broadcast_token_event = AsyncMock()
+        mock_ws.broadcast_session_usage_updated = AsyncMock()
+        processor = SessionMessageProcessor(
+            mock_db,
+            websocket_server=mock_ws,
+            session_manager=mock_session_manager,
+        )
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text('{"type": "event_msg"}\n')
+        parsed_msg = ParsedMessage(
+            index=0,
+            role="assistant",
+            content="Done",
+            content_type="text",
+            tool_name=None,
+            tool_input=None,
+            tool_result=None,
+            timestamp=datetime.now(),
+            raw_json={"params": {"update": {"totalContextTokens": 512000}}},
+            usage=TokenUsage(
+                input_tokens=1_500,
+                output_tokens=250,
+                cache_creation_tokens=500,
+                cache_read_tokens=8_000,
+            ),
+            model="grok-build",
+            message_id="grok-token",
+        )
+        mock_parser = MagicMock()
+        mock_parser.parse_lines.return_value = [parsed_msg]
+        processor._active_sessions["session-1"] = str(transcript)
+        processor._parsers["session-1"] = mock_parser
+
+        await processor._process_session("session-1", str(transcript))
+
+        # Real per-message usage drives _usage_has_tokens -> True, selecting the
+        # token-based snapshot and never the window-only fallback.
+        token_spy.assert_called_once()
+        window_spy.assert_not_called()
+        mock_ws.broadcast_token_event.assert_awaited_once()
+        mock_session_manager.update_usage.assert_called_once()
+        snapshot = mock_session_manager.update_context_usage.call_args.args[1]
+        assert snapshot.source == "grok"
+        assert snapshot.context_window == 512000
+        assert snapshot.context_used_tokens == 10_000
+        assert snapshot.confidence == "reported"
+
+    @pytest.mark.asyncio
     async def test_process_session_skips_model_update_when_none(self, mock_db, tmp_path) -> None:
         """Should not update model when parsed message has no model."""
         mock_session_manager = MagicMock()

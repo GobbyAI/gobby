@@ -13,6 +13,7 @@ from gobby.mcp_proxy.tools.worktrees._helpers import (
     install_provider_hooks,
     resolve_project_context,
 )
+from gobby.sessions.token_usage import gemini_token_usage
 from gobby.storage.token_events import build_session_usage_payload
 from gobby.utils.project_context import get_workflow_project_path
 from gobby.worktrees.git import WorktreeGitManager
@@ -86,24 +87,25 @@ class MiscEventHandlerMixin(EventHandlersBase):
 
             if isinstance(response_data, dict) and self._session_manager:
                 usage = response_data.get("usageMetadata")
-                if usage:
-                    input_tokens = usage.get("promptTokenCount", 0)
-                    output_tokens = usage.get("candidatesTokenCount", 0)
-                    cache_read_tokens = usage.get("cachedContentTokenCount", 0)
-                    # total_tokens = usage.get("totalTokenCount", 0)
+                if isinstance(usage, dict) and usage:
+                    # De-overlap cached input and fold thinking tokens into output
+                    # via the shared helper so live usage matches replayed
+                    # transcripts (Gemini has no cache_creation split here → 0).
+                    tokens = gemini_token_usage(usage)
 
                     # Update session usage in DB
                     try:
                         self._session_manager.update_usage(
                             session_id=session_id,
-                            input_tokens=input_tokens,
-                            output_tokens=output_tokens,
-                            cache_creation_tokens=0,  # Gemini doesn't always split these here
-                            cache_read_tokens=cache_read_tokens,
+                            input_tokens=tokens.input_tokens,
+                            output_tokens=tokens.output_tokens,
+                            cache_creation_tokens=tokens.cache_creation_tokens,
+                            cache_read_tokens=tokens.cache_read_tokens,
                             model=model_name,
                         )
                         self.logger.debug(
-                            f"Updated Gemini session usage: {input_tokens} in, {output_tokens} out"
+                            "Updated Gemini session usage: "
+                            f"{tokens.input_tokens} in, {tokens.output_tokens} out"
                         )
                         refreshed = self._session_manager.get(session_id)
                         app_ctx = get_app_context()

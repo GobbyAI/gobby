@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from gobby.sessions.token_usage import gemini_token_usage
 from gobby.sessions.transcripts.base import (
     BaseTranscriptParser,
     ParsedMessage,
@@ -344,20 +345,12 @@ class GeminiTranscriptParser(BaseTranscriptParser):
         )
 
     def _extract_usage(self, data: dict[str, Any]) -> TokenUsage | None:
-        """Extract token usage from Gemini message data."""
-        # Gemini API standard is usageMetadata
+        """Extract de-overlapped, thinking-aware token usage from Gemini message data."""
+        # Gemini API standard is usageMetadata; de-overlap + thinking-token
+        # handling lives in the shared gemini_token_usage helper.
         usage_data = data.get("usageMetadata") or data.get("tokens")
-
-        if not usage_data:
-            return None
-
         if isinstance(usage_data, dict):
-            return TokenUsage(
-                input_tokens=usage_data.get("promptTokenCount", 0),
-                output_tokens=usage_data.get("candidatesTokenCount", 0),
-                cache_read_tokens=usage_data.get("cachedContentTokenCount", 0),
-            )
-
+            return gemini_token_usage(usage_data)
         return None
 
     def iter_parse_events(
@@ -460,6 +453,13 @@ class GeminiTranscriptParser(BaseTranscriptParser):
         elif msg_type == "gemini":
             results: list[ParsedMessage] = []
             idx = start_index
+            usage = self._extract_usage(msg)
+
+            def consume_usage() -> TokenUsage | None:
+                nonlocal usage
+                current = usage
+                usage = None
+                return current
 
             # Thoughts → one collapsed thinking block per turn (subject as
             # bold heading, description as body) so Gemini transcripts don't
@@ -486,7 +486,7 @@ class GeminiTranscriptParser(BaseTranscriptParser):
                             tool_result=None,
                             timestamp=timestamp,
                             raw_json=msg,
-                            usage=self._extract_usage(msg),
+                            usage=consume_usage(),
                             message_id=self._message_id_for("json", idx, msg.get("id")),
                         )
                     )
@@ -506,7 +506,7 @@ class GeminiTranscriptParser(BaseTranscriptParser):
                         tool_result=None,
                         timestamp=timestamp,
                         raw_json=msg,
-                        usage=self._extract_usage(msg),
+                        usage=consume_usage(),
                         message_id=self._message_id_for("json", idx, msg.get("id")),
                     )
                 )
@@ -536,7 +536,7 @@ class GeminiTranscriptParser(BaseTranscriptParser):
                         tool_result=None,
                         timestamp=timestamp,
                         raw_json=tc,
-                        usage=self._extract_usage(msg),
+                        usage=consume_usage(),
                         tool_use_id=tc_id,
                         message_id=self._message_id_for("json", idx, tc.get("id")),
                     )
@@ -566,7 +566,7 @@ class GeminiTranscriptParser(BaseTranscriptParser):
                             tool_result={"output": func_response, "status": "success"},
                             timestamp=timestamp,
                             raw_json=tc,
-                            usage=self._extract_usage(msg),
+                            usage=consume_usage(),
                             tool_use_id=tc_id,
                             message_id=self._message_id_for("json", idx, tc.get("id")),
                         )
