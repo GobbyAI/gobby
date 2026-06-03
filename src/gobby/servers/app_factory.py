@@ -18,6 +18,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from starlette.datastructures import Headers
+from starlette.requests import ClientDisconnect
 from websockets.typing import Subprotocol
 
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
@@ -826,13 +827,25 @@ def _mount_vite_dev_ui(app: FastAPI, server: "HTTPServer") -> None:
         if request.url.query:
             target += f"?{request.url.query}"
 
+        # Read the request body before the upstream call so a client that goes
+        # away mid-request (HMR sockets, aborted fetches, navigations — constant
+        # over Tailscale) surfaces as a ClientDisconnect here rather than escaping
+        # uncaught and getting logged as a full 500 traceback through every
+        # middleware layer. There is no client left to answer, so return a
+        # 499-style empty response and log at debug.
+        try:
+            body = await request.body()
+        except ClientDisconnect:
+            logger.debug("Vite UI proxy: client disconnected before request body completed")
+            return Response(status_code=499)
+
         try:
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
                 backend_response = await client.request(
                     request.method,
                     target,
                     headers=_proxied_request_headers(request.headers),
-                    content=await request.body(),
+                    content=body,
                 )
         except httpx.RequestError as exc:
             logger.debug("Vite UI proxy error: %s", exc)
