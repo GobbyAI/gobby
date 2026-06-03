@@ -8,6 +8,7 @@ from typing import Any
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
 from gobby.install.bin_freshness_models import compare_versions
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
+from gobby.install.version_probe import probe_native_bin_version
 
 
 def get_latest_gloc_version(module: Any) -> str | None:
@@ -135,23 +136,12 @@ def install_gloc_from_cargo_install(
 
 def probe_gloc_version(module: Any, gloc_path: Path) -> str | None:
     """Probe gloc binary for a version string."""
-    try:
-        result = module.subprocess.run(
-            [str(gloc_path), "--version"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except Exception as e:
-        module.logger.warning("gloc: failed running --version probe: %s", e)
-        return None
-
-    if result.returncode != 0:
-        module.logger.warning("gloc: --version probe failed: %s", result.stderr.strip())
-        return None
-
-    output = (result.stdout or result.stderr).strip()
-    return output.split()[-1] if output else None
+    return probe_native_bin_version(
+        gloc_path,
+        runner=module.subprocess.run,
+        logger=module.logger,
+        label="gloc",
+    )
 
 
 def install_gloc(module: Any, force: bool = False) -> dict[str, Any]:

@@ -56,9 +56,9 @@ def test_get_gcode_version(tmp_path: Path) -> None:
     # CLI probe wins over stale stamps.
     with patch.object(Path, "home", return_value=tmp_path):
         with patch("gobby.utils.deps.resolve_native_bin", return_value="/usr/bin/gcode"):
-            with patch("gobby.utils.deps._run_cmd", return_value="gcode 0.2.2"):
+            with patch("gobby.utils.deps.probe_native_bin_version", return_value="0.2.2"):
                 assert deps.get_gcode_version() == "0.2.2"
-            with patch("gobby.utils.deps._run_cmd", return_value=None):
+            with patch("gobby.utils.deps.probe_native_bin_version", return_value=None):
                 assert deps.get_gcode_version() == "0.2.1"
 
 
@@ -73,9 +73,9 @@ def test_get_gsqz_version(tmp_path: Path) -> None:
     # CLI probe wins over stale stamps.
     with patch.object(Path, "home", return_value=tmp_path):
         with patch("gobby.utils.deps.resolve_native_bin", return_value="/usr/bin/gsqz"):
-            with patch("gobby.utils.deps._run_cmd", return_value="gsqz 1.1.1"):
+            with patch("gobby.utils.deps.probe_native_bin_version", return_value="1.1.1"):
                 assert deps.get_gsqz_version() == "1.1.1"
-            with patch("gobby.utils.deps._run_cmd", return_value=None):
+            with patch("gobby.utils.deps.probe_native_bin_version", return_value=None):
                 assert deps.get_gsqz_version() == "1.1.0"
 
 
@@ -91,9 +91,9 @@ def test_get_ghook_version(tmp_path: Path) -> None:
         ghook = tmp_path / ".gobby" / "bin" / "ghook"
         ghook.write_text("")
         ghook.chmod(0o755)
-        with patch("gobby.utils.deps._run_cmd", return_value="ghook 0.2.1"):
+        with patch("gobby.utils.deps.probe_native_bin_version", return_value="0.2.1"):
             assert deps.get_ghook_version() == "0.2.1"
-        with patch("gobby.utils.deps._run_cmd", return_value=None):
+        with patch("gobby.utils.deps.probe_native_bin_version", return_value=None):
             assert deps.get_ghook_version() == "0.2.0"
 
 
@@ -109,9 +109,9 @@ def test_get_gloc_version(tmp_path: Path) -> None:
         gloc = tmp_path / ".gobby" / "bin" / "gloc"
         gloc.write_text("")
         gloc.chmod(0o755)
-        with patch("gobby.utils.deps._run_cmd", return_value="gloc 0.1.2"):
+        with patch("gobby.utils.deps.probe_native_bin_version", return_value="0.1.2"):
             assert deps.get_gloc_version() == "0.1.2"
-        with patch("gobby.utils.deps._run_cmd", return_value=None):
+        with patch("gobby.utils.deps.probe_native_bin_version", return_value=None):
             assert deps.get_gloc_version() == "0.1.1"
 
 
@@ -127,9 +127,9 @@ def test_get_gwiki_version(tmp_path: Path) -> None:
         gwiki = tmp_path / ".gobby" / "bin" / "gwiki"
         gwiki.write_text("")
         gwiki.chmod(0o755)
-        with patch("gobby.utils.deps._run_cmd", return_value="gwiki 0.1.1"):
+        with patch("gobby.utils.deps.probe_native_bin_version", return_value="0.1.1"):
             assert deps.get_gwiki_version() == "0.1.1"
-        with patch("gobby.utils.deps._run_cmd", return_value=None):
+        with patch("gobby.utils.deps.probe_native_bin_version", return_value=None):
             assert deps.get_gwiki_version() == "0.1.0"
 
 
@@ -593,12 +593,12 @@ def test_file_read_exceptions(tmp_path: Path) -> None:
             stamp = tmp_path / ".gobby" / "bin" / ".gcode-version"
             stamp.parent.mkdir(parents=True)
             stamp.touch()
-            with patch("gobby.utils.deps._run_cmd", return_value=None):
+            with patch("gobby.utils.deps.probe_native_bin_version", return_value=None):
                 assert deps.get_gcode_version() is None
 
             sqz = tmp_path / ".gobby" / "bin" / ".gsqz-version"
             sqz.touch()
-            with patch("gobby.utils.deps._run_cmd", return_value=None):
+            with patch("gobby.utils.deps.probe_native_bin_version", return_value=None):
                 assert deps.get_gsqz_version() is None
 
     with patch("pathlib.Path.read_text", side_effect=Exception):

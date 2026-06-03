@@ -14,6 +14,7 @@ import subprocess  # nosec B404 # needed for version detection
 from pathlib import Path
 from typing import Any
 
+from gobby.install.version_probe import probe_native_bin_version
 from gobby.utils.native_bin import local_native_bin_path, resolve_native_bin
 
 logger = logging.getLogger(__name__)
@@ -62,20 +63,14 @@ def _read_version_stamp(stamp_name: str) -> str | None:
     return value or None
 
 
-def _extract_version_token(output: str) -> str | None:
-    """Extract the trailing version token from a ``--version`` style output."""
-    parts = output.split()
-    return parts[-1] if parts else output
-
-
 def _get_native_binary_version(binary_name: str, stamp_name: str | None = None) -> str | None:
     """Get a managed native binary version, preferring the resolved CLI over stamps."""
 
     binary_path = resolve_native_bin(binary_name)
     if binary_path:
-        output = _run_cmd([binary_path, "--version"])
-        if output:
-            return _extract_version_token(output)
+        version = probe_native_bin_version(binary_path)
+        if version:
+            return version
 
     return _read_version_stamp(stamp_name) if stamp_name else None
 

@@ -8,6 +8,7 @@ from typing import Any
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
 from gobby.install.bin_freshness_models import compare_versions
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
+from gobby.install.version_probe import probe_native_bin_version
 
 
 def get_latest_gcode_version(module: Any) -> str | None:
@@ -42,23 +43,12 @@ def get_installed_gcode_version(module: Any, bin_dir: Path) -> str | None:
 
 def probe_gcode_version(module: Any, gcode_path: Path) -> str | None:
     """Probe gcode binary for a version string."""
-    try:
-        result = module.subprocess.run(
-            [str(gcode_path), "--version"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (module.subprocess.SubprocessError, OSError) as e:
-        module.logger.warning("gcode: failed running --version probe: %s", e)
-        return None
-
-    if result.returncode != 0:
-        module.logger.warning("gcode: --version probe failed: %s", result.stderr.strip())
-        return None
-
-    output = (result.stdout or result.stderr).strip()
-    return output.split()[-1] if output else None
+    return probe_native_bin_version(
+        gcode_path,
+        runner=module.subprocess.run,
+        logger=module.logger,
+        label="gcode",
+    )
 
 
 def write_gcode_version_stamp(module: Any, bin_dir: Path, version: str) -> None:

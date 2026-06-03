@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import subprocess  # nosec B404 # bounded local --version probes for managed helpers
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -13,6 +12,7 @@ from gobby.install.bin_freshness_models import (
     ManagedBinSpec,
     is_at_least_version,
 )
+from gobby.install.version_probe import probe_native_bin_version
 from gobby.utils.native_bin import native_bin_dir
 
 
@@ -43,27 +43,8 @@ def _mtime_iso(path: Path) -> str | None:
         return None
 
 
-def _extract_version_token(output: str) -> str | None:
-    parts = output.split()
-    return parts[-1] if parts else None
-
-
 def _probe_binary_version(binary_path: Path) -> str | None:
-    try:
-        result = subprocess.run(  # noqa: S603
-            [str(binary_path), "--version"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-
-    if result.returncode != 0:
-        return None
-
-    output = (result.stdout or result.stderr).strip()
-    return _extract_version_token(output)
+    return probe_native_bin_version(binary_path)
 
 
 def inspect_managed_bin(spec: ManagedBinSpec, *, bin_dir: Path | None = None) -> BinInspection:

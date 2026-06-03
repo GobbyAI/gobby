@@ -8,6 +8,7 @@ from typing import Any
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
 from gobby.install.bin_freshness_models import compare_versions
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
+from gobby.install.version_probe import probe_native_bin_version
 
 _NATIVE_GHOOK_BINARY_MAGICS = (
     b"\x7fELF",
@@ -256,24 +257,13 @@ def get_ghook_method_override(module: Any) -> str | None:
 
 
 def probe_ghook_version(module: Any, ghook_path: Path) -> str | None:
-    """Probe ghook binary for version and compatibility side effects."""
-    try:
-        result = module.subprocess.run(
-            [str(ghook_path), "--version"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except Exception as e:
-        module.logger.warning("ghook: failed running --version probe: %s", e)
-        return None
-
-    if result.returncode != 0:
-        module.logger.warning("ghook: --version probe failed: %s", result.stderr.strip())
-        return None
-
-    output = (result.stdout or result.stderr).strip()
-    return output.split()[-1] if output else None
+    """Probe ghook binary for a version string."""
+    return probe_native_bin_version(
+        ghook_path,
+        runner=module.subprocess.run,
+        logger=module.logger,
+        label="ghook",
+    )
 
 
 def install_ghook(module: Any, force: bool = False) -> dict[str, Any]:
