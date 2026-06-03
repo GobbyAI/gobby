@@ -1,3 +1,4 @@
+pub(crate) mod ask;
 pub(crate) mod audit;
 pub(crate) mod backlinks;
 pub(crate) mod collect;
@@ -50,6 +51,13 @@ pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
             limit,
             include_semantic,
         } => search::execute(query, scope, limit, include_semantic),
+        Command::Ask {
+            query,
+            scope,
+            llm,
+            ai,
+            require_ai,
+        } => ask::execute(query, scope, llm, ai, require_ai),
         Command::Read { target, scope } => read::execute(target, scope),
         Command::Backlinks { page, scope } => backlinks::execute(page, scope),
         Command::LinkSuggest { scope, limit } => backlinks::execute_link_suggest(scope, limit),

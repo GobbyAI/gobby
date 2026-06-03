@@ -3,16 +3,50 @@
   "contract_version": 1,
   "summary": "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
   "global_flags": [
-    {"name": "--format", "takes_value": true, "value_name": "json|text", "allowed_values": ["json", "text"], "required": false, "repeatable": false},
-    {"name": "--quiet", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false}
+    {
+      "name": "--format",
+      "takes_value": true,
+      "value_name": "json|text",
+      "allowed_values": [
+        "json",
+        "text"
+      ],
+      "required": false,
+      "repeatable": false
+    },
+    {
+      "name": "--quiet",
+      "takes_value": false,
+      "value_name": null,
+      "allowed_values": [],
+      "required": false,
+      "repeatable": false
+    }
   ],
   "scope": {
     "flags": [
-      {"name": "--project", "takes_value": true, "value_name": "ROOT", "allowed_values": [], "required": false, "repeatable": false},
-      {"name": "--topic", "takes_value": true, "value_name": "NAME", "allowed_values": [], "required": false, "repeatable": false}
+      {
+        "name": "--project",
+        "takes_value": true,
+        "value_name": "ROOT",
+        "allowed_values": [],
+        "required": false,
+        "repeatable": false
+      },
+      {
+        "name": "--topic",
+        "takes_value": true,
+        "value_name": "NAME",
+        "allowed_values": [],
+        "required": false,
+        "repeatable": false
+      }
     ],
     "default": "detect project from current working directory; bare --project uses current directory",
-    "identity_keys": ["kind", "id"]
+    "identity_keys": [
+      "kind",
+      "id"
+    ]
   },
   "commands": [
     {
@@ -21,9 +55,27 @@
       "daemon_consumed": true,
       "positionals": [],
       "flags": [
-        {"name": "--format", "takes_value": true, "value_name": "json|text", "allowed_values": ["json", "text"], "required": false, "repeatable": false}
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
       ],
-      "json_output_keys": ["tool", "contract_version", "summary", "global_flags", "scope", "commands", "error_codes"]
+      "json_output_keys": [
+        "tool",
+        "contract_version",
+        "summary",
+        "global_flags",
+        "scope",
+        "commands",
+        "error_codes"
+      ]
     },
     {
       "name": "index",
@@ -31,18 +83,113 @@
       "daemon_consumed": true,
       "positionals": [],
       "flags": [],
-      "json_output_keys": ["command", "scope", "status", "indexed_pages", "indexed_sources"]
+      "json_output_keys": [
+        "command",
+        "scope",
+        "status",
+        "indexed_pages",
+        "indexed_sources"
+      ]
     },
     {
       "name": "search",
       "summary": "Search wiki documents in the selected scope.",
       "daemon_consumed": true,
-      "positionals": [{"name": "QUERY", "required": true, "repeatable": false}],
-      "flags": [
-        {"name": "--limit", "takes_value": true, "value_name": "N", "allowed_values": [], "required": false, "repeatable": false},
-        {"name": "--no-semantic", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false}
+      "positionals": [
+        {
+          "name": "QUERY",
+          "required": true,
+          "repeatable": false
+        }
       ],
-      "json_output_keys": ["command", "scope", "query", "limit", "results", "degradations", "path", "title", "summary", "score"]
+      "flags": [
+        {
+          "name": "--limit",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--no-semantic",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "command",
+        "scope",
+        "query",
+        "limit",
+        "results",
+        "degradations",
+        "path",
+        "title",
+        "summary",
+        "score"
+      ]
+    },
+    {
+      "name": "ask",
+      "summary": "Ask a question about wiki documents in the selected scope.",
+      "daemon_consumed": true,
+      "positionals": [
+        {
+          "name": "QUESTION",
+          "required": true,
+          "repeatable": false
+        }
+      ],
+      "flags": [
+        {
+          "name": "--llm",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--ai",
+          "takes_value": true,
+          "value_name": "auto|daemon|direct|off",
+          "allowed_values": [
+            "auto",
+            "daemon",
+            "direct",
+            "off"
+          ],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--require-ai",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "command",
+        "scope",
+        "query",
+        "status",
+        "hits",
+        "related_pages",
+        "sources",
+        "gaps",
+        "stale_candidates",
+        "suggested_questions",
+        "warnings",
+        "ai",
+        "synthesis"
+      ]
     },
     {
       "name": "read",
@@ -50,10 +197,32 @@
       "daemon_consumed": true,
       "positionals": [],
       "flags": [
-        {"name": "--path", "takes_value": true, "value_name": "PATH", "allowed_values": [], "required": false, "repeatable": false},
-        {"name": "--title", "takes_value": true, "value_name": "TITLE", "allowed_values": [], "required": false, "repeatable": false}
+        {
+          "name": "--path",
+          "takes_value": true,
+          "value_name": "PATH",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--title",
+          "takes_value": true,
+          "value_name": "TITLE",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        }
       ],
-      "json_output_keys": ["command", "scope", "path", "title", "content", "frontmatter", "citations"]
+      "json_output_keys": [
+        "command",
+        "scope",
+        "path",
+        "title",
+        "content",
+        "frontmatter",
+        "citations"
+      ]
     },
     {
       "name": "refresh",
@@ -61,55 +230,228 @@
       "daemon_consumed": true,
       "positionals": [],
       "flags": [
-        {"name": "--id", "takes_value": true, "value_name": "SOURCE_ID", "allowed_values": [], "required": false, "repeatable": true},
-        {"name": "--dry-run", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false}
+        {
+          "name": "--id",
+          "takes_value": true,
+          "value_name": "SOURCE_ID",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": true
+        },
+        {
+          "name": "--dry-run",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        }
       ],
-      "json_output_keys": ["command", "scope", "status", "results", "changed_paths", "refreshed", "failed"]
+      "json_output_keys": [
+        "command",
+        "scope",
+        "status",
+        "results",
+        "changed_paths",
+        "refreshed",
+        "failed"
+      ]
     },
     {
       "name": "ingest-file",
       "summary": "Capture a local source file into the wiki inbox.",
       "daemon_consumed": true,
-      "positionals": [{"name": "PATH", "required": true, "repeatable": false}],
-      "flags": [
-        {"name": "--no-ai", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false},
-        {"name": "--translate", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false},
-        {"name": "--target-lang", "takes_value": true, "value_name": "LANG", "allowed_values": [], "required": false, "repeatable": false},
-        {"name": "--video-frame-interval", "takes_value": true, "value_name": "SECONDS", "allowed_values": [], "required": false, "repeatable": false},
-        {"name": "--transcription-routing", "takes_value": true, "value_name": "auto|daemon|direct|off", "allowed_values": ["auto", "daemon", "direct", "off"], "required": false, "repeatable": false},
-        {"name": "--vision-routing", "takes_value": true, "value_name": "auto|daemon|direct|off", "allowed_values": ["auto", "daemon", "direct", "off"], "required": false, "repeatable": false},
-        {"name": "--text-routing", "takes_value": true, "value_name": "auto|daemon|direct|off", "allowed_values": ["auto", "daemon", "direct", "off"], "required": false, "repeatable": false}
+      "positionals": [
+        {
+          "name": "PATH",
+          "required": true,
+          "repeatable": false
+        }
       ],
-      "json_output_keys": ["command", "scope", "path", "raw_path", "source_path", "source_asset", "changed_paths", "citations"]
+      "flags": [
+        {
+          "name": "--no-ai",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--translate",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--target-lang",
+          "takes_value": true,
+          "value_name": "LANG",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--video-frame-interval",
+          "takes_value": true,
+          "value_name": "SECONDS",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--transcription-routing",
+          "takes_value": true,
+          "value_name": "auto|daemon|direct|off",
+          "allowed_values": [
+            "auto",
+            "daemon",
+            "direct",
+            "off"
+          ],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--vision-routing",
+          "takes_value": true,
+          "value_name": "auto|daemon|direct|off",
+          "allowed_values": [
+            "auto",
+            "daemon",
+            "direct",
+            "off"
+          ],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--text-routing",
+          "takes_value": true,
+          "value_name": "auto|daemon|direct|off",
+          "allowed_values": [
+            "auto",
+            "daemon",
+            "direct",
+            "off"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "command",
+        "scope",
+        "path",
+        "raw_path",
+        "source_path",
+        "source_asset",
+        "changed_paths",
+        "citations"
+      ]
     },
     {
       "name": "ingest-url",
       "summary": "Fetch URL sources into the wiki inbox.",
       "daemon_consumed": true,
-      "positionals": [{"name": "URL", "required": true, "repeatable": true}],
+      "positionals": [
+        {
+          "name": "URL",
+          "required": true,
+          "repeatable": true
+        }
+      ],
       "flags": [],
-      "json_output_keys": ["command", "scope", "results", "path", "raw_path", "raw_paths", "source_path", "changed_paths", "citations", "url", "status"]
+      "json_output_keys": [
+        "command",
+        "scope",
+        "results",
+        "path",
+        "raw_path",
+        "raw_paths",
+        "source_path",
+        "changed_paths",
+        "citations",
+        "url",
+        "status"
+      ]
     },
     {
       "name": "collect",
       "summary": "Collect recognized inbox drops into raw storage.",
       "daemon_consumed": true,
-      "positionals": [{"name": "QUERY", "required": false, "repeatable": false}],
+      "positionals": [
+        {
+          "name": "QUERY",
+          "required": false,
+          "repeatable": false
+        }
+      ],
       "flags": [],
-      "json_output_keys": ["command", "scope", "results", "changed_paths", "status"]
+      "json_output_keys": [
+        "command",
+        "scope",
+        "results",
+        "changed_paths",
+        "status"
+      ]
     },
     {
       "name": "research",
       "summary": "Dispatch research workers and checkpoint wiki research state.",
       "daemon_consumed": true,
-      "positionals": [{"name": "QUESTION", "required": false, "repeatable": false}],
-      "flags": [
-        {"name": "--source-constraints", "takes_value": true, "value_name": "TEXT", "allowed_values": [], "required": false, "repeatable": false},
-        {"name": "--agent-count", "takes_value": true, "value_name": "N", "allowed_values": [], "required": false, "repeatable": false},
-        {"name": "--task-id", "takes_value": true, "value_name": "ID", "allowed_values": [], "required": false, "repeatable": false},
-        {"name": "--resume", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false}
+      "positionals": [
+        {
+          "name": "QUESTION",
+          "required": false,
+          "repeatable": false
+        }
       ],
-      "json_output_keys": ["command", "scope", "question", "checkpoint", "accepted_notes", "changed_paths", "status"]
+      "flags": [
+        {
+          "name": "--source-constraints",
+          "takes_value": true,
+          "value_name": "TEXT",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--agent-count",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--task-id",
+          "takes_value": true,
+          "value_name": "ID",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--resume",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "command",
+        "scope",
+        "question",
+        "checkpoint",
+        "accepted_notes",
+        "changed_paths",
+        "status"
+      ]
     },
     {
       "name": "compile",
@@ -117,13 +459,56 @@
       "daemon_consumed": true,
       "positionals": [],
       "flags": [
-        {"name": "--topic", "takes_value": true, "value_name": "TOPIC", "allowed_values": [], "required": false, "repeatable": false},
-        {"name": "--outline", "takes_value": true, "value_name": "PATH", "allowed_values": [], "required": false, "repeatable": false},
-        {"name": "--target", "takes_value": true, "value_name": "PATH", "allowed_values": [], "required": false, "repeatable": false},
-        {"name": "--kind", "takes_value": true, "value_name": "article|stub", "allowed_values": [], "required": false, "repeatable": false},
-        {"name": "--output", "takes_value": true, "value_name": "PATH", "allowed_values": [], "required": false, "repeatable": false}
+        {
+          "name": "--topic",
+          "takes_value": true,
+          "value_name": "TOPIC",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--outline",
+          "takes_value": true,
+          "value_name": "PATH",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--target",
+          "takes_value": true,
+          "value_name": "PATH",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--kind",
+          "takes_value": true,
+          "value_name": "article|stub",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--output",
+          "takes_value": true,
+          "value_name": "PATH",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        }
       ],
-      "json_output_keys": ["command", "scope", "topic", "target_page", "written_path", "changed_paths", "status"]
+      "json_output_keys": [
+        "command",
+        "scope",
+        "topic",
+        "target_page",
+        "written_path",
+        "changed_paths",
+        "status"
+      ]
     },
     {
       "name": "audit",
@@ -131,7 +516,13 @@
       "daemon_consumed": true,
       "positionals": [],
       "flags": [],
-      "json_output_keys": ["command", "scope", "findings", "changed_paths", "status"]
+      "json_output_keys": [
+        "command",
+        "scope",
+        "findings",
+        "changed_paths",
+        "status"
+      ]
     },
     {
       "name": "health",
@@ -139,7 +530,13 @@
       "daemon_consumed": true,
       "positionals": [],
       "flags": [],
-      "json_output_keys": ["command", "root", "text_path", "json_path", "status"]
+      "json_output_keys": [
+        "command",
+        "root",
+        "text_path",
+        "json_path",
+        "status"
+      ]
     },
     {
       "name": "sources",
@@ -147,15 +544,37 @@
       "daemon_consumed": true,
       "positionals": [],
       "flags": [],
-      "json_output_keys": ["command", "scope", "sources", "id", "url", "path", "raw_path", "source_path"]
+      "json_output_keys": [
+        "command",
+        "scope",
+        "sources",
+        "id",
+        "url",
+        "path",
+        "raw_path",
+        "source_path"
+      ]
     },
     {
       "name": "backlinks",
       "summary": "Show backlinks for a wiki page.",
       "daemon_consumed": true,
-      "positionals": [{"name": "PAGE", "required": true, "repeatable": false}],
+      "positionals": [
+        {
+          "name": "PAGE",
+          "required": true,
+          "repeatable": false
+        }
+      ],
       "flags": [],
-      "json_output_keys": ["command", "scope", "page", "backlinks", "path", "title"]
+      "json_output_keys": [
+        "command",
+        "scope",
+        "page",
+        "backlinks",
+        "path",
+        "title"
+      ]
     },
     {
       "name": "status",
@@ -163,7 +582,13 @@
       "daemon_consumed": true,
       "positionals": [],
       "flags": [],
-      "json_output_keys": ["command", "scope", "status", "root", "vault"]
+      "json_output_keys": [
+        "command",
+        "scope",
+        "status",
+        "root",
+        "vault"
+      ]
     },
     {
       "name": "remove-source",
@@ -171,13 +596,62 @@
       "daemon_consumed": true,
       "positionals": [],
       "flags": [
-        {"name": "--id", "takes_value": true, "value_name": "SOURCE_ID", "allowed_values": [], "required": true, "repeatable": false},
-        {"name": "--dry-run", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false},
-        {"name": "--yes", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false},
-        {"name": "--keep-asset", "takes_value": false, "value_name": null, "allowed_values": [], "required": false, "repeatable": false}
+        {
+          "name": "--id",
+          "takes_value": true,
+          "value_name": "SOURCE_ID",
+          "allowed_values": [],
+          "required": true,
+          "repeatable": false
+        },
+        {
+          "name": "--dry-run",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--yes",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--keep-asset",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        }
       ],
-      "json_output_keys": ["command", "scope", "id", "removed_manifest", "removed_raw_asset", "changed_paths"]
+      "json_output_keys": [
+        "command",
+        "scope",
+        "id",
+        "removed_manifest",
+        "removed_raw_asset",
+        "changed_paths"
+      ]
     }
   ],
-  "error_codes": ["not_implemented", "invalid_scope", "config", "io", "json", "yaml", "registry", "daemon", "invalid_input", "not_found", "index", "search", "setup"]
+  "error_codes": [
+    "not_implemented",
+    "invalid_scope",
+    "config",
+    "io",
+    "json",
+    "yaml",
+    "registry",
+    "daemon",
+    "invalid_input",
+    "not_found",
+    "index",
+    "search",
+    "setup"
+  ]
 }

@@ -99,6 +99,25 @@ impl SearchOutput {
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct AskOutput {
+    pub command: &'static str,
+    pub scope: ScopeIdentity,
+    pub query: String,
+    pub status: &'static str,
+    pub hits: Vec<SearchResultOutput>,
+    pub related_pages: Vec<AskRelatedPageOutput>,
+    pub sources: Vec<String>,
+    pub gaps: Vec<String>,
+    pub stale_candidates: Vec<String>,
+    pub suggested_questions: Vec<String>,
+    pub warnings: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ai: Option<AskAiOutput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub synthesis: Option<AskSynthesisOutput>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct SearchResultOutput {
     pub title: Option<String>,
     pub wiki_page: PathBuf,
@@ -107,6 +126,29 @@ pub struct SearchResultOutput {
     pub score: f64,
     pub sources: Vec<String>,
     pub explanations: Vec<SearchSourceExplanationOutput>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct AskRelatedPageOutput {
+    pub title: Option<String>,
+    pub path: PathBuf,
+    pub score: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct AskAiOutput {
+    pub requested: bool,
+    pub requested_mode: &'static str,
+    pub route: &'static str,
+    pub status: &'static str,
+    pub model: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct AskSynthesisOutput {
+    pub answer: String,
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]

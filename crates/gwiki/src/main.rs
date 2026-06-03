@@ -77,6 +77,8 @@ enum CliCommand {
     RemoveSource(RemoveSourceArgs),
     /// Search wiki documents in the selected scope.
     Search(SearchArgs),
+    /// Ask a question about wiki documents in the selected scope.
+    Ask(AskArgs),
     /// Read a wiki page or document in the selected scope.
     Read(ReadArgs),
     /// Show backlinks for a wiki page.
@@ -173,6 +175,24 @@ struct SearchArgs {
     /// Disable semantic vector search for this query.
     #[arg(long = "no-semantic")]
     no_semantic: bool,
+}
+
+#[derive(Debug, Args)]
+struct AskArgs {
+    #[arg(value_name = "QUESTION")]
+    question: String,
+
+    /// Synthesize an answer from retrieved wiki hits.
+    #[arg(long)]
+    llm: bool,
+
+    /// AI routing override for synthesis. Inert unless --llm is set.
+    #[arg(long, default_value = "auto", value_name = "auto|daemon|direct|off")]
+    ai: AiRouting,
+
+    /// Fail if synthesis is requested but no AI route succeeds.
+    #[arg(long = "require-ai")]
+    require_ai: bool,
 }
 
 #[derive(Debug, Args)]
@@ -481,6 +501,13 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             limit: args.limit,
             include_semantic: !args.no_semantic,
         }),
+        CliCommand::Ask(args) => Ok(Command::Ask {
+            query: args.question,
+            scope,
+            llm: args.llm,
+            ai: args.ai,
+            require_ai: args.require_ai,
+        }),
         CliCommand::Read(args) => {
             let target = match (args.path, args.title) {
                 (Some(path), None) => ReadTarget::Path(path),
@@ -663,6 +690,36 @@ mod tests {
             context.bindings.audio_translate.target_lang.as_deref(),
             Some("es")
         );
+    }
+
+    #[test]
+    fn ask_cli_flags_map_to_command_options() {
+        let command = command_from_cli(
+            CliCommand::Ask(AskArgs {
+                question: "How do hooks work?".to_string(),
+                llm: true,
+                ai: AiRouting::Direct,
+                require_ai: true,
+            }),
+            ScopeSelection::topic("docs"),
+        )
+        .expect("map ask command");
+
+        let Command::Ask {
+            query,
+            scope,
+            llm,
+            ai,
+            require_ai,
+        } = command
+        else {
+            panic!("expected ask command");
+        };
+        assert_eq!(query, "How do hooks work?");
+        assert_eq!(scope, ScopeSelection::topic("docs"));
+        assert!(llm);
+        assert_eq!(ai, AiRouting::Direct);
+        assert!(require_ai);
     }
 
     #[test]

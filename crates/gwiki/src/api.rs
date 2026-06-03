@@ -51,6 +51,13 @@ pub enum Command {
         limit: usize,
         include_semantic: bool,
     },
+    Ask {
+        query: String,
+        scope: ScopeSelection,
+        llm: bool,
+        ai: AiRouting,
+        require_ai: bool,
+    },
     Read {
         target: ReadTarget,
         scope: ScopeSelection,

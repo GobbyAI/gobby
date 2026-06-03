@@ -22,6 +22,15 @@ pub(crate) fn execute(
     limit: usize,
     include_semantic: bool,
 ) -> Result<CommandOutcome, WikiError> {
+    render(retrieve(query, selection, limit, include_semantic)?)
+}
+
+pub(crate) fn retrieve(
+    query: String,
+    selection: ScopeSelection,
+    limit: usize,
+    include_semantic: bool,
+) -> Result<SearchOutput, WikiError> {
     if let Some(database_url) = database_url_from_env() {
         let scope = resolve_command_scope(&selection)?;
         return run_search_attached(
@@ -62,7 +71,7 @@ fn run_search_attached(
     query: String,
     limit: usize,
     include_semantic: bool,
-) -> Result<CommandOutcome, WikiError> {
+) -> Result<SearchOutput, WikiError> {
     let mut conn = gobby_core::postgres::connect_readonly(database_url).map_err(|error| {
         WikiError::Config {
             detail: format!("failed to connect to PostgreSQL for gwiki search: {error}"),
@@ -183,7 +192,7 @@ fn run_search_with_backends<B, S, G>(
     semantic_backend: &mut S,
     graph_backend: &mut G,
     input: SearchExecutionInput,
-) -> Result<CommandOutcome, WikiError>
+) -> Result<SearchOutput, WikiError>
 where
     B: wiki_search::bm25::Bm25SearchBackend,
     S: wiki_search::semantic::SemanticSearchBackend,
@@ -230,14 +239,13 @@ where
         .iter()
         .map(degradation_label)
         .collect::<Vec<_>>();
-    let output = SearchOutput::new(
+    Ok(SearchOutput::new(
         input.output_scope,
         input.query,
         input.limit,
         results,
         degradations,
-    );
-    render(output)
+    ))
 }
 
 fn render(output: SearchOutput) -> Result<CommandOutcome, WikiError> {
