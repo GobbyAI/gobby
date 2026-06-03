@@ -87,6 +87,7 @@ pub(crate) trait SourceIngestor {
 pub(crate) struct NoteWriteOutcome {
     pub note: AcceptedResearchNote,
     pub created: bool,
+    pub write_conflict: bool,
 }
 
 pub(crate) trait ResearchNoteWriter {
@@ -168,6 +169,7 @@ pub(crate) struct ResearchLoopResult {
     pub stop_reason: ResearchStopReason,
     pub steps_used: usize,
     pub tokens_used: usize,
+    pub write_conflict: bool,
     pub sources_added: Vec<String>,
     pub gaps: Vec<ResearchGap>,
     pub warnings: Vec<String>,
@@ -431,6 +433,7 @@ impl<'a> ResearchLoop<'a> {
         if outcome.created {
             state.changed_paths.push(outcome.note.path.clone());
         }
+        state.write_conflict |= outcome.write_conflict;
         if !state
             .accepted_notes
             .iter()
@@ -532,6 +535,7 @@ impl<'a> ResearchLoop<'a> {
 struct LoopState {
     steps_used: usize,
     tokens_used: usize,
+    write_conflict: bool,
     sources_added: Vec<String>,
     known_sources: HashSet<String>,
     observations: Vec<ResearchObservation>,
@@ -582,6 +586,7 @@ impl LoopState {
             stop_reason,
             steps_used: self.steps_used,
             tokens_used: self.tokens_used,
+            write_conflict: self.write_conflict,
             sources_added: self.sources_added,
             gaps: self.gaps,
             warnings: self.warnings,
@@ -874,6 +879,7 @@ mod tests {
                     path: PathBuf::from(format!("raw/research/{}.md", note.title)),
                 },
                 created: true,
+                write_conflict: false,
             })
         }
     }

@@ -55,10 +55,32 @@ impl VisionResult {
 pub struct TextResult {
     pub text: String,
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TokenUsage>,
     /// Provider-specific metadata preserved for diagnostics and callers that
     /// need backend details without depending on a transport-specific schema.
     #[serde(default)]
     pub metadata: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenUsage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_tokens: Option<usize>,
+}
+
+impl TokenUsage {
+    pub fn token_count(&self) -> Option<usize> {
+        self.total_tokens.or_else(|| {
+            self.input_tokens
+                .zip(self.output_tokens)
+                .map(|(input, output)| input.saturating_add(output))
+        })
+    }
 }
 
 impl TextResult {

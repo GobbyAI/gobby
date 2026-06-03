@@ -87,6 +87,10 @@ pub struct ResearchOutcome {
     pub stop_reason: ResearchStopReason,
     pub steps_used: usize,
     pub tokens_used: usize,
+    pub max_steps: usize,
+    pub max_tokens: usize,
+    pub max_sources: usize,
+    pub write_conflict: bool,
     pub sources_added: Vec<String>,
     pub findings: Vec<AuditFinding>,
     pub gaps: Vec<ResearchGap>,
@@ -203,6 +207,10 @@ pub fn run(options: ResearchOptions) -> Result<ResearchOutcome, WikiError> {
             stop_reason: loop_result.stop_reason,
             steps_used: loop_result.steps_used,
             tokens_used: loop_result.tokens_used,
+            max_steps: options.max_steps,
+            max_tokens: options.max_tokens,
+            max_sources: options.max_sources,
+            write_conflict: loop_result.write_conflict,
             sources_added: loop_result.sources_added,
             findings: Vec::new(),
             gaps: loop_result.gaps,
@@ -236,6 +244,10 @@ pub fn run(options: ResearchOptions) -> Result<ResearchOutcome, WikiError> {
         stop_reason,
         steps_used: usize::from(options.audit),
         tokens_used: 0,
+        max_steps: options.max_steps,
+        max_tokens: options.max_tokens,
+        max_sources: options.max_sources,
+        write_conflict: false,
         sources_added: Vec::new(),
         findings,
         gaps: Vec::new(),
@@ -358,13 +370,20 @@ impl ResearchModel for GcoreResearchModel {
         );
         let route = effective_route(&context, AiCapability::TextGenerate);
         let prompt = render_model_prompt(&request);
+        let max_tokens = request.max_tokens.saturating_sub(request.tokens_used);
         let result = match route {
-            AiRouting::Direct => {
-                text::generate_text(&context, &prompt, Some(model_system_prompt()))
-            }
-            AiRouting::Daemon => {
-                daemon::generate_via_daemon(&context, &prompt, Some(model_system_prompt()))
-            }
+            AiRouting::Direct => text::generate_text_with_max_tokens(
+                &context,
+                &prompt,
+                Some(model_system_prompt()),
+                Some(max_tokens),
+            ),
+            AiRouting::Daemon => daemon::generate_via_daemon_with_max_tokens(
+                &context,
+                &prompt,
+                Some(model_system_prompt()),
+                Some(max_tokens),
+            ),
             AiRouting::Auto | AiRouting::Off => {
                 return self
                     .ai_unavailable(format!("text generation route '{route:?}' is unavailable"));
@@ -377,9 +396,16 @@ impl ResearchModel for GcoreResearchModel {
         };
         let action =
             parse_model_action(&result.text).map_err(ResearchModelError::InvalidResponse)?;
+        let tokens_used = result
+            .usage
+            .as_ref()
+            .and_then(|usage| usage.token_count())
+            .unwrap_or_else(|| {
+                estimate_tokens(&prompt).saturating_add(estimate_tokens(&result.text))
+            });
         Ok(ModelDecision {
             action,
-            tokens_used: estimate_tokens(&prompt).saturating_add(estimate_tokens(&result.text)),
+            tokens_used,
         })
     }
 }
@@ -490,6 +516,7 @@ impl ResearchNoteWriter for AcceptedNoteWriter<'_> {
         Ok(NoteWriteOutcome {
             note: accepted.note,
             created: accepted.created,
+            write_conflict: accepted.write_conflict,
         })
     }
 }
@@ -575,7 +602,7 @@ fn dedup_strings(values: Vec<String>) -> Vec<String> {
 
 fn scope_selection_from_research_scope(scope: &ResearchScope) -> ScopeSelection {
     match scope {
-        ResearchScope::Project { root } => ScopeSelection::project(root.clone()),
+        ResearchScope::Project { root, .. } => ScopeSelection::project(root.clone()),
         ResearchScope::Topic { name, .. } => ScopeSelection::topic(name.clone()),
     }
 }
@@ -701,7 +728,9 @@ pub fn resolve_scope(selection: &ScopeSelection) -> Result<ResearchScope, WikiEr
 pub fn research_scope_from_resolved(scope: &scope::ResolvedScope) -> ResearchScope {
     match scope.kind() {
         ScopeKind::Topic { name } => ResearchScope::topic(name.clone(), scope.root().to_path_buf()),
-        ScopeKind::Project { .. } => ResearchScope::project(scope.root().to_path_buf()),
+        ScopeKind::Project { project_id, .. } => {
+            ResearchScope::project_for_id(project_id.clone(), scope.root().to_path_buf())
+        }
     }
 }
 
@@ -718,6 +747,7 @@ struct AcceptedNoteFrontmatter<'a> {
 struct AcceptedNoteWrite {
     note: AcceptedResearchNote,
     created: bool,
+    write_conflict: bool,
 }
 
 fn write_accepted_note(
@@ -740,21 +770,29 @@ fn write_accepted_note(
                 path,
             },
             created: false,
+            write_conflict: false,
         });
     }
 
-    let path = match create_materializing_research_note(&research_dir, session_id, note, &draft_id)?
-    {
-        AcceptedNoteSlot::Existing(path) => {
+    let slot = create_materializing_research_note(&research_dir, session_id, note, &draft_id)?;
+    let (path, write_conflict) = match slot {
+        AcceptedNoteSlot::Existing {
+            path,
+            write_conflict,
+        } => {
             return Ok(AcceptedNoteWrite {
                 note: AcceptedResearchNote {
                     title: note.title.clone(),
                     path,
                 },
                 created: false,
+                write_conflict,
             });
         }
-        AcceptedNoteSlot::Materializing(path) => path,
+        AcceptedNoteSlot::Materializing {
+            path,
+            write_conflict,
+        } => (path, write_conflict),
     };
 
     let body = render_accepted_note_body(session_id, note, &draft_id, "completed", true)?;
@@ -774,12 +812,13 @@ fn write_accepted_note(
             path,
         },
         created: true,
+        write_conflict,
     })
 }
 
 enum AcceptedNoteSlot {
-    Existing(PathBuf),
-    Materializing(PathBuf),
+    Existing { path: PathBuf, write_conflict: bool },
+    Materializing { path: PathBuf, write_conflict: bool },
 }
 
 enum ResearchNoteFileState {
@@ -826,6 +865,7 @@ fn create_materializing_research_note(
 ) -> Result<AcceptedNoteSlot, WikiError> {
     let title = &note.title;
     let slug = slugify(title);
+    let mut write_conflict = false;
     for attempt in 1..=MAX_RESEARCH_NOTE_SUFFIX_ATTEMPTS {
         let file_name = if attempt == 1 {
             format!("{slug}.md")
@@ -835,7 +875,10 @@ fn create_materializing_research_note(
         let path = research_dir.join(file_name);
         match research_note_file_state(&path, draft_id)? {
             ResearchNoteFileState::CompletedMatching => {
-                return Ok(AcceptedNoteSlot::Existing(path));
+                return Ok(AcceptedNoteSlot::Existing {
+                    path,
+                    write_conflict,
+                });
             }
             ResearchNoteFileState::MaterializingMatching { stale } if stale => {
                 fs::remove_file(&path).map_err(|error| WikiError::Io {
@@ -846,11 +889,17 @@ fn create_materializing_research_note(
             }
             ResearchNoteFileState::MaterializingMatching { .. } => {
                 if let Some(path) = wait_for_materializing_research_note(&path, draft_id, title)? {
-                    return Ok(AcceptedNoteSlot::Existing(path));
+                    return Ok(AcceptedNoteSlot::Existing {
+                        path,
+                        write_conflict,
+                    });
                 }
                 continue;
             }
-            ResearchNoteFileState::Occupied => continue,
+            ResearchNoteFileState::Occupied => {
+                write_conflict = true;
+                continue;
+            }
             ResearchNoteFileState::Missing => {}
         }
 
@@ -873,9 +922,15 @@ fn create_materializing_research_note(
                         source: error,
                     });
                 }
-                return Ok(AcceptedNoteSlot::Materializing(path));
+                return Ok(AcceptedNoteSlot::Materializing {
+                    path,
+                    write_conflict,
+                });
             }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                write_conflict = true;
+                continue;
+            }
             Err(error) => {
                 return Err(WikiError::Io {
                     action: "create accepted research note marker",
@@ -1309,6 +1364,10 @@ mod tests {
             .first()
             .expect("accepted note recorded");
         assert_eq!(outcome.session.dispatch_task_id, None);
+        assert_eq!(outcome.max_steps, 0);
+        assert_eq!(outcome.max_tokens, 24_000);
+        assert_eq!(outcome.max_sources, 8);
+        assert!(!outcome.write_conflict);
         assert!(note.path.starts_with(scope.root().join("raw/research")));
         assert_eq!(
             note.path.file_name().and_then(|name| name.to_str()),
@@ -1361,6 +1420,8 @@ mod tests {
             second.note.path.file_name().and_then(|name| name.to_str()),
             Some("same-title-2.md")
         );
+        assert!(!first.write_conflict);
+        assert!(second.write_conflict);
     }
 
     #[test]
@@ -1378,6 +1439,8 @@ mod tests {
 
         assert!(first.created);
         assert!(!second.created);
+        assert!(!first.write_conflict);
+        assert!(!second.write_conflict);
         assert_eq!(first.note.path, second.note.path);
         let index = std::fs::read_to_string(root.join("raw/INDEX.md")).expect("raw index");
         assert_eq!(index.matches("raw/research/same-title.md").count(), 1);
@@ -1424,6 +1487,26 @@ mod tests {
 
         assert!(!accepted.created);
         assert_eq!(accepted.note.path, path);
+    }
+
+    #[test]
+    fn research_scope_from_resolved_carries_project_id() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let resolved = scope::ResolvedScope::project(
+            "project-123".to_string(),
+            temp.path().to_path_buf(),
+            temp.path().join(".gwiki"),
+        );
+
+        let scope = research_scope_from_resolved(&resolved);
+
+        match scope {
+            ResearchScope::Project { project_id, root } => {
+                assert_eq!(project_id, "project-123");
+                assert_eq!(root, temp.path().join(".gwiki"));
+            }
+            ResearchScope::Topic { .. } => panic!("expected project scope"),
+        }
     }
 
     #[test]

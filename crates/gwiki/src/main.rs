@@ -415,6 +415,7 @@ fn is_cli_subcommand(value: &str) -> bool {
             | "sources"
             | "remove-source"
             | "search"
+            | "ask"
             | "read"
             | "backlinks"
             | "link-suggest"
@@ -662,6 +663,67 @@ mod tests {
     use gobby_core::config::{AiRouting, EnvOnlySource};
 
     use super::*;
+
+    fn cli_subcommands() -> &'static [&'static str] {
+        &[
+            "init",
+            "contract",
+            "setup",
+            "index",
+            "collect",
+            "ingest-file",
+            "ingest-url",
+            "refresh",
+            "sources",
+            "remove-source",
+            "search",
+            "ask",
+            "read",
+            "backlinks",
+            "link-suggest",
+            "research",
+            "compile",
+            "export",
+            "audit",
+            "lint",
+            "health",
+            "status",
+        ]
+    }
+
+    #[test]
+    fn project_flag_normalization_handles_every_subcommand() {
+        for subcommand in cli_subcommands() {
+            let normalized = normalize_project_flag_args(["gwiki", "--project", subcommand]);
+            assert_eq!(
+                normalized,
+                vec![
+                    OsString::from("gwiki"),
+                    OsString::from("--project"),
+                    OsString::from("."),
+                    OsString::from(subcommand),
+                ],
+                "bare --project should receive cwd before {subcommand}"
+            );
+        }
+    }
+
+    #[test]
+    fn attached_project_flag_preserves_every_subcommand() {
+        for subcommand in cli_subcommands() {
+            let normalized =
+                normalize_project_flag_args(["gwiki", "--project=/tmp/wiki-project", subcommand]);
+            assert_eq!(
+                normalized,
+                vec![
+                    OsString::from("gwiki"),
+                    OsString::from("--project=/tmp/wiki-project"),
+                    OsString::from(subcommand),
+                ],
+                "attached --project value should stay attached before {subcommand}"
+            );
+        }
+    }
 
     #[test]
     fn ingest_file_cli_flags_map_to_command_options() {

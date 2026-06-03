@@ -79,7 +79,9 @@ pub(crate) fn resolve_command_scope(
 
 pub(crate) fn research_scope_identity(scope: &session::ResearchScope) -> ScopeIdentity {
     match scope {
-        session::ResearchScope::Project { .. } => ScopeIdentity::project(DEFAULT_PROJECT_ID),
+        session::ResearchScope::Project { project_id, .. } => {
+            ScopeIdentity::project(project_id.clone())
+        }
         session::ResearchScope::Topic { name, .. } => ScopeIdentity::topic(name.clone()),
     }
 }

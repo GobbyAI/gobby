@@ -141,6 +141,15 @@ pub fn generate_via_daemon(
     prompt: &str,
     system: Option<&str>,
 ) -> Result<TextResult, AiError> {
+    generate_via_daemon_with_max_tokens(cfg, prompt, system, None)
+}
+
+pub fn generate_via_daemon_with_max_tokens(
+    cfg: &AiContext,
+    prompt: &str,
+    system: Option<&str>,
+    max_tokens: Option<usize>,
+) -> Result<TextResult, AiError> {
     let capability = AiCapability::TextGenerate;
     let binding = cfg.binding(capability);
     let client = daemon_client()?;
@@ -152,6 +161,7 @@ pub fn generate_via_daemon(
         binding.provider.as_deref(),
         binding.model.as_deref(),
         cfg.project_id.as_deref(),
+        max_tokens,
     );
     let _permit = cfg.limiter.acquire();
 
@@ -296,6 +306,7 @@ fn text_request_body(
     provider: Option<&str>,
     model: Option<&str>,
     project_id: Option<&str>,
+    max_tokens: Option<usize>,
 ) -> Value {
     let mut body = Map::new();
     body.insert("prompt".to_string(), Value::String(prompt.to_string()));
@@ -303,6 +314,9 @@ fn text_request_body(
     insert_optional(&mut body, "provider", provider);
     insert_optional(&mut body, "model", model);
     insert_optional(&mut body, "project_id", project_id);
+    if let Some(max_tokens) = max_tokens.filter(|value| *value > 0) {
+        body.insert("max_tokens".to_string(), Value::from(max_tokens));
+    }
     Value::Object(body)
 }
 
@@ -468,13 +482,17 @@ mod tests {
 
     #[test]
     fn forwards_provider_model_and_optional_project_id() {
-        let (port, request) = spawn_server(r#"{"text":"ok","model":"daemon-model"}"#);
+        let (port, request) = spawn_server(
+            r#"{"text":"ok","model":"daemon-model","usage":{"input_tokens":3,"output_tokens":4,"total_tokens":7}}"#,
+        );
         let home = temp_home();
         let _env = EnvGuard::set_home(home.path());
         write_daemon_files(home.path(), port, "text-token");
         let cfg = test_context(Some("project-123"));
 
-        let result = generate_via_daemon(&cfg, "Write a title", Some("Be brief")).unwrap();
+        let result =
+            generate_via_daemon_with_max_tokens(&cfg, "Write a title", Some("Be brief"), Some(64))
+                .unwrap();
         let request = request.join().unwrap().unwrap();
         let body = request_body_json(&request);
 
@@ -484,7 +502,12 @@ mod tests {
         assert_eq!(body["project_id"], "project-123");
         assert_eq!(body["prompt"], "Write a title");
         assert_eq!(body["system"], "Be brief");
+        assert_eq!(body["max_tokens"], 64);
         assert_eq!(result.text, "ok");
+        assert_eq!(
+            result.usage.as_ref().and_then(|usage| usage.token_count()),
+            Some(7)
+        );
 
         let (port, request) = spawn_server(r#"{"text":"ok"}"#);
         write_daemon_files(home.path(), port, "text-token");

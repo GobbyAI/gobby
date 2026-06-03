@@ -110,6 +110,86 @@ pub fn contract() -> CliContract {
                     "ai_enabled",
                 ],
             },
+            CommandContract {
+                name: "graph sync-file",
+                summary: "Sync one indexed file into the code-index graph projection.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![
+                    FlagContract::value("--file", "FILE"),
+                    FlagContract::switch("--allow-missing-indexed-file"),
+                    format_flag(),
+                ],
+                json_output_keys: vec![
+                    "status",
+                    "project_id",
+                    "file",
+                    "relationships_written",
+                    "skipped",
+                    "summary",
+                ],
+            },
+            CommandContract {
+                name: "graph overview",
+                summary: "Show an overview graph for the current project.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![FlagContract::value("--limit", "N"), format_flag()],
+                json_output_keys: graph_payload_keys(),
+            },
+            CommandContract {
+                name: "graph file",
+                summary: "Show graph nodes and links for one indexed file.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![FlagContract::value("--file", "FILE"), format_flag()],
+                json_output_keys: graph_payload_keys(),
+            },
+            CommandContract {
+                name: "graph neighbors",
+                summary: "Show graph neighbors for one symbol ID.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![
+                    FlagContract::value("--symbol-id", "SYMBOL_ID"),
+                    FlagContract::value("--limit", "N"),
+                    format_flag(),
+                ],
+                json_output_keys: graph_payload_keys(),
+            },
+            CommandContract {
+                name: "graph blast-radius",
+                summary: "Show transitive graph impact for a symbol ID or file path.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![
+                    FlagContract::value("--symbol-id", "SYMBOL_ID"),
+                    FlagContract::value("--file", "FILE"),
+                    FlagContract::value("--depth", "N"),
+                    FlagContract::value("--limit", "N"),
+                    format_flag(),
+                ],
+                json_output_keys: graph_payload_keys(),
+            },
+            CommandContract {
+                name: "graph clear",
+                summary: "Clear the current project's code-index graph projection.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![
+                    FlagContract::value("--project-id", "PROJECT_ID"),
+                    format_flag(),
+                ],
+                json_output_keys: graph_lifecycle_keys(),
+            },
+            CommandContract {
+                name: "graph rebuild",
+                summary: "Rebuild the current project's code-index graph projection from PostgreSQL facts.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![format_flag()],
+                json_output_keys: graph_lifecycle_keys(),
+            },
         ],
         error_codes: vec![
             "invalid_input",
@@ -168,5 +248,23 @@ fn contract_keys() -> Vec<&'static str> {
         "scope",
         "commands",
         "error_codes",
+    ]
+}
+
+fn graph_payload_keys() -> Vec<&'static str> {
+    vec!["nodes", "links", "summary"]
+}
+
+fn graph_lifecycle_keys() -> Vec<&'static str> {
+    vec![
+        "status",
+        "action",
+        "project_id",
+        "synced_files",
+        "synced_symbols",
+        "synced_relationships",
+        "deleted_nodes",
+        "deleted_relationships",
+        "summary",
     ]
 }

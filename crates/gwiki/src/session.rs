@@ -12,13 +12,27 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ResearchScope {
-    Project { root: PathBuf },
-    Topic { name: String, root: PathBuf },
+    Project {
+        #[serde(default = "default_project_id")]
+        project_id: String,
+        root: PathBuf,
+    },
+    Topic {
+        name: String,
+        root: PathBuf,
+    },
 }
 
 impl ResearchScope {
     pub fn project(root: impl Into<PathBuf>) -> Self {
-        Self::Project { root: root.into() }
+        Self::project_for_id(default_project_id(), root)
+    }
+
+    pub fn project_for_id(project_id: impl Into<String>, root: impl Into<PathBuf>) -> Self {
+        Self::Project {
+            project_id: project_id.into(),
+            root: root.into(),
+        }
     }
 
     pub fn topic(name: impl Into<String>, root: impl Into<PathBuf>) -> Self {
@@ -30,7 +44,7 @@ impl ResearchScope {
 
     pub fn root(&self) -> &Path {
         match self {
-            Self::Project { root } | Self::Topic { root, .. } => root,
+            Self::Project { root, .. } | Self::Topic { root, .. } => root,
         }
     }
 }
@@ -39,9 +53,15 @@ impl From<&ResolvedScope> for ResearchScope {
     fn from(scope: &ResolvedScope) -> Self {
         match scope.kind() {
             ScopeKind::Topic { name } => Self::topic(name.clone(), scope.root().to_path_buf()),
-            ScopeKind::Project { .. } => Self::project(scope.root().to_path_buf()),
+            ScopeKind::Project { project_id, .. } => {
+                Self::project_for_id(project_id.clone(), scope.root().to_path_buf())
+            }
         }
     }
+}
+
+fn default_project_id() -> String {
+    "current".to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
