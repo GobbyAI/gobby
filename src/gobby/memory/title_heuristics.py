@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
 from pathlib import Path
@@ -173,48 +172,55 @@ async def _heuristic_title_from_transcript(
     transcript_path: str | None,
     source: str | None,
     *,
-    max_turns: int = 200,
+    max_lines: int = 600,
 ) -> str | None:
-    """Derive a heuristic title from the first meaningful user prompt.
+    """Derive a heuristic title from the transcript's opening user prompt.
 
-    Reads the transcript's current segment (since the last ``/clear``) via the
-    shared parser registry and feeds the opening non-lifecycle user prompt to
-    :func:`_build_heuristic_title`. LLM-free; the resilient backstop for sessions
-    whose per-turn title paths never landed (notably interactive Claude sessions
-    whose stops are perpetually blocked). Returns ``None`` when the transcript is
-    missing, empty, or yields no usable prompt.
+    Parses the transcript from the **beginning** via the provider parser
+    (:meth:`TranscriptParser.parse_lines`) and feeds the first meaningful user
+    text message — ``role == "user"`` and ``content_type == "text"``, skipping
+    lifecycle commands and tool-result/non-text records — to
+    :func:`_build_heuristic_title`. LLM-free; the provider-agnostic backstop for
+    sessions whose per-turn title paths never landed. Returns ``None`` when the
+    transcript is missing, empty, or yields no usable opening prompt.
+
+    Only the opening ``max_lines`` of the transcript are scanned: a session's
+    first user prompt is always near the start, so this bounds work on long
+    transcripts without changing the result. (The previous implementation read
+    the *last* window via ``extract_turns_since_clear`` and surfaced only
+    assistant turns, so it never found the opener on real transcripts.)
     """
     if not transcript_path or not Path(transcript_path).exists():
         return None
     try:
-        from gobby.sessions.transcripts import get_parser
+        from gobby.sessions.transcripts import ParsedMessage, get_parser
 
         parser = get_parser(source or "")
 
         def _read_lines() -> list[str]:
+            lines: list[str] = []
             with open(transcript_path, encoding="utf-8") as f:
-                return f.readlines()
+                for line in f:
+                    lines.append(line)
+                    if len(lines) >= max_lines:
+                        break
+            return lines
 
-        turns: list[dict[str, Any]] = []
-        for line in await asyncio.to_thread(_read_lines):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                turns.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-        segment = parser.extract_turns_since_clear(turns, max_turns=max_turns) if turns else []
-        if not segment:
+        lines = await asyncio.to_thread(_read_lines)
+        if not lines:
             return None
-        # Large num_pairs keeps every message, so the first user one is the opener.
-        for msg in parser.extract_last_messages(segment, num_pairs=len(segment) + 1):
-            if msg.get("role") != "user":
+
+        for record in parser.parse_lines(lines):
+            if not isinstance(record, ParsedMessage):
                 continue
-            content = str(msg.get("content") or "")
+            if record.role != "user" or record.content_type != "text":
+                continue
+            content = (
+                record.content if isinstance(record.content, str) else str(record.content or "")
+            )
             stripped = content.strip().lower()
             if not stripped or any(
-                stripped == c or stripped.startswith(c + " ") for c in _LIFECYCLE_CMDS
+                stripped == cmd or stripped.startswith(cmd + " ") for cmd in _LIFECYCLE_CMDS
             ):
                 continue
             title = _build_heuristic_title(content)

@@ -291,8 +291,40 @@ class TestBootstrapSessionTitle:
         session_manager.update_title.assert_not_called()
 
 
+def _claude_user_record(content: object, idx: int = 0) -> dict[str, object]:
+    """Build a realistic Claude transcript user record (full envelope)."""
+    return {
+        "parentUuid": None,
+        "isSidechain": False,
+        "userType": "external",
+        "cwd": "/projects/test",
+        "sessionId": "sess",
+        "version": "2.1.160",
+        "type": "user",
+        "message": {"role": "user", "content": content},
+        "uuid": f"u-{idx}",
+        "timestamp": "2026-06-01T10:00:00.000Z",
+    }
+
+
+def _claude_assistant_record(text: str, idx: int = 0) -> dict[str, object]:
+    """Build a realistic Claude transcript assistant text record (full envelope)."""
+    return {
+        "parentUuid": None,
+        "isSidechain": False,
+        "userType": "external",
+        "cwd": "/projects/test",
+        "sessionId": "sess",
+        "version": "2.1.160",
+        "type": "assistant",
+        "message": {"role": "assistant", "content": [{"type": "text", "text": text}]},
+        "uuid": f"a-{idx}",
+        "timestamp": "2026-06-01T10:00:00.000Z",
+    }
+
+
 class TestHeuristicTitleFromTranscript:
-    """Tests for _heuristic_title_from_transcript (real Claude fixture)."""
+    """Tests for _heuristic_title_from_transcript (opening-prompt extraction)."""
 
     @pytest.mark.asyncio
     async def test_extracts_first_user_prompt_from_real_fixture(self) -> None:
@@ -307,19 +339,49 @@ class TestHeuristicTitleFromTranscript:
         assert await _heuristic_title_from_transcript(None, "claude") is None
 
     @pytest.mark.asyncio
-    async def test_skips_lifecycle_and_tool_results(self, tmp_path) -> None:
+    async def test_skips_lifecycle_and_tool_results(self, tmp_path: Path) -> None:
         import json
 
         transcript = tmp_path / "transcript.jsonl"
-        turns = [
-            {"message": {"role": "user", "content": "/clear"}},
-            {"message": {"role": "user", "content": [{"type": "tool_result", "content": "x"}]}},
-            {"message": {"role": "user", "content": "Refactor the dispatcher rules"}},
+        records = [
+            _claude_user_record("/clear", idx=1),
+            _claude_user_record(
+                [{"type": "tool_result", "tool_use_id": "t1", "content": "x"}], idx=2
+            ),
+            _claude_user_record("Refactor the dispatcher rules", idx=3),
         ]
-        transcript.write_text("\n".join(json.dumps(t) for t in turns))
+        transcript.write_text("\n".join(json.dumps(r) for r in records))
 
         title = await _heuristic_title_from_transcript(str(transcript), "claude")
         assert title == "Refactor the dispatcher rules"
+
+    @pytest.mark.asyncio
+    async def test_opening_prompt_wins_on_long_transcript(self, tmp_path: Path) -> None:
+        """The opening prompt wins even with a mid-session /clear, an
+        assistant-heavy tail, tool_result user records, and >200 later turns —
+        the exact shape the old last-window implementation returned None on.
+        """
+        import json
+
+        records: list[dict[str, object]] = [
+            _claude_user_record("Add pagination to the search endpoint", idx=0),
+            _claude_user_record("/clear", idx=1),
+        ]
+        for i in range(250):
+            records.append(_claude_assistant_record(f"Working on step {i}.", idx=i))
+            records.append(
+                _claude_user_record(
+                    [{"type": "tool_result", "tool_use_id": f"t{i}", "content": "ok"}],
+                    idx=1000 + i,
+                )
+            )
+        records.append(_claude_user_record("now also add sorting", idx=9999))
+
+        transcript = tmp_path / "long.jsonl"
+        transcript.write_text("\n".join(json.dumps(r) for r in records))
+
+        title = await _heuristic_title_from_transcript(str(transcript), "claude")
+        assert title == "Add pagination to the search endpoint"
 
 
 class TestReadLastTurnFromTranscript:
