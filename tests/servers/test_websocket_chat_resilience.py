@@ -274,13 +274,18 @@ class TestClassifyChatError:
 
 
 class TestOrphanedToolResult:
-    """Tests for warning when ToolResult arrives without prior ToolCall."""
+    """A ToolResult that arrives without a prior ToolCall is reconciled, not dropped."""
 
     @pytest.mark.asyncio
-    async def test_orphaned_tool_result_logs_warning(
+    async def test_orphaned_tool_result_surfaced_as_provisional(
         self, host: ChatMixinHost, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """A ToolResultEvent without a prior ToolCallEvent should log a warning."""
+        """An orphan ToolResultEvent is buffered and surfaced provisionally at done.
+
+        No ToolCallEvent ever arrives, so the result is flushed as a provisional
+        tool call (name "unknown") instead of logging a warning and emitting an
+        orphan "completed" the UI cannot attach to.
+        """
         ws = MockWebSocket()
         host.clients[ws] = {"conversation_id": "conv-6"}
 
@@ -303,8 +308,20 @@ class TestOrphanedToolResult:
         with caplog.at_level(logging.WARNING):
             await host._stream_chat_response(ws, "conv-6", "test", None)
 
-        assert any(
+        # No warning — the out-of-order result is handled gracefully.
+        assert not any(
             "arrived before ToolCallEvent" in r.message
             for r in caplog.records
             if r.levelno >= logging.WARNING
         )
+
+        frames = [json.loads(m) for m in ws.sent_messages]
+        tool_frames = [
+            f
+            for f in frames
+            if f.get("type") == "tool_status" and f.get("tool_call_id") == "orphan-tc-1"
+        ]
+        # The flush emits a provisional "calling" then the buffered "completed".
+        assert any(f.get("status") == "calling" for f in tool_frames)
+        completed = next(f for f in tool_frames if f.get("status") == "completed")
+        assert completed["result"] == "some result"
