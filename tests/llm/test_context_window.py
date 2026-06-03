@@ -127,6 +127,47 @@ class TestResolveContextWindow:
             # Prefix match: claude-sonnet-4-6-20241022 matches claude-sonnet-4-6
             assert resolve_context_window("claude-sonnet-4-6-20241022", None) == 200_000
 
+    @pytest.mark.parametrize(
+        ("model", "provider", "expected"),
+        [
+            # Bare aliases must resolve exactly as before (additive change).
+            ("opus", None, 1_000_000),
+            ("opus", "claude", 1_000_000),
+            ("sonnet", None, 200_000),
+            ("haiku", None, 200_000),
+            # Long-form Opus not enumerated in the static table — the
+            # claude-opus-4-8 regression — resolves via the family-substring
+            # fallback rather than falling through to a smaller default.
+            ("claude-opus-4-8", None, 1_000_000),
+            ("claude-opus-4-8", "claude", 1_000_000),
+            # 1M-context marker suffixes normalize to the same family window.
+            ("claude-opus-4-8[1m]", None, 1_000_000),
+            ("claude-opus-4-8[1m]", "claude", 1_000_000),
+            ("claude-opus-4-8-context-1m", "claude", 1_000_000),
+            # Future dated Opus versions resolve without a per-version table.
+            ("claude-opus-4-9", "claude", 1_000_000),
+            # Sonnet/Haiku families stay at 200k.
+            ("claude-sonnet-4-6", "claude", 200_000),
+            ("claude-haiku-4-5", "claude", 200_000),
+        ],
+    )
+    def test_claude_family_substring_fallback(
+        self, model: str, provider: str | None, expected: int
+    ) -> None:
+        """Long-form Claude IDs resolve to their family window via static fallback."""
+        with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
+            assert resolve_context_window(model, provider=provider) == expected
+
+    def test_family_fallback_scoped_to_claude_providers(self) -> None:
+        """The opus/sonnet/haiku family keys stay scoped to Claude-ish providers."""
+        with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
+            assert resolve_context_window("claude-opus-4-8", provider="openai") is None
+
+    def test_family_fallback_ignores_unknown_claude_model(self) -> None:
+        """A Claude id with no family token still returns None (no false 200k)."""
+        with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
+            assert resolve_context_window("claude-unknown-model", None) is None
+
     def test_non_claude_model_uses_registry(self) -> None:
         """Non-Claude models use registry lookup."""
         with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):

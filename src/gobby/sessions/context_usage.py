@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.llm.context_windows import resolve_context_window
@@ -243,3 +244,76 @@ def _coerce_positive_int(value: object) -> int | None:
     except (TypeError, ValueError):
         return None
     return coerced if coerced > 0 else None
+
+
+@dataclass(frozen=True)
+class ContextWindowBackfillResult:
+    """Outcome of a one-shot context-window backfill pass."""
+
+    scanned: int
+    updated: int
+
+    @property
+    def skipped(self) -> int:
+        return self.scanned - self.updated
+
+
+def backfill_session_context_windows(
+    db: HubDatabase,
+    *,
+    catalog: Any | None = None,
+    dry_run: bool = False,
+) -> ContextWindowBackfillResult:
+    """Re-resolve under-counted session context windows from the model.
+
+    Historical sessions persisted an under-sized ``context_window`` (e.g. a
+    1M-context Opus stored at 200k), which clamped ``context_usage_ratio`` to
+    100%. For each session that carries recorded usage, re-resolve its window
+    from its model via the family-aware resolver and bump it upward when the
+    resolved window is larger, recomputing the ratio from the stored
+    ``context_used_tokens``. Windows that already meet or exceed the resolved
+    value are left untouched, so genuinely-reported smaller windows (other
+    providers/runtimes) are never shrunk.
+    """
+    rows = db.fetchall(
+        "SELECT id, model, source, context_window, context_used_tokens "
+        "FROM sessions "
+        "WHERE model IS NOT NULL AND model <> '' "
+        "AND context_used_tokens IS NOT NULL AND context_used_tokens > 0"
+    )
+    scanned = 0
+    updated = 0
+    for row in rows or []:
+        if not isinstance(row, Mapping):
+            continue
+        scanned += 1
+        model = row.get("model")
+        if not isinstance(model, str) or not model.strip():
+            continue
+
+        source = row.get("source")
+        snapshot_source = normalize_context_usage_source(
+            source if isinstance(source, str) else None
+        )
+        provider = "gemini" if snapshot_source == "agy" else snapshot_source
+
+        resolved = resolve_context_window(model, provider=provider, catalog=catalog)
+        if resolved is None:
+            continue
+
+        current_window = _coerce_positive_int(row.get("context_window"))
+        if current_window is not None and current_window >= resolved:
+            continue
+
+        used = _coerce_positive_int(row.get("context_used_tokens"))
+        new_ratio = ContextUsageSnapshot.calculate_ratio(used, resolved)
+        updated += 1
+        if dry_run:
+            continue
+        with db.transaction():
+            db.execute(
+                "UPDATE sessions SET context_window = %s, context_usage_ratio = %s, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+                (resolved, new_ratio, row.get("id")),
+            )
+    return ContextWindowBackfillResult(scanned=scanned, updated=updated)

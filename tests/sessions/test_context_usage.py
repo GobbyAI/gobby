@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
 from gobby.sessions.context_usage import (
+    backfill_session_context_windows,
     context_window_for_source_model,
     context_window_from_raw_message,
     effective_context_window_for_session,
@@ -108,3 +110,104 @@ def test_effective_context_window_prefers_latest_token_event_window() -> None:
 def test_context_window_from_raw_message_truncates_fractional_windows() -> None:
     assert context_window_from_raw_message({"context_window": 1.5}) == 1
     assert context_window_from_raw_message({"context_window": 2.0}) == 2
+
+
+class _BackfillFakeDb:
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self.rows = rows
+        self.updates: list[tuple[object, ...]] = []
+
+    def fetchall(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
+        return self.rows
+
+    def transaction(self) -> _BackfillFakeDb:
+        return self
+
+    def __enter__(self) -> _BackfillFakeDb:
+        return self
+
+    def __exit__(self, *_args: object) -> bool:
+        return False
+
+    def execute(self, _sql: str, params: tuple[object, ...] = ()) -> SimpleNamespace:
+        self.updates.append(params)
+        return SimpleNamespace(rowcount=1)
+
+
+def test_backfill_bumps_under_counted_windows_and_recomputes_ratio() -> None:
+    rows: list[dict[str, object]] = [
+        # 1M-context Opus stored at the old 200k default -> bump to 1M, recompute.
+        {
+            "id": "s1",
+            "model": "claude-opus-4-8",
+            "source": "claude",
+            "context_window": 200_000,
+            "context_used_tokens": 418_834,
+        },
+        # [1m] marker, window never recorded (0) -> bump to 1M.
+        {
+            "id": "s2",
+            "model": "claude-opus-4-8[1m]",
+            "source": "claude",
+            "context_window": 0,
+            "context_used_tokens": 150_000,
+        },
+        # Already correct -> untouched.
+        {
+            "id": "s3",
+            "model": "claude-opus-4-8",
+            "source": "claude",
+            "context_window": 1_000_000,
+            "context_used_tokens": 500_000,
+        },
+        # Genuine larger window must never be shrunk to the family default.
+        {
+            "id": "s4",
+            "model": "claude-sonnet-4-6",
+            "source": "claude",
+            "context_window": 1_000_000,
+            "context_used_tokens": 10_000,
+        },
+        # Unknown model resolves to None -> skipped.
+        {
+            "id": "s5",
+            "model": "totally-unknown-model",
+            "source": "unknown",
+            "context_window": 100,
+            "context_used_tokens": 50,
+        },
+    ]
+    db = _BackfillFakeDb(rows)
+    with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
+        result = backfill_session_context_windows(db)  # type: ignore[arg-type]
+
+    assert result.scanned == 5
+    assert result.updated == 2
+    assert result.skipped == 3
+
+    by_id = {params[-1]: params for params in db.updates}
+    assert set(by_id) == {"s1", "s2"}
+    # s1: window bumped to 1M, ratio = 418834 / 1_000_000.
+    assert by_id["s1"][0] == 1_000_000
+    assert by_id["s1"][1] == pytest.approx(0.418834)
+    # s2: window bumped to 1M from an unrecorded (0) value.
+    assert by_id["s2"][0] == 1_000_000
+    assert by_id["s2"][1] == pytest.approx(0.15)
+
+
+def test_backfill_dry_run_writes_nothing() -> None:
+    rows: list[dict[str, object]] = [
+        {
+            "id": "s1",
+            "model": "claude-opus-4-8",
+            "source": "claude",
+            "context_window": 200_000,
+            "context_used_tokens": 418_834,
+        }
+    ]
+    db = _BackfillFakeDb(rows)
+    with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
+        result = backfill_session_context_windows(db, dry_run=True)  # type: ignore[arg-type]
+
+    assert result.updated == 1
+    assert db.updates == []

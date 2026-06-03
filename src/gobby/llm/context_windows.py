@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, cast
@@ -42,6 +43,22 @@ _KNOWN_PROVIDER_PREFIXES = (
     "z-ai/",
     "moonshotai/",
     "minimax/",
+)
+# Long-form Claude IDs (e.g. ``claude-opus-4-8``) neither start with the bare
+# ``opus``/``sonnet``/``haiku`` aliases nor get enumerated per dated version, so
+# map them to their family's window by substring. Order is longest-token-first;
+# all three tokens are mutually exclusive in practice.
+_CLAUDE_FAMILY_TOKENS: tuple[tuple[str, str], ...] = (
+    ("claude-opus", "opus"),
+    ("claude-sonnet", "sonnet"),
+    ("claude-haiku", "haiku"),
+)
+# Trailing long-context markers select the 1M tier of an existing family rather
+# than naming a distinct model: ``[1m]``, ``-1m``, ``-context-1m``. Strip them so
+# ``claude-opus-4-8[1m]`` normalizes to ``claude-opus-4-8`` and resolves the same.
+_CONTEXT_WINDOW_MARKER_RE = re.compile(
+    r"(?:\[(?:context[-_]?)?1m\]|[-_](?:context[-_])?1m)$",
+    re.IGNORECASE,
 )
 _VALID_CONTEXT_LENGTH_SOURCES: frozenset[str] = frozenset(
     {"provider_reported", "provider_catalog", "registry", "static_default"}
@@ -172,9 +189,22 @@ def strip_qwen_auth_suffix(value: str) -> str:
     return trimmed
 
 
+def strip_context_window_marker_suffix(value: str) -> str:
+    """Strip a trailing 1M-context marker (``[1m]``, ``-1m``, ``-context-1m``).
+
+    The marker selects the long-context tier of an existing model family, so it
+    must not block family/static matching of the underlying model ID.
+    """
+    trimmed = value.strip()
+    stripped = _CONTEXT_WINDOW_MARKER_RE.sub("", trimmed).strip()
+    return stripped or trimmed
+
+
 def normalize_model_lookup_id(value: str) -> str:
     """Normalize a model ID for catalog/static prefix matching."""
-    return strip_qwen_auth_suffix(strip_known_provider_prefix(value)).lower()
+    return strip_context_window_marker_suffix(
+        strip_qwen_auth_suffix(strip_known_provider_prefix(value))
+    ).lower()
 
 
 def context_key_allowed_for_provider(provider: str | None, key: str) -> bool:
@@ -337,7 +367,22 @@ def _lookup_context_length(
         if normalized_model.startswith(key) and len(key) > best_len:
             best_len = len(key)
             best_value = value
-    return best_value
+    if best_value is not None:
+        return best_value
+
+    # Additive family fallback: runs only after exact and prefix matching fail,
+    # so bare aliases (opus/sonnet/haiku) and enumerated IDs still resolve exactly
+    # as before. Long-form IDs like ``claude-opus-4-8`` (and future ``-4-9``) map
+    # to their family window by substring rather than a per-version table. No-op
+    # for catalogs (e.g. droid) that don't carry the bare family keys.
+    for token, family in _CLAUDE_FAMILY_TOKENS:
+        if token in normalized_model and context_key_allowed_for_provider(
+            normalized_provider, family
+        ):
+            family_value = values.get(family)
+            if family_value is not None:
+                return family_value
+    return None
 
 
 def _resolve_from_catalog(

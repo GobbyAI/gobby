@@ -599,3 +599,30 @@ def restore_transcript(
         click.echo(f"\nSkipped {len(skipped)} session(s)")
 
     click.echo(f"\nRestored {len(restored_list)} transcript(s)")
+
+
+@sessions.command("backfill-context-windows")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Report what would change without writing any updates.",
+)
+def backfill_context_windows(dry_run: bool) -> None:
+    """Recompute under-counted session context windows and usage ratios.
+
+    Re-resolves each session's context window from its model and bumps any
+    under-sized window (e.g. a 1M-context Opus stored at 200k) upward,
+    recomputing the usage ratio. Larger windows are never shrunk.
+    """
+    from gobby.sessions.context_usage import backfill_session_context_windows
+
+    manager = get_session_manager()
+    try:
+        result = backfill_session_context_windows(manager.db, dry_run=dry_run)
+    finally:
+        manager.db.close()
+
+    verb = "Would update" if dry_run else "Updated"
+    click.echo(
+        f"{verb} {result.updated} of {result.scanned} session(s) ({result.skipped} unchanged)."
+    )
