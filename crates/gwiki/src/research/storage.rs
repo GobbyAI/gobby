@@ -1,0 +1,172 @@
+use super::*;
+
+pub(crate) fn append_raw_index_locked(
+    vault_root: &Path,
+    title: &str,
+    note_path: &Path,
+) -> Result<(), WikiError> {
+    let raw_dir = vault_root.join("raw");
+    fs::create_dir_all(&raw_dir).map_err(|error| WikiError::Io {
+        action: "create raw directory",
+        path: Some(raw_dir.clone()),
+        source: error,
+    })?;
+    let index_path = raw_dir.join("INDEX.md");
+    let relative = note_path
+        .strip_prefix(vault_root)
+        .unwrap_or(note_path)
+        .to_string_lossy();
+    let lock_path = raw_index_lock_path(vault_root);
+    let lock = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|error| WikiError::Io {
+            action: "open raw index lock",
+            path: Some(lock_path.clone()),
+            source: error,
+        })?;
+    lock_raw_index(&lock, &lock_path)?;
+    let mut contents = match fs::read_to_string(&index_path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == ErrorKind::NotFound => "# Raw Sources\n\n".to_string(),
+        Err(error) => {
+            return Err(WikiError::Io {
+                action: "read raw index",
+                path: Some(index_path.clone()),
+                source: error,
+            });
+        }
+    };
+    if contents.is_empty() {
+        contents.push_str("# Raw Sources\n\n");
+    }
+    contents.push_str(&format!("- [{title}]({relative})\n"));
+    // Keep the lock handle alive through the full read-modify-write sequence.
+    write_file_atomically(&index_path, contents.as_bytes(), "raw index")
+}
+
+pub(crate) fn lock_raw_index(lock: &fs::File, lock_path: &Path) -> Result<(), WikiError> {
+    let timeout = index_lock_timeout();
+    let started = Instant::now();
+
+    loop {
+        match fs4::FileExt::try_lock(lock) {
+            Ok(()) => return Ok(()),
+            Err(fs4::TryLockError::WouldBlock) => {
+                let elapsed = started.elapsed();
+                if elapsed >= timeout {
+                    return Err(WikiError::Io {
+                        action: "lock raw index",
+                        path: Some(lock_path.to_path_buf()),
+                        source: std::io::Error::new(
+                            ErrorKind::TimedOut,
+                            format!("timed out after {}ms", timeout.as_millis()),
+                        ),
+                    });
+                }
+                thread::sleep(Duration::from_millis(25).min(timeout - elapsed));
+            }
+            Err(error) => {
+                return Err(WikiError::Io {
+                    action: "lock raw index",
+                    path: Some(lock_path.to_path_buf()),
+                    source: error.into(),
+                });
+            }
+        }
+    }
+}
+
+pub(crate) fn raw_index_lock_path(vault_root: &Path) -> PathBuf {
+    vault_root.join("raw").join("INDEX.md.lock")
+}
+
+pub(crate) fn write_file_atomically(
+    path: &Path,
+    contents: &[u8],
+    label: &'static str,
+) -> Result<(), WikiError> {
+    let temp_path = temp_sibling_path(path);
+    let mut file = fs::File::create(&temp_path).map_err(|error| WikiError::Io {
+        action: "create temp file",
+        path: Some(temp_path.clone()),
+        source: error,
+    })?;
+    if let Err(error) = file.write_all(contents) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: "write temp file",
+            path: Some(temp_path),
+            source: error,
+        });
+    }
+    if let Err(error) = file.sync_all() {
+        let _ = fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: "sync temp file",
+            path: Some(temp_path),
+            source: error,
+        });
+    }
+    drop(file);
+    if let Err(error) = fs::rename(&temp_path, path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: label,
+            path: Some(path.to_path_buf()),
+            source: error,
+        });
+    }
+    Ok(())
+}
+
+pub(crate) fn temp_sibling_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("INDEX.md");
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    path.with_file_name(format!(".{file_name}.{}.{nanos}.tmp", std::process::id()))
+}
+
+pub(crate) fn slugify(title: &str) -> String {
+    let mut slug = String::new();
+    let mut last_was_dash = false;
+
+    for ch in title.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch);
+            last_was_dash = false;
+        } else if !last_was_dash && !slug.is_empty() {
+            slug.push('-');
+            last_was_dash = true;
+        }
+    }
+
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+
+    if slug.is_empty() {
+        "research-note".to_string()
+    } else {
+        slug
+    }
+}
+
+pub(crate) fn unix_timestamp_ms() -> Result<u64, WikiError> {
+    let duration = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| WikiError::Config {
+            detail: format!("system clock is before Unix epoch: {error}"),
+        })?;
+    u64::try_from(duration.as_millis()).map_err(|_| WikiError::Config {
+        detail: "system timestamp exceeds u64 milliseconds".to_string(),
+    })
+}
