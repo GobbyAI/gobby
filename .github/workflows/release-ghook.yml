@@ -144,10 +144,21 @@ jobs:
         with:
           merge-multiple: true
 
+      - name: Generate SHA-256 checksums
+        # Installers fetch <asset>.sha256 and verify the archive before
+        # chmod/PATH placement (fail-closed on missing/mismatched checksum).
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for asset in ghook-*.tar.gz ghook-*.zip; do
+            sha256sum "$asset" > "$asset.sha256"
+          done
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             ghook-*.tar.gz
             ghook-*.zip
+            ghook-*.sha256
           generate_release_notes: true

@@ -237,10 +237,21 @@ jobs:
         with:
           merge-multiple: true
 
+      - name: Generate SHA-256 checksums
+        # Installers fetch <asset>.sha256 and verify the archive before
+        # chmod/PATH placement (fail-closed on missing/mismatched checksum).
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for asset in gwiki-*.tar.gz gwiki-*.zip; do
+            sha256sum "$asset" > "$asset.sha256"
+          done
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           files: |
             gwiki-*.tar.gz
             gwiki-*.zip
+            gwiki-*.sha256
           generate_release_notes: true
