@@ -125,8 +125,8 @@ fn build_request(
         form = form.text("model", model.to_string());
     }
     if let Some(language) = language
-        .or(binding.language.as_deref())
         .filter(|value| !value.is_empty())
+        .or(binding.language.as_deref())
     {
         form = form.text("language", language.to_string());
     }

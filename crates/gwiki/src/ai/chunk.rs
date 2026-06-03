@@ -564,6 +564,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::large_stack_frames)]
     fn long_request<'a>() -> TranscriptionRequest<'a> {
         // Test-only leak of one bounded oversized fixture. The request model
         // borrows audio bytes, and this avoids repeated >MAX-byte allocations

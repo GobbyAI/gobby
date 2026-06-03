@@ -134,7 +134,7 @@ fn append_target_section(
 }
 
 fn inline_code(value: &str) -> String {
-    let delimiter = "`".repeat(max_backtick_run(value).saturating_add(1).max(1));
+    let delimiter = "`".repeat(max_backtick_run(value).saturating_add(1));
     if value.starts_with('`') || value.ends_with('`') {
         format!("{delimiter} {value} {delimiter}")
     } else {

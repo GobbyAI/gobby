@@ -178,7 +178,6 @@ where
             degradation: None,
         }
     };
-    let semantic_degraded = semantic_outcome.degradation.is_some();
     let semantic_hits = semantic_outcome.hits;
     let seed_paths = graph_seed_paths(&bm25_hits, &semantic_hits, GRAPH_SEED_LIMIT);
     let graph_outcome = graph_backend.search_graph_boost(graph_boost::GraphBoostRequest {
@@ -186,24 +185,35 @@ where
         seed_paths,
         limit: request.limit,
     })?;
-    let graph_degraded = graph_outcome.degradation.is_some();
+    let graph_unavailable = graph_outcome
+        .degradation
+        .as_ref()
+        .is_some_and(search_source_unavailable);
 
     let mut degradations = Vec::new();
     let mut unavailable_sources = Vec::new();
+    let semantic_unavailable = semantic_outcome
+        .degradation
+        .as_ref()
+        .is_some_and(search_source_unavailable);
     if let Some(degradation) = semantic_outcome.degradation {
         degradations.push(degradation);
-        unavailable_sources.push(SearchSource::Semantic.as_str().to_string());
+        if semantic_unavailable {
+            unavailable_sources.push(SearchSource::Semantic.as_str().to_string());
+        }
     }
     if let Some(degradation) = graph_outcome.degradation {
         degradations.push(degradation);
-        unavailable_sources.push(SearchSource::Graph.as_str().to_string());
+        if graph_unavailable {
+            unavailable_sources.push(SearchSource::Graph.as_str().to_string());
+        }
     }
     if !unavailable_sources.is_empty() {
         degradations.push(DegradationKind::PartialSearch {
             available: available_sources(
                 request.include_semantic,
-                semantic_degraded,
-                graph_degraded,
+                semantic_unavailable,
+                graph_unavailable,
             ),
             unavailable: unavailable_sources,
         });
@@ -239,17 +249,21 @@ fn graph_seed_paths(
 
 fn available_sources(
     include_semantic: bool,
-    semantic_degraded: bool,
-    graph_degraded: bool,
+    semantic_unavailable: bool,
+    graph_unavailable: bool,
 ) -> Vec<String> {
     let mut available = vec![SearchSource::Bm25.as_str().to_string()];
-    if !graph_degraded {
+    if !graph_unavailable {
         available.push(SearchSource::Graph.as_str().to_string());
     }
-    if include_semantic && !semantic_degraded {
+    if include_semantic && !semantic_unavailable {
         available.push(SearchSource::Semantic.as_str().to_string());
     }
     available
+}
+
+fn search_source_unavailable(degradation: &DegradationKind) -> bool {
+    matches!(degradation, DegradationKind::ServiceUnavailable { .. })
 }
 
 #[cfg(test)]

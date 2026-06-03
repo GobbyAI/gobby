@@ -12,8 +12,23 @@ use crate::support::text::slugify;
 
 const GRAPH_SOURCE_KIND: &str = "graph";
 const GRAPH_SERVICE: &str = "gwiki_graph";
-const GRAPH_BOOST_DOCUMENT_QUERY_LIMIT: i64 = 10_000;
-const GRAPH_BOOST_LINK_QUERY_LIMIT: i64 = 50_000;
+const DEFAULT_GRAPH_BOOST_DOCUMENT_QUERY_LIMIT: i64 = 10_000;
+const DEFAULT_GRAPH_BOOST_LINK_QUERY_LIMIT: i64 = 50_000;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GraphBoostConfig {
+    pub document_query_limit: i64,
+    pub link_query_limit: i64,
+}
+
+impl Default for GraphBoostConfig {
+    fn default() -> Self {
+        Self {
+            document_query_limit: DEFAULT_GRAPH_BOOST_DOCUMENT_QUERY_LIMIT,
+            link_query_limit: DEFAULT_GRAPH_BOOST_LINK_QUERY_LIMIT,
+        }
+    }
+}
 
 pub struct GraphBoostRequest {
     pub scope: SearchScope,
@@ -81,7 +96,15 @@ pub struct PostgresGraphBoostBackend {
 
 impl PostgresGraphBoostBackend {
     pub fn new(conn: &mut postgres::Client, scope: SearchScope) -> Self {
-        match load_graph_boost_data(conn, &scope) {
+        Self::new_with_config(conn, scope, GraphBoostConfig::default())
+    }
+
+    pub fn new_with_config(
+        conn: &mut postgres::Client,
+        scope: SearchScope,
+        config: GraphBoostConfig,
+    ) -> Self {
+        match load_graph_boost_data(conn, &scope, config) {
             Ok(data) => Self {
                 scope,
                 documents: data.documents,
@@ -153,9 +176,12 @@ struct GraphBoostData {
 fn load_graph_boost_data(
     conn: &mut postgres::Client,
     scope: &SearchScope,
+    config: GraphBoostConfig,
 ) -> Result<GraphBoostData, postgres::Error> {
     let scope_kind = scope.scope_kind().to_string();
     let scope_id = scope.scope_value().to_string();
+    let document_query_limit = config.document_query_limit.max(0);
+    let link_query_limit = config.link_query_limit.max(0);
 
     let mut document_rows = conn.query(
         "SELECT path, title
@@ -166,11 +192,11 @@ fn load_graph_boost_data(
         &[
             &scope_kind,
             &scope_id,
-            &(GRAPH_BOOST_DOCUMENT_QUERY_LIMIT + 1),
+            &document_query_limit.saturating_add(1),
         ],
     )?;
-    let documents_capped = document_rows.len() > GRAPH_BOOST_DOCUMENT_QUERY_LIMIT as usize;
-    document_rows.truncate(GRAPH_BOOST_DOCUMENT_QUERY_LIMIT as usize);
+    let documents_capped = document_rows.len() > document_query_limit as usize;
+    document_rows.truncate(document_query_limit as usize);
     let documents = document_rows
         .into_iter()
         .map(|row| GraphBoostDocument {
@@ -185,10 +211,10 @@ fn load_graph_boost_data(
              WHERE scope_kind = $1 AND scope_id = $2
              ORDER BY path, target_path
              LIMIT $3",
-        &[&scope_kind, &scope_id, &(GRAPH_BOOST_LINK_QUERY_LIMIT + 1)],
+        &[&scope_kind, &scope_id, &link_query_limit.saturating_add(1)],
     )?;
-    let links_capped = link_rows.len() > GRAPH_BOOST_LINK_QUERY_LIMIT as usize;
-    link_rows.truncate(GRAPH_BOOST_LINK_QUERY_LIMIT as usize);
+    let links_capped = link_rows.len() > link_query_limit as usize;
+    link_rows.truncate(link_query_limit as usize);
     let links = link_rows
         .into_iter()
         .map(|row| GraphBoostLink {
@@ -217,9 +243,10 @@ fn graph_boost_cap_degradation(
         (false, true) => "links",
         (false, false) => unreachable!(),
     };
-    Some(graph_degradation(format!(
-        "graph boost snapshot capped while loading {capped}"
-    )))
+    Some(DegradationKind::PartialData {
+        component: GRAPH_SERVICE.to_string(),
+        message: format!("graph boost snapshot capped while loading {capped}"),
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -456,7 +483,11 @@ mod tests {
     #[test]
     fn graph_boost_cap_degradation_reports_capped_rows() {
         assert!(graph_boost_cap_degradation(false, false).is_none());
-        assert!(graph_boost_cap_degradation(true, false).is_some());
+        assert!(matches!(
+            graph_boost_cap_degradation(true, false),
+            Some(DegradationKind::PartialData { component, message })
+                if component == GRAPH_SERVICE && message.contains("documents")
+        ));
         assert!(graph_boost_cap_degradation(false, true).is_some());
     }
 

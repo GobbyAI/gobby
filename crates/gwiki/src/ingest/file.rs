@@ -36,6 +36,13 @@ use crate::{ScopeIdentity, WikiError};
 #[cfg(all(feature = "documents", feature = "ai"))]
 use gobby_core::ai::effective_route;
 
+/// TEXT_INLINE_LIMIT_BYTES keeps ordinary text inline while pushing unusually
+/// large text into raw assets. The 256 KB threshold is above typical note and
+/// config sizes but below the point where markdown rendering, chunking, memory
+/// use, search indexing, and API transfer costs start to dominate an ingest.
+/// Lower it in production if inline text drives slow indexing or high network
+/// transfer; raise it only when metrics show asset indirection is costing more
+/// than the extra memory and I/O.
 const TEXT_INLINE_LIMIT_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -416,7 +423,8 @@ fn detect_source_kind(path: &Path) -> SourceKind {
         Some("mp4" | "mov" | "m4v" | "webm" | "mkv") => SourceKind::Video,
         Some("md" | "markdown") => SourceKind::Markdown,
         Some(
-            "txt" | "text" | "csv" | "json" | "jsonl" | "xml" | "yaml" | "yml" | "toml" | "log",
+            "txt" | "text" | "csv" | "json" | "jsonl" | "xml" | "yaml" | "yml" | "toml" | "log"
+            | "ini" | "env" | "properties" | "conf" | "sql" | "sh" | "bash",
         ) => SourceKind::Text,
         _ => SourceKind::File,
     }
@@ -771,7 +779,23 @@ mod tests {
                 SourceKind::Html
             );
         }
-        for extension in ["csv", "json", "jsonl", "xml", "yaml", "yml", "toml", "log"] {
+        for extension in [
+            "csv",
+            "json",
+            "jsonl",
+            "xml",
+            "yaml",
+            "yml",
+            "toml",
+            "log",
+            "ini",
+            "env",
+            "properties",
+            "conf",
+            "sql",
+            "sh",
+            "bash",
+        ] {
             assert_eq!(
                 detect_source_kind(Path::new(&format!("data.{extension}"))),
                 SourceKind::Text

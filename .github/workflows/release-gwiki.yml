@@ -46,37 +46,7 @@ jobs:
       - name: Verify published gobby-core supports ai
         run: |
           set -euo pipefail
-          core_version="$(python3 - <<'PY'
-          import sys
-          import tomllib
-          from pathlib import Path
-
-          manifest = tomllib.loads(Path("crates/gwiki/Cargo.toml").read_text())
-          features = manifest.get("features", {})
-          default_features = features.get("default", [])
-          ai_features = features.get("ai", [])
-          dependency = manifest.get("dependencies", {}).get("gobby-core")
-
-          if not isinstance(dependency, dict):
-              print("::error::gobby-wiki must depend on gobby-core with an explicit version.", file=sys.stderr)
-              sys.exit(1)
-
-          core_version = dependency.get("version")
-          if not core_version:
-              print("::error::gobby-wiki's gobby-core dependency must include a crates.io version.", file=sys.stderr)
-              sys.exit(1)
-
-          if "ai" not in default_features:
-              print("::error::gobby-wiki default features must include ai for release builds.", file=sys.stderr)
-              sys.exit(1)
-
-          if "gobby-core/ai" not in ai_features:
-              print("::error::gobby-wiki's ai feature must enable gobby-core/ai.", file=sys.stderr)
-              sys.exit(1)
-
-          print(core_version)
-          PY
-          )"
+          core_version="$(python3 .github/scripts/verify-gwiki-deps.py)"
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
           mkdir -p "$tmp/src"

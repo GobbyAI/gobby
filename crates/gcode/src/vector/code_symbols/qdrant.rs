@@ -216,9 +216,10 @@ pub(super) fn delete_vectors_for_filter_excluding_ids(
         }));
     }
     let mut filter = json!({ "must": must });
-    if !keep_point_ids.is_empty()
-        && let Some(filter) = filter.as_object_mut()
-    {
+    if !keep_point_ids.is_empty() {
+        let filter = filter
+            .as_object_mut()
+            .expect("filter must be a JSON object");
         filter.insert(
             "must_not".to_string(),
             json!([{ "has_id": keep_point_ids }]),

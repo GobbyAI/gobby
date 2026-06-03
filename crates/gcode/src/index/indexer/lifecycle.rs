@@ -124,7 +124,7 @@ pub fn invalidate(
 /// Fire-and-forget: warns on failure, never errors.
 fn notify_daemon_invalidate(base_url: &str, project_id: &str) {
     let client = match reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(2))
+        .timeout(std::time::Duration::from_secs(1))
         .build()
     {
         Ok(c) => c,

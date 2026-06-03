@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -134,9 +135,13 @@ fn render_image_derived_markdown(
     if let Some(degradation) = degradation {
         fields.push(("vision_degradation".to_string(), degradation.reason.clone()));
     }
-    if let Some(extraction) = &extraction {
-        for (key, value) in &extraction.metadata {
-            fields.push((vision_metadata_key(key), value.clone()));
+    let deduped_metadata = extraction
+        .as_ref()
+        .map(|extraction| dedupe_vision_metadata(&extraction.metadata))
+        .unwrap_or_default();
+    if extraction.is_some() {
+        for (key, value) in &deduped_metadata {
+            fields.push((key.clone(), value.clone()));
         }
     }
 
@@ -166,11 +171,11 @@ fn render_image_derived_markdown(
             markdown.push_str(&single_line(&ocr_text));
             markdown.push_str("\n\n");
         }
-        if !extraction.metadata.is_empty() {
+        if !deduped_metadata.is_empty() {
             markdown.push_str("## Vision Metadata\n\n");
-            for (key, value) in extraction.metadata {
+            for (key, value) in deduped_metadata {
                 markdown.push_str("- ");
-                markdown.push_str(&vision_metadata_key(&key));
+                markdown.push_str(&key);
                 markdown.push_str(": ");
                 markdown.push_str(&single_line(&value));
                 markdown.push('\n');
@@ -198,6 +203,16 @@ fn render_image_derived_markdown(
         markdown.push('\n');
     }
     markdown
+}
+
+fn dedupe_vision_metadata(metadata: &[(String, String)]) -> Vec<(String, String)> {
+    let mut deduped = BTreeMap::new();
+    for (key, value) in metadata {
+        deduped
+            .entry(vision_metadata_key(key))
+            .or_insert_with(|| value.clone());
+    }
+    deduped.into_iter().collect()
 }
 
 fn vision_metadata_key(key: &str) -> String {
@@ -410,12 +425,17 @@ mod tests {
             Some(VisionExtraction {
                 description: "diagram".to_string(),
                 ocr_text: None,
-                metadata: vec![("Model Name".to_string(), "fake-vision".to_string())],
+                metadata: vec![
+                    ("Model Name".to_string(), "fake-vision".to_string()),
+                    ("model_name".to_string(), "duplicate".to_string()),
+                ],
             }),
             None,
         );
 
         assert!(markdown.contains("vision_model_name: fake-vision"));
+        assert_eq!(markdown.matches("vision_model_name:").count(), 2);
+        assert!(!markdown.contains("duplicate"));
         assert!(!markdown.contains("vision_Model Name"));
         assert!(markdown.contains("- vision_model_name: fake-vision"));
     }

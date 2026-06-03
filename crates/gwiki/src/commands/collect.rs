@@ -11,7 +11,7 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
     let scope = resolve_command_scope(&selection)?;
 
     // Vault initialization is idempotent here; collect only needs the paths to exist.
-    let _ = vault::initialize(&scope)?;
+    vault::initialize(&scope)?;
     let output_scope = resolved_scope_identity(&scope);
     let mut store = store::MemoryWikiStore::default();
     let timestamp = collect_timestamp().map_err(|error| WikiError::Config {

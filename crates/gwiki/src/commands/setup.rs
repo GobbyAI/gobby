@@ -36,6 +36,10 @@ pub(crate) fn execute(
         })
         .collect::<Vec<_>>();
 
+    if options.standalone {
+        validate_embedding_vector_dim(&options).map_err(standalone_error)?;
+    }
+
     let (status, created, skipped, failed) = if options.standalone {
         let home = gobby_home().map_err(standalone_error)?;
         let mut service_options = DockerServiceOptions::new(home.clone());
@@ -195,11 +199,7 @@ fn apply_embedding_options(
     options: &SetupOptions,
     config: &mut StandaloneConfig,
 ) -> anyhow::Result<()> {
-    if let Some(vector_dim) = options.embedding_vector_dim
-        && !(1..=8192).contains(&vector_dim)
-    {
-        anyhow::bail!("--embedding-vector-dim must be between 1 and 8192");
-    }
+    validate_embedding_vector_dim(options)?;
     let has_embedding_options = options.embedding_provider.is_some()
         || options.embedding_api_base.is_some()
         || options.embedding_model.is_some()
@@ -229,6 +229,15 @@ fn apply_embedding_options(
     }
     if let Some(api_key) = options.embedding_api_key.as_deref() {
         config.set(embedding_keys::AI_API_KEY, api_key);
+    }
+    Ok(())
+}
+
+fn validate_embedding_vector_dim(options: &SetupOptions) -> anyhow::Result<()> {
+    if let Some(vector_dim) = options.embedding_vector_dim
+        && !(1..=8192).contains(&vector_dim)
+    {
+        anyhow::bail!("--embedding-vector-dim must be between 1 and 8192");
     }
     Ok(())
 }

@@ -61,7 +61,7 @@ fn missing_relations(client: &mut Client, relations: &[&str]) -> anyhow::Result<
         let qualified = format!("{DEFAULT_SCHEMA}.{relation}");
         let row = client
             .query_one("SELECT to_regclass($1) IS NOT NULL", &[&qualified])
-            .with_context(|| format!("failed to check PostgreSQL relation `{relation}`"))?;
+            .with_context(|| format!("failed to check PostgreSQL relation `{qualified}`"))?;
         let exists: bool = row
             .try_get(0)
             .context("failed to decode PostgreSQL relation check")?;

@@ -42,6 +42,7 @@ pub(crate) fn degradation_label(degradation: &DegradationKind) -> String {
             ServiceState::Unreachable { .. } => format!("{service}_unreachable"),
         },
         DegradationKind::PartialSearch { .. } => "partial_search".to_string(),
+        DegradationKind::PartialData { .. } => "partial_data".to_string(),
         DegradationKind::StaleIndex { .. } => "stale_index".to_string(),
         DegradationKind::SkippedArtifacts { .. } => "skipped_artifacts".to_string(),
     }

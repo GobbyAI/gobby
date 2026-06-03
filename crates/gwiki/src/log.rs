@@ -1,10 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use crate::{ScopeIdentity, WikiError};
+
+const RESOLVED_LOG_PATH_CACHE_LIMIT: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogEntry {
@@ -139,9 +141,12 @@ fn same_file_identity(_left: &Path, _right: &Path) -> bool {
 }
 
 fn resolved_log_path(path: &Path) -> PathBuf {
-    static CACHE: OnceLock<Mutex<HashMap<PathBuf, PathBuf>>> = OnceLock::new();
+    static CACHE: OnceLock<Mutex<ResolvedLogPathCache>> = OnceLock::new();
     let key = path.to_path_buf();
-    let mut cache = match CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock() {
+    let mut cache = match CACHE
+        .get_or_init(|| Mutex::new(ResolvedLogPathCache::default()))
+        .lock()
+    {
         Ok(cache) => cache,
         Err(poisoned) => poisoned.into_inner(),
     };
@@ -157,6 +162,34 @@ fn resolved_log_path(path: &Path) -> PathBuf {
     let resolved = resolve_log_path_fallback(path);
     cache.insert(key, resolved.clone());
     resolved
+}
+
+#[derive(Default)]
+struct ResolvedLogPathCache {
+    entries: HashMap<PathBuf, PathBuf>,
+    order: VecDeque<PathBuf>,
+}
+
+impl ResolvedLogPathCache {
+    fn get(&self, key: &Path) -> Option<&PathBuf> {
+        self.entries.get(key)
+    }
+
+    fn insert(&mut self, key: PathBuf, value: PathBuf) {
+        if !self.entries.contains_key(&key) {
+            self.order.push_back(key.clone());
+        }
+        self.entries.insert(key, value);
+        // Bounded FIFO eviction keeps process-lifetime log path caching from
+        // growing without limit while retaining stable repeated lookups.
+        while self.entries.len() > RESOLVED_LOG_PATH_CACHE_LIMIT {
+            if let Some(oldest) = self.order.pop_front() {
+                self.entries.remove(&oldest);
+            } else {
+                break;
+            }
+        }
+    }
 }
 
 fn resolve_log_path_fallback(path: &Path) -> PathBuf {

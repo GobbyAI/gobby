@@ -139,10 +139,12 @@ fn sslmode_value(database_url: &str) -> Option<String> {
         });
     }
 
-    database_url.split_whitespace().find_map(|part| {
-        let (key, value) = part.split_once('=')?;
-        (key == "sslmode").then(|| normalize_sslmode_token(value))
-    })
+    split_libpq_keyword_tokens(database_url)
+        .into_iter()
+        .find_map(|part| {
+            let (key, value) = part.split_once('=')?;
+            (key == "sslmode").then(|| normalize_sslmode_token(value))
+        })
 }
 
 fn normalize_sslmode_for_parser(database_url: &str) -> String {
@@ -155,11 +157,51 @@ fn normalize_sslmode_for_parser(database_url: &str) -> String {
         return format!("{base}?{query}");
     }
 
-    database_url
-        .split_whitespace()
+    split_libpq_keyword_tokens(database_url)
+        .into_iter()
         .map(normalize_sslmode_pair)
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn split_libpq_keyword_tokens(database_url: &str) -> Vec<&str> {
+    let mut tokens = Vec::new();
+    let mut start = None;
+    let mut in_single_quote = false;
+    let mut escaped = false;
+
+    for (index, ch) in database_url.char_indices() {
+        if start.is_none() {
+            if ch.is_whitespace() {
+                continue;
+            }
+            start = Some(index);
+        }
+
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '\'' {
+            in_single_quote = !in_single_quote;
+            continue;
+        }
+        if ch.is_whitespace()
+            && !in_single_quote
+            && let Some(token_start) = start.take()
+        {
+            tokens.push(&database_url[token_start..index]);
+        }
+    }
+
+    if let Some(token_start) = start {
+        tokens.push(&database_url[token_start..]);
+    }
+    tokens
 }
 
 fn normalize_sslmode_pair(pair: &str) -> String {
@@ -318,6 +360,16 @@ mod tests {
         assert_eq!(
             normalize_sslmode_for_parser("host=localhost sslmode='verify-full' dbname=gobby"),
             "host=localhost sslmode=require dbname=gobby"
+        );
+        assert_eq!(
+            normalize_sslmode_for_parser(
+                "host=localhost password='my pass' sslmode='verify-ca' dbname=gobby"
+            ),
+            "host=localhost password='my pass' sslmode=require dbname=gobby"
+        );
+        assert_eq!(
+            requested_ssl_mode("host=localhost password='my pass' sslmode='verify-full'"),
+            Some(RequestedSslMode::VerifyFull)
         );
     }
 }

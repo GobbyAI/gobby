@@ -673,6 +673,7 @@ fn persist_video_frame_assets(
 
     let mut persisted_paths = Vec::with_capacity(frame_image_paths.len());
     let mut descriptions = frame_descriptions.to_vec();
+    let mut desc_index = 0;
     for (index, path) in frame_image_paths.iter().enumerate() {
         let cleanup_source_temp = samples
             .get(index)
@@ -708,8 +709,9 @@ fn persist_video_frame_assets(
             sample.source_asset = persisted_path.clone();
             sample.source_reference = reference.clone();
         }
-        if let Some(description) = descriptions.get_mut(index) {
+        if let Some(description) = descriptions.get_mut(desc_index) {
             description.source_reference = reference;
+            desc_index += 1;
         }
         if cleanup_source_temp {
             remove_sampled_temp_frame(path)?;

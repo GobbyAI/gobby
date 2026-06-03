@@ -19,6 +19,8 @@ const DEFAULT_SOURCE_MANIFEST_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
 const SOURCE_MANIFEST_LOCK_RETRY_DELAY: Duration = Duration::from_millis(25);
 
 const SOURCE_MARKER: &str = "<!-- gwiki-source:";
+const GENERATED_SOURCE_MANIFEST_START: &str = "<!-- GENERATED SOURCE MANIFEST START -->";
+const GENERATED_SOURCE_MANIFEST_END: &str = "<!-- GENERATED SOURCE MANIFEST END -->";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -407,12 +409,24 @@ impl SourceManifest {
         })?;
 
         let index_path = Self::index_path(vault_root);
-        let mut index = existing_index_without_manifest(&index_path)?;
+        let preserved = existing_index_without_manifest(&index_path)?;
+        let mut index = preserved.prefix;
         if !self.entries.is_empty() {
-            index.push_str("## Source manifest\n\n");
+            index.push_str(GENERATED_SOURCE_MANIFEST_START);
+            index.push_str("\n## Source manifest\n\n");
         }
         for entry in &self.entries {
             render_entry(entry, &mut index)?;
+        }
+        if !self.entries.is_empty() {
+            index.push_str(GENERATED_SOURCE_MANIFEST_END);
+            index.push_str("\n\n");
+        }
+        if !preserved.suffix.is_empty() {
+            index.push_str(&preserved.suffix);
+            if !index.ends_with('\n') {
+                index.push('\n');
+            }
         }
 
         write_atomic(&index_path, index.as_bytes(), "write raw source index")
@@ -628,9 +642,17 @@ fn split_sorted_query(location: &str) -> (String, Option<String>) {
     (base.to_string(), Some(params.join("&")))
 }
 
-fn existing_index_without_manifest(index_path: &Path) -> Result<String, WikiError> {
+struct PreservedSourceIndex {
+    prefix: String,
+    suffix: String,
+}
+
+fn existing_index_without_manifest(index_path: &Path) -> Result<PreservedSourceIndex, WikiError> {
     if !index_path.exists() {
-        return Ok(String::from("# Raw Sources\n\n"));
+        return Ok(PreservedSourceIndex {
+            prefix: String::from("# Raw Sources\n\n"),
+            suffix: String::new(),
+        });
     }
 
     let existing = fs::read_to_string(index_path).map_err(|error| WikiError::Io {
@@ -638,28 +660,48 @@ fn existing_index_without_manifest(index_path: &Path) -> Result<String, WikiErro
         path: Some(index_path.to_path_buf()),
         source: error,
     })?;
-    let mut preserved = Vec::new();
-    let mut skipping_manifest = false;
 
-    for line in existing.lines() {
-        if line.trim() == "## Source manifest" {
-            skipping_manifest = true;
-            continue;
-        }
-        if !skipping_manifest {
-            preserved.push(line);
+    if let Some(start) = existing.find(GENERATED_SOURCE_MANIFEST_START) {
+        let search_from = start + GENERATED_SOURCE_MANIFEST_START.len();
+        if let Some(relative_end) = existing[search_from..].find(GENERATED_SOURCE_MANIFEST_END) {
+            let end = search_from + relative_end + GENERATED_SOURCE_MANIFEST_END.len();
+            return Ok(PreservedSourceIndex {
+                prefix: normalize_preserved_index_prefix(&existing[..start]),
+                suffix: normalize_preserved_index_suffix(&existing[end..]),
+            });
         }
     }
 
-    let mut index = preserved.join("\n");
-    if index.trim().is_empty() {
-        index.push_str("# Raw Sources");
+    if let Some(start) = existing.find("\n## Source manifest") {
+        return Ok(PreservedSourceIndex {
+            prefix: normalize_preserved_index_prefix(&existing[..start]),
+            suffix: String::new(),
+        });
     }
-    while index.ends_with('\n') {
-        index.pop();
+    if existing.trim_start().starts_with("## Source manifest") {
+        return Ok(PreservedSourceIndex {
+            prefix: String::from("# Raw Sources\n\n"),
+            suffix: String::new(),
+        });
     }
-    index.push_str("\n\n");
-    Ok(index)
+
+    Ok(PreservedSourceIndex {
+        prefix: normalize_preserved_index_prefix(&existing),
+        suffix: String::new(),
+    })
+}
+
+fn normalize_preserved_index_prefix(prefix: &str) -> String {
+    let mut prefix = prefix.trim_end_matches('\n').to_string();
+    if prefix.trim().is_empty() {
+        prefix.push_str("# Raw Sources");
+    }
+    prefix.push_str("\n\n");
+    prefix
+}
+
+fn normalize_preserved_index_suffix(suffix: &str) -> String {
+    suffix.trim_start_matches('\n').to_string()
 }
 
 fn write_atomic(path: &Path, contents: &[u8], action: &'static str) -> Result<(), WikiError> {
@@ -686,7 +728,7 @@ fn write_atomic(path: &Path, contents: &[u8], action: &'static str) -> Result<()
         });
     }
     drop(file);
-    if let Err(error) = fs::rename(&temp_path, path) {
+    if let Err(error) = replace_atomic(&temp_path, path) {
         let _ = fs::remove_file(&temp_path);
         return Err(WikiError::Io {
             action,
@@ -695,6 +737,18 @@ fn write_atomic(path: &Path, contents: &[u8], action: &'static str) -> Result<()
         });
     }
     sync_parent_dir(path)
+}
+
+fn replace_atomic(temp_path: &Path, path: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        match fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    fs::rename(temp_path, path)
 }
 
 fn temp_sibling_path(path: &Path) -> PathBuf {
@@ -926,8 +980,29 @@ mod tests {
 
         let stripped = existing_index_without_manifest(&index_path).expect("strip manifest");
 
-        assert!(stripped.contains("Manual note."));
-        assert!(!stripped.contains("Generated Heading"));
-        assert!(!stripped.contains("stale generated content"));
+        assert!(stripped.prefix.contains("Manual note."));
+        assert!(!stripped.prefix.contains("Generated Heading"));
+        assert!(!stripped.prefix.contains("stale generated content"));
+        assert!(stripped.suffix.is_empty());
+    }
+
+    #[test]
+    fn existing_index_preserves_content_after_marked_manifest() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let index_path = SourceManifest::index_path(temp.path());
+        std::fs::create_dir_all(index_path.parent().expect("raw dir")).expect("raw dir");
+        std::fs::write(
+            &index_path,
+            format!(
+                "# Raw Sources\n\nManual before.\n\n{GENERATED_SOURCE_MANIFEST_START}\n## Source manifest\n\n- generated\n{GENERATED_SOURCE_MANIFEST_END}\n\nManual after.\n",
+            ),
+        )
+        .expect("index");
+
+        let stripped = existing_index_without_manifest(&index_path).expect("strip manifest");
+
+        assert!(stripped.prefix.contains("Manual before."));
+        assert!(!stripped.prefix.contains("generated"));
+        assert!(stripped.suffix.contains("Manual after."));
     }
 }

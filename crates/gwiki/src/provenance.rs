@@ -1,11 +1,12 @@
 //! Provenance links from raw source chunks to synthesized wiki sections.
 
 use std::collections::BTreeMap;
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use tempfile::NamedTempFile;
 
 use crate::WikiError;
 
@@ -140,37 +141,30 @@ fn write_provenance_json_durably(
     path: &std::path::Path,
     contents: &[u8],
 ) -> Result<(), WikiError> {
-    let temp_path = meta_dir.join(format!(".provenance.json.{}.tmp", std::process::id()));
-    let mut temp = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temp_path)
-        .map_err(|source| WikiError::Io {
-            action: "create provenance graph temp file",
-            path: Some(temp_path.clone()),
-            source,
-        })?;
+    let mut temp = NamedTempFile::new_in(meta_dir).map_err(|source| WikiError::Io {
+        action: "create provenance graph temp file",
+        path: Some(meta_dir.to_path_buf()),
+        source,
+    })?;
+    let temp_path = temp.path().to_path_buf();
     if let Err(source) = temp.write_all(contents) {
-        let _ = fs::remove_file(&temp_path);
         return Err(WikiError::Io {
             action: "write provenance graph temp file",
             path: Some(temp_path),
             source,
         });
     }
-    if let Err(source) = temp.sync_all() {
-        let _ = fs::remove_file(&temp_path);
+    if let Err(source) = temp.as_file().sync_all() {
         return Err(WikiError::Io {
             action: "sync provenance graph temp file",
             path: Some(temp_path),
             source,
         });
     }
-    drop(temp);
-    fs::rename(&temp_path, path).map_err(|source| WikiError::Io {
+    temp.persist(path).map_err(|error| WikiError::Io {
         action: "replace provenance graph",
         path: Some(path.to_path_buf()),
-        source,
+        source: error.error,
     })?;
     sync_provenance_dir(meta_dir)
 }

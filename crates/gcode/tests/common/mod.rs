@@ -1,4 +1,4 @@
-use postgres::{Client, NoTls};
+use postgres::Client;
 
 pub struct ProjectCleanup {
     database_url: String,
@@ -19,11 +19,11 @@ impl Drop for ProjectCleanup {
         let database_url = self.database_url.clone();
         let project_id = self.project_id.clone();
         if std::panic::catch_unwind(move || {
-			let mut conn = match Client::connect(&database_url, NoTls) {
+			let mut conn = match gobby_core::postgres::connect_readwrite(&database_url) {
 				Ok(conn) => conn,
 				Err(err) => {
 					eprintln!(
-						"ProjectCleanup cleanup: Client::connect failed for project {project_id}: {err}",
+						"ProjectCleanup cleanup: connect_readwrite failed for project {project_id}: {err}",
 					);
 					return;
 				}

@@ -130,6 +130,13 @@ pub enum DegradationKind {
         /// Source names that could not contribute results.
         unavailable: Vec<String>,
     },
+    /// Operation completed with capped or otherwise incomplete data.
+    PartialData {
+        /// Component whose data was incomplete.
+        component: String,
+        /// Human-readable detail about the partial data.
+        message: String,
+    },
     /// Index data may be stale because of content drift or age thresholds.
     StaleIndex {
         /// Paths whose indexed data may be stale.

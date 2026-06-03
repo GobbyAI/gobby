@@ -68,7 +68,7 @@ pub fn detect_backend(backends: &[Backend], timeout_ms: u64) -> Option<Backend> 
 /// Validate that a specific backend is reachable.
 pub fn validate_backend(backend: &Backend, timeout_ms: u64) -> bool {
     let timeout = std::time::Duration::from_millis(timeout_ms);
-    let url = format!("{}{}", backend.url, backend.probe);
+    let url = backend_probe_url(backend);
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(timeout)
         .timeout_read(timeout)
@@ -101,6 +101,16 @@ pub fn validate_backend(backend: &Backend, timeout_ms: u64) -> bool {
             );
             false
         }
+    }
+}
+
+fn backend_probe_url(backend: &Backend) -> String {
+    let base = backend.url.trim_end_matches('/');
+    let probe = backend.probe.trim_start_matches('/');
+    if probe.is_empty() {
+        base.to_string()
+    } else {
+        format!("{base}/{probe}")
     }
 }
 
@@ -163,6 +173,27 @@ mod tests {
                 .iter()
                 .all(|backend| backend.auth_token.is_empty())
         );
+    }
+
+    #[test]
+    fn probe_url_uses_exactly_one_separator() {
+        let backend = Backend {
+            name: "test".into(),
+            url: "http://localhost:1234/".into(),
+            probe: "/v1/models".into(),
+            auth_token: String::new(),
+        };
+
+        assert_eq!(
+            backend_probe_url(&backend),
+            "http://localhost:1234/v1/models"
+        );
+
+        let backend = Backend {
+            probe: String::new(),
+            ..backend
+        };
+        assert_eq!(backend_probe_url(&backend), "http://localhost:1234");
     }
 
     fn has_header(request: &str, name: &str, value: &str) -> bool {

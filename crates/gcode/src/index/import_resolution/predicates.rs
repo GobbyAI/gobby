@@ -294,7 +294,11 @@ pub(super) fn bundled_ruby_require_roots() -> &'static HashMap<String, String> {
         serde_json::from_str(include_str!(
             "../../../assets/import_roots/ruby_require_roots.json"
         ))
-        .expect("bundled Ruby require roots JSON parses")
+        .expect(
+            "failed to parse bundled import roots asset \
+             ../../../assets/import_roots/ruby_require_roots.json; \
+             please report this gobby-code packaging bug",
+        )
     })
 }
 
@@ -304,7 +308,11 @@ pub(super) fn bundled_elixir_dependency_roots() -> &'static HashMap<String, Vec<
         serde_json::from_str(include_str!(
             "../../../assets/import_roots/elixir_dependency_roots.json"
         ))
-        .expect("bundled Elixir dependency roots JSON parses")
+        .expect(
+            "failed to parse bundled import roots asset \
+             ../../../assets/import_roots/elixir_dependency_roots.json; \
+             please report this gobby-code packaging bug",
+        )
     })
 }
 

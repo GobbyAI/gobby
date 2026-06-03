@@ -989,7 +989,21 @@ pub fn write_standalone_bootstrap(
 }
 
 fn remove_legacy_embedding_keys(config: &mut StandaloneConfig) {
-    for key in embedding_keys::legacy_keys() {
+    let legacy_keys = embedding_keys::legacy_keys();
+    let removed = legacy_keys
+        .iter()
+        .filter(|key| config.get(key).is_some())
+        .cloned()
+        .collect::<Vec<_>>();
+    if !removed.is_empty() {
+        log::warn!(
+            "removing legacy embedding config keys [{}]; embedding config now lives under \
+             ai.embeddings.* and unsupported legacy values are dropped. See \
+             hub-install-contract.md and ai-daemon-contract.md for migration guidance.",
+            removed.join(", ")
+        );
+    }
+    for key in legacy_keys {
         config.remove(&key);
     }
 }
@@ -1176,6 +1190,14 @@ mod tests {
         }
 
         fn clear(&self) {
+            let lock_is_held = matches!(
+                TEST_ENV_LOCK.try_lock(),
+                Err(std::sync::TryLockError::WouldBlock)
+            );
+            assert!(
+                lock_is_held,
+                "TEST_ENV_LOCK must be held before mutating test environment"
+            );
             for key in [
                 "GOBBY_FALKORDB_HOST",
                 "GOBBY_FALKORDB_PORT",

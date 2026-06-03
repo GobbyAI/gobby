@@ -280,6 +280,7 @@ fn claim_lines(page: &WikiPage, options: &AuditOptions) -> Vec<ClaimLine> {
     let mut frontmatter_marker: Option<&str> = None;
     let mut fence: Option<MarkdownFence> = None;
     let mut current_heading: Option<String> = None;
+    let mut in_comment = false;
 
     for raw_line in page.markdown.split_inclusive('\n') {
         let line = raw_line.trim_end_matches(['\r', '\n']);
@@ -306,7 +307,19 @@ fn claim_lines(page: &WikiPage, options: &AuditOptions) -> Vec<ClaimLine> {
             fence = Some(opening_fence);
             continue;
         }
-        if trimmed.is_empty() || trimmed.starts_with("<!--") {
+        if in_comment {
+            if trimmed.contains("-->") {
+                in_comment = false;
+            }
+            continue;
+        }
+        if trimmed.contains("<!--") {
+            if !trimmed.contains("-->") {
+                in_comment = true;
+            }
+            continue;
+        }
+        if trimmed.is_empty() {
             continue;
         }
         if is_thematic_break(trimmed) {
@@ -376,9 +389,33 @@ fn has_inline_source_support(line: &str) -> bool {
     let lower = line.to_ascii_lowercase();
     lower.contains("[[wiki/sources/")
         || lower.contains("(wiki/sources/")
-        || lower.contains("citation:")
-        || lower.contains("source:")
+        || has_link_like_source_token(&lower, "citation:")
+        || has_link_like_source_token(&lower, "source:")
         || lower.contains("gwiki-source:")
+}
+
+fn has_link_like_source_token(line: &str, token: &str) -> bool {
+    let mut start = 0;
+    while let Some(relative_index) = line[start..].find(token) {
+        let index = start + relative_index;
+        let before = line[..index].chars().next_back();
+        let has_boundary =
+            before.is_none_or(|ch| !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')));
+        let after = line[index + token.len()..].trim_start();
+        if has_boundary
+            && (after.starts_with("http://")
+                || after.starts_with("https://")
+                || after.starts_with("[[wiki/sources/")
+                || after.starts_with('[')
+                || after.starts_with("(wiki/sources/")
+                || after.starts_with("wiki/sources/")
+                || after.starts_with("gwiki-source:"))
+        {
+            return true;
+        }
+        start = index + token.len();
+    }
+    false
 }
 
 #[cfg(test)]
@@ -501,6 +538,40 @@ mod tests {
         assert_eq!(claims.len(), 2);
         assert_eq!(claims[0].text, "Claim after TOML frontmatter.");
         assert_eq!(claims[1].text, "Claim after thematic break.");
+    }
+
+    #[test]
+    fn multiline_html_comments_do_not_emit_claims() {
+        let page = WikiPage {
+            path: PathBuf::from("wiki/topics/comments.md"),
+            relative_path: PathBuf::from("wiki/topics/comments.md"),
+            markdown: "# Comments\nVisible claim.\n<!--\nHidden claim.\n-->\nAfter claim.\n"
+                .to_string(),
+            parsed: crate::markdown::parse_markdown(
+                "wiki/topics/comments.md",
+                "# Comments\n",
+                std::iter::empty::<&str>(),
+            )
+            .expect("parse markdown"),
+            has_frontmatter: false,
+        };
+
+        let claims = claim_lines(&page, &AuditOptions::default());
+
+        assert_eq!(claims.len(), 2);
+        assert_eq!(claims[0].text, "Visible claim.");
+        assert_eq!(claims[1].text, "After claim.");
+    }
+
+    #[test]
+    fn inline_source_support_requires_link_like_target() {
+        assert!(!has_inline_source_support("the upstream source: TBD"));
+        assert!(has_inline_source_support(
+            "Evidence source: https://example.com/report"
+        ));
+        assert!(has_inline_source_support(
+            "Evidence citation: [[wiki/sources/source-1]]"
+        ));
     }
 
     #[test]

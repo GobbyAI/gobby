@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 #[cfg(feature = "documents")]
 use std::io::Cursor;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::ScopeIdentity;
 use crate::WikiError;
@@ -453,16 +453,24 @@ fn extract_vision_for_page(
         VisionEndpoint::Unavailable(_) => return Ok(None),
     };
     let file_name = rendered_page_file_name(&snapshot.file_name, rendered.number);
+    let image_asset_path = rendered_page_asset_path(asset_path, &file_name);
     client
         .extract(&VisionRequest {
             file_name: &file_name,
             mime_type: Some(rendered.mime_type.as_str()),
-            asset_path,
+            asset_path: &image_asset_path,
             bytes: &rendered.bytes,
             width: rendered.width,
             height: rendered.height,
         })
         .map(Some)
+}
+
+fn rendered_page_asset_path(asset_path: &Path, file_name: &str) -> PathBuf {
+    asset_path
+        .parent()
+        .map(|parent| parent.join(file_name))
+        .unwrap_or_else(|| PathBuf::from(file_name))
 }
 
 fn merge_page_markdown(text_layer: &str, vision: Option<&VisionExtraction>) -> String {
@@ -701,6 +709,20 @@ mod tests {
             assert_eq!(request.mime_type, Some("image/png"));
             assert_eq!(request.width, Some(1200));
             assert_eq!(request.height, Some(1600));
+            assert_eq!(
+                request
+                    .asset_path
+                    .file_name()
+                    .and_then(|name| name.to_str()),
+                Some(request.file_name)
+            );
+            assert_eq!(
+                request
+                    .asset_path
+                    .extension()
+                    .and_then(|name| name.to_str()),
+                Some("png")
+            );
             let page_2 = request.file_name.contains("page-2");
 
             Ok(VisionExtraction {

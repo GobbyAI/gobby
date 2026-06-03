@@ -55,12 +55,7 @@ pub(crate) fn write_asset_with_suffix(
     file_name: &str,
     bytes: &[u8],
 ) -> Result<PathBuf, WikiError> {
-    let extension = Path::new(file_name)
-        .extension()
-        .and_then(|value| value.to_str())
-        .map(sanitize_extension)
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "bin".to_string());
+    let extension = sanitized_extension_for_file_name(file_name);
     let suffix = sanitize_asset_suffix(suffix);
     let asset_path = PathBuf::from("raw")
         .join("assets")
@@ -262,15 +257,26 @@ fn write_immutable_file(
 }
 
 pub(crate) fn asset_path(record: &SourceRecord, file_name: &str) -> PathBuf {
-    let extension = Path::new(file_name)
+    let extension = sanitized_extension_for_file_name(file_name);
+    PathBuf::from("raw")
+        .join("assets")
+        .join(format!("{}.{}", record.id, extension))
+}
+
+fn sanitized_extension_for_file_name(file_name: &str) -> String {
+    // Path-shaped names from external inputs are reduced to their basename
+    // before extension extraction, so directory components cannot affect the
+    // raw asset path.
+    let basename = Path::new(file_name)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(file_name);
+    Path::new(basename)
         .extension()
         .and_then(|value| value.to_str())
         .map(sanitize_extension)
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "bin".to_string());
-    PathBuf::from("raw")
-        .join("assets")
-        .join(format!("{}.{}", record.id, extension))
+        .unwrap_or_else(|| "bin".to_string())
 }
 
 fn sanitize_extension(extension: &str) -> String {
@@ -285,6 +291,7 @@ fn sanitize_extension(extension: &str) -> String {
 mod tests {
     use std::path::{Path, PathBuf};
 
+    use super::asset_path;
     use gobby_core::ai_context::AiContext;
     use gobby_core::config::EnvOnlySource;
     use gobby_core::indexing::content_hash;
@@ -293,7 +300,9 @@ mod tests {
     use crate::api::IngestFileOptions;
     use crate::ingest::file;
     use crate::ingest::wayback::{self, WaybackCaptureSnapshot};
-    use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
+    use crate::sources::{
+        CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest, SourceRecord,
+    };
     use crate::store::{
         MemoryWikiStore, StoreError, WikiChunk, WikiDocument, WikiIndexStore, WikiIngestion,
         WikiIngestionEvent, WikiLink, WikiSource,
@@ -316,6 +325,37 @@ mod tests {
             std::fs::create_dir_all(parent).expect("create parent");
         }
         std::fs::write(path, contents).expect("write file");
+    }
+
+    fn test_source_record() -> SourceRecord {
+        SourceRecord {
+            id: "source-1".to_string(),
+            location: "/tmp/report.pdf".to_string(),
+            canonical_location: "/tmp/report.pdf".to_string(),
+            kind: SourceKind::Pdf,
+            fetched_at: "2026-05-29T17:00:00Z".to_string(),
+            content_hash: "hash".to_string(),
+            title: None,
+            citation: None,
+            license: None,
+            ingestion_method: IngestionMethod::Manual,
+            compile_status: CompileStatus::Pending,
+            replay: None,
+        }
+    }
+
+    #[test]
+    fn asset_path_uses_basename_before_extension_extraction() {
+        let record = test_source_record();
+
+        assert_eq!(
+            asset_path(&record, "../nested/report.PDF"),
+            PathBuf::from("raw/assets/source-1.pdf")
+        );
+        assert_eq!(
+            asset_path(&record, "../nested/no-extension"),
+            PathBuf::from("raw/assets/source-1.bin")
+        );
     }
 
     #[test]
