@@ -204,11 +204,23 @@ class CodexManagedChatSession(
         async with self._lock:
             self.last_activity = datetime.now(UTC)
             self.message_index += 1
+            saw_text_output = False
+            plan_text_parts: list[str] = []
             async for event in self._backend.send_message(
                 self,
                 prompt,
                 context_prefix=context_prefix or None,
             ):
+                if isinstance(event, TextChunk) and event.content:
+                    plan_text_parts.append(event.content)
+                    saw_text_output = True
+                if isinstance(event, DoneEvent):
+                    # Managed CLIs present a plan as a normal assistant turn (no
+                    # ExitPlanMode tool); surface it before the turn's DoneEvent
+                    # so it flows through the shared plan-approval UX.
+                    await self._maybe_broadcast_pending_plan(
+                        "".join(plan_text_parts), saw_text_output
+                    )
                 yield event
 
     async def interrupt(self) -> None:
