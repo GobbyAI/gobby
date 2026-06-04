@@ -178,6 +178,7 @@ export function ChatPage({
           onTtsEnabledChange={onTtsEnabledChange}
           onVoiceInputModeChange={onVoiceInputModeChange}
           onWikiActionComplete={handleWikiActionComplete}
+          onViewPlan={() => showPlanRef?.current?.()}
           openCodeAsArtifact={artifacts.openCodeAsArtifact}
           openFileAsArtifact={artifacts.openFileAsArtifact}
           agentDefinitions={agentDefinitions}

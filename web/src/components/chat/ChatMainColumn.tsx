@@ -45,6 +45,7 @@ interface ChatMainColumnProps extends AgentPickerProps {
   onTtsEnabledChange?: (enabled: boolean) => void;
   onVoiceInputModeChange?: (mode: VoiceInputMode) => void;
   onWikiActionComplete?: () => void | Promise<void>;
+  onViewPlan?: () => void;
   openCodeAsArtifact: (
     language: string,
     content: string,
@@ -79,6 +80,7 @@ export function ChatMainColumn({
   onTtsEnabledChange,
   onVoiceInputModeChange,
   onWikiActionComplete,
+  onViewPlan,
   openCodeAsArtifact,
   openFileAsArtifact,
   agentDefinitions,
@@ -148,6 +150,10 @@ export function ChatMainColumn({
             isLoadingMessages={chat.isLoadingMessages}
             onRespondToQuestion={chat.onRespondToQuestion}
             onRespondToApproval={chat.onRespondToApproval}
+            planPendingApproval={chat.planPendingApproval}
+            onApprovePlan={chat.onApprovePlan}
+            onRequestPlanChanges={chat.onRequestPlanChanges}
+            onViewPlan={onViewPlan}
           />
         </div>
 

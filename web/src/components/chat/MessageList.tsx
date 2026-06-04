@@ -18,6 +18,7 @@ import type { ChatMessage } from "../../types/chat";
 import { MessageItem } from "./MessageItem";
 import { MessageErrorBoundary } from "./MessageErrorBoundary";
 import { GobbyLogo } from "../shared/GobbyLogo";
+import { PlanPendingApprovalBlock } from "./PlanPendingApprovalBlock";
 
 interface MessageListProps {
   messages: ChatMessage[];
@@ -32,6 +33,10 @@ interface MessageListProps {
     toolCallId: string,
     decision: "approve" | "reject" | "approve_always",
   ) => boolean | void;
+  planPendingApproval?: boolean;
+  onApprovePlan?: () => void;
+  onRequestPlanChanges?: (feedback: string) => void;
+  onViewPlan?: () => void;
 }
 
 export interface MessageListHandle {
@@ -50,6 +55,10 @@ export const MessageList = memo(
       isLoadingMessages,
       onRespondToQuestion,
       onRespondToApproval,
+      planPendingApproval,
+      onApprovePlan,
+      onRequestPlanChanges,
+      onViewPlan,
     },
     ref,
   ) {
@@ -221,9 +230,23 @@ export const MessageList = memo(
               messages[messages.length - 1].role === "user") && (
               <ThinkingIndicator />
             )}
+          {planPendingApproval && onApprovePlan && onRequestPlanChanges && (
+            <PlanPendingApprovalBlock
+              onApprove={onApprovePlan}
+              onRequestChanges={onRequestPlanChanges}
+              onView={onViewPlan}
+            />
+          )}
         </>
       ),
-      [isThinking, messages],
+      [
+        isThinking,
+        messages,
+        planPendingApproval,
+        onApprovePlan,
+        onRequestPlanChanges,
+        onViewPlan,
+      ],
     );
 
     // Stable reference for itemContent to avoid Virtuoso re-renders
