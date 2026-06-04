@@ -10,6 +10,7 @@ import { useActivityPanel } from "../activity/useActivityPanel";
 import { Heading } from "../shared/Heading";
 import { CommandPalette } from "./CommandPalette";
 import { ChatMainColumn } from "./ChatMainColumn";
+import { PlanCapabilityProvider } from "./PlanCapabilityContext";
 import { type MessageListHandle } from "./MessageList";
 import type { ChatPageProps } from "./ChatPage.types";
 import { useChatPageArtifacts } from "./useChatPageArtifacts";
@@ -151,6 +152,7 @@ export function ChatPage({
   ]);
 
   return (
+    <PlanCapabilityProvider manualSwitchRequired={chat.planManualSwitch}>
     <div className="relative flex h-full overflow-hidden bg-background text-foreground">
       <Heading level={1} className="sr-only">
         Chat
@@ -240,5 +242,6 @@ export function ChatPage({
         actions={paletteActions}
       />
     </div>
+    </PlanCapabilityProvider>
   );
 }

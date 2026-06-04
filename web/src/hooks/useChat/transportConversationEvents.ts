@@ -88,6 +88,8 @@ export function handleSessionInfo(
   if (wtPath !== undefined) ctx.setWorktreePath(wtPath);
   const agentName = data.agent_name as string | undefined;
   if (agentName) ctx.setActiveAgent(agentName);
+  const planAutoSwitch = data.plan_auto_switch as boolean | undefined;
+  if (typeof planAutoSwitch === "boolean") ctx.setPlanManualSwitch(!planAutoSwitch);
 }
 
 export function handleWorktreeSwitched(

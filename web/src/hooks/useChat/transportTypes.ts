@@ -109,6 +109,7 @@ export interface StateSetters {
   setMainSessionMeta: Setter<SessionObservationMeta | null>;
   setMessages: Setter<ChatMessage[]>;
   setObservedSessionId: Setter<string | null>;
+  setPlanManualSwitch: Setter<boolean>;
   setPlanPendingApproval: Setter<boolean>;
   setProxyDeliveryNotice: Setter<string | null>;
   setSelectedProvider: Setter<string | null>;

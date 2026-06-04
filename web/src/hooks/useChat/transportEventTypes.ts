@@ -177,6 +177,7 @@ export interface SessionInfoMessage {
   current_branch?: string;
   worktree_path?: string;
   agent_name?: string;
+  plan_auto_switch?: boolean;
 }
 
 export interface WorktreeSwitchedMessage {

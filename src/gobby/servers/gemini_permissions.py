@@ -17,6 +17,13 @@ logger = logging.getLogger(__name__)
 class GeminiWebChatPermissionsMixin:
     """Permission and plan helpers for Gemini web-chat wrappers."""
 
+    # ACP CLIs expose no protocol-level mode push (no session/set_mode), so
+    # plan approval cannot auto-switch the agent at the protocol level: 1c's
+    # fallback only flips the Gobby-side mode + UI radio. The UI uses this to
+    # note that a manual switch/continue is required. The Claude SDK session is
+    # native and defaults to True (via getattr in the session_info builder).
+    plan_auto_switch: bool = False
+
     conversation_id: str
     chat_mode: str
     _on_mode_changed: Callable[[str, str], Awaitable[None]] | None
