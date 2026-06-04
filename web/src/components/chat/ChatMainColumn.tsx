@@ -150,10 +150,6 @@ export function ChatMainColumn({
             isLoadingMessages={chat.isLoadingMessages}
             onRespondToQuestion={chat.onRespondToQuestion}
             onRespondToApproval={chat.onRespondToApproval}
-            planPendingApproval={chat.planPendingApproval}
-            onApprovePlan={chat.onApprovePlan}
-            onRequestPlanChanges={chat.onRequestPlanChanges}
-            onViewPlan={onViewPlan}
           />
         </div>
 

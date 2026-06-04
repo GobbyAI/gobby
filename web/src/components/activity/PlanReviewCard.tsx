@@ -3,6 +3,7 @@ import type { Artifact } from '../../types/artifacts'
 import { cn } from '../../lib/utils'
 import { Markdown } from '../chat/Markdown'
 import { PlanApprovalActions } from '../chat/PlanApprovalActions'
+import { useIsMobile } from '../../hooks/useIsMobile'
 
 interface PlanReviewCardProps {
   plan: Artifact
@@ -32,6 +33,9 @@ export const PlanReviewCard = memo(function PlanReviewCard({
   onRequestPlanChanges,
   onSetVersion,
 }: PlanReviewCardProps) {
+  // Approval actions live on the agent status bar on desktop; the panel
+  // carries them only on mobile, where the status bar may be off-screen.
+  const isMobile = useIsMobile()
   const [approved, setApproved] = useState(false)
   const [didRequestChanges, setDidRequestChanges] = useState(false)
   // Track previous props so derived state can be adjusted during render (the
@@ -85,9 +89,11 @@ export const PlanReviewCard = memo(function PlanReviewCard({
             </span>
           </div>
           <p className="max-w-[70ch] text-sm text-muted-foreground">
-            Review the plan below, then approve it or request changes.
+            {isMobile
+              ? 'Review the plan below, then approve it or request changes.'
+              : 'Review the plan below, then approve or request changes from the status bar.'}
           </p>
-          {onApprovePlan && onRequestPlanChanges && (
+          {isMobile && onApprovePlan && onRequestPlanChanges && (
             <PlanApprovalActions
               onApprove={onApprovePlan}
               onRequestChanges={handleRequestChanges}

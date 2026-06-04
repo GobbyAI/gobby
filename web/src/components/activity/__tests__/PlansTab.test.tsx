@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { type ComponentProps } from 'react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { PlansTab } from '../PlansTab'
@@ -8,6 +8,29 @@ import type { Artifact } from '../../../types/artifacts'
 vi.mock('../../chat/Markdown', () => ({
   Markdown: ({ content }: { content: string }) => <div data-testid="markdown">{content}</div>,
 }))
+
+// Plan-approval actions live on the agent status bar on desktop and ALSO in the
+// Plans activity panel on mobile (#15634). Drive useIsMobile via matchMedia +
+// innerWidth so the panel renders its actions only in the mobile viewport.
+function setViewport(mobile: boolean) {
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    matches: mobile,
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }))
+  Object.defineProperty(window, 'innerWidth', {
+    value: mobile ? 480 : 1280,
+    configurable: true,
+    writable: true,
+  })
+}
+
+beforeEach(() => setViewport(false))
 
 function makePlan(contents: string[]): Artifact {
   return {
@@ -56,15 +79,16 @@ describe('PlansTab', () => {
     expect(screen.getByText('Plans')).toBeInTheDocument()
   })
 
-  it('renders the pending approval card with plan text and actions', () => {
+  it('renders the pending card with plan text but no panel actions on desktop', () => {
     renderPlansTab(makePlan(['# Plan\n\nStep 1 details']))
 
     const status = screen.getByTestId('plan-review-status')
     expect(status).toHaveAttribute('data-status', 'pending')
     expect(screen.getByText('Awaiting your approval')).toBeInTheDocument()
     expect(screen.getByTestId('markdown')).toHaveTextContent('Step 1 details')
-    expect(screen.getByTestId('plan-review-approve')).toBeInTheDocument()
-    expect(screen.getByTestId('plan-review-request-changes')).toBeInTheDocument()
+    // Desktop: approve / request-changes live on the agent status bar, not here.
+    expect(screen.queryByTestId('plan-review-approve')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('plan-review-request-changes')).not.toBeInTheDocument()
 
     // BAN 1: no left/right side-stripe accent on the card.
     expect(status.className).not.toContain('border-l')
@@ -74,13 +98,22 @@ describe('PlansTab', () => {
     expect(status.className).toContain('--color-warning-foreground')
   })
 
-  it('fires onApprovePlan when approve is clicked', () => {
+  it('renders approve / request-changes in the panel on mobile', () => {
+    setViewport(true)
+    renderPlansTab(makePlan(['# Plan\n\nStep 1 details']))
+    expect(screen.getByTestId('plan-review-approve')).toBeInTheDocument()
+    expect(screen.getByTestId('plan-review-request-changes')).toBeInTheDocument()
+  })
+
+  it('fires onApprovePlan when approve is clicked (mobile)', () => {
+    setViewport(true)
     const { props } = renderPlansTab(makePlan(['plan body']))
     fireEvent.click(screen.getByTestId('plan-review-approve'))
     expect(props.onApprovePlan).toHaveBeenCalledTimes(1)
   })
 
-  it('fires onRequestPlanChanges with the entered feedback', () => {
+  it('fires onRequestPlanChanges with the entered feedback (mobile)', () => {
+    setViewport(true)
     const { props } = renderPlansTab(makePlan(['plan body']))
 
     fireEvent.click(screen.getByTestId('plan-review-request-changes'))
