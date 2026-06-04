@@ -28,6 +28,8 @@ const RELEASE_WORKFLOWS: [(&str, &str); 5] = [
     ),
 ];
 
+const SOFTPROPS_ACTION_GH_RELEASE_SHA: &str = "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65";
+
 #[test]
 fn release_workflows_have_one_default_and_one_no_default_check() {
     let cases = [
@@ -71,6 +73,23 @@ fn release_workflows_have_one_default_and_one_no_default_check() {
             1,
             "{package} no-default test step count"
         );
+    }
+}
+
+#[test]
+fn release_workflows_pin_github_release_action_by_sha() {
+    for (tool, workflow) in RELEASE_WORKFLOWS {
+        let release_ref = format!("softprops/action-gh-release@{SOFTPROPS_ACTION_GH_RELEASE_SHA}");
+        if workflow.contains("softprops/action-gh-release") {
+            assert!(
+                workflow.contains(&release_ref),
+                "release-{tool}.yml should pin softprops/action-gh-release by SHA"
+            );
+            assert!(
+                !workflow.contains("softprops/action-gh-release@v2"),
+                "release-{tool}.yml should not use a mutable softprops/action-gh-release tag"
+            );
+        }
     }
 }
 

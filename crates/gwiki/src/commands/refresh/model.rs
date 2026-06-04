@@ -2,7 +2,6 @@ use super::*;
 
 #[derive(Debug)]
 pub(crate) struct Selection {
-    pub(crate) candidates: Vec<SourceRecord>,
     pub(crate) planned: Vec<RefreshPlan>,
     pub(crate) skipped: Vec<SkippedRefresh>,
     pub(crate) failed: Vec<RefreshFailure>,

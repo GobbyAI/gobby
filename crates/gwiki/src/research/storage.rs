@@ -1,4 +1,6 @@
 use super::*;
+use crate::support::text::slugify_with_options;
+use crate::support::time;
 
 pub(crate) fn append_raw_index_locked(
     vault_root: &Path,
@@ -136,37 +138,9 @@ pub(crate) fn temp_sibling_path(path: &Path) -> PathBuf {
 }
 
 pub(crate) fn slugify(title: &str) -> String {
-    let mut slug = String::new();
-    let mut last_was_dash = false;
-
-    for ch in title.chars().flat_map(char::to_lowercase) {
-        if ch.is_ascii_alphanumeric() {
-            slug.push(ch);
-            last_was_dash = false;
-        } else if !last_was_dash && !slug.is_empty() {
-            slug.push('-');
-            last_was_dash = true;
-        }
-    }
-
-    while slug.ends_with('-') {
-        slug.pop();
-    }
-
-    if slug.is_empty() {
-        "research-note".to_string()
-    } else {
-        slug
-    }
+    slugify_with_options(title, Some("research-note"), None)
 }
 
 pub(crate) fn unix_timestamp_ms() -> Result<u64, WikiError> {
-    let duration = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|error| WikiError::Config {
-            detail: format!("system clock is before Unix epoch: {error}"),
-        })?;
-    u64::try_from(duration.as_millis()).map_err(|_| WikiError::Config {
-        detail: "system timestamp exceeds u64 milliseconds".to_string(),
-    })
+    time::unix_timestamp_ms()
 }

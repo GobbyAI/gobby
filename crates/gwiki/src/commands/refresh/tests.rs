@@ -1,6 +1,7 @@
 use super::*;
 use crate::IngestFileOptions;
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceReplay};
+use std::path::PathBuf;
 
 fn test_scope(root: &Path) -> ResolvedScope {
     ResolvedScope::topic(
@@ -318,6 +319,48 @@ fn explicit_unsupported_and_missing_sources_fail_structurally() {
         "missing_replay_metadata"
     );
     assert_eq!(outcome.result.payload["failed"][1]["code"], "not_found");
+}
+
+#[test]
+fn raw_source_path_trims_source_ids() {
+    assert_eq!(
+        raw_source_path("  src-abc  ").expect("raw path"),
+        PathBuf::from("raw/src-abc.md")
+    );
+}
+
+#[test]
+fn remove_relative_file_rejects_unsafe_paths_before_join() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    for relative in [
+        Path::new(""),
+        Path::new("."),
+        Path::new("../raw/source.md"),
+        Path::new("/raw/source.md"),
+    ] {
+        assert!(
+            matches!(
+                remove_relative_file(temp.path(), relative),
+                Err(WikiError::InvalidInput { .. })
+            ),
+            "expected invalid path for {}",
+            relative.display()
+        );
+    }
+}
+
+#[test]
+fn refresh_url_accepts_case_insensitive_http_prefix_without_allocation() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let mut record = seed_url(
+        temp.path(),
+        "HTTPS://Example.test/Page",
+        "unix-ms:1",
+        b"body",
+    );
+    record.canonical_location = "https://canonical.example/page".to_string();
+
+    assert_eq!(refresh_url(&record), "HTTPS://Example.test/Page");
 }
 
 #[test]

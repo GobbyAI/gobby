@@ -109,8 +109,8 @@ pub(super) fn index_overlay_files(
         parent_root: parent_root.to_string_lossy().to_string(),
     });
 
-    let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
-    let (candidates, content_only) = walker::discover_files(root_path, &excludes);
+    let excludes = DEFAULT_EXCLUDES;
+    let (candidates, content_only) = walker::discover_files(root_path, excludes);
     let ast_by_rel = paths_by_relative(root_path, &candidates);
     let content_by_rel = paths_by_relative(root_path, &content_only);
     let import_context = parser::build_import_resolution_context(root_path, &candidates);
@@ -190,7 +190,7 @@ pub(super) fn index_overlay_files(
                     &abs,
                     overlay_project_id,
                     root_path,
-                    &excludes,
+                    excludes,
                     &import_context,
                     semantic_resolver.as_deref_mut(),
                 )? {
@@ -199,7 +199,7 @@ pub(super) fn index_overlay_files(
                 }
             }
             OverlayReconcileAction::Index if content_by_rel.contains_key(&rel) => {
-                match index_content_only(conn, &abs, overlay_project_id, root_path, &excludes)? {
+                match index_content_only(conn, &abs, overlay_project_id, root_path, excludes)? {
                     Some(counts) => outcome.add_counts(counts),
                     None => outcome.skipped_files += 1,
                 }

@@ -384,7 +384,8 @@ fn rollback_removed_source(
 }
 
 fn raw_source_path(id: &str) -> Result<PathBuf, WikiError> {
-    if id.trim().is_empty()
+    let id = id.trim();
+    if id.is_empty()
         || id.contains('/')
         || id.contains('\\')
         || Path::new(id)
@@ -633,6 +634,14 @@ mod tests {
             let error = source_asset_path(temp.path(), value).expect_err("unsafe path rejected");
             assert_eq!(error.code(), "invalid_input");
         }
+    }
+
+    #[test]
+    fn raw_source_path_trims_source_ids_before_building_path() {
+        assert_eq!(
+            raw_source_path("  src-abc  ").expect("raw source path"),
+            PathBuf::from("raw/src-abc.md")
+        );
     }
 
     #[test]

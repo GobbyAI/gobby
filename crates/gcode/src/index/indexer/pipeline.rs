@@ -54,8 +54,8 @@ fn index_discovered_files(
     let root_path = &request.project_root;
     let mut outcome = IndexOutcome::new(project_id);
 
-    let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
-    let (mut candidates, mut content_only) = walker::discover_files(root_path, &excludes);
+    let excludes = DEFAULT_EXCLUDES;
+    let (mut candidates, mut content_only) = walker::discover_files(root_path, excludes);
     if let Some(filter) = request.path_filter.as_deref() {
         candidates = filter_discovered_paths(root_path, filter, candidates);
         content_only = filter_discovered_paths(root_path, filter, content_only);
@@ -117,7 +117,7 @@ fn index_discovered_files(
             path,
             project_id,
             root_path,
-            &excludes,
+            excludes,
             &import_context,
             semantic_resolver.as_deref_mut(),
         )? {
@@ -139,7 +139,7 @@ fn index_discovered_files(
             outcome.skipped_files += 1;
             continue;
         }
-        match index_content_only(conn, path, project_id, root_path, &excludes)? {
+        match index_content_only(conn, path, project_id, root_path, excludes)? {
             Some(counts) => outcome.add_counts(counts),
             None => outcome.skipped_files += 1,
         }
@@ -173,7 +173,7 @@ fn index_explicit_files_with_connection(
     let mut outcome = IndexOutcome::new(project_id);
     outcome.scanned_files = request.explicit_files.len();
 
-    let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
+    let excludes = DEFAULT_EXCLUDES;
     let mut routed_files = Vec::new();
     let mut ast_files = Vec::new();
     let mut content_only_files = Vec::new();
@@ -193,7 +193,7 @@ fn index_explicit_files_with_connection(
             continue;
         }
 
-        match explicit_file_route(root_path, &abs, &excludes) {
+        match explicit_file_route(root_path, &abs, excludes) {
             ExplicitFileRoute::Ast => {
                 ast_files.push(abs.clone());
                 routed_files.push((abs, ExplicitFileRoute::Ast));
@@ -249,7 +249,7 @@ fn index_explicit_files_with_connection(
                     &abs,
                     project_id,
                     root_path,
-                    &excludes,
+                    excludes,
                     &import_context,
                     semantic_resolver.as_deref_mut(),
                 )? {
@@ -259,7 +259,7 @@ fn index_explicit_files_with_connection(
                 }
             }
             ExplicitFileRoute::ContentOnly => {
-                match index_content_only(conn, &abs, project_id, root_path, &excludes)? {
+                match index_content_only(conn, &abs, project_id, root_path, excludes)? {
                     Some(counts) => outcome.add_counts(counts),
                     None => outcome.skipped_files += 1,
                 }

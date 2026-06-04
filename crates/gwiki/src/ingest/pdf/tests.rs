@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use chrono::{DateTime, Utc};
 use gobby_core::indexing::content_hash;
 
 use super::ingest::{ingest_pages, ingest_pages_with_vision};
@@ -7,7 +8,9 @@ use super::markdown::{render_pdf_markdown, sanitize_pdf_page_markdown};
 use super::render::normalize_page_text;
 #[cfg(feature = "documents")]
 use super::render::pdf_render_budget_degradation;
-use super::types::{PdfPage, PdfRenderedPage, PdfSnapshot};
+#[cfg(feature = "documents")]
+use super::types::pdf_fetched_at;
+use super::types::{DEFAULT_PDF_RENDER_DPI, PdfPage, PdfRenderedPage, PdfSnapshot};
 use super::{PdfMarkdownSummary, PdfPageMarkdown};
 use crate::ScopeIdentity;
 use crate::WikiError;
@@ -16,6 +19,12 @@ use crate::store::MemoryWikiStore;
 use crate::vision::{VisionClient, VisionEndpoint, VisionExtraction, VisionRequest};
 
 struct FakePdfVisionClient;
+
+fn fetched_at(value: &str) -> DateTime<Utc> {
+    DateTime::parse_from_rfc3339(value)
+        .expect("valid timestamp")
+        .with_timezone(&Utc)
+}
 
 impl VisionClient for FakePdfVisionClient {
     fn extract(&self, request: &VisionRequest<'_>) -> Result<VisionExtraction, WikiError> {
@@ -51,13 +60,27 @@ impl VisionClient for FakePdfVisionClient {
 }
 
 #[test]
+fn default_pdf_render_dpi_is_public_ingest_default() {
+    assert_eq!(DEFAULT_PDF_RENDER_DPI, 150);
+}
+
+#[cfg(feature = "documents")]
+#[test]
+fn pdf_fetched_at_accepts_collect_timestamp_format() {
+    let timestamp = pdf_fetched_at("unix-ms:1000").expect("unix milliseconds timestamp");
+
+    assert_eq!(timestamp.timestamp_millis(), 1000);
+    assert!(pdf_fetched_at("not-a-timestamp").is_err());
+}
+
+#[test]
 fn combines_text_layer_and_vision() {
     let temp = tempfile::tempdir().expect("tempdir");
     let bytes = b"%PDF-1.7\nsource bytes\n%%EOF\n".to_vec();
     let snapshot = PdfSnapshot {
         location: "/tmp/guide.pdf".to_string(),
         file_name: "guide.pdf".to_string(),
-        fetched_at: "2026-05-29T16:30:00Z".to_string(),
+        fetched_at: fetched_at("2026-05-29T16:30:00Z"),
         bytes,
         pages: vec![
             PdfPage {
@@ -128,7 +151,7 @@ fn pdf_ingest_preserves_page_refs() {
     let snapshot = PdfSnapshot {
         location: "/tmp/guide.pdf".to_string(),
         file_name: "guide.pdf".to_string(),
-        fetched_at: "2026-05-29T16:30:00Z".to_string(),
+        fetched_at: fetched_at("2026-05-29T16:30:00Z"),
         bytes: bytes.clone(),
         pages: vec![
             PdfPage {
@@ -143,7 +166,8 @@ fn pdf_ingest_preserves_page_refs() {
     };
     let mut store = MemoryWikiStore::default();
 
-    let result = ingest_pages(temp.path(), &mut store, snapshot).expect("ingest pdf");
+    let scope = ScopeIdentity::global();
+    let result = ingest_pages(temp.path(), &mut store, &scope, snapshot).expect("ingest pdf");
 
     let raw =
         std::fs::read_to_string(temp.path().join(&result.raw_path)).expect("raw markdown written");
@@ -173,7 +197,7 @@ fn pdf_page_body_sanitizes_internal_markers_and_fences() {
     let snapshot = PdfSnapshot {
         location: "/tmp/report.pdf".to_string(),
         file_name: "report.pdf".to_string(),
-        fetched_at: "2026-05-29T21:30:00Z".to_string(),
+        fetched_at: fetched_at("2026-05-29T21:30:00Z"),
         bytes: vec![0; 10],
         pages: Vec::new(),
     };
@@ -230,7 +254,7 @@ fn pdf_degradation_uses_uniform_metadata() {
     let snapshot = PdfSnapshot {
         location: "/tmp/scanned.pdf".to_string(),
         file_name: "scanned.pdf".to_string(),
-        fetched_at: "2026-05-29T16:30:00Z".to_string(),
+        fetched_at: fetched_at("2026-05-29T16:30:00Z"),
         bytes: bytes.clone(),
         pages: vec![PdfPage {
             number: 1,
@@ -272,7 +296,7 @@ fn pdf_degradation_uses_uniform_metadata() {
     let text_only_pdf = PdfSnapshot {
         location: "/tmp/text-only.pdf".to_string(),
         file_name: "text-only.pdf".to_string(),
-        fetched_at: "2026-05-29T16:30:00Z".to_string(),
+        fetched_at: fetched_at("2026-05-29T16:30:00Z"),
         bytes: b"%PDF text".to_vec(),
         pages: vec![PdfPage {
             number: 1,
@@ -298,7 +322,7 @@ fn pdf_degradation_uses_uniform_metadata() {
     let empty_pdf = PdfSnapshot {
         location: "/tmp/empty.pdf".to_string(),
         file_name: "empty.pdf".to_string(),
-        fetched_at: "2026-05-29T16:30:00Z".to_string(),
+        fetched_at: fetched_at("2026-05-29T16:30:00Z"),
         bytes: b"%PDF empty".to_vec(),
         pages: Vec::new(),
     };

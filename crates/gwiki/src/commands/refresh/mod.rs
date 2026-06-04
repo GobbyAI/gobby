@@ -60,7 +60,6 @@ fn execute_resolved_with_fetcher(
     let manifest = SourceManifest::read(scope.root())?;
     let explicit = !source_ids.is_empty();
     let Selection {
-        candidates,
         planned,
         skipped,
         mut failed,
@@ -82,14 +81,13 @@ fn execute_resolved_with_fetcher(
         }));
     }
 
-    let fetched_at = collect_timestamp().map_err(|error| WikiError::Config {
-        detail: format!("failed to read system clock: {error}"),
-    })?;
+    let fetched_at = collect_timestamp()?;
     let mut refreshed = Vec::new();
     let mut unchanged = Vec::new();
     let mut degradations = Vec::new();
 
-    for record in &candidates {
+    for plan in &planned {
+        let record = &plan.record;
         match replay_kind(record) {
             Ok(ReplayKind::Url) => {
                 refresh_url_candidate(

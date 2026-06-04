@@ -1,4 +1,9 @@
-const DEFAULT_PDF_RENDER_DPI: u16 = 150;
+#[cfg(feature = "documents")]
+use chrono::TimeZone;
+use chrono::{DateTime, Utc};
+
+/// Default rasterization density for PDF page images sent to vision extraction.
+pub const DEFAULT_PDF_RENDER_DPI: u16 = 150;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PdfPage {
@@ -10,7 +15,7 @@ pub struct PdfPage {
 pub struct PdfSnapshot {
     pub location: String,
     pub file_name: String,
-    pub fetched_at: String,
+    pub fetched_at: DateTime<Utc>,
     pub bytes: Vec<u8>,
     pub pages: Vec<PdfPage>,
 }
@@ -19,7 +24,7 @@ pub struct PdfSnapshot {
 pub struct PdfFileSnapshot {
     pub location: String,
     pub file_name: String,
-    pub fetched_at: String,
+    pub fetched_at: DateTime<Utc>,
     pub bytes: Vec<u8>,
 }
 
@@ -43,4 +48,28 @@ impl Default for PdfIngestOptions {
             render_dpi: DEFAULT_PDF_RENDER_DPI,
         }
     }
+}
+
+#[cfg(feature = "documents")]
+pub(crate) fn pdf_fetched_at(value: &str) -> Result<DateTime<Utc>, crate::WikiError> {
+    let value = value.trim();
+    if let Some(millis) = value.strip_prefix("unix-ms:") {
+        let millis = millis
+            .parse::<i64>()
+            .map_err(|error| crate::WikiError::Config {
+                detail: format!("invalid PDF fetch timestamp `{value}`: {error}"),
+            })?;
+        return Utc
+            .timestamp_millis_opt(millis)
+            .single()
+            .ok_or_else(|| crate::WikiError::Config {
+                detail: format!("PDF fetch timestamp `{value}` is out of range"),
+            });
+    }
+
+    DateTime::parse_from_rfc3339(value)
+        .map(|timestamp| timestamp.with_timezone(&Utc))
+        .map_err(|error| crate::WikiError::Config {
+            detail: format!("invalid PDF fetch timestamp `{value}`: {error}"),
+        })
 }

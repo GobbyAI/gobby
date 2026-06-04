@@ -44,32 +44,37 @@ impl GrepMatcher {
 }
 
 fn has_identifier_boundaries(line: &str, span: &GrepSpan) -> bool {
-    let bytes = line.as_bytes();
-    let mut token_start = span.start;
-    while token_start < span.end && !is_identifier_byte(bytes[token_start]) {
-        token_start += 1;
-    }
-    if token_start == span.end {
+    let Some((start_offset, first)) = line[span.start..span.end]
+        .char_indices()
+        .find(|(_, ch)| is_identifier_char(*ch))
+    else {
         return false;
+    };
+    let token_start = span.start + start_offset;
+    let mut token_end = token_start + first.len_utf8();
+    let remaining_start = token_end;
+
+    for (offset, ch) in line[remaining_start..span.end].char_indices() {
+        if !is_identifier_char(ch) {
+            break;
+        }
+        token_end = remaining_start + offset + ch.len_utf8();
     }
 
-    let mut token_end = token_start;
-    while token_end < span.end && is_identifier_byte(bytes[token_end]) {
-        token_end += 1;
-    }
-
-    let before_attached = token_start
-        .checked_sub(1)
-        .is_some_and(|index| is_identifier_byte(bytes[index]));
-    let after_attached = bytes
-        .get(token_end)
-        .is_some_and(|byte| is_identifier_byte(*byte));
+    let before_attached = line[..token_start]
+        .chars()
+        .next_back()
+        .is_some_and(is_identifier_char);
+    let after_attached = line[token_end..]
+        .chars()
+        .next()
+        .is_some_and(is_identifier_char);
 
     !before_attached && !after_attached
 }
 
-fn is_identifier_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_'
+fn is_identifier_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
 }
 
 #[cfg(test)]
@@ -105,6 +110,17 @@ mod tests {
             matcher
                 .find_spans("selected_note_paths note_paths xnote_path")
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn word_matching_rejects_attached_unicode_identifier_chars() {
+        let matcher = GrepMatcher::new("bar", false, false, true).expect("matcher");
+
+        assert!(matcher.find_spans("føøbar barβ _bar bar_").is_empty());
+        assert_eq!(
+            matched_texts(&matcher, "føø bar; β bar"),
+            vec!["bar", "bar"]
         );
     }
 

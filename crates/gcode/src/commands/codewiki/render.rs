@@ -340,9 +340,14 @@ pub(crate) fn render_module_doc(module: &ModuleDoc) -> String {
         CodewikiGraphAvailability::Unavailable => {
             doc.push_str("## Dependency Diagram\n\n`degraded: graph-unavailable`\n\n");
         }
-        CodewikiGraphAvailability::Available => {
+        CodewikiGraphAvailability::Available | CodewikiGraphAvailability::Truncated => {
+            if module.graph_availability == CodewikiGraphAvailability::Truncated {
+                doc.push_str("## Dependency Diagram\n\n`degraded: graph-truncated`\n\n");
+            }
             if let Some(diagram) = &module.dependency_diagram {
-                doc.push_str("## Dependency Diagram\n\n");
+                if module.graph_availability == CodewikiGraphAvailability::Available {
+                    doc.push_str("## Dependency Diagram\n\n");
+                }
                 doc.push_str(diagram);
                 doc.push('\n');
             }

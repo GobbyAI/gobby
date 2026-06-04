@@ -31,7 +31,6 @@ pub(crate) fn select_sources(entries: &[SourceRecord], source_ids: &[String]) ->
             }
         }
         return Selection {
-            candidates: planned.iter().map(|plan| plan.record.clone()).collect(),
             planned,
             skipped,
             failed,
@@ -64,7 +63,6 @@ pub(crate) fn select_sources(entries: &[SourceRecord], source_ids: &[String]) ->
     }
 
     Selection {
-        candidates: planned.iter().map(|plan| plan.record.clone()).collect(),
         planned,
         skipped: Vec::new(),
         failed,
@@ -164,6 +162,11 @@ pub(crate) fn refresh_url(record: &SourceRecord) -> &str {
 }
 
 fn is_http_url(value: &str) -> bool {
-    let lower = value.trim().to_ascii_lowercase();
-    lower.starts_with("http://") || lower.starts_with("https://")
+    let value = value.trim();
+    value
+        .get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("http://"))
+        || value
+            .get(..8)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"))
 }

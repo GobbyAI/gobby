@@ -42,8 +42,7 @@ pub fn project_changed_since(
         .checked_sub(SKEW_MARGIN)
         .unwrap_or(last_indexed_at);
 
-    let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
-    let (candidates, content_only) = walker::discover_files(project_root, &excludes);
+    let (candidates, content_only) = walker::discover_files(project_root, DEFAULT_EXCLUDES);
 
     // Modify / add: a discovered file whose mtime is newer than the threshold.
     // A freshly added file also carries a recent mtime, so adds are caught here

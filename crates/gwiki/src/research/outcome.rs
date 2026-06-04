@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use super::*;
 
 pub(crate) fn observation_from_outcome(
@@ -73,9 +75,10 @@ pub(crate) fn collect_strings(value: &Value, out: &mut Vec<String>) {
 }
 
 pub(crate) fn dedup_strings(values: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
     let mut deduped = Vec::new();
     for value in values {
-        if !deduped.iter().any(|existing| existing == &value) {
+        if seen.insert(value.clone()) {
             deduped.push(value);
         }
     }
@@ -215,5 +218,23 @@ pub fn research_scope_from_resolved(scope: &scope::ResolvedScope) -> ResearchSco
         ScopeKind::Project { project_id, .. } => {
             ResearchScope::project_for_id(project_id.clone(), scope.root().to_path_buf())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dedup_strings_preserves_first_seen_order() {
+        assert_eq!(
+            dedup_strings(vec![
+                "a".to_string(),
+                "b".to_string(),
+                "a".to_string(),
+                "c".to_string(),
+            ]),
+            vec!["a", "b", "c"]
+        );
     }
 }

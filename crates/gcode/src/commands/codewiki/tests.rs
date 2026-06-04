@@ -1,4 +1,4 @@
-use super::io::write_doc;
+use super::io::{source_files_from_frontmatter, unquote_yaml_string, write_doc};
 use super::*;
 
 #[test]
@@ -350,6 +350,72 @@ fn empty_available_graph_does_not_emit_degradation_marker() {
         .expect("module doc still renders");
 
     assert!(!module.contains("degraded: graph-unavailable"));
+}
+
+#[test]
+fn truncated_graph_emits_degradation_marker_with_partial_diagram() {
+    let input = CodewikiInput {
+        files: vec![
+            "src/api/handler.rs".to_string(),
+            "src/domain/service.rs".to_string(),
+        ],
+        graph_edges: vec![CodewikiGraphEdge::import(
+            test_component_id("src/api/handler.rs", "handle", "function"),
+            test_component_id("src/domain/service.rs", "Service", "class"),
+        )],
+        graph_availability: CodewikiGraphAvailability::Truncated,
+        symbols: vec![
+            test_symbol(
+                "src/api/handler.rs",
+                "handle",
+                "function",
+                1,
+                "pub fn handle()",
+            ),
+            test_symbol(
+                "src/domain/service.rs",
+                "Service",
+                "class",
+                1,
+                "pub struct Service;",
+            ),
+        ],
+    };
+
+    let docs = generate_hierarchical_docs(&input, None);
+    let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
+    let module = docs_by_path
+        .get("modules/src/api.md")
+        .expect("module doc still renders");
+
+    assert!(module.contains("degraded: graph-truncated"));
+    assert!(module.contains("```mermaid"));
+    assert!(module.contains("m_src_api[\"src/api\"] --> m_src_domain[\"src/domain\"]"));
+}
+
+#[test]
+fn frontmatter_source_files_accept_unquoted_and_escaped_values() {
+    let files = source_files_from_frontmatter(
+        r#"---
+sources:
+  - file: src/plain.rs
+  - file: "src/escaped\"quote.rs"
+---
+"#,
+    );
+
+    assert!(files.contains("src/plain.rs"));
+    assert!(files.contains("src/escaped\"quote.rs"));
+}
+
+#[test]
+fn yaml_unquote_translates_common_escapes_and_rejects_incomplete_escape() {
+    assert_eq!(
+        unquote_yaml_string(r#""line\nquote\"tab\tbackslash\\""#),
+        Some("line\nquote\"tab\tbackslash\\".to_string())
+    );
+    let incomplete = format!("\"{}\\\"", "src/incomplete");
+    assert_eq!(unquote_yaml_string(&incomplete), None);
 }
 
 #[test]

@@ -1,5 +1,7 @@
 use super::*;
 
+const CODEWIKI_GRAPH_EDGE_LIMIT: usize = 5000;
+
 pub(crate) fn fetch_codewiki_graph_edges(
     ctx: &Context,
     files: &[String],
@@ -57,6 +59,7 @@ pub(crate) fn fetch_codewiki_graph_edges(
     let Some(rows) = query_or_unavailable(ctx, &mut client, &query, params) else {
         return Ok(CodewikiGraph::unavailable());
     };
+    let mut truncated = rows.len() == CODEWIKI_GRAPH_EDGE_LIMIT;
     for row in rows {
         let Some(source) = row.get("source").and_then(|value| value.as_str()) else {
             continue;
@@ -82,6 +85,7 @@ pub(crate) fn fetch_codewiki_graph_edges(
         let Some(rows) = query_or_unavailable(ctx, &mut client, &query, params) else {
             return Ok(CodewikiGraph::unavailable());
         };
+        truncated |= rows.len() == CODEWIKI_GRAPH_EDGE_LIMIT;
         for row in rows {
             let Some(source_file) = row.get("source").and_then(|value| value.as_str()) else {
                 continue;
@@ -107,7 +111,11 @@ pub(crate) fn fetch_codewiki_graph_edges(
         }
     }
 
-    Ok(CodewikiGraph::available(edges))
+    if truncated {
+        Ok(CodewikiGraph::truncated(edges))
+    } else {
+        Ok(CodewikiGraph::available(edges))
+    }
 }
 
 pub(crate) fn codewiki_call_edges_query(
@@ -119,7 +127,7 @@ pub(crate) fn codewiki_call_edges_query(
             "MATCH (source:CodeSymbol {{project: $project}})-[:CALLS]->(target:CodeSymbol {{project: $project}}) \
              WHERE source.id IN [{}] AND target.id IN [{}] \
              RETURN source.id AS source, target.id AS target \
-             LIMIT 5000",
+             LIMIT {CODEWIKI_GRAPH_EDGE_LIMIT}",
             falkor::id_list_literal(symbol_ids),
             falkor::id_list_literal(symbol_ids)
         ),
@@ -139,7 +147,7 @@ pub(crate) fn codewiki_import_edges_query(
             "MATCH (source:CodeFile {{project: $project}})-[:IMPORTS]->(target:CodeModule {{project: $project}}) \
              WHERE source.path IN [{}] \
              RETURN source.path AS source, target.name AS target \
-             LIMIT 5000",
+             LIMIT {CODEWIKI_GRAPH_EDGE_LIMIT}",
             falkor::id_list_literal(files)
         ),
         HashMap::from([(

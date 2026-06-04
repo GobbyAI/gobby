@@ -151,14 +151,22 @@ pub(crate) fn source_files_from_frontmatter(content: &str) -> BTreeSet<String> {
         if !in_frontmatter {
             continue;
         }
-        if let Some(file) = line
-            .strip_prefix("  - file: ")
-            .and_then(unquote_yaml_string)
-        {
+        if let Some(file) = line.strip_prefix("  - file: ").and_then(yaml_file_value) {
             files.insert(file);
         }
     }
     files
+}
+
+fn yaml_file_value(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    unquote_yaml_string(trimmed).or_else(|| {
+        if trimmed.starts_with('"') || trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
 }
 
 pub(crate) fn unquote_yaml_string(value: &str) -> Option<String> {
@@ -168,7 +176,21 @@ pub(crate) fn unquote_yaml_string(value: &str) -> Option<String> {
     let mut chars = inner.chars();
     while let Some(ch) = chars.next() {
         if ch == '\\' {
-            out.push(chars.next()?);
+            out.push(match chars.next()? {
+                '0' => '\0',
+                'a' => '\u{0007}',
+                'b' => '\u{0008}',
+                't' => '\t',
+                'n' => '\n',
+                'v' => '\u{000b}',
+                'f' => '\u{000c}',
+                'r' => '\r',
+                'e' => '\u{001b}',
+                '"' => '"',
+                '/' => '/',
+                '\\' => '\\',
+                _ => return None,
+            });
         } else {
             out.push(ch);
         }

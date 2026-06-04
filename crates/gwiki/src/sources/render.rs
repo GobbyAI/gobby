@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::WikiError;
+use crate::support::text::slugify_with_options;
 
 use super::types::SourceRecord;
 use super::{
@@ -185,23 +186,7 @@ pub(crate) fn source_id(canonical_location: &str, content_hash: &str) -> String 
     // Sixteen hex chars gives a 64-bit collision space while keeping source IDs
     // readable in Markdown manifests.
     let hash_prefix = &content_hash[..content_hash.len().min(SOURCE_ID_HASH_PREFIX_LEN)];
-    let mut slug = String::new();
-    let mut last_was_dash = false;
-    for ch in canonical_location.chars().flat_map(char::to_lowercase) {
-        if ch.is_ascii_alphanumeric() {
-            slug.push(ch);
-            last_was_dash = false;
-        } else if !last_was_dash && !slug.is_empty() {
-            slug.push('-');
-            last_was_dash = true;
-        }
-        if slug.len() >= 48 {
-            break;
-        }
-    }
-    while slug.ends_with('-') {
-        slug.pop();
-    }
+    let slug = slugify_with_options(canonical_location, None, Some(48));
 
     if slug.is_empty() {
         format!("src-{hash_prefix}")

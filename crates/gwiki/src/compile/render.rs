@@ -2,6 +2,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::WikiError;
+use crate::support::text::slugify_with_options;
+use crate::support::time;
 
 use super::*;
 
@@ -162,34 +164,9 @@ pub(crate) fn normalize_target_page(
 }
 
 pub(crate) fn slugify(topic: &str) -> String {
-    let mut slug = String::new();
-    let mut last_was_dash = false;
-    for ch in topic.chars().flat_map(char::to_lowercase) {
-        if ch.is_ascii_alphanumeric() {
-            slug.push(ch);
-            last_was_dash = false;
-        } else if !last_was_dash && !slug.is_empty() {
-            slug.push('-');
-            last_was_dash = true;
-        }
-    }
-    while slug.ends_with('-') {
-        slug.pop();
-    }
-    if slug.is_empty() {
-        "handoff".to_string()
-    } else {
-        slug
-    }
+    slugify_with_options(topic, Some("handoff"), None)
 }
 
 pub(crate) fn unix_timestamp_ms() -> Result<u64, WikiError> {
-    let duration = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|error| WikiError::Config {
-            detail: format!("system clock is before Unix epoch: {error}"),
-        })?;
-    u64::try_from(duration.as_millis()).map_err(|_| WikiError::Config {
-        detail: "system timestamp exceeds u64 milliseconds".to_string(),
-    })
+    time::unix_timestamp_ms()
 }

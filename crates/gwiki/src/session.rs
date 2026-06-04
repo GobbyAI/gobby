@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     WikiError,
     scope::{ResolvedScope, ScopeKind},
+    support::time,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -271,14 +272,7 @@ fn new_session_id() -> Result<String, WikiError> {
 }
 
 fn unix_timestamp_ms() -> Result<u64, WikiError> {
-    let duration = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|error| WikiError::Config {
-            detail: format!("system clock is before Unix epoch: {error}"),
-        })?;
-    u64::try_from(duration.as_millis()).map_err(|_| WikiError::Config {
-        detail: "system timestamp exceeds u64 milliseconds".to_string(),
-    })
+    time::unix_timestamp_ms()
 }
 
 pub(crate) fn research_prompt(

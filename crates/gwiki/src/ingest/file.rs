@@ -15,7 +15,9 @@ use crate::ingest::audio::{
 use crate::ingest::document::{DocumentSnapshot, ingest_document_without_index};
 use crate::ingest::image::{ImageSnapshot, ingest_image_with_production_vision_without_index};
 #[cfg(feature = "documents")]
-use crate::ingest::pdf::{PdfFileSnapshot, PdfIngestOptions, ingest_pdf_file_without_index};
+use crate::ingest::pdf::{
+    PdfFileSnapshot, PdfIngestOptions, ingest_pdf_file_without_index, pdf_fetched_at,
+};
 use crate::ingest::video::{
     VideoFileSnapshot, VideoIngestResult,
     ingest_video_file_with_production_processing_without_index,
@@ -174,7 +176,7 @@ pub(crate) fn ingest_path_without_index(
             let snapshot = PdfFileSnapshot {
                 location,
                 file_name: file_name.to_string(),
-                fetched_at: fetched_at.to_string(),
+                fetched_at: pdf_fetched_at(fetched_at)?,
                 bytes,
             };
             #[cfg(feature = "ai")]

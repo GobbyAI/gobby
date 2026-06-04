@@ -21,12 +21,13 @@ use super::types::{PdfRenderedPage, PdfSnapshot};
 pub fn ingest_pages(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
+    scope: &ScopeIdentity,
     snapshot: PdfSnapshot,
 ) -> Result<IngestResult, WikiError> {
     ingest_pages_with_vision(
         vault_root,
         store,
-        &ScopeIdentity::global(),
+        scope,
         snapshot,
         Vec::new(),
         VisionEndpoint::Unavailable(crate::vision::VisionDegradation {
@@ -154,7 +155,7 @@ fn ingest_pages_with_vision_inner(
     let draft = SourceDraft {
         location: snapshot.location.clone(),
         kind: SourceKind::Pdf,
-        fetched_at: snapshot.fetched_at.clone(),
+        fetched_at: snapshot.fetched_at.to_rfc3339(),
         content: snapshot.bytes.clone(),
         title: Some(title.clone()),
         citation: Some(snapshot.location.clone()),

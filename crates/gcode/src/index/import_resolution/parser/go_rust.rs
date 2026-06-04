@@ -16,10 +16,11 @@ pub(crate) fn parse_go_import_statement(
     extracted: &mut ExtractedImports,
 ) {
     let Some(rest) = text.trim().strip_prefix("import") else {
-        extracted.imports.push(ImportRelation {
-            file_path: rel_path.to_string(),
-            module_name: text.to_string(),
-        });
+        debug_assert!(
+            text.trim().strip_prefix("import").is_some(),
+            "expected Go import statement, got `{}`",
+            text.trim()
+        );
         return;
     };
 
@@ -78,10 +79,11 @@ pub(crate) fn parse_rust_import_statement(
     extracted: &mut ExtractedImports,
 ) {
     let Some(rest) = text.trim().strip_prefix("use ") else {
-        extracted.imports.push(ImportRelation {
-            file_path: rel_path.to_string(),
-            module_name: text.to_string(),
-        });
+        debug_assert!(
+            text.trim().strip_prefix("use ").is_some(),
+            "expected Rust use statement, got `{}`",
+            text.trim()
+        );
         return;
     };
     let rest = rest.trim().trim_end_matches(';').trim();
@@ -184,4 +186,51 @@ fn register_rust_path_import(
         .bindings
         .member
         .insert(local_alias.to_string(), path.to_string());
+}
+
+#[cfg(test)]
+mod tests {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    use super::*;
+
+    #[test]
+    fn non_import_go_statement_does_not_record_raw_import() {
+        let mut extracted = ExtractedImports::default();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            parse_go_import_statement(
+                "package main",
+                "main.go",
+                &ImportResolutionContext::default(),
+                &mut extracted,
+            );
+        }));
+
+        if cfg!(debug_assertions) {
+            assert!(result.is_err());
+        } else {
+            assert!(result.is_ok());
+        }
+        assert!(extracted.imports.is_empty());
+    }
+
+    #[test]
+    fn non_use_rust_statement_does_not_record_raw_import() {
+        let mut extracted = ExtractedImports::default();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            parse_rust_import_statement(
+                "mod tests;",
+                "lib.rs",
+                &ImportResolutionContext::default(),
+                &mut extracted,
+            );
+        }));
+
+        if cfg!(debug_assertions) {
+            assert!(result.is_err());
+        } else {
+            assert!(result.is_ok());
+        }
+        assert!(extracted.imports.is_empty());
+    }
 }

@@ -66,9 +66,7 @@ pub(crate) fn execute_ingest_file(
     let output_scope = resolved_scope_identity(&scope);
     let project_id = ai_project_id(&output_scope);
     let gobby_home = gobby_home()?;
-    let fetched_at = collect_timestamp().map_err(|error| WikiError::Config {
-        detail: format!("failed to read system clock: {error}"),
-    })?;
+    let fetched_at = collect_timestamp()?;
     if let Some(database_url) = database_url_from_env() {
         let mut conn = connect_postgres_index(&database_url, "gwiki ingest-file")?;
         let (ai_context, options) = {
@@ -130,9 +128,7 @@ pub(crate) fn execute_ingest_url(
         );
     }
     let output_scope = resolved_scope_identity(&scope);
-    let fetched_at = collect_timestamp().map_err(|error| WikiError::Config {
-        detail: format!("failed to read system clock: {error}"),
-    })?;
+    let fetched_at = collect_timestamp()?;
     if let Some(database_url) = database_url_from_env() {
         let mut conn = connect_postgres_index(&database_url, "gwiki ingest-url")?;
         let search_scope = search_scope_for_resolved(&scope);

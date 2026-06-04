@@ -23,7 +23,7 @@ pub(crate) fn render_pdf_markdown(
     let mut fields = vec![
         ("source_kind", "pdf".to_string()),
         ("source_location", snapshot.location.clone()),
-        ("fetched_at", snapshot.fetched_at.clone()),
+        ("fetched_at", snapshot.fetched_at.to_rfc3339()),
         ("source_hash", source_hash.to_string()),
         ("source_asset", path_to_string(asset_path)),
         ("file_size_bytes", snapshot.bytes.len().to_string()),

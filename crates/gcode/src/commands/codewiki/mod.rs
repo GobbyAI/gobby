@@ -98,6 +98,13 @@ impl CodewikiGraph {
         }
     }
 
+    fn truncated(edges: Vec<CodewikiGraphEdge>) -> Self {
+        Self {
+            edges,
+            availability: CodewikiGraphAvailability::Truncated,
+        }
+    }
+
     fn unavailable() -> Self {
         Self {
             edges: Vec::new(),
@@ -109,6 +116,7 @@ impl CodewikiGraph {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodewikiGraphAvailability {
     Available,
+    Truncated,
     Unavailable,
 }
 
