@@ -29,6 +29,14 @@ const RELEASE_WORKFLOWS: [(&str, &str); 5] = [
 ];
 
 const SOFTPROPS_ACTION_GH_RELEASE_SHA: &str = "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65";
+const TAIKI_INSTALL_NEXTEST_SHA: &str = "f5b277aa8941a90c16bc1cd6ab9363e0502b7d31";
+const TAIKI_INSTALL_LLVM_COV_SHA: &str = "28ba36d36bfc4814f98a469ff9f76b2a41e9aa8a";
+
+fn release_upload_marker(workflow: &str) -> Option<usize> {
+    workflow
+        .find("softprops/action-gh-release")
+        .or_else(|| workflow.find("gh release create"))
+}
 
 #[test]
 fn release_workflows_have_one_default_and_one_no_default_check() {
@@ -94,6 +102,59 @@ fn release_workflows_pin_github_release_action_by_sha() {
 }
 
 #[test]
+fn ci_workflow_pins_taiki_install_actions_by_sha() {
+    let workflow = include_str!("../../../.github/workflows/ci.yml");
+
+    assert_eq!(
+        workflow.matches("taiki-e/install-action@nextest").count(),
+        0
+    );
+    assert_eq!(
+        workflow
+            .matches("taiki-e/install-action@cargo-llvm-cov")
+            .count(),
+        0
+    );
+    assert_eq!(
+        workflow
+            .matches(&format!(
+                "taiki-e/install-action@{TAIKI_INSTALL_NEXTEST_SHA}"
+            ))
+            .count(),
+        2
+    );
+    assert_eq!(
+        workflow
+            .matches(&format!(
+                "taiki-e/install-action@{TAIKI_INSTALL_LLVM_COV_SHA}"
+            ))
+            .count(),
+        1
+    );
+    assert!(workflow.contains("tool: nextest"));
+    assert!(workflow.contains("tool: cargo-llvm-cov"));
+}
+
+#[test]
+fn release_gwiki_uses_github_cli_release_creation() {
+    let workflow = include_str!("../../../.github/workflows/release-gwiki.yml");
+
+    assert!(
+        !workflow.contains("softprops/action-gh-release"),
+        "release-gwiki.yml should use the GitHub CLI instead of softprops"
+    );
+    assert!(
+        workflow.contains("GH_TOKEN: ${{ github.token }}"),
+        "release-gwiki.yml should authenticate gh with github.token"
+    );
+    assert!(
+        workflow
+            .contains(r#"gh release create "$tag" "${assets[@]}" --generate-notes --verify-tag"#),
+        "release-gwiki.yml should create the release with generated notes and tag verification"
+    );
+}
+
+#[test]
 fn release_gwiki_validates_dependencies_without_python_helper() {
     let workflow = include_str!("../../../.github/workflows/release-gwiki.yml");
 
@@ -113,8 +174,7 @@ fn release_workflows_generate_and_upload_archive_checksums() {
         let checksum_step = workflow
             .find("name: Generate SHA-256 checksums")
             .unwrap_or_else(|| panic!("release-{tool}.yml missing checksum generation step"));
-        let release_upload = workflow
-            .find("softprops/action-gh-release")
+        let release_upload = release_upload_marker(workflow)
             .unwrap_or_else(|| panic!("release-{tool}.yml missing GitHub release upload"));
 
         assert!(
@@ -136,10 +196,18 @@ fn release_workflows_generate_and_upload_archive_checksums() {
             "release-{tool}.yml should write per-asset checksum files"
         );
 
-        let release_body = &workflow[release_upload..];
-        assert!(
-            release_body.contains(&format!("{tool}-*.sha256")),
-            "release-{tool}.yml should upload checksum files"
-        );
+        if tool == "gwiki" {
+            assert!(
+                workflow[checksum_step..]
+                    .contains("assets=(gwiki-*.tar.gz gwiki-*.zip gwiki-*.sha256)"),
+                "release-gwiki.yml should add checksum files to the gh release asset array"
+            );
+        } else {
+            let release_body = &workflow[release_upload..];
+            assert!(
+                release_body.contains(&format!("{tool}-*.sha256")),
+                "release-{tool}.yml should upload checksum files"
+            );
+        }
     }
 }

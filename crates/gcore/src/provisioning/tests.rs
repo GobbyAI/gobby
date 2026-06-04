@@ -83,7 +83,7 @@ databases:
 }
 
 #[test]
-fn gcore_yaml_writes_flat_keys() {
+fn gcore_yaml_writes_nested_keys() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join(GCORE_CONFIG_FILENAME);
     let mut config = StandaloneConfig::empty();
@@ -92,9 +92,17 @@ fn gcore_yaml_writes_flat_keys() {
 
     config.write_at(&path).expect("write config");
     let raw = fs::read_to_string(&path).expect("read config");
+    let yaml: serde_yaml::Value = serde_yaml::from_str(&raw).expect("parse written yaml");
 
-    assert!(raw.contains("databases.postgres.dsn:"));
-    assert!(raw.contains(&format!("{}:", embedding_keys::AI_DIM)));
+    assert!(!raw.contains("databases.postgres.dsn:"));
+    assert_eq!(
+        nested_yaml_str(&yaml, &["databases", "postgres", "dsn"]),
+        Some("postgresql://local/db")
+    );
+    assert_eq!(
+        nested_yaml_str(&yaml, &["ai", "embeddings", "dim"]),
+        Some("768")
+    );
     assert_eq!(
         StandaloneConfig::read_at(&path)
             .expect("read config")
@@ -102,6 +110,35 @@ fn gcore_yaml_writes_flat_keys() {
             .get(embedding_keys::AI_DIM),
         Some("768")
     );
+}
+
+#[test]
+fn gcore_yaml_rejects_excessive_nesting() {
+    let mut yaml = String::new();
+    for depth in 0..=65 {
+        yaml.push_str(&"  ".repeat(depth));
+        yaml.push_str(&format!("k{depth}:\n"));
+    }
+    yaml.push_str(&"  ".repeat(66));
+    yaml.push_str("value: too-deep\n");
+
+    let error = StandaloneConfig::from_yaml_str(&yaml).expect_err("too-deep YAML must fail");
+
+    assert!(
+        error
+            .to_string()
+            .contains("gcore.yaml nesting exceeds maximum depth of 64")
+    );
+}
+
+fn nested_yaml_str<'a>(value: &'a serde_yaml::Value, path: &[&str]) -> Option<&'a str> {
+    let mut current = value;
+    for key in path {
+        current = current
+            .as_mapping()?
+            .get(&serde_yaml::Value::String((*key).to_string()))?;
+    }
+    current.as_str()
 }
 
 #[test]
@@ -199,6 +236,11 @@ fn docker_provisioning_prepares_assets_runs_compose_and_health_checks() {
     assert!(runner.commands[0].args.contains(&"--profile".to_string()));
     assert!(runner.commands[0].args.contains(&"all".to_string()));
     assert_eq!(health.checks, vec!["postgres", "qdrant", "falkordb"]);
+    assert!(health.endpoints.contains(&(
+        "qdrant",
+        DEFAULT_QDRANT_HOST.to_string(),
+        DEFAULT_QDRANT_HTTP_PORT
+    )));
     assert_eq!(report.started_profiles, vec!["all"]);
     assert_eq!(report.health_checks, vec!["postgres", "qdrant", "falkordb"]);
     assert_eq!(
@@ -527,21 +569,25 @@ impl CommandRunner for RecordingRunner {
 #[derive(Default)]
 struct RecordingHealth {
     checks: Vec<&'static str>,
+    endpoints: Vec<(&'static str, String, u16)>,
 }
 
 impl DockerHealthChecker for RecordingHealth {
-    fn wait_postgres(&mut self, _host: &str, _port: u16) -> anyhow::Result<()> {
+    fn wait_postgres(&mut self, host: &str, port: u16) -> anyhow::Result<()> {
         self.checks.push("postgres");
+        self.endpoints.push(("postgres", host.to_string(), port));
         Ok(())
     }
 
-    fn wait_qdrant(&mut self, _host: &str, _port: u16) -> anyhow::Result<()> {
+    fn wait_qdrant(&mut self, host: &str, port: u16) -> anyhow::Result<()> {
         self.checks.push("qdrant");
+        self.endpoints.push(("qdrant", host.to_string(), port));
         Ok(())
     }
 
-    fn wait_falkordb(&mut self, _host: &str, _port: u16) -> anyhow::Result<()> {
+    fn wait_falkordb(&mut self, host: &str, port: u16) -> anyhow::Result<()> {
         self.checks.push("falkordb");
+        self.endpoints.push(("falkordb", host.to_string(), port));
         Ok(())
     }
 }

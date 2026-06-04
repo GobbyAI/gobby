@@ -427,9 +427,21 @@ fn run() -> anyhow::Result<()> {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::symbols::tree(&ctx, format)
         }
-        Command::Codewiki { out, scope, ai } => {
+        Command::Codewiki {
+            out,
+            scope,
+            ai,
+            edge_limit,
+        } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
-            commands::codewiki::run(&ctx, out, scope, ai.map(AiRouteArg::into), format)
+            commands::codewiki::run(
+                &ctx,
+                out,
+                scope,
+                ai.map(AiRouteArg::into),
+                edge_limit,
+                format,
+            )
         }
 
         Command::Callers {

@@ -1,11 +1,10 @@
 use super::*;
 
-const CODEWIKI_GRAPH_EDGE_LIMIT: usize = 5000;
-
 pub(crate) fn fetch_codewiki_graph_edges(
     ctx: &Context,
     files: &[String],
     symbols: &[Symbol],
+    edge_limit: usize,
 ) -> anyhow::Result<CodewikiGraph> {
     let symbol_components = symbols
         .iter()
@@ -55,11 +54,11 @@ pub(crate) fn fetch_codewiki_graph_edges(
         .collect::<Vec<_>>();
 
     let mut edges = Vec::new();
-    let (query, params) = codewiki_call_edges_query(&ctx.project_id, &symbol_ids);
+    let (query, params) = codewiki_call_edges_query(&ctx.project_id, &symbol_ids, edge_limit);
     let Some(rows) = query_or_unavailable(ctx, &mut client, &query, params) else {
         return Ok(CodewikiGraph::unavailable());
     };
-    let mut truncated = rows.len() == CODEWIKI_GRAPH_EDGE_LIMIT;
+    let mut truncated = rows.len() == edge_limit;
     for row in rows {
         let Some(source) = row.get("source").and_then(|value| value.as_str()) else {
             continue;
@@ -81,11 +80,11 @@ pub(crate) fn fetch_codewiki_graph_edges(
 
     if !core_files.is_empty() {
         let file_symbols = symbols_by_file_component(symbols);
-        let (query, params) = codewiki_import_edges_query(&ctx.project_id, &core_files);
+        let (query, params) = codewiki_import_edges_query(&ctx.project_id, &core_files, edge_limit);
         let Some(rows) = query_or_unavailable(ctx, &mut client, &query, params) else {
             return Ok(CodewikiGraph::unavailable());
         };
-        truncated |= rows.len() == CODEWIKI_GRAPH_EDGE_LIMIT;
+        truncated |= rows.len() == edge_limit;
         for row in rows {
             let Some(source_file) = row.get("source").and_then(|value| value.as_str()) else {
                 continue;
@@ -121,13 +120,14 @@ pub(crate) fn fetch_codewiki_graph_edges(
 pub(crate) fn codewiki_call_edges_query(
     project_id: &str,
     symbol_ids: &[String],
+    edge_limit: usize,
 ) -> (String, HashMap<String, String>) {
     (
         format!(
             "MATCH (source:CodeSymbol {{project: $project}})-[:CALLS]->(target:CodeSymbol {{project: $project}}) \
              WHERE source.id IN [{}] AND target.id IN [{}] \
              RETURN source.id AS source, target.id AS target \
-             LIMIT {CODEWIKI_GRAPH_EDGE_LIMIT}",
+             LIMIT {edge_limit}",
             falkor::id_list_literal(symbol_ids),
             falkor::id_list_literal(symbol_ids)
         ),
@@ -141,13 +141,14 @@ pub(crate) fn codewiki_call_edges_query(
 pub(crate) fn codewiki_import_edges_query(
     project_id: &str,
     files: &[String],
+    edge_limit: usize,
 ) -> (String, HashMap<String, String>) {
     (
         format!(
             "MATCH (source:CodeFile {{project: $project}})-[:IMPORTS]->(target:CodeModule {{project: $project}}) \
              WHERE source.path IN [{}] \
              RETURN source.path AS source, target.name AS target \
-             LIMIT {CODEWIKI_GRAPH_EDGE_LIMIT}",
+             LIMIT {edge_limit}",
             falkor::id_list_literal(files)
         ),
         HashMap::from([(

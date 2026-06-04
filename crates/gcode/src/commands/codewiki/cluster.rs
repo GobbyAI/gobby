@@ -62,6 +62,13 @@ pub(crate) fn union_files(parents: &mut HashMap<String, String>, left: &str, rig
     }
 }
 
+/// Find the canonical root for a file in the module-union parent map.
+///
+/// The parent map is expected to represent a disjoint-set forest where roots
+/// point to themselves. If a cycle slips in, choose the lexicographically
+/// smallest file in the discovered cycle/path as the stable root. Every visited
+/// node is then path-compressed to that root so future lookups keep the forest
+/// invariant.
 pub(crate) fn find_file_root(parents: &mut HashMap<String, String>, file: &str) -> String {
     let mut current = file.to_string();
     let mut path = Vec::new();

@@ -228,6 +228,7 @@ pub fn run(
     out: Option<String>,
     scope_args: Vec<String>,
     ai: Option<AiRouting>,
+    edge_limit: usize,
     format: Format,
 ) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
@@ -245,7 +246,7 @@ pub fn run(
         symbols.extend(visibility::visible_symbols_for_file(&mut conn, ctx, file)?);
     }
 
-    let graph = fetch_codewiki_graph_edges(ctx, &files, &symbols)?;
+    let graph = fetch_codewiki_graph_edges(ctx, &files, &symbols, edge_limit)?;
     let input = CodewikiInput {
         files,
         graph_edges: graph.edges,

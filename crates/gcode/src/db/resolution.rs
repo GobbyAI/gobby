@@ -310,10 +310,37 @@ fn request_broker_database_url(daemon_url: &str, token: &str) -> anyhow::Result<
         .into_json()
         .context("database_url broker response was not valid JSON")?;
     let database_url = body.database_url.trim().to_string();
+    validate_broker_database_url(&database_url)
+}
+
+fn validate_broker_database_url(database_url: &str) -> anyhow::Result<String> {
     if database_url.is_empty() {
         bail!("database_url broker response was empty");
     }
-    Ok(database_url)
+    let Some(without_scheme) = database_url
+        .strip_prefix("postgres://")
+        .or_else(|| database_url.strip_prefix("postgresql://"))
+    else {
+        bail!("database_url broker response must use postgres:// or postgresql://");
+    };
+    let Some((authority, path_and_query)) = without_scheme.split_once('/') else {
+        bail!("database_url broker response must include a database path");
+    };
+    let host_port = authority.rsplit('@').next().unwrap_or_default();
+    let has_host = if let Some(rest) = host_port.strip_prefix('[') {
+        rest.split_once(']')
+            .is_some_and(|(host, _)| !host.is_empty())
+    } else {
+        !host_port.split(':').next().unwrap_or_default().is_empty()
+    };
+    if !has_host {
+        bail!("database_url broker response must include a host");
+    }
+    let database_path = path_and_query.split('?').next().unwrap_or_default();
+    if database_path.is_empty() {
+        bail!("database_url broker response must include a database path");
+    }
+    Ok(database_url.to_string())
 }
 
 #[cfg(test)]
@@ -702,6 +729,39 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("database_url broker response was empty")
+        );
+    }
+
+    #[test]
+    fn broker_invalid_database_url_scheme_fails() {
+        let err = validate_broker_database_url("http://broker/db")
+            .expect_err("non-postgres scheme must fail");
+
+        assert!(
+            err.to_string()
+                .contains("must use postgres:// or postgresql://")
+        );
+    }
+
+    #[test]
+    fn broker_missing_database_url_host_fails() {
+        let err =
+            validate_broker_database_url("postgresql:///db").expect_err("missing host must fail");
+
+        assert!(
+            err.to_string()
+                .contains("database_url broker response must include a host")
+        );
+    }
+
+    #[test]
+    fn broker_missing_database_url_path_fails() {
+        let err = validate_broker_database_url("postgresql://broker/")
+            .expect_err("missing path must fail");
+
+        assert!(
+            err.to_string()
+                .contains("database_url broker response must include a database path")
         );
     }
 

@@ -7,6 +7,31 @@ use gobby_core::config::AiRouting;
 use gobby_wiki::{Command, IngestFileOptions, ReadTarget, ScopeSelection, WikiError, output};
 use serde_json::json;
 
+const CLI_SUBCOMMANDS: &[&str] = &[
+    "init",
+    "contract",
+    "setup",
+    "index",
+    "collect",
+    "ingest-file",
+    "ingest-url",
+    "refresh",
+    "sources",
+    "remove-source",
+    "search",
+    "ask",
+    "read",
+    "backlinks",
+    "link-suggest",
+    "research",
+    "compile",
+    "export",
+    "audit",
+    "lint",
+    "health",
+    "status",
+];
+
 #[derive(Debug, Parser)]
 #[command(name = "gwiki", version, about = "Gobby wiki CLI")]
 struct Cli {
@@ -402,31 +427,7 @@ where
 }
 
 fn is_cli_subcommand(value: &str) -> bool {
-    matches!(
-        value,
-        "init"
-            | "contract"
-            | "setup"
-            | "index"
-            | "collect"
-            | "ingest-file"
-            | "ingest-url"
-            | "refresh"
-            | "sources"
-            | "remove-source"
-            | "search"
-            | "ask"
-            | "read"
-            | "backlinks"
-            | "link-suggest"
-            | "research"
-            | "compile"
-            | "export"
-            | "audit"
-            | "lint"
-            | "health"
-            | "status"
-    )
+    CLI_SUBCOMMANDS.contains(&value)
 }
 
 fn print_error(format: output::Format, error: &WikiError) {
@@ -664,36 +665,9 @@ mod tests {
 
     use super::*;
 
-    fn cli_subcommands() -> &'static [&'static str] {
-        &[
-            "init",
-            "contract",
-            "setup",
-            "index",
-            "collect",
-            "ingest-file",
-            "ingest-url",
-            "refresh",
-            "sources",
-            "remove-source",
-            "search",
-            "ask",
-            "read",
-            "backlinks",
-            "link-suggest",
-            "research",
-            "compile",
-            "export",
-            "audit",
-            "lint",
-            "health",
-            "status",
-        ]
-    }
-
     #[test]
     fn project_flag_normalization_handles_every_subcommand() {
-        for subcommand in cli_subcommands() {
+        for subcommand in CLI_SUBCOMMANDS {
             let normalized = normalize_project_flag_args(["gwiki", "--project", subcommand]);
             assert_eq!(
                 normalized,
@@ -710,7 +684,7 @@ mod tests {
 
     #[test]
     fn attached_project_flag_preserves_every_subcommand() {
-        for subcommand in cli_subcommands() {
+        for subcommand in CLI_SUBCOMMANDS {
             let normalized =
                 normalize_project_flag_args(["gwiki", "--project=/tmp/wiki-project", subcommand]);
             assert_eq!(

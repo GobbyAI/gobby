@@ -528,6 +528,30 @@ fn parse_codewiki_ai_flag() {
 }
 
 #[test]
+fn parse_codewiki_edge_limit_flag() {
+    let cli = Cli::try_parse_from(["gcode", "codewiki"]).expect("codewiki parses");
+    match cli.command {
+        Command::Codewiki { edge_limit, .. } => {
+            assert_eq!(edge_limit, DEFAULT_CODEWIKI_GRAPH_EDGE_LIMIT)
+        }
+        _ => panic!("expected codewiki command"),
+    }
+
+    let cli = Cli::try_parse_from(["gcode", "codewiki", "--edge-limit", "42"])
+        .expect("codewiki edge limit parses");
+    match cli.command {
+        Command::Codewiki { edge_limit, .. } => assert_eq!(edge_limit, 42),
+        _ => panic!("expected codewiki command"),
+    }
+
+    let error = match Cli::try_parse_from(["gcode", "codewiki", "--edge-limit", "0"]) {
+        Ok(_) => panic!("zero edge limit must fail"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("positive integer"));
+}
+
+#[test]
 fn parse_setup_standalone() {
     let cli = Cli::try_parse_from([
         "gcode",

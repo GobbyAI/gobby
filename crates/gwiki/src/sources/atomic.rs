@@ -11,7 +11,7 @@ pub(crate) fn write_atomic(
 ) -> Result<(), WikiError> {
     let temp_path = temp_sibling_path(path)?;
     let mut file = File::create(&temp_path).map_err(|error| WikiError::Io {
-        action: "create raw source index temp file",
+        action: "create atomic write temp file",
         path: Some(temp_path.clone()),
         source: error,
     })?;
@@ -26,7 +26,7 @@ pub(crate) fn write_atomic(
     if let Err(error) = file.sync_all() {
         let _ = fs::remove_file(&temp_path);
         return Err(WikiError::Io {
-            action: "sync raw source index temp file",
+            action: "sync atomic write temp file",
             path: Some(temp_path),
             source: error,
         });
@@ -92,7 +92,7 @@ fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
         File::open(parent)
             .and_then(|dir| dir.sync_all())
             .map_err(|error| WikiError::Io {
-                action: "sync raw source index directory",
+                action: "sync atomic write parent directory",
                 path: Some(parent.to_path_buf()),
                 source: error,
             })

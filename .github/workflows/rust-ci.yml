@@ -22,7 +22,9 @@ jobs:
           components: clippy, rustfmt
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@f5b277aa8941a90c16bc1cd6ab9363e0502b7d31
+        with:
+          tool: nextest
 
       - name: Cache cargo registry & build
         uses: actions/cache@v4
@@ -122,10 +124,14 @@ jobs:
           components: llvm-tools-preview
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
+        uses: taiki-e/install-action@28ba36d36bfc4814f98a469ff9f76b2a41e9aa8a
+        with:
+          tool: cargo-llvm-cov
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@f5b277aa8941a90c16bc1cd6ab9363e0502b7d31
+        with:
+          tool: nextest
 
       - name: Cache cargo registry & build
         uses: actions/cache@v4

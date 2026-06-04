@@ -138,6 +138,18 @@ fn file_root_detection_breaks_parent_cycles() {
 }
 
 #[test]
+fn graph_queries_use_requested_edge_limit() {
+    let symbol_ids = vec!["symbol-a".to_string(), "symbol-b".to_string()];
+    let files = vec!["src/a.rs".to_string(), "src/b.rs".to_string()];
+
+    let (call_query, _) = codewiki_call_edges_query("project-1", &symbol_ids, 17);
+    let (import_query, _) = codewiki_import_edges_query("project-1", &files, 17);
+
+    assert!(call_query.contains("LIMIT 17"));
+    assert!(import_query.contains("LIMIT 17"));
+}
+
+#[test]
 fn clusters_without_falkordb() {
     let input = CodewikiInput {
         files: vec![

@@ -33,6 +33,7 @@ pub const DEFAULT_FALKORDB_PORT: u16 = 16379;
 pub const DEFAULT_FALKORDB_BROWSER_PORT: u16 = 13000;
 pub const DEFAULT_FALKORDB_PASSWORD: &str = "gobbyfalkor";
 
+pub const DEFAULT_QDRANT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_QDRANT_HTTP_PORT: u16 = 6333;
 pub const DEFAULT_QDRANT_GRPC_PORT: u16 = 6334;
 
@@ -93,10 +94,7 @@ impl StandaloneConfig {
         }
         let mut mapping = serde_yaml::Mapping::new();
         for (key, value) in &self.values {
-            mapping.insert(
-                serde_yaml::Value::String(key.clone()),
-                serde_yaml::Value::String(value.clone()),
-            );
+            insert_nested_yaml_value(&mut mapping, key, value);
         }
         let yaml = serde_yaml::to_string(&serde_yaml::Value::Mapping(mapping))?;
         fs::write(path, yaml)?;
@@ -157,6 +155,35 @@ pub fn default_database_url(port: u16) -> String {
         password = DEFAULT_POSTGRES_PASSWORD,
         db = DEFAULT_POSTGRES_DB
     )
+}
+
+fn insert_nested_yaml_value(mapping: &mut serde_yaml::Mapping, key: &str, value: &str) {
+    let parts = key
+        .split('.')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if !parts.is_empty() {
+        insert_nested_yaml_parts(mapping, &parts, value);
+    }
+}
+
+fn insert_nested_yaml_parts(mapping: &mut serde_yaml::Mapping, parts: &[&str], value: &str) {
+    let yaml_key = serde_yaml::Value::String(parts[0].to_string());
+    if parts.len() == 1 {
+        mapping.insert(yaml_key, serde_yaml::Value::String(value.to_string()));
+        return;
+    }
+
+    let entry = mapping
+        .entry(yaml_key)
+        .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+    if !matches!(entry, serde_yaml::Value::Mapping(_)) {
+        *entry = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+    }
+    let serde_yaml::Value::Mapping(child) = entry else {
+        unreachable!("entry was normalized to a mapping");
+    };
+    insert_nested_yaml_parts(child, &parts[1..], value);
 }
 
 mod bootstrap;

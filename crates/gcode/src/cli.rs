@@ -2,6 +2,8 @@ use clap::{ArgAction, ArgGroup, Parser, Subcommand, ValueEnum};
 use gobby_code::output;
 use gobby_core::config::AiRouting;
 
+const DEFAULT_CODEWIKI_GRAPH_EDGE_LIMIT: usize = 5000;
+
 #[derive(Parser)]
 #[command(
     name = "gcode",
@@ -337,6 +339,9 @@ pub(crate) enum Command {
         /// Override AI routing for generated summaries
         #[arg(long, value_enum)]
         ai: Option<AiRouteArg>,
+        /// Maximum graph edges to fetch from FalkorDB
+        #[arg(long, default_value_t = DEFAULT_CODEWIKI_GRAPH_EDGE_LIMIT, value_parser = positive_usize)]
+        edge_limit: usize,
     },
 
     // ── Dependency Graph (requires graph backend) ──────────────────────
@@ -471,6 +476,17 @@ fn non_empty_grep_pattern(value: &str) -> Result<String, String> {
         Err("gcode grep pattern cannot be empty".to_string())
     } else {
         Ok(value.to_string())
+    }
+}
+
+fn positive_usize(value: &str) -> Result<usize, String> {
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|_| "value must be a positive integer".to_string())?;
+    if parsed == 0 {
+        Err("value must be a positive integer".to_string())
+    } else {
+        Ok(parsed)
     }
 }
 

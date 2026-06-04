@@ -168,7 +168,7 @@ pub fn provision_docker_services_with(
     }
 
     health.wait_postgres(DEFAULT_POSTGRES_HOST, options.postgres_port)?;
-    health.wait_qdrant(DEFAULT_POSTGRES_HOST, options.qdrant_http_port)?;
+    health.wait_qdrant(DEFAULT_QDRANT_HOST, options.qdrant_http_port)?;
     health.wait_falkordb(&options.falkordb_host, options.falkordb_port)?;
 
     Ok(DockerProvisioningReport {

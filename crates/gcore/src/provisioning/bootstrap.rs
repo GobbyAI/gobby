@@ -1,5 +1,7 @@
 use super::*;
 
+const MAX_YAML_FLATTEN_DEPTH: usize = 64;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmbeddingBootstrap {
     pub provider: String,
@@ -92,6 +94,18 @@ pub(crate) fn flatten_yaml_value(
     value: &serde_yaml::Value,
     output: &mut BTreeMap<String, String>,
 ) -> anyhow::Result<()> {
+    flatten_yaml_value_at_depth(prefix, value, output, 0)
+}
+
+fn flatten_yaml_value_at_depth(
+    prefix: Option<&str>,
+    value: &serde_yaml::Value,
+    output: &mut BTreeMap<String, String>,
+    depth: usize,
+) -> anyhow::Result<()> {
+    if depth > MAX_YAML_FLATTEN_DEPTH {
+        anyhow::bail!("gcore.yaml nesting exceeds maximum depth of {MAX_YAML_FLATTEN_DEPTH}");
+    }
     match value {
         serde_yaml::Value::Null => Ok(()),
         serde_yaml::Value::Mapping(mapping) => {
@@ -105,7 +119,7 @@ pub(crate) fn flatten_yaml_value(
                 };
                 match value {
                     serde_yaml::Value::Mapping(_) if !key.contains('.') => {
-                        flatten_yaml_value(Some(&joined), value, output)?;
+                        flatten_yaml_value_at_depth(Some(&joined), value, output, depth + 1)?;
                     }
                     _ => {
                         if let Some(text) = scalar_to_string(value)? {

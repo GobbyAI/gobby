@@ -44,10 +44,11 @@ impl ResearchModel for GcoreResearchModel {
                 Some(model_system_prompt()),
                 Some(max_tokens),
             ),
-            AiRouting::Auto | AiRouting::Off => {
+            AiRouting::Off => {
                 return self
                     .ai_unavailable(format!("text generation route '{route:?}' is unavailable"));
             }
+            _ => unreachable!("effective route resolution returned unresolved auto route"),
         };
 
         let result = match result {

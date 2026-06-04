@@ -456,8 +456,15 @@ fn explicit_database_url_reachable(
 
 #[cfg(not(feature = "postgres"))]
 fn explicit_database_url_reachable(
-    _database_url: &str,
+    database_url: &str,
     _database_reachable: &mut impl FnMut(&str) -> bool,
 ) -> bool {
+    // Without the postgres feature, gcore cannot open a connection to probe an
+    // explicit hub DSN. Preserve the configured DSN and let the consumer fail
+    // later if it actually needs PostgreSQL access.
+    log::warn!(
+        "postgres feature is disabled; preserving configured PostgreSQL hub {} without a reachability probe",
+        redact_database_url_for_error(database_url)
+    );
     true
 }

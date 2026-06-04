@@ -378,11 +378,23 @@ fn collect_error_with_cleanup<T>(
     if cleanup_errors.is_empty() {
         return Err(original_error);
     }
-    Err(WikiError::Config {
-        detail: format!(
-            "{original_error}; cleanup failures: {}",
-            cleanup_errors.join("; ")
-        ),
+    let cleanup_detail = collect_cleanup_detail(&cleanup_errors);
+    Err(match original_error {
+        WikiError::Config { detail } => WikiError::Config {
+            detail: format!("{detail}{cleanup_detail}"),
+        },
+        WikiError::Io {
+            action,
+            path,
+            source,
+        } => WikiError::Io {
+            action,
+            path,
+            source: std::io::Error::new(source.kind(), format!("{source}{cleanup_detail}")),
+        },
+        error => WikiError::Config {
+            detail: format!("{error}{cleanup_detail}"),
+        },
     })
 }
 
@@ -841,5 +853,50 @@ mod tests {
             Some("inbox item exceeds 3 byte limit")
         );
         assert!(temp.path().join("inbox/large.txt").is_file());
+    }
+
+    #[test]
+    fn collect_cleanup_context_preserves_config_error_variant() {
+        let error = collect_error_with_cleanup::<()>(
+            WikiError::Config {
+                detail: "write failed".to_string(),
+            },
+            vec!["remove raw failed".to_string()],
+        )
+        .expect_err("cleanup error must be returned");
+
+        match error {
+            WikiError::Config { detail } => {
+                assert!(detail.contains("write failed"));
+                assert!(detail.contains("cleanup failures: remove raw failed"));
+            }
+            other => panic!("expected config error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn collect_cleanup_context_preserves_io_error_variant() {
+        let error = collect_error_with_cleanup::<()>(
+            WikiError::Io {
+                action: "write raw source",
+                path: None,
+                source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied"),
+            },
+            vec!["remove raw failed".to_string()],
+        )
+        .expect_err("cleanup error must be returned");
+
+        match error {
+            WikiError::Io { source, .. } => {
+                assert_eq!(source.kind(), std::io::ErrorKind::PermissionDenied);
+                assert!(source.to_string().contains("denied"));
+                assert!(
+                    source
+                        .to_string()
+                        .contains("cleanup failures: remove raw failed")
+                );
+            }
+            other => panic!("expected io error, got {other:?}"),
+        }
     }
 }

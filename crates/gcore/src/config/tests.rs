@@ -1,3 +1,4 @@
+use super::resolve::{EMBEDDING_DEFAULT_MODEL, EMBEDDING_DEFAULT_TIMEOUT_SECONDS};
 use super::*;
 use std::collections::HashMap;
 use std::sync::MutexGuard;
