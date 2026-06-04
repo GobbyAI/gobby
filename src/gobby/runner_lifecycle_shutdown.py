@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
 
 logger = logging.getLogger("gobby.runner_lifecycle")
-WIKI_WATCHER_STOP_TIMEOUT_SECONDS = 2.0
+WIKI_WATCHER_STOP_TIMEOUT_SECONDS: float = 2.0
 
 _CRITICAL_STOP_HOOK_GRACE_SECONDS = 5.0
 _HTTP_CONNECTION_DRAIN_SECONDS = 3.0

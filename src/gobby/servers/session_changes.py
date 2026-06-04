@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 _GIT_TIMEOUT = 10
 # Internal paths that should never surface as user-facing changes.
-_IGNORED_PATH_FRAGMENTS = (".gobby/", ".claude/plans/")
+_IGNORED_PATH_FRAGMENTS = frozenset((".gobby/", ".claude/plans/"))
 
 
 @dataclass(slots=True, frozen=True)

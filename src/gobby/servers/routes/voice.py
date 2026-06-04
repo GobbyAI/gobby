@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import json
 import logging
+import threading
 import time
 import weakref
 from collections import OrderedDict
@@ -38,22 +39,25 @@ _AUDIO_REGISTRY_CACHE: OrderedDict[str, tuple[float, AICapabilityRegistry]] = Or
 _AUDIO_CONFIG_SIGNATURE_CACHE: weakref.WeakKeyDictionary[Any, tuple[tuple[Any, ...], str]] = (
     weakref.WeakKeyDictionary()
 )
+_AUDIO_CONFIG_SIGNATURE_CACHE_LOCK = threading.RLock()
 
 
 def _config_signature(config: Any) -> str:
     marker = _audio_config_marker(config)
-    try:
-        cached = _AUDIO_CONFIG_SIGNATURE_CACHE.get(config)
-    except TypeError:
-        cached = None
+    with _AUDIO_CONFIG_SIGNATURE_CACHE_LOCK:
+        try:
+            cached = _AUDIO_CONFIG_SIGNATURE_CACHE.get(config)
+        except TypeError:
+            cached = None
     if cached is not None and cached[0] == marker:
         return cached[1]
 
     signature = json.dumps(marker, sort_keys=True, separators=(",", ":"), default=str)
-    try:
-        _AUDIO_CONFIG_SIGNATURE_CACHE[config] = (marker, signature)
-    except TypeError:
-        pass
+    with _AUDIO_CONFIG_SIGNATURE_CACHE_LOCK:
+        try:
+            _AUDIO_CONFIG_SIGNATURE_CACHE[config] = (marker, signature)
+        except TypeError:
+            pass
     return signature
 
 

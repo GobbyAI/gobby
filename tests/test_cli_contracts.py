@@ -168,6 +168,7 @@ def reset_recording_research_gateway_instances() -> Iterator[None]:
     RecordingResearchGateway.instances = []
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
     contract = _contract("gwiki")
@@ -242,6 +243,7 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
             assert "--project" in argv
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_gcode_gateway_argv_conforms_to_vendored_contract() -> None:
     contract = _contract("gcode")
@@ -305,6 +307,7 @@ async def test_gcode_gateway_argv_conforms_to_vendored_contract() -> None:
             assert "--project" in argv
 
 
+@pytest.mark.unit
 def test_wiki_mcp_tools_are_backed_by_documented_gwiki_commands() -> None:
     contract = _contract("gwiki")
     daemon_commands = {
@@ -331,6 +334,7 @@ def test_wiki_mcp_tools_are_backed_by_documented_gwiki_commands() -> None:
     assert set(tool_to_command.values()) <= daemon_commands
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_wiki_research_mcp_routes_d5_options_to_gateway() -> None:
     registry = create_wiki_registry(
@@ -373,6 +377,7 @@ async def test_wiki_research_mcp_routes_d5_options_to_gateway() -> None:
     assert result["index_handoff"] == {"status": "completed"}
 
 
+@pytest.mark.unit
 def test_gwiki_contract_documents_daemon_parsed_keys() -> None:
     contract = _contract("gwiki")
 
@@ -389,6 +394,7 @@ def test_gwiki_contract_documents_daemon_parsed_keys() -> None:
     assert {"root", "text_path"} <= _json_keys(contract, "health")
 
 
+@pytest.mark.unit
 def test_gcode_contract_covers_daemon_consumed_surface() -> None:
     contract = _contract("gcode")
     commands = {command["name"] for command in contract["commands"]}
@@ -461,6 +467,7 @@ def _real_cli_contract_sources(tool: str) -> list[tuple[str, dict[str, Any]]]:
     return sources
 
 
+@pytest.mark.unit
 def test_real_cli_contract_sources_include_binary_when_source_exists(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -498,6 +505,7 @@ def test_real_cli_contract_sources_include_binary_when_source_exists(
     assert calls == [(tool, binary)]
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("tool", ["gcode", "gwiki"])
 def test_vendored_cli_contract_matches_real_cli(tool: str) -> None:
     """The vendored contract must match the real gobby-cli contract.

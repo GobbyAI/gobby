@@ -391,6 +391,32 @@ def test_ingest_mixed_urls_and_paths_routes_to_gateway(client: TestClient) -> No
     ]
 
 
+def test_ingest_mixed_urls_and_multiple_paths_flattens_results(client: TestClient) -> None:
+    response = client.post(
+        "/api/wiki/ingest",
+        json={
+            "paths": ["docs/a.md", "docs/b.md"],
+            "urls": ["https://example.test/a"],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["payload"]["changed_paths"] == ["docs/a.md", "docs/b.md"]
+    assert [result["command"] for result in body["payload"]["results"]] == [
+        "ingest_url",
+        "ingest_file",
+        "ingest_file",
+    ]
+    assert all("results" not in result["payload"] for result in body["payload"]["results"])
+    assert FakeGateway.instances[-1].calls == [
+        ("ingest_url", ["https://example.test/a"]),
+        ("ingest_file", {"path": "docs/a.md", "exists": False}),
+        ("ingest_file", {"path": "docs/b.md", "exists": False}),
+        ("index", None),
+    ]
+
+
 def test_ingest_mixed_ignores_invalid_gateway_changed_paths(client: TestClient) -> None:
     FakeGateway.next_result = {
         "command": "ingest-url",

@@ -44,7 +44,7 @@ async def test_vite_proxy_swallows_client_disconnect_without_traceback(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A client that disconnects mid-request yields a 499, not a 500 traceback."""
+    """A client that disconnects mid-request exits early without a traceback."""
     upstream_calls: list[str] = []
 
     class FakeAsyncClient:
@@ -76,9 +76,9 @@ async def test_vite_proxy_swallows_client_disconnect_without_traceback(
     request = _make_request("POST", "src/main.tsx", receive_disconnect)
 
     with caplog.at_level(logging.DEBUG, logger=app_factory.logger.name):
-        response: Response = await endpoint(request, path="src/main.tsx")
+        response: Response | None = await endpoint(request, path="src/main.tsx")
 
-    assert response.status_code == 499
+    assert response is None
     # The disconnect must short-circuit before reaching the upstream Vite server.
     assert upstream_calls == []
     # No error-level traceback should be emitted — only a debug breadcrumb.

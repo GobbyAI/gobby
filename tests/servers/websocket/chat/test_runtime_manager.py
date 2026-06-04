@@ -119,6 +119,11 @@ class TestWebChatRuntimeManager:
         assert manager.sandbox_config.enabled is True
         assert manager.sandbox_policy_hash
 
+    def test_manager_handles_daemon_config_without_embeddings(self) -> None:
+        manager = WebChatRuntimeManager(codex_client=None, daemon_config=SimpleNamespace())
+
+        assert manager._qwen_backend._local_openai_api_key is None
+
     @pytest.mark.asyncio
     async def test_background_start_skips_acp_backends(self) -> None:
         manager = WebChatRuntimeManager(codex_client=None)

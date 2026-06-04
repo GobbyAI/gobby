@@ -218,6 +218,28 @@ def test_reconcile_identity_updates_system_name_and_timestamp(
     assert updated.updated_at == "2030-01-01T00:00:00+00:00"
 
 
+def test_reconcile_identity_allows_enabled_true_when_next_run_already_set(
+    cron_storage: CronJobStorage,
+) -> None:
+    job = _job(cron_storage, is_system=True)
+
+    updated = cron_storage.reconcile_system_job_identity(job.id, enabled=True)
+
+    assert updated is not None
+    assert updated.enabled is True
+    assert updated.next_run_at == job.next_run_at
+
+
+def test_reconcile_identity_rejects_enabled_system_row_without_next_run(
+    cron_storage: CronJobStorage,
+) -> None:
+    job = _job(cron_storage, is_system=True)
+    cron_storage.update_system_job_bookkeeping(job.id, next_run_at=None)
+
+    with pytest.raises(ValueError, match="enabled=True requires next_run_at"):
+        cron_storage.reconcile_system_job_identity(job.id, name="renamed")
+
+
 def test_reconcile_no_op_when_action_in_sync(cron_storage: CronJobStorage) -> None:
     job = _job(cron_storage, is_system=True)
 

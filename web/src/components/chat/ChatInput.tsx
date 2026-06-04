@@ -308,10 +308,10 @@ export function ChatInput({
       const next = Math.min(textarea.scrollHeight, MAX_TEXTAREA_HEIGHT)
       if (next !== lastTextareaHeightRef.current) {
         lastTextareaHeightRef.current = next
+        textarea.style.height = `${next}px`
+        // Keep the cursor visible when content exceeds the max height.
+        textarea.scrollTop = textarea.scrollHeight
       }
-      textarea.style.height = `${next}px`
-      // Keep the cursor visible when content exceeds the max height.
-      textarea.scrollTop = textarea.scrollHeight
     })
     return () => cancelAnimationFrame(frame)
   }, [input])

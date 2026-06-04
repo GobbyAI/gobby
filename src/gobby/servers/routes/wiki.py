@@ -347,7 +347,13 @@ async def _ingest_mixed(gateway: GwikiGateway, urls: list[str], paths: list[str]
     if len(paths) == 1:
         results.append(await _map_gateway_awaitable(gateway.ingest_file(paths[0])))
     else:
-        results.append(await _ingest_many(gateway, paths))
+        many_result = await _ingest_many(gateway, paths)
+        payload = many_result.get("payload")
+        nested_results = payload.get("results") if isinstance(payload, dict) else None
+        if isinstance(nested_results, list):
+            results.extend(item for item in nested_results if isinstance(item, dict))
+        else:
+            results.append(many_result)
     return _aggregate_ingest_results(results, command="ingest_file")
 
 

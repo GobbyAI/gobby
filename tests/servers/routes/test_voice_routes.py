@@ -320,6 +320,15 @@ class TestVoiceRoutes:
         assert voice_module._config_signature(configs[1]) not in keys
         assert voice_module._config_signature(configs[2]) in keys
 
+    def test_audio_config_signature_handles_non_weakrefable_config(self) -> None:
+        class NonWeakrefableConfig:
+            __slots__ = ()
+
+        config = NonWeakrefableConfig()
+
+        assert voice_module._config_signature(config) == "[null]"
+        assert voice_module._config_signature(config) == "[null]"
+
     def test_status_reports_missing_chatterbox_reference_audio(
         self, client: TestClient, server_with_voice: MagicMock, tmp_path: Path
     ) -> None:

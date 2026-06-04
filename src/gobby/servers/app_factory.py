@@ -798,7 +798,7 @@ def _mount_vite_dev_ui(app: FastAPI, server: "HTTPServer") -> None:
         return
     ui_port = config.ui.port
 
-    async def vite_proxy(request: Request, path: str = "") -> Response:
+    async def vite_proxy(request: Request, path: str = "") -> Any:
         if _is_daemon_owned_ui_path(path):
             raise HTTPException(status_code=404)
 
@@ -810,13 +810,13 @@ def _mount_vite_dev_ui(app: FastAPI, server: "HTTPServer") -> None:
         # away mid-request (HMR sockets, aborted fetches, navigations — constant
         # over Tailscale) surfaces as a ClientDisconnect here rather than escaping
         # uncaught and getting logged as a full 500 traceback through every
-        # middleware layer. There is no client left to answer, so return a
-        # 499-style empty response and log at debug.
+        # middleware layer. There is no client left to answer, so exit early
+        # and log at debug.
         try:
             body = await request.body()
         except ClientDisconnect:
             logger.debug("Vite UI proxy: client disconnected before request body completed")
-            return Response(status_code=499)
+            return None
 
         try:
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:

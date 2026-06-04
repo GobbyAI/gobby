@@ -436,7 +436,9 @@ class CronJobStorage:
         update_fields = {key: value for key, value in fields.items() if value is not UNSET}
         if not update_fields:
             return job
-        if update_fields.get("enabled") is True and update_fields.get("next_run_at") is None:
+        resulting_enabled = update_fields.get("enabled", job.enabled)
+        resulting_next_run_at = update_fields.get("next_run_at", job.next_run_at)
+        if resulting_enabled is True and resulting_next_run_at is None:
             raise ValueError(
                 "enabled=True requires next_run_at when repairing system cron identity"
             )

@@ -762,7 +762,7 @@ def _get_installed_gwiki_version(bin_dir: Path) -> str | None:
 
 
 def _write_gwiki_version_stamp(bin_dir: Path, version: str) -> None:
-    return _gwiki_impl.write_gwiki_version_stamp(_module(), bin_dir, version)
+    _gwiki_impl.write_gwiki_version_stamp(_module(), bin_dir, version)
 
 
 def _install_gwiki_from_github(bin_dir: Path, target: str, version: str | None = None) -> bool:

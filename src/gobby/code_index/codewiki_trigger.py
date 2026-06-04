@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -203,5 +202,5 @@ def _changed_doc_paths(out_dir: Path, result: dict[str, Any]) -> list[Path]:
             path = out_dir / path
         resolved = path.resolve(strict=False)
         if resolved.is_relative_to(out_dir):
-            paths.append(Path(os.path.normpath(os.fspath(resolved))))
+            paths.append(resolved)
     return paths

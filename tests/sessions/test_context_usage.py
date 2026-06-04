@@ -73,6 +73,40 @@ def test_effective_context_window_preserves_reported_session_value() -> None:
     assert effective_context_window_for_session(session) == 200_000
 
 
+def test_effective_context_window_uses_reported_db_session_value() -> None:
+    class FakeDb:
+        def fetchall(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
+            return []
+
+        def fetchone(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            return {"context_window": 200_000, "context_usage_confidence": "reported"}
+
+    session = SimpleNamespace(
+        id="session-1",
+        source="unknown-provider",
+        model="unknown-model",
+    )
+
+    assert effective_context_window_for_session(session, db=FakeDb()) == 200_000
+
+
+def test_effective_context_window_ignores_non_reported_db_session_value() -> None:
+    class FakeDb:
+        def fetchall(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
+            return []
+
+        def fetchone(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            return {"context_window": 200_000, "context_usage_confidence": "inferred"}
+
+    session = SimpleNamespace(
+        id="session-1",
+        source="unknown-provider",
+        model="unknown-model",
+    )
+
+    assert effective_context_window_for_session(session, db=FakeDb()) is None
+
+
 def test_effective_context_window_prefers_latest_token_event_window() -> None:
     class FakeDb:
         def fetchall(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:

@@ -20,7 +20,7 @@ __all__ = ["probe_native_bin_version"]
 def probe_native_bin_version(
     binary_path: Path | str,
     *,
-    runner: Callable[..., Any] = subprocess.run,
+    runner: Callable[..., subprocess.CompletedProcess[Any]] = subprocess.run,
     logger: logging.Logger | None = None,
     label: str | None = None,
 ) -> str | None:
@@ -33,8 +33,20 @@ def probe_native_bin_version(
     install-time probes).
     """
     try:
+        resolved_path = Path(binary_path).expanduser().resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as exc:
+        if logger is not None and label is not None:
+            logger.warning("%s: invalid --version probe path: %s", label, exc)
+        return None
+
+    if not resolved_path.is_absolute() or not resolved_path.is_file():
+        if logger is not None and label is not None:
+            logger.warning("%s: invalid --version probe path: %s", label, resolved_path)
+        return None
+
+    try:
         result = runner(
-            [str(binary_path), "--version"],
+            [str(resolved_path), "--version"],
             capture_output=True,
             text=True,
             timeout=5,

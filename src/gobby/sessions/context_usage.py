@@ -196,8 +196,8 @@ def _reported_session_context_window(session: Any, db: HubDatabase | None) -> in
         return None
     confidence = row.get("context_usage_confidence")
     if isinstance(confidence, str) and confidence == "reported":
-        return None
-    return _coerce_positive_int(row.get("context_window"))
+        return _coerce_positive_int(row.get("context_window"))
+    return None
 
 
 def context_window_from_raw_message(raw_json: object) -> int | None:
