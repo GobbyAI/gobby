@@ -137,9 +137,13 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             cross: false
+            pdfium_archive: pdfium-win-x64.tgz
+            pdfium_sha: 06ef95ac4f9b8897731224639ddf0f185693cb48bc9ee650f1e92f71e0d2a94e
           - target: aarch64-pc-windows-msvc
             os: windows-latest
             cross: true
+            pdfium_archive: pdfium-win-arm64.tgz
+            pdfium_sha: e01a0df46347d40c591a11f2060a371004ef5c423cf890c6cb431594ccbd2b9b
 
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.target }}
@@ -181,23 +185,25 @@ jobs:
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
+          PDFIUM_ARCHIVE: ${{ matrix.pdfium_archive }}
+          PDFIUM_SHA: ${{ matrix.pdfium_sha }}
         run: |
           set -euo pipefail
           version="7690"
           case "$TARGET" in
-            x86_64-pc-windows-msvc)
-              archive="pdfium-win-x64.tgz"
-              sha="06ef95ac4f9b8897731224639ddf0f185693cb48bc9ee650f1e92f71e0d2a94e"
-              ;;
-            aarch64-pc-windows-msvc)
-              archive="pdfium-win-arm64.tgz"
-              sha="e01a0df46347d40c591a11f2060a371004ef5c423cf890c6cb431594ccbd2b9b"
+            x86_64-pc-windows-msvc | aarch64-pc-windows-msvc)
               ;;
             *)
               echo "::error::Provision pdfium: unexpected Windows target '$TARGET'." >&2
               exit 1
               ;;
           esac
+          if [ -z "$PDFIUM_ARCHIVE" ] || [ -z "$PDFIUM_SHA" ]; then
+            echo "::error::Provision pdfium: missing archive metadata for '$TARGET'." >&2
+            exit 1
+          fi
+          archive="$PDFIUM_ARCHIVE"
+          sha="$PDFIUM_SHA"
           dest="$RUNNER_TEMP/pdfium"
           mkdir -p "$dest"
           url="https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F${version}/${archive}"
@@ -210,6 +216,7 @@ jobs:
           echo "Provisioned pdfium for $TARGET at ${lib}"
 
       - name: Build gwiki
+        shell: bash
         env:
           TARGET: ${{ matrix.target }}
         run: cargo build --release --target "$TARGET" -p gobby-wiki

@@ -12,7 +12,7 @@ pub(crate) mod types;
 #[cfg(feature = "documents")]
 pub(crate) use ingest::ingest_pdf_file_without_index;
 #[cfg(feature = "documents")]
-pub use types::{PdfFileSnapshot, PdfIngestOptions};
+pub(crate) use types::{PdfFileSnapshot, PdfIngestOptions};
 
 #[cfg(feature = "documents")]
 use types::PdfRenderedPage;

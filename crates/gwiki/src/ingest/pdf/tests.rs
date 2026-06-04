@@ -8,7 +8,7 @@ use super::render::normalize_page_text;
 #[cfg(feature = "documents")]
 use super::render::pdf_render_budget_degradation;
 use super::types::{PdfPage, PdfRenderedPage, PdfSnapshot};
-use super::*;
+use super::{PdfMarkdownSummary, PdfPageMarkdown};
 use crate::ScopeIdentity;
 use crate::WikiError;
 use crate::sources::{SourceKind, SourceManifest};
