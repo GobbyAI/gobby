@@ -3474,8 +3474,8 @@ class TestCodexAdapterApprovalHandling:
         mock_hm.handle.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_handle_approval_auto_accepts_safe_canvas_calls(self) -> None:
-        """UI-only canvas tools should still fire hooks and force accept."""
+    async def test_handle_approval_auto_accepts_safe_artifacts_calls(self) -> None:
+        """Read-only artifact display tools should still fire hooks and force accept."""
         mock_hm = MagicMock()
         mock_hm.handle.return_value = HookResponse(decision="block")
         adapter = CodexAdapter(hook_manager=mock_hm)
@@ -3483,12 +3483,12 @@ class TestCodexAdapterApprovalHandling:
         result = await adapter.handle_approval_request(
             "item/mcpToolCall/requestApproval",
             {
-                "threadId": "thr-canvas-safe",
-                "itemId": "item-canvas-safe",
+                "threadId": "thr-artifacts-safe",
+                "itemId": "item-artifacts-safe",
                 "name": "mcp__gobby__call_tool",
                 "arguments": {
-                    "server_name": "gobby-canvas",
-                    "tool_name": "render_surface",
+                    "server_name": "gobby-artifacts",
+                    "tool_name": "show_file",
                 },
             },
         )

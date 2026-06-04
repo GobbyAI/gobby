@@ -86,16 +86,6 @@ describe('groupToolCalls', () => {
     expect(result[3].kind).toBe('single')
   })
 
-  it('never groups render_surface calls', () => {
-    const calls = [
-      makeCall({ id: '1', tool_name: 'render_surface' }),
-      makeCall({ id: '2', tool_name: 'render_surface' }),
-    ]
-    const result = groupToolCalls(calls)
-    expect(result).toHaveLength(2)
-    expect(result.every(s => s.kind === 'single')).toBe(true)
-  })
-
   it('never groups AskUserQuestion calls', () => {
     const calls = [
       makeCall({ id: '1', tool_name: 'AskUserQuestion' }),

@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest'
 import { render } from '@testing-library/react'
 import {
   ActivityPanelEmpty,
-  CanvasEmptyIcon,
   ChangesEmptyIcon,
   PlansEmptyIcon,
 } from '../ActivityPanelEmpty'
@@ -52,7 +51,6 @@ describe('ActivityPanelEmpty (#14246)', () => {
     const renders = [
       render(<PlansEmptyIcon />),
       render(<ChangesEmptyIcon />),
-      render(<CanvasEmptyIcon />),
     ]
 
     for (const r of renders) {
@@ -89,23 +87,10 @@ describe('ActivityPanelEmpty (#14246)', () => {
       expect(source).not.toMatch(/No file changes detected/)
     })
 
-    it('CanvasTab uses ActivityPanelEmpty with the spec heading + body and no inline icon', () => {
-      const source = readSource('src/components/activity/CanvasTab.tsx')
-      expect(source).toContain('ActivityPanelEmpty')
-      expect(source).toContain('CanvasEmptyIcon')
-      expect(source).toContain('heading="A2UI Canvas"')
-      expect(source).toContain(
-        'body="Interactive surfaces appear here when generated"',
-      )
-      expect(source).not.toMatch(/function CanvasEmptyIcon/)
-      expect(source).not.toMatch(/chat-empty-state/)
-    })
-
     it('strips the trailing period from every empty-state body line', () => {
       const sources = [
         readSource('src/components/activity/PlansTab.tsx'),
         readSource('src/components/activity/FileChangesTab.tsx'),
-        readSource('src/components/activity/CanvasTab.tsx'),
       ]
       for (const source of sources) {
         const match = source.match(/body="([^"]+)"/)
@@ -145,7 +130,6 @@ describe('ActivityPanelEmpty (#14246)', () => {
         readSource('src/components/activity/TracesTab.tsx'),
         readSource('src/components/activity/FileChangesTab.tsx'),
         readSource('src/components/activity/PlansTab.tsx'),
-        readSource('src/components/activity/CanvasTab.tsx'),
       ]
       for (const source of sources) {
         expect(source).not.toMatch(/className="activity-tab-empty"/)

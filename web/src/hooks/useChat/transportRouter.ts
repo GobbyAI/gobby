@@ -5,10 +5,7 @@ import {
   type ModelSwitchedMessage,
   type ToolStatusMessage,
 } from "./transportEventTypes";
-import {
-  handleArtifactTransportEvent,
-  handleCanvasTransportEvent,
-} from "./transportCanvasEvents";
+import { handleArtifactTransportEvent } from "./transportArtifactEvents";
 import {
   handleAgentChanged,
   handleChatCleared,
@@ -159,9 +156,6 @@ export function routeTransportMessage(
       return;
     case "connection_established":
       handleConnectionEstablished(data, ctx);
-      return;
-    case "canvas_event":
-      handleCanvasTransportEvent(data, ctx);
       return;
     case "artifact_event":
       handleArtifactTransportEvent(data, ctx);

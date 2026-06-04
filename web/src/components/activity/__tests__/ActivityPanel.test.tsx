@@ -32,9 +32,6 @@ vi.mock('../FileChangesTab', () => ({
   FileChangesTab: () => <div>Changes Tab</div>,
 }))
 
-vi.mock('../CanvasTab', () => ({
-  CanvasTab: () => <div>Canvas Tab</div>,
-}))
 
 vi.mock('../SessionsTab', () => ({
   SessionsTab: () => <div>Sessions Tab</div>,
@@ -79,8 +76,6 @@ describe('ActivityPanel', () => {
         onOpenArtifact={vi.fn()}
         onCloseArtifact={vi.fn()}
         onSetArtifactVersion={vi.fn()}
-        canvasState={null}
-        onCloseCanvas={vi.fn()}
         isMobile={false}
       />,
     )
@@ -102,8 +97,6 @@ describe('ActivityPanel', () => {
         onOpenArtifact={vi.fn()}
         onCloseArtifact={vi.fn()}
         onSetArtifactVersion={vi.fn()}
-        canvasState={null}
-        onCloseCanvas={vi.fn()}
         isMobile={false}
       />,
     )
@@ -129,8 +122,6 @@ describe('ActivityPanel', () => {
         onOpenArtifact={vi.fn()}
         onCloseArtifact={vi.fn()}
         onSetArtifactVersion={vi.fn()}
-        canvasState={null}
-        onCloseCanvas={vi.fn()}
         isMobile={false}
       />,
     )
@@ -157,8 +148,6 @@ describe('ActivityPanel', () => {
         onOpenArtifact={vi.fn()}
         onCloseArtifact={vi.fn()}
         onSetArtifactVersion={vi.fn()}
-        canvasState={null}
-        onCloseCanvas={vi.fn()}
         isMobile={true}
       />,
     )
@@ -191,8 +180,6 @@ describe('ActivityPanel', () => {
         onOpenArtifact={vi.fn()}
         onCloseArtifact={vi.fn()}
         onSetArtifactVersion={vi.fn()}
-        canvasState={null}
-        onCloseCanvas={vi.fn()}
         isMobile={false}
       />,
     )
@@ -219,8 +206,6 @@ describe('ActivityPanel', () => {
         onOpenArtifact={vi.fn()}
         onCloseArtifact={vi.fn()}
         onSetArtifactVersion={vi.fn()}
-        canvasState={null}
-        onCloseCanvas={vi.fn()}
         isMobile={false}
       />,
     )
@@ -260,8 +245,6 @@ describe('ActivityPanel', () => {
           onOpenArtifact={vi.fn()}
           onCloseArtifact={vi.fn()}
           onSetArtifactVersion={vi.fn()}
-          canvasState={null}
-          onCloseCanvas={vi.fn()}
           isMobile={false}
         />,
       )
@@ -298,8 +281,6 @@ describe('ActivityPanel', () => {
         onOpenArtifact={vi.fn()}
         onCloseArtifact={vi.fn()}
         onSetArtifactVersion={vi.fn()}
-        canvasState={null}
-        onCloseCanvas={vi.fn()}
         changedFiles={[{ path: 'src/example.ts', status: 'M' }]}
         isMobile={false}
       />,
@@ -322,8 +303,6 @@ describe('ActivityPanel', () => {
         onOpenArtifact={vi.fn()}
         onCloseArtifact={vi.fn()}
         onSetArtifactVersion={vi.fn()}
-        canvasState={null}
-        onCloseCanvas={vi.fn()}
         mcp={{} as never}
         isMobile={false}
       />,

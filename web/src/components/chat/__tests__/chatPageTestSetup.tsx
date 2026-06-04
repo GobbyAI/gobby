@@ -414,14 +414,6 @@ export const useActivityPanelMockFactory = () => ({
   }),
 });
 
-export const useCanvasPanelMockFactory = () => ({
-  useCanvasPanel: () => ({
-    openCanvas: vi.fn(),
-    closeCanvas: vi.fn(),
-    activeCanvas: null,
-  }),
-});
-
 export const useFileChangesMockFactory = () => ({
   useFileChanges: () => ({
     changedFiles: [],
@@ -457,9 +449,6 @@ export function createChat(overrides: Partial<ChatState> = {}): ChatState {
     onRespondToApproval: vi.fn(),
     paletteItems: [],
     onPaletteSelect: vi.fn(),
-    canvasSurfaces: new Map(),
-    canvasPanel: null,
-    onCanvasInteraction: vi.fn(),
     mode: "plan",
     onModeChange: vi.fn(),
     planPendingApproval: false,

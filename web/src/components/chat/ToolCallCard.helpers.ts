@@ -5,7 +5,7 @@ import { extractImageSrc } from '../../lib/imageSources'
 const FILE_TOOL_TYPES = new Set(['read', 'edit'])
 const COMPACT_HEADER_TOOL_TYPES = new Set(['read', 'bash', 'grep', 'glob', 'protocol'])
 const COMPACT_HEADER_NAMES = new Set(['list_mcp_servers', 'ExitPlanMode'])
-const UNGROUPABLE_TOOLS = new Set(['render_surface', 'AskUserQuestion'])
+const UNGROUPABLE_TOOLS = new Set(['AskUserQuestion'])
 const SHELL_ALIAS_NAMES = new Set([
   'bash',
   'shell',
@@ -310,7 +310,7 @@ export function hasVisibleToolCall(call: ToolCall): boolean {
   if (call.status === 'calling' || call.status === 'pending_approval' || call.status === 'error') {
     return true
   }
-  if (call.tool_name === 'render_surface' || call.tool_name === 'AskUserQuestion') {
+  if (call.tool_name === 'AskUserQuestion') {
     return true
   }
   if (call.arguments && Object.keys(call.arguments).length > 0) {

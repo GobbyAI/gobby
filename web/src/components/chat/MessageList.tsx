@@ -17,7 +17,6 @@ import {
 import type { ChatMessage } from "../../types/chat";
 import { MessageItem } from "./MessageItem";
 import { MessageErrorBoundary } from "./MessageErrorBoundary";
-import type { A2UISurfaceState, UserAction } from "../canvas";
 import { GobbyLogo } from "../shared/GobbyLogo";
 
 interface MessageListProps {
@@ -33,8 +32,6 @@ interface MessageListProps {
     toolCallId: string,
     decision: "approve" | "reject" | "approve_always",
   ) => boolean | void;
-  canvasSurfaces?: Map<string, A2UISurfaceState>;
-  onCanvasInteraction?: (canvasId: string, action: UserAction) => void;
 }
 
 export interface MessageListHandle {
@@ -53,8 +50,6 @@ export const MessageList = memo(
       isLoadingMessages,
       onRespondToQuestion,
       onRespondToApproval,
-      canvasSurfaces,
-      onCanvasInteraction,
     },
     ref,
   ) {
@@ -241,8 +236,6 @@ export const MessageList = memo(
             isThinking={isThinking && index === messages.length - 1}
             onRespondToQuestion={onRespondToQuestion}
             onRespondToApproval={onRespondToApproval}
-            canvasSurfaces={canvasSurfaces}
-            onCanvasInteraction={onCanvasInteraction}
           />
         </MessageErrorBoundary>
       ),
@@ -252,8 +245,6 @@ export const MessageList = memo(
         messages.length,
         onRespondToQuestion,
         onRespondToApproval,
-        canvasSurfaces,
-        onCanvasInteraction,
       ],
     );
 

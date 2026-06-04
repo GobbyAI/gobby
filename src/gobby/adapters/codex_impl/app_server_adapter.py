@@ -130,14 +130,9 @@ class CodexAdapter(BaseAdapter):
         "mcp__gobby__search_tools",
     }
 
-    # UI-only canvas calls are safe because they only present/update
-    # browser surfaces; they do not mutate repo or system state.
-    SAFE_CANVAS_CALL_TOOLS: set[str] = {
-        "render_surface",
-        "update_surface",
-        "close_canvas",
-        "wait_for_interaction",
-        "canvas_present",
+    # Read-only artifact display calls are safe: they present file contents in
+    # the web chat artifacts panel and do not mutate repo or system state.
+    SAFE_ARTIFACTS_CALL_TOOLS: set[str] = {
         "show_file",
     }
 
@@ -392,7 +387,7 @@ class CodexAdapter(BaseAdapter):
 
         mcp_server = hook_event.data.get("mcp_server")
         mcp_tool = hook_event.data.get("mcp_tool")
-        if mcp_server == "gobby-canvas" and mcp_tool in self.SAFE_CANVAS_CALL_TOOLS:
+        if mcp_server == "gobby-artifacts" and mcp_tool in self.SAFE_ARTIFACTS_CALL_TOOLS:
             return True
 
         if tool_name != "mcp__gobby__call_tool":
@@ -402,8 +397,8 @@ class CodexAdapter(BaseAdapter):
         if not isinstance(raw_input, dict):
             return False
         return (
-            raw_input.get("server_name") == "gobby-canvas"
-            and raw_input.get("tool_name") in self.SAFE_CANVAS_CALL_TOOLS
+            raw_input.get("server_name") == "gobby-artifacts"
+            and raw_input.get("tool_name") in self.SAFE_ARTIFACTS_CALL_TOOLS
         )
 
     def _translate_approval_event(self, method: str, params: dict[str, Any]) -> HookEvent | None:

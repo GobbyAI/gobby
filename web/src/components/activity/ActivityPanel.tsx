@@ -7,7 +7,6 @@ import {
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { PlansTab } from "./PlansTab";
 import { FileChangesTab } from "./FileChangesTab";
-import { CanvasTab } from "./CanvasTab";
 import { SessionsTab } from "./SessionsTab";
 import { PipelinesTab } from "./PipelinesTab";
 import { TasksTab } from "./TasksTab";
@@ -18,7 +17,6 @@ import { ActivityMcpTab, type ActivityMcpTabProps } from "./ActivityMcpTab";
 import { WikiTab } from "./WikiTab";
 import type { Artifact } from "../../types/artifacts";
 import type { GobbySession } from "../../types/sessions";
-import type { CanvasPanelState } from "../canvas/hooks/useCanvasPanel";
 import type { SessionsFilters } from "./sessionsFilters";
 import type { LayoutMode } from "./useActivityPanel";
 import { PanelIcon } from "../chat/icons/PanelIcon";
@@ -68,11 +66,6 @@ interface ActivityPanelProps {
   planPendingApproval?: boolean;
   onApprovePlan?: () => void;
   onRequestPlanChanges?: (feedback: string) => void;
-  // Canvas tab props
-  canvasState: CanvasPanelState | null;
-  onCloseCanvas: () => void;
-  // Clear callbacks
-  onClearCanvas?: () => void;
   // File changes tab
   changedFiles?: { path: string; status: string }[];
   fetchDiff?: (path: string) => Promise<string>;
@@ -187,9 +180,6 @@ export function ActivityPanel({
   planPendingApproval,
   onApprovePlan,
   onRequestPlanChanges,
-  canvasState,
-  onCloseCanvas,
-  onClearCanvas,
   changedFiles = [],
   fetchDiff,
   changesLoading = false,
@@ -335,14 +325,6 @@ export function ActivityPanel({
             loading={changesLoading}
             error={changesError}
             onRetry={onRetryChanges}
-          />
-        );
-      case "canvas":
-        return (
-          <CanvasTab
-            state={canvasState}
-            onClose={onCloseCanvas}
-            onClearAll={onClearCanvas}
           />
         );
       default:

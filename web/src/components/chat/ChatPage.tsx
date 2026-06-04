@@ -5,7 +5,6 @@ import { useCallback, useEffect, useRef } from "react";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import { useConfirmDialog } from "../../hooks/useConfirmDialog";
 import { useFileChanges } from "../../hooks/useFileChanges";
-import { useCanvasPanel } from "../canvas/hooks/useCanvasPanel";
 import { ActivityPanel } from "../activity/ActivityPanel";
 import { useActivityPanel } from "../activity/useActivityPanel";
 import { Heading } from "../shared/Heading";
@@ -52,7 +51,6 @@ export function ChatPage({
   const messageListRef = useRef<MessageListHandle>(null);
   const lastAutoScrolledLoadRef = useRef<string | null>(null);
   const isMobile = useIsMobile();
-  const canvas = useCanvasPanel();
   const activity = useActivityPanel(isMobile);
   const { confirm, ConfirmDialogElement } = useConfirmDialog();
   const {
@@ -69,7 +67,6 @@ export function ChatPage({
     toggleFromPanel,
     wikiRefreshSignal,
   } = activity;
-  const { openCanvas, closeCanvas, activeCanvas } = canvas;
   const panelVisible = effectiveMode !== "chat";
   const showChatColumn = isMobile || effectiveMode !== "panel";
 
@@ -120,15 +117,6 @@ export function ChatPage({
     showTab("wiki");
     refreshWikiTab();
   }, [refreshWikiTab, showTab]);
-
-  useEffect(() => {
-    if (chat.canvasPanel) {
-      openCanvas(chat.canvasPanel);
-      showTab("canvas");
-    } else {
-      closeCanvas();
-    }
-  }, [chat.canvasPanel, closeCanvas, openCanvas, showTab]);
 
   useEffect(() => {
     if (!requestedActivityTab) return;
@@ -217,9 +205,6 @@ export function ChatPage({
         planPendingApproval={artifacts.planPendingApproval}
         onApprovePlan={artifacts.handleApprovePlan}
         onRequestPlanChanges={artifacts.handleRequestPlanChanges}
-        canvasState={activeCanvas}
-        onCloseCanvas={closeCanvas}
-        onClearCanvas={canvas.closeCanvas}
         changedFiles={fileChanges.changedFiles}
         fetchDiff={fileChanges.fetchDiff}
         changesLoading={fileChanges.loading}

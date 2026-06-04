@@ -542,7 +542,6 @@ web/src/
 ├── components/
 │   ├── activity/           # Activity panel tabs and models
 │   ├── app/                # App shell helpers, navigation, lazy pages
-│   ├── canvas/             # A2UI canvas renderer
 │   ├── chat/               # Chat page, input, messages, chat-specific styles
 │   │   └── ui/             # Shared UI primitives
 │   ├── code/               # Code graph/code page surfaces

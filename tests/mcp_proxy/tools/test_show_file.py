@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from gobby.mcp_proxy.tools.canvas import (
+from gobby.mcp_proxy.tools.artifacts import (
     MAX_IMAGE_FILE_SIZE,
     MAX_TEXT_FILE_SIZE,
-    create_canvas_registry,
+    create_artifacts_registry,
     set_artifact_broadcaster,
 )
 
@@ -17,19 +17,11 @@ pytestmark = pytest.mark.unit
 @pytest.fixture(autouse=True)
 def clean_state():
     """Reset artifact broadcaster state before and after each test."""
-    from gobby.mcp_proxy.tools import canvas as canvas_mod
+    from gobby.mcp_proxy.tools import artifacts as artifacts_mod
 
-    canvas_mod._artifact_broadcaster_ref["func"] = None
-    canvas_mod._broadcaster_ref["func"] = None
-    canvas_mod._canvases.clear()
-    canvas_mod._canvas_locks.clear()
-    canvas_mod._rate_counters.clear()
+    artifacts_mod._artifact_broadcaster_ref["func"] = None
     yield
-    canvas_mod._artifact_broadcaster_ref["func"] = None
-    canvas_mod._broadcaster_ref["func"] = None
-    canvas_mod._canvases.clear()
-    canvas_mod._canvas_locks.clear()
-    canvas_mod._rate_counters.clear()
+    artifacts_mod._artifact_broadcaster_ref["func"] = None
 
 
 class MockBroadcaster:
@@ -49,7 +41,7 @@ def artifact_bc():
 
 @pytest.fixture
 def registry():
-    return create_canvas_registry()
+    return create_artifacts_registry()
 
 
 async def test_show_file_python(registry, artifact_bc, tmp_path):

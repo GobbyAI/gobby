@@ -9,7 +9,6 @@ import { Markdown } from './Markdown'
 import { ThinkingBlock } from './ThinkingBlock'
 import { ToolCallCards } from './ToolCallCard'
 import { UnknownBlockCard } from './UnknownBlockCard'
-import type { A2UISurfaceState, UserAction } from '../canvas'
 import { splitProtocolContent } from './protocolContent'
 
 /** Replace [Image: ...] text descriptions with styled placeholders */
@@ -128,8 +127,6 @@ interface MessageItemProps {
   isThinking?: boolean
   onRespondToQuestion?: (toolCallId: string, answers: Record<string, string>) => boolean | void
   onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void
-  canvasSurfaces?: Map<string, A2UISurfaceState>
-  onCanvasInteraction?: (canvasId: string, action: UserAction) => void
 }
 
 function ProtocolAwareText({
@@ -138,16 +135,12 @@ function ProtocolAwareText({
   isStreaming = false,
   onRespondToQuestion,
   onRespondToApproval,
-  canvasSurfaces,
-  onCanvasInteraction,
 }: {
   content: string
   id: string
   isStreaming?: boolean
   onRespondToQuestion?: (toolCallId: string, answers: Record<string, string>) => boolean | void
   onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void
-  canvasSurfaces?: Map<string, A2UISurfaceState>
-  onCanvasInteraction?: (canvasId: string, action: UserAction) => void
 }) {
   const segments = splitProtocolContent(content, id)
   const textSegmentIndexes = segments
@@ -179,8 +172,6 @@ function ProtocolAwareText({
             toolCalls={[segment.call]}
             onRespond={onRespondToQuestion}
             onRespondToApproval={onRespondToApproval}
-            canvasSurfaces={canvasSurfaces}
-            onCanvasInteraction={onCanvasInteraction}
           />
         )
       })}
@@ -188,7 +179,7 @@ function ProtocolAwareText({
   )
 }
 
-export const MessageItem = memo(function MessageItem({ message, isStreaming = false, isThinking = false, onRespondToQuestion, onRespondToApproval, canvasSurfaces, onCanvasInteraction }: MessageItemProps) {
+export const MessageItem = memo(function MessageItem({ message, isStreaming = false, isThinking = false, onRespondToQuestion, onRespondToApproval }: MessageItemProps) {
   const isModelSwitch = message.role === 'system' && message.id.startsWith('model-switch-')
   const lastTextBlockIndex = message.contentBlocks?.reduce(
     (last, block, index) => (block.type === 'text' ? index : last),
@@ -256,8 +247,6 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
                     isStreaming={isStreaming && i === lastTextBlockIndex}
                     onRespondToQuestion={onRespondToQuestion}
                     onRespondToApproval={onRespondToApproval}
-                    canvasSurfaces={canvasSurfaces}
-                    onCanvasInteraction={onCanvasInteraction}
                   />
                 )
               }
@@ -271,8 +260,6 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
                     toolCalls={block.tool_calls}
                     onRespond={onRespondToQuestion}
                     onRespondToApproval={onRespondToApproval}
-                    canvasSurfaces={canvasSurfaces}
-                    onCanvasInteraction={onCanvasInteraction}
                   />
                 )
               }
@@ -325,7 +312,7 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
         ) : (
           <>
             {message.toolCalls && message.toolCalls.length > 0 && (
-              <ToolCallCards toolCalls={message.toolCalls} onRespond={onRespondToQuestion} onRespondToApproval={onRespondToApproval} canvasSurfaces={canvasSurfaces} onCanvasInteraction={onCanvasInteraction} />
+              <ToolCallCards toolCalls={message.toolCalls} onRespond={onRespondToQuestion} onRespondToApproval={onRespondToApproval} />
             )}
             {message.content && (
               <ProtocolAwareText
@@ -334,8 +321,6 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
                 isStreaming={isStreaming}
                 onRespondToQuestion={onRespondToQuestion}
                 onRespondToApproval={onRespondToApproval}
-                canvasSurfaces={canvasSurfaces}
-                onCanvasInteraction={onCanvasInteraction}
               />
             )}
           </>

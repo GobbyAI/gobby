@@ -42,20 +42,8 @@ SAFE_MCP_PROXY_TOOLS = frozenset(
     }
 )
 
-SAFE_CANVAS_CALL_TOOLS = frozenset(
-    {
-        "render_surface",
-        "update_surface",
-        "close_canvas",
-        "wait_for_interaction",
-        "canvas_present",
-        "show_file",
-    }
-)
-
 BUILT_IN_EXEMPTION_LABELS = (
     "mcp:gobby*:*",
-    "mcp:gobby-canvas:*",
     "tool:Bash (gcode / safe gsqz input only)",
 )
 
@@ -64,7 +52,7 @@ GOBBY_EXEMPT_SERVERS = frozenset(
         "gobby",
         "gobby-agent",
         "gobby-agents",
-        "gobby-canvas",
+        "gobby-artifacts",
         "gobby-clone",
         "gobby-clones",
         "gobby-communications",
@@ -268,18 +256,10 @@ def is_auto_exempt_shell_command(input_data: dict[str, Any]) -> bool:
     return False
 
 
-def is_safe_canvas_call(input_data: dict[str, Any]) -> bool:
-    server_name = input_data.get("server_name", "")
-    tool_name = input_data.get("tool_name", "")
-    return server_name == "gobby-canvas" and tool_name in SAFE_CANVAS_CALL_TOOLS
-
-
 def is_builtin_auto_exempt(tool_name: str, input_data: dict[str, Any]) -> bool:
     """Hardcoded exemptions shared by interactive web-chat providers."""
     canonical = str(canonicalize_shell_tool_name(tool_name))
     if canonical in SAFE_MCP_PROXY_TOOLS:
-        return True
-    if is_safe_canvas_call(input_data):
         return True
     if canonical == "Bash" and is_auto_exempt_shell_command(input_data):
         return True

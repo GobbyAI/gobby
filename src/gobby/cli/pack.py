@@ -34,7 +34,6 @@ PACK_DIRS = [
     "services",
     "hooks",
     "certs",
-    "canvas",
     "scripts",
 ]
 

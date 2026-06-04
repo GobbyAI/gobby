@@ -51,7 +51,6 @@ class BroadcastMixin:
             "pipeline_event",
             "terminal_output",
             "tmux_session_event",
-            "canvas_event",
             "skill_event",
             "mcp_event",
             "workflow_event",
@@ -407,24 +406,6 @@ class BroadcastMixin:
         message = {
             "type": "communications_event",
             "event": event,
-            "timestamp": datetime.now(UTC).isoformat(),
-            **kwargs,
-        }
-        await self.broadcast(message)
-
-    async def broadcast_canvas_event(
-        self,
-        event: str,
-        canvas_id: str,
-        conversation_id: str,
-        **kwargs: Any,
-    ) -> None:
-        """Broadcast canvas interaction/update event."""
-        message = {
-            "type": "canvas_event",
-            "event": event,
-            "canvas_id": canvas_id,
-            "conversation_id": conversation_id,
             "timestamp": datetime.now(UTC).isoformat(),
             **kwargs,
         }

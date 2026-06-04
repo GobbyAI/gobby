@@ -148,8 +148,6 @@ export function ChatMainColumn({
             isLoadingMessages={chat.isLoadingMessages}
             onRespondToQuestion={chat.onRespondToQuestion}
             onRespondToApproval={chat.onRespondToApproval}
-            canvasSurfaces={chat.canvasSurfaces}
-            onCanvasInteraction={chat.onCanvasInteraction}
           />
         </div>
 

@@ -14,7 +14,6 @@ const VALID_TABS: ActivityTab[] = [
   'plans',
   'changes',
   'files',
-  'canvas',
   'pipelines',
   'cron',
   'traces',
@@ -54,9 +53,9 @@ function reduceMobileToggle(view: MobileView): MobileView {
 }
 
 function normalizeStoredTab(value: string | null): ActivityTab | null {
-  // The Artifacts tab was removed; any stored value (legacy v1 or v2) lands on
-  // Changes so existing users never resolve to a missing tab.
-  if (value === 'artifacts') return 'changes'
+  // The Artifacts and A2UI Canvas tabs were removed; any stored value (legacy
+  // v1 or v2) lands on Changes so existing users never resolve to a missing tab.
+  if (value === 'artifacts' || value === 'canvas') return 'changes'
   if (value && VALID_TABS.includes(value as ActivityTab)) return value as ActivityTab
   return null
 }

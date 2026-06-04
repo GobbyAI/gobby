@@ -299,7 +299,6 @@ class WebSocketServer(
                 "voice_mode_toggle": self._handle_voice_mode_toggle,
                 "voice_prepare": self._handle_voice_prepare,
                 "tts_stop": self._handle_tts_stop,
-                "canvas_interaction": self._handle_canvas_interaction,
                 "heartbeat": self._handle_heartbeat,
             }
 
@@ -309,17 +308,6 @@ class WebSocketServer(
         else:
             logger.warning(f"Unknown message type: {msg_type}")
             await self._send_error(websocket, f"Unknown message type: {msg_type}")
-
-    async def _handle_canvas_interaction(self, websocket: Any, data: dict[str, Any]) -> None:
-        """Handle user interaction on an A2UI canvas."""
-        canvas_id = data.get("canvas_id")
-        action = data.get("action")
-        if not canvas_id or not action:
-            return
-
-        from gobby.mcp_proxy.tools.canvas import resolve_interaction
-
-        await resolve_interaction(canvas_id, action)
 
     async def start(self) -> None:
         """
@@ -377,10 +365,6 @@ class WebSocketServer(
 
         # Stop all chat sessions (fire SESSION_END before each)
         for conv_id, session in list(self._chat_sessions.items()):
-            from gobby.mcp_proxy.tools.canvas import cancel_conversation_canvases
-
-            cancel_conversation_canvases(conv_id)
-
             await self._fire_session_end(conv_id)
             await self._cancel_active_chat(conv_id)
             await session.stop()

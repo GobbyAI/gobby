@@ -9,7 +9,6 @@ import type {
   QueuedFile,
 } from "../../types/chat";
 import { normalizeChatMode } from "../../types/chat";
-import type { UserAction } from "../../components/canvas/types";
 import {
   mapApiMessages,
   mapRenderedMessageToChatMessage,
@@ -884,23 +883,6 @@ const respondToApproval = useCallback(
   [],
 );
 
-// Respond to a Canvas surface interaction
-const respondToCanvas = useCallback(
-  (canvasId: string, action: UserAction) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    wsRef.current.send(
-      JSON.stringify({
-        type: "canvas_interaction",
-        conversation_id: conversationIdRef.current,
-        canvas_id: canvasId,
-        action,
-      }),
-    );
-  },
-  [],
-);
-
-
 // Approve the current plan. The backend's mode_changed event is authoritative.
 const approvePlan = useCallback(() => {
   if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
@@ -953,7 +935,6 @@ const requestPlanChanges = useCallback((feedback: string) => {
     sendMessage,
     respondToQuestion,
     respondToApproval,
-    respondToCanvas,
     approvePlan,
     requestPlanChanges,
   };

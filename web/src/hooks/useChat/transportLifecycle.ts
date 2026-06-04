@@ -108,7 +108,6 @@ export function connectChatTransport(
           "chat_error",
           "tool_status",
           "chat_thinking",
-          "canvas_event",
           "artifact_event",
           "session_message",
           "session_usage_updated",

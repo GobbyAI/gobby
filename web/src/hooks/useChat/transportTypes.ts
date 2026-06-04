@@ -3,8 +3,6 @@ import type {
   MutableRefObject,
   SetStateAction,
 } from "react";
-import type { CanvasPanelState } from "../../components/canvas/hooks/useCanvasPanel";
-import type { A2UISurfaceState } from "../../components/canvas/types";
 import type {
   ChatMessage,
   ChatMode,
@@ -100,8 +98,6 @@ export interface StateSetters {
   setActiveAgent: Setter<string>;
   setAttachedSessionId: Setter<string | null>;
   setAttachedSessionMeta: Setter<SessionObservationMeta | null>;
-  setCanvasPanel: Setter<CanvasPanelState | null>;
-  setCanvasSurfaces: Setter<Map<string, A2UISurfaceState>>;
   setContextUsage: Setter<ContextUsage>;
   setConversationId: Setter<string>;
   setCurrentBranch: Setter<string | null>;

@@ -63,7 +63,7 @@ variables:
       - gobby-sessions
       - gobby-memory
       - gobby-workflows
-      - gobby-canvas
+      - gobby-artifacts
       - gobby-metrics
       - gobby-agents
       - gobby-worktrees

@@ -28,7 +28,6 @@ from gobby.servers.tool_approvals import (
     find_out_of_repo_write_path,
     get_global_approval_rules,
     is_gcode_shell_command,
-    is_safe_canvas_call,
     is_tool_auto_allowed,
     load_project_approval_rules,
     normalize_approved_tool_keys,
@@ -281,7 +280,7 @@ class ChatSessionPermissionsMixin:
 
         if tool_name in SAFE_MCP_PROXY_TOOLS:
             return PermissionResultAllow(updated_input=input_data)
-        if tool_name == "mcp__gobby__call_tool" and self._is_safe_canvas_call(input_data):
+        if tool_name == "mcp__gobby__call_tool" and self._is_safe_artifacts_call(input_data):
             return PermissionResultAllow(updated_input=input_data)
 
         # Check tool approval (before AskUserQuestion, which has its own flow)
@@ -383,7 +382,7 @@ class ChatSessionPermissionsMixin:
 
     def _is_write_mcp_call(self, input_data: dict[str, Any]) -> bool:
         """Check if an MCP call_tool invocation targets a write operation."""
-        if self._is_safe_canvas_call(input_data):
+        if self._is_safe_artifacts_call(input_data):
             return False
         tool_name = input_data.get("tool_name", "")
         if not tool_name:
@@ -392,9 +391,12 @@ class ChatSessionPermissionsMixin:
             return False
         return True
 
-    def _is_safe_canvas_call(self, input_data: dict[str, Any]) -> bool:
-        """Return True for UI-only canvas MCP calls that are safe to auto-approve."""
-        return is_safe_canvas_call(input_data)
+    def _is_safe_artifacts_call(self, input_data: dict[str, Any]) -> bool:
+        """Return True for the read-only ``gobby-artifacts:show_file`` display call."""
+        return (
+            input_data.get("server_name") == "gobby-artifacts"
+            and input_data.get("tool_name") == "show_file"
+        )
 
     def _is_write_bash(self, input_data: dict[str, Any]) -> bool:
         """Check if a Bash command performs write/destructive operations (plan mode)."""

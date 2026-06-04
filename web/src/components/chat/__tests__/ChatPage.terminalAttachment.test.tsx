@@ -47,9 +47,6 @@ vi.mock("../../../hooks/useArtifacts", async () =>
 vi.mock("../../activity/useActivityPanel", async () =>
   (await import("./chatPageTestSetup")).useActivityPanelMockFactory(),
 );
-vi.mock("../../canvas/hooks/useCanvasPanel", async () =>
-  (await import("./chatPageTestSetup")).useCanvasPanelMockFactory(),
-);
 vi.mock("../../../hooks/useFileChanges", async () =>
   (await import("./chatPageTestSetup")).useFileChangesMockFactory(),
 );

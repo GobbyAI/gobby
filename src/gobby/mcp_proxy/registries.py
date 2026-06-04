@@ -229,12 +229,12 @@ def setup_internal_registries(
     manager.add_registry(workflows_registry)
     logger.debug("Workflows registry initialized")
 
-    # Initialize canvas registry (always available)
-    from gobby.mcp_proxy.tools.canvas import create_canvas_registry
+    # Initialize artifacts registry (always available)
+    from gobby.mcp_proxy.tools.artifacts import create_artifacts_registry
 
-    canvas_registry = create_canvas_registry()
-    manager.add_registry(canvas_registry)
-    logger.debug("Canvas registry initialized")
+    artifacts_registry = create_artifacts_registry()
+    manager.add_registry(artifacts_registry)
+    logger.debug("Artifacts registry initialized")
 
     # Initialize wiki registry (always available; gateway availability is checked per call)
     from gobby.mcp_proxy.tools.wiki import create_wiki_registry

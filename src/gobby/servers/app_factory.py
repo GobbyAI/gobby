@@ -281,19 +281,8 @@ def create_app(server: "HTTPServer") -> FastAPI:
             )
             logger.debug("Completion registry connected to session coordinator")
 
-        # Initialize canvas broadcaster
-        from gobby.mcp_proxy.tools.canvas import set_broadcaster
-
-        async def _canvas_broadcaster(**kwargs: Any) -> None:
-            ws = server.services.websocket_server or server.websocket_server
-            if ws and hasattr(ws, "broadcast_canvas_event"):
-                await ws.broadcast_canvas_event(**kwargs)
-
-        set_broadcaster(_canvas_broadcaster)
-        logger.debug("Canvas broadcaster connected to WebSocket server")
-
         # Initialize artifact broadcaster
-        from gobby.mcp_proxy.tools.canvas import set_artifact_broadcaster
+        from gobby.mcp_proxy.tools.artifacts import set_artifact_broadcaster
 
         async def _artifact_broadcaster(**kwargs: Any) -> None:
             ws = server.services.websocket_server or server.websocket_server
@@ -554,16 +543,6 @@ def create_app(server: "HTTPServer") -> FastAPI:
     if mcp_app is not None:
         app.mount("/mcp", mcp_app)
         logger.debug("MCP server mounted at /mcp")
-
-    # Mount Canvas sandbox
-    from pathlib import Path
-
-    from fastapi.staticfiles import StaticFiles
-
-    canvas_dir = Path.home() / ".gobby" / "canvas"
-    canvas_dir.mkdir(parents=True, exist_ok=True)
-    app.mount("/__gobby__/canvas", StaticFiles(directory=str(canvas_dir)), name="canvas-sandbox")
-    logger.debug("Canvas sandbox mounted at /__gobby__/canvas")
 
     # Mount WebSocket proxy (before production UI catch-all)
     _mount_ws_proxy(app, server)

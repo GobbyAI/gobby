@@ -83,7 +83,7 @@ links to the guide that owns that topic.
 | Guide | Description |
 |-------|-------------|
 | [web-ui.md](web-ui.md) | Web app shell, chat, dashboard, projects, settings, and route/API flow |
-| [canvas-artifacts.md](canvas-artifacts.md) | Canvas MCP tools, artifact panel, HTML sandbox, file rendering, and interaction flow |
+| [artifacts.md](artifacts.md) | The `gobby-artifacts` MCP tool, artifact panel, and file rendering |
 | [providers-and-models.md](providers-and-models.md) | Provider availability, model catalogs, web-chat backends, and local model warmup |
 | [frontend-style-guide.md](frontend-style-guide.md) | Design tokens, component patterns, and web UI styling rules |
 | [voice.md](voice.md) | Local speech-to-text and text-to-speech for web chat voice conversations |
@@ -118,7 +118,7 @@ links to the guide that owns that topic.
 ### Building Integrations
 
 1. Read [mcp-tools.md](mcp-tools.md) for the native MCP proxy model.
-2. Read [canvas-artifacts.md](canvas-artifacts.md) for browser-facing MCP artifacts.
+2. Read [artifacts.md](artifacts.md) for browser-facing MCP artifacts.
 3. Read [providers-and-models.md](providers-and-models.md) for provider/model selection.
 4. Read [integrations.md](integrations.md) for GitHub and Linear setup.
 5. Read [comm-integrations.md](comm-integrations.md) for channel adapters.

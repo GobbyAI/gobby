@@ -8,8 +8,6 @@ import { Badge } from './ui/Badge'
 import { Button } from '../shared/Button'
 import { JsonBlock } from './JsonBlock'
 import { PanelIcon } from './icons/PanelIcon'
-import type { A2UISurfaceState, UserAction } from '../canvas'
-import { A2UIRenderer } from '../canvas'
 import { useArtifactContext } from './artifacts/ArtifactContext'
 import {
   COMPACT_HEADER_NAMES,
@@ -50,8 +48,6 @@ interface ToolCallCardProps {
   toolCalls: ToolCall[]
   onRespond?: (toolCallId: string, answers: Record<string, string>) => boolean | void
   onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void
-  canvasSurfaces?: Map<string, A2UISurfaceState>
-  onCanvasInteraction?: (canvasId: string, action: UserAction) => void
 }
 
 interface AskUserOption {
@@ -304,7 +300,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
   return <ToolResultBody body={resultStr} />
 }
 
-const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToApproval, canvasSurfaces, onCanvasInteraction, nested = false }: { call: ToolCall; onRespond?: (toolCallId: string, answers: Record<string, string>) => boolean | void; onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void; canvasSurfaces?: Map<string, A2UISurfaceState>; onCanvasInteraction?: (canvasId: string, action: UserAction) => void; nested?: boolean }) {
+const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToApproval, nested = false }: { call: ToolCall; onRespond?: (toolCallId: string, answers: Record<string, string>) => boolean | void; onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void; nested?: boolean }) {
   const displayName = getToolDisplayName(call)
   const toolType = resolveToolType(call)
   const [expanded, setExpanded] = useState(defaultExpandedForCall(call))
@@ -326,10 +322,6 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
     const fileName = pathBasename(filePath)
     return { artifactInfo, parsed, fileName }
   }, [toolType, call.status, call.result, call.arguments])
-
-  if (call.tool_name === 'render_surface') {
-    return <CanvasSurfaceCard call={call} canvasSurfaces={canvasSurfaces} onCanvasInteraction={onCanvasInteraction} />
-  }
 
   if (call.tool_name === 'AskUserQuestion') {
     return <AskUserQuestionCard call={call} onRespond={onRespond} />
@@ -687,47 +679,6 @@ function StatusIcon({ status }: { status: string }) {
   return null
 }
 
-function CanvasSurfaceCard({ call, canvasSurfaces, onCanvasInteraction }: { call: ToolCall; canvasSurfaces?: Map<string, A2UISurfaceState>; onCanvasInteraction?: (canvasId: string, action: UserAction) => void }) {
-  const [expanded, setExpanded] = useState(true)
-  const args = call.arguments as { canvas_id?: string } | undefined
-  const canvasId = args?.canvas_id
-  const surfaceState = canvasId ? canvasSurfaces?.get(canvasId) : undefined
-  const displayName = formatToolName(call.tool_name)
-
-  return (
-    <div className={cn(
-      'rounded-lg border border-accent/20 overflow-hidden my-1.5',
-      call.status === 'error' && 'border-destructive-foreground/30'
-    )}>
-      <div
-        className={cn(TOOL_CARD_SPACING.header, 'text-sm cursor-pointer hover:bg-muted/50 transition-colors bg-accent/5')}
-        onClick={() => setExpanded(!expanded)}
-      >
-        <StatusIcon status={call.status} />
-        <span className="font-mono text-foreground">{displayName}</span>
-        <span className="text-muted-foreground text-xs">{call.server_name}</span>
-        {surfaceState && <Badge variant="info" className="ml-2">Interactive</Badge>}
-        <div className="flex-1" />
-        <span className="text-muted-foreground text-xs">{expanded ? '\u25BC' : '\u25B6'}</span>
-      </div>
-      {expanded && (
-        <div className={cn(TOOL_CARD_SPACING.body, 'text-xs')}>
-          {surfaceState && onCanvasInteraction ? (
-            <A2UIRenderer surfaceState={surfaceState} onAction={onCanvasInteraction} />
-          ) : (
-            <div className="text-muted-foreground italic">Targeting {canvasId || 'an unknown canvas'}</div>
-          )}
-          {call.status === 'error' && call.error && (
-            <div className="mt-2">
-              <ToolErrorBody error={call.error} />
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
 function GroupStatusIcon({ hasErrors, allCompleted, hasInFlight }: { hasErrors: boolean; allCompleted: boolean; hasInFlight: boolean }) {
   if (hasInFlight) {
     return (
@@ -754,14 +705,12 @@ function GroupStatusIcon({ hasErrors, allCompleted, hasInFlight }: { hasErrors: 
   return null
 }
 
-function ToolCallGroupHeader({ group, expanded, onToggle, onRespond, onRespondToApproval, canvasSurfaces, onCanvasInteraction }: {
+function ToolCallGroupHeader({ group, expanded, onToggle, onRespond, onRespondToApproval }: {
   group: ToolCallGroup
   expanded: boolean
   onToggle: () => void
   onRespond?: (toolCallId: string, answers: Record<string, string>) => boolean | void
   onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void
-  canvasSurfaces?: Map<string, A2UISurfaceState>
-  onCanvasInteraction?: (canvasId: string, action: UserAction) => void
 }) {
   const serverName = group.tool_calls[0]?.server_name
   const groupBorderClass = group.hasErrors
@@ -794,8 +743,6 @@ function ToolCallGroupHeader({ group, expanded, onToggle, onRespond, onRespondTo
               nested
               onRespond={onRespond}
               onRespondToApproval={onRespondToApproval}
-              canvasSurfaces={canvasSurfaces}
-              onCanvasInteraction={onCanvasInteraction}
             />
           ))}
         </div>
@@ -804,7 +751,7 @@ function ToolCallGroupHeader({ group, expanded, onToggle, onRespond, onRespondTo
   )
 }
 
-export const ToolCallCards = memo(function ToolCallCards({ toolCalls, onRespond, onRespondToApproval, canvasSurfaces, onCanvasInteraction }: ToolCallCardProps) {
+export const ToolCallCards = memo(function ToolCallCards({ toolCalls, onRespond, onRespondToApproval }: ToolCallCardProps) {
   const visibleToolCalls = useMemo(
     () => toolCalls.filter(hasVisibleToolCall),
     [toolCalls],
@@ -833,8 +780,6 @@ export const ToolCallCards = memo(function ToolCallCards({ toolCalls, onRespond,
               call={segment.call}
               onRespond={onRespond}
               onRespondToApproval={onRespondToApproval}
-              canvasSurfaces={canvasSurfaces}
-              onCanvasInteraction={onCanvasInteraction}
             />
           )
         }
@@ -849,8 +794,6 @@ export const ToolCallCards = memo(function ToolCallCards({ toolCalls, onRespond,
             onToggle={() => toggleGroup(groupKey, defaultExpanded)}
             onRespond={onRespond}
             onRespondToApproval={onRespondToApproval}
-            canvasSurfaces={canvasSurfaces}
-            onCanvasInteraction={onCanvasInteraction}
           />
         )
       })}

@@ -88,7 +88,7 @@ Web chat combines HTTP session reads with WebSocket streaming:
 - Provider and model controls read `/api/providers` and `/api/providers/models`.
 - Chat settings persist through `/api/config/ui-settings`.
 - Voice status uses `/api/voice/status`.
-- Canvas and artifact events arrive over the same live UI channel used by chat.
+- Artifact events arrive over the same live UI channel used by chat.
 
 The main React owners are `web/src/hooks/useChat/*`,
 `web/src/components/chat/ChatPage.tsx`, and provider controls under
@@ -191,7 +191,7 @@ use progressive discovery against `chrome-devtools`:
 4. `call_tool(...)`
 
 For product behavior, prefer native Gobby MCP servers such as `gobby-tasks`,
-`gobby-cron`, `gobby-metrics`, `gobby-canvas`, `gobby-memory`, and
+`gobby-cron`, `gobby-metrics`, `gobby-artifacts`, `gobby-memory`, and
 `gobby-skills`.
 
 ## File Locations
@@ -212,7 +212,7 @@ For product behavior, prefer native Gobby MCP servers such as `gobby-tasks`,
 
 - [frontend-style-guide.md](frontend-style-guide.md)
 - [providers-and-models.md](providers-and-models.md)
-- [canvas-artifacts.md](canvas-artifacts.md)
+- [artifacts.md](artifacts.md)
 - [observability.md](observability.md)
 - [http-endpoints.md](http-endpoints.md)
 

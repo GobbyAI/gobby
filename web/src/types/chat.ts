@@ -192,9 +192,6 @@ export interface ContextUsage {
   contextUsageConfidence?: string | null;
 }
 
-import type { A2UISurfaceState, UserAction } from "../components/canvas/types";
-import type { CanvasPanelState } from "../components/canvas/hooks/useCanvasPanel";
-
 export interface SessionObservationMeta {
   ref: string | null;
   source: string;
@@ -252,9 +249,6 @@ export interface ChatState {
   onInputChange: (value: string) => void;
   paletteItems: PaletteItem[];
   onPaletteSelect: (item: PaletteItem) => void;
-  canvasSurfaces: Map<string, A2UISurfaceState>;
-  canvasPanel: CanvasPanelState | null;
-  onCanvasInteraction: (canvasId: string, action: UserAction) => void;
   mode: ChatMode;
   onModeChange: (mode: ChatMode) => void;
   onModeChangeLocal?: (mode: ChatMode) => void;

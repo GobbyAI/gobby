@@ -169,7 +169,7 @@ gobby/                                  # Project root
 │   │   │   ├── hub.py                 # Hub tools
 │   │   │   ├── merge.py               # Merge tools
 │   │   │   ├── metrics.py             # Metrics tools
-│   │   │   ├── canvas.py              # Canvas tools
+│   │   │   ├── artifacts.py           # Artifact display tool (show_file)
 │   │   │   ├── voice.py               # Voice tools
 │   │   │   ├── internal.py            # Internal utility tools
 │   │   │   ├── task_dependencies.py   # Task dependency tools

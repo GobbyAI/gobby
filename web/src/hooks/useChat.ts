@@ -1,7 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { ChatMessage, QueuedFile } from "../types/chat";
-import type { A2UISurfaceState } from "../components/canvas/types";
-import type { CanvasPanelState } from "../components/canvas/hooks/useCanvasPanel";
 import type {
   ChatError,
   ChatStreamChunk,
@@ -46,12 +44,6 @@ export function useChat() {
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [transportError, setTransportError] =
     useState<TransportErrorNotice | null>(null);
-
-  // Canvas state
-  const [canvasSurfaces, setCanvasSurfaces] = useState<
-    Map<string, A2UISurfaceState>
-  >(new Map());
-  const [canvasPanel, setCanvasPanel] = useState<CanvasPanelState | null>(null);
 
   // Keep a ref so onopen/reconnect can read the current project
   const projectIdRef = useRef<string | null>(null);
@@ -253,8 +245,6 @@ export function useChat() {
     setMainSessionMeta(null);
     setCurrentBranch(null);
     setWorktreePath(null);
-    setCanvasSurfaces(new Map());
-    setCanvasPanel(null);
     setPlanPendingApproval(false);
     planContentRef.current = null;
     setContextUsage(createEmptyContextUsage());
@@ -433,8 +423,6 @@ export function useChat() {
     setActiveAgent,
     setAttachedSessionId,
     setAttachedSessionMeta,
-    setCanvasPanel,
-    setCanvasSurfaces,
     setContextUsage,
     setConversationId,
     setCurrentBranch,
@@ -512,7 +500,6 @@ export function useChat() {
     sendMessage,
     respondToQuestion,
     respondToApproval,
-    respondToCanvas,
     approvePlan,
     requestPlanChanges,
   } = useChatActions({
@@ -688,9 +675,6 @@ export function useChat() {
     deleteConversation,
     respondToQuestion,
     respondToApproval,
-    canvasSurfaces,
-    canvasPanel,
-    onCanvasInteraction: respondToCanvas,
     planPendingApproval,
     approvePlan,
     requestPlanChanges,

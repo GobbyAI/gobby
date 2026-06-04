@@ -207,24 +207,6 @@ export interface ConnectionEstablishedMessage {
   conversation_ids?: string[];
 }
 
-export interface CanvasEventMessage {
-  type: "canvas_event";
-  event?: string;
-  canvas_id?: string;
-  conversation_id?: string;
-  mode?: string;
-  surface?: unknown;
-  data_model?: unknown;
-  root_component_id?: string;
-  completed?: boolean;
-  url?: string;
-  html_url?: string;
-  title?: string;
-  width?: number;
-  height?: number;
-  surfaces?: unknown[];
-}
-
 export interface ArtifactEventMessage {
   type: "artifact_event";
   event?: string;
@@ -312,7 +294,6 @@ export type WebSocketMessage =
   | SessionContinuedMessage
   | TransportErrorMessage
   | ConnectionEstablishedMessage
-  | CanvasEventMessage
   | ArtifactEventMessage
   | AttachToSessionResultMessage
   | DetachFromSessionResultMessage

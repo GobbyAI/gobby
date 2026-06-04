@@ -173,7 +173,7 @@ registries (`gobby-tasks`, `gobby-tasks-ops`, `gobby-workflows`,
 | `gobby-worktrees` | Git worktree isolation lifecycle | 17 |
 | `gobby-clones` | Git clone isolation lifecycle | 13 |
 | `gobby-merge` | Merge resolution, conflict prediction, branch protection | 12 |
-| `gobby-canvas` | A2UI surfaces and chat artifacts | 6 |
+| `gobby-artifacts` | File display in the chat artifact panel | 1 |
 | `gobby-config` | Runtime config get/set | 7 |
 | `gobby-skills` | Skill discovery, install, hubs | 12 |
 | `gobby-metrics` | Tool/rule/skill metrics, usage reports | 13 |
@@ -851,17 +851,12 @@ call_tool("gobby-merge", "merge_apply", {"resolution_id": "<id>"})
 
 ---
 
-## Canvas (`gobby-canvas`)
+## Artifacts (`gobby-artifacts`)
 
-6 tools for A2UI surfaces and chat-side artifact rendering.
+1 tool for chat-side artifact rendering.
 
 | Tool | Description |
 | :--- | :--- |
-| `render_surface` | Render an inline A2UI surface from declarative JSON components. |
-| `update_surface` | Update an existing surface with new components or data. |
-| `wait_for_interaction` | Block until the user interacts with a canvas. |
-| `close_canvas` | Close a canvas and remove it from the UI. |
-| `canvas_present` | Present a local HTML file in the Canvas panel sandbox. |
 | `show_file` | Show a file in the web chat artifacts panel (syntax highlighting or rendered markdown). |
 
 ---

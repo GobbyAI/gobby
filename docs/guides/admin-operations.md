@@ -125,7 +125,7 @@ POST /api/config/import
 
 `gobby pack` creates a broader snapshot than resource export. It can include the
 database, bootstrap config, machine ID, secret salt, transcripts, summaries,
-services, hooks, certs, canvas files, scripts, current project `.gobby`, and
+services, hooks, certs, scripts, current project `.gobby`, and
 Docker volumes such as Qdrant and FalkorDB data.
 
 Common commands:
@@ -210,7 +210,7 @@ Use progressive discovery before calling any server.
   savings, and lifecycle routes.
 - `src/gobby/servers/routes/configuration.py`: config export/import and prompt
   routes.
-- `~/.gobby/`: global daemon state, secrets, packs, canvas files, and caches.
+- `~/.gobby/`: global daemon state, secrets, packs, and caches.
 - `.gobby/`: project-local Gobby state.
 
 ## See Also

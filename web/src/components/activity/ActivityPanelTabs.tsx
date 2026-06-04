@@ -10,8 +10,7 @@ export type ActivityTab =
   | "tasks"
   | "files"
   | "plans"
-  | "changes"
-  | "canvas";
+  | "changes";
 
 const iconProps = {
   width: 16,
@@ -106,18 +105,6 @@ export const ACTIVITY_PANEL_TABS: ActivityPanelTab[] = [
     icon: (
       <svg {...iconProps}>
         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-      </svg>
-    ),
-  },
-  {
-    id: "canvas",
-    label: "A2UI Canvas",
-    icon: (
-      <svg {...iconProps}>
-        <path d="M12 19l7-7 3 3-7 7-3-3z" />
-        <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
-        <path d="M2 2l7.586 7.586" />
-        <circle cx="11" cy="11" r="2" />
       </svg>
     ),
   },

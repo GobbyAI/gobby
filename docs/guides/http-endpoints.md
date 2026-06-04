@@ -72,7 +72,6 @@ Unauthenticated protected API requests return `401` with:
 | Route | Method | Purpose |
 | --- | --- | --- |
 | `/mcp` | MCP HTTP transport | FastMCP protocol mount. JSON-RPC clients use this mount directly. |
-| `/__gobby__/canvas/*` | `GET` | Static Canvas sandbox files from `~/.gobby/canvas`. |
 | `/ws` | WebSocket | Proxy to the standalone WebSocket server. |
 | `/ws/{path}` | WebSocket | Proxy subpaths to the standalone WebSocket server. |
 | `/assets/*` | `GET` | Production UI assets, mounted only when production UI mode is enabled and assets exist. |
