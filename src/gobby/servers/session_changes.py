@@ -23,9 +23,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from gobby.utils.git import run_git_command
+
 logger = logging.getLogger(__name__)
 
-_GIT_TIMEOUT = 10.0
+_GIT_TIMEOUT = 10
 # Internal paths that should never surface as user-facing changes.
 _IGNORED_PATH_FRAGMENTS = (".gobby/", ".claude/plans/")
 
@@ -47,27 +49,36 @@ class ChangedFile:
     status: str
 
 
-async def _run_git(cwd: str, args: list[str], timeout: float = _GIT_TIMEOUT) -> tuple[int, str]:
-    """Run a git command in ``cwd``, returning ``(returncode, stdout)``."""
+async def _git(cwd: str, args: list[str], timeout: int = _GIT_TIMEOUT) -> str | None:
+    """Run a git command in ``cwd`` off the event loop.
+
+    Reuses the shared ``gobby.utils.git.run_git_command`` helper (which returns
+    stripped stdout on success, ``None`` on any non-zero exit) and runs it in a
+    worker thread so the async route is not blocked.
+    """
+    return await asyncio.to_thread(run_git_command, ["git", *args], cwd, timeout)
+
+
+def _new_file_diff(abs_path: Path, rel_path: str) -> str:
+    """Synthesize a unified "new file" diff for an untracked file.
+
+    ``run_git_command`` returns ``None`` for ``git diff --no-index`` (it exits 1
+    when files differ), so build the added-file diff directly from contents.
+    """
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "git",
-            *args,
-            cwd=cwd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-    except (OSError, ValueError):
-        return 1, ""
-    try:
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except TimeoutError:
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
-        return 1, ""
-    return proc.returncode or 0, stdout.decode("utf-8", errors="replace")
+        content = abs_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+    lines = content.splitlines()
+    body = "".join(f"+{line}\n" for line in lines)
+    return (
+        f"diff --git a/{rel_path} b/{rel_path}\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        f"+++ b/{rel_path}\n"
+        f"@@ -0,0 +1,{len(lines)} @@\n"
+        f"{body}"
+    )
 
 
 def _map_status(code: str) -> str:
@@ -156,8 +167,8 @@ async def compute_session_changes(workspace: SessionWorkspace) -> list[ChangedFi
     base = workspace.base_ref
     files: dict[str, str] = {}
 
-    rc, out = await _run_git(cwd, ["-c", "core.quotepath=false", "diff", base, "--name-status"])
-    if rc == 0:
+    out = await _git(cwd, ["-c", "core.quotepath=false", "diff", base, "--name-status"])
+    if out:
         for line in out.splitlines():
             if not line.strip():
                 continue
@@ -169,10 +180,10 @@ async def compute_session_changes(workspace: SessionWorkspace) -> list[ChangedFi
             path = parts[-1]
             files[path] = _map_status(code)
 
-    rc_untracked, out_untracked = await _run_git(
+    out_untracked = await _git(
         cwd, ["-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard"]
     )
-    if rc_untracked == 0:
+    if out_untracked:
         for line in out_untracked.splitlines():
             path = line.strip()
             if path and path not in files:
@@ -194,10 +205,9 @@ async def compute_session_file_diff(workspace: SessionWorkspace, path: str) -> s
     cwd = workspace.working_dir
     base = workspace.base_ref
 
-    rc, out = await _run_git(cwd, ["diff", base, "--", path])
-    if rc == 0 and out.strip():
+    out = await _git(cwd, ["diff", base, "--", path])
+    if out and out.strip():
         return out
 
     # Untracked/new files are absent from the base; show them as a full addition.
-    _, untracked = await _run_git(cwd, ["diff", "--no-index", "--", "/dev/null", path])
-    return untracked if untracked.strip() else out
+    return await asyncio.to_thread(_new_file_diff, Path(cwd) / path, path)
