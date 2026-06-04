@@ -21,6 +21,9 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Cache cargo registry & build
         uses: actions/cache@v4
         with:
@@ -39,23 +42,23 @@ jobs:
         run: cargo clippy -p gobby-core --all-targets -- -D warnings
 
       - name: Test (gobby-core)
-        run: cargo test -p gobby-core
+        run: cargo nextest run --profile ci -p gobby-core
 
       - name: Clippy (gobby-core, ai)
         run: cargo clippy -p gobby-core --features ai --all-targets -- -D warnings
 
       - name: Test (gobby-core, ai)
-        run: cargo test -p gobby-core --features ai
+        run: cargo nextest run --profile ci -p gobby-core --features ai
 
       # ghook: full clippy + tests
       - name: Clippy (ghook)
         run: cargo clippy -p gobby-hooks --all-targets -- -D warnings
 
       - name: Test (ghook)
-        run: cargo test -p gobby-hooks
+        run: cargo nextest run --profile ci -p gobby-hooks
 
       - name: Test (ghook, no default features)
-        run: cargo test -p gobby-hooks --no-default-features
+        run: cargo nextest run --profile ci -p gobby-hooks --no-default-features
 
       - name: Clippy (ghook, no default features)
         run: cargo clippy -p gobby-hooks --all-targets --no-default-features -- -D warnings
@@ -65,37 +68,85 @@ jobs:
         run: cargo clippy -p gobby-squeeze -- -D warnings
 
       - name: Test (gsqz)
-        run: cargo test -p gobby-squeeze
+        run: cargo nextest run --profile ci -p gobby-squeeze
 
       # gloc: full clippy + tests
       - name: Clippy (gloc)
         run: cargo clippy -p gobby-local -- -D warnings
 
       - name: Test (gloc)
-        run: cargo test -p gobby-local
+        run: cargo nextest run --profile ci -p gobby-local
 
       # gwiki: default checks include documents/pdfium; no-default-features covers degraded storage path
       - name: Clippy (gwiki)
         run: cargo clippy -p gobby-wiki --all-targets -- -D warnings
 
       - name: Test (gwiki)
-        run: cargo test -p gobby-wiki
+        run: cargo nextest run --profile ci -p gobby-wiki
 
       - name: Clippy (gwiki, no default features)
         run: cargo clippy -p gobby-wiki --all-targets --no-default-features -- -D warnings
 
       - name: Test (gwiki, no default features)
-        run: cargo test -p gobby-wiki --no-default-features
+        run: cargo nextest run --profile ci -p gobby-wiki --no-default-features
 
       # gcode: clippy + tests without embeddings (Linux CI has no cmake/Metal)
       - name: Clippy (gcode, no embeddings)
         run: cargo clippy -p gobby-code --all-targets --no-default-features -- -D warnings
 
       - name: Test (gcode, no embeddings)
-        run: cargo test -p gobby-code --no-default-features
+        run: cargo nextest run --profile ci -p gobby-code --no-default-features
 
       - name: Test codewiki (gcode, no embeddings)
-        run: cargo test -p gobby-code --no-default-features codewiki
+        run: cargo nextest run --profile ci -p gobby-code --no-default-features -E 'test(codewiki)'
+
+      - name: Test workspace (no default features)
+        run: cargo nextest run --profile ci --workspace --no-default-features
+
+      - name: Test doctests (workspace, no default features)
+        run: cargo test --doc --workspace --no-default-features
 
       - name: Build workspace (without embeddings)
         run: cargo build --workspace --no-default-features
+
+  coverage:
+    name: Coverage (report only)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache cargo registry & build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-coverage-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-coverage-cargo-
+
+      - name: Generate LCOV report
+        run: |
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov --no-report nextest --workspace --no-default-features --profile ci
+          cargo llvm-cov report --lcov --output-path lcov.info
+
+      - name: Upload LCOV artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lcov
+          path: lcov.info
+          if-no-files-found: ignore
