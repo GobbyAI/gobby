@@ -1,13 +1,14 @@
 import { memo, useEffect } from 'react'
 import type { Artifact } from '../../types/artifacts'
-import { ArtifactPanel } from '../chat/artifacts/ArtifactPanel'
 import { ActivityPanelEmpty, PlansEmptyIcon } from './ActivityPanelEmpty'
+import { PlanReviewCard } from './PlanReviewCard'
 
 interface PlansTabProps {
   artifacts: Map<string, Artifact>
   artifact: Artifact | null
   onOpenArtifact: (id: string) => void
-  onClose: () => void
+  // Accepted for caller compatibility; the review surface manages its own chrome.
+  onClose?: () => void
   onUpdateContent?: (id: string, content: string) => void
   onSetVersion: (id: string, index: number) => void
   planPendingApproval?: boolean
@@ -19,14 +20,12 @@ export const PlansTab = memo(function PlansTab({
   artifacts,
   artifact,
   onOpenArtifact,
-  onClose,
-  onUpdateContent,
   onSetVersion,
   planPendingApproval,
   onApprovePlan,
   onRequestPlanChanges,
 }: PlansTabProps) {
-  // Only plan artifacts, sorted by most recent version timestamp
+  // Only plan artifacts, oldest -> newest by latest version timestamp.
   const plans = Array.from(artifacts.values())
     .filter((a) => a.isPlan)
     .sort((a, b) => {
@@ -36,7 +35,7 @@ export const PlansTab = memo(function PlansTab({
     })
   const latestPlan = plans[plans.length - 1] ?? null
 
-  // Auto-open the latest plan if none is active
+  // Auto-open the latest plan if none is active.
   useEffect(() => {
     if (!artifact && latestPlan) {
       onOpenArtifact(latestPlan.id)
@@ -53,19 +52,16 @@ export const PlansTab = memo(function PlansTab({
     )
   }
 
-  // Show the active plan (or latest if none selected)
+  // Show the active plan (or latest if none selected).
   const displayPlan = artifact?.isPlan ? artifact : latestPlan
 
   return (
-    <ArtifactPanel
-      artifact={displayPlan}
-      onClose={onClose}
-      onBack={onClose}
-      onUpdateContent={onUpdateContent}
-      onSetVersion={onSetVersion}
-      planPendingApproval={planPendingApproval}
+    <PlanReviewCard
+      plan={displayPlan}
+      planPendingApproval={!!planPendingApproval}
       onApprovePlan={onApprovePlan}
       onRequestPlanChanges={onRequestPlanChanges}
+      onSetVersion={onSetVersion}
     />
   )
 })
