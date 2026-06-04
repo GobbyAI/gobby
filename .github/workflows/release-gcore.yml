@@ -20,11 +20,17 @@ jobs:
         with:
           components: clippy
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Clippy
         run: cargo clippy -p gobby-core --all-targets -- -D warnings
 
       - name: Run tests
-        run: cargo test -p gobby-core
+        run: cargo nextest run --profile ci -p gobby-core
+
+      - name: Run doctests
+        run: cargo test --doc -p gobby-core
 
   publish:
     needs: test

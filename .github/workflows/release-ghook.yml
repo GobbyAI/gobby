@@ -20,6 +20,9 @@ jobs:
         with:
           components: clippy
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Verify tag matches Cargo.toml version
         # Guards against the tag/crate/release drift that broke installer
         # discovery in 0.2.x (see GobbyAI/gobby-cli#4): the public installer
@@ -46,7 +49,10 @@ jobs:
         run: cargo clippy -p gobby-hooks --all-targets -- -D warnings
 
       - name: Run tests
-        run: cargo test -p gobby-hooks
+        run: cargo nextest run --profile ci -p gobby-hooks
+
+      - name: Run doctests
+        run: cargo test --doc -p gobby-hooks
 
   build:
     needs: test

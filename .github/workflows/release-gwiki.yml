@@ -30,6 +30,9 @@ jobs:
           toolchain: stable
           components: clippy
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Verify tag matches Cargo.toml version
         # Tag-only: on a workflow_dispatch run GITHUB_REF is refs/heads/<branch>,
         # which has no gwiki-v version to check against Cargo.toml.
@@ -111,10 +114,16 @@ jobs:
         run: cargo clippy -p gobby-wiki --all-targets --no-default-features -- -D warnings
 
       - name: Run tests
-        run: cargo test -p gobby-wiki
+        run: cargo nextest run --profile ci -p gobby-wiki
+
+      - name: Run doctests
+        run: cargo test --doc -p gobby-wiki
 
       - name: Run tests without default features
-        run: cargo test -p gobby-wiki --no-default-features
+        run: cargo nextest run --profile ci -p gobby-wiki --no-default-features
+
+      - name: Run doctests without default features
+        run: cargo test --doc -p gobby-wiki --no-default-features
 
   build:
     needs: test

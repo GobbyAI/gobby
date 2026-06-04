@@ -20,6 +20,9 @@ jobs:
         with:
           components: clippy
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Verify tag matches Cargo.toml version
         # Guards against tag/crate/release drift: installers resolve a version
         # from crates.io and then look for a matching gcode-v{version} GitHub
@@ -46,10 +49,16 @@ jobs:
         run: cargo clippy -p gobby-code --no-default-features -- -D warnings
 
       - name: Run tests
-        run: cargo test -p gobby-code
+        run: cargo nextest run --profile ci -p gobby-code
+
+      - name: Run doctests
+        run: cargo test --doc -p gobby-code
 
       - name: Run tests without default features
-        run: cargo test -p gobby-code --no-default-features
+        run: cargo nextest run --profile ci -p gobby-code --no-default-features
+
+      - name: Run doctests without default features
+        run: cargo test --doc -p gobby-code --no-default-features
 
   build:
     needs: test
