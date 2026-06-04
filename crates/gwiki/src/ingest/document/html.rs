@@ -16,13 +16,24 @@ pub(crate) fn extract_html_document(bytes: &[u8]) -> Result<DocumentExtraction, 
     collect_visible_text(root, &mut parts);
     let markdown = normalize_markdown_text(&parts.join("\n"));
     if markdown.is_empty() {
-        return Err(document_error("html contained no readable text"));
+        return Ok(DocumentExtraction {
+            title,
+            markdown,
+            units_label: "section_count",
+            units_count: 0,
+            degradation: Some(DocumentDegradation::new(
+                DocumentFailureMode::HtmlNoContent,
+                DocumentUnitCount::pages(1),
+                "HTML contained no readable text; original asset is preserved.",
+            )),
+        });
     }
     Ok(DocumentExtraction {
         title,
         markdown,
         units_label: "section_count",
         units_count: 1,
+        degradation: None,
     })
 }
 

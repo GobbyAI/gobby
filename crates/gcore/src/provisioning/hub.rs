@@ -261,13 +261,13 @@ pub fn resolve_recorded_hub_database_url(
                             _,
                             HubIdentityProbeResult::UnknownInsufficientPrivilege { message },
                         ) => Ok(Some(RecordedHubResolution {
-                            database_url: existing.clone(),
+                            database_url: existing,
                             identity_status:
                                 RecordedHubIdentityStatus::IdentityUnknownInsufficientPrivilege {
                                     message: format!(
                                         "identity_unknown_insufficient_privilege: preserving existing recorded hub {}; daemon hub {} was not adopted because identity could not be verified ({message})",
-                                        redact_database_url_for_error(&existing),
-                                        redact_database_url_for_error(&daemon),
+                                        existing_redacted,
+                                        daemon_redacted,
                                     ),
                                 },
                         })),

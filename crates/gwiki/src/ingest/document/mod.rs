@@ -57,6 +57,7 @@ pub struct DocumentExtraction {
     pub markdown: String,
     pub units_label: &'static str,
     pub units_count: usize,
+    pub degradation: Option<DocumentDegradation>,
 }
 
 pub trait DocumentExtractor {
@@ -121,7 +122,10 @@ pub(crate) fn ingest_document_with_endpoint_without_index(
     };
     let (extraction, degradation) = match endpoint {
         DocumentEndpoint::Available(extractor) => match extractor.extract(&request) {
-            Ok(extraction) => (Some(extraction), None),
+            Ok(extraction) => {
+                let degradation = extraction.degradation.clone();
+                (Some(extraction), degradation)
+            }
             Err(error) => (
                 None,
                 Some(document_degradation_for_error(&request, error.to_string())),

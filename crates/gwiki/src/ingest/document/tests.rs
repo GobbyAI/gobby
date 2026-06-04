@@ -230,11 +230,7 @@ fn office_html_degradation_uses_uniform_metadata() {
         .documents
         .get(&html.derived_path)
         .expect("html derived document indexed");
-    assert!(
-        html_doc
-            .body
-            .contains("media_degradation: html_parse_error")
-    );
+    assert!(html_doc.body.contains("media_degradation: html_no_content"));
     assert!(
         html_doc
             .body

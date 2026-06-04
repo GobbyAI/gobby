@@ -18,8 +18,7 @@ falkor = ["dep:falkordb", "dep:urlencoding"]
 qdrant = ["dep:reqwest", "dep:urlencoding"]
 indexing = ["dep:ignore", "dep:sha2"]
 search = []
-ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:httpdate", "dep:rand", "reqwest/multipart"]
-test-helpers = []
+ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:httpdate", "dep:rand", "dep:ureq", "reqwest/multipart"]
 full = ["postgres", "falkor", "qdrant", "indexing", "search", "ai"]
 
 [dependencies]
@@ -41,7 +40,7 @@ base64 = { version = "0.22", optional = true }
 bytes = { version = "1", optional = true }
 httpdate = { version = "1", optional = true }
 rand = { version = "0.8", optional = true }
-ureq = "2"
+ureq = { version = "2", optional = true }
 ignore = { version = "0.4", optional = true }
 sha2 = { version = "0.10", optional = true }
 urlencoding = { version = "2", optional = true }

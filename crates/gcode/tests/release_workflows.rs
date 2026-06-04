@@ -228,6 +228,29 @@ fn release_gwiki_uses_github_cli_release_creation() {
 }
 
 #[test]
+fn release_gsqz_uses_github_cli_release_creation() {
+    let workflow = include_str!("../../../.github/workflows/release-gsqz.yml");
+
+    assert!(
+        !workflow.contains("softprops/action-gh-release"),
+        "release-gsqz.yml should use the GitHub CLI instead of softprops"
+    );
+    assert!(
+        workflow.contains("GITHUB_RELEASE_TOKEN: ${{ github.token }}"),
+        "release-gsqz.yml should pass github.token to the explicit gh auth flow"
+    );
+    assert!(
+        workflow.contains("gh auth login --with-token"),
+        "release-gsqz.yml should authenticate gh explicitly"
+    );
+    assert!(
+        workflow
+            .contains(r#"gh release create "$tag" "${assets[@]}" --generate-notes --verify-tag"#),
+        "release-gsqz.yml should create the release with generated notes and tag verification"
+    );
+}
+
+#[test]
 fn release_gwiki_validates_dependencies_without_python_helper() {
     let workflow = include_str!("../../../.github/workflows/release-gwiki.yml");
 
@@ -269,11 +292,12 @@ fn release_workflows_generate_and_upload_archive_checksums() {
             "release-{tool}.yml should write per-asset checksum files"
         );
 
-        if tool == "gwiki" {
+        if matches!(tool, "gwiki" | "gsqz") {
             assert!(
-                workflow[checksum_step..]
-                    .contains("assets=(gwiki-*.tar.gz gwiki-*.zip gwiki-*.sha256)"),
-                "release-gwiki.yml should add checksum files to the gh release asset array"
+                workflow[checksum_step..].contains(&format!(
+                    "assets=({tool}-*.tar.gz {tool}-*.zip {tool}-*.sha256)"
+                )),
+                "release-{tool}.yml should add checksum files to the gh release asset array"
             );
         } else {
             let release_body = &workflow[release_upload..];

@@ -74,7 +74,6 @@ fn execute_resolved_with_fetcher(
             unchanged: Vec::new(),
             failed,
             skipped,
-            indexed: None,
             index_status: IndexStatus::not_run(),
             degradations: Vec::new(),
             explicit,
@@ -115,17 +114,14 @@ fn execute_resolved_with_fetcher(
         }
     }
 
-    let (indexed, index_status) = if refreshed.is_empty() {
-        (None, IndexStatus::not_run())
+    let index_status = if refreshed.is_empty() {
+        IndexStatus::not_run()
     } else {
         match index::index_resolved_scope(&scope) {
-            Ok(counts) => {
-                let indexed = IndexedCounts::from(counts);
-                (Some(indexed.clone()), IndexStatus::indexed(indexed))
-            }
+            Ok(counts) => IndexStatus::indexed(IndexedCounts::from(counts)),
             Err(error) => {
                 degradations.push(format!("index_failed:{error}"));
-                (None, IndexStatus::degraded())
+                IndexStatus::degraded()
             }
         }
     };
@@ -138,7 +134,6 @@ fn execute_resolved_with_fetcher(
         unchanged,
         failed,
         skipped,
-        indexed,
         index_status,
         degradations,
         explicit,

@@ -5,6 +5,8 @@ mod api;
 mod error;
 mod runner;
 pub(crate) mod support;
+#[cfg(test)]
+pub(crate) mod test_http;
 
 // TODO(#357): Narrow these broad library-build allowances as gwiki CLI-only
 // modules are split from reusable public APIs.

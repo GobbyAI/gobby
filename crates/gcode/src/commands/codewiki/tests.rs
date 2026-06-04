@@ -459,8 +459,15 @@ fn yaml_unquote_translates_common_escapes_and_rejects_incomplete_escape() {
         unquote_yaml_string(r#""line\nquote\"tab\tbackslash\\""#),
         Some("line\nquote\"tab\tbackslash\\".to_string())
     );
+    assert_eq!(
+        unquote_yaml_string(r#""hex\x21 unicode\u2713 scalar\U0001F680""#),
+        Some("hex! unicode\u{2713} scalar\u{1f680}".to_string())
+    );
     let incomplete = format!("\"{}\\\"", "src/incomplete");
     assert_eq!(unquote_yaml_string(&incomplete), None);
+    assert_eq!(unquote_yaml_string(r#""bad\x1""#), None);
+    assert_eq!(unquote_yaml_string(r#""bad\u12xz""#), None);
+    assert_eq!(unquote_yaml_string(r#""bad\U00110000""#), None);
 }
 
 #[test]

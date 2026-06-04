@@ -149,8 +149,12 @@ impl<'a> ResearchLoop<'a> {
         notes: &[AcceptedNoteDraft],
     ) -> Result<Option<ResearchStopReason>, WikiError> {
         for note in notes {
-            let Some(validated) = self.validated_note(note.clone(), None, state) else {
-                return Ok(Some(ResearchStopReason::SourceBlocked));
+            let validated = match self.validated_note(note.clone(), None) {
+                Ok(validated) => validated,
+                Err(gap) => {
+                    record_validation_gap(state, gap);
+                    return Ok(Some(ResearchStopReason::SourceBlocked));
+                }
             };
             if matches!(
                 self.write_validated_note(state, &validated)?,
@@ -212,10 +216,12 @@ impl<'a> ResearchLoop<'a> {
                     body,
                     sources,
                 };
-                let known_sources = state.known_sources.clone();
-                let Some(validated) = self.validated_note(draft, Some(&known_sources), state)
-                else {
-                    return Ok(StepOutcome::Stop(ResearchStopReason::SourceBlocked));
+                let validated = match self.validated_note(draft, Some(&state.known_sources)) {
+                    Ok(validated) => validated,
+                    Err(gap) => {
+                        record_validation_gap(state, gap);
+                        return Ok(StepOutcome::Stop(ResearchStopReason::SourceBlocked));
+                    }
                 };
                 match self.write_validated_note(state, &validated)? {
                     NoteWriteResult::Conflict => {
@@ -295,8 +301,7 @@ impl<'a> ResearchLoop<'a> {
         &self,
         mut note: AcceptedNoteDraft,
         known_sources: Option<&HashSet<String>>,
-        state: &mut LoopState,
-    ) -> Option<AcceptedNoteDraft> {
+    ) -> Result<AcceptedNoteDraft, ResearchGap> {
         note.title = note.title.trim().to_string();
         note.body = note.body.trim().to_string();
         note.sources = normalize_sources(&note.sources);
@@ -329,15 +334,10 @@ impl<'a> ResearchLoop<'a> {
         };
 
         if let Some(gap) = gap {
-            state.events.push(ResearchLoopEvent {
-                kind: "research_source_blocked".to_string(),
-                message: gap.reason.clone(),
-            });
-            state.gaps.push(gap);
-            return None;
+            return Err(gap);
         }
 
-        Some(note)
+        Ok(note)
     }
 
     fn unsupported_source_gap(
@@ -372,6 +372,14 @@ impl<'a> ResearchLoop<'a> {
         }
         None
     }
+}
+
+fn record_validation_gap(state: &mut LoopState, gap: ResearchGap) {
+    state.events.push(ResearchLoopEvent {
+        kind: "research_source_blocked".to_string(),
+        message: gap.reason.clone(),
+    });
+    state.gaps.push(gap);
 }
 
 #[derive(Debug, Default)]

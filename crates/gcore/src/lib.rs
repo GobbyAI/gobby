@@ -50,5 +50,5 @@ pub mod indexing;
 #[cfg(feature = "search")]
 pub mod search;
 
-#[cfg(any(test, feature = "test-helpers"))]
-pub mod test_http;
+#[cfg(test)]
+pub(crate) mod test_http;

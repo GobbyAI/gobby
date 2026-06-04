@@ -46,6 +46,7 @@ pub(crate) fn extract_docx(bytes: &[u8]) -> Result<DocumentExtraction, WikiError
         markdown: paragraphs.join("\n\n"),
         units_label: "paragraph_count",
         units_count: paragraphs.len(),
+        degradation: None,
     })
 }
 
@@ -61,7 +62,7 @@ pub(crate) fn extract_pptx(bytes: &[u8]) -> Result<DocumentExtraction, WikiError
         return Err(document_error("pptx contained no slide XML"));
     }
     let slides_truncated = slide_names.len() > MAX_SLIDES;
-    if slide_names.len() > MAX_SLIDES {
+    if slides_truncated {
         slide_names.truncate(MAX_SLIDES);
     }
 
@@ -98,6 +99,7 @@ pub(crate) fn extract_pptx(bytes: &[u8]) -> Result<DocumentExtraction, WikiError
         markdown: markdown.trim_end().to_string(),
         units_label: "slide_count",
         units_count: slide_count,
+        degradation: None,
     })
 }
 
@@ -155,6 +157,7 @@ fn extract_spreadsheet(bytes: &[u8]) -> Result<DocumentExtraction, WikiError> {
         markdown: markdown.trim_end().to_string(),
         units_label: "sheet_count",
         units_count: rendered_sheets,
+        degradation: None,
     })
 }
 

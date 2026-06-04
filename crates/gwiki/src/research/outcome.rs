@@ -93,13 +93,13 @@ pub(crate) fn scope_selection_from_research_scope(scope: &ResearchScope) -> Scop
 }
 
 /// Rough budget heuristic used only when provider usage metadata is unavailable.
-/// It estimates four tokens for every three whitespace-separated words.
+/// Estimate conservatively as ceil(words * 1.3) without floating-point drift.
 pub(crate) fn estimate_tokens(text: &str) -> usize {
     let words = text.split_whitespace().count();
     if words == 0 {
         0
     } else {
-        words.saturating_mul(4).saturating_add(2) / 3
+        words.saturating_mul(13).saturating_add(9) / 10
     }
 }
 
@@ -246,10 +246,14 @@ mod tests {
     }
 
     #[test]
-    fn estimate_tokens_uses_four_thirds_word_heuristic() {
+    fn estimate_tokens_uses_one_point_three_word_heuristic() {
         assert_eq!(estimate_tokens(""), 0);
         assert_eq!(estimate_tokens("one"), 2);
         assert_eq!(estimate_tokens("one two three"), 4);
         assert_eq!(estimate_tokens("one two three four"), 6);
+        assert_eq!(
+            estimate_tokens("one two three four five six seven eight nine ten"),
+            13
+        );
     }
 }

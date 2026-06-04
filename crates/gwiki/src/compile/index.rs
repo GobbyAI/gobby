@@ -60,13 +60,6 @@ pub(crate) fn update_wiki_index(
         insert_compiled_page_link(&mut index, &link);
     }
 
-    if let Some(parent) = index_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| WikiError::Io {
-            action: "create wiki index directory",
-            path: Some(parent.to_path_buf()),
-            source: error,
-        })?;
-    }
     fs::write(&index_path, index).map_err(|error| WikiError::Io {
         action: "write wiki index",
         path: Some(index_path),

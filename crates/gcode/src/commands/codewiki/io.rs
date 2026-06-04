@@ -193,6 +193,9 @@ pub(crate) fn unquote_yaml_string(value: &str) -> Option<String> {
                 '"' => '"',
                 '/' => '/',
                 '\\' => '\\',
+                'x' => decode_hex_escape(&mut chars, 2)?,
+                'u' => decode_hex_escape(&mut chars, 4)?,
+                'U' => decode_hex_escape(&mut chars, 8)?,
                 _ => return None,
             });
         } else {
@@ -200,6 +203,16 @@ pub(crate) fn unquote_yaml_string(value: &str) -> Option<String> {
         }
     }
     Some(out)
+}
+
+#[cfg(test)]
+fn decode_hex_escape(chars: &mut std::str::Chars<'_>, digits: usize) -> Option<char> {
+    let mut value = 0_u32;
+    for _ in 0..digits {
+        value = value.checked_mul(16)?;
+        value = value.checked_add(chars.next()?.to_digit(16)?)?;
+    }
+    char::from_u32(value)
 }
 
 pub(crate) fn safe_doc_path(out_dir: &Path, relative_path: &str) -> anyhow::Result<PathBuf> {

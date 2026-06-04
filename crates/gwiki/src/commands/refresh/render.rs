@@ -1,6 +1,7 @@
 use super::*;
 
 pub(crate) fn render_refresh(render: RefreshRender) -> CommandOutcome {
+    let indexed = render.index_status.indexed.clone();
     let status = refresh_status(
         render.dry_run,
         render.refreshed.len(),
@@ -27,7 +28,7 @@ pub(crate) fn render_refresh(render: RefreshRender) -> CommandOutcome {
         "unchanged": render.unchanged,
         "failed": render.failed,
         "skipped": render.skipped,
-        "indexed": render.indexed,
+        "indexed": indexed,
         "index_status": render.index_status,
         "degradations": render.degradations,
     });

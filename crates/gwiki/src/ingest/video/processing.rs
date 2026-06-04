@@ -1,4 +1,20 @@
-use super::*;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use gobby_core::config::AiRouting;
+use tempfile::NamedTempFile;
+
+use crate::ingest::{index_after_ingest, path_to_string};
+use crate::store::WikiIndexStore;
+use crate::transcribe::{TranscriptionEndpoint, TranscriptionMarkdownInput, TranscriptionRequest};
+use crate::vision::{VisionDegradation, VisionEndpoint, VisionRequest};
+use crate::{ScopeIdentity, WikiError};
+
+use super::{
+    DEFAULT_FRAME_INTERVAL_SECONDS, VideoFileSnapshot, VideoIngestResult, format_timestamp,
+    ingest_video_file_with_degradations_without_index, transcribe_for_markdown,
+};
+use crate::video::{VideoFrameDescription, VideoFrameSample, VideoMediaDegradation};
 
 pub(crate) trait VideoMediaExtractor {
     fn extract_audio(&self, video: &Path) -> Result<NamedTempFile, WikiError>;

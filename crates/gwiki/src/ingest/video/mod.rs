@@ -1,13 +1,13 @@
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 #[cfg(feature = "ai")]
 use crate::ai::clients::ProductionVisionClient;
 #[cfg(feature = "ai")]
 use gobby_core::ai::effective_route;
 use gobby_core::ai_context::AiContext;
-use gobby_core::config::{AiCapability, AiRouting};
-use tempfile::NamedTempFile;
+use gobby_core::config::AiCapability;
+#[cfg(feature = "ai")]
+use gobby_core::config::AiRouting;
 
 use crate::ingest::audio::{production_transcription_endpoint, transcribe_for_markdown};
 use crate::ingest::{
@@ -18,16 +18,13 @@ use crate::sources::{
     CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest, SourceRecord,
 };
 use crate::store::WikiIndexStore;
-use crate::transcribe::{
-    TranscriptSegment, TranscriptionDegradation, TranscriptionEndpoint, TranscriptionMarkdownInput,
-    TranscriptionOutput, TranscriptionRequest,
-};
+use crate::transcribe::{TranscriptSegment, TranscriptionDegradation, TranscriptionOutput};
 use crate::video::{
     AlignedVideoSegment, FrameSamplingPlan, VideoFrameDescription, VideoFrameSample,
     VideoMarkdownRequest, VideoMarkdownResult, VideoMediaDegradation, VideoMediaMetadata,
     write_video_derived_markdown,
 };
-use crate::vision::{VisionDegradation, VisionEndpoint, VisionRequest};
+use crate::vision::VisionEndpoint;
 use crate::{ScopeIdentity, WikiError};
 
 pub const DEFAULT_FRAME_INTERVAL_SECONDS: u32 = 5;

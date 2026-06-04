@@ -29,13 +29,25 @@ fn yaml_field_eq_requires_exact_key_and_value() {
     let frontmatter = r#"
 research_note_id_suffix: abc
 research_note_id: abc-extra
-  research_status: "completed"
+research_status: "completed"
 research_mode: completed now
 "#;
 
     assert!(!yaml_field_eq(frontmatter, "research_note_id", "abc"));
     assert!(yaml_field_eq(frontmatter, "research_status", "completed"));
     assert!(!yaml_field_eq(frontmatter, "research_mode", "completed"));
+}
+
+#[test]
+fn yaml_field_eq_rejects_block_scalar_prefix_match() {
+    let frontmatter = r#"
+research_note_id: |
+  abc
+research_status: completed
+"#;
+
+    assert!(!yaml_field_eq(frontmatter, "research_note_id", "abc"));
+    assert!(yaml_field_eq(frontmatter, "research_status", "completed"));
 }
 
 #[test]

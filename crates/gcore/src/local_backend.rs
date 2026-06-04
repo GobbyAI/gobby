@@ -1,4 +1,10 @@
+use std::io::{self, Read, Write};
+use std::net::{TcpStream, ToSocketAddrs};
+use std::time::Duration;
+
 use serde::Deserialize;
+
+const MAX_PROBE_RESPONSE_BYTES: usize = 1024;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct Backend {
@@ -67,28 +73,25 @@ pub fn detect_backend(backends: &[Backend], timeout_ms: u64) -> Option<Backend> 
 
 /// Validate that a specific backend is reachable.
 pub fn validate_backend(backend: &Backend, timeout_ms: u64) -> bool {
-    let timeout = std::time::Duration::from_millis(timeout_ms);
+    let timeout = Duration::from_millis(timeout_ms);
     let url = backend_probe_url(backend);
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(timeout)
-        .timeout_read(timeout)
-        .build();
-    let mut request = agent.get(&url);
-    let auth_header;
-    let token = backend.auth_token.trim();
-    if !token.is_empty() {
-        auth_header = format!("Bearer {token}");
-        request = request.set("Authorization", &auth_header);
-    }
-    match request.call() {
-        Ok(_) => true,
-        Err(ureq::Error::Status(status, response)) => {
+    let Some(target) = HttpProbeTarget::parse(&url) else {
+        log::trace!(
+            "local backend probe `{}` at {} failed: unsupported HTTP URL",
+            backend.name,
+            url
+        );
+        return false;
+    };
+
+    match send_probe_request(&target, backend.auth_token.trim(), timeout) {
+        Ok(status) if (200..300).contains(&status) => true,
+        Ok(status) => {
             log::trace!(
-                "local backend probe `{}` at {} returned HTTP {} {}",
+                "local backend probe `{}` at {} returned HTTP {}",
                 backend.name,
                 url,
-                status,
-                response.status_text()
+                status
             );
             false
         }
@@ -102,6 +105,135 @@ pub fn validate_backend(backend: &Backend, timeout_ms: u64) -> bool {
             false
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HttpProbeTarget {
+    host: String,
+    port: u16,
+    path: String,
+}
+
+impl HttpProbeTarget {
+    fn parse(url: &str) -> Option<Self> {
+        let rest = url.strip_prefix("http://")?;
+        let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+        let (host, port) = parse_http_authority(authority)?;
+        Some(Self {
+            host,
+            port,
+            path: format!("/{path}"),
+        })
+    }
+
+    fn socket_addr(&self) -> String {
+        if self.host.contains(':') {
+            format!("[{}]:{}", self.host, self.port)
+        } else {
+            format!("{}:{}", self.host, self.port)
+        }
+    }
+
+    fn host_header(&self) -> String {
+        if self.port == 80 {
+            self.host.clone()
+        } else if self.host.contains(':') {
+            format!("[{}]:{}", self.host, self.port)
+        } else {
+            format!("{}:{}", self.host, self.port)
+        }
+    }
+}
+
+fn parse_http_authority(authority: &str) -> Option<(String, u16)> {
+    if authority.is_empty() || authority.contains('@') {
+        return None;
+    }
+    if let Some(rest) = authority.strip_prefix('[') {
+        let (host, suffix) = rest.split_once(']')?;
+        if host.is_empty() {
+            return None;
+        }
+        let port = if suffix.is_empty() {
+            80
+        } else {
+            suffix.strip_prefix(':')?.parse().ok()?
+        };
+        return Some((host.to_string(), port));
+    }
+    if authority.contains('[') || authority.contains(']') {
+        return None;
+    }
+    match authority.rsplit_once(':') {
+        Some((host, port)) if !host.contains(':') && !host.is_empty() => {
+            Some((host.to_string(), port.parse().ok()?))
+        }
+        Some(_) => None,
+        None => Some((authority.to_string(), 80)),
+    }
+}
+
+fn send_probe_request(
+    target: &HttpProbeTarget,
+    auth_token: &str,
+    timeout: Duration,
+) -> io::Result<u16> {
+    let addr = target
+        .socket_addr()
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no resolved address"))?;
+    let mut stream = TcpStream::connect_timeout(&addr, timeout)?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
+
+    let mut request = format!(
+        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: gobby-core\r\nConnection: close\r\n",
+        target.path,
+        target.host_header()
+    );
+    if !auth_token.is_empty() {
+        request.push_str("Authorization: Bearer ");
+        request.push_str(auth_token);
+        request.push_str("\r\n");
+    }
+    request.push_str("\r\n");
+    stream.write_all(request.as_bytes())?;
+
+    let mut response = Vec::new();
+    let mut chunk = [0_u8; 128];
+    while response.len() < MAX_PROBE_RESPONSE_BYTES {
+        let read = match stream.read(&mut chunk) {
+            Ok(read) => read,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) && !response.is_empty() =>
+            {
+                break;
+            }
+            Err(error) => return Err(error),
+        };
+        if read == 0 {
+            break;
+        }
+        response.extend_from_slice(&chunk[..read]);
+        if response.contains(&b'\n') {
+            break;
+        }
+    }
+    parse_http_status(&response)
+}
+
+fn parse_http_status(response: &[u8]) -> io::Result<u16> {
+    let response = String::from_utf8_lossy(response);
+    response
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|status| status.parse().ok())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing HTTP status"))
 }
 
 fn backend_probe_url(backend: &Backend) -> String {

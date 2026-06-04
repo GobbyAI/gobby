@@ -17,7 +17,7 @@ pub(crate) struct ChangedRefresh {
 
 pub(crate) struct RefreshSinks<'a> {
     pub(crate) refreshed: &'a mut Vec<RefreshedSource>,
-    pub(crate) unchanged: &'a mut Vec<UnchangedRefresh>,
+    pub(crate) unchanged: &'a mut Vec<RefreshResult>,
     pub(crate) failed: &'a mut Vec<RefreshFailure>,
     pub(crate) degradations: &'a mut Vec<String>,
 }
@@ -28,10 +28,9 @@ pub(crate) struct RefreshRender {
     pub(crate) dry_run: bool,
     pub(crate) planned: Vec<RefreshPlan>,
     pub(crate) refreshed: Vec<RefreshedSource>,
-    pub(crate) unchanged: Vec<UnchangedRefresh>,
+    pub(crate) unchanged: Vec<RefreshResult>,
     pub(crate) failed: Vec<RefreshFailure>,
     pub(crate) skipped: Vec<SkippedRefresh>,
-    pub(crate) indexed: Option<IndexedCounts>,
     pub(crate) index_status: IndexStatus,
     pub(crate) degradations: Vec<String>,
     pub(crate) explicit: bool,
@@ -80,7 +79,7 @@ pub(crate) struct RefreshedSource {
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct UnchangedRefresh {
+pub(crate) struct RefreshResult {
     pub(crate) id: String,
     pub(crate) location: String,
     pub(crate) source_kind: SourceKind,

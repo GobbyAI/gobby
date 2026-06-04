@@ -381,6 +381,9 @@ fn wait_for(
     retries: usize,
     interval: Duration,
 ) -> anyhow::Result<()> {
+    if retries == 0 {
+        anyhow::bail!("health check failed without retries");
+    }
     let mut last_error = None;
     for attempt in 0..retries {
         match check() {

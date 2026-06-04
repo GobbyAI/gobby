@@ -6,7 +6,7 @@ pub(crate) fn refresh_url_candidate(
     fetch: &mut impl FnMut(&SourceRecord, &str) -> Result<UrlSnapshot, UrlIngestFailure>,
     fetched_at: &str,
     refreshed: &mut Vec<RefreshedSource>,
-    unchanged: &mut Vec<UnchangedRefresh>,
+    unchanged: &mut Vec<RefreshResult>,
     failed: &mut Vec<RefreshFailure>,
 ) -> Result<(), WikiError> {
     match fetch(record, fetched_at) {
@@ -14,7 +14,7 @@ pub(crate) fn refresh_url_candidate(
             let source_hash = gobby_core::indexing::content_hash(&snapshot.body);
             let raw_path = raw_source_path(&record.id)?;
             if source_hash == record.content_hash {
-                unchanged.push(UnchangedRefresh {
+                unchanged.push(RefreshResult {
                     id: record.id.clone(),
                     location: record.location.clone(),
                     source_kind: record.kind.clone(),
@@ -84,7 +84,7 @@ pub(crate) fn refresh_local_candidate(
     };
     let raw_path = raw_source_path(&record.id)?;
     if source_hash == record.content_hash {
-        sinks.unchanged.push(UnchangedRefresh {
+        sinks.unchanged.push(RefreshResult {
             id: record.id.clone(),
             location: record.location.clone(),
             source_kind: record.kind.clone(),

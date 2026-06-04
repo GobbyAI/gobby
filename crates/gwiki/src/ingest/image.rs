@@ -317,10 +317,8 @@ mod tests {
             sample_snapshot(),
         )
         .expect("ingest image with production vision");
-        let request = request
-            .join()
-            .expect("vision request")
-            .expect("vision request ok");
+        let request = request.join().expect("vision test server thread joins");
+        let request = request.expect("vision request was captured");
 
         assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1"));
         assert!(request.contains("data:image/png;base64,"));
@@ -375,9 +373,7 @@ mod tests {
     }
 
     #[cfg(feature = "ai")]
-    fn spawn_vision_server(
-        response: &'static str,
-    ) -> (String, gobby_core::test_http::RequestHandle) {
-        gobby_core::test_http::spawn_json_response(response).expect("spawn test server")
+    fn spawn_vision_server(response: &'static str) -> (String, crate::test_http::RequestHandle) {
+        crate::test_http::spawn_json_response(response).expect("spawn test server")
     }
 }

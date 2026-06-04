@@ -4,6 +4,7 @@ use crate::ingest::single_line;
 pub enum DocumentFailureMode {
     OfficeParseError,
     HtmlParseError,
+    HtmlNoContent,
     PdfTextLayerError,
     PdfRenderError,
     PdfRenderBudgetExceeded,
@@ -17,6 +18,7 @@ impl DocumentFailureMode {
         match self {
             Self::OfficeParseError => "office_parse_error",
             Self::HtmlParseError => "html_parse_error",
+            Self::HtmlNoContent => "html_no_content",
             Self::PdfTextLayerError => "pdf_text_layer_error",
             Self::PdfRenderError => "pdf_render_error",
             Self::PdfRenderBudgetExceeded => "pdf_render_budget_exceeded",
@@ -136,6 +138,12 @@ mod tests {
                 DocumentFailureMode::HtmlParseError,
                 DocumentUnitCount::pages(1),
                 "html_parse_error",
+                "page_count",
+            ),
+            (
+                DocumentFailureMode::HtmlNoContent,
+                DocumentUnitCount::pages(1),
+                "html_no_content",
                 "page_count",
             ),
             (

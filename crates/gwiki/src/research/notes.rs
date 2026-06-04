@@ -405,23 +405,14 @@ pub(crate) fn research_note_body_matches(contents: &str, expected_body: &str) ->
 }
 
 pub(crate) fn yaml_field_eq(frontmatter: &str, key: &str, value: &str) -> bool {
-    let prefix = format!("{key}:");
-    frontmatter
-        .lines()
-        .filter_map(|line| {
-            line.strip_suffix('\r')
-                .unwrap_or(line)
-                .trim_start()
-                .strip_prefix(&prefix)
-        })
-        .any(|remainder| {
-            let remainder = remainder.trim_start();
-            remainder == value
-                || remainder
-                    .strip_prefix('"')
-                    .and_then(|quoted| quoted.strip_suffix('"'))
-                    .is_some_and(|quoted| quoted == value)
-        })
+    let Ok(serde_yaml::Value::Mapping(fields)) = serde_yaml::from_str(frontmatter) else {
+        return false;
+    };
+    let key = serde_yaml::Value::String(key.to_string());
+    matches!(
+        fields.get(&key),
+        Some(serde_yaml::Value::String(actual)) if actual == value
+    )
 }
 
 pub(crate) fn materializing_marker_is_stale(path: &Path) -> bool {
