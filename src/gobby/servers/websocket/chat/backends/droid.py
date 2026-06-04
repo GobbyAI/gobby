@@ -30,7 +30,6 @@ from gobby.servers.chat_session_helpers import (
     PendingApproval,
     build_compaction_context,
 )
-from gobby.servers.gemini_permissions import GeminiWebChatPermissionsMixin
 from gobby.servers.tool_approvals import (
     DEFAULT_GLOBAL_APPROVAL_RULES,
     find_out_of_repo_write_path,
@@ -46,6 +45,7 @@ from gobby.servers.websocket.chat.backends.base import (
     _log_upstream_error_event,
 )
 from gobby.servers.websocket.chat.backends.droid_stream import _parse_droid_stream_line
+from gobby.servers.websocket.chat.permissions import ManagedWebChatPermissionsMixin
 from gobby.storage.config_store import ConfigStore
 
 logger = logging.getLogger(__name__)
@@ -74,7 +74,7 @@ def _droid_tool_name_adapter(raw_tool_name: str) -> str:
 
 
 @dataclass
-class DroidManagedChatSession(GeminiWebChatPermissionsMixin, ManagedChatSessionBase):
+class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSessionBase):
     """Web-chat session backed by a per-session Droid stream-jsonrpc process."""
 
     provider: str = field(default="droid", init=False)

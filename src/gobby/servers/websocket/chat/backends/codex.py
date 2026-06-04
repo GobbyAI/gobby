@@ -26,7 +26,6 @@ from gobby.servers.chat_session_helpers import (
     PendingApproval,
     build_compaction_context,
 )
-from gobby.servers.gemini_permissions import GeminiWebChatPermissionsMixin
 from gobby.servers.tool_approvals import (
     DEFAULT_GLOBAL_APPROVAL_RULES,
     find_out_of_repo_write_path,
@@ -52,6 +51,7 @@ from gobby.servers.websocket.chat.backends.codex_events import (
     normalize_codex_usage,
     prefer_codex_usage,
 )
+from gobby.servers.websocket.chat.permissions import ManagedWebChatPermissionsMixin
 from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.storage.config_store import ConfigStore
@@ -89,7 +89,7 @@ def _extract_codex_delta(params: dict[str, Any]) -> str:
 
 @dataclass
 class CodexManagedChatSession(
-    GeminiWebChatPermissionsMixin,
+    ManagedWebChatPermissionsMixin,
     ManagedChatSessionBase,
 ):
     """Web-chat session backed by the shared Codex app-server backend."""

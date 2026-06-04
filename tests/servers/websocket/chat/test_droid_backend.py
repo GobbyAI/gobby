@@ -18,7 +18,7 @@ from gobby.llm.claude_models import (
     ToolCallEvent,
     ToolResultEvent,
 )
-from gobby.servers.websocket.chat.droid_backend import (
+from gobby.servers.websocket.chat.backends.droid import (
     DroidManagedChatSession,
     DroidWebChatBackend,
     _droid_tool_name_adapter,
@@ -262,9 +262,9 @@ async def test_send_message_streams_fixture_and_writes_prompt() -> None:
     session.project_path = "/tmp/project"
 
     with (
-        patch("gobby.servers.websocket.chat.droid_backend.shutil.which", return_value="/bin/droid"),
+        patch("gobby.servers.websocket.chat.backends.droid.shutil.which", return_value="/bin/droid"),
         patch(
-            "gobby.servers.websocket.chat.droid_backend.asyncio.create_subprocess_exec",
+            "gobby.servers.websocket.chat.backends.droid.asyncio.create_subprocess_exec",
             return_value=process,
         ) as create_process,
     ):
@@ -309,9 +309,9 @@ async def test_send_message_answers_auto_allowed_permission_request() -> None:
     session.project_path = "/tmp/project"
 
     with (
-        patch("gobby.servers.websocket.chat.droid_backend.shutil.which", return_value="/bin/droid"),
+        patch("gobby.servers.websocket.chat.backends.droid.shutil.which", return_value="/bin/droid"),
         patch(
-            "gobby.servers.websocket.chat.droid_backend.asyncio.create_subprocess_exec",
+            "gobby.servers.websocket.chat.backends.droid.asyncio.create_subprocess_exec",
             return_value=process,
         ),
     ):
@@ -354,9 +354,9 @@ async def test_send_message_cancels_permission_when_pre_tool_blocks() -> None:
     session._on_pre_tool = block_pre_tool
 
     with (
-        patch("gobby.servers.websocket.chat.droid_backend.shutil.which", return_value="/bin/droid"),
+        patch("gobby.servers.websocket.chat.backends.droid.shutil.which", return_value="/bin/droid"),
         patch(
-            "gobby.servers.websocket.chat.droid_backend.asyncio.create_subprocess_exec",
+            "gobby.servers.websocket.chat.backends.droid.asyncio.create_subprocess_exec",
             return_value=process,
         ),
     ):
@@ -401,9 +401,9 @@ async def test_send_message_waits_for_user_permission_approval() -> None:
     session._tool_approval_callback = approve_tool
 
     with (
-        patch("gobby.servers.websocket.chat.droid_backend.shutil.which", return_value="/bin/droid"),
+        patch("gobby.servers.websocket.chat.backends.droid.shutil.which", return_value="/bin/droid"),
         patch(
-            "gobby.servers.websocket.chat.droid_backend.asyncio.create_subprocess_exec",
+            "gobby.servers.websocket.chat.backends.droid.asyncio.create_subprocess_exec",
             return_value=process,
         ),
     ):
@@ -427,9 +427,9 @@ async def test_send_message_supports_multiple_turns_on_same_process() -> None:
     session.project_path = "/tmp/project"
 
     with (
-        patch("gobby.servers.websocket.chat.droid_backend.shutil.which", return_value="/bin/droid"),
+        patch("gobby.servers.websocket.chat.backends.droid.shutil.which", return_value="/bin/droid"),
         patch(
-            "gobby.servers.websocket.chat.droid_backend.asyncio.create_subprocess_exec",
+            "gobby.servers.websocket.chat.backends.droid.asyncio.create_subprocess_exec",
             return_value=process,
         ),
     ):
@@ -459,9 +459,9 @@ async def test_send_message_reattaches_dead_process_before_next_turn() -> None:
     session.project_path = "/tmp/project"
 
     with (
-        patch("gobby.servers.websocket.chat.droid_backend.shutil.which", return_value="/bin/droid"),
+        patch("gobby.servers.websocket.chat.backends.droid.shutil.which", return_value="/bin/droid"),
         patch(
-            "gobby.servers.websocket.chat.droid_backend.asyncio.create_subprocess_exec",
+            "gobby.servers.websocket.chat.backends.droid.asyncio.create_subprocess_exec",
             side_effect=processes,
         ) as create_process,
     ):
@@ -493,9 +493,9 @@ async def test_eof_before_result_yields_error_event() -> None:
     session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
 
     with (
-        patch("gobby.servers.websocket.chat.droid_backend.shutil.which", return_value="/bin/droid"),
+        patch("gobby.servers.websocket.chat.backends.droid.shutil.which", return_value="/bin/droid"),
         patch(
-            "gobby.servers.websocket.chat.droid_backend.asyncio.create_subprocess_exec",
+            "gobby.servers.websocket.chat.backends.droid.asyncio.create_subprocess_exec",
             return_value=process,
         ),
     ):
@@ -518,9 +518,9 @@ async def test_switch_model_respawns_session_object_first() -> None:
     session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
 
     with (
-        patch("gobby.servers.websocket.chat.droid_backend.shutil.which", return_value="/bin/droid"),
+        patch("gobby.servers.websocket.chat.backends.droid.shutil.which", return_value="/bin/droid"),
         patch(
-            "gobby.servers.websocket.chat.droid_backend.asyncio.create_subprocess_exec",
+            "gobby.servers.websocket.chat.backends.droid.asyncio.create_subprocess_exec",
             side_effect=processes,
         ) as create_process,
     ):
@@ -545,7 +545,7 @@ def test_public_backend_methods_use_session_object_first_contract() -> None:
 async def test_health_reports_missing_droid() -> None:
     backend = DroidWebChatBackend()
 
-    with patch("gobby.servers.websocket.chat.droid_backend.shutil.which", return_value=None):
+    with patch("gobby.servers.websocket.chat.backends.droid.shutil.which", return_value=None):
         await backend.start()
 
     health = backend.health()

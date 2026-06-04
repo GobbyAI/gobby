@@ -1,4 +1,20 @@
-"""Tool approval and plan-mode helpers for Gemini web-chat sessions."""
+"""Tool approval and plan-mode helpers shared by managed web-chat sessions.
+
+Every non-native web-chat session — i.e. every CLI Gobby wraps rather than
+drives through the Claude SDK — needs the same approval/plan-mode UX:
+tool-approval gating, plan-mode prompt injection, and the plan-pending /
+approve / request-changes pipeline. That UX is identical regardless of the
+underlying wire protocol, so it lives here in one place:
+
+- ACP CLIs (Gemini, Grok, Qwen) via ``ACPManagedChatSession``
+- Codex via the Codex app-server JSON-RPC (``CodexManagedChatSession``)
+- Droid via stream-jsonrpc (``DroidManagedChatSession``)
+
+This used to be two near-identical mixins — ``ACPWebChatPermissionsMixin`` and
+a misleadingly named ``GeminiWebChatPermissionsMixin`` (the latter used by
+Codex/Droid, never Gemini). They are unified here; the name is protocol-neutral
+because the logic is not ACP-, Codex-, or Gemini-specific.
+"""
 
 from __future__ import annotations
 
@@ -14,8 +30,8 @@ from gobby.servers.tool_approvals import approval_key_for_tool
 logger = logging.getLogger(__name__)
 
 
-class GeminiWebChatPermissionsMixin:
-    """Permission and plan helpers for Gemini web-chat wrappers."""
+class ManagedWebChatPermissionsMixin:
+    """Permission and plan helpers for managed (non-SDK) web-chat sessions."""
 
     # ACP CLIs expose no protocol-level mode push (no session/set_mode), so
     # plan approval cannot auto-switch the agent at the protocol level: 1c's
@@ -27,6 +43,7 @@ class GeminiWebChatPermissionsMixin:
     conversation_id: str
     chat_mode: str
     _on_mode_changed: Callable[[str, str], Awaitable[None]] | None
+    _on_plan_ready: Callable[[str | None, dict[str, Any]], Awaitable[None]] | None
     _on_pre_tool: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
     _pending_question: dict[str, Any] | None
     _pending_answers: dict[str, str] | None
@@ -75,11 +92,13 @@ class GeminiWebChatPermissionsMixin:
             self._pending_plan_allowed_prompts = None
             self._pending_post_plan_mode = None
         else:
+            # Leaving plan mode: keep _pending_post_plan_mode so the following
+            # sync_sdk_permission_mode() can tell a plan approval (handler sets
+            # it) from a manual mode switch (does not).
             self._plan_approved = False
             self._plan_feedback = None
             self._pending_plan_content = None
             self._pending_plan_allowed_prompts = None
-            self._pending_post_plan_mode = None
         if self._on_mode_persist:
             try:
                 self._on_mode_persist(mode)
@@ -98,7 +117,34 @@ class GeminiWebChatPermissionsMixin:
 
     @property
     def has_pending_plan(self) -> bool:
-        return False
+        return self._pending_plan_content is not None
+
+    def _clear_pending_plan_prompt(self) -> None:
+        """Clear the in-flight plan approval prompt shown in the UI."""
+        self._pending_plan_content = None
+        self._pending_plan_allowed_prompts = None
+
+    async def _maybe_broadcast_pending_plan(self, plan_text: str, saw_content: bool) -> None:
+        """Surface a presented plan to the web UI for managed CLIs.
+
+        Managed providers have no ExitPlanMode tool, so a plan is delivered as a
+        normal assistant turn. When a substantive turn completes in plan mode,
+        broadcast plan_pending_approval using the same payload shape as the SDK
+        path so it flows through the shared frontend surfaces.
+        """
+        if self.chat_mode != "plan" or self._plan_approved:
+            return
+        if not saw_content:
+            return
+        text = plan_text.strip()
+        if not text:
+            return
+        if self._pending_plan_content is not None:
+            return
+        self._pending_plan_content = text
+        self._last_plan_content = text
+        if self._on_plan_ready is not None:
+            await self._on_plan_ready(text, {"plan": text})
 
     def _pop_plan_mode_context(self) -> str | None:
         if self.chat_mode != "plan":
@@ -181,8 +227,26 @@ class GeminiWebChatPermissionsMixin:
             self._pending_approval_event.set()
 
     async def sync_sdk_permission_mode(self) -> None:
-        pass
+        """Apply the post-plan mode transition for managed CLIs.
+
+        Managed CLIs expose no protocol-level mode push (no session/set_mode),
+        so on plan approval the user-visible fallback is to broadcast the
+        Gobby-side mode change. The plan gate stops re-injecting because
+        chat_mode is no longer "plan" (see _pop_plan_mode_context).
+
+        _pending_post_plan_mode is set only by the plan-approval handler, which
+        distinguishes an approval from a manual mode switch (where this is a
+        no-op) and from entering plan mode.
+        """
+        if self.chat_mode == "plan" or self._pending_post_plan_mode is None:
+            return
+        self._pending_post_plan_mode = None
+        if self._on_mode_changed is not None:
+            await self._on_mode_changed(self.chat_mode, "plan_approved")
 
     @property
     def has_pending_approval(self) -> bool:
         return self._pending_approval is not None
+
+
+__all__ = ["ManagedWebChatPermissionsMixin"]

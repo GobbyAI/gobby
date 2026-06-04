@@ -27,7 +27,7 @@ from gobby.servers.websocket.chat.backends.qwen import (
 )
 
 if TYPE_CHECKING:
-    from gobby.servers.websocket.chat.droid_backend import (
+    from gobby.servers.websocket.chat.backends.droid import (
         DroidManagedChatSession,
         DroidWebChatBackend,
     )
@@ -36,12 +36,12 @@ if TYPE_CHECKING:
 def __getattr__(name: str) -> object:
     """Lazily expose Droid classes without re-entering the Droid module at import time."""
     if name == "DroidManagedChatSession":
-        from gobby.servers.websocket.chat.droid_backend import DroidManagedChatSession
+        from gobby.servers.websocket.chat.backends.droid import DroidManagedChatSession
 
         globals()[name] = DroidManagedChatSession
         return DroidManagedChatSession
     if name == "DroidWebChatBackend":
-        from gobby.servers.websocket.chat.droid_backend import DroidWebChatBackend
+        from gobby.servers.websocket.chat.backends.droid import DroidWebChatBackend
 
         globals()[name] = DroidWebChatBackend
         return DroidWebChatBackend

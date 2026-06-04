@@ -19,19 +19,19 @@ from gobby.llm.claude_models import (
     ToolResultEvent,
 )
 from gobby.servers.chat_session_helpers import PendingApproval, build_compaction_context
-from gobby.servers.websocket.chat.acp_permissions import ACPWebChatPermissionsMixin
 from gobby.servers.websocket.chat.backends.base import (
     ManagedChatSessionBase,
     _extract_text,
     _log_upstream_error_event,
 )
+from gobby.servers.websocket.chat.permissions import ManagedWebChatPermissionsMixin
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class ACPManagedChatSession(
-    ACPWebChatPermissionsMixin,
+    ManagedWebChatPermissionsMixin,
     ManagedChatSessionBase,
 ):
     """Web-chat session backed by a shared ACP backend."""

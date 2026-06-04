@@ -2,7 +2,7 @@
 
 ACP CLIs expose no protocol-level mode push (no session/set_mode), so plan
 approval relies on a user-visible fallback in
-``ACPWebChatPermissionsMixin.sync_sdk_permission_mode``: broadcast
+``ManagedWebChatPermissionsMixin.sync_sdk_permission_mode``: broadcast
 ``mode_changed`` reason ``plan_approved`` (so the UI Plan radio switches off)
 and stop the plan-mode gate from re-injecting on the next prompt. It must NOT
 fire on a plain manual mode switch.
