@@ -108,3 +108,29 @@ async def test_clear_pending_plan_prompt_resets_for_revise_cycle() -> None:
     assert session.has_pending_plan is True
     assert len(broadcasts) == 2
     assert broadcasts[1][0] == "the revised plan"
+
+
+async def test_thinking_chunks_excluded_from_broadcast_plan() -> None:
+    # Reasoning arrives as thinking_delta (translated to ThinkingEvent, not a
+    # TextChunk) so it must never pollute the plan text the Plans panel renders
+    # (#15635). Only content_delta / assistant message text is the plan.
+    session, broadcasts = _make_session(
+        "plan",
+        [
+            StreamEvent(
+                event_type="thinking_delta",
+                data={"content": "Let me reason about the repo layout first."},
+            ),
+            StreamEvent(event_type="content_delta", data={"content": "## Plan\n\n"}),
+            StreamEvent(event_type="content_delta", data={"content": "1. Do the thing"}),
+        ],
+    )
+
+    [e async for e in session.send_message("draft a plan")]
+
+    assert len(broadcasts) == 1
+    content, input_data = broadcasts[0]
+    assert content == "## Plan\n\n1. Do the thing"
+    assert "reason about the repo" not in (content or "")
+    assert input_data == {"plan": "## Plan\n\n1. Do the thing"}
+    assert session.has_pending_plan is True

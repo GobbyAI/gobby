@@ -26,7 +26,7 @@ from typing import Any
 import pytest
 
 from gobby.adapters.gemini_acp_client import StreamEvent
-from gobby.llm.claude_models import ChatEvent, DoneEvent, TextChunk
+from gobby.llm.claude_models import ChatEvent, DoneEvent, TextChunk, ThinkingEvent
 from gobby.servers.websocket.chat.backends.codex import CodexManagedChatSession
 from gobby.servers.websocket.chat.backends.droid import DroidManagedChatSession
 
@@ -321,3 +321,43 @@ async def test_managed_sync_while_in_plan_mode_is_noop(
     session._pending_post_plan_mode = "normal"  # set, but still in plan mode
     await session.sync_sdk_permission_mode()
     assert mode_changes == []
+
+
+async def test_codex_thinking_excluded_from_plan() -> None:
+    # Codex's session accumulates TextChunks; a ThinkingEvent is not a TextChunk
+    # so reasoning never reaches the broadcast plan content (#15635).
+    session, broadcasts = _make_codex_session(
+        "plan",
+        [
+            ThinkingEvent(content="internal reasoning the user should not see"),
+            TextChunk(content="## Plan\n\n1. Do it"),
+            DoneEvent(tool_calls_count=0),
+        ],
+    )
+
+    [e async for e in session.send_message("draft a plan")]
+
+    assert len(broadcasts) == 1
+    assert broadcasts[0][0] == "## Plan\n\n1. Do it"
+    assert "internal reasoning" not in (broadcasts[0][0] or "")
+
+
+async def test_droid_thinking_excluded_from_plan() -> None:
+    # Droid translates content_delta kind="thinking" to a ThinkingEvent, which
+    # the TextChunk-only accumulation drops, keeping the plan content clean.
+    session, broadcasts = _make_droid_session(
+        "plan",
+        [
+            StreamEvent(
+                event_type="content_delta",
+                data={"kind": "thinking", "content": "weighing options"},
+            ),
+            _droid_text("## Plan\n\n1. Do it"),
+        ],
+    )
+
+    [e async for e in session.send_message("draft a plan")]
+
+    assert len(broadcasts) == 1
+    assert broadcasts[0][0] == "## Plan\n\n1. Do it"
+    assert "weighing options" not in (broadcasts[0][0] or "")
