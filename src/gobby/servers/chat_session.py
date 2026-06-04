@@ -120,6 +120,7 @@ class ChatSession(ChatSessionPermissionsMixin):
     _pending_post_plan_mode: str | None = field(default=None, repr=False)
     _pending_plan_event: asyncio.Event | None = field(default=None, repr=False)
     _pending_plan_decision: str | None = field(default=None, repr=False)
+    _plan_broadcast_sent: bool = field(default=False, repr=False)
     _on_plan_ready: Callable[[str | None, dict[str, Any]], Awaitable[None]] | None = field(
         default=None, repr=False
     )
@@ -491,13 +492,14 @@ class ChatSession(ChatSessionPermissionsMixin):
                     file_path = tool_input.get("file_path", "")
                     if _PLAN_FILE_PATTERN.match(file_path):
                         plan_content = self._read_plan_file()
-                        if plan_content and self._on_plan_ready:
+                        if plan_content and self._on_plan_ready and not self._plan_broadcast_sent:
                             self._remember_plan_artifact(
                                 file_path=file_path,
                                 content=plan_content,
                                 allowed_prompts=tool_input.get("allowedPrompts"),
                             )
                             await self._on_plan_ready(plan_content, tool_input)
+                            self._plan_broadcast_sent = True
                             logger.info(
                                 f"Plan file {('read' if tool_name == 'Read' else 'written')}, broadcast plan_pending_approval for {self.conversation_id[:8]}",
                             )

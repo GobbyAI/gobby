@@ -88,6 +88,7 @@ class ChatSessionPermissionsMixin:
     _pending_post_plan_mode: str | None
     _pending_plan_event: asyncio.Event | None
     _pending_plan_decision: str | None
+    _plan_broadcast_sent: bool
     _on_mode_persist: Callable[[str], None] | None
     _on_plan_ready: Callable[[str | None, dict[str, Any]], Awaitable[None]] | None
     project_path: str | None
@@ -145,18 +146,32 @@ class ChatSessionPermissionsMixin:
             if self._plan_approved:
                 return PermissionResultAllow(updated_input=input_data)
 
-            plan_content = self._read_plan_file()
+            # Source the plan from the native ExitPlanMode tool input first
+            # (Claude passes the plan text in input_data["plan"] and does not
+            # necessarily write a file), falling back to a written plan file.
+            plan_content = input_data.get("plan") or self._read_plan_file()
             if not plan_content:
                 return PermissionResultDeny(
                     message=(
-                        "No plan file found. Write your plan to a .gobby/plans/*.md "
-                        "or .claude/plans/*.md file first, then call ExitPlanMode."
+                        "No plan content found. Include the plan in ExitPlanMode, "
+                        "or write it to a .gobby/plans/*.md or .claude/plans/*.md "
+                        "file first, then call ExitPlanMode."
                     )
                 )
 
+            # Broadcast plan_pending_approval atomically with the gate. If the
+            # PostToolUse file-write hook already broadcast this plan cycle,
+            # skip to avoid a duplicate (de-duped via _plan_broadcast_sent).
+            if self._on_plan_ready and not self._plan_broadcast_sent:
+                self._remember_plan_artifact(
+                    file_path=None,
+                    content=plan_content,
+                    allowed_prompts=input_data.get("allowedPrompts"),
+                )
+                await self._on_plan_ready(plan_content, input_data)
+                self._plan_broadcast_sent = True
+
             # Block until the user approves or rejects the plan in the UI.
-            # The plan_pending_approval broadcast was already sent when the
-            # agent wrote the plan file (PostToolUse hook → _on_plan_ready).
             # The plan_approval.py handler calls provide_plan_decision() to
             # unblock this event.
             self._pending_plan_event = asyncio.Event()
@@ -183,13 +198,17 @@ class ChatSessionPermissionsMixin:
                 if approved_mode != self.chat_mode:
                     self.set_chat_mode(approved_mode)
                 self._plan_approved = True
+                self._plan_broadcast_sent = False
                 self._clear_pending_plan_prompt()
                 if self._on_mode_changed:
                     await self._on_mode_changed(self.chat_mode, "plan_approved")
                 return PermissionResultAllow(updated_input=input_data)
             else:
-                # request_changes — deny so the agent stays in plan mode
+                # request_changes — deny so the agent stays in plan mode. Reset
+                # the broadcast flag so the agent's revised plan re-broadcasts
+                # plan_pending_approval on the next ExitPlanMode.
                 self._pending_post_plan_mode = None
+                self._plan_broadcast_sent = False
                 self._clear_pending_plan_prompt()
                 if self._on_mode_changed:
                     await self._on_mode_changed("plan", "plan_changes_requested")
@@ -416,6 +435,7 @@ class ChatSessionPermissionsMixin:
             self._pending_plan_content = None
             self._pending_plan_allowed_prompts = None
             self._pending_post_plan_mode = None
+            self._plan_broadcast_sent = False
         elif mode != "plan":
             # Leaving plan mode — clear plan state
             self._plan_approved = False

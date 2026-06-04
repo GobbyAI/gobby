@@ -36,13 +36,103 @@ class TestCanUseTool:
         mock_cb.assert_awaited_once_with("plan", "agent_requested")
 
     @pytest.mark.asyncio
-    async def test_exit_plan_mode_no_file(self, session: ChatSession) -> None:
-        """ExitPlanMode denies if no plan file is found."""
+    async def test_exit_plan_mode_no_content(self, session: ChatSession) -> None:
+        """ExitPlanMode denies when neither tool input nor a plan file has content."""
         session.set_chat_mode("plan")
         with patch.object(session, "_read_plan_file", return_value=None):
             result = await session._can_use_tool("ExitPlanMode", {}, ToolPermissionContext())
             assert isinstance(result, PermissionResultDeny)
-            assert "No plan file found" in result.message
+            assert "No plan content found" in result.message
+
+    @pytest.mark.asyncio
+    async def test_exit_plan_mode_input_plan_broadcasts_and_approves(
+        self, session: ChatSession
+    ) -> None:
+        """Plan sourced from the ExitPlanMode tool input (no file) broadcasts
+        plan_pending_approval exactly once, blocks, then approves."""
+        session.set_chat_mode("plan")
+        on_plan_ready = AsyncMock()
+        session._on_plan_ready = on_plan_ready
+        session._on_mode_changed = AsyncMock()
+        with patch.object(session, "_read_plan_file", return_value=None):
+            task = asyncio.create_task(
+                session._can_use_tool(
+                    "ExitPlanMode",
+                    {"plan": "# Plan\nDo the thing"},
+                    ToolPermissionContext(),
+                )
+            )
+            await wait_for_async_condition(
+                lambda: session.has_pending_plan, description="pending plan"
+            )
+            on_plan_ready.assert_awaited_once()
+            assert on_plan_ready.await_args.args[0] == "# Plan\nDo the thing"
+            assert session._plan_broadcast_sent is True
+            session._pending_post_plan_mode = "bypass"
+            session.provide_plan_decision("approve")
+            result = await task
+
+        assert isinstance(result, PermissionResultAllow)
+        assert session.chat_mode == "bypass"
+        assert session._plan_approved is True
+        assert session._plan_broadcast_sent is False
+        session._on_mode_changed.assert_awaited_once_with("bypass", "plan_approved")
+
+    @pytest.mark.asyncio
+    async def test_exit_plan_mode_input_plan_request_changes_resets_flag(
+        self, session: ChatSession
+    ) -> None:
+        """Request-changes denies with feedback and resets the broadcast flag so
+        the agent's revised plan re-broadcasts on the next ExitPlanMode."""
+        session.set_chat_mode("plan")
+        session._on_plan_ready = AsyncMock()
+        session._on_mode_changed = AsyncMock()
+        session.set_plan_feedback("tighten scope")
+        with patch.object(session, "_read_plan_file", return_value=None):
+            task = asyncio.create_task(
+                session._can_use_tool("ExitPlanMode", {"plan": "draft"}, ToolPermissionContext())
+            )
+            await wait_for_async_condition(
+                lambda: session.has_pending_plan, description="pending plan"
+            )
+            session.provide_plan_decision("request_changes")
+            result = await task
+
+        assert isinstance(result, PermissionResultDeny)
+        assert "tighten scope" in result.message
+        assert session.chat_mode == "plan"
+        assert session._plan_broadcast_sent is False
+        session._on_mode_changed.assert_awaited_once_with("plan", "plan_changes_requested")
+
+    @pytest.mark.asyncio
+    async def test_exit_plan_mode_dedupes_after_file_write_broadcast(
+        self, session: ChatSession
+    ) -> None:
+        """If the file-write PostToolUse hook already broadcast this cycle,
+        ExitPlanMode does not broadcast a duplicate."""
+        session.set_chat_mode("plan")
+        session._plan_broadcast_sent = True  # prior file-write broadcast
+        on_plan_ready = AsyncMock()
+        session._on_plan_ready = on_plan_ready
+        session._on_mode_changed = AsyncMock()
+        with patch.object(session, "_read_plan_file", return_value="file plan"):
+            task = asyncio.create_task(
+                session._can_use_tool(
+                    "ExitPlanMode", {"plan": "input plan"}, ToolPermissionContext()
+                )
+            )
+            await wait_for_async_condition(
+                lambda: session.has_pending_plan, description="pending plan"
+            )
+            session._pending_post_plan_mode = "bypass"
+            session.provide_plan_decision("approve")
+            result = await task
+
+        # No duplicate broadcast, but the gate still resolves normally.
+        on_plan_ready.assert_not_awaited()
+        assert isinstance(result, PermissionResultAllow)
+        assert session.chat_mode == "bypass"
+        assert session._plan_approved is True
 
     @pytest.mark.asyncio
     async def test_exit_plan_mode_already_approved(self, session: ChatSession) -> None:
@@ -410,3 +500,80 @@ class TestConsumePlanModeContext:
 
         assert context is not None
         assert "gcode outline/search/symbol" in context
+
+
+class TestStartPlanPermissionMode:
+    @pytest.mark.asyncio
+    async def test_start_in_plan_mode_pushes_native_plan_permission(self) -> None:
+        """A session that begins in plan mode connects the SDK with native
+        permission_mode 'plan' so Claude emits ExitPlanMode (the §1 base trigger)."""
+        session = ChatSession(conversation_id="test-start-plan")
+        session.chat_mode = "plan"
+        session.system_prompt_override = "sys"  # skip prompt loading
+        captured: dict[str, object] = {}
+
+        class _FakeClient:
+            def __init__(self, options: object) -> None:
+                captured["options"] = options
+
+            async def connect(self) -> None:
+                return None
+
+        with (
+            patch(
+                "gobby.servers.chat_session._find_cli_path",
+                return_value="/usr/bin/claude",
+            ),
+            patch(
+                "gobby.servers.chat_session.materialize_claude_settings_async",
+                new=AsyncMock(return_value="/tmp/settings.json"),
+            ),
+            patch("gobby.servers.chat_session.ClaudeSDKClient", _FakeClient),
+            patch.object(
+                ChatSession,
+                "_resolve_requested_model",
+                new=AsyncMock(return_value="claude-x"),
+            ),
+        ):
+            await session.start()
+
+        options = captured["options"]
+        assert options.permission_mode == "plan"
+        # The gate callback that intercepts ExitPlanMode must be wired in.
+        assert options.can_use_tool == session._can_use_tool
+        assert session._connected is True
+
+    @pytest.mark.asyncio
+    async def test_start_in_normal_mode_pushes_default_permission(self) -> None:
+        """A non-plan session maps to the SDK 'default' permission mode."""
+        session = ChatSession(conversation_id="test-start-normal")
+        session.chat_mode = "normal"
+        session.system_prompt_override = "sys"
+        captured: dict[str, object] = {}
+
+        class _FakeClient:
+            def __init__(self, options: object) -> None:
+                captured["options"] = options
+
+            async def connect(self) -> None:
+                return None
+
+        with (
+            patch(
+                "gobby.servers.chat_session._find_cli_path",
+                return_value="/usr/bin/claude",
+            ),
+            patch(
+                "gobby.servers.chat_session.materialize_claude_settings_async",
+                new=AsyncMock(return_value="/tmp/settings.json"),
+            ),
+            patch("gobby.servers.chat_session.ClaudeSDKClient", _FakeClient),
+            patch.object(
+                ChatSession,
+                "_resolve_requested_model",
+                new=AsyncMock(return_value="claude-x"),
+            ),
+        ):
+            await session.start()
+
+        assert captured["options"].permission_mode == "default"
