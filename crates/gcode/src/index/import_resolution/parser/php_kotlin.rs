@@ -45,10 +45,6 @@ pub(crate) fn parse_php_import_statement(
     }
 
     if rest.contains('{') || rest.contains('}') {
-        extracted.imports.push(ImportRelation {
-            file_path: rel_path.to_string(),
-            module_name: rest.to_string(),
-        });
         return;
     }
 

@@ -118,12 +118,22 @@ pub(crate) fn normalize_sources(sources: &[String]) -> Vec<String> {
 pub(crate) fn validate_source_reference(root: &Path, source: &str) -> Result<(), String> {
     if let Ok(url) = url::Url::parse(source) {
         return match url.scheme() {
-            "http" | "https" | "file" => Ok(()),
+            "http" | "https" => Ok(()),
+            "file" => {
+                let path = url
+                    .to_file_path()
+                    .map_err(|_| "file URL source path is invalid".to_string())?;
+                validate_source_path(root, &path)
+            }
             scheme => Err(format!("unsupported URL scheme '{scheme}'")),
         };
     }
 
     let path = Path::new(source);
+    validate_source_path(root, path)
+}
+
+fn validate_source_path(root: &Path, path: &Path) -> Result<(), String> {
     if path.as_os_str().is_empty() {
         return Err("source path is empty".to_string());
     }

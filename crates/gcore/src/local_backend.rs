@@ -1,9 +1,13 @@
+#[cfg(feature = "http")]
 use std::io::{self, Read, Write};
+#[cfg(feature = "http")]
 use std::net::{TcpStream, ToSocketAddrs};
+#[cfg(feature = "http")]
 use std::time::Duration;
 
 use serde::Deserialize;
 
+#[cfg(feature = "http")]
 const MAX_PROBE_RESPONSE_BYTES: usize = 1024;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -62,6 +66,7 @@ pub fn backend_api_base(backend: &Backend) -> String {
 }
 
 /// Probe backends in order, return the first that responds successfully.
+#[cfg(feature = "http")]
 pub fn detect_backend(backends: &[Backend], timeout_ms: u64) -> Option<Backend> {
     for backend in backends {
         if validate_backend(backend, timeout_ms) {
@@ -72,6 +77,7 @@ pub fn detect_backend(backends: &[Backend], timeout_ms: u64) -> Option<Backend> 
 }
 
 /// Validate that a specific backend is reachable.
+#[cfg(feature = "http")]
 pub fn validate_backend(backend: &Backend, timeout_ms: u64) -> bool {
     let timeout = Duration::from_millis(timeout_ms);
     let url = backend_probe_url(backend);
@@ -107,6 +113,7 @@ pub fn validate_backend(backend: &Backend, timeout_ms: u64) -> bool {
     }
 }
 
+#[cfg(feature = "http")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HttpProbeTarget {
     host: String,
@@ -114,6 +121,7 @@ struct HttpProbeTarget {
     path: String,
 }
 
+#[cfg(feature = "http")]
 impl HttpProbeTarget {
     fn parse(url: &str) -> Option<Self> {
         let rest = url.strip_prefix("http://")?;
@@ -145,6 +153,7 @@ impl HttpProbeTarget {
     }
 }
 
+#[cfg(feature = "http")]
 fn parse_http_authority(authority: &str) -> Option<(String, u16)> {
     if authority.is_empty() || authority.contains('@') {
         return None;
@@ -173,6 +182,7 @@ fn parse_http_authority(authority: &str) -> Option<(String, u16)> {
     }
 }
 
+#[cfg(feature = "http")]
 fn send_probe_request(
     target: &HttpProbeTarget,
     auth_token: &str,
@@ -226,6 +236,7 @@ fn send_probe_request(
     parse_http_status(&response)
 }
 
+#[cfg(feature = "http")]
 fn parse_http_status(response: &[u8]) -> io::Result<u16> {
     let response = String::from_utf8_lossy(response);
     response
@@ -236,6 +247,7 @@ fn parse_http_status(response: &[u8]) -> io::Result<u16> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing HTTP status"))
 }
 
+#[cfg(feature = "http")]
 fn backend_probe_url(backend: &Backend) -> String {
     let base = backend.url.trim_end_matches('/');
     let probe = backend.probe.trim_start_matches('/');
@@ -249,54 +261,6 @@ fn backend_probe_url(backend: &Backend) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-    use std::thread;
-
-    fn reachable_backend() -> (Backend, thread::JoinHandle<String>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let handle = thread::spawn(move || {
-            if let Ok((mut stream, _)) = listener.accept() {
-                let mut buffer = [0_u8; 1024];
-                let read = stream.read(&mut buffer).unwrap_or(0);
-                let _ = stream.write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
-                );
-                return String::from_utf8_lossy(&buffer[..read]).to_string();
-            }
-            String::new()
-        });
-
-        (
-            Backend {
-                name: "reachable".into(),
-                url: format!("http://{}", addr),
-                probe: "/v1/models".into(),
-                auth_token: "token".into(),
-            },
-            handle,
-        )
-    }
-
-    fn unreachable_backend() -> Backend {
-        Backend {
-            name: "unreachable".into(),
-            url: "http://127.0.0.1:9".into(),
-            probe: "/".into(),
-            auth_token: String::new(),
-        }
-    }
-
-    #[test]
-    fn detects_first_reachable() {
-        let (reachable, handle) = reachable_backend();
-        let backends = vec![unreachable_backend(), reachable.clone()];
-
-        assert_eq!(detect_backend(&backends, 500), Some(reachable));
-        let request = handle.join().expect("probe request thread");
-        assert!(has_header(&request, "authorization", "Bearer token"));
-    }
 
     #[test]
     fn default_local_backends_do_not_send_auth_tokens() {
@@ -307,32 +271,85 @@ mod tests {
         );
     }
 
-    #[test]
-    fn probe_url_uses_exactly_one_separator() {
-        let backend = Backend {
-            name: "test".into(),
-            url: "http://localhost:1234/".into(),
-            probe: "/v1/models".into(),
-            auth_token: String::new(),
-        };
+    #[cfg(feature = "http")]
+    mod http {
+        use super::*;
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
 
-        assert_eq!(
-            backend_probe_url(&backend),
-            "http://localhost:1234/v1/models"
-        );
+        fn reachable_backend() -> (Backend, thread::JoinHandle<String>) {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            let handle = thread::spawn(move || {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut buffer = [0_u8; 1024];
+                    let read = stream.read(&mut buffer).unwrap_or(0);
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+                    );
+                    return String::from_utf8_lossy(&buffer[..read]).to_string();
+                }
+                String::new()
+            });
 
-        let backend = Backend {
-            probe: String::new(),
-            ..backend
-        };
-        assert_eq!(backend_probe_url(&backend), "http://localhost:1234");
-    }
+            (
+                Backend {
+                    name: "reachable".into(),
+                    url: format!("http://{}", addr),
+                    probe: "/v1/models".into(),
+                    auth_token: "token".into(),
+                },
+                handle,
+            )
+        }
 
-    fn has_header(request: &str, name: &str, value: &str) -> bool {
-        request.lines().any(|line| {
-            line.split_once(':').is_some_and(|(header, actual)| {
-                header.trim().eq_ignore_ascii_case(name) && actual.trim() == value
+        fn unreachable_backend() -> Backend {
+            Backend {
+                name: "unreachable".into(),
+                url: "http://127.0.0.1:9".into(),
+                probe: "/".into(),
+                auth_token: String::new(),
+            }
+        }
+
+        #[test]
+        fn detects_first_reachable() {
+            let (reachable, handle) = reachable_backend();
+            let backends = vec![unreachable_backend(), reachable.clone()];
+
+            assert_eq!(detect_backend(&backends, 500), Some(reachable));
+            let request = handle.join().expect("probe request thread");
+            assert!(has_header(&request, "authorization", "Bearer token"));
+        }
+
+        #[test]
+        fn probe_url_uses_exactly_one_separator() {
+            let backend = Backend {
+                name: "test".into(),
+                url: "http://localhost:1234/".into(),
+                probe: "/v1/models".into(),
+                auth_token: String::new(),
+            };
+
+            assert_eq!(
+                backend_probe_url(&backend),
+                "http://localhost:1234/v1/models"
+            );
+
+            let backend = Backend {
+                probe: String::new(),
+                ..backend
+            };
+            assert_eq!(backend_probe_url(&backend), "http://localhost:1234");
+        }
+
+        fn has_header(request: &str, name: &str, value: &str) -> bool {
+            request.lines().any(|line| {
+                line.split_once(':').is_some_and(|(header, actual)| {
+                    header.trim().eq_ignore_ascii_case(name) && actual.trim() == value
+                })
             })
-        })
+        }
     }
 }

@@ -20,6 +20,7 @@ const DEFAULT_OUT_DIR: &str = "codewiki";
 const CODEWIKI_META_PATH: &str = "_meta/codewiki.json";
 const MAX_MERMAID_HOPS: usize = 2;
 const MAX_MERMAID_EDGES: usize = 20;
+const MAX_EDGE_LIMIT: usize = 100_000;
 
 mod build;
 mod cluster;
@@ -255,6 +256,8 @@ pub fn run(
     edge_limit: usize,
     format: Format,
 ) -> anyhow::Result<()> {
+    validate_edge_limit(edge_limit)?;
+
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let scopes = scope_args
         .iter()
@@ -279,10 +282,7 @@ pub fn run(
     };
     let mut generator = resolve_text_generator(ctx, ai);
     let ai_enabled = generator.is_some();
-    let docs = match generator.as_deref_mut() {
-        Some(generate) => generate_hierarchical_docs(&input, Some(generate)),
-        None => generate_hierarchical_docs(&input, None),
-    };
+    let docs = generate_hierarchical_docs(&input, generator.as_deref_mut());
     let module_count = docs
         .iter()
         .filter(|(path, _)| path.starts_with("modules/"))
@@ -321,6 +321,13 @@ pub fn run(
             summary.files, summary.modules, summary.out_dir
         )),
     }
+}
+
+fn validate_edge_limit(edge_limit: usize) -> anyhow::Result<()> {
+    if (1..=MAX_EDGE_LIMIT).contains(&edge_limit) {
+        return Ok(());
+    }
+    anyhow::bail!("codewiki --edge-limit must be between 1 and {MAX_EDGE_LIMIT}, got {edge_limit}")
 }
 
 pub fn generate_hierarchical_docs(

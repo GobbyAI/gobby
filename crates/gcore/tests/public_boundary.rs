@@ -27,7 +27,8 @@ fn cargo_features_define_public_boundary() {
         r#"qdrant = ["dep:reqwest", "dep:urlencoding"]"#,
         r#"indexing = ["dep:ignore", "dep:sha2"]"#,
         "search = []",
-        r#"ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:httpdate", "dep:rand", "dep:ureq", "reqwest/multipart"]"#,
+        r#"http = ["dep:ureq"]"#,
+        r#"ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:httpdate", "dep:rand", "http", "reqwest/multipart"]"#,
         r#"full = ["postgres", "falkor", "qdrant", "indexing", "search", "ai"]"#,
         r#"serde = { version = "1", features = ["derive"] }"#,
         r#"thiserror = "2""#,
@@ -52,11 +53,10 @@ fn cargo_features_define_public_boundary() {
         );
     }
 
-    let gloc_gcore_dependency =
-        r#"gobby-core = { path = "../gcore", version = "0.3.0", default-features = false }"#;
+    let gloc_gcore_dependency = r#"gobby-core = { path = "../gcore", version = "0.3.0", default-features = false, features = ["http"] }"#;
     assert!(
         gloc_manifest.contains(gloc_gcore_dependency),
-        "gloc must keep default-features = false (no heavier gobby-core/ai feature); \
+        "gloc must keep default-features = false and opt only into gobby-core/http; \
          the explicit version is required for crates.io publishing"
     );
 }
@@ -111,6 +111,7 @@ fn development_guide_documents_foundation_boundary() {
         "`qdrant`",
         "`indexing`",
         "`search`",
+        "`http`",
         "`full`",
         "Feature-gated modules",
         "Adding a New Helper",

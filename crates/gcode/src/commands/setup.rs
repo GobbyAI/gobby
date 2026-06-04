@@ -537,45 +537,49 @@ mod tests {
         );
     }
 
-    #[test]
-    #[serial_test::serial]
-    fn standalone_command_installs_public_code_index_subset() {
-        let Ok(database_url) = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL") else {
-            return;
-        };
-        let home = tempfile::tempdir().expect("temp home");
-        unsafe { std::env::set_var("GOBBY_HOME", home.path()) };
-        let request = StandaloneSetupRequest::new(true, Some(database_url.clone()), None);
+    mod serial_db {
+        use super::*;
 
-        run(request, Format::Json, true).expect("standalone setup runs");
+        #[test]
+        #[serial_test::serial(serial_db)]
+        fn standalone_command_installs_public_code_index_subset() {
+            let Ok(database_url) = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL") else {
+                return;
+            };
+            let home = tempfile::tempdir().expect("temp home");
+            unsafe { std::env::set_var("GOBBY_HOME", home.path()) };
+            let request = StandaloneSetupRequest::new(true, Some(database_url.clone()), None);
 
-        let mut client =
-            gobby_core::postgres::connect_readwrite(&database_url).expect("connect test db");
-        let exists: bool = client
-            .query_one("SELECT to_regclass('public.code_symbols') IS NOT NULL", &[])
-            .expect("check code_symbols")
-            .get(0);
-        assert!(exists);
+            run(request, Format::Json, true).expect("standalone setup runs");
 
-        let forbidden_exists: bool = client
-            .query_one("SELECT to_regclass('public.config_store') IS NOT NULL", &[])
-            .expect("check config_store")
-            .get(0);
-        assert!(!forbidden_exists);
-        assert!(home.path().join("gcore.yaml").exists());
+            let mut client =
+                gobby_core::postgres::connect_readwrite(&database_url).expect("connect test db");
+            let exists: bool = client
+                .query_one("SELECT to_regclass('public.code_symbols') IS NOT NULL", &[])
+                .expect("check code_symbols")
+                .get(0);
+            assert!(exists);
 
-        client
-            .batch_execute(
-                "DROP INDEX IF EXISTS public.code_symbols_search_bm25;
-                 DROP INDEX IF EXISTS public.code_content_search_bm25;
-                 DROP TABLE IF EXISTS public.code_calls;
-                 DROP TABLE IF EXISTS public.code_imports;
-                 DROP TABLE IF EXISTS public.code_content_chunks;
-                 DROP TABLE IF EXISTS public.code_symbols;
-                 DROP TABLE IF EXISTS public.code_indexed_files;
-                 DROP TABLE IF EXISTS public.code_indexed_projects;",
-            )
-            .expect("drop code-index test objects");
-        unsafe { std::env::remove_var("GOBBY_HOME") };
+            let forbidden_exists: bool = client
+                .query_one("SELECT to_regclass('public.config_store') IS NOT NULL", &[])
+                .expect("check config_store")
+                .get(0);
+            assert!(!forbidden_exists);
+            assert!(home.path().join("gcore.yaml").exists());
+
+            client
+                .batch_execute(
+                    "DROP INDEX IF EXISTS public.code_symbols_search_bm25;
+                     DROP INDEX IF EXISTS public.code_content_search_bm25;
+                     DROP TABLE IF EXISTS public.code_calls;
+                     DROP TABLE IF EXISTS public.code_imports;
+                     DROP TABLE IF EXISTS public.code_content_chunks;
+                     DROP TABLE IF EXISTS public.code_symbols;
+                     DROP TABLE IF EXISTS public.code_indexed_files;
+                     DROP TABLE IF EXISTS public.code_indexed_projects;",
+                )
+                .expect("drop code-index test objects");
+            unsafe { std::env::remove_var("GOBBY_HOME") };
+        }
     }
 }

@@ -50,14 +50,14 @@ pub(crate) fn update_wiki_index(
     };
 
     let link = wiki_link(vault_root, &article.path, &article.title);
-    if !index.contains("## Compiled pages") {
+    if !has_compiled_pages_heading(&index) {
         if !index.ends_with('\n') {
             index.push('\n');
         }
         index.push_str("\n## Compiled pages\n\n");
     }
-    if !index.contains(&link) {
-        insert_compiled_page_link(&mut index, &link);
+    if !has_compiled_page_link(&index, &link) {
+        insert_compiled_page_link(&mut index, &link)?;
     }
 
     fs::write(&index_path, index).map_err(|error| WikiError::Io {
@@ -68,16 +68,13 @@ pub(crate) fn update_wiki_index(
     Ok(())
 }
 
-fn insert_compiled_page_link(index: &mut String, link: &str) {
+pub(super) fn insert_compiled_page_link(index: &mut String, link: &str) -> Result<(), WikiError> {
     let heading = "## Compiled pages";
-    let heading_pos = index
-        .find(heading)
-        .expect("compiled pages heading should exist before insertion");
-    let section_body_start = heading_pos + heading.len();
-    let mut insertion_point = index[section_body_start..]
-        .find("\n## ")
-        .map(|offset| section_body_start + offset + 1)
-        .unwrap_or(index.len());
+    let section_body_start = exact_line_end(index, heading).ok_or_else(|| WikiError::Config {
+        detail: "wiki index is missing ## Compiled pages heading".to_string(),
+    })?;
+    let mut insertion_point =
+        next_section_heading_offset(index, section_body_start).unwrap_or(index.len());
 
     if insertion_point > 0 && !index[..insertion_point].ends_with('\n') {
         index.insert(insertion_point, '\n');
@@ -89,6 +86,45 @@ fn insert_compiled_page_link(index: &mut String, link: &str) {
         entry.push('\n');
     }
     index.insert_str(insertion_point, &entry);
+    Ok(())
+}
+
+fn has_compiled_pages_heading(index: &str) -> bool {
+    has_exact_line(index, "## Compiled pages")
+}
+
+fn has_compiled_page_link(index: &str, link: &str) -> bool {
+    has_exact_line(index, &format!("- {link}"))
+}
+
+fn has_exact_line(markdown: &str, expected: &str) -> bool {
+    markdown.lines().any(|line| line == expected)
+}
+
+fn exact_line_end(markdown: &str, expected: &str) -> Option<usize> {
+    let mut offset = 0;
+    for line in markdown.split_inclusive('\n') {
+        if line_body(line) == expected {
+            return Some(offset + line.len());
+        }
+        offset += line.len();
+    }
+    None
+}
+
+fn next_section_heading_offset(markdown: &str, start: usize) -> Option<usize> {
+    let mut offset = start;
+    for line in markdown[start..].split_inclusive('\n') {
+        if line_body(line).starts_with("## ") {
+            return Some(offset);
+        }
+        offset += line.len();
+    }
+    None
+}
+
+fn line_body(line: &str) -> &str {
+    line.trim_end_matches('\n').trim_end_matches('\r')
 }
 
 pub(crate) fn write_provenance(
@@ -96,6 +132,7 @@ pub(crate) fn write_provenance(
     article: &SynthesizedPage,
     sources: &[AcceptedCompileSource],
 ) -> Result<(), WikiError> {
+    let _lock = lock_provenance(vault_root)?;
     let provenance_path = vault_root.join("meta").join("provenance.json");
     let mut graph = if provenance_path.exists() {
         ProvenanceGraph::load_from_vault(vault_root)?
@@ -155,6 +192,30 @@ pub(crate) fn write_provenance(
     graph.save_to_vault(vault_root)
 }
 
+fn lock_provenance(vault_root: &Path) -> Result<fs::File, WikiError> {
+    let lock_path = vault_root.join(".gwiki").join("provenance.lock");
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| WikiError::Io {
+            action: "create provenance lock directory",
+            path: Some(parent.to_path_buf()),
+            source: error,
+        })?;
+    }
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|error| WikiError::Io {
+            action: "open provenance lock",
+            path: Some(lock_path.clone()),
+            source: error,
+        })?;
+    lock_file(&lock, &lock_path, "lock provenance")?;
+    Ok(lock)
+}
+
 fn first_rendered_article_section(markdown: &str) -> Option<String> {
     markdown.lines().find_map(|line| {
         line.strip_prefix("## ")
@@ -185,6 +246,10 @@ pub(crate) fn mark_sources_compiled(
 }
 
 fn lock_wiki_index(lock: &fs::File, lock_path: &Path) -> Result<(), WikiError> {
+    lock_file(lock, lock_path, "lock wiki index")
+}
+
+fn lock_file(lock: &fs::File, lock_path: &Path, action: &'static str) -> Result<(), WikiError> {
     let timeout = index_lock_timeout();
     let started = Instant::now();
 
@@ -197,7 +262,7 @@ fn lock_wiki_index(lock: &fs::File, lock_path: &Path) -> Result<(), WikiError> {
                     // Returning drops the lock file handle, which releases any
                     // fs4 lock acquired by this process through RAII.
                     return Err(WikiError::Io {
-                        action: "lock wiki index",
+                        action,
                         path: Some(lock_path.to_path_buf()),
                         source: std::io::Error::new(
                             ErrorKind::TimedOut,
@@ -209,7 +274,7 @@ fn lock_wiki_index(lock: &fs::File, lock_path: &Path) -> Result<(), WikiError> {
             }
             Err(error) => {
                 return Err(WikiError::Io {
-                    action: "lock wiki index",
+                    action,
                     path: Some(lock_path.to_path_buf()),
                     source: error.into(),
                 });

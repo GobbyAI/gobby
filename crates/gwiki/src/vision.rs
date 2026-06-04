@@ -227,13 +227,17 @@ fn dedupe_vision_metadata(metadata: &[(String, String)]) -> Vec<(String, String)
 }
 
 fn bounded_vision_metadata_key(key: &str) -> String {
-    if key.chars().count() <= MAX_VISION_METADATA_KEY_CHARS {
+    let mut chars = key.chars();
+    let mut prefix = String::with_capacity(key.len().min(MAX_VISION_METADATA_KEY_CHARS));
+    for _ in 0..MAX_VISION_METADATA_KEY_CHARS {
+        let Some(ch) = chars.next() else {
+            return key.to_string();
+        };
+        prefix.push(ch);
+    }
+    if chars.next().is_none() {
         return key.to_string();
     }
-    let prefix = key
-        .chars()
-        .take(MAX_VISION_METADATA_KEY_CHARS)
-        .collect::<String>();
     let hash = gobby_core::indexing::content_hash(key.as_bytes());
     format!(
         "{prefix}-{}",

@@ -11,21 +11,9 @@ fail-fast = false
 serial-db = { max-threads = 1 }
 
 [[profile.default.overrides]]
-filter = 'package(gobby-code) & test(/(validates_runtime_schema_when_postgres_test_dsn_is_set|standalone_command_installs_public_code_index_subset|overwrite_recreates_incompatible_code_index_and_preserves_sentinel_table|overlay_visibility_counts_and_kinds_use_database_predicates)$/)'
+filter = 'package(gobby-code) & (test(::serial_db::) | test(serial_db::))'
 test-group = 'serial-db'
 
 [[profile.default.overrides]]
-filter = 'package(gobby-code) & test(/(uuid_input_resolves_exact_symbol_for_active_project|unknown_uuid_input_does_not_fall_back_to_name_resolution|ambiguous_name_behavior_remains_unchanged)$/)'
-test-group = 'serial-db'
-
-[[profile.default.overrides]]
-filter = 'package(gobby-code) & test(/(no_freshness_env_short_circuits_project_refresh|busy_project_lock_skips_freshness_refresh|pre_gate_skips_lock_when_unchanged_and_trips_after_a_change|symbol_slice_check_uses_stored_byte_range_hash)$/)'
-test-group = 'serial-db'
-
-[[profile.default.overrides]]
-filter = 'package(gobby-code) & test(/(brief_try_returns_busy_while_same_project_lock_is_held|wait_blocks_until_same_project_lock_is_released|different_project_ids_do_not_block_each_other)$/)'
-test-group = 'serial-db'
-
-[[profile.default.overrides]]
-filter = 'package(gobby-wiki) & test(/(search_uses_configured_postgres_bm25_backend|index_uses_configured_postgres_store|ingest_uses_configured_postgres_store|configured_postgres_index_feeds_configured_search|configured_postgres_index_feeds_configured_search_when_test_database_is_available)$/)'
+filter = 'package(gobby-wiki) & (test(::serial_db::) | test(serial_db::))'
 test-group = 'serial-db'

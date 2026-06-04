@@ -455,6 +455,24 @@ fn php_grouped_const_imports_preserve_aliases() {
 }
 
 #[test]
+fn php_malformed_grouped_imports_do_not_register_literal_brace_paths() {
+    let mut extracted = ExtractedImports::default();
+
+    parse_import_statement(
+        "php",
+        r"use Vendor\Pkg\{Client, Helper;",
+        "src/sample.php",
+        &ImportResolutionContext::default(),
+        &mut extracted,
+    )
+    .expect("parse malformed PHP grouped import");
+
+    assert!(extracted.imports.is_empty());
+    assert!(extracted.bindings.bare.is_empty());
+    assert!(extracted.bindings.member.is_empty());
+}
+
+#[test]
 fn php_wildcard_imports_register_external_module_prefixes() {
     let mut extracted = ExtractedImports::default();
 

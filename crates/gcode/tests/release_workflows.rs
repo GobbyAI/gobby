@@ -29,8 +29,7 @@ const RELEASE_WORKFLOWS: [(&str, &str); 5] = [
 ];
 
 const SOFTPROPS_ACTION_GH_RELEASE_SHA: &str = "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65";
-const TAIKI_INSTALL_NEXTEST_SHA: &str = "f5b277aa8941a90c16bc1cd6ab9363e0502b7d31";
-const TAIKI_INSTALL_LLVM_COV_SHA: &str = "28ba36d36bfc4814f98a469ff9f76b2a41e9aa8a";
+const TAIKI_INSTALL_ACTION_SHA: &str = "f5b277aa8941a90c16bc1cd6ab9363e0502b7d31";
 const ACTIONS_CHECKOUT_SHA: &str = "34e114876b0b11c390a56381ad16ebd13914f8d5";
 const DTOLNAY_RUST_TOOLCHAIN_SHA: &str = "29eef336d9b2848a0b548edc03f92a220660cdb8";
 const ACTIONS_CACHE_SHA: &str = "0057852bfaa89a56745cba8c7296529d2fc39830";
@@ -148,18 +147,10 @@ fn ci_workflow_pins_taiki_install_actions_by_sha() {
     assert_eq!(
         workflow
             .matches(&format!(
-                "taiki-e/install-action@{TAIKI_INSTALL_NEXTEST_SHA}"
+                "taiki-e/install-action@{TAIKI_INSTALL_ACTION_SHA}"
             ))
             .count(),
-        2
-    );
-    assert_eq!(
-        workflow
-            .matches(&format!(
-                "taiki-e/install-action@{TAIKI_INSTALL_LLVM_COV_SHA}"
-            ))
-            .count(),
-        1
+        3
     );
     assert!(workflow.contains("tool: nextest"));
     assert!(workflow.contains("tool: cargo-llvm-cov"));

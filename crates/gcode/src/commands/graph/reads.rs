@@ -504,102 +504,109 @@ mod tests {
         .expect("insert graph resolution symbol");
     }
 
-    #[test]
-    fn uuid_input_resolves_exact_symbol_for_active_project() {
-        let Some(mut conn) = connect_graph_resolution_test_db() else {
-            return;
-        };
-        let project_id = unique_uuid("project");
-        cleanup_graph_resolution_project(&mut conn, &project_id);
-        insert_project(&mut conn, &project_id);
-        insert_file(&mut conn, &project_id, "src/target.rs", 1);
+    mod serial_db {
+        use super::*;
 
-        let symbol_id = unique_uuid("target-symbol");
-        insert_symbol(
-            &mut conn,
-            &project_id,
-            "src/target.rs",
-            &symbol_id,
-            "target_symbol",
-            7,
-        );
+        #[test]
+        #[serial_test::serial(serial_db)]
+        fn uuid_input_resolves_exact_symbol_for_active_project() {
+            let Some(mut conn) = connect_graph_resolution_test_db() else {
+                return;
+            };
+            let project_id = unique_uuid("project");
+            cleanup_graph_resolution_project(&mut conn, &project_id);
+            insert_project(&mut conn, &project_id);
+            insert_file(&mut conn, &project_id, "src/target.rs", 1);
 
-        let (resolved, suggestions) =
-            resolve_symbol_with_connection(&mut conn, &project_id, &symbol_id)
-                .expect("resolve graph symbol by uuid");
-        cleanup_graph_resolution_project(&mut conn, &project_id);
+            let symbol_id = unique_uuid("target-symbol");
+            insert_symbol(
+                &mut conn,
+                &project_id,
+                "src/target.rs",
+                &symbol_id,
+                "target_symbol",
+                7,
+            );
 
-        assert!(suggestions.is_empty());
-        let resolved = resolved.expect("symbol should resolve");
-        assert_eq!(resolved.id, symbol_id);
-        assert_eq!(resolved.display_name, "target_symbol");
-    }
+            let (resolved, suggestions) =
+                resolve_symbol_with_connection(&mut conn, &project_id, &symbol_id)
+                    .expect("resolve graph symbol by uuid");
+            cleanup_graph_resolution_project(&mut conn, &project_id);
 
-    #[test]
-    fn unknown_uuid_input_does_not_fall_back_to_name_resolution() {
-        let Some(mut conn) = connect_graph_resolution_test_db() else {
-            return;
-        };
-        let project_id = unique_uuid("project");
-        cleanup_graph_resolution_project(&mut conn, &project_id);
-        insert_project(&mut conn, &project_id);
-        insert_file(&mut conn, &project_id, "src/name.rs", 1);
+            assert!(suggestions.is_empty());
+            let resolved = resolved.expect("symbol should resolve");
+            assert_eq!(resolved.id, symbol_id);
+            assert_eq!(resolved.display_name, "target_symbol");
+        }
 
-        let uuid_shaped_name = unique_uuid("uuid-shaped-name");
-        insert_symbol(
-            &mut conn,
-            &project_id,
-            "src/name.rs",
-            &unique_uuid("different-symbol-id"),
-            &uuid_shaped_name,
-            3,
-        );
+        #[test]
+        #[serial_test::serial(serial_db)]
+        fn unknown_uuid_input_does_not_fall_back_to_name_resolution() {
+            let Some(mut conn) = connect_graph_resolution_test_db() else {
+                return;
+            };
+            let project_id = unique_uuid("project");
+            cleanup_graph_resolution_project(&mut conn, &project_id);
+            insert_project(&mut conn, &project_id);
+            insert_file(&mut conn, &project_id, "src/name.rs", 1);
 
-        let (resolved, suggestions) =
-            resolve_symbol_with_connection(&mut conn, &project_id, &uuid_shaped_name)
-                .expect("resolve unknown uuid");
-        cleanup_graph_resolution_project(&mut conn, &project_id);
+            let uuid_shaped_name = unique_uuid("uuid-shaped-name");
+            insert_symbol(
+                &mut conn,
+                &project_id,
+                "src/name.rs",
+                &unique_uuid("different-symbol-id"),
+                &uuid_shaped_name,
+                3,
+            );
 
-        assert!(resolved.is_none());
-        assert!(suggestions.is_empty());
-    }
+            let (resolved, suggestions) =
+                resolve_symbol_with_connection(&mut conn, &project_id, &uuid_shaped_name)
+                    .expect("resolve unknown uuid");
+            cleanup_graph_resolution_project(&mut conn, &project_id);
 
-    #[test]
-    fn ambiguous_name_behavior_remains_unchanged() {
-        let Some(mut conn) = connect_graph_resolution_test_db() else {
-            return;
-        };
-        let project_id = unique_uuid("project");
-        cleanup_graph_resolution_project(&mut conn, &project_id);
-        insert_project(&mut conn, &project_id);
-        insert_file(&mut conn, &project_id, "src/a.rs", 1);
-        insert_file(&mut conn, &project_id, "src/b.rs", 1);
+            assert!(resolved.is_none());
+            assert!(suggestions.is_empty());
+        }
 
-        insert_symbol(
-            &mut conn,
-            &project_id,
-            "src/a.rs",
-            &unique_uuid("shared-a"),
-            "shared_lookup",
-            10,
-        );
-        insert_symbol(
-            &mut conn,
-            &project_id,
-            "src/b.rs",
-            &unique_uuid("shared-b"),
-            "shared_lookup",
-            20,
-        );
+        #[test]
+        #[serial_test::serial(serial_db)]
+        fn ambiguous_name_behavior_remains_unchanged() {
+            let Some(mut conn) = connect_graph_resolution_test_db() else {
+                return;
+            };
+            let project_id = unique_uuid("project");
+            cleanup_graph_resolution_project(&mut conn, &project_id);
+            insert_project(&mut conn, &project_id);
+            insert_file(&mut conn, &project_id, "src/a.rs", 1);
+            insert_file(&mut conn, &project_id, "src/b.rs", 1);
 
-        let (resolved, suggestions) =
-            resolve_symbol_with_connection(&mut conn, &project_id, "shared_lookup")
-                .expect("resolve ambiguous name");
-        cleanup_graph_resolution_project(&mut conn, &project_id);
+            insert_symbol(
+                &mut conn,
+                &project_id,
+                "src/a.rs",
+                &unique_uuid("shared-a"),
+                "shared_lookup",
+                10,
+            );
+            insert_symbol(
+                &mut conn,
+                &project_id,
+                "src/b.rs",
+                &unique_uuid("shared-b"),
+                "shared_lookup",
+                20,
+            );
 
-        assert!(resolved.is_none());
-        assert_eq!(suggestions.len(), 2);
-        assert!(suggestions.iter().any(|item| item.contains("src/a.rs:10")));
-        assert!(suggestions.iter().any(|item| item.contains("src/b.rs:20")));
+            let (resolved, suggestions) =
+                resolve_symbol_with_connection(&mut conn, &project_id, "shared_lookup")
+                    .expect("resolve ambiguous name");
+            cleanup_graph_resolution_project(&mut conn, &project_id);
+
+            assert!(resolved.is_none());
+            assert_eq!(suggestions.len(), 2);
+            assert!(suggestions.iter().any(|item| item.contains("src/a.rs:10")));
+            assert!(suggestions.iter().any(|item| item.contains("src/b.rs:20")));
+        }
     }
 }

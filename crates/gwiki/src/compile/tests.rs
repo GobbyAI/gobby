@@ -1,6 +1,7 @@
 use super::*;
 use crate::provenance::ProvenanceGraph;
 use crate::session::{AcceptedResearchNote, ResearchScope, ResearchSession};
+use crate::synthesis::SynthesizedPage;
 
 fn session_with_note(scope: &ResearchScope, title: &str, relative_path: &str) -> ResearchSession {
     ResearchSession {
@@ -318,4 +319,67 @@ fn index_update_preserves_unrelated_entries() {
     let index = std::fs::read_to_string(scope.root().join("_index.md")).expect("index read");
     assert!(index.contains("[[wiki/topics/existing|Existing Entry]]"));
     assert!(index.contains("[[wiki/topics/index-preservation|Index Preservation]]"));
+}
+
+#[test]
+fn index_update_uses_structural_heading_and_link_checks() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let article = SynthesizedPage {
+        path: temp.path().join("wiki/topics/exact.md"),
+        title: "Exact".to_string(),
+        markdown: "# Exact\n\n".to_string(),
+    };
+    std::fs::write(
+        temp.path().join("_index.md"),
+        concat!(
+            "# Wiki Index\n\n",
+            "## Compiled pages archive\n\n",
+            "- [[wiki/topics/exact|Exact]] archived copy\n"
+        ),
+    )
+    .expect("index written");
+
+    update_wiki_index(temp.path(), &article).expect("index updated");
+
+    let index = std::fs::read_to_string(temp.path().join("_index.md")).expect("index read");
+    assert!(index.lines().any(|line| line == "## Compiled pages"));
+    assert_eq!(
+        index
+            .lines()
+            .filter(|line| *line == "- [[wiki/topics/exact|Exact]]")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn insert_compiled_page_link_errors_without_compiled_heading() {
+    let mut index = "# Wiki Index\n\n".to_string();
+
+    let error = insert_compiled_page_link(&mut index, "[[wiki/topics/missing|Missing]]")
+        .expect_err("missing heading fails");
+
+    assert!(matches!(error, WikiError::Config { .. }));
+}
+
+#[test]
+fn write_target_page_rejects_existing_page_without_overwrite_race() {
+    let vault = tempfile::tempdir().expect("vault tempdir");
+    let target = vault.path().join("existing.md");
+    std::fs::write(&target, "human-authored wiki page").expect("existing page");
+
+    let error = write_target_page(vault.path(), &target, "# Replacement\n")
+        .expect_err("existing target rejected");
+
+    assert!(matches!(
+        error,
+        WikiError::InvalidInput {
+            field: "write_intent",
+            ..
+        }
+    ));
+    assert_eq!(
+        std::fs::read_to_string(&target).expect("existing page retained"),
+        "human-authored wiki page"
+    );
 }

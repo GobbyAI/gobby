@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use crate::WikiError;
 use crate::research::{AcceptedNoteDraft, ResearchStopReason};
+use crate::research_loop::helpers::validate_source_reference;
 use crate::session::AcceptedResearchNote;
 
 #[derive(Default)]
@@ -262,4 +263,20 @@ fn parses_fenced_json_action() {
             reason: Some("enough evidence".to_string())
         }
     );
+}
+
+#[test]
+fn file_url_source_references_use_path_scope_validation() {
+    let root = tempfile::tempdir().expect("wiki root");
+    let inside = root.path().join("raw/source.md");
+    let inside_url = url::Url::from_file_path(&inside).expect("inside file URL");
+    assert!(validate_source_reference(root.path(), inside_url.as_str()).is_ok());
+
+    let outside = tempfile::tempdir().expect("outside root");
+    let outside_url =
+        url::Url::from_file_path(outside.path().join("raw/source.md")).expect("outside file URL");
+    let error = validate_source_reference(root.path(), outside_url.as_str())
+        .expect_err("outside file URL rejected");
+
+    assert!(error.contains("outside the wiki scope"));
 }

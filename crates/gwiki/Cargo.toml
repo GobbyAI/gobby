@@ -60,3 +60,4 @@ zip = { version = "4", default-features = false, features = ["deflate"], optiona
 
 [dev-dependencies]
 gobby-core = { path = "../gcore", version = "0.3.0", features = ["postgres", "falkor", "qdrant", "indexing", "search", "ai"] }
+serial_test = "3"

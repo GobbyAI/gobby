@@ -1275,6 +1275,7 @@ dependencies = [
  "scraper",
  "serde",
  "serde_json",
+ "serial_test",
  "tempfile",
  "toml",
  "ureq",

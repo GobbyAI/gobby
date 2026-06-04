@@ -88,15 +88,20 @@ mod tests {
         assert!(REQUIRED_BM25_INDEXES.contains(&"code_content_search_bm25"));
     }
 
-    #[test]
-    fn validates_runtime_schema_when_postgres_test_dsn_is_set() {
-        let Ok(database_url) = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL") else {
-            return;
-        };
+    mod serial_db {
+        use super::*;
 
-        let mut client = gobby_core::postgres::connect_readwrite(&database_url)
-            .expect("connect test PostgreSQL hub");
-        assert!(validate_runtime_schema(&mut client).is_ok());
+        #[test]
+        #[serial_test::serial(serial_db)]
+        fn validates_runtime_schema_when_postgres_test_dsn_is_set() {
+            let Ok(database_url) = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL") else {
+                return;
+            };
+
+            let mut client = gobby_core::postgres::connect_readwrite(&database_url)
+                .expect("connect test PostgreSQL hub");
+            assert!(validate_runtime_schema(&mut client).is_ok());
+        }
     }
 
     #[test]

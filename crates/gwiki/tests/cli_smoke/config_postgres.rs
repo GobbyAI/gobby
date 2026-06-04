@@ -68,79 +68,84 @@ fn configured_index_uses_postgres_writer_when_database_url_is_set() {
     );
 }
 
-#[test]
-fn configured_postgres_index_feeds_configured_search_when_test_database_is_available() {
-    let Some(database_url) = common::postgres_test_database_url() else {
-        eprintln!(
-            "skipping configured_postgres_index_feeds_configured_search_when_test_database_is_available: GWIKI_POSTGRES_TEST_DATABASE_URL/GCODE_POSTGRES_TEST_DATABASE_URL is not set"
-        );
-        return;
-    };
+mod serial_db {
+    use super::*;
 
-    let fixture = common::GwikiFixture::new();
-    let topic = fixture.init_topic("pg-index-search");
-    let _cleanup =
-        common::GwikiScopeCleanup::new(database_url.clone(), "topic", topic.name.clone());
+    #[test]
+    #[serial_test::serial(serial_db)]
+    fn configured_postgres_index_feeds_configured_search_when_test_database_is_available() {
+        let Some(database_url) = common::postgres_test_database_url() else {
+            eprintln!(
+                "skipping configured_postgres_index_feeds_configured_search_when_test_database_is_available: GWIKI_POSTGRES_TEST_DATABASE_URL/GCODE_POSTGRES_TEST_DATABASE_URL is not set"
+            );
+            return;
+        };
 
-    let setup = gwiki_with_database_url(
-        &fixture,
-        fixture.root(),
-        &database_url,
-        &[
-            "--format",
-            "json",
-            "setup",
-            "--standalone",
-            "--no-services",
-            "--database-url",
+        let fixture = common::GwikiFixture::new();
+        let topic = fixture.init_topic("pg-index-search");
+        let _cleanup =
+            common::GwikiScopeCleanup::new(database_url.clone(), "topic", topic.name.clone());
+
+        let setup = gwiki_with_database_url(
+            &fixture,
+            fixture.root(),
             &database_url,
-            "--topic",
-            &topic.name,
-        ],
-    );
-    common::assert_success(&setup, "setup");
+            &[
+                "--format",
+                "json",
+                "setup",
+                "--standalone",
+                "--no-services",
+                "--database-url",
+                &database_url,
+                "--topic",
+                &topic.name,
+            ],
+        );
+        common::assert_success(&setup, "setup");
 
-    fs::create_dir_all(topic.vault.join("wiki/topics")).expect("create topic dir");
-    fs::write(
-        topic.vault.join("wiki/topics/durable-search.md"),
-        "# Durable Search\n\nDurable bm25needle content is searchable after indexing.\n",
-    )
-    .expect("write topic page");
+        fs::create_dir_all(topic.vault.join("wiki/topics")).expect("create topic dir");
+        fs::write(
+            topic.vault.join("wiki/topics/durable-search.md"),
+            "# Durable Search\n\nDurable bm25needle content is searchable after indexing.\n",
+        )
+        .expect("write topic page");
 
-    let index = gwiki_with_database_url(
-        &fixture,
-        fixture.root(),
-        &database_url,
-        &["--format", "json", "index", "--topic", &topic.name],
-    );
-    common::assert_success(&index, "index");
+        let index = gwiki_with_database_url(
+            &fixture,
+            fixture.root(),
+            &database_url,
+            &["--format", "json", "index", "--topic", &topic.name],
+        );
+        common::assert_success(&index, "index");
 
-    let search = gwiki_with_database_url(
-        &fixture,
-        fixture.root(),
-        &database_url,
-        &[
-            "--format",
-            "json",
-            "search",
-            "--topic",
-            &topic.name,
-            "bm25needle",
-            "--limit",
-            "3",
-        ],
-    );
-    common::assert_success(&search, "search");
-    let search_payload = common::json_stdout(&search);
-    assert!(
-        search_payload["results"].as_array().is_some_and(|results| {
-            results.iter().any(|result| {
-                result["wiki_page"] == "wiki/topics/durable-search.md"
-                    && result["sources"]
-                        .as_array()
-                        .is_some_and(|sources| sources.iter().any(|source| source == "bm25"))
-            })
-        }),
-        "{search_payload:#}"
-    );
+        let search = gwiki_with_database_url(
+            &fixture,
+            fixture.root(),
+            &database_url,
+            &[
+                "--format",
+                "json",
+                "search",
+                "--topic",
+                &topic.name,
+                "bm25needle",
+                "--limit",
+                "3",
+            ],
+        );
+        common::assert_success(&search, "search");
+        let search_payload = common::json_stdout(&search);
+        assert!(
+            search_payload["results"].as_array().is_some_and(|results| {
+                results.iter().any(|result| {
+                    result["wiki_page"] == "wiki/topics/durable-search.md"
+                        && result["sources"]
+                            .as_array()
+                            .is_some_and(|sources| sources.iter().any(|source| source == "bm25"))
+                })
+            }),
+            "{search_payload:#}"
+        );
+    }
 }

@@ -14,6 +14,17 @@ const OVERLAY_VISIBILITY_CHILD_TABLES: &[&str] = &[
 ];
 const OVERLAY_VISIBILITY_PROJECT_TABLE: &str = "code_indexed_projects";
 
+fn unique_test_id(prefix: &str) -> String {
+    format!(
+        "{prefix}-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time after epoch")
+            .as_nanos()
+    )
+}
+
 #[test]
 fn sanitize_pg_search_query_matches_gobby_rules() {
     assert_eq!(
@@ -154,41 +165,116 @@ fn snippet_handles_unicode_before_match() {
     assert!(snippet.chars().count() <= 180);
 }
 
+mod serial_db {
+    use super::*;
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    fn overlay_visibility_counts_and_kinds_use_database_predicates() {
+        let Some((mut conn, database_url)) = connect_overlay_visibility_test_db() else {
+            return;
+        };
+
+        let ids = OverlayFixtureIds::new(database_url);
+        cleanup_overlay_visibility_fixture(&mut conn, &ids);
+        let cleanup = OverlayFixtureCleanup {
+            database_url: ids.database_url.clone(),
+            parent_project_id: ids.parent_project_id.clone(),
+            overlay_project_id: ids.overlay_project_id.clone(),
+        };
+
+        seed_overlay_visibility_fixture(&mut conn, &ids);
+        let ctx = overlay_visibility_context(&ids);
+
+        assert_eq!(
+            crate::visibility::visible_kinds(&mut conn, &ctx).expect("visible kinds"),
+            vec!["overlay_kind", "overlay_shadow_kind", "parent_kind"]
+        );
+        assert_eq!(
+            count_text_visible(&mut conn, "parentonly", &ctx, None, &[]),
+            1
+        );
+        assert_eq!(count_text_visible(&mut conn, "++", &ctx, None, &[]), 3);
+        assert_eq!(
+            count_content_visible(&mut conn, "parentonly", &ctx, None, &[]),
+            1
+        );
+        assert_eq!(count_content_visible(&mut conn, "++", &ctx, None, &[]), 3);
+
+        cleanup
+            .cleanup()
+            .expect("cleanup overlay visibility fixture");
+    }
+}
+
 #[test]
-fn overlay_visibility_counts_and_kinds_use_database_predicates() {
-    let Some((mut conn, database_url)) = connect_overlay_visibility_test_db() else {
+fn resolve_graph_symbol_by_id_resolves_exact_symbol() {
+    let Some((mut conn, _database_url)) = connect_overlay_visibility_test_db() else {
         return;
     };
 
-    let ids = OverlayFixtureIds::new(database_url);
-    cleanup_overlay_visibility_fixture(&mut conn, &ids);
-    let cleanup = OverlayFixtureCleanup {
-        database_url: ids.database_url.clone(),
-        parent_project_id: ids.parent_project_id.clone(),
-        overlay_project_id: ids.overlay_project_id.clone(),
+    let project_id = unique_test_id("gcode-graph-symbol-by-id");
+    cleanup_single_project(&mut conn, &project_id);
+    insert_project(&mut conn, &project_id, "/tmp/gcode-graph-symbol-by-id");
+    insert_file(&mut conn, &project_id, "src/target.rs", "rust", 1);
+    insert_symbol(
+        &mut conn,
+        &project_id,
+        "src/target.rs",
+        "target_symbol",
+        "function",
+    );
+    let symbol_id = format!("{project_id}:src/target.rs:target_symbol");
+
+    let resolved = resolve_graph_symbol_by_id(&mut conn, &symbol_id, &project_id)
+        .expect("resolve symbol by id")
+        .expect("symbol resolves");
+    cleanup_single_project(&mut conn, &project_id);
+
+    assert_eq!(resolved.id, symbol_id);
+    assert_eq!(resolved.display_name, "target_symbol");
+}
+
+#[test]
+fn resolve_graph_symbol_by_id_returns_none_for_missing_uuid() {
+    let Some((mut conn, _database_url)) = connect_overlay_visibility_test_db() else {
+        return;
+    };
+    let project_id = unique_test_id("gcode-graph-symbol-missing");
+    let missing_id = uuid::Uuid::new_v5(
+        &crate::models::CODE_INDEX_UUID_NAMESPACE,
+        project_id.as_bytes(),
+    )
+    .to_string();
+
+    let resolved = resolve_graph_symbol_by_id(&mut conn, &missing_id, &project_id)
+        .expect("resolve missing symbol id");
+
+    assert!(resolved.is_none());
+}
+
+#[test]
+fn resolve_graph_symbol_by_id_returns_none_for_empty_id() {
+    let Some((mut conn, _database_url)) = connect_overlay_visibility_test_db() else {
+        return;
     };
 
-    seed_overlay_visibility_fixture(&mut conn, &ids);
-    let ctx = overlay_visibility_context(&ids);
+    let resolved = resolve_graph_symbol_by_id(&mut conn, "", "gcode-empty-symbol-id")
+        .expect("resolve empty symbol id");
 
-    assert_eq!(
-        crate::visibility::visible_kinds(&mut conn, &ctx).expect("visible kinds"),
-        vec!["overlay_kind", "overlay_shadow_kind", "parent_kind"]
-    );
-    assert_eq!(
-        count_text_visible(&mut conn, "parentonly", &ctx, None, &[]),
-        1
-    );
-    assert_eq!(count_text_visible(&mut conn, "++", &ctx, None, &[]), 3);
-    assert_eq!(
-        count_content_visible(&mut conn, "parentonly", &ctx, None, &[]),
-        1
-    );
-    assert_eq!(count_content_visible(&mut conn, "++", &ctx, None, &[]), 3);
+    assert!(resolved.is_none());
+}
 
-    cleanup
-        .cleanup()
-        .expect("cleanup overlay visibility fixture");
+#[test]
+fn resolve_graph_symbol_by_id_returns_none_for_malformed_id() {
+    let Some((mut conn, _database_url)) = connect_overlay_visibility_test_db() else {
+        return;
+    };
+
+    let resolved = resolve_graph_symbol_by_id(&mut conn, "not-a-symbol-id", "gcode-malformed-id")
+        .expect("resolve malformed symbol id");
+
+    assert!(resolved.is_none());
 }
 
 fn connect_overlay_visibility_test_db() -> Option<(Client, String)> {
@@ -262,6 +348,10 @@ impl Drop for OverlayFixtureCleanup {
 fn cleanup_overlay_visibility_fixture(conn: &mut Client, ids: &OverlayFixtureIds) {
     let _ =
         cleanup_overlay_visibility_projects(conn, &ids.parent_project_id, &ids.overlay_project_id);
+}
+
+fn cleanup_single_project(conn: &mut Client, project_id: &str) {
+    let _ = cleanup_overlay_visibility_projects(conn, project_id, project_id);
 }
 
 fn cleanup_overlay_visibility_projects(

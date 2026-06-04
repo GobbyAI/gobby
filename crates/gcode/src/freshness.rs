@@ -307,113 +307,117 @@ mod tests {
         .expect("full index of test project");
     }
 
-    #[test]
-    #[serial_test::serial]
-    fn no_freshness_env_short_circuits_project_refresh() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let ctx = context_for(tmp.path());
-        unsafe { std::env::set_var(INFLIGHT_ENV, "1") };
-        let result = ensure_fresh(&ctx, FreshnessScope::Project);
-        unsafe { std::env::remove_var(INFLIGHT_ENV) };
+    mod serial_db {
+        use super::*;
 
-        assert_eq!(result.expect("freshness status"), FreshnessStatus::Checked);
-    }
+        #[test]
+        #[serial_test::serial(serial_db)]
+        fn no_freshness_env_short_circuits_project_refresh() {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let ctx = context_for(tmp.path());
+            unsafe { std::env::set_var(INFLIGHT_ENV, "1") };
+            let result = ensure_fresh(&ctx, FreshnessScope::Project);
+            unsafe { std::env::remove_var(INFLIGHT_ENV) };
 
-    #[test]
-    #[serial_test::serial]
-    fn busy_project_lock_skips_freshness_refresh() {
-        let Some(ctx) = postgres_test_context("gcode-freshness-busy") else {
-            return;
-        };
-        let _holder = hold_project_lock(&ctx);
+            assert_eq!(result.expect("freshness status"), FreshnessStatus::Checked);
+        }
 
-        let status = ensure_fresh(&ctx, FreshnessScope::Project).expect("freshness status");
+        #[test]
+        #[serial_test::serial(serial_db)]
+        fn busy_project_lock_skips_freshness_refresh() {
+            let Some(ctx) = postgres_test_context("gcode-freshness-busy") else {
+                return;
+            };
+            let _holder = hold_project_lock(&ctx);
 
-        assert_eq!(status, FreshnessStatus::SkippedBusy);
-    }
+            let status = ensure_fresh(&ctx, FreshnessScope::Project).expect("freshness status");
 
-    #[test]
-    #[serial_test::serial]
-    fn pre_gate_skips_lock_when_unchanged_and_trips_after_a_change() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let root = tmp.path();
-        std::fs::create_dir_all(root.join("src")).expect("create src");
-        let lib = root.join("src/lib.rs");
-        std::fs::write(&lib, b"fn main() {}\n").expect("write lib.rs");
-        std::fs::write(root.join("README.md"), b"# Title\n").expect("write README");
+            assert_eq!(status, FreshnessStatus::SkippedBusy);
+        }
 
-        // Age the files well past the skew margin so a clean index leaves them
-        // unambiguously older than last_indexed_at, regardless of host/hub skew.
-        let aged = SystemTime::now() - std::time::Duration::from_secs(3600);
-        set_mtime(&lib, aged);
-        set_mtime(&root.join("README.md"), aged);
+        #[test]
+        #[serial_test::serial(serial_db)]
+        fn pre_gate_skips_lock_when_unchanged_and_trips_after_a_change() {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let root = tmp.path();
+            std::fs::create_dir_all(root.join("src")).expect("create src");
+            let lib = root.join("src/lib.rs");
+            std::fs::write(&lib, b"fn main() {}\n").expect("write lib.rs");
+            std::fs::write(root.join("README.md"), b"# Title\n").expect("write README");
 
-        let Some(ctx) = postgres_context_with_root("gcode-freshness-pregate", root) else {
-            return;
-        };
+            // Age the files well past the skew margin so a clean index leaves them
+            // unambiguously older than last_indexed_at, regardless of host/hub skew.
+            let aged = SystemTime::now() - std::time::Duration::from_secs(3600);
+            set_mtime(&lib, aged);
+            set_mtime(&root.join("README.md"), aged);
 
-        // Start clean, then index so code_indexed_projects.last_indexed_at = NOW().
-        invalidate_test_project(&ctx);
-        full_index(&ctx);
+            let Some(ctx) = postgres_context_with_root("gcode-freshness-pregate", root) else {
+                return;
+            };
 
-        // Nothing changed: the pre-gate must skip the advisory lock entirely,
-        // even while another connection holds it, and report Checked. Without
-        // the gate this would force SkippedBusy.
-        let holder = hold_project_lock(&ctx);
-        let status = ensure_fresh(&ctx, FreshnessScope::Project).expect("freshness status");
-        assert_eq!(status, FreshnessStatus::Checked);
+            // Start clean, then index so code_indexed_projects.last_indexed_at = NOW().
+            invalidate_test_project(&ctx);
+            full_index(&ctx);
 
-        // Touch a tracked file with a future mtime so the gate trips regardless
-        // of skew; with the lock still held it reports SkippedBusy, proving it
-        // took the lock path rather than skipping.
-        set_mtime(
-            &lib,
-            SystemTime::now() + std::time::Duration::from_secs(3600),
-        );
-        let status = ensure_fresh(&ctx, FreshnessScope::Project).expect("freshness status");
-        assert_eq!(status, FreshnessStatus::SkippedBusy);
-        drop(holder);
+            // Nothing changed: the pre-gate must skip the advisory lock entirely,
+            // even while another connection holds it, and report Checked. Without
+            // the gate this would force SkippedBusy.
+            let holder = hold_project_lock(&ctx);
+            let status = ensure_fresh(&ctx, FreshnessScope::Project).expect("freshness status");
+            assert_eq!(status, FreshnessStatus::Checked);
 
-        invalidate_test_project(&ctx);
-    }
+            // Touch a tracked file with a future mtime so the gate trips regardless
+            // of skew; with the lock still held it reports SkippedBusy, proving it
+            // took the lock path rather than skipping.
+            set_mtime(
+                &lib,
+                SystemTime::now() + std::time::Duration::from_secs(3600),
+            );
+            let status = ensure_fresh(&ctx, FreshnessScope::Project).expect("freshness status");
+            assert_eq!(status, FreshnessStatus::SkippedBusy);
+            drop(holder);
 
-    #[test]
-    #[serial_test::serial]
-    fn symbol_slice_check_uses_stored_byte_range_hash() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let source = b"fn before() {}\nfn target() {}\n";
-        std::fs::write(tmp.path().join("lib.rs"), source).expect("write file");
-        let ctx = context_for(tmp.path());
-        let start = 15;
-        let end = source.len();
-        let sym = Symbol {
-            id: uuid::Uuid::new_v5(&CODE_INDEX_UUID_NAMESPACE, b"sym").to_string(),
-            project_id: "proj".to_string(),
-            file_path: "lib.rs".to_string(),
-            name: "target".to_string(),
-            qualified_name: "target".to_string(),
-            kind: "function".to_string(),
-            language: "rust".to_string(),
-            byte_start: start,
-            byte_end: end,
-            line_start: 2,
-            line_end: 2,
-            signature: None,
-            docstring: None,
-            parent_symbol_id: None,
-            content_hash: symbol_hash(source, start, end),
-            summary: None,
-            created_at: String::new(),
-            updated_at: String::new(),
-        };
+            invalidate_test_project(&ctx);
+        }
 
-        assert!(symbol_slice_is_current(&ctx, &sym));
+        #[test]
+        #[serial_test::serial(serial_db)]
+        fn symbol_slice_check_uses_stored_byte_range_hash() {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let source = b"fn before() {}\nfn target() {}\n";
+            std::fs::write(tmp.path().join("lib.rs"), source).expect("write file");
+            let ctx = context_for(tmp.path());
+            let start = 15;
+            let end = source.len();
+            let sym = Symbol {
+                id: uuid::Uuid::new_v5(&CODE_INDEX_UUID_NAMESPACE, b"sym").to_string(),
+                project_id: "proj".to_string(),
+                file_path: "lib.rs".to_string(),
+                name: "target".to_string(),
+                qualified_name: "target".to_string(),
+                kind: "function".to_string(),
+                language: "rust".to_string(),
+                byte_start: start,
+                byte_end: end,
+                line_start: 2,
+                line_end: 2,
+                signature: None,
+                docstring: None,
+                parent_symbol_id: None,
+                content_hash: symbol_hash(source, start, end),
+                summary: None,
+                created_at: String::new(),
+                updated_at: String::new(),
+            };
 
-        std::fs::write(
-            tmp.path().join("lib.rs"),
-            b"// shifted\nfn before() {}\nfn target() {}\n",
-        )
-        .expect("shift file");
-        assert!(!symbol_slice_is_current(&ctx, &sym));
+            assert!(symbol_slice_is_current(&ctx, &sym));
+
+            std::fs::write(
+                tmp.path().join("lib.rs"),
+                b"// shifted\nfn before() {}\nfn target() {}\n",
+            )
+            .expect("shift file");
+            assert!(!symbol_slice_is_current(&ctx, &sym));
+        }
     }
 }

@@ -1,4 +1,5 @@
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::{ErrorKind, Write as _};
 use std::path::{Path, PathBuf};
 
 use crate::WikiError;
@@ -66,15 +67,6 @@ pub(crate) fn write_target_page(
     target_page: &Path,
     rendered: &str,
 ) -> Result<(), WikiError> {
-    if target_page.exists() {
-        return Err(WikiError::InvalidInput {
-            field: "write_intent",
-            message: format!(
-                "existing page {} requires merge/diff handling before overwrite",
-                target_page.display()
-            ),
-        });
-    }
     if let Some(parent) = target_page.parent() {
         ensure_compile_target_parent_inside_vault(vault_root, parent)?;
         fs::create_dir_all(parent).map_err(|error| WikiError::Io {
@@ -83,11 +75,33 @@ pub(crate) fn write_target_page(
             source: error,
         })?;
     }
-    fs::write(target_page, rendered).map_err(|error| WikiError::Io {
-        action: "write compile target page",
-        path: Some(target_page.to_path_buf()),
-        source: error,
-    })
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(target_page)
+        .map_err(|error| {
+            if error.kind() == ErrorKind::AlreadyExists {
+                WikiError::InvalidInput {
+                    field: "write_intent",
+                    message: format!(
+                        "existing page {} requires merge/diff handling before overwrite",
+                        target_page.display()
+                    ),
+                }
+            } else {
+                WikiError::Io {
+                    action: "write compile target page",
+                    path: Some(target_page.to_path_buf()),
+                    source: error,
+                }
+            }
+        })?;
+    file.write_all(rendered.as_bytes())
+        .map_err(|error| WikiError::Io {
+            action: "write compile target page",
+            path: Some(target_page.to_path_buf()),
+            source: error,
+        })
 }
 
 fn ensure_compile_target_parent_inside_vault(

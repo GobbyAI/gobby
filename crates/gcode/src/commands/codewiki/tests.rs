@@ -164,6 +164,16 @@ fn graph_queries_use_requested_edge_limit() {
 }
 
 #[test]
+fn edge_limit_validation_rejects_zero_and_excessive_limits() {
+    assert!(validate_edge_limit(1).is_ok());
+    assert!(validate_edge_limit(MAX_EDGE_LIMIT).is_ok());
+    assert!(validate_edge_limit(0).is_err());
+
+    let error = validate_edge_limit(MAX_EDGE_LIMIT + 1).expect_err("limit above cap fails");
+    assert!(error.to_string().contains("codewiki --edge-limit"));
+}
+
+#[test]
 fn clusters_without_falkordb() {
     let input = CodewikiInput {
         files: vec![
