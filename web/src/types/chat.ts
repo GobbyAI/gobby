@@ -270,7 +270,6 @@ export interface ChatState {
       fallbackContext?: FallbackContextMode;
     },
   ) => Promise<string>;
-  planManualSwitch: boolean;
   planPendingApproval: boolean;
   onApprovePlan: () => void;
   onRequestPlanChanges: (feedback: string) => void;

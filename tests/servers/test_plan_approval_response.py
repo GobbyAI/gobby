@@ -160,3 +160,101 @@ async def test_handle_plan_approval_approve_pending_plan_unblocks_into_post_plan
     websocket.send.assert_not_called()
     assert websocket.send.call_count == 0
     assert not websocket.send.called
+
+
+@pytest.mark.asyncio
+async def test_handle_plan_approval_approve_managed_auto_continues_execution():
+    """Approve on a managed CLI auto-starts a continuation turn (#15633).
+
+    Managed CLIs (plan_auto_switch False) present a plan as a completed
+    assistant turn with no ExitPlanMode to unblock, so approval must inject a
+    continuation through the normal chat-message ingress for execution to begin.
+    """
+
+    class MockHost(SessionControlMixin):
+        def __init__(self):
+            self._chat_sessions = {}
+            self.clients = {}
+            self._active_chat_tasks = {}
+            self._pending_modes = {}
+            self._pending_worktree_paths = {}
+            self._pending_agents = {}
+            self.session_manager = None
+
+    host = MockHost()
+    host._handle_chat_message = AsyncMock()
+
+    session = MagicMock()
+    session.has_pending_plan = True
+    session.plan_auto_switch = False
+    session.sync_sdk_permission_mode = AsyncMock()
+
+    conversation_id = "conv-managed"
+    host._chat_sessions[conversation_id] = session
+    websocket = AsyncMock()
+    data = {
+        "type": "plan_approval_response",
+        "conversation_id": conversation_id,
+        "decision": "approve",
+    }
+
+    with patch(
+        "gobby.servers.websocket.handlers.plan_approval._resolve_post_plan_mode",
+        return_value="normal",
+    ):
+        await SessionControlMixin._handle_plan_approval_response(host, websocket, data)
+
+    session.set_chat_mode.assert_called_once_with("normal")
+    session.provide_plan_decision.assert_called_once_with("approve")
+    # Exactly one continuation turn through the chat ingress, on the same socket.
+    host._handle_chat_message.assert_awaited_once()
+    cont_ws, cont_data = host._handle_chat_message.await_args[0]
+    assert cont_ws is websocket
+    assert cont_data["type"] == "chat_message"
+    assert cont_data["conversation_id"] == conversation_id
+    assert cont_data["content"].strip()
+
+
+@pytest.mark.asyncio
+async def test_handle_plan_approval_approve_native_does_not_auto_continue():
+    """Native Claude (auto-switch) unblocks ExitPlanMode in-flight; no extra turn."""
+
+    class MockHost(SessionControlMixin):
+        def __init__(self):
+            self._chat_sessions = {}
+            self.clients = {}
+            self._active_chat_tasks = {}
+            self._pending_modes = {}
+            self._pending_worktree_paths = {}
+            self._pending_agents = {}
+            self.session_manager = None
+
+    host = MockHost()
+    host._handle_chat_message = AsyncMock()
+
+    session = MagicMock()
+    session.has_pending_plan = True
+    session.plan_auto_switch = True
+    session.sync_sdk_permission_mode = AsyncMock()
+
+    conversation_id = "conv-native"
+    host._chat_sessions[conversation_id] = session
+    websocket = AsyncMock()
+    data = {
+        "type": "plan_approval_response",
+        "conversation_id": conversation_id,
+        "decision": "approve",
+    }
+
+    with patch(
+        "gobby.servers.websocket.handlers.plan_approval._resolve_post_plan_mode",
+        return_value="normal",
+    ):
+        await SessionControlMixin._handle_plan_approval_response(host, websocket, data)
+
+    # Native unblocks ExitPlanMode in-flight and switches mode, but does NOT
+    # inject a second turn (that would double-execute the approved plan).
+    session.set_chat_mode.assert_called_once_with("normal")
+    session.sync_sdk_permission_mode.assert_awaited_once()
+    session.provide_plan_decision.assert_called_once_with("approve")
+    host._handle_chat_message.assert_not_awaited()

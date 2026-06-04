@@ -101,7 +101,6 @@ export default function App() {
     deleteConversation,
     respondToQuestion,
     respondToApproval,
-    planManualSwitch,
     planPendingApproval,
     approvePlan,
     requestPlanChanges,
@@ -799,7 +798,6 @@ export default function App() {
                   onWorktreeChange: isPersonalProject
                     ? undefined
                     : sendWorktreeChange,
-                  planManualSwitch,
                   planPendingApproval,
                   onApprovePlan: approvePlan,
                   onRequestPlanChanges: requestPlanChanges,

@@ -69,6 +69,38 @@ def _clear_pending_plan_prompt(session: Any) -> None:
     session._pending_plan_allowed_prompts = None
 
 
+async def _auto_continue_after_approval(
+    mixin: SessionControlMixin, websocket: Any, conversation_id: str
+) -> None:
+    """Start a continuation turn so an approved plan actually executes.
+
+    Managed CLIs (Codex, Droid, Gemini, Grok, Qwen) present a plan as a
+    completed assistant turn -- there is no in-flight ExitPlanMode tool to
+    unblock, so approval alone leaves the agent idle. The button says
+    "Approve & Execute", so we inject a short continuation prompt through the
+    normal chat-message path; the agent proceeds in the now-active execution
+    mode (chat_mode was already flipped off plan). Native Claude auto-switches
+    via the SDK and unblocks ExitPlanMode in-flight, so it is excluded by the
+    caller and never reaches here.
+    """
+    handler = getattr(mixin, "_handle_chat_message", None)
+    if handler is None:
+        logger.warning(
+            "Cannot auto-continue plan approval for %s: no chat-message ingress",
+            conversation_id[:8],
+        )
+        return
+    continuation = {
+        "type": "chat_message",
+        "conversation_id": conversation_id,
+        "content": "The plan is approved. Proceed with the implementation.",
+    }
+    try:
+        await handler(websocket, continuation)
+    except Exception:
+        logger.exception("Failed to auto-continue after plan approval for %s", conversation_id[:8])
+
+
 async def handle_plan_approval_response(
     mixin: SessionControlMixin, websocket: Any, data: dict[str, Any]
 ) -> None:
@@ -114,6 +146,11 @@ async def handle_plan_approval_response(
                 conversation_id[:8],
                 post_plan_mode,
             )
+            # Managed CLIs have no in-flight ExitPlanMode to unblock; the plan
+            # was a completed assistant turn. Native Claude (plan_auto_switch)
+            # continues the paused turn itself, so only auto-continue managed.
+            if not getattr(session, "plan_auto_switch", False):
+                await _auto_continue_after_approval(mixin, websocket, conversation_id)
         else:
             session._pending_post_plan_mode = post_plan_mode
             session.set_chat_mode(post_plan_mode)

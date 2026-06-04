@@ -14,7 +14,6 @@ type ChatLifecycleCallback = (conversationId: string) => void;
 
 export function usePlanArtifactCallbacks() {
   const [planPendingApproval, setPlanPendingApproval] = useState(false);
-  const [planManualSwitch, setPlanManualSwitch] = useState(false);
   const planContentRef = useRef<string | null>(null);
   const currentModeRef = useRef<ChatMode>("plan");
 
@@ -62,7 +61,6 @@ export function usePlanArtifactCallbacks() {
     onPlanReadyRef,
     pendingPlanFeedbackRef,
     planContentRef,
-    planManualSwitch,
     planPendingApproval,
     setOnArtifactEvent,
     setOnChatCleared,
@@ -70,7 +68,6 @@ export function usePlanArtifactCallbacks() {
     setCurrentMode,
     setOnModeChanged,
     setOnPlanReady,
-    setPlanManualSwitch,
     setPlanPendingApproval,
   };
 }
