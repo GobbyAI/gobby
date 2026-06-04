@@ -74,7 +74,7 @@ fn has_identifier_boundaries(line: &str, span: &GrepSpan) -> bool {
 }
 
 fn is_identifier_char(ch: char) -> bool {
-    ch.is_alphanumeric() || ch == '_'
+    ch.is_ascii_alphanumeric() || ch == '_'
 }
 
 #[cfg(test)]
@@ -114,13 +114,12 @@ mod tests {
     }
 
     #[test]
-    fn word_matching_rejects_attached_unicode_identifier_chars() {
+    fn word_matching_treats_unicode_as_non_identifier_chars() {
         let matcher = GrepMatcher::new("bar", false, false, true).expect("matcher");
 
-        assert!(matcher.find_spans("føøbar barβ _bar bar_").is_empty());
         assert_eq!(
-            matched_texts(&matcher, "føø bar; β bar"),
-            vec!["bar", "bar"]
+            matched_texts(&matcher, "føøbar barβ _bar bar_ føø bar; β bar"),
+            vec!["bar", "bar", "bar", "bar"]
         );
     }
 

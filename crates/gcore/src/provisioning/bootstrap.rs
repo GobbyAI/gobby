@@ -119,6 +119,8 @@ fn flatten_yaml_value_at_depth(
                 };
                 match value {
                     serde_yaml::Value::Mapping(_) => {
+                        // Dotted keys may be flattened prefixes such as
+                        // `ai.embeddings`, so nested values still need recursion.
                         flatten_yaml_value_at_depth(Some(&joined), value, output, depth + 1)?;
                     }
                     _ => {

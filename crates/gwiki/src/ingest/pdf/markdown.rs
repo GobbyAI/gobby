@@ -7,7 +7,7 @@ use crate::document::{DocumentDegradation, DocumentFailureMode, DocumentUnitCoun
 use crate::ingest::{markdown_metadata, path_to_string, single_line};
 use crate::vision::{VisionEndpoint, VisionExtraction, VisionRequest};
 
-use super::render::normalize_page_text;
+use super::text::normalize_page_text;
 use super::types::{PdfRenderedPage, PdfSnapshot};
 use super::{PdfMarkdownSummary, PdfPageMarkdown};
 

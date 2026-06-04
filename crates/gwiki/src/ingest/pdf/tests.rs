@@ -5,9 +5,9 @@ use gobby_core::indexing::content_hash;
 
 use super::ingest::{ingest_pages, ingest_pages_with_vision};
 use super::markdown::{render_pdf_markdown, sanitize_pdf_page_markdown};
-use super::render::normalize_page_text;
 #[cfg(feature = "documents")]
 use super::render::pdf_render_budget_degradation;
+use super::text::normalize_page_text;
 #[cfg(feature = "documents")]
 use super::types::pdf_fetched_at;
 use super::types::{DEFAULT_PDF_RENDER_DPI, PdfPage, PdfRenderedPage, PdfSnapshot};

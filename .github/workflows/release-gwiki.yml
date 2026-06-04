@@ -31,7 +31,7 @@ jobs:
           components: clippy
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@f5b277aa8941a90c16bc1cd6ab9363e0502b7d31
 
       - name: Verify tag matches Cargo.toml version
         # Tag-only: on a workflow_dispatch run GITHUB_REF is refs/heads/<branch>,
@@ -289,13 +289,22 @@ jobs:
         run: |
           set -euo pipefail
           version="$(cargo metadata --no-deps --format-version=1 | jq -r '.packages[] | select(.name == "gobby-wiki") | .version')"
-          code="$(curl -sS -A 'gobby-cli release workflow' -o /dev/null -w '%{http_code}' "https://crates.io/api/v1/crates/gobby-wiki/${version}")"
+          set +e
+          code="$(curl --fail --silent --show-error -A 'gobby-cli release workflow' -o /dev/null -w '%{http_code}' "https://crates.io/api/v1/crates/gobby-wiki/${version}")"
+          curl_status=$?
+          set -e
           if [ "$code" = "200" ]; then
             echo "gobby-wiki ${version} is already on crates.io; skipping publish (binaries still attach)."
             echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "gobby-wiki ${version} not on crates.io (HTTP ${code}); will publish."
+          elif [ "$code" = "404" ]; then
+            echo "gobby-wiki ${version} not on crates.io (HTTP 404); will publish."
             echo "skip=false" >> "$GITHUB_OUTPUT"
+          elif [ "$curl_status" -ne 0 ]; then
+            echo "::error::crates.io version check failed (curl exit ${curl_status}, HTTP ${code:-unknown})." >&2
+            exit "$curl_status"
+          else
+            echo "::error::Unexpected crates.io response while checking gobby-wiki ${version}: HTTP ${code}." >&2
+            exit 1
           fi
 
       - name: Authenticate to crates.io

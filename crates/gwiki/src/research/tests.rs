@@ -25,6 +25,20 @@ fn frontmatter_block_accepts_crlf_delimiters() {
 }
 
 #[test]
+fn yaml_field_eq_requires_exact_key_and_value() {
+    let frontmatter = r#"
+research_note_id_suffix: abc
+research_note_id: abc-extra
+  research_status: "completed"
+research_mode: completed now
+"#;
+
+    assert!(!yaml_field_eq(frontmatter, "research_note_id", "abc"));
+    assert!(yaml_field_eq(frontmatter, "research_status", "completed"));
+    assert!(!yaml_field_eq(frontmatter, "research_mode", "completed"));
+}
+
+#[test]
 fn research_reloads_checkpoint_without_daemon_dispatch() {
     let temp = tempfile::tempdir().expect("tempdir");
     let scope = ResearchScope::project(temp.path());

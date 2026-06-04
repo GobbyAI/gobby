@@ -55,8 +55,6 @@ pub(crate) use render::{
     render_module_doc,
 };
 // AI and structural text helpers.
-#[cfg(test)]
-pub(crate) use text::yaml_quote;
 pub(crate) use text::{
     citation_list, collect_link_spans, frontmatter, ground_text, maybe_generate,
     resolve_text_generator, structural_file_summary, structural_module_summary,

@@ -93,9 +93,14 @@ pub(crate) fn scope_selection_from_research_scope(scope: &ResearchScope) -> Scop
 }
 
 /// Rough budget heuristic used only when provider usage metadata is unavailable.
-/// It counts whitespace-separated words, so it can under- or over-estimate model tokens.
+/// It estimates four tokens for every three whitespace-separated words.
 pub(crate) fn estimate_tokens(text: &str) -> usize {
-    text.split_whitespace().count()
+    let words = text.split_whitespace().count();
+    if words == 0 {
+        0
+    } else {
+        words.saturating_mul(4).saturating_add(2) / 3
+    }
 }
 
 pub(crate) fn load_or_create_session(
@@ -238,5 +243,13 @@ mod tests {
             ]),
             vec!["a", "b", "c"]
         );
+    }
+
+    #[test]
+    fn estimate_tokens_uses_four_thirds_word_heuristic() {
+        assert_eq!(estimate_tokens(""), 0);
+        assert_eq!(estimate_tokens("one"), 2);
+        assert_eq!(estimate_tokens("one two three"), 4);
+        assert_eq!(estimate_tokens("one two three four"), 6);
     }
 }

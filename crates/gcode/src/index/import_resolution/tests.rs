@@ -302,6 +302,32 @@ fn rust_glob_imports_do_not_register_individual_bare_bindings() {
 }
 
 #[test]
+fn python_empty_module_imports_do_not_register_alias_bindings() {
+    let mut extracted = ExtractedImports::default();
+
+    parse_import_statement(
+        "python",
+        "import  as alias",
+        "src/sample.py",
+        &ImportResolutionContext::default(),
+        &mut extracted,
+    )
+    .expect("parse malformed Python import");
+    parse_import_statement(
+        "python",
+        "from  import thing as alias",
+        "src/sample.py",
+        &ImportResolutionContext::default(),
+        &mut extracted,
+    )
+    .expect("parse malformed Python from import");
+
+    assert!(extracted.imports.is_empty());
+    assert!(extracted.bindings.bare.is_empty());
+    assert!(extracted.bindings.member.is_empty());
+}
+
+#[test]
 fn php_grouped_imports_register_concrete_member_bindings() {
     let mut extracted = ExtractedImports::default();
 

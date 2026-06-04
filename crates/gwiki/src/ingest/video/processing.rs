@@ -170,7 +170,7 @@ pub(crate) fn video_media_degradation(
     error: WikiError,
 ) -> VideoMediaDegradation {
     let message = error.to_string();
-    let reason = if message.contains("ffmpeg") {
+    let reason = if error.is_ffmpeg_unavailable() || message_is_ffmpeg_unavailable(&message) {
         "ffmpeg_unavailable"
     } else {
         fallback_reason
@@ -180,6 +180,18 @@ pub(crate) fn video_media_degradation(
         reason: reason.to_string(),
         message,
     }
+}
+
+fn message_is_ffmpeg_unavailable(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    [
+        "ffmpeg is unavailable",
+        "ffmpeg unavailable",
+        "ffmpeg executable not found",
+        "ffmpeg was not found",
+    ]
+    .iter()
+    .any(|needle| message.contains(needle))
 }
 
 #[derive(Debug)]

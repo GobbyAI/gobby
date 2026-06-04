@@ -610,6 +610,27 @@ fn production_ingest_applies_degradation_matrix() {
 }
 
 #[test]
+fn video_media_degradation_classifies_only_unavailable_ffmpeg_errors() {
+    let unavailable = video_media_degradation(
+        "audio",
+        "extraction_failed",
+        WikiError::Config {
+            detail: "ffmpeg executable not found on PATH".to_string(),
+        },
+    );
+    assert_eq!(unavailable.reason, "ffmpeg_unavailable");
+
+    let failed = video_media_degradation(
+        "frames",
+        "extraction_failed",
+        WikiError::Config {
+            detail: "ffmpeg frame extraction failed".to_string(),
+        },
+    );
+    assert_eq!(failed.reason, "extraction_failed");
+}
+
+#[test]
 fn frame_vision_failure_drops_sampled_temp_frames_before_keep() {
     let frame = temp_file_with_bytes(".jpg", b"frame-zero").expect("frame temp");
     let frame_path = frame.path().to_path_buf();

@@ -177,13 +177,48 @@ pub(crate) fn source_id(canonical_location: &str, content_hash: &str) -> String 
 }
 
 fn escape_markdown_text(text: &str) -> String {
-    text.replace('[', "\\[").replace(']', "\\]")
+    normalize_newlines(text)
+        .replace('\\', "\\\\")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
 }
 
 fn escape_markdown_destination(destination: &str) -> String {
-    destination.replace('(', "\\(").replace(')', "\\)")
+    normalize_newlines(destination)
+        .replace('\\', "\\\\")
+        .replace('(', "\\(")
+        .replace(')', "\\)")
 }
 
 fn inline_text(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    normalize_newlines(text)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn normalize_newlines(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn markdown_link_escaping_escapes_backslashes_before_breakers() {
+        assert_eq!(escape_markdown_text(r"a\[b]"), r"a\\\[b\]");
+        assert_eq!(
+            escape_markdown_destination(r"https://example.test/a\(b)"),
+            r"https://example.test/a\\\(b\)"
+        );
+    }
+
+    #[test]
+    fn inline_text_normalizes_newlines_and_collapses_whitespace() {
+        assert_eq!(
+            inline_text("alpha\r\n  beta\tgamma\rdone"),
+            "alpha beta gamma done"
+        );
+    }
 }

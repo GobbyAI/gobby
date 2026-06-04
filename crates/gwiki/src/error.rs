@@ -76,6 +76,19 @@ impl WikiError {
             Self::Setup { .. } => "setup_error",
         }
     }
+
+    pub(crate) fn is_ffmpeg_unavailable(&self) -> bool {
+        match self {
+            Self::Config { detail } => {
+                detail.eq_ignore_ascii_case("ffmpeg executable not found on PATH")
+            }
+            Self::Io { action, source, .. } => {
+                action.eq_ignore_ascii_case("run ffmpeg")
+                    && source.kind() == std::io::ErrorKind::NotFound
+            }
+            _ => false,
+        }
+    }
 }
 
 impl fmt::Display for WikiError {

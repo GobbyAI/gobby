@@ -126,14 +126,14 @@ pub(crate) fn codewiki_call_edges_query(
     symbol_ids: &[String],
     edge_limit: usize,
 ) -> (String, HashMap<String, String>) {
+    let id_list = falkor::id_list_literal(symbol_ids);
     (
         format!(
             "MATCH (source:CodeSymbol {{project: $project}})-[:CALLS]->(target:CodeSymbol {{project: $project}}) \
              WHERE source.id IN [{}] AND target.id IN [{}] \
              RETURN source.id AS source, target.id AS target \
              LIMIT {edge_limit}",
-            falkor::id_list_literal(symbol_ids),
-            falkor::id_list_literal(symbol_ids)
+            id_list, id_list
         ),
         HashMap::from([(
             "project".to_string(),

@@ -23,7 +23,14 @@ pub(crate) fn parse_python_import_statement(
                 continue;
             }
 
-            let (module, alias) = split_alias(entry);
+            let (module, alias) = if let Some(alias) = entry.strip_prefix("as ").map(str::trim) {
+                ("", Some(alias))
+            } else {
+                split_alias(entry)
+            };
+            if module.is_empty() {
+                continue;
+            }
             extracted.imports.push(ImportRelation {
                 file_path: rel_path.to_string(),
                 module_name: module.to_string(),
@@ -58,6 +65,9 @@ pub(crate) fn parse_python_import_statement(
     };
 
     let module = module.trim();
+    if module.is_empty() {
+        return;
+    }
     extracted.imports.push(ImportRelation {
         file_path: rel_path.to_string(),
         module_name: module.to_string(),

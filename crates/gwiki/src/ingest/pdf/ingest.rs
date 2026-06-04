@@ -11,9 +11,9 @@ use crate::store::WikiIndexStore;
 use crate::vision::{VisionEndpoint, disabled_degradation};
 
 use super::markdown::{merge_pdf_pages, render_pdf_markdown};
-use super::render::normalize_page_text;
 #[cfg(feature = "documents")]
 use super::render::{extract_text_layer_pages, render_pdf_pages};
+use super::text::normalize_page_text;
 #[cfg(feature = "documents")]
 use super::types::{PdfFileSnapshot, PdfIngestOptions};
 use super::types::{PdfRenderedPage, PdfSnapshot};

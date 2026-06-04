@@ -86,6 +86,21 @@ ai.embeddings:
 }
 
 #[test]
+fn gcore_yaml_reads_dotted_mapping_prefixes() {
+    let config = StandaloneConfig::from_yaml_str(
+        r#"
+ai.embeddings:
+  provider: ollama
+  model: nomic-embed-text
+"#,
+    )
+    .expect("parse config");
+
+    assert_eq!(config.get("ai.embeddings.provider"), Some("ollama"));
+    assert_eq!(config.get("ai.embeddings.model"), Some("nomic-embed-text"));
+}
+
+#[test]
 fn gcore_yaml_writes_nested_keys() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join(GCORE_CONFIG_FILENAME);

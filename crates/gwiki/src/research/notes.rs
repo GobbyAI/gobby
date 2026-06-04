@@ -405,12 +405,23 @@ pub(crate) fn research_note_body_matches(contents: &str, expected_body: &str) ->
 }
 
 pub(crate) fn yaml_field_eq(frontmatter: &str, key: &str, value: &str) -> bool {
-    let plain = format!("{key}: {value}");
-    let quoted = format!("{key}: \"{value}\"");
+    let prefix = format!("{key}:");
     frontmatter
         .lines()
-        .map(str::trim)
-        .any(|line| line == plain || line == quoted)
+        .filter_map(|line| {
+            line.strip_suffix('\r')
+                .unwrap_or(line)
+                .trim_start()
+                .strip_prefix(&prefix)
+        })
+        .any(|remainder| {
+            let remainder = remainder.trim_start();
+            remainder == value
+                || remainder
+                    .strip_prefix('"')
+                    .and_then(|quoted| quoted.strip_suffix('"'))
+                    .is_some_and(|quoted| quoted == value)
+        })
 }
 
 pub(crate) fn materializing_marker_is_stale(path: &Path) -> bool {

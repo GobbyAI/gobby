@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -8,13 +9,13 @@ use crate::session::AcceptedResearchNote;
 
 #[derive(Default)]
 struct FakeModel {
-    decisions: Vec<ModelDecision>,
+    decisions: VecDeque<ModelDecision>,
 }
 
 impl FakeModel {
     fn new(decisions: Vec<ModelDecision>) -> Self {
         Self {
-            decisions: decisions.into_iter().rev().collect(),
+            decisions: decisions.into(),
         }
     }
 }
@@ -25,7 +26,7 @@ impl ResearchModel for FakeModel {
         _request: ModelRequest<'_>,
     ) -> Result<ModelDecision, ResearchModelError> {
         self.decisions
-            .pop()
+            .pop_front()
             .ok_or_else(|| ResearchModelError::InvalidResponse("no decision".to_string()))
     }
 }

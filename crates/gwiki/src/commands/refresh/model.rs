@@ -87,6 +87,8 @@ pub(crate) struct UnchangedRefresh {
     pub(crate) replay_kind: &'static str,
     pub(crate) raw_path: PathBuf,
     pub(crate) content_hash: String,
+    /// Serialized as `false` so unchanged entries keep the same output shape as
+    /// changed refresh entries.
     pub(crate) changed: bool,
 }
 

@@ -1,10 +1,9 @@
-use std::fs::File;
 use std::io::Write;
 
 use tempfile::{Builder, NamedTempFile};
 
 use crate::document::{DocumentDegradationMatrix, DocumentFailureMode, DocumentUnitCount};
-use crate::ingest::{markdown_metadata, path_to_string, single_line};
+use crate::ingest::{markdown_metadata, path_to_string, single_line, sync_parent_dir};
 
 use super::*;
 
@@ -119,27 +118,6 @@ fn create_document_temp_file(path: &Path) -> Result<NamedTempFile, WikiError> {
             path: Some(parent.to_path_buf()),
             source,
         })
-}
-
-fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        Ok(())
-    }
-    #[cfg(unix)]
-    {
-        let Some(parent) = path.parent() else {
-            return Ok(());
-        };
-        File::open(parent)
-            .and_then(|dir| dir.sync_all())
-            .map_err(|error| WikiError::Io {
-                action: "sync document derived markdown directory",
-                path: Some(parent.to_path_buf()),
-                source: error,
-            })
-    }
 }
 
 fn render_document_derived_markdown(

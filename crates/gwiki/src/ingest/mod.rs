@@ -348,7 +348,7 @@ fn create_raw_temp_file(path: &Path) -> Result<tempfile::NamedTempFile, WikiErro
 
 /// Syncs the containing directory on Unix so the atomic rename is durable.
 /// Non-Unix platforms keep the file sync but skip directory `sync_all`.
-fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
+pub(crate) fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
     #[cfg(not(unix))]
     {
         let _ = path;
@@ -362,7 +362,7 @@ fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
         File::open(parent)
             .and_then(|dir| dir.sync_all())
             .map_err(|error| WikiError::Io {
-                action: "sync raw source directory",
+                action: "sync parent directory",
                 path: Some(parent.to_path_buf()),
                 source: error,
             })

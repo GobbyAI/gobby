@@ -5,7 +5,6 @@ use std::io::Cursor;
 use crate::WikiError;
 #[cfg(feature = "documents")]
 use crate::document::{DocumentDegradation, DocumentFailureMode, DocumentUnitCount};
-use crate::ingest::single_line;
 
 #[cfg(feature = "documents")]
 use pdfium_render::prelude::{PdfRenderConfig, Pdfium};
@@ -161,29 +160,6 @@ fn pdfium_error(error: impl std::fmt::Display) -> WikiError {
         field: "pdf",
         message: format!("failed to render PDF page: {error}"),
     }
-}
-
-pub(crate) fn normalize_page_text(text: &str) -> String {
-    let mut paragraphs = Vec::new();
-    let mut current = Vec::new();
-
-    for line in text.lines() {
-        let line = single_line(line);
-        if line.is_empty() {
-            if !current.is_empty() {
-                paragraphs.push(current.join(" "));
-                current.clear();
-            }
-            continue;
-        }
-        current.push(line);
-    }
-
-    if !current.is_empty() {
-        paragraphs.push(current.join(" "));
-    }
-
-    paragraphs.join("\n\n")
 }
 
 #[cfg(test)]

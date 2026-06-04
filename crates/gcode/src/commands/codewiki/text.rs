@@ -2,6 +2,20 @@ use std::fmt::Write as _;
 
 use super::*;
 
+#[derive(serde::Serialize)]
+struct Frontmatter<'a> {
+    title: &'a str,
+    #[serde(rename = "type")]
+    kind: &'a str,
+    source_files: Vec<FrontmatterSourceFile<'a>>,
+}
+
+#[derive(serde::Serialize)]
+struct FrontmatterSourceFile<'a> {
+    file: &'a str,
+    ranges: Vec<String>,
+}
+
 pub(crate) fn resolve_text_generator(
     ctx: &Context,
     ai: Option<AiRouting>,
@@ -220,7 +234,6 @@ pub(crate) fn citation_parts(value: &str) -> Option<(&str, usize, usize)> {
 }
 
 pub(crate) fn frontmatter(title: &str, kind: &str, source_spans: &[SourceSpan]) -> String {
-    let mut out = format!("---\ntitle: \"{}\"\ntype: {kind}\n", yaml_quote(title));
     let mut files: BTreeMap<&str, BTreeSet<(usize, usize)>> = BTreeMap::new();
     for span in source_spans {
         files
@@ -228,47 +241,37 @@ pub(crate) fn frontmatter(title: &str, kind: &str, source_spans: &[SourceSpan]) 
             .or_default()
             .insert((span.line_start, span.line_end));
     }
-    if files.is_empty() {
-        out.push_str("source_files: []\n");
-        out.push_str("---\n\n");
-        return out;
-    }
-    out.push_str("source_files:\n");
-    for (file, ranges) in files {
-        let _ = writeln!(out, "  - file: \"{}\"", yaml_quote(file));
-        out.push_str("    ranges:\n");
-        for (line_start, line_end) in ranges {
-            if line_start == line_end {
-                let _ = writeln!(out, "      - \"{line_start}\"");
-            } else {
-                let _ = writeln!(out, "      - \"{line_start}-{line_end}\"");
-            }
-        }
+
+    let source_files = files
+        .into_iter()
+        .map(|(file, ranges)| FrontmatterSourceFile {
+            file,
+            ranges: ranges
+                .into_iter()
+                .map(|(line_start, line_end)| {
+                    if line_start == line_end {
+                        line_start.to_string()
+                    } else {
+                        format!("{line_start}-{line_end}")
+                    }
+                })
+                .collect(),
+        })
+        .collect();
+    let data = Frontmatter {
+        title,
+        kind,
+        source_files,
+    };
+    let yaml = serde_yaml::to_string(&data)
+        .expect("codewiki frontmatter only contains YAML-serializable data");
+    let yaml = yaml.strip_prefix("---\n").unwrap_or(&yaml);
+
+    let mut out = String::from("---\n");
+    out.push_str(yaml);
+    if !out.ends_with('\n') {
+        out.push('\n');
     }
     out.push_str("---\n\n");
-    out
-}
-
-pub(crate) fn yaml_quote(value: &str) -> String {
-    let mut out = String::new();
-    for ch in value.chars() {
-        match ch {
-            '\0' => out.push_str("\\0"),
-            '\u{0007}' => out.push_str("\\a"),
-            '\u{0008}' => out.push_str("\\b"),
-            '\t' => out.push_str("\\t"),
-            '\n' => out.push_str("\\n"),
-            '\u{000b}' => out.push_str("\\v"),
-            '\u{000c}' => out.push_str("\\f"),
-            '\r' => out.push_str("\\r"),
-            '\u{001b}' => out.push_str("\\e"),
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            ch if ch < ' ' => {
-                let _ = write!(out, "\\x{:02X}", ch as u32);
-            }
-            _ => out.push(ch),
-        }
-    }
     out
 }

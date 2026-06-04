@@ -464,11 +464,39 @@ fn yaml_unquote_translates_common_escapes_and_rejects_incomplete_escape() {
 }
 
 #[test]
-fn yaml_quote_escapes_double_quoted_scalar_content() {
-    assert_eq!(
-        yaml_quote("line\nquote\"tab\tbackslash\\nul\0bell\u{0007}"),
-        r#"line\nquote\"tab\tbackslash\\nul\0bell\a"#
+fn frontmatter_serializes_scalars_with_serde_yaml() {
+    let source_file = "src/quote\"colon:thing.rs";
+    let doc = frontmatter(
+        "line\nquote\"tab\tbackslash\\nul\0bell\u{0007}",
+        "code_file",
+        &[SourceSpan {
+            file: source_file.to_string(),
+            line_start: 7,
+            line_end: 9,
+        }],
     );
+    let yaml = doc
+        .strip_prefix("---\n")
+        .and_then(|content| content.strip_suffix("---\n\n"))
+        .expect("frontmatter delimiters");
+    let parsed: serde_yaml::Value = serde_yaml::from_str(yaml).expect("frontmatter parses");
+    let serde_yaml::Value::Mapping(mapping) = parsed else {
+        panic!("frontmatter is a YAML mapping");
+    };
+
+    assert_eq!(
+        mapping
+            .get(&serde_yaml::Value::String("title".to_string()))
+            .and_then(serde_yaml::Value::as_str),
+        Some("line\nquote\"tab\tbackslash\\nul\0bell\u{0007}")
+    );
+    assert_eq!(
+        mapping
+            .get(&serde_yaml::Value::String("type".to_string()))
+            .and_then(serde_yaml::Value::as_str),
+        Some("code_file")
+    );
+    assert!(source_files_from_frontmatter(&doc).contains(source_file));
 }
 
 #[test]
@@ -514,10 +542,9 @@ fn citations_validated_against_spans() {
         .expect("file doc");
 
     assert!(file_doc.contains("source_files:\n"));
-    assert!(file_doc.contains("  - file: \"src/lib.rs\"\n"));
-    assert!(file_doc.contains("    ranges:\n"));
-    assert!(file_doc.contains("      - \"10-14\"\n"));
-    assert!(file_doc.contains("      - \"20-24\"\n"));
+    assert!(source_files_from_frontmatter(file_doc).contains("src/lib.rs"));
+    assert!(file_doc.contains("10-14"));
+    assert!(file_doc.contains("20-24"));
     assert!(file_doc.contains("[src/lib.rs:10-14]"));
     assert!(file_doc.contains("[src/lib.rs:20]"));
     assert!(!file_doc.contains("src/lib.rs:999"));

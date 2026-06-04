@@ -5,6 +5,7 @@ use crate::document::DocumentDegradation;
 pub(crate) mod ingest;
 mod markdown;
 mod render;
+mod text;
 pub(crate) mod types;
 
 // ingest::file (gated on the documents feature) is the only cross-module consumer
