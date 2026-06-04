@@ -24,11 +24,6 @@ vi.mock('../ActiveAgentIndicator', () => ({
     <div data-testid="agent-indicator" data-disabled={String(Boolean(disabled))} />
   ),
 }))
-vi.mock('../WikiChatActions', () => ({
-  WikiChatActions: ({ disabled }: { disabled?: boolean }) => (
-    <button type="button" data-testid="wiki-actions" aria-label="Wiki actions" disabled={disabled} />
-  ),
-}))
 vi.mock('../shared/Button', () => ({
   Button: ({ children, onClick, disabled, ...props }: any) => (
     <button onClick={onClick} disabled={disabled} {...props}>

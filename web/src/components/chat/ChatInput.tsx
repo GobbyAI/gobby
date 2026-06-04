@@ -13,7 +13,6 @@ import { PaperclipIcon, RecordIcon, SendIcon, StopIcon } from './ChatInputIcons'
 import { ChatInputModelControls } from './ChatInputModelControls'
 import { ChatInputVoiceControls } from './ChatInputVoiceControls'
 import { ModeSelector } from './ModeSelector'
-import { WikiChatActions } from './WikiChatActions'
 import { BranchIndicator } from './BranchIndicator'
 import { ActiveAgentIndicator } from './ActiveAgentIndicator'
 import { useChatInputProviderSelection } from './useChatInputProviderSelection'
@@ -102,7 +101,6 @@ interface ChatInputProps {
   onAttachObservedSession?: () => void
   proxyDeliveryNotice?: string | null
   attachmentsDisabled?: boolean
-  onWikiActionComplete?: () => void | Promise<void>
 }
 
 const LOCAL_ONLY_SLASH_COMMANDS = new Set([
@@ -198,7 +196,6 @@ export function ChatInput({
   onAttachObservedSession,
   proxyDeliveryNotice = null,
   attachmentsDisabled = false,
-  onWikiActionComplete,
 }: ChatInputProps) {
   const [input, setInput] = useState('')
   const [isDragOver, setIsDragOver] = useState(false)
@@ -842,11 +839,6 @@ export function ChatInput({
               >
                 <PaperclipIcon />
               </Button>
-              <WikiChatActions
-                projectId={projectId ?? null}
-                disabled={disabled}
-                onActionComplete={onWikiActionComplete}
-              />
               {onAgentChange &&
                 agentName &&
                 agentDefinitions.length > 0 && (

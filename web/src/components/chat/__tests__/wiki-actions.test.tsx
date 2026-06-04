@@ -2,12 +2,8 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ChatInput } from "../ChatInput";
+import { WikiChatActions } from "../WikiChatActions";
 import { WikiActionResult } from "../WikiActionResult";
-
-const defaultProps = {
-  onSend: vi.fn(),
-};
 
 function jsonResponse(payload: unknown, init?: ResponseInit) {
   return Response.json(payload, init);
@@ -59,7 +55,7 @@ describe("wiki chat actions", () => {
   });
 
   it("test_actions_mounted_in_chat_input", async () => {
-    render(<ChatInput {...defaultProps} projectId="demo" />);
+    render(<WikiChatActions projectId="demo" />);
 
     expect(screen.getByRole("button", { name: "Wiki actions" })).toBeInTheDocument();
     await waitFor(() => {
@@ -71,7 +67,7 @@ describe("wiki chat actions", () => {
 
   it("test_writes_require_explicit_intent", async () => {
     const user = userEvent.setup();
-    render(<ChatInput {...defaultProps} projectId="demo" />);
+    render(<WikiChatActions projectId="demo" />);
 
     await user.click(screen.getByRole("button", { name: "Wiki actions" }));
     await user.click(screen.getByRole("button", { name: "Compile wiki" }));
@@ -100,7 +96,7 @@ describe("wiki chat actions", () => {
 
   it("test_url_batch_ingest_action", async () => {
     const user = userEvent.setup();
-    render(<ChatInput {...defaultProps} projectId="demo" />);
+    render(<WikiChatActions projectId="demo" />);
 
     await user.click(screen.getByRole("button", { name: "Wiki actions" }));
     await user.click(screen.getByRole("button", { name: "Ingest URLs" }));
@@ -137,7 +133,7 @@ describe("wiki chat actions", () => {
 
   it("test_mixed_ingest_preserves_paths_with_spaces", async () => {
     const user = userEvent.setup();
-    render(<ChatInput {...defaultProps} projectId="demo" />);
+    render(<WikiChatActions projectId="demo" />);
 
     await user.click(screen.getByRole("button", { name: "Wiki actions" }));
     await user.click(screen.getByRole("button", { name: "Ingest URLs" }));
@@ -165,11 +161,7 @@ describe("wiki chat actions", () => {
   it("test_action_links_back_to_wiki_panel", async () => {
     const user = userEvent.setup();
     render(
-      <ChatInput
-        {...defaultProps}
-        projectId="demo"
-        onWikiActionComplete={onWikiActionComplete}
-      />,
+      <WikiChatActions projectId="demo" onActionComplete={onWikiActionComplete} />,
     );
 
     await user.click(screen.getByRole("button", { name: "Wiki actions" }));

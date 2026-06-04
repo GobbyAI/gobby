@@ -44,7 +44,6 @@ interface ChatMainColumnProps extends AgentPickerProps {
   onSttEnabledChange?: (enabled: boolean) => void;
   onTtsEnabledChange?: (enabled: boolean) => void;
   onVoiceInputModeChange?: (mode: VoiceInputMode) => void;
-  onWikiActionComplete?: () => void | Promise<void>;
   onViewPlan?: () => void;
   openCodeAsArtifact: (
     language: string,
@@ -79,7 +78,6 @@ export function ChatMainColumn({
   onSttEnabledChange,
   onTtsEnabledChange,
   onVoiceInputModeChange,
-  onWikiActionComplete,
   onViewPlan,
   openCodeAsArtifact,
   openFileAsArtifact,
@@ -249,7 +247,6 @@ export function ChatMainColumn({
             }
             proxyDeliveryNotice={chat.proxyDeliveryNotice}
             attachmentsDisabled={isProxyAttached}
-            onWikiActionComplete={onWikiActionComplete}
           />
         )}
       </ArtifactContext.Provider>

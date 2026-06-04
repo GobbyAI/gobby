@@ -1,6 +1,6 @@
 import "./styles.css";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 
 import { useIsMobile } from "../../hooks/useIsMobile";
 import { useConfirmDialog } from "../../hooks/useConfirmDialog";
@@ -59,13 +59,11 @@ export function ChatPage({
     dismissOnMobile,
     effectiveMode,
     panelWidth,
-    refreshWikiTab,
     setActiveTab: setActivityTab,
     setPanelWidth,
     showTab,
     toggleFromChat,
     toggleFromPanel,
-    wikiRefreshSignal,
   } = activity;
   const panelVisible = effectiveMode !== "chat";
   const showChatColumn = isMobile || effectiveMode !== "panel";
@@ -113,11 +111,6 @@ export function ChatPage({
     toggleFromPanel,
   });
   const voiceStatus = useChatPageVoiceStatus(voice);
-  const handleWikiActionComplete = useCallback(() => {
-    showTab("wiki");
-    refreshWikiTab();
-  }, [refreshWikiTab, showTab]);
-
   useEffect(() => {
     if (!requestedActivityTab) return;
     showTab(requestedActivityTab);
@@ -177,7 +170,6 @@ export function ChatPage({
           onSttEnabledChange={onSttEnabledChange}
           onTtsEnabledChange={onTtsEnabledChange}
           onVoiceInputModeChange={onVoiceInputModeChange}
-          onWikiActionComplete={handleWikiActionComplete}
           onViewPlan={() => showPlanRef?.current?.()}
           openCodeAsArtifact={artifacts.openCodeAsArtifact}
           openFileAsArtifact={artifacts.openFileAsArtifact}
@@ -226,7 +218,6 @@ export function ChatPage({
         onResumeSession={routing.handleResumeSessionFromActivity}
         onAddFileToChat={routing.handleAddFileToChat}
         isMobile={isMobile}
-        wikiRefreshSignal={wikiRefreshSignal}
       />
 
       <CommandPalette

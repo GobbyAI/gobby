@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
 import {
   useWiki,
@@ -6,6 +6,7 @@ import {
   type WikiSourceRecord,
 } from "../../hooks/useWiki";
 import { WikiSourceRemovalDialog } from "./WikiSourceRemovalDialog";
+import { WikiChatActions } from "../chat/WikiChatActions";
 import {
   asRecord,
   booleanValue,
@@ -26,7 +27,6 @@ import {
 
 interface WikiTabProps {
   projectId?: string | null;
-  refreshSignal?: number;
 }
 
 function StatBlock({ label, value }: { label: string; value: string }) {
@@ -85,7 +85,7 @@ function LinksList({ links }: { links: WikiLink[] }) {
   );
 }
 
-export function WikiTab({ projectId, refreshSignal = 0 }: WikiTabProps) {
+export function WikiTab({ projectId }: WikiTabProps) {
   const { status, health, sources, isLoading, error, refresh, removeSource } = useWiki({ projectId });
   const [removingSource, setRemovingSource] = useState<WikiSourceRecord | null>(null);
   const [preview, setPreview] = useState<WikiEnvelope | null>(null);
@@ -93,14 +93,6 @@ export function WikiTab({ projectId, refreshSignal = 0 }: WikiTabProps) {
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
   const removalPreviewRequestRef = useRef(0);
-  const lastRefreshSignalRef = useRef(refreshSignal);
-
-  useEffect(() => {
-    if (lastRefreshSignalRef.current === refreshSignal) return;
-    lastRefreshSignalRef.current = refreshSignal;
-    if (refreshSignal > 0) void refresh();
-  }, [refresh, refreshSignal]);
-
   const statusPayload = asRecord(status?.payload);
   const healthPayload = asRecord(health?.payload);
   const maintenancePayload = asRecord(statusPayload.maintenance);
@@ -191,13 +183,16 @@ export function WikiTab({ projectId, refreshSignal = 0 }: WikiTabProps) {
           <h2 className="text-sm font-semibold text-foreground">Wiki</h2>
           <p className="text-xs text-muted-foreground">{scopeText}</p>
         </div>
-        <button
-          type="button"
-          onClick={() => void refresh()}
-          className="rounded-md border border-border px-3 py-1.5 text-sm text-foreground hover:bg-muted"
-        >
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <WikiChatActions projectId={projectId} onActionComplete={() => void refresh()} />
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            className="rounded-md border border-border px-3 py-1.5 text-sm text-foreground hover:bg-muted"
+          >
+            Refresh
+          </button>
+        </div>
       </div>
 
       {error ? (
