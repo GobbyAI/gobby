@@ -33,8 +33,11 @@ class ChatStreamEventState:
     pending_approval_id: str | None = None
     pending_tool_calls: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Tool results whose ToolCallEvent has not arrived yet (out-of-order ACP
-    # delivery). Buffered here and reconciled once the matching call lands so
-    # the UI shows the real tool name instead of "unknown".
+    # delivery). Buffered here and reconciled once the matching call lands so the UI
+    # shows the real tool name instead of "unknown". Example lifecycle:
+    # ToolResultEvent(call-1) -> buffer, ToolCallEvent(call-1) -> emit calling,
+    # then apply the buffered result and remove it. If the stream ends first,
+    # _flush_orphan_tool_results synthesizes an "unknown" call before completion.
     orphan_tool_results: dict[str, ToolResultEvent] = field(default_factory=dict)
 
 
@@ -203,7 +206,7 @@ class ChatStreamEventHandler:
             # name (emitting calling -> completed in order) rather than sending
             # an orphan "completed" the UI renders as an "unknown" tool.
             self.state.orphan_tool_results[event.tool_call_id] = event
-            logger.debug(
+            logger.info(
                 "Buffered ToolResultEvent for %s pending its ToolCallEvent",
                 event.tool_call_id,
             )

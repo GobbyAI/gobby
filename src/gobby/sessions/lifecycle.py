@@ -575,10 +575,11 @@ class SessionLifecycleManager:
                 tool_call_count=stats["tool_call_count"],
                 last_assistant_content=stats["last_assistant_content"],
             )
-        except Exception:
+        except (ValueError, KeyError, TypeError) as e:
             logger.warning(
-                "Failed to persist transcript stats for session %s",
+                "Failed to persist transcript stats for session %s: %s",
                 session_id,
+                e,
                 exc_info=True,
             )
 

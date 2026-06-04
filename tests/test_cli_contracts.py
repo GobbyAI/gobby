@@ -16,6 +16,8 @@ from gobby.gwiki_gateway import GwikiGateway
 from gobby.mcp_proxy.tools.wiki import create_wiki_registry
 
 CONTRACT_DIR = Path(__file__).parent / "contracts"
+CLI_CONTRACT_TOOLS = ("gcode", "gwiki")
+pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 
 def _contract(tool: str) -> dict[str, Any]:
@@ -500,6 +502,22 @@ def _real_cli_contract_sources(tool: str) -> list[tuple[str, dict[str, Any]]]:
     return sources
 
 
+def _has_gobby_cli_contract_checkout() -> bool:
+    repo = _gobby_cli_repo()
+    return all(
+        (repo / f"crates/{tool}/contract/{tool}.contract.json").exists()
+        for tool in CLI_CONTRACT_TOOLS
+    )
+
+
+def _has_all_cli_binaries() -> bool:
+    return all(_installed_cli_binary(tool) is not None for tool in CLI_CONTRACT_TOOLS)
+
+
+def _missing_external_cli_contract_sources() -> bool:
+    return not (_has_gobby_cli_contract_checkout() or _has_all_cli_binaries())
+
+
 @pytest.mark.unit
 def test_real_cli_contract_sources_include_binary_when_source_exists(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -539,6 +557,10 @@ def test_real_cli_contract_sources_include_binary_when_source_exists(
 
 
 @pytest.mark.integration
+@pytest.mark.skipif(
+    _missing_external_cli_contract_sources(),
+    reason="requires sibling gobby-cli checkout or installed gcode and gwiki binaries",
+)
 @pytest.mark.parametrize("tool", ["gcode", "gwiki"])
 def test_vendored_cli_contract_matches_real_cli(tool: str) -> None:
     """The vendored contract must match the real gobby-cli contract.
@@ -550,10 +572,6 @@ def test_vendored_cli_contract_matches_real_cli(tool: str) -> None:
     vendored = _contract(tool)
     sources = _real_cli_contract_sources(tool)
 
-    assert sources, (
-        f"cannot verify {tool} contract drift: no gobby-cli source at "
-        f"{_gobby_cli_repo() / f'crates/{tool}/contract/{tool}.contract.json'} "
-        f"and no installed `{tool}` binary on PATH or in ~/.gobby/bin"
-    )
+    assert sources
     for source_name, real_contract in sources:
         assert vendored == real_contract, f"vendored {tool} contract drifted from {source_name}"

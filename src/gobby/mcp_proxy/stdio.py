@@ -135,9 +135,9 @@ class DaemonProxy:
             self.base_url,
             self._project_id,
         )
+        self._session_bootstrap_attempted = True
         if resolved_session_id is not None:
             self._session_id = resolved_session_id
-            self._session_bootstrap_attempted = True
         return self._session_id
 
     async def _request(

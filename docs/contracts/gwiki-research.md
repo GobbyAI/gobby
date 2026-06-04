@@ -18,9 +18,9 @@ where `gwiki research` posted to `/api/agents/spawn` with `--task-id`,
 
 Reference commits:
 
-- Spec: `/Users/josh/Projects/gobby-cli@6b5c5ba8660624438d7416b412ec94ff86dec9a2`.
+- Spec: `gobby-cli@6b5c5ba8660624438d7416b412ec94ff86dec9a2`.
 - First implementation slice:
-  `/Users/josh/Projects/gobby-cli@f9bbde3fb836cac1bf99047558d5d2cca869310b`.
+  `gobby-cli@f9bbde3fb836cac1bf99047558d5d2cca869310b`.
 
 The implementation removes `gwiki research` daemon agent dispatch, drops
 `--task-id`, `--agent-count`, and `--resume`, adds deterministic

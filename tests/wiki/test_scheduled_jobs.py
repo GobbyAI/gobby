@@ -11,6 +11,7 @@ from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
 from gobby.storage.projects import LocalProjectManager
 from gobby.wiki.scheduled_jobs import (
+    _create_gateway,
     configured_wiki_cron_scopes,
     create_wiki_audit_handler,
     create_wiki_health_handler,
@@ -253,6 +254,26 @@ def test_wiki_cron_handlers_registered(cron_storage: CronJobStorage, project_id:
     assert all(job.action_type == "handler" for job in jobs)
     assert all(job.is_system for job in jobs)
     assert cron_storage.get_job_by_name("gobby:wiki-research:project:alpha") is None
+
+
+def test_wiki_cron_registration_requires_db_without_gateway_factory(
+    cron_storage: CronJobStorage,
+    project_id: str,
+) -> None:
+    executor = RecordingExecutor(handlers={})
+
+    with pytest.raises(ValueError, match="requires db"):
+        register_wiki_cron_jobs(
+            cron_storage=cron_storage,
+            cron_executor=executor,
+            project_id=project_id,
+            scopes=["project:alpha"],
+        )
+
+
+def test_create_gateway_requires_db_without_gateway_factory() -> None:
+    with pytest.raises(ValueError, match="requires db"):
+        _create_gateway("project:alpha", db=None, gateway_factory=None)
 
 
 def test_queryless_system_research_jobs_are_retired(

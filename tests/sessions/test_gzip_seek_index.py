@@ -11,6 +11,7 @@ from gobby.sessions.gzip_seek_index import (
     iter_gzip_block_raw_lines,
     load_gzip_block_index,
     write_blocked_gzip_archive,
+    write_blocked_gzip_archive_async,
 )
 
 pytestmark = pytest.mark.unit
@@ -33,6 +34,19 @@ def test_write_blocked_gzip_archive_persists_seekable_sidecar(tmp_path: Path) ->
     assert len(index.blocks) > 1
     assert gzip.decompress(archive.read_bytes()) == payload
     assert Path(gzip_block_sidecar_path(str(archive))).is_file()
+    assert load_gzip_block_index(str(archive)) == index
+
+
+async def test_write_blocked_gzip_archive_async_persists_seekable_sidecar(
+    tmp_path: Path,
+) -> None:
+    source, payload = _write_source(tmp_path)
+    archive = tmp_path / "ext-async.jsonl.gz"
+
+    index = await write_blocked_gzip_archive_async(str(source), str(archive), block_size=160)
+
+    assert len(index.blocks) > 1
+    assert gzip.decompress(archive.read_bytes()) == payload
     assert load_gzip_block_index(str(archive)) == index
 
 
@@ -73,7 +87,7 @@ def test_iter_gzip_block_raw_lines_ignores_prior_corrupt_block(tmp_path: Path) -
     assert f'"i":{target.raw_line_start}' in lines[0].text
 
 
-def test_ensure_gzip_block_index_reblocks_legacy_single_member_archive(
+async def test_ensure_gzip_block_index_reblocks_legacy_single_member_archive(
     tmp_path: Path,
 ) -> None:
     source, payload = _write_source(tmp_path)
@@ -81,7 +95,7 @@ def test_ensure_gzip_block_index_reblocks_legacy_single_member_archive(
     with gzip.open(archive, "wb") as handle:
         handle.write(source.read_bytes())
 
-    index = ensure_gzip_block_index(str(archive), block_size=160)
+    index = await ensure_gzip_block_index(str(archive), block_size=160)
 
     assert len(index.blocks) > 1
     assert gzip.decompress(archive.read_bytes()) == payload

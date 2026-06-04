@@ -1115,10 +1115,10 @@ class TestDaemonProxyMethods:
         assert result == {"success": True}
         _, kwargs = mock_client.request.call_args
         assert "X-Gobby-Session-Id" not in kwargs["headers"]
-        assert proxy._session_bootstrap_attempted is False
+        assert proxy._session_bootstrap_attempted is True
 
     @pytest.mark.asyncio
-    async def test_request_bootstrap_no_match_can_retry_later(self) -> None:
+    async def test_request_bootstrap_no_match_marks_attempted(self) -> None:
         from gobby.mcp_proxy.stdio import DaemonProxy
 
         with (
@@ -1130,14 +1130,13 @@ class TestDaemonProxyMethods:
         with patch(
             "gobby.mcp_proxy.stdio.resolve_session_id_from_terminal_context",
             new_callable=AsyncMock,
-            side_effect=[None, "bootstrapped-session"],
+            return_value=None,
         ) as mock_bootstrap:
             assert await proxy._resolve_session_id() is None
-            assert proxy._session_bootstrap_attempted is False
-            assert await proxy._resolve_session_id() == "bootstrapped-session"
+            assert proxy._session_bootstrap_attempted is True
+            assert await proxy._resolve_session_id() is None
 
-        assert mock_bootstrap.await_count == 2
-        assert proxy._session_bootstrap_attempted is True
+        assert mock_bootstrap.await_count == 1
 
     @pytest.mark.asyncio
     async def test_list_tools(self) -> None:

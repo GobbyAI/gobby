@@ -154,9 +154,11 @@ if [ -n "$CHANGED_FILES" ]; then
                 ROOT_PATH=$(git rev-parse --show-toplevel 2>/dev/null)
                 if [ -n "$ROOT_PATH" ] && command -v curl >/dev/null 2>&1; then
                     DAEMON_PORT="${GOBBY_DAEMON_PORT:-60887}"
-                    curl -fsS -X POST --get \
-                        --data-urlencode "root_path=$ROOT_PATH" \
-                        "http://localhost:${DAEMON_PORT}/api/code-index/codewiki/refresh" >/dev/null 2>&1 || true
+                    if ! curl -fsS --connect-timeout 2 --max-time 10 -X POST \
+                        --url-query "root_path=$ROOT_PATH" \
+                        "http://localhost:${DAEMON_PORT}/api/code-index/codewiki/refresh" >/dev/null 2>&1; then
+                        echo "gobby: codewiki refresh request failed for $ROOT_PATH" >&2
+                    fi
                 fi
             fi
         ) &

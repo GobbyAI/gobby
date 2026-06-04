@@ -31,14 +31,11 @@ def test_source_checkout_install_requires_repo_marker(tmp_path: Path) -> None:
 def test_docker_daemon_available_handles_subprocess_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    def raise_subprocess_error(*_args: object, **_kwargs: object) -> None:
+        raise subprocess.SubprocessError("docker failed")
+
     monkeypatch.setattr(install_module.shutil, "which", lambda _name: "/usr/bin/docker")
-    monkeypatch.setattr(
-        install_module.subprocess,
-        "run",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            subprocess.SubprocessError("docker failed")
-        ),
-    )
+    monkeypatch.setattr(install_module.subprocess, "run", raise_subprocess_error)
 
     assert install_module._docker_daemon_available() is False
 

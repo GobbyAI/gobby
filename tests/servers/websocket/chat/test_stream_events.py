@@ -19,6 +19,8 @@ from gobby.servers.websocket.chat._stream_events import (
 )
 from gobby.servers.websocket.chat.content_blocks import AssistantContentBlocks
 
+pytestmark = pytest.mark.unit
+
 
 class _FakeTransport:
     """Records every frame the handler broadcasts."""

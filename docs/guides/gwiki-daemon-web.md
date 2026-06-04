@@ -220,6 +220,14 @@ Required result fields:
 
 Scheduled research uses the same gateway contract as explicit research.
 
+`GwikiGateway.research()` keeps `query` positional for compatibility. Its
+default call emits only `gwiki research --format json` plus scope flags; omitted
+options are not passed. `audit=True` adds `--audit`; each
+`source_constraints` entry adds `--source-constraint`; `max_steps`,
+`max_tokens`, and `max_sources` add their matching numeric flags; `ai` adds
+`--ai`; and `require_ai=True` adds `--require-ai`. When `query` is provided, it
+is appended after all option flags.
+
 ### `compile`
 
 Required result fields:

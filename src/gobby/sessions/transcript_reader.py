@@ -436,8 +436,7 @@ class TranscriptReader:
                     _read_archive_sample, str(archive_path), SOURCE_SAMPLE_LINES
                 )
                 source = self._archive_source(session, sample, session_id)
-                gzip_index = await asyncio.to_thread(
-                    ensure_gzip_block_index,
+                gzip_index = await ensure_gzip_block_index(
                     str(archive_path),
                     mtime_ns=st.st_mtime_ns,
                     size=st.st_size,

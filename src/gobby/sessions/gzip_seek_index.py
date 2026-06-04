@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import gzip
 import json
 import os
@@ -61,6 +62,22 @@ def write_blocked_gzip_archive(
         return write_blocked_gzip_from_lines(source, dest_path, block_size=block_size)
 
 
+async def write_blocked_gzip_archive_async(
+    source_path: str,
+    dest_path: str,
+    *,
+    block_size: int = DEFAULT_GZIP_BLOCK_UNCOMPRESSED_SIZE,
+) -> GzipBlockIndex:
+    """Async wrapper for `write_blocked_gzip_archive` that offloads file I/O."""
+
+    return await asyncio.to_thread(
+        write_blocked_gzip_archive,
+        source_path,
+        dest_path,
+        block_size=block_size,
+    )
+
+
 def write_blocked_gzip_from_lines(
     raw_lines: Iterable[bytes],
     dest_path: str,
@@ -87,7 +104,7 @@ def write_blocked_gzip_from_lines(
         raise
 
 
-def ensure_gzip_block_index(
+async def ensure_gzip_block_index(
     path: str,
     *,
     block_size: int = DEFAULT_GZIP_BLOCK_UNCOMPRESSED_SIZE,
@@ -95,6 +112,24 @@ def ensure_gzip_block_index(
     size: int | None = None,
 ) -> GzipBlockIndex:
     """Return a valid block index, reblocking legacy single-member archives when needed."""
+
+    return await asyncio.to_thread(
+        _ensure_gzip_block_index_sync,
+        path,
+        block_size=block_size,
+        mtime_ns=mtime_ns,
+        size=size,
+    )
+
+
+def _ensure_gzip_block_index_sync(
+    path: str,
+    *,
+    block_size: int = DEFAULT_GZIP_BLOCK_UNCOMPRESSED_SIZE,
+    mtime_ns: int | None = None,
+    size: int | None = None,
+) -> GzipBlockIndex:
+    """Synchronous implementation for the async public wrapper."""
 
     st = os.stat(path)
     index = load_gzip_block_index(
@@ -264,7 +299,8 @@ def _write_blocked_members(
                     close_block(dest)
                     open_block(dest)
 
-                assert member is not None
+                if member is None:
+                    raise RuntimeError("gzip block member was not opened before writing")
                 member.write(raw_line)
                 total_uncompressed += len(raw_line)
                 total_lines += 1

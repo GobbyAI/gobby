@@ -95,8 +95,6 @@ class GwikiGateway:
         require_ai: bool = False,
     ) -> dict[str, Any]:
         args = ["ask", query]
-        if not llm and (ai is not None or require_ai):
-            raise ValueError("ai and require_ai can only be used when llm=True")
         if llm:
             args.append("--llm")
             if ai is not None:
@@ -141,6 +139,15 @@ class GwikiGateway:
         ai: str | None = None,
         require_ai: bool = False,
     ) -> dict[str, Any]:
+        """Run `gwiki research` with explicit CLI argv construction.
+
+        `query` remains positional for compatibility and is appended last when
+        provided. Optional values use daemon defaults of omission: `audit=False`,
+        no `source_constraints`, no `max_steps`, no `max_tokens`, no
+        `max_sources`, `ai=None`, and `require_ai=False`. Provided options map
+        directly to repeated `--source-constraint`, `--max-steps`,
+        `--max-tokens`, `--max-sources`, `--ai`, and `--require-ai` flags.
+        """
         args = ["research"]
         if audit:
             args.append("--audit")

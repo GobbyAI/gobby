@@ -84,6 +84,8 @@ class CodewikiRefreshTrigger:
         self._config_store_provider = config_store_provider
         self._gcode_gateway_factory = gcode_gateway_factory
         self._gwiki_gateway_factory = gwiki_gateway_factory or (
+            # Background codewiki refresh can ingest many generated docs; keep the
+            # longer timeout local to this path instead of widening route defaults.
             lambda root: GwikiGateway(project_root=root, timeout_seconds=120.0)
         )
         self._debounce_seconds = debounce_seconds

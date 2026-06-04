@@ -235,7 +235,7 @@ async def test_broadcast_event_unified(
 async def test_broadcast_event_session_end_resume_reason(
     mock_websocket_server: MagicMock,
     default_config: DaemonConfig,
-    caplog,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Runtime resume reasons must validate before broadcasting SESSION_END."""
     from datetime import UTC, datetime
@@ -294,8 +294,10 @@ async def test_broadcast_event_with_response(mock_websocket_server, default_conf
 
 @pytest.mark.asyncio
 async def test_broadcast_event_permission_request_allow_uses_decision_payload(
-    mock_websocket_server, default_config, caplog
-):
+    mock_websocket_server,
+    default_config,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Plain allow PermissionRequest responses must match the nested output schema."""
     from datetime import UTC, datetime
 
@@ -327,8 +329,10 @@ async def test_broadcast_event_permission_request_allow_uses_decision_payload(
 
 @pytest.mark.asyncio
 async def test_broadcast_event_notification_backfills_required_fields(
-    mock_websocket_server, default_config, caplog
-):
+    mock_websocket_server,
+    default_config,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Notification broadcasts should tolerate CLI payloads without notification fields."""
     caplog.set_level("WARNING", logger="gobby.hooks.broadcaster")
     default_config.hook_extensions.websocket.broadcast_events.append("notification")
@@ -357,8 +361,10 @@ async def test_broadcast_event_notification_backfills_required_fields(
 
 @pytest.mark.asyncio
 async def test_broadcast_event_notification_uses_camel_case_type(
-    mock_websocket_server, default_config, caplog
-):
+    mock_websocket_server,
+    default_config,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """notificationType aliases should populate notification_type without dropping extras."""
     caplog.set_level("WARNING", logger="gobby.hooks.broadcaster")
     default_config.hook_extensions.websocket.broadcast_events.append("notification")
@@ -393,11 +399,11 @@ async def test_broadcast_event_notification_uses_camel_case_type(
 async def test_broadcast_event_notification_maps_provider_level_or_severity(
     mock_websocket_server,
     default_config,
-    caplog,
+    caplog: pytest.LogCaptureFixture,
     field_name: str,
     field_value: str,
     expected_severity: str,
-):
+) -> None:
     """Provider level/severity should feed notification_type and severity when valid."""
     caplog.set_level("WARNING", logger="gobby.hooks.broadcaster")
     default_config.hook_extensions.websocket.broadcast_events.append("notification")
@@ -424,8 +430,10 @@ async def test_broadcast_event_notification_maps_provider_level_or_severity(
 
 @pytest.mark.asyncio
 async def test_broadcast_event_notification_empty_message_falls_back(
-    mock_websocket_server, default_config, caplog
-):
+    mock_websocket_server,
+    default_config,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Empty message fields should fall through to reason before validation."""
     caplog.set_level("WARNING", logger="gobby.hooks.broadcaster")
     default_config.hook_extensions.websocket.broadcast_events.append("notification")
@@ -452,8 +460,10 @@ async def test_broadcast_event_notification_empty_message_falls_back(
 
 @pytest.mark.asyncio
 async def test_broadcast_event_after_tool_failure_backfills_error_from_tool_output(
-    mock_websocket_server, default_config, caplog
-):
+    mock_websocket_server,
+    default_config,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Test failed after_tool broadcasts backfill error from tool_output."""
     caplog.set_level("WARNING", logger="gobby.hooks.broadcaster")
     default_config.hook_extensions.websocket.broadcast_events.append("post-tool-use-failure")
@@ -627,8 +637,10 @@ async def test_broadcast_event_after_tool_success_stays_post_tool_use(
 
 @pytest.mark.asyncio
 async def test_broadcast_event_after_tool_success_backfills_tool_name_from_response(
-    mock_websocket_server, default_config, caplog
-):
+    mock_websocket_server,
+    default_config,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Post-tool success broadcasts use the normalized tool name when input omitted it."""
     caplog.set_level("WARNING", logger="gobby.hooks.broadcaster")
     broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
@@ -653,8 +665,10 @@ async def test_broadcast_event_after_tool_success_backfills_tool_name_from_respo
 
 @pytest.mark.asyncio
 async def test_broadcast_event_after_tool_failure_backfills_tool_name_from_response(
-    mock_websocket_server, default_config, caplog
-):
+    mock_websocket_server,
+    default_config,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Post-tool failure broadcasts use the normalized tool name when input omitted it."""
     caplog.set_level("WARNING", logger="gobby.hooks.broadcaster")
     default_config.hook_extensions.websocket.broadcast_events.append("post-tool-use-failure")

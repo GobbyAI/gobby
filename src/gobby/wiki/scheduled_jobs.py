@@ -157,6 +157,8 @@ def register_wiki_cron_jobs(
     gateway_factory: GatewayFactory | None = None,
 ) -> int:
     """Register wiki cron handlers and reconcile one cron row per scope and command."""
+    if gateway_factory is None and db is None:
+        raise ValueError("register_wiki_cron_jobs requires db when gateway_factory is not provided")
     reconcile_stale_wiki_cron_scopes(cron_storage=cron_storage, project_id=project_id)
     registered = 0
     for scope in _configured_scopes(scopes, project_id):
@@ -250,6 +252,8 @@ def _create_gateway(
     db: HubDatabase | None,
     gateway_factory: GatewayFactory | None,
 ) -> WikiGatewayProtocol:
+    if gateway_factory is None and db is None:
+        raise ValueError("_create_gateway requires db when gateway_factory is not provided")
     resolved = resolve_scope_identity(
         db,
         scope,

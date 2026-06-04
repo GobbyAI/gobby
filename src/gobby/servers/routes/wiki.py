@@ -311,7 +311,8 @@ def _one_query(q: str | None, query: str | None) -> str:
 def _normalize_ai(value: str) -> str:
     ai = value.strip().lower()
     if ai not in _AI_VALUES:
-        raise HTTPException(status_code=400, detail="ai must be one of auto, daemon, direct, off")
+        allowed = ", ".join(sorted(_AI_VALUES))
+        raise HTTPException(status_code=400, detail=f"ai must be one of {allowed}")
     return ai
 
 

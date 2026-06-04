@@ -221,7 +221,7 @@ def install_gsqz(module: Any, force: bool = False) -> dict[str, Any]:
             return {"installed": False, "skipped": True, "version": installed_version}
 
     target_version = pinned_version
-    if compare_versions(installed_version, pinned_version) == 1:
+    if installed_version is not None and compare_versions(installed_version, pinned_version) == 1:
         target_version = installed_version
     bin_dir.mkdir(parents=True, exist_ok=True)
     method = None

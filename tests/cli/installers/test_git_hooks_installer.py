@@ -923,9 +923,11 @@ class TestHookTemplates:
         assert "\0" not in content
         assert r"tr '\n' '\0'" in content
         assert 'xargs -0 "$GCODE" index --quiet --files >/dev/null 2>&1; then' in content
-        assert "curl -fsS -X POST --get \\" in content
-        assert '--data-urlencode "root_path=$ROOT_PATH"' in content
+        assert "curl -fsS --connect-timeout 2 --max-time 10 -X POST \\" in content
+        assert '--url-query "root_path=$ROOT_PATH"' in content
+        assert "codewiki refresh request failed" in content
         assert "/api/code-index/codewiki/refresh" in content
+        assert "--get" not in content
 
         git_dir = tmp_path / ".git"
         git_dir.mkdir()
@@ -939,9 +941,11 @@ class TestHookTemplates:
         assert "\0" not in installed
         assert r"tr '\n' '\0'" in installed
         assert 'xargs -0 "$GCODE" index --quiet --files >/dev/null 2>&1; then' in installed
-        assert "curl -fsS -X POST --get \\" in installed
-        assert '--data-urlencode "root_path=$ROOT_PATH"' in installed
+        assert "curl -fsS --connect-timeout 2 --max-time 10 -X POST \\" in installed
+        assert '--url-query "root_path=$ROOT_PATH"' in installed
+        assert "codewiki refresh request failed" in installed
         assert "/api/code-index/codewiki/refresh" in installed
+        assert "--get" not in installed
 
     def test_templates_do_not_import_jsonl(self) -> None:
         """No installed hook template automatically imports JSONL."""

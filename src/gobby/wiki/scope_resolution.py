@@ -80,7 +80,7 @@ def resolve_wiki_scope(
             topic=identity.removeprefix(TOPIC_SCOPE_PREFIX),
         )
 
-    project_ref = project or default_project_id
+    project_ref = project if project is not None else default_project_id
     if project_ref is None:
         return ResolvedWikiScope(identity=None)
 
