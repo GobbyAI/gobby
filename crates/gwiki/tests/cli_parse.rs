@@ -1,68 +1,29 @@
 use std::fs;
-use std::path::Path;
-use std::process::{Command, Output};
 
 mod common;
 
-fn gwiki(args: &[&str]) -> Output {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let hub = tmp.path().join("hub");
-    let project = tmp.path().join("project");
-    common::write_gcode_json(&project);
-    fs::write(project.join("README.md"), "# Parse fixture\n").expect("write ingest fixture");
+fn gwiki(args: &[&str]) -> std::process::Output {
+    let fixture = common::GwikiFixture::new();
+    common::write_gcode_json(fixture.project());
+    fs::write(fixture.project().join("README.md"), "# Parse fixture\n")
+        .expect("write ingest fixture");
     if args.first().is_none_or(|command| *command != "init") {
         if args.contains(&"--topic") {
-            let mut command = common::gwiki_command();
-            strip_db_env(&mut command)
-                .args(["init", "--topic", "rust"])
-                .current_dir(&project);
-            apply_isolated_env(&mut command, tmp.path(), &hub);
+            let mut command = fixture.command_in_project();
+            command.args(["init", "--topic", "rust"]);
             let output = command.output().expect("gwiki topic init runs");
-            assert!(
-                output.status.success(),
-                "topic init fixture failed\nstdout:\n{}\nstderr:\n{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
+            common::assert_success(&output, "topic init fixture");
         } else if args.contains(&"--project") {
-            let mut command = common::gwiki_command();
-            strip_db_env(&mut command)
-                .args(["init", "--project"])
-                .current_dir(&project);
-            apply_isolated_env(&mut command, tmp.path(), &hub);
+            let mut command = fixture.command_in_project();
+            command.args(["init", "--project"]);
             let output = command.output().expect("gwiki project init runs");
-            assert!(
-                output.status.success(),
-                "project init fixture failed\nstdout:\n{}\nstderr:\n{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
+            common::assert_success(&output, "project init fixture");
         }
     }
 
-    let mut command = common::gwiki_command();
-    strip_db_env(&mut command).args(args).current_dir(&project);
-    apply_isolated_env(&mut command, tmp.path(), &hub);
+    let mut command = fixture.command_in_project();
+    command.args(args);
     command.output().expect("gwiki binary runs")
-}
-
-fn strip_db_env(command: &mut Command) -> &mut Command {
-    command
-        .env_remove("GWIKI_DATABASE_URL")
-        .env_remove("GOBBY_POSTGRES_DSN")
-        .env_remove("GCODE_DATABASE_URL")
-        .env_remove("GWIKI_POSTGRES_TEST_DATABASE_URL")
-        .env_remove("GCODE_POSTGRES_TEST_DATABASE_URL")
-}
-
-fn apply_isolated_env<'a>(command: &'a mut Command, root: &Path, hub: &Path) -> &'a mut Command {
-    command
-        .env("GOBBY_WIKI_HUB", hub)
-        .env("HOME", root.join("home"))
-        .env("XDG_CONFIG_HOME", root.join("xdg-config"))
-        .env("XDG_DATA_HOME", root.join("xdg-data"))
-        .env("XDG_CACHE_HOME", root.join("xdg-cache"))
-        .env("XDG_STATE_HOME", root.join("xdg-state"))
 }
 
 #[test]

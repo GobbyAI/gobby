@@ -37,31 +37,22 @@ fn command_modules_do_not_define_static_placeholder_results() {
 
 #[test]
 fn configured_index_uses_postgres_writer_when_database_url_is_set() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let hub = tmp.path().join("hub");
-    let topic = unique_topic("pg-writer-contract");
+    let fixture = common::GwikiFixture::new();
+    let topic = fixture.init_topic("pg-writer-contract");
     let invalid_database_url = "postgresql://127.0.0.1:1/gwiki";
 
-    let init = gwiki(
-        &hub,
-        tmp.path(),
-        &["--format", "json", "init", "--topic", &topic],
-    );
-    assert_success(&init, "init");
-
-    let vault = hub.join("topics").join(&topic);
-    fs::create_dir_all(vault.join("wiki/topics")).expect("create topic dir");
+    fs::create_dir_all(topic.vault.join("wiki/topics")).expect("create topic dir");
     fs::write(
-        vault.join("wiki/topics/durable-search.md"),
+        topic.vault.join("wiki/topics/durable-search.md"),
         "# Durable Search\n\nConfigured indexing must use PostgreSQL.\n",
     )
     .expect("write topic page");
 
     let index = gwiki_with_database_url(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         invalid_database_url,
-        &["--format", "json", "index", "--topic", &topic],
+        &["--format", "json", "index", "--topic", &topic.name],
     );
     assert!(
         !index.status.success(),
@@ -79,31 +70,21 @@ fn configured_index_uses_postgres_writer_when_database_url_is_set() {
 
 #[test]
 fn configured_postgres_index_feeds_configured_search_when_test_database_is_available() {
-    let Some(database_url) = std::env::var("GWIKI_POSTGRES_TEST_DATABASE_URL")
-        .ok()
-        .or_else(|| std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL").ok())
-    else {
+    let Some(database_url) = common::postgres_test_database_url() else {
         eprintln!(
             "skipping configured_postgres_index_feeds_configured_search_when_test_database_is_available: GWIKI_POSTGRES_TEST_DATABASE_URL/GCODE_POSTGRES_TEST_DATABASE_URL is not set"
         );
         return;
     };
 
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let hub = tmp.path().join("hub");
-    let topic = unique_topic("pg-index-search");
-    let _cleanup = PostgresTopicCleanup::new(database_url.clone(), topic.clone());
-
-    let init = gwiki(
-        &hub,
-        tmp.path(),
-        &["--format", "json", "init", "--topic", &topic],
-    );
-    assert_success(&init, "init");
+    let fixture = common::GwikiFixture::new();
+    let topic = fixture.init_topic("pg-index-search");
+    let _cleanup =
+        common::GwikiScopeCleanup::new(database_url.clone(), "topic", topic.name.clone());
 
     let setup = gwiki_with_database_url(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &database_url,
         &[
             "--format",
@@ -114,44 +95,43 @@ fn configured_postgres_index_feeds_configured_search_when_test_database_is_avail
             "--database-url",
             &database_url,
             "--topic",
-            &topic,
+            &topic.name,
         ],
     );
-    assert_success(&setup, "setup");
+    common::assert_success(&setup, "setup");
 
-    let vault = hub.join("topics").join(&topic);
-    fs::create_dir_all(vault.join("wiki/topics")).expect("create topic dir");
+    fs::create_dir_all(topic.vault.join("wiki/topics")).expect("create topic dir");
     fs::write(
-        vault.join("wiki/topics/durable-search.md"),
+        topic.vault.join("wiki/topics/durable-search.md"),
         "# Durable Search\n\nDurable bm25needle content is searchable after indexing.\n",
     )
     .expect("write topic page");
 
     let index = gwiki_with_database_url(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &database_url,
-        &["--format", "json", "index", "--topic", &topic],
+        &["--format", "json", "index", "--topic", &topic.name],
     );
-    assert_success(&index, "index");
+    common::assert_success(&index, "index");
 
     let search = gwiki_with_database_url(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &database_url,
         &[
             "--format",
             "json",
             "search",
             "--topic",
-            &topic,
+            &topic.name,
             "bm25needle",
             "--limit",
             "3",
         ],
     );
-    assert_success(&search, "search");
-    let search_payload = json_output(&search);
+    common::assert_success(&search, "search");
+    let search_payload = common::json_stdout(&search);
     assert!(
         search_payload["results"].as_array().is_some_and(|results| {
             results.iter().any(|result| {
@@ -163,51 +143,4 @@ fn configured_postgres_index_feeds_configured_search_when_test_database_is_avail
         }),
         "{search_payload:#}"
     );
-}
-
-struct PostgresTopicCleanup {
-    database_url: String,
-    topic: String,
-}
-
-impl PostgresTopicCleanup {
-    fn new(database_url: String, topic: String) -> Self {
-        Self {
-            database_url,
-            topic,
-        }
-    }
-}
-
-impl Drop for PostgresTopicCleanup {
-    fn drop(&mut self) {
-        let _ = cleanup_postgres_topic(&self.database_url, &self.topic);
-    }
-}
-
-fn cleanup_postgres_topic(database_url: &str, topic: &str) -> anyhow::Result<()> {
-    let mut client = gobby_core::postgres::connect_readwrite(database_url)?;
-    let mut tx = client.transaction()?;
-    tx.execute(
-        "DELETE FROM gwiki_ingestions WHERE scope_kind = 'topic' AND scope_id = $1",
-        &[&topic],
-    )?;
-    tx.execute(
-        "DELETE FROM gwiki_links WHERE scope_kind = 'topic' AND scope_id = $1",
-        &[&topic],
-    )?;
-    tx.execute(
-        "DELETE FROM gwiki_sources WHERE scope_kind = 'topic' AND scope_id = $1",
-        &[&topic],
-    )?;
-    tx.execute(
-        "DELETE FROM gwiki_chunks WHERE scope_kind = 'topic' AND scope_id = $1",
-        &[&topic],
-    )?;
-    tx.execute(
-        "DELETE FROM gwiki_documents WHERE scope_kind = 'topic' AND scope_id = $1",
-        &[&topic],
-    )?;
-    tx.commit()?;
-    Ok(())
 }

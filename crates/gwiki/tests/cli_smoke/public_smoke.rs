@@ -3,9 +3,8 @@ use gobby_wiki::session::DaemonDispatch;
 
 #[test]
 fn public_cli_smoke_uses_gwiki_modules() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let hub = tmp.path().join("hub");
-    let source = tmp.path().join("ownership-source.md");
+    let fixture = common::GwikiFixture::new();
+    let source = fixture.root().join("ownership-source.md");
     fs::write(
         &source,
         "# Ownership Source\n\nOwnership evidence for Rust borrowing.\n",
@@ -13,19 +12,19 @@ fn public_cli_smoke_uses_gwiki_modules() {
     .expect("write source");
 
     let init = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &["--format", "json", "init", "--topic", "rust"],
     );
-    assert_success(&init, "init");
+    common::assert_success(&init, "init");
 
     let setup = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &["--format", "json", "setup", "--topic", "rust"],
     );
-    assert_success(&setup, "setup");
-    let setup_payload = json_output(&setup);
+    common::assert_success(&setup, "setup");
+    let setup_payload = common::json_stdout(&setup);
     assert!(
         setup_payload["objects"]
             .as_array()
@@ -33,7 +32,7 @@ fn public_cli_smoke_uses_gwiki_modules() {
         "{setup_payload:#}"
     );
 
-    let vault = hub.join("topics").join("rust");
+    let vault = fixture.topic_vault("rust");
     fs::create_dir_all(vault.join("wiki/topics")).expect("create topic dir");
     fs::write(
         vault.join("wiki/topics/ownership.md"),
@@ -47,8 +46,8 @@ fn public_cli_smoke_uses_gwiki_modules() {
     .expect("write rust page");
 
     let ingest = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &[
             "--format",
             "json",
@@ -58,18 +57,18 @@ fn public_cli_smoke_uses_gwiki_modules() {
             source.to_str().expect("source path utf8"),
         ],
     );
-    assert_success(&ingest, "ingest-file");
-    let ingest_payload = json_output(&ingest);
+    common::assert_success(&ingest, "ingest-file");
+    let ingest_payload = common::json_stdout(&ingest);
     assert_eq!(ingest_payload["command"], "ingest-file");
     assert!(ingest_payload["raw_path"].as_str().is_some());
 
     let index = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &["--format", "json", "index", "--topic", "rust"],
     );
-    assert_success(&index, "index");
-    let index_payload = json_output(&index);
+    common::assert_success(&index, "index");
+    let index_payload = common::json_stdout(&index);
     assert!(
         index_payload["indexed"]["documents"]
             .as_u64()
@@ -84,8 +83,8 @@ fn public_cli_smoke_uses_gwiki_modules() {
     );
 
     let search = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &[
             "--format",
             "json",
@@ -97,8 +96,8 @@ fn public_cli_smoke_uses_gwiki_modules() {
             "3",
         ],
     );
-    assert_success(&search, "search");
-    let search_payload = json_output(&search);
+    common::assert_success(&search, "search");
+    let search_payload = common::json_stdout(&search);
     assert!(
         search_payload["results"]
             .as_array()
@@ -120,8 +119,8 @@ fn public_cli_smoke_uses_gwiki_modules() {
     );
 
     let backlinks = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &[
             "--format",
             "json",
@@ -131,8 +130,8 @@ fn public_cli_smoke_uses_gwiki_modules() {
             "wiki/topics/ownership.md",
         ],
     );
-    assert_success(&backlinks, "backlinks");
-    let backlinks_payload = json_output(&backlinks);
+    common::assert_success(&backlinks, "backlinks");
+    let backlinks_payload = common::json_stdout(&backlinks);
     assert!(
         backlinks_payload["backlinks"]
             .as_array()
@@ -141,8 +140,8 @@ fn public_cli_smoke_uses_gwiki_modules() {
     );
 
     let suggestions = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &[
             "--format",
             "json",
@@ -153,8 +152,8 @@ fn public_cli_smoke_uses_gwiki_modules() {
             "3",
         ],
     );
-    assert_success(&suggestions, "link-suggest");
-    let suggestions_payload = json_output(&suggestions);
+    common::assert_success(&suggestions, "link-suggest");
+    let suggestions_payload = common::json_stdout(&suggestions);
     assert!(
         suggestions_payload["suggestions"]
             .as_array()
@@ -165,14 +164,14 @@ fn public_cli_smoke_uses_gwiki_modules() {
     seed_accepted_research_checkpoint(&vault);
 
     let research = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &[
             "--format", "json", "--topic", "rust", "research", "--audit", "--ai", "off",
         ],
     );
-    assert_success(&research, "research");
-    let research_payload = json_output(&research);
+    common::assert_success(&research, "research");
+    let research_payload = common::json_stdout(&research);
     assert_eq!(research_payload["command"], "research");
     assert_eq!(research_payload["audit"], true);
     assert_eq!(research_payload["stop_reason"], "ai_unavailable");
@@ -180,8 +179,8 @@ fn public_cli_smoke_uses_gwiki_modules() {
     assert_eq!(research_payload["scope"]["id"], "rust");
 
     let compile = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &[
             "--format",
             "json",
@@ -194,8 +193,8 @@ fn public_cli_smoke_uses_gwiki_modules() {
             "wiki/topics/ownership-synthesis.md",
         ],
     );
-    assert_success(&compile, "compile");
-    let compile_payload = json_output(&compile);
+    common::assert_success(&compile, "compile");
+    let compile_payload = common::json_stdout(&compile);
     assert_eq!(compile_payload["command"], "compile");
     assert_json_path(
         &compile_payload["article_path"],
@@ -204,29 +203,28 @@ fn public_cli_smoke_uses_gwiki_modules() {
     assert!(vault.join("wiki/sources/ownership-evidence.md").is_file());
 
     let audit = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &["--format", "json", "--topic", "rust", "audit"],
     );
-    assert_success(&audit, "audit");
-    let audit_payload = json_output(&audit);
+    common::assert_success(&audit, "audit");
+    let audit_payload = common::json_stdout(&audit);
     assert_eq!(audit_payload["command"], "audit");
     assert_json_path(&audit_payload["root"], &vault);
 }
 
 #[test]
 fn public_cli_smoke_continues_research_compile_audit_in_topic_scope() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let hub = tmp.path().join("hub");
+    let fixture = common::GwikiFixture::new();
 
     let init = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &["--format", "json", "init", "--topic", "rust"],
     );
-    assert_success(&init, "init");
+    common::assert_success(&init, "init");
 
-    let vault = hub.join("topics").join("rust");
+    let vault = fixture.topic_vault("rust");
     let note_path = vault.join("raw/research/session-scope.md");
     fs::create_dir_all(note_path.parent().expect("note parent")).expect("create research dir");
     fs::write(
@@ -255,14 +253,14 @@ fn public_cli_smoke_continues_research_compile_audit_in_topic_scope() {
     session.save_checkpoint().expect("save checkpoint");
 
     let research = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &[
             "--format", "json", "--topic", "rust", "research", "--audit", "--ai", "off",
         ],
     );
-    assert_success(&research, "research");
-    let research_payload = json_output(&research);
+    common::assert_success(&research, "research");
+    let research_payload = common::json_stdout(&research);
     assert_eq!(research_payload["command"], "research");
     assert_eq!(research_payload["scope"]["kind"], "topic");
     assert_eq!(research_payload["scope"]["id"], "rust");
@@ -271,12 +269,12 @@ fn public_cli_smoke_continues_research_compile_audit_in_topic_scope() {
     assert!(vault.join(".gwiki/session-events.jsonl").exists());
 
     let compile = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &["--format", "json", "--topic", "rust", "compile"],
     );
-    assert_success(&compile, "compile");
-    let compile_payload = json_output(&compile);
+    common::assert_success(&compile, "compile");
+    let compile_payload = common::json_stdout(&compile);
     assert_eq!(compile_payload["command"], "compile");
     assert!(
         compile_payload["article_path"]
@@ -286,12 +284,12 @@ fn public_cli_smoke_continues_research_compile_audit_in_topic_scope() {
     );
 
     let audit = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &["--format", "json", "--topic", "rust", "audit"],
     );
-    assert_success(&audit, "audit");
-    let audit_payload = json_output(&audit);
+    common::assert_success(&audit, "audit");
+    let audit_payload = common::json_stdout(&audit);
     assert_eq!(audit_payload["command"], "audit");
     assert_eq!(audit_payload["scope"]["kind"], "topic");
     assert_eq!(audit_payload["scope"]["id"], "rust");

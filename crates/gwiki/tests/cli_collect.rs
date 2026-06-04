@@ -1,21 +1,9 @@
-use std::process::Output;
-
 mod common;
 
-fn gwiki(args: &[&str]) -> Output {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let hub = tmp.path().join("hub");
-    let project = tmp.path().join("project");
-    common::write_gcode_json(&project);
-
-    common::gwiki_command()
-        .args(args)
-        .env_clear()
-        .env("HOME", tmp.path())
-        .env("GOBBY_WIKI_HUB", &hub)
-        .current_dir(&project)
-        .output()
-        .expect("gwiki binary runs")
+fn gwiki(args: &[&str]) -> std::process::Output {
+    let fixture = common::GwikiFixture::new();
+    common::write_gcode_json(fixture.project());
+    fixture.output_in_project(args)
 }
 
 #[test]

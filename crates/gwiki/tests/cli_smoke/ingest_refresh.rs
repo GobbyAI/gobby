@@ -2,17 +2,16 @@ use super::*;
 
 #[test]
 fn read_returns_scoped_wiki_document_contract() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let hub = tmp.path().join("hub");
+    let fixture = common::GwikiFixture::new();
 
     let init = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &["--format", "json", "init", "--topic", "rust"],
     );
-    assert_success(&init, "init");
+    common::assert_success(&init, "init");
 
-    let vault = hub.join("topics").join("rust");
+    let vault = fixture.topic_vault("rust");
     let ownership_path = vault.join("wiki/topics/ownership.md");
     std::fs::write(
         &ownership_path,
@@ -31,8 +30,8 @@ fn read_returns_scoped_wiki_document_contract() {
     .expect("write shared concept page");
 
     let by_path = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &[
             "--format",
             "json",
@@ -43,8 +42,8 @@ fn read_returns_scoped_wiki_document_contract() {
             "wiki/topics/ownership.md",
         ],
     );
-    assert_success(&by_path, "read by path");
-    let by_path_payload = json_output(&by_path);
+    common::assert_success(&by_path, "read by path");
+    let by_path_payload = common::json_stdout(&by_path);
     assert_eq!(by_path_payload["command"], "read");
     assert_eq!(by_path_payload["status"], "found");
     assert_eq!(by_path_payload["scope"]["kind"], "topic");
@@ -71,8 +70,8 @@ fn read_returns_scoped_wiki_document_contract() {
     );
 
     let by_title = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &[
             "--format",
             "json",
@@ -83,15 +82,15 @@ fn read_returns_scoped_wiki_document_contract() {
             "Ownership",
         ],
     );
-    assert_success(&by_title, "read by title");
-    let by_title_payload = json_output(&by_title);
+    common::assert_success(&by_title, "read by title");
+    let by_title_payload = common::json_stdout(&by_title);
     assert_eq!(by_title_payload["status"], "found");
     assert_eq!(by_title_payload["requested"]["kind"], "title");
     assert_eq!(by_title_payload["wiki_path"], "wiki/topics/ownership.md");
 
     let missing = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &[
             "--format",
             "json",
@@ -102,16 +101,16 @@ fn read_returns_scoped_wiki_document_contract() {
             "wiki/topics/missing.md",
         ],
     );
-    assert_success(&missing, "read missing");
-    let missing_payload = json_output(&missing);
+    common::assert_success(&missing, "read missing");
+    let missing_payload = common::json_stdout(&missing);
     assert_eq!(missing_payload["status"], "not_found");
     assert_eq!(missing_payload["wiki_path"], "wiki/topics/missing.md");
     assert_eq!(missing_payload["content"], serde_json::Value::Null);
     assert_eq!(missing_payload["degradations"][0]["reason"], "not_found");
 
     let invalid = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &[
             "--format",
             "json",
@@ -122,8 +121,8 @@ fn read_returns_scoped_wiki_document_contract() {
             "../secret.md",
         ],
     );
-    assert_success(&invalid, "read invalid");
-    let invalid_payload = json_output(&invalid);
+    common::assert_success(&invalid, "read invalid");
+    let invalid_payload = common::json_stdout(&invalid);
     assert_eq!(invalid_payload["status"], "invalid_request");
     assert_eq!(invalid_payload["wiki_path"], serde_json::Value::Null);
     assert_eq!(invalid_payload["content"], serde_json::Value::Null);
@@ -133,14 +132,14 @@ fn read_returns_scoped_wiki_document_contract() {
     );
 
     let ambiguous = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &[
             "--format", "json", "--topic", "rust", "read", "--title", "Shared",
         ],
     );
-    assert_success(&ambiguous, "read ambiguous");
-    let ambiguous_payload = json_output(&ambiguous);
+    common::assert_success(&ambiguous, "read ambiguous");
+    let ambiguous_payload = common::json_stdout(&ambiguous);
     assert_eq!(ambiguous_payload["status"], "ambiguous");
     assert_eq!(ambiguous_payload["degradations"][0]["reason"], "ambiguous");
     assert_eq!(
@@ -154,11 +153,8 @@ fn read_returns_scoped_wiki_document_contract() {
 
 #[test]
 fn ingest_url_json_reports_partial_success() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let hub = tmp.path().join("hub");
-    let topic = unique_topic("url-partial");
-    let init = gwiki(&hub, tmp.path(), &["init", "--topic", &topic]);
-    assert_success(&init, "init topic");
+    let fixture = common::GwikiFixture::new();
+    let topic = fixture.init_topic("url-partial");
 
     let (base_url, server) = serve_http_responses(vec![
         (
@@ -170,22 +166,22 @@ fn ingest_url_json_reports_partial_success() {
     let accepted_url = format!("{base_url}/accepted");
     let failed_url = format!("{base_url}/failed");
     let output = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &[
             "--format",
             "json",
             "ingest-url",
             "--topic",
-            &topic,
+            &topic.name,
             &accepted_url,
             &failed_url,
         ],
     );
     server.join().expect("HTTP fixture completed");
-    assert_success(&output, "ingest-url partial");
+    common::assert_success(&output, "ingest-url partial");
 
-    let payload = json_output(&output);
+    let payload = common::json_stdout(&output);
     assert_eq!(payload["command"], "ingest-url");
     assert_eq!(payload["status"], "partial");
     assert_eq!(payload["accepted"].as_array().expect("accepted").len(), 1);
@@ -215,24 +211,21 @@ fn ingest_url_json_reports_partial_success() {
 
 #[test]
 fn ingest_url_json_reports_all_failed_with_nonzero_exit() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let hub = tmp.path().join("hub");
-    let topic = unique_topic("url-failed");
-    let init = gwiki(&hub, tmp.path(), &["init", "--topic", &topic]);
-    assert_success(&init, "init topic");
+    let fixture = common::GwikiFixture::new();
+    let topic = fixture.init_topic("url-failed");
 
     let (base_url, server) =
         serve_http_responses(vec![("500 Internal Server Error", "fixture failure")]);
     let failed_url = format!("{base_url}/failed");
     let output = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &[
             "--format",
             "json",
             "ingest-url",
             "--topic",
-            &topic,
+            &topic.name,
             &failed_url,
         ],
     );
@@ -244,7 +237,7 @@ fn ingest_url_json_reports_all_failed_with_nonzero_exit() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let payload = json_output(&output);
+    let payload = common::json_stdout(&output);
     assert_eq!(payload["command"], "ingest-url");
     assert_eq!(payload["status"], "failed");
     assert_eq!(payload["accepted"].as_array().expect("accepted").len(), 0);
@@ -259,11 +252,8 @@ fn ingest_url_json_reports_all_failed_with_nonzero_exit() {
 
 #[test]
 fn refresh_url_json_reports_changed_and_reindexes_once() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let hub = tmp.path().join("hub");
-    let topic = unique_topic("refresh-changed");
-    let init = gwiki(&hub, tmp.path(), &["init", "--topic", &topic]);
-    assert_success(&init, "init topic");
+    let fixture = common::GwikiFixture::new();
+    let topic = fixture.init_topic("refresh-changed");
 
     let (base_url, server) = serve_http_responses(vec![
         (
@@ -277,12 +267,19 @@ fn refresh_url_json_reports_changed_and_reindexes_once() {
     ]);
     let url = format!("{base_url}/source");
     let ingest = gwiki(
-        &hub,
-        tmp.path(),
-        &["--format", "json", "ingest-url", "--topic", &topic, &url],
+        &fixture,
+        fixture.root(),
+        &[
+            "--format",
+            "json",
+            "ingest-url",
+            "--topic",
+            &topic.name,
+            &url,
+        ],
     );
-    assert_success(&ingest, "ingest-url initial");
-    let ingest_payload = json_output(&ingest);
+    common::assert_success(&ingest, "ingest-url initial");
+    let ingest_payload = common::json_stdout(&ingest);
     let old_id = ingest_payload["accepted"][0]["source"]["id"]
         .as_str()
         .expect("old source id")
@@ -293,15 +290,21 @@ fn refresh_url_json_reports_changed_and_reindexes_once() {
         .to_string();
 
     let refresh = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &[
-            "--format", "json", "refresh", "--topic", &topic, "--id", &old_id,
+            "--format",
+            "json",
+            "refresh",
+            "--topic",
+            &topic.name,
+            "--id",
+            &old_id,
         ],
     );
     server.join().expect("HTTP fixture completed");
-    assert_success(&refresh, "refresh changed");
-    let payload = json_output(&refresh);
+    common::assert_success(&refresh, "refresh changed");
+    let payload = common::json_stdout(&refresh);
     assert_eq!(payload["command"], "refresh");
     assert_eq!(payload["status"], "refreshed");
     assert_eq!(payload["refreshed"].as_array().expect("refreshed").len(), 1);
@@ -319,8 +322,7 @@ fn refresh_url_json_reports_changed_and_reindexes_once() {
     );
     assert_eq!(payload["index_status"]["index_required"], false);
 
-    let vault = hub.join("topics").join(&topic);
-    let manifest = SourceManifest::read(&vault).expect("read source manifest");
+    let manifest = SourceManifest::read(&topic.vault).expect("read source manifest");
     let matching = manifest
         .entries
         .iter()
@@ -328,42 +330,52 @@ fn refresh_url_json_reports_changed_and_reindexes_once() {
         .collect::<Vec<_>>();
     assert_eq!(matching.len(), 1);
     assert_eq!(matching[0].id, new_id);
-    assert!(!vault.join(old_raw_path).exists());
-    assert!(vault.join(format!("raw/{new_id}.md")).exists());
+    assert!(!topic.vault.join(old_raw_path).exists());
+    assert!(topic.vault.join(format!("raw/{new_id}.md")).exists());
 }
 
 #[test]
 fn refresh_url_json_reports_unchanged_without_indexing() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let hub = tmp.path().join("hub");
-    let topic = unique_topic("refresh-unchanged");
-    let init = gwiki(&hub, tmp.path(), &["init", "--topic", &topic]);
-    assert_success(&init, "init topic");
+    let fixture = common::GwikiFixture::new();
+    let topic = fixture.init_topic("refresh-unchanged");
 
     let body = "<!doctype html><html><head><title>Same</title></head><body><p>same body.</p></body></html>";
     let (base_url, server) = serve_http_responses(vec![("200 OK", body), ("200 OK", body)]);
     let url = format!("{base_url}/source");
     let ingest = gwiki(
-        &hub,
-        tmp.path(),
-        &["--format", "json", "ingest-url", "--topic", &topic, &url],
+        &fixture,
+        fixture.root(),
+        &[
+            "--format",
+            "json",
+            "ingest-url",
+            "--topic",
+            &topic.name,
+            &url,
+        ],
     );
-    assert_success(&ingest, "ingest-url initial");
-    let source_id = json_output(&ingest)["accepted"][0]["source"]["id"]
+    common::assert_success(&ingest, "ingest-url initial");
+    let source_id = common::json_stdout(&ingest)["accepted"][0]["source"]["id"]
         .as_str()
         .expect("source id")
         .to_string();
 
     let refresh = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &[
-            "--format", "json", "refresh", "--topic", &topic, "--id", &source_id,
+            "--format",
+            "json",
+            "refresh",
+            "--topic",
+            &topic.name,
+            "--id",
+            &source_id,
         ],
     );
     server.join().expect("HTTP fixture completed");
-    assert_success(&refresh, "refresh unchanged");
-    let payload = json_output(&refresh);
+    common::assert_success(&refresh, "refresh unchanged");
+    let payload = common::json_stdout(&refresh);
     assert_eq!(payload["status"], "unchanged");
     assert_eq!(payload["unchanged"][0]["id"], source_id);
     assert_eq!(payload["index_status"]["status"], "not_run");
@@ -372,63 +384,66 @@ fn refresh_url_json_reports_unchanged_without_indexing() {
 
 #[test]
 fn refresh_ingest_file_json_replays_local_dry_run_and_unchanged() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let hub = tmp.path().join("hub");
-    let topic = unique_topic("refresh-local");
-    let init = gwiki(&hub, tmp.path(), &["init", "--topic", &topic]);
-    assert_success(&init, "init topic");
+    let fixture = common::GwikiFixture::new();
+    let topic = fixture.init_topic("refresh-local");
 
-    let source = tmp.path().join("local-source.md");
+    let source = fixture.root().join("local-source.md");
     fs::write(&source, "# Local\n\nsame body\n").expect("write local source");
     let source_arg = source.to_str().expect("source path utf8");
     let ingest = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &[
             "--format",
             "json",
             "ingest-file",
             "--topic",
-            &topic,
+            &topic.name,
             "--no-ai",
             source_arg,
         ],
     );
-    assert_success(&ingest, "ingest-file initial");
-    let source_id = json_output(&ingest)["source"]["id"]
+    common::assert_success(&ingest, "ingest-file initial");
+    let source_id = common::json_stdout(&ingest)["source"]["id"]
         .as_str()
         .expect("source id")
         .to_string();
 
     let dry_run = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &[
             "--format",
             "json",
             "refresh",
             "--topic",
-            &topic,
+            &topic.name,
             "--id",
             &source_id,
             "--dry-run",
         ],
     );
-    assert_success(&dry_run, "refresh local dry-run");
-    let dry_payload = json_output(&dry_run);
+    common::assert_success(&dry_run, "refresh local dry-run");
+    let dry_payload = common::json_stdout(&dry_run);
     assert_eq!(dry_payload["status"], "dry_run");
     assert_eq!(dry_payload["planned"][0]["id"], source_id);
     assert_eq!(dry_payload["planned"][0]["replay_kind"], "local_file");
 
     let refresh = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &[
-            "--format", "json", "refresh", "--topic", &topic, "--id", &source_id,
+            "--format",
+            "json",
+            "refresh",
+            "--topic",
+            &topic.name,
+            "--id",
+            &source_id,
         ],
     );
-    assert_success(&refresh, "refresh local unchanged");
-    let payload = json_output(&refresh);
+    common::assert_success(&refresh, "refresh local unchanged");
+    let payload = common::json_stdout(&refresh);
     assert_eq!(payload["status"], "unchanged");
     assert_eq!(payload["unchanged"][0]["id"], source_id);
     assert_eq!(payload["unchanged"][0]["replay_kind"], "local_file");
@@ -437,11 +452,8 @@ fn refresh_ingest_file_json_replays_local_dry_run_and_unchanged() {
 
 #[test]
 fn refresh_explicit_all_failed_preserves_json_stdout() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let hub = tmp.path().join("hub");
-    let topic = unique_topic("refresh-failed");
-    let init = gwiki(&hub, tmp.path(), &["init", "--topic", &topic]);
-    assert_success(&init, "init topic");
+    let fixture = common::GwikiFixture::new();
+    let topic = fixture.init_topic("refresh-failed");
 
     let (base_url, server) = serve_http_responses(vec![
         (
@@ -452,21 +464,34 @@ fn refresh_explicit_all_failed_preserves_json_stdout() {
     ]);
     let url = format!("{base_url}/source");
     let ingest = gwiki(
-        &hub,
-        tmp.path(),
-        &["--format", "json", "ingest-url", "--topic", &topic, &url],
+        &fixture,
+        fixture.root(),
+        &[
+            "--format",
+            "json",
+            "ingest-url",
+            "--topic",
+            &topic.name,
+            &url,
+        ],
     );
-    assert_success(&ingest, "ingest-url initial");
-    let source_id = json_output(&ingest)["accepted"][0]["source"]["id"]
+    common::assert_success(&ingest, "ingest-url initial");
+    let source_id = common::json_stdout(&ingest)["accepted"][0]["source"]["id"]
         .as_str()
         .expect("source id")
         .to_string();
 
     let refresh = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &[
-            "--format", "json", "refresh", "--topic", &topic, "--id", &source_id,
+            "--format",
+            "json",
+            "refresh",
+            "--topic",
+            &topic.name,
+            "--id",
+            &source_id,
         ],
     );
     server.join().expect("HTTP fixture completed");
@@ -476,7 +501,7 @@ fn refresh_explicit_all_failed_preserves_json_stdout() {
         String::from_utf8_lossy(&refresh.stdout),
         String::from_utf8_lossy(&refresh.stderr)
     );
-    let payload = json_output(&refresh);
+    let payload = common::json_stdout(&refresh);
     assert_eq!(payload["command"], "refresh");
     assert_eq!(payload["status"], "failed");
     assert_eq!(payload["failed"][0]["id"], source_id);
@@ -485,12 +510,11 @@ fn refresh_explicit_all_failed_preserves_json_stdout() {
 
 #[test]
 fn refresh_help_and_project_scope_use_existing_scope_flags() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let hub = tmp.path().join("hub");
-    let project_marker = common::write_gcode_json(tmp.path());
+    let fixture = common::GwikiFixture::new();
+    let project_marker = common::write_gcode_json(fixture.root());
 
-    let help = gwiki(&hub, tmp.path(), &["refresh", "--help"]);
-    assert_success(&help, "refresh help");
+    let help = gwiki(&fixture, fixture.root(), &["refresh", "--help"]);
+    common::assert_success(&help, "refresh help");
     let help_text = String::from_utf8_lossy(&help.stdout);
     assert!(help_text.contains("--id"));
     assert!(help_text.contains("--dry-run"));
@@ -498,15 +522,19 @@ fn refresh_help_and_project_scope_use_existing_scope_flags() {
     assert!(help_text.contains("--topic"));
     assert!(!help_text.contains("--scope"));
 
-    let init = gwiki(&hub, tmp.path(), &["--format", "json", "init", "--project"]);
-    assert_success(&init, "init project");
+    let init = gwiki(
+        &fixture,
+        fixture.root(),
+        &["--format", "json", "init", "--project"],
+    );
+    common::assert_success(&init, "init project");
     let refresh = gwiki(
-        &hub,
-        tmp.path(),
+        &fixture,
+        fixture.root(),
         &["--format", "json", "refresh", "--project", "--dry-run"],
     );
-    assert_success(&refresh, "refresh project dry-run");
-    let payload = json_output(&refresh);
+    common::assert_success(&refresh, "refresh project dry-run");
+    let payload = common::json_stdout(&refresh);
     assert_eq!(payload["command"], "refresh");
     assert_eq!(payload["status"], "dry_run");
     assert_eq!(payload["scope"]["kind"], "project");

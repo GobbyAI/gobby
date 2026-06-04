@@ -18,45 +18,27 @@ use gobby_wiki::sources::{
     CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest,
 };
 
-fn gwiki(hub: &Path, cwd: &Path, args: &[&str]) -> Output {
-    common::gwiki_command()
+fn gwiki(fixture: &common::GwikiFixture, cwd: &Path, args: &[&str]) -> Output {
+    fixture
+        .command_in(cwd)
         .args(args)
-        .env("GOBBY_WIKI_HUB", hub)
-        .env("HOME", cwd.join("home"))
         .env("GWIKI_ALLOW_LOOPBACK_URL_FETCH_FOR_TESTS", "1")
-        .env_remove("GWIKI_DATABASE_URL")
-        .env_remove("GOBBY_POSTGRES_DSN")
-        .env_remove("GCODE_DATABASE_URL")
-        .current_dir(cwd)
         .output()
         .expect("gwiki binary runs")
 }
 
-fn gwiki_with_database_url(hub: &Path, cwd: &Path, database_url: &str, args: &[&str]) -> Output {
-    common::gwiki_command()
+fn gwiki_with_database_url(
+    fixture: &common::GwikiFixture,
+    cwd: &Path,
+    database_url: &str,
+    args: &[&str],
+) -> Output {
+    fixture
+        .command_with_database_url_in(cwd, database_url)
         .args(args)
-        .env("GOBBY_WIKI_HUB", hub)
-        .env("HOME", cwd.join("home"))
-        .env("GWIKI_DATABASE_URL", database_url)
         .env("GWIKI_ALLOW_LOOPBACK_URL_FETCH_FOR_TESTS", "1")
-        .env_remove("GOBBY_POSTGRES_DSN")
-        .env_remove("GCODE_DATABASE_URL")
-        .current_dir(cwd)
         .output()
         .expect("gwiki binary runs")
-}
-
-fn assert_success(output: &Output, label: &str) {
-    assert!(
-        output.status.success(),
-        "{label} failed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-fn json_output(output: &Output) -> serde_json::Value {
-    serde_json::from_slice(&output.stdout).expect("stdout is JSON")
 }
 
 fn assert_json_path(value: &serde_json::Value, expected: &Path) {
@@ -65,14 +47,6 @@ fn assert_json_path(value: &serde_json::Value, expected: &Path) {
         Some(expected.to_str().expect("path utf8")),
         "{value:#}"
     );
-}
-
-fn unique_topic(label: &str) -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system time after epoch")
-        .as_nanos();
-    format!("{label}-{}-{nanos}", std::process::id())
 }
 
 fn serve_http_responses(

@@ -1,63 +1,11 @@
 use std::fs;
 use std::path::Path;
-use std::process::Output;
 
 mod common;
 
 use gobby_wiki::sources::{
     CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest, SourceRecord,
 };
-
-fn gwiki(hub: &Path, cwd: &Path, args: &[&str]) -> Output {
-    let home = cwd.join("home");
-    fs::create_dir_all(&home).expect("create isolated home");
-    common::gwiki_command()
-        .args(args)
-        .env("GOBBY_WIKI_HUB", hub)
-        .env("HOME", home)
-        .env_remove("GWIKI_DATABASE_URL")
-        .env_remove("GWIKI_POSTGRES_TEST_DATABASE_URL")
-        .env_remove("GOBBY_POSTGRES_DSN")
-        .env_remove("GCODE_DATABASE_URL")
-        .env_remove("GCODE_POSTGRES_TEST_DATABASE_URL")
-        .current_dir(cwd)
-        .output()
-        .expect("gwiki binary runs")
-}
-
-fn assert_success(output: &Output, label: &str) {
-    assert!(
-        output.status.success(),
-        "{label} failed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-fn json_stdout(output: &Output) -> serde_json::Value {
-    serde_json::from_slice(&output.stdout).expect("stdout is JSON")
-}
-
-fn json_stderr(output: &Output) -> serde_json::Value {
-    serde_json::from_slice(&output.stderr).expect("stderr is JSON")
-}
-
-fn unique_topic(label: &str) -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system time after epoch")
-        .as_nanos();
-    format!("{label}-{}-{nanos}", std::process::id())
-}
-
-fn initialized_topic(tmp: &Path, label: &str) -> (std::path::PathBuf, String, std::path::PathBuf) {
-    let hub = tmp.join("hub");
-    let topic = unique_topic(label);
-    let init = gwiki(&hub, tmp, &["--format", "json", "init", "--topic", &topic]);
-    assert_success(&init, "init");
-    let vault = hub.join("topics").join(&topic);
-    (hub, topic, vault)
-}
 
 fn seed_source(
     vault: &Path,
@@ -125,10 +73,10 @@ fn json_array_contains(value: &serde_json::Value, needle: &str) -> bool {
 
 #[test]
 fn sources_lists_manifest_entries_raw_path_and_source_asset() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let (hub, topic, vault) = initialized_topic(tmp.path(), "sources-list");
+    let fixture = common::GwikiFixture::new();
+    let topic = fixture.init_topic("sources-list");
     let record = seed_source(
-        &vault,
+        &topic.vault,
         "list",
         CompileStatus::Pending,
         Some("raw/assets/list.pdf"),
@@ -136,13 +84,9 @@ fn sources_lists_manifest_entries_raw_path_and_source_asset() {
         true,
     );
 
-    let output = gwiki(
-        &hub,
-        tmp.path(),
-        &["--format", "json", "sources", "--topic", &topic],
-    );
-    assert_success(&output, "sources");
-    let payload = json_stdout(&output);
+    let output = fixture.output(&["--format", "json", "sources", "--topic", &topic.name]);
+    common::assert_success(&output, "sources");
+    let payload = common::json_stdout(&output);
     let source = &payload["sources"][0];
 
     assert_eq!(payload["command"], "sources");
@@ -166,10 +110,10 @@ fn sources_lists_manifest_entries_raw_path_and_source_asset() {
 
 #[test]
 fn remove_source_dry_run_reports_intended_changes_without_mutation() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let (hub, topic, vault) = initialized_topic(tmp.path(), "source-dry-run");
+    let fixture = common::GwikiFixture::new();
+    let topic = fixture.init_topic("source-dry-run");
     let record = seed_source(
-        &vault,
+        &topic.vault,
         "dry-run",
         CompileStatus::Pending,
         Some("raw/assets/dry-run.pdf"),
@@ -177,22 +121,18 @@ fn remove_source_dry_run_reports_intended_changes_without_mutation() {
         true,
     );
 
-    let output = gwiki(
-        &hub,
-        tmp.path(),
-        &[
-            "--format",
-            "json",
-            "remove-source",
-            "--topic",
-            &topic,
-            "--id",
-            &record.id,
-            "--dry-run",
-        ],
-    );
-    assert_success(&output, "remove-source dry-run");
-    let payload = json_stdout(&output);
+    let output = fixture.output(&[
+        "--format",
+        "json",
+        "remove-source",
+        "--topic",
+        &topic.name,
+        "--id",
+        &record.id,
+        "--dry-run",
+    ]);
+    common::assert_success(&output, "remove-source dry-run");
+    let payload = common::json_stdout(&output);
 
     assert_eq!(payload["status"], "would_remove");
     assert_eq!(payload["dry_run"], true);
@@ -207,14 +147,15 @@ fn remove_source_dry_run_reports_intended_changes_without_mutation() {
     assert_eq!(payload["index_status"]["status"], "not_run");
     assert_eq!(payload["index_status"]["index_required"], false);
     assert!(
-        vault
+        topic
+            .vault
             .join("raw")
             .join(format!("{}.md", record.id))
             .is_file()
     );
-    assert!(vault.join("raw/assets/dry-run.pdf").is_file());
+    assert!(topic.vault.join("raw/assets/dry-run.pdf").is_file());
     assert_eq!(
-        SourceManifest::read(&vault)
+        SourceManifest::read(&topic.vault)
             .expect("read manifest")
             .entries
             .len(),
@@ -224,10 +165,10 @@ fn remove_source_dry_run_reports_intended_changes_without_mutation() {
 
 #[test]
 fn remove_source_yes_removes_manifest_raw_asset_and_indexes() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let (hub, topic, vault) = initialized_topic(tmp.path(), "source-remove");
+    let fixture = common::GwikiFixture::new();
+    let topic = fixture.init_topic("source-remove");
     let record = seed_source(
-        &vault,
+        &topic.vault,
         "remove",
         CompileStatus::Compiled,
         Some("raw/assets/remove.pdf"),
@@ -235,22 +176,18 @@ fn remove_source_yes_removes_manifest_raw_asset_and_indexes() {
         true,
     );
 
-    let output = gwiki(
-        &hub,
-        tmp.path(),
-        &[
-            "--format",
-            "json",
-            "remove-source",
-            "--topic",
-            &topic,
-            "--id",
-            &record.id,
-            "--yes",
-        ],
-    );
-    assert_success(&output, "remove-source yes");
-    let payload = json_stdout(&output);
+    let output = fixture.output(&[
+        "--format",
+        "json",
+        "remove-source",
+        "--topic",
+        &topic.name,
+        "--id",
+        &record.id,
+        "--yes",
+    ]);
+    common::assert_success(&output, "remove-source yes");
+    let payload = common::json_stdout(&output);
 
     assert_eq!(payload["status"], "removed");
     assert_eq!(payload["dry_run"], false);
@@ -260,10 +197,16 @@ fn remove_source_yes_removes_manifest_raw_asset_and_indexes() {
         &payload["follow_up"],
         "audit_recommended"
     ));
-    assert!(!vault.join("raw").join(format!("{}.md", record.id)).exists());
-    assert!(!vault.join("raw/assets/remove.pdf").exists());
     assert!(
-        SourceManifest::read(&vault)
+        !topic
+            .vault
+            .join("raw")
+            .join(format!("{}.md", record.id))
+            .exists()
+    );
+    assert!(!topic.vault.join("raw/assets/remove.pdf").exists());
+    assert!(
+        SourceManifest::read(&topic.vault)
             .expect("read manifest")
             .entries
             .is_empty()
@@ -272,10 +215,10 @@ fn remove_source_yes_removes_manifest_raw_asset_and_indexes() {
 
 #[test]
 fn remove_source_keep_asset_preserves_raw_asset() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let (hub, topic, vault) = initialized_topic(tmp.path(), "source-keep-asset");
+    let fixture = common::GwikiFixture::new();
+    let topic = fixture.init_topic("source-keep-asset");
     let record = seed_source(
-        &vault,
+        &topic.vault,
         "keep-asset",
         CompileStatus::Pending,
         Some("raw/assets/keep.pdf"),
@@ -283,54 +226,52 @@ fn remove_source_keep_asset_preserves_raw_asset() {
         true,
     );
 
-    let output = gwiki(
-        &hub,
-        tmp.path(),
-        &[
-            "--format",
-            "json",
-            "remove-source",
-            "--topic",
-            &topic,
-            "--id",
-            &record.id,
-            "--yes",
-            "--keep-asset",
-        ],
-    );
-    assert_success(&output, "remove-source keep-asset");
-    let payload = json_stdout(&output);
+    let output = fixture.output(&[
+        "--format",
+        "json",
+        "remove-source",
+        "--topic",
+        &topic.name,
+        "--id",
+        &record.id,
+        "--yes",
+        "--keep-asset",
+    ]);
+    common::assert_success(&output, "remove-source keep-asset");
+    let payload = common::json_stdout(&output);
 
     assert!(json_array_contains(
         &payload["kept_paths"],
         "raw/assets/keep.pdf"
     ));
-    assert!(!vault.join("raw").join(format!("{}.md", record.id)).exists());
-    assert!(vault.join("raw/assets/keep.pdf").is_file());
+    assert!(
+        !topic
+            .vault
+            .join("raw")
+            .join(format!("{}.md", record.id))
+            .exists()
+    );
+    assert!(topic.vault.join("raw/assets/keep.pdf").is_file());
 }
 
 #[test]
 fn remove_source_missing_id_returns_structured_not_found_error() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let (hub, topic, _vault) = initialized_topic(tmp.path(), "source-missing-id");
+    let fixture = common::GwikiFixture::new();
+    let topic = fixture.init_topic("source-missing-id");
 
-    let output = gwiki(
-        &hub,
-        tmp.path(),
-        &[
-            "--format",
-            "json",
-            "remove-source",
-            "--topic",
-            &topic,
-            "--id",
-            "missing-source",
-            "--yes",
-        ],
-    );
+    let output = fixture.output(&[
+        "--format",
+        "json",
+        "remove-source",
+        "--topic",
+        &topic.name,
+        "--id",
+        "missing-source",
+        "--yes",
+    ]);
 
     assert!(!output.status.success());
-    let error = json_stderr(&output);
+    let error = common::json_stderr(&output);
     assert_eq!(error["code"], "not_found");
     assert!(
         error["message"]
@@ -342,10 +283,10 @@ fn remove_source_missing_id_returns_structured_not_found_error() {
 
 #[test]
 fn remove_source_rejects_unsafe_source_asset_without_mutation() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let (hub, topic, vault) = initialized_topic(tmp.path(), "source-unsafe-asset");
+    let fixture = common::GwikiFixture::new();
+    let topic = fixture.init_topic("source-unsafe-asset");
     let record = seed_source(
-        &vault,
+        &topic.vault,
         "unsafe-asset",
         CompileStatus::Pending,
         Some("../escape.pdf"),
@@ -353,32 +294,29 @@ fn remove_source_rejects_unsafe_source_asset_without_mutation() {
         false,
     );
 
-    let output = gwiki(
-        &hub,
-        tmp.path(),
-        &[
-            "--format",
-            "json",
-            "remove-source",
-            "--topic",
-            &topic,
-            "--id",
-            &record.id,
-            "--yes",
-        ],
-    );
+    let output = fixture.output(&[
+        "--format",
+        "json",
+        "remove-source",
+        "--topic",
+        &topic.name,
+        "--id",
+        &record.id,
+        "--yes",
+    ]);
 
     assert!(!output.status.success());
-    let error = json_stderr(&output);
+    let error = common::json_stderr(&output);
     assert_eq!(error["code"], "invalid_input");
     assert!(
-        vault
+        topic
+            .vault
             .join("raw")
             .join(format!("{}.md", record.id))
             .is_file()
     );
     assert_eq!(
-        SourceManifest::read(&vault)
+        SourceManifest::read(&topic.vault)
             .expect("read manifest")
             .entries
             .len(),
@@ -388,10 +326,10 @@ fn remove_source_rejects_unsafe_source_asset_without_mutation() {
 
 #[test]
 fn remove_source_tolerates_missing_raw_file_when_manifest_entry_exists() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let (hub, topic, vault) = initialized_topic(tmp.path(), "source-missing-raw");
+    let fixture = common::GwikiFixture::new();
+    let topic = fixture.init_topic("source-missing-raw");
     let record = seed_source(
-        &vault,
+        &topic.vault,
         "missing-raw",
         CompileStatus::Pending,
         None,
@@ -399,22 +337,18 @@ fn remove_source_tolerates_missing_raw_file_when_manifest_entry_exists() {
         false,
     );
 
-    let output = gwiki(
-        &hub,
-        tmp.path(),
-        &[
-            "--format",
-            "json",
-            "remove-source",
-            "--topic",
-            &topic,
-            "--id",
-            &record.id,
-            "--yes",
-        ],
-    );
-    assert_success(&output, "remove-source missing raw");
-    let payload = json_stdout(&output);
+    let output = fixture.output(&[
+        "--format",
+        "json",
+        "remove-source",
+        "--topic",
+        &topic.name,
+        "--id",
+        &record.id,
+        "--yes",
+    ]);
+    common::assert_success(&output, "remove-source missing raw");
+    let payload = common::json_stdout(&output);
 
     assert_eq!(payload["status"], "removed");
     assert!(json_array_contains(
@@ -426,7 +360,7 @@ fn remove_source_tolerates_missing_raw_file_when_manifest_entry_exists() {
         &format!("raw_missing:raw/{}.md", record.id)
     ));
     assert!(
-        SourceManifest::read(&vault)
+        SourceManifest::read(&topic.vault)
             .expect("read manifest")
             .entries
             .is_empty()
