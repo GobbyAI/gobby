@@ -69,11 +69,13 @@ class ACPWebChatPermissionsMixin:
             self._pending_plan_allowed_prompts = None
             self._pending_post_plan_mode = None
         else:
+            # Leaving plan mode: keep _pending_post_plan_mode so the following
+            # sync_sdk_permission_mode() can tell a plan approval (handler sets
+            # it) from a manual mode switch (does not).
             self._plan_approved = False
             self._plan_feedback = None
             self._pending_plan_content = None
             self._pending_plan_allowed_prompts = None
-            self._pending_post_plan_mode = None
         if self._on_mode_persist:
             try:
                 self._on_mode_persist(mode)
@@ -202,7 +204,22 @@ class ACPWebChatPermissionsMixin:
             self._pending_approval_event.set()
 
     async def sync_sdk_permission_mode(self) -> None:
-        pass
+        """Apply the post-plan mode transition for ACP CLIs.
+
+        ACP CLIs expose no protocol-level mode push (no session/set_mode), so
+        on plan approval the user-visible fallback is to broadcast the
+        Gobby-side mode change. The plan gate stops re-injecting because
+        chat_mode is no longer "plan" (see _pop_plan_mode_context).
+
+        _pending_post_plan_mode is set only by the plan-approval handler, which
+        distinguishes an approval from a manual mode switch (where this is a
+        no-op) and from entering plan mode.
+        """
+        if self.chat_mode == "plan" or self._pending_post_plan_mode is None:
+            return
+        self._pending_post_plan_mode = None
+        if self._on_mode_changed is not None:
+            await self._on_mode_changed(self.chat_mode, "plan_approved")
 
     @property
     def has_pending_approval(self) -> bool:
