@@ -44,7 +44,9 @@ async def execute_mcp_step(
     tokens = resolve_and_seed_contexts(
         session_ref=pipeline_session_id,
         session_manager=session_manager,
-        project_ref=None,
+        project_ref=context.get("project_id"),
+        session_ref_origin="ambient",
+        project_ref_is_fallback=True,
         db=(session_manager.db if session_manager else None),
     )
     effective_session_id = tokens.resolved_session_id

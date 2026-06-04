@@ -11,7 +11,7 @@ import asyncio
 import concurrent.futures
 import json
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from gobby.hooks.events import HookEvent
 from gobby.mcp_proxy.server_list import compact_mcp_server_list
@@ -268,6 +268,7 @@ def dispatch_mcp_calls(
         server = call.get("server")
         tool = call.get("tool")
         arguments = dict(call.get("arguments") or {})
+        session_id_is_explicit = "session_id" in arguments
         background = call.get("background", False)
         inject_result = call.get("inject_result", False)
         block_on_failure = call.get("block_on_failure", False)
@@ -293,6 +294,10 @@ def dispatch_mcp_calls(
 
         # Resolve session_id for context setting (needed for both project and session ContextVars)
         _event_session_id: str = arguments.get("session_id", "")
+        _session_ref_origin: Literal["explicit", "ambient"] = (
+            "explicit" if session_id_is_explicit else "ambient"
+        )
+        _event_project_id = event.project_id
 
         async def _call(
             s: str,
@@ -300,6 +305,8 @@ def dispatch_mcp_calls(
             args: dict[str, Any],
             *,
             _sid: str = _event_session_id,
+            _project_id: str | None = _event_project_id,
+            _origin: Literal["explicit", "ambient"] = _session_ref_origin,
         ) -> dict[str, Any] | None:
             from gobby.utils.session_context import (
                 reset_seeded_contexts,
@@ -312,7 +319,9 @@ def dispatch_mcp_calls(
             tokens = resolve_and_seed_contexts(
                 session_ref=_sid or None,
                 session_manager=session_manager,
-                project_ref=None,
+                project_ref=_project_id,
+                session_ref_origin=_origin,
+                project_ref_is_fallback=True,
                 db=(session_manager.db if session_manager else None),
             )
             try:

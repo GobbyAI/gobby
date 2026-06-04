@@ -327,29 +327,41 @@ class TestExecuteMCPStep:
         self,
         mock_tool_proxy,
         caplog: pytest.LogCaptureFixture,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Unresolvable session ref logs warning and falls through to the no-session path."""
+        """Unresolvable pipeline session refs are debug-only and fall through."""
         import logging as _logging
 
         session_manager = _make_session_manager(
             resolve_to=None, resolve_exc=ValueError("Session not found")
         )
-        mock_warning = MagicMock()
-        monkeypatch.setattr("gobby.utils.session_context.logger.warning", mock_warning)
+        session_manager.db = None
         step = PipelineStep(
             id="test_step",
             mcp=MCPStepConfig(server="gobby-workflows", tool="list_pipeline_executions"),
         )
 
-        context: dict = {"inputs": {}, "steps": {}, "session_id": "bogus-ref"}
-        caplog.set_level(_logging.WARNING, logger="gobby.utils.session_context")
+        context: dict = {
+            "inputs": {},
+            "steps": {},
+            "session_id": "#6858",
+            "project_id": "pipeline-project",
+        }
+        caplog.set_level(_logging.DEBUG, logger="gobby.utils.session_context")
         await execute_mcp_step(
             step, context, lambda: mock_tool_proxy, session_manager=session_manager
         )
 
-        assert mock_warning.call_count == 1
-        assert "could not resolve session ref" in mock_warning.call_args.args[0]
+        session_manager.resolve_session_reference.assert_called_once_with(
+            "#6858", "pipeline-project"
+        )
+        assert any(
+            rec.levelno == _logging.DEBUG and "could not resolve session ref" in rec.message
+            for rec in caplog.records
+        )
+        assert not any(
+            rec.levelno >= _logging.WARNING and "could not resolve session ref" in rec.message
+            for rec in caplog.records
+        )
         assert mock_tool_proxy.get_tool_schema.call_args.kwargs["session_id"] is None
         assert mock_tool_proxy.call_tool.call_args.kwargs["session_id"] is None
 

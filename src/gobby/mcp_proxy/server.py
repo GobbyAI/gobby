@@ -245,6 +245,7 @@ class GobbyDaemonTools:
             session_manager=self._session_manager,
             project_ref=project_id,
             session_scope_ref=session_scope_ref,
+            session_ref_origin="ambient",
             db=db,
         )
 

@@ -33,6 +33,7 @@ def _make_hook_manager_stub(
 def _make_event(
     platform_session_id: str = "plat-sess-1",
     prompt: str = "Fix the auth bug",
+    project_id: str | None = None,
 ) -> HookEvent:
     """Create a minimal HookEvent for testing."""
     return HookEvent(
@@ -41,6 +42,7 @@ def _make_event(
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data={"prompt": prompt},
+        project_id=project_id,
         metadata={"_platform_session_id": platform_session_id},
     )
 
@@ -446,5 +448,47 @@ class TestDispatchMcpCallsSessionResolution:
             loop.close()
 
         assert any("could not resolve session ref" in rec.message for rec in caplog.records)
+        called_kwargs = proxy.call_tool.call_args.kwargs
+        assert called_kwargs.get("session_id") is None
+
+    def test_dispatch_injected_hash_session_ref_uses_event_project_and_logs_debug(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Injected platform #N refs are ambient and scoped to the event project."""
+        import logging as _logging
+
+        proxy, session_manager = self._proxy_with_session_manager(
+            resolve_to=None, resolve_exc=ValueError("Session #6858 not found in project")
+        )
+        session_manager.db = None
+        stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy)
+        event = _make_event(platform_session_id="#6858", project_id="event-project")
+
+        calls = [
+            {
+                "server": "gobby-memory",
+                "tool": "search_memories",
+                "arguments": {},
+                "background": False,
+            }
+        ]
+
+        caplog.set_level(_logging.DEBUG, logger="gobby.utils.session_context")
+        loop = asyncio.new_event_loop()
+        stub._loop = loop
+        try:
+            stub._dispatch_mcp_calls(calls, event)
+        finally:
+            loop.close()
+
+        session_manager.resolve_session_reference.assert_called_once_with("#6858", "event-project")
+        assert any(
+            rec.levelno == _logging.DEBUG and "could not resolve session ref" in rec.message
+            for rec in caplog.records
+        )
+        assert not any(
+            rec.levelno >= _logging.WARNING and "could not resolve session ref" in rec.message
+            for rec in caplog.records
+        )
         called_kwargs = proxy.call_tool.call_args.kwargs
         assert called_kwargs.get("session_id") is None

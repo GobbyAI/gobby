@@ -152,11 +152,11 @@ class TestCallToolSessionResolution:
     async def test_call_tool_skips_session_context_when_unresolvable(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Unresolvable session ref → warning + no SessionContext planted."""
+        """Unresolvable wrapper session ref is debug-only with no SessionContext planted."""
         handler, _ = self._make_handler(
             resolve_to=None, resolve_exc=ValueError("Session not found")
         )
-        caplog.set_level(logging.WARNING, logger="gobby.utils.session_context")
+        caplog.set_level(logging.DEBUG, logger="gobby.utils.session_context")
 
         await handler.call_tool(
             server_name="gobby-tasks",
@@ -165,7 +165,14 @@ class TestCallToolSessionResolution:
             session_id="22222222-2222-2222-2222-222222222222",
         )
 
-        assert any("could not resolve session ref" in rec.message for rec in caplog.records)
+        assert any(
+            rec.levelno == logging.DEBUG and "could not resolve session ref" in rec.message
+            for rec in caplog.records
+        )
+        assert not any(
+            rec.levelno >= logging.WARNING and "could not resolve session ref" in rec.message
+            for rec in caplog.records
+        )
         call_args = handler.tool_proxy.call_tool.call_args
         resolved = call_args.kwargs.get("session_id")
         if resolved is None and len(call_args.args) > 3:

@@ -14,7 +14,7 @@ import contextvars
 import logging
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -181,6 +181,7 @@ def resolve_and_seed_contexts(
     *,
     project_ref: str | None = None,
     session_scope_ref: str | None = None,
+    session_ref_origin: Literal["explicit", "ambient"] = "explicit",
     project_ref_is_fallback: bool = False,
     db: HubDatabase | None = None,
 ) -> SeededContextTokens:
@@ -219,6 +220,8 @@ def resolve_and_seed_contexts(
     Unexpected errors (DB failures, config errors) from project canonicalization
     or session resolution propagate. Only ``ValueError`` from the session
     resolver is logged-and-swallowed as a normal not-found / ambiguous path.
+    Explicit session refs log at warning level; ambient wrapper/header refs log
+    at debug level because they can be stale during context handoff/startup.
     """
     from gobby.utils.project_context import (
         set_project_context,
@@ -262,7 +265,8 @@ def resolve_and_seed_contexts(
                 session_manager.resolve_session_reference(effective_session_ref, session_scope)
             )
         except ValueError as exc:
-            logger.warning(
+            log = logger.debug if session_ref_origin == "ambient" else logger.warning
+            log(
                 "resolve_and_seed_contexts: could not resolve session ref %r (project_id=%s): %s",
                 effective_session_ref,
                 session_scope,

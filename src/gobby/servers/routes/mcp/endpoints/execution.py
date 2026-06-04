@@ -8,7 +8,7 @@ These endpoints handle tool listing, schema retrieval, and tool execution.
 import json
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import Depends, HTTPException, Request
 
@@ -176,6 +176,9 @@ def _set_context_for_request(
     # target-tool parameter and must not make child-session workflow
     # enforcement apply to the caller.
     session_id = header_session_id or argument_session_id
+    session_ref_origin: Literal["explicit", "ambient"] = (
+        "ambient" if header_session_id else "explicit"
+    )
 
     # HTTP-specific bootstrap: old clients send only X-Gobby-Project-Id as a
     # caller-project hint. New clients also send X-Gobby-Caller-Project-Id; when
@@ -212,6 +215,7 @@ def _set_context_for_request(
         session_manager=server.session_manager if server.session_manager else None,
         project_ref=canonical_project_ref,
         session_scope_ref=session_scope_ref,
+        session_ref_origin=session_ref_origin,
         project_ref_is_fallback=project_ref_is_fallback,
         db=db,
     )

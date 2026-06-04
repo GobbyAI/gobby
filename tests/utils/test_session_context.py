@@ -624,6 +624,55 @@ def test_resolve_and_seed_contexts_valueerror_on_session_logs_warning(
         reset_seeded_contexts(tokens)
 
 
+def test_resolve_and_seed_contexts_ambient_valueerror_logs_debug_and_seeds_project(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Stale ambient #N refs are debug-only while project context still seeds."""
+    mgr = _make_session_manager(resolve_exc=ValueError("Session #6858 not found in project"))
+    with (
+        patch(
+            "gobby.storage.projects.LocalProjectManager",
+        ) as mock_pm_class,
+        patch(
+            "gobby.utils.project_context.set_project_context_from_ref",
+            return_value="ref-token",
+        ) as mock_from_ref,
+    ):
+        mock_pm = MagicMock()
+        project = MagicMock()
+        project.id = PROJECT_B_UUID
+        mock_pm.resolve_ref.return_value = project
+        mock_pm_class.return_value = mock_pm
+
+        caplog.set_level(logging.DEBUG, logger="gobby.utils.session_context")
+        tokens = resolve_and_seed_contexts(
+            session_ref="#6858",
+            session_manager=mgr,
+            project_ref=PROJECT_B_UUID,
+            session_ref_origin="ambient",
+            project_ref_is_fallback=True,
+            db=mgr.db,
+        )
+
+    try:
+        assert tokens.session_token is None
+        assert tokens.resolved_session_id is None
+        assert tokens.resolved_project_id == PROJECT_B_UUID
+        assert tokens.project_token == "ref-token"
+        mgr.resolve_session_reference.assert_called_once_with("#6858", PROJECT_B_UUID)
+        mock_from_ref.assert_called_once_with(PROJECT_B_UUID, mgr.db)
+        assert any(
+            rec.levelno == logging.DEBUG and "could not resolve session ref" in rec.message
+            for rec in caplog.records
+        )
+        assert not any(
+            rec.levelno >= logging.WARNING and "could not resolve session ref" in rec.message
+            for rec in caplog.records
+        )
+    finally:
+        reset_seeded_contexts(tokens)
+
+
 def test_reset_seeded_contexts_safe_on_empty_and_partial_tokens() -> None:
     """reset() must tolerate None session_token, None project_token, or both."""
     reset_seeded_contexts(SeededContextTokens())
