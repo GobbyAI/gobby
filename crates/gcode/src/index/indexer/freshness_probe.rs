@@ -18,7 +18,8 @@ use super::util::DEFAULT_EXCLUDES;
 /// Clock-skew / mtime-granularity margin. Subtracted from `last_indexed_at`
 /// before comparing file mtimes, so the gate only ever errs toward refreshing
 /// and can never miss a real change. Absorbs host-vs-PostgreSQL (docker) clock
-/// skew and same-second mtime granularity; anything beyond it is reconciled by
+/// skew and same-second mtime granularity. It is not a distributed-filesystem
+/// correctness guarantee; larger NFS or multi-host clock drift is reconciled by
 /// the periodic maintenance full re-hash sweep.
 const SKEW_MARGIN: Duration = Duration::from_secs(2);
 

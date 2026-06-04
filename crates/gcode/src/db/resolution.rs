@@ -1,3 +1,4 @@
+use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -296,6 +297,7 @@ fn read_local_cli_token_at(gobby_home: &Path) -> anyhow::Result<String> {
 }
 
 fn request_broker_database_url(daemon_url: &str, token: &str) -> anyhow::Result<String> {
+    validate_loopback_daemon_url(daemon_url)?;
     let url = format!(
         "{}/api/local/runtime/database-url",
         daemon_url.trim_end_matches('/')
@@ -311,6 +313,29 @@ fn request_broker_database_url(daemon_url: &str, token: &str) -> anyhow::Result<
         .context("database_url broker response was not valid JSON")?;
     let database_url = body.database_url.trim().to_string();
     validate_broker_database_url(&database_url)
+}
+
+fn validate_loopback_daemon_url(daemon_url: &str) -> anyhow::Result<()> {
+    let url = reqwest::Url::parse(daemon_url)
+        .with_context(|| format!("database_url broker daemon URL is invalid: {daemon_url}"))?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow!("database_url broker daemon URL must include a host"))?;
+    let port = url.port_or_known_default().ok_or_else(|| {
+        anyhow!("database_url broker daemon URL must include a port or known scheme")
+    })?;
+    let mut resolved = (host, port)
+        .to_socket_addrs()
+        .with_context(|| format!("resolve database_url broker daemon host `{host}`"))?
+        .peekable();
+    if resolved.peek().is_none() {
+        bail!("database_url broker daemon host `{host}` resolved no addresses");
+    }
+    if resolved.all(|addr| addr.ip().is_loopback()) {
+        Ok(())
+    } else {
+        bail!("database_url broker daemon host `{host}` must resolve only to loopback addresses");
+    }
 }
 
 fn validate_broker_database_url(database_url: &str) -> anyhow::Result<String> {
@@ -626,6 +651,17 @@ mod tests {
             request
                 .to_ascii_lowercase()
                 .contains("x-gobby-local-token: token-123")
+        );
+    }
+
+    #[test]
+    fn broker_request_rejects_non_loopback_daemon_url_before_sending_local_token() {
+        let err = request_broker_database_url("http://192.0.2.1:60887", "token-123")
+            .expect_err("non-loopback daemon URL must fail");
+
+        assert!(
+            err.to_string()
+                .contains("must resolve only to loopback addresses")
         );
     }
 

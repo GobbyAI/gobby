@@ -766,7 +766,7 @@ fn run_summary_serializes_daemon_contract_keys() {
 fn component_id_uses_stored_symbol_id() {
     let mut symbol = test_symbol("src/lib.rs", "Client", "class", 1, "pub struct Client;");
     symbol.id = "stored-symbol-id".to_string();
-    assert_eq!(component_id(&symbol), "stored-symbol-id");
+    assert_eq!(symbol.id, "stored-symbol-id");
 }
 
 #[test]

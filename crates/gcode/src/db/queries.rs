@@ -1,7 +1,8 @@
-use anyhow::{Context as _, bail};
+use anyhow::bail;
 use postgres::GenericClient;
 
 use crate::models::{CallRelation, CallTargetKind, ImportRelation, Symbol};
+use crate::utils::i64_to_usize;
 
 #[derive(Debug, Clone)]
 pub struct GraphFileFacts {
@@ -245,12 +246,6 @@ fn call_target_kind_from_str(value: &str) -> anyhow::Result<CallTargetKind> {
         "external" => Ok(CallTargetKind::External),
         other => bail!("unknown code_calls.callee_target_kind `{other}`"),
     }
-}
-
-fn i64_to_usize(value: i64, column: &str) -> anyhow::Result<usize> {
-    value
-        .try_into()
-        .with_context(|| format!("column `{column}` contains negative or too-large value {value}"))
 }
 
 pub fn symbol_select_columns(alias: &str) -> String {

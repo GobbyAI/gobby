@@ -12,7 +12,7 @@ pub(crate) fn unix_timestamp_ms() -> Result<u64, WikiError> {
             detail: format!("system clock is before Unix epoch: {error}"),
         })?;
     u64::try_from(duration.as_millis()).map_err(|_| WikiError::Config {
-        detail: "system timestamp exceeds u64 milliseconds".to_string(),
+        detail: "system timestamp milliseconds exceed u64 range".to_string(),
     })
 }
 
@@ -22,6 +22,19 @@ mod tests {
 
     #[test]
     fn unix_timestamp_ms_returns_epoch_milliseconds() {
-        assert!(unix_timestamp_ms().expect("timestamp") > 0);
+        let timestamp = unix_timestamp_ms().expect("timestamp");
+        let earliest_expected = 1_704_067_200_000;
+        let now = u64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock after Unix epoch")
+                .as_millis(),
+        )
+        .expect("current timestamp fits u64");
+
+        assert!(
+            (earliest_expected..=now).contains(&timestamp),
+            "timestamp {timestamp} was outside expected range {earliest_expected}..={now}"
+        );
     }
 }

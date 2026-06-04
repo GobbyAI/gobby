@@ -26,7 +26,6 @@ pub(crate) fn source_asset_paths_for_id(
     if !asset_dir.exists() {
         return Ok(Vec::new());
     }
-    let prefix = format!("{id}.");
     let mut paths = Vec::new();
     for entry in fs::read_dir(&asset_dir).map_err(|error| WikiError::Io {
         action: "read raw source assets",
@@ -46,7 +45,6 @@ pub(crate) fn source_asset_paths_for_id(
                     .extension()
                     .and_then(|extension| extension.to_str())
                     .is_some_and(|extension| !extension.is_empty())
-                && name.starts_with(&prefix)
         }) {
             paths.push(Path::new("raw/assets").join(file_name));
         }

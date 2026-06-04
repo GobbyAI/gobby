@@ -78,7 +78,8 @@ pub(crate) fn dedup_strings(values: Vec<String>) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut deduped = Vec::new();
     for value in values {
-        if seen.insert(value.clone()) {
+        if !seen.contains(&value) {
+            seen.insert(value.clone());
             deduped.push(value);
         }
     }

@@ -8,7 +8,7 @@ pub(crate) fn cluster_file_modules(
     let mut components_to_file = HashMap::new();
     for (file, symbols) in symbols_by_file {
         for symbol in symbols {
-            components_to_file.insert(component_id(symbol), file.clone());
+            components_to_file.insert(symbol.id.clone(), file.clone());
         }
     }
 
@@ -161,7 +161,7 @@ pub(crate) fn symbols_by_file_component(symbols: &[Symbol]) -> BTreeMap<String, 
         if is_core_file(&symbol.file_path) {
             out.entry(symbol.file_path.clone())
                 .or_default()
-                .push(component_id(symbol));
+                .push(symbol.id.clone());
         }
     }
     out

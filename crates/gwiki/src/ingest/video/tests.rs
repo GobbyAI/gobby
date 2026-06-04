@@ -1,6 +1,8 @@
 #[cfg(feature = "ai")]
 use std::cell::RefCell;
 use std::io::Write;
+#[cfg(feature = "ai")]
+use std::rc::Rc;
 use std::time::Duration;
 
 use gobby_core::indexing::{content_hash, file_content_hash};
@@ -339,7 +341,7 @@ fn frame_interval_zero_disables_frames() {
 #[cfg(feature = "ai")]
 struct ScriptedTranscriptionClient {
     english: RefCell<Vec<Result<TranscriptionOutput, WikiError>>>,
-    calls: RefCell<Vec<&'static str>>,
+    calls: Rc<RefCell<Vec<&'static str>>>,
 }
 
 #[cfg(feature = "ai")]
@@ -392,6 +394,7 @@ fn video_long_english_translation_reuses_chunk_branch() {
         fail_audio: None,
         fail_frames: None,
     };
+    let calls = Rc::new(RefCell::new(Vec::new()));
     let client = ScriptedTranscriptionClient {
         english: RefCell::new(vec![
             Ok(transcript_output(
@@ -404,7 +407,7 @@ fn video_long_english_translation_reuses_chunk_branch() {
                 detail: "chunk failed".to_string(),
             }),
         ]),
-        calls: RefCell::new(Vec::new()),
+        calls: Rc::clone(&calls),
     };
 
     let result = ingest_video_file_with_processing(
@@ -452,6 +455,10 @@ fn video_long_english_translation_reuses_chunk_branch() {
             .contains("transcription_missing_ranges: 9000-19000")
     );
     assert!(document.body.contains("[00:00:00] hello"));
+    assert_eq!(
+        calls.borrow().as_slice(),
+        ["translate_to_english", "translate_to_english"]
+    );
 }
 
 #[cfg(feature = "ai")]

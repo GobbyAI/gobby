@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so agents prefer `gcode grep -w <identifier>` for identifier text search and
   `gcode usages/callers <symbol-id>` for reference mapping.
 
+#### gwiki
+
+- Clarified the research and compile contract docs for budget/write-conflict
+  fields, compile `TOPIC`/`--outline`/`--kind` inputs, and daemon JSON parsing.
+
 ## [0.2.0] — gwiki
 
 ### Added

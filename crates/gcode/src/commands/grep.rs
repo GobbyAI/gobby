@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use anyhow::Context as _;
 use postgres::Client;
 use postgres::types::ToSql;
 use serde::Serialize;
@@ -12,6 +11,7 @@ use crate::config::{Context, ProjectIndexScope};
 use crate::db;
 use crate::output::{self, Format};
 use crate::search::fts;
+use crate::utils::i64_to_usize;
 use crate::visibility;
 
 use grep_matcher::GrepMatcher;
@@ -594,12 +594,6 @@ fn push_grouped_grep_line<'a>(
         *current_path = Some(path);
     }
     lines.push(format!("{line}{marker}{}", text.trim_start()));
-}
-
-fn i64_to_usize(value: i64, column: &str) -> anyhow::Result<usize> {
-    value
-        .try_into()
-        .with_context(|| format!("column `{column}` contains negative or too-large value {value}"))
 }
 
 #[cfg(test)]

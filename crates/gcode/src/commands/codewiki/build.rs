@@ -16,7 +16,7 @@ pub(crate) fn build_file_doc(
                 prompts::SYMBOL_SYSTEM,
             )
             .unwrap_or(fallback);
-            let component_id = component_id(&symbol);
+            let component_id = symbol.id.clone();
             let component_label = component_label(&symbol);
             let source_span = SourceSpan::from_symbol(&symbol);
             let purpose = ground_text(

@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use sha2::{Digest, Sha256};
 
 pub fn api_key_fingerprint(api_key: &str) -> String {
@@ -12,6 +13,12 @@ pub fn api_key_fingerprint(api_key: &str) -> String {
 
 pub fn short_id(id: &str) -> String {
     id.chars().take(8).collect()
+}
+
+pub(crate) fn i64_to_usize(value: i64, column: &str) -> anyhow::Result<usize> {
+    value
+        .try_into()
+        .with_context(|| format!("column `{column}` contains negative or too-large value {value}"))
 }
 
 #[cfg(test)]

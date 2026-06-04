@@ -46,8 +46,8 @@ pub(crate) use graph::fetch_codewiki_graph_edges;
 pub(crate) use graph::{codewiki_call_edges_query, codewiki_import_edges_query};
 // Markdown path and wikilink helpers.
 pub(crate) use paths::{
-    component_id, component_label, direct_child_modules, file_doc_path, file_wikilink, in_scope,
-    inline_code, is_core_file, module_ancestors, module_depth, module_doc_path, module_for_file,
+    component_label, direct_child_modules, file_doc_path, file_wikilink, in_scope, inline_code,
+    is_core_file, module_ancestors, module_depth, module_doc_path, module_for_file,
     module_is_ancestor, module_wikilink, parent_module, plural,
 };
 // Rendered markdown and graph diagrams.

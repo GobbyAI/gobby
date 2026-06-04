@@ -1,4 +1,5 @@
 use super::*;
+use crate::ingest;
 use crate::support::text::slugify_with_options;
 use crate::support::time;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -125,6 +126,7 @@ pub(crate) fn write_file_atomically(
             source: error,
         });
     }
+    ingest::sync_parent_dir(path)?;
     Ok(())
 }
 

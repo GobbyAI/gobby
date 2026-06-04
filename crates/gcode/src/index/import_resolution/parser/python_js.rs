@@ -23,12 +23,8 @@ pub(crate) fn parse_python_import_statement(
                 continue;
             }
 
-            let (module, alias) = if let Some(alias) = entry.strip_prefix("as ").map(str::trim) {
-                ("", Some(alias))
-            } else {
-                split_alias(entry)
-            };
-            if module.is_empty() {
+            let (module, alias) = split_alias(entry);
+            if module.is_empty() || module.chars().any(char::is_whitespace) {
                 continue;
             }
             extracted.imports.push(ImportRelation {

@@ -1,7 +1,8 @@
-use anyhow::Context as _;
 use postgres::Row;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+use crate::utils::i64_to_usize;
 
 /// Stable namespace for deterministic symbol UUIDs.
 /// Must match Python: uuid.UUID("c0de1de0-0000-4000-8000-000000000000")
@@ -228,12 +229,6 @@ pub fn make_external_symbol_id(
     let module_key = module.unwrap_or_default();
     let key = format!("external:{project_id}:{module_key}:{callee_name}");
     Uuid::new_v5(&CODE_INDEX_UUID_NAMESPACE, key.as_bytes()).to_string()
-}
-
-fn i64_to_usize(value: i64, column: &str) -> anyhow::Result<usize> {
-    value
-        .try_into()
-        .with_context(|| format!("column `{column}` contains negative or too-large value {value}"))
 }
 
 /// Metadata for an indexed file.

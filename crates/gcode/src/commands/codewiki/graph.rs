@@ -9,7 +9,7 @@ pub(crate) fn fetch_codewiki_graph_edges(
     let symbol_components = symbols
         .iter()
         .filter(|symbol| is_core_file(&symbol.file_path))
-        .map(|symbol| (symbol.id.clone(), component_id(symbol)))
+        .map(|symbol| (symbol.id.clone(), symbol.id.clone()))
         .collect::<HashMap<_, _>>();
     if symbol_components.is_empty() {
         return Ok(CodewikiGraph::available(Vec::new()));

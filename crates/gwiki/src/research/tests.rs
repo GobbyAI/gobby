@@ -15,6 +15,12 @@ fn default_options(question: &str, scope: ResearchScope) -> ResearchOptions {
     }
 }
 
+fn write_test_source(root: &Path) {
+    let raw_dir = root.join("raw");
+    std::fs::create_dir_all(&raw_dir).expect("raw dir");
+    std::fs::write(raw_dir.join("source.md"), "source").expect("source file");
+}
+
 #[test]
 fn frontmatter_block_accepts_crlf_delimiters() {
     let markdown = "---\r\nresearch_note_id: abc\r\nresearch_status: completed\r\n---\r\nBody";
@@ -99,6 +105,7 @@ fn enrichment_rejects_ai_off() {
 fn accepted_notes_land_in_raw_research() {
     let temp = tempfile::tempdir().expect("tempdir");
     let scope = ResearchScope::project(temp.path());
+    write_test_source(scope.root());
 
     let mut options = default_options("How should events be monitored?", scope.clone());
     options.source_constraints = vec!["source-linked notes".to_string()];
@@ -338,6 +345,7 @@ fn deterministic_audit_reports_untracked_completed_note() {
 fn deterministic_audit_uses_checkpoint_inventory() {
     let temp = tempfile::tempdir().expect("tempdir");
     let scope = ResearchScope::project(temp.path());
+    write_test_source(scope.root());
     let mut options = default_options("Record accepted note", scope.clone());
     options.max_steps = 0;
     options.accepted_notes = vec![AcceptedNoteDraft {
@@ -345,7 +353,8 @@ fn deterministic_audit_uses_checkpoint_inventory() {
         body: "Tracked body.".to_string(),
         sources: vec!["raw/source.md".to_string()],
     }];
-    run(options).expect("accepted note written");
+    let setup = run(options).expect("accepted note written");
+    assert_eq!(setup.session.accepted_notes.len(), 1);
 
     let mut audit_options = default_options("Audit wiki scope", scope);
     audit_options.audit = true;

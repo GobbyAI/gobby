@@ -107,6 +107,11 @@ fn config() -> ResearchLoopConfig {
 
 #[test]
 fn model_planned_note_is_written_after_source_is_observed() {
+    let root = tempfile::tempdir().expect("wiki root");
+    let raw_dir = root.path().join("raw");
+    std::fs::create_dir_all(&raw_dir).expect("raw dir");
+    std::fs::write(raw_dir.join("source.md"), "source").expect("source file");
+
     let mut model = FakeModel::new(vec![
         ModelDecision {
             action: ResearchAction::Search {
@@ -136,7 +141,7 @@ fn model_planned_note_is_written_after_source_is_observed() {
     let mut ingest = FakeIngest;
     let mut writer = FakeWriter::default();
     let mut loop_ = ResearchLoop::new(
-        Path::new("/tmp/wiki"),
+        root.path(),
         config(),
         ResearchLoopDeps {
             model: &mut model,
@@ -161,6 +166,11 @@ fn model_planned_note_is_written_after_source_is_observed() {
 
 #[test]
 fn write_conflict_stops_the_run_without_recording_the_note() {
+    let root = tempfile::tempdir().expect("wiki root");
+    let raw_dir = root.path().join("raw");
+    std::fs::create_dir_all(&raw_dir).expect("raw dir");
+    std::fs::write(raw_dir.join("source.md"), "source").expect("source file");
+
     let mut model = FakeModel::new(vec![
         ModelDecision {
             action: ResearchAction::Search {
@@ -187,7 +197,7 @@ fn write_conflict_stops_the_run_without_recording_the_note() {
         ..Default::default()
     };
     let mut loop_ = ResearchLoop::new(
-        Path::new("/tmp/wiki"),
+        root.path(),
         config(),
         ResearchLoopDeps {
             model: &mut model,
@@ -269,14 +279,36 @@ fn parses_fenced_json_action() {
 fn file_url_source_references_use_path_scope_validation() {
     let root = tempfile::tempdir().expect("wiki root");
     let inside = root.path().join("raw/source.md");
+    std::fs::create_dir_all(inside.parent().expect("inside parent")).expect("inside raw dir");
+    std::fs::write(&inside, "source").expect("inside source");
     let inside_url = url::Url::from_file_path(&inside).expect("inside file URL");
     assert!(validate_source_reference(root.path(), inside_url.as_str()).is_ok());
 
     let outside = tempfile::tempdir().expect("outside root");
+    std::fs::create_dir_all(outside.path().join("raw")).expect("outside raw dir");
+    std::fs::write(outside.path().join("raw/source.md"), "source").expect("outside source");
     let outside_url =
         url::Url::from_file_path(outside.path().join("raw/source.md")).expect("outside file URL");
     let error = validate_source_reference(root.path(), outside_url.as_str())
         .expect_err("outside file URL rejected");
 
     assert!(error.contains("outside the wiki scope"));
+}
+
+#[cfg(unix)]
+#[test]
+fn source_reference_rejects_relative_symlink_escape() {
+    let root = tempfile::tempdir().expect("wiki root");
+    let outside = tempfile::tempdir().expect("outside root");
+    let outside_source = outside.path().join("source.md");
+    std::fs::write(&outside_source, "source").expect("outside source");
+
+    let raw_dir = root.path().join("raw");
+    std::fs::create_dir_all(&raw_dir).expect("raw dir");
+    std::os::unix::fs::symlink(&outside_source, raw_dir.join("source.md")).expect("source symlink");
+
+    let error = validate_source_reference(root.path(), "raw/source.md")
+        .expect_err("symlink escape rejected");
+
+    assert!(error.contains("relative source path must stay inside the wiki scope"));
 }

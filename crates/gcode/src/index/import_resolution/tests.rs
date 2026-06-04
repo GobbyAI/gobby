@@ -328,6 +328,26 @@ fn python_empty_module_imports_do_not_register_alias_bindings() {
 }
 
 #[test]
+fn python_alias_imports_register_member_binding() {
+    let mut extracted = ExtractedImports::default();
+
+    parse_import_statement(
+        "python",
+        "import numpy as np",
+        "src/sample.py",
+        &ImportResolutionContext::default(),
+        &mut extracted,
+    )
+    .expect("parse aliased Python import");
+
+    assert_eq!(extracted.imports[0].module_name, "numpy");
+    assert_eq!(
+        extracted.bindings.member.get("np").map(String::as_str),
+        Some("numpy")
+    );
+}
+
+#[test]
 fn php_grouped_imports_register_concrete_member_bindings() {
     let mut extracted = ExtractedImports::default();
 

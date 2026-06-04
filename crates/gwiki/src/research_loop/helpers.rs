@@ -144,8 +144,14 @@ fn validate_source_path(root: &Path, path: &Path) -> Result<(), String> {
     {
         return Err("source path cannot contain parent traversal".to_string());
     }
+    let resolved_root = root
+        .canonicalize()
+        .map_err(|_| "wiki scope root does not exist or cannot be resolved".to_string())?;
     if path.is_absolute() {
-        if path.starts_with(root) {
+        let resolved_path = path
+            .canonicalize()
+            .map_err(|_| "source path does not exist or cannot be resolved".to_string())?;
+        if resolved_path.starts_with(&resolved_root) {
             return Ok(());
         }
         return Err("absolute source path is outside the wiki scope".to_string());
@@ -154,6 +160,13 @@ fn validate_source_path(root: &Path, path: &Path) -> Result<(), String> {
         .components()
         .any(|component| matches!(component, Component::Prefix(_) | Component::RootDir))
     {
+        return Err("relative source path must stay inside the wiki scope".to_string());
+    }
+    let resolved_path = root
+        .join(path)
+        .canonicalize()
+        .map_err(|_| "source path does not exist or cannot be resolved".to_string())?;
+    if !resolved_path.starts_with(&resolved_root) {
         return Err("relative source path must stay inside the wiki scope".to_string());
     }
     Ok(())

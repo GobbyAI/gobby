@@ -31,10 +31,6 @@ pub(crate) fn plural(count: usize) -> &'static str {
     if count == 1 { "" } else { "s" }
 }
 
-pub(crate) fn component_id(symbol: &Symbol) -> String {
-    symbol.id.clone()
-}
-
 pub(crate) fn component_label(symbol: &Symbol) -> String {
     let name = if symbol.qualified_name.is_empty() {
         &symbol.name

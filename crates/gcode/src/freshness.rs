@@ -278,6 +278,7 @@ mod tests {
 
     fn set_mtime(path: &Path, time: SystemTime) {
         std::fs::File::options()
+            .read(true)
             .write(true)
             .open(path)
             .expect("open file to set mtime")
