@@ -85,13 +85,24 @@ This satisfies "status at a glance, depth on demand" + keyboard-first + the resp
 
 ### Fix
 Make plan capture + approval a **backend-agnostic** capability for managed web-chat sessions:
-0. **Fix the base trigger first (Claude/SDK).** Establish that presenting a plan in web-chat
-   Plan mode produces a `plan_pending_approval` broadcast, then renders it at the three
-   altitudes above (inline collapsible block + `AgentStatusBar` pending affordance + Plans
-   panel history). Determine why it doesn't fire today — either wire the SDK so the agent
-   actually emits `ExitPlanMode` (routed through `chat_session_permissions`), or detect the
-   plan turn and broadcast — and confirm the broadcast reaches the UI
+0. **Fix the base trigger first (Claude/SDK).** ROOT CAUSE CONFIRMED IN CODE: (a) `_MODE_TO_SDK`
+   maps `plan → "plan"` (`chat_session.py:943`) but `sync_sdk_permission_mode()` only runs on an
+   explicit user toggle (`handle_set_mode`, `session_config.py`), so a session that *begins* in
+   plan mode may never push native plan mode to the SDK subprocess and Claude never emits
+   `ExitPlanMode`; (b) even when `ExitPlanMode` fires, `_can_use_tool`
+   (`chat_session_permissions.py:137-205`) sources the plan only from `_read_plan_file()` and
+   HARD-DENIES with "No plan file found…", while the `plan_pending_approval` broadcast is bound
+   to the file-write PostToolUse hook (`_on_plan_ready`) and never to the `ExitPlanMode` tool
+   input — so a native plan presentation populates nothing (the observed live failure: plan
+   inline, Plans panel empty).
+   **DECIDED FIX (no open question):** push native plan mode at session start for sessions that
+   begin in plan mode; source plan content from the `ExitPlanMode` tool input (`input_data["plan"]`)
+   as primary with `_read_plan_file()` fallback (drop the hard deny when the input carries the
+   plan); broadcast `plan_pending_approval` atomically inside the `ExitPlanMode` branch, keeping
+   the file-write broadcast as a de-duped secondary. Confirm the broadcast reaches the UI
    (`transportConversationEvents.ts` → `useChatPageArtifacts` → `AgentStatusBar` + `PlansTab`).
+   **Decomposed into leaf tasks:** 1a.1 (backend gate, #15622) → 1a.2 (FE action layer, #15623) →
+   {1a.3 Plans-panel card #15624, 1a.4 inline block #15625, 1a.5 AgentStatusBar + mobile #15626}.
 1. **Surface plans for ACP CLIs.** Detect when an ACP agent finishes presenting a plan in
    plan mode (it emits the plan as a normal assistant turn) and broadcast
    `plan_pending_approval` with the plan content, mirroring the Claude `_on_plan_ready`
