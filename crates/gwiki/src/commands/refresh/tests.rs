@@ -330,6 +330,22 @@ fn raw_source_path_trims_source_ids() {
 }
 
 #[test]
+fn source_asset_paths_for_id_accepts_only_single_extension_assets() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let asset_dir = temp.path().join("raw/assets");
+    fs::create_dir_all(&asset_dir).expect("asset dir");
+    fs::write(asset_dir.join("source-1.png"), "asset").expect("single extension");
+    fs::write(asset_dir.join("source-1.pdf.png"), "derived").expect("derived extension");
+    fs::write(asset_dir.join("source-10.png"), "other source").expect("other source");
+    fs::write(asset_dir.join("source-1."), "empty extension").expect("empty extension");
+
+    let mut paths = source_asset_paths_for_id(temp.path(), "source-1").expect("asset paths");
+    paths.sort();
+
+    assert_eq!(paths, vec![PathBuf::from("raw/assets/source-1.png")]);
+}
+
+#[test]
 fn remove_relative_file_rejects_unsafe_paths_before_join() {
     let temp = tempfile::tempdir().expect("tempdir");
     for relative in [

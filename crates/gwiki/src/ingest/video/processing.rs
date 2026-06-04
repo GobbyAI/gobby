@@ -251,7 +251,7 @@ pub(crate) fn describe_frame_images(
             frame,
             description,
         } = pending_frame;
-        let path = frame.into_temp_path().keep().map_err(|error| {
+        let kept_path = frame.into_temp_path().keep().map_err(|error| {
             cleanup_kept_temp_frames(&kept_paths);
             WikiError::Io {
                 action: "persist sampled video frame",
@@ -259,15 +259,15 @@ pub(crate) fn describe_frame_images(
                 source: error.error,
             }
         })?;
-        kept_paths.push(path.clone());
-        let source_reference = path_to_string(&path);
+        let source_reference = path_to_string(&kept_path);
         samples.push(VideoFrameSample {
             timestamp_seconds,
             timestamp: timestamp.clone(),
-            source_asset: path.clone(),
+            source_asset: kept_path.clone(),
             source_reference: source_reference.clone(),
         });
-        paths.push(path.clone());
+        paths.push(kept_path.clone());
+        kept_paths.push(kept_path);
 
         if let Some(description) = description {
             descriptions.push(VideoFrameDescription {

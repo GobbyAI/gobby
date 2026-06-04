@@ -150,9 +150,10 @@ pub fn compose_file_path(gobby_home: &Path) -> PathBuf {
 
 pub fn default_database_url(port: u16) -> String {
     format!(
-        "postgresql://{user}:{password}@localhost:{port}/{db}",
+        "postgresql://{user}:{password}@{host}:{port}/{db}",
         user = DEFAULT_POSTGRES_USER,
         password = DEFAULT_POSTGRES_PASSWORD,
+        host = DEFAULT_POSTGRES_HOST,
         db = DEFAULT_POSTGRES_DB
     )
 }

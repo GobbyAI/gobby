@@ -39,10 +39,15 @@ pub(crate) fn source_asset_paths_for_id(
             source: error,
         })?;
         let file_name = entry.file_name();
-        if file_name
-            .to_str()
-            .is_some_and(|name| name.starts_with(&prefix))
-        {
+        if file_name.to_str().is_some_and(|name| {
+            let path = Path::new(name);
+            path.file_stem().and_then(|stem| stem.to_str()) == Some(id)
+                && path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| !extension.is_empty())
+                && name.starts_with(&prefix)
+        }) {
             paths.push(Path::new("raw/assets").join(file_name));
         }
     }

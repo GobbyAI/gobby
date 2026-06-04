@@ -370,7 +370,7 @@ fn extract_imports(
                     rel_path,
                     import_context,
                     &mut extracted,
-                );
+                )?;
             }
         }
     }

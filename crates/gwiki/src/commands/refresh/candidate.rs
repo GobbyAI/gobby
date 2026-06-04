@@ -284,13 +284,11 @@ fn refresh_changed_local_source(
         }
     }
 
-    if previous.id != result.record.id {
-        SourceManifest::update(vault_root, |manifest| {
-            let before = manifest.entries.len();
-            manifest.entries.retain(|entry| entry.id != previous.id);
-            Ok(manifest.entries.len() != before)
-        })?;
-    }
+    SourceManifest::update(vault_root, |manifest| {
+        let before = manifest.entries.len();
+        manifest.entries.retain(|entry| entry.id != previous.id);
+        Ok(manifest.entries.len() != before)
+    })?;
 
     Ok(ChangedRefresh {
         result,

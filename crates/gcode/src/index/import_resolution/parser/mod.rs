@@ -12,11 +12,18 @@ mod php_kotlin;
 mod python_js;
 mod rest;
 
-use go_rust::*;
-use java_csharp::*;
-use php_kotlin::*;
-use python_js::*;
-use rest::*;
+use go_rust::{parse_go_import_statement, parse_rust_import_statement};
+use java_csharp::{
+    csharp_global_qualifier_parts, parse_csharp_import_statement, parse_java_import_statement,
+};
+use php_kotlin::{
+    parse_kotlin_import_statement, parse_php_import_statement, php_local_symbol_exists,
+};
+use python_js::{parse_js_import_statement, parse_python_import_statement};
+use rest::{
+    parse_dart_import_statement, parse_elixir_import_statement, parse_ruby_import_statement,
+    parse_swift_import_statement,
+};
 
 pub(crate) fn parse_import_statement(
     language: &str,
@@ -24,13 +31,13 @@ pub(crate) fn parse_import_statement(
     rel_path: &str,
     import_context: &ImportResolutionContext,
     extracted: &mut ExtractedImports,
-) {
+) -> anyhow::Result<()> {
     match language {
         "python" => parse_python_import_statement(text, rel_path, import_context, extracted),
         "javascript" | "typescript" => {
             parse_js_import_statement(text, rel_path, import_context, extracted)
         }
-        "go" => parse_go_import_statement(text, rel_path, import_context, extracted),
+        "go" => parse_go_import_statement(text, rel_path, import_context, extracted)?,
         "rust" => parse_rust_import_statement(text, rel_path, import_context, extracted),
         "java" => parse_java_import_statement(text, rel_path, import_context, extracted),
         "csharp" => parse_csharp_import_statement(text, rel_path, import_context, extracted),
@@ -45,6 +52,7 @@ pub(crate) fn parse_import_statement(
             module_name: text.to_string(),
         }),
     }
+    Ok(())
 }
 
 pub(crate) fn seed_import_bindings(

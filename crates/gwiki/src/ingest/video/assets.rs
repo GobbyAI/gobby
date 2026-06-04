@@ -123,6 +123,8 @@ pub(crate) struct PersistedVideoFrameAssets {
     descriptions: Vec<VideoFrameDescription>,
 }
 
+/// Persists frame assets by index: `samples[index]`, `frame_image_paths[index]`,
+/// and matching descriptions are expected to refer to the same sampled frame.
 pub(crate) fn persist_video_frame_assets(
     vault_root: &Path,
     record: &SourceRecord,
@@ -181,8 +183,11 @@ pub(crate) fn persist_video_frame_assets(
             description.source_reference = reference;
             desc_index += 1;
         }
-        if cleanup_source_temp {
-            remove_sampled_temp_frame(path)?;
+        if cleanup_source_temp && let Err(error) = remove_sampled_temp_frame(path) {
+            log::warn!(
+                "failed to remove sampled temp video frame {} after persistence: {error}",
+                path.display()
+            );
         }
         persisted_paths.push(persisted_path);
     }

@@ -264,7 +264,8 @@ fn rust_grouped_imports_register_named_bare_bindings() {
         "src/lib.rs",
         &ImportResolutionContext::default(),
         &mut extracted,
-    );
+    )
+    .expect("parse Rust grouped import");
 
     let hash_map = extracted
         .bindings
@@ -293,7 +294,8 @@ fn rust_glob_imports_do_not_register_individual_bare_bindings() {
         "src/lib.rs",
         &ImportResolutionContext::default(),
         &mut extracted,
-    );
+    )
+    .expect("parse Rust glob import");
 
     assert!(extracted.bindings.bare.is_empty());
     assert!(extracted.bindings.member.is_empty());
@@ -309,7 +311,8 @@ fn php_grouped_imports_register_concrete_member_bindings() {
         "src/sample.php",
         &ImportResolutionContext::default(),
         &mut extracted,
-    );
+    )
+    .expect("parse PHP grouped import");
 
     assert!(
         extracted
@@ -343,7 +346,8 @@ fn php_grouped_function_imports_register_concrete_bare_bindings() {
         "src/sample.php",
         &ImportResolutionContext::default(),
         &mut extracted,
-    );
+    )
+    .expect("parse PHP grouped function import");
 
     assert!(
         extracted
@@ -382,7 +386,8 @@ fn swift_imports_do_not_mark_local_modules_external() {
         "Sources/AppCore/Thing.swift",
         &context,
         &mut extracted,
-    );
+    )
+    .expect("parse Swift local import");
 
     assert!(!extracted.bindings.external_roots.contains_key("AppCore"));
 }
@@ -398,7 +403,8 @@ fn swift_imports_still_mark_unknown_modules_external() {
         "Sources/AppCore/Thing.swift",
         &context,
         &mut extracted,
-    );
+    )
+    .expect("parse Swift external import");
 
     assert!(extracted.bindings.external_roots.contains_key("Foundation"));
 }
@@ -413,7 +419,8 @@ fn php_grouped_const_imports_preserve_aliases() {
         "src/sample.php",
         &ImportResolutionContext::default(),
         &mut extracted,
-    );
+    )
+    .expect("parse PHP grouped const import");
 
     assert_eq!(
         extracted.bindings.member.get("V").map(String::as_str),
@@ -431,7 +438,8 @@ fn php_wildcard_imports_register_external_module_prefixes() {
         "src/sample.php",
         &ImportResolutionContext::default(),
         &mut extracted,
-    );
+    )
+    .expect("parse PHP wildcard import");
 
     assert_eq!(
         extracted
@@ -454,7 +462,8 @@ fn php_path_segment_wildcards_do_not_register_literal_member_bindings() {
         "src/sample.php",
         &ImportResolutionContext::default(),
         &mut extracted,
-    );
+    )
+    .expect("parse PHP path wildcard import");
 
     assert_eq!(
         extracted.bindings.bare_wildcard_modules,
@@ -552,7 +561,8 @@ end
         "app.rb",
         &context,
         &mut extracted,
-    );
+    )
+    .expect("parse Ruby require");
     assert!(
         extracted
             .bindings
@@ -648,7 +658,8 @@ fn go_backtick_imports_register_external_bindings() {
         "main.go",
         &import_context,
         &mut extracted,
-    );
+    )
+    .expect("parse Go backtick import");
 
     assert_eq!(
         extracted
@@ -661,6 +672,41 @@ fn go_backtick_imports_register_external_bindings() {
         extracted.bindings.member.get("api").map(String::as_str),
         Some("github.com/acme/api-client")
     );
+}
+
+#[test]
+fn java_non_import_statement_is_ignored() {
+    let mut extracted = ExtractedImports::default();
+
+    parse_import_statement(
+        "java",
+        "package com.example;",
+        "src/main/java/com/example/App.java",
+        &ImportResolutionContext::default(),
+        &mut extracted,
+    )
+    .expect("ignore Java non-import statement");
+
+    assert!(extracted.imports.is_empty());
+    assert!(extracted.bindings.member.is_empty());
+}
+
+#[test]
+fn csharp_non_using_statement_is_ignored() {
+    let mut extracted = ExtractedImports::default();
+
+    parse_import_statement(
+        "csharp",
+        "namespace Example;",
+        "Program.cs",
+        &ImportResolutionContext::default(),
+        &mut extracted,
+    )
+    .expect("ignore C# non-using statement");
+
+    assert!(extracted.imports.is_empty());
+    assert!(extracted.bindings.member.is_empty());
+    assert!(extracted.bindings.external_roots.is_empty());
 }
 
 #[test]

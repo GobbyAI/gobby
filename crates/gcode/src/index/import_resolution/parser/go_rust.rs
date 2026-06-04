@@ -14,15 +14,18 @@ pub(crate) fn parse_go_import_statement(
     rel_path: &str,
     import_context: &ImportResolutionContext,
     extracted: &mut ExtractedImports,
-) {
-    let Some(rest) = text.trim().strip_prefix("import") else {
-        debug_assert!(
-            text.trim().strip_prefix("import").is_some(),
-            "expected Go import statement, got `{}`",
-            text.trim()
-        );
-        return;
+) -> anyhow::Result<()> {
+    let trimmed = text.trim();
+    let Some(rest) = trimmed.strip_prefix("import") else {
+        anyhow::bail!("expected Go import statement, got `{trimmed}`");
     };
+    if rest
+        .chars()
+        .next()
+        .is_some_and(|ch| !ch.is_whitespace() && ch != '(')
+    {
+        anyhow::bail!("expected Go import statement, got `{trimmed}`");
+    }
 
     let rest = rest.trim();
     if rest.starts_with('(') {
@@ -33,6 +36,7 @@ pub(crate) fn parse_go_import_statement(
     } else {
         parse_go_import_spec(rest, rel_path, import_context, extracted);
     }
+    Ok(())
 }
 
 fn parse_go_import_spec(
@@ -78,11 +82,12 @@ pub(crate) fn parse_rust_import_statement(
     import_context: &ImportResolutionContext,
     extracted: &mut ExtractedImports,
 ) {
-    let Some(rest) = text.trim().strip_prefix("use ") else {
+    let trimmed = text.trim();
+    let Some(rest) = trimmed.strip_prefix("use ") else {
         debug_assert!(
-            text.trim().strip_prefix("use ").is_some(),
+            trimmed.strip_prefix("use ").is_some(),
             "expected Rust use statement, got `{}`",
-            text.trim()
+            trimmed
         );
         return;
     };
@@ -197,20 +202,14 @@ mod tests {
     #[test]
     fn non_import_go_statement_does_not_record_raw_import() {
         let mut extracted = ExtractedImports::default();
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            parse_go_import_statement(
-                "package main",
-                "main.go",
-                &ImportResolutionContext::default(),
-                &mut extracted,
-            );
-        }));
+        let result = parse_go_import_statement(
+            "package main",
+            "main.go",
+            &ImportResolutionContext::default(),
+            &mut extracted,
+        );
 
-        if cfg!(debug_assertions) {
-            assert!(result.is_err());
-        } else {
-            assert!(result.is_ok());
-        }
+        assert!(result.is_err());
         assert!(extracted.imports.is_empty());
     }
 

@@ -118,7 +118,7 @@ fn flatten_yaml_value_at_depth(
                     _ => key.to_string(),
                 };
                 match value {
-                    serde_yaml::Value::Mapping(_) if !key.contains('.') => {
+                    serde_yaml::Value::Mapping(_) => {
                         flatten_yaml_value_at_depth(Some(&joined), value, output, depth + 1)?;
                     }
                     _ => {

@@ -58,6 +58,8 @@ pub(crate) fn fetch_codewiki_graph_edges(
     let Some(rows) = query_or_unavailable(ctx, &mut client, &query, params) else {
         return Ok(CodewikiGraph::unavailable());
     };
+    // FalkorDB only reports that at most LIMIT rows were returned, so equality
+    // is the conservative signal that additional rows may have been omitted.
     let mut truncated = rows.len() == edge_limit;
     for row in rows {
         let Some(source) = row.get("source").and_then(|value| value.as_str()) else {
@@ -84,6 +86,8 @@ pub(crate) fn fetch_codewiki_graph_edges(
         let Some(rows) = query_or_unavailable(ctx, &mut client, &query, params) else {
             return Ok(CodewikiGraph::unavailable());
         };
+        // A full import page may be exactly complete or may have hidden rows;
+        // mark it truncated so rendered docs disclose that uncertainty.
         truncated |= rows.len() == edge_limit;
         for row in rows {
             let Some(source_file) = row.get("source").and_then(|value| value.as_str()) else {

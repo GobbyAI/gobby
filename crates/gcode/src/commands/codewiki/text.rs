@@ -18,7 +18,9 @@ pub(crate) fn resolve_text_generator(
         let result = match route {
             AiRouting::Daemon => generate_via_daemon(&ai_context, prompt, Some(system)),
             AiRouting::Direct => generate_text(&ai_context, prompt, Some(system)),
-            AiRouting::Off | AiRouting::Auto => return None,
+            AiRouting::Off | AiRouting::Auto => {
+                unreachable!("non-generating routes returned above")
+            }
         };
         match result {
             Ok(result) => clean_generated(result.text),
@@ -59,7 +61,6 @@ pub(crate) fn maybe_generate(
     generate
         .as_deref_mut()
         .and_then(|generate| generate(prompt, system))
-        .and_then(clean_generated)
 }
 
 pub(crate) fn clean_generated(text: String) -> Option<String> {
@@ -249,5 +250,25 @@ pub(crate) fn frontmatter(title: &str, kind: &str, source_spans: &[SourceSpan]) 
 }
 
 pub(crate) fn yaml_quote(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
+    let mut out = String::new();
+    for ch in value.chars() {
+        match ch {
+            '\0' => out.push_str("\\0"),
+            '\u{0007}' => out.push_str("\\a"),
+            '\u{0008}' => out.push_str("\\b"),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\u{000b}' => out.push_str("\\v"),
+            '\u{000c}' => out.push_str("\\f"),
+            '\r' => out.push_str("\\r"),
+            '\u{001b}' => out.push_str("\\e"),
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            ch if ch < ' ' => {
+                let _ = write!(out, "\\x{:02X}", ch as u32);
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
 }

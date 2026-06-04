@@ -30,12 +30,38 @@ mod prompts;
 mod render;
 mod text;
 
-pub(crate) use build::*;
-pub(crate) use cluster::*;
-pub(crate) use graph::*;
-pub(crate) use paths::*;
-pub(crate) use render::*;
-pub(crate) use text::*;
+// Document builders.
+pub(crate) use build::{build_file_doc, build_module_docs};
+// Module clustering and graph-to-file helpers.
+pub(crate) use cluster::{
+    cluster_file_modules, files_for_import_target, first_component_for_file,
+    symbols_by_file_component,
+};
+#[cfg(test)]
+pub(crate) use cluster::{common_module_for_files, find_file_root};
+// Optional FalkorDB graph queries.
+pub(crate) use graph::fetch_codewiki_graph_edges;
+#[cfg(test)]
+pub(crate) use graph::{codewiki_call_edges_query, codewiki_import_edges_query};
+// Markdown path and wikilink helpers.
+pub(crate) use paths::{
+    component_id, component_label, direct_child_modules, file_doc_path, file_wikilink, in_scope,
+    inline_code, is_core_file, module_ancestors, module_depth, module_doc_path, module_for_file,
+    module_is_ancestor, module_wikilink, parent_module, plural,
+};
+// Rendered markdown and graph diagrams.
+pub(crate) use render::{
+    build_repo_doc, render_file_doc, render_module_call_mermaid, render_module_dependency_mermaid,
+    render_module_doc,
+};
+// AI and structural text helpers.
+#[cfg(test)]
+pub(crate) use text::yaml_quote;
+pub(crate) use text::{
+    citation_list, collect_link_spans, frontmatter, ground_text, maybe_generate,
+    resolve_text_generator, structural_file_summary, structural_module_summary,
+    structural_repo_summary, structural_symbol_purpose, write_section,
+};
 
 pub use io::{write_doc_set, write_incremental_doc_set};
 

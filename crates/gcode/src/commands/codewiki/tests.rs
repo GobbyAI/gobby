@@ -138,6 +138,19 @@ fn file_root_detection_breaks_parent_cycles() {
 }
 
 #[test]
+fn common_module_for_empty_files_is_root() {
+    assert_eq!(common_module_for_files(&[]), "");
+}
+
+#[test]
+fn module_depth_counts_only_non_empty_segments() {
+    assert_eq!(module_depth(""), 0);
+    assert_eq!(module_depth("/"), 0);
+    assert_eq!(module_depth("src"), 1);
+    assert_eq!(module_depth("src/commands/"), 2);
+}
+
+#[test]
 fn graph_queries_use_requested_edge_limit() {
     let symbol_ids = vec!["symbol-a".to_string(), "symbol-b".to_string()];
     let files = vec!["src/a.rs".to_string(), "src/b.rs".to_string()];
@@ -409,7 +422,7 @@ fn truncated_graph_emits_degradation_marker_with_partial_diagram() {
 fn frontmatter_source_files_accept_unquoted_and_escaped_values() {
     let files = source_files_from_frontmatter(
         r#"---
-sources:
+source_files:
   - file: src/plain.rs
   - file: "src/escaped\"quote.rs"
 ---
@@ -421,6 +434,25 @@ sources:
 }
 
 #[test]
+fn frontmatter_source_files_parse_yaml_with_ranges() {
+    let files = source_files_from_frontmatter(
+        r#"---
+title: "Example"
+source_files:
+  - file: "src/one:thing.rs"
+    ranges:
+      - "1-4"
+  - file: src/two.rs
+---
+"#,
+    );
+
+    assert!(files.contains("src/one:thing.rs"));
+    assert!(files.contains("src/two.rs"));
+    assert_eq!(files.len(), 2);
+}
+
+#[test]
 fn yaml_unquote_translates_common_escapes_and_rejects_incomplete_escape() {
     assert_eq!(
         unquote_yaml_string(r#""line\nquote\"tab\tbackslash\\""#),
@@ -428,6 +460,14 @@ fn yaml_unquote_translates_common_escapes_and_rejects_incomplete_escape() {
     );
     let incomplete = format!("\"{}\\\"", "src/incomplete");
     assert_eq!(unquote_yaml_string(&incomplete), None);
+}
+
+#[test]
+fn yaml_quote_escapes_double_quoted_scalar_content() {
+    assert_eq!(
+        yaml_quote("line\nquote\"tab\tbackslash\\nul\0bell\u{0007}"),
+        r#"line\nquote\"tab\tbackslash\\nul\0bell\a"#
+    );
 }
 
 #[test]

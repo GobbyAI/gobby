@@ -13,10 +13,6 @@ pub(crate) fn parse_java_import_statement(
 ) {
     let normalized = text.trim().trim_end_matches(';').trim();
     let Some(rest) = normalized.strip_prefix("import ") else {
-        extracted.imports.push(ImportRelation {
-            file_path: rel_path.to_string(),
-            module_name: normalized.to_string(),
-        });
         return;
     };
 
@@ -53,7 +49,10 @@ pub(crate) fn parse_java_import_statement(
     if !is_external_java_class(target, import_context) {
         return;
     }
-    let class_alias = target.rsplit('.').next().unwrap_or(target);
+    let class_alias = target
+        .rsplit('.')
+        .next()
+        .expect("rsplit always yields at least one segment");
     extracted
         .bindings
         .member
@@ -68,10 +67,6 @@ pub(crate) fn parse_csharp_import_statement(
 ) {
     let normalized = text.trim().trim_end_matches(';').trim();
     let Some(rest) = normalized.strip_prefix("using ") else {
-        extracted.imports.push(ImportRelation {
-            file_path: rel_path.to_string(),
-            module_name: normalized.to_string(),
-        });
         return;
     };
 

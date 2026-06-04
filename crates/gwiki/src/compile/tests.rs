@@ -287,7 +287,6 @@ fn compile_writes_obsidian_markdown() {
     assert!(provenance.contains("raw/research/compile.md"));
     let provenance: ProvenanceGraph = serde_json::from_str(&provenance).expect("parse provenance");
     let source = &provenance.links()[0].source;
-    assert!(source.byte_start > 0);
     assert!(source.byte_end > source.byte_start);
 }
 

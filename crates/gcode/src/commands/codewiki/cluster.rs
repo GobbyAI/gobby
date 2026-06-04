@@ -105,6 +105,10 @@ pub(crate) fn find_file_root(parents: &mut HashMap<String, String>, file: &str) 
 }
 
 pub(crate) fn common_module_for_files(files: &[String]) -> String {
+    if files.is_empty() {
+        return String::new();
+    }
+
     let mut common = module_for_file(&files[0])
         .split('/')
         .filter(|part| !part.is_empty())

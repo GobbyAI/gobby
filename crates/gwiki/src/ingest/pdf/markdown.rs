@@ -296,6 +296,9 @@ fn vision_model(vision: &VisionExtraction) -> Option<&str> {
 }
 
 fn rendered_page_file_name(file_name: &str, page_number: usize) -> String {
-    let stem = file_name.strip_suffix(".pdf").unwrap_or(file_name);
+    let stem = Path::new(file_name)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(file_name);
     format!("{stem}-page-{page_number}.png")
 }

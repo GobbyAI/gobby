@@ -139,36 +139,40 @@ pub(crate) fn source_hashes_for_doc(
 
 pub(crate) fn source_files_from_frontmatter(content: &str) -> BTreeSet<String> {
     let mut files = BTreeSet::new();
-    let mut in_frontmatter = false;
-    for line in content.lines() {
-        if line == "---" {
-            if in_frontmatter {
-                break;
+
+    let mut lines = content.lines();
+    if lines.next() != Some("---") {
+        return files;
+    }
+    let frontmatter = lines
+        .take_while(|line| *line != "---")
+        .collect::<Vec<_>>()
+        .join("\n");
+    let Ok(serde_yaml::Value::Mapping(frontmatter)) =
+        serde_yaml::from_str::<serde_yaml::Value>(&frontmatter)
+    else {
+        return files;
+    };
+
+    for key in ["source_files", "sources"] {
+        let key = serde_yaml::Value::String(key.to_string());
+        let Some(serde_yaml::Value::Sequence(sources)) = frontmatter.get(&key) else {
+            continue;
+        };
+        for source in sources {
+            let serde_yaml::Value::Mapping(source) = source else {
+                continue;
+            };
+            let file_key = serde_yaml::Value::String("file".to_string());
+            if let Some(serde_yaml::Value::String(file)) = source.get(&file_key) {
+                files.insert(file.clone());
             }
-            in_frontmatter = true;
-            continue;
-        }
-        if !in_frontmatter {
-            continue;
-        }
-        if let Some(file) = line.strip_prefix("  - file: ").and_then(yaml_file_value) {
-            files.insert(file);
         }
     }
     files
 }
 
-fn yaml_file_value(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    unquote_yaml_string(trimmed).or_else(|| {
-        if trimmed.starts_with('"') || trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    })
-}
-
+#[cfg(test)]
 pub(crate) fn unquote_yaml_string(value: &str) -> Option<String> {
     let value = value.trim();
     let inner = value.strip_prefix('"')?.strip_suffix('"')?;

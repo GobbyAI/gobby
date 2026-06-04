@@ -16,7 +16,7 @@ impl GrepMatcher {
         word: bool,
     ) -> anyhow::Result<Self> {
         if pattern.is_empty() {
-            anyhow::bail!("gcode grep pattern must not be empty");
+            anyhow::bail!("pattern cannot be empty");
         }
         let pattern = if fixed_strings {
             regex::escape(pattern)
@@ -142,5 +142,12 @@ mod tests {
             format!("{error:#}").contains("invalid gcode grep pattern"),
             "unexpected error: {error:#}"
         );
+    }
+
+    #[test]
+    fn empty_pattern_reports_plain_pattern_error() {
+        let error = GrepMatcher::new("", false, false, false).expect_err("empty pattern");
+
+        assert_eq!(error.to_string(), "pattern cannot be empty");
     }
 }

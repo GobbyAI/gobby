@@ -137,6 +137,44 @@ fn combines_text_layer_and_vision() {
 }
 
 #[test]
+fn pdf_rendered_page_file_names_use_file_stem_for_uppercase_extension() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let snapshot = PdfSnapshot {
+        location: "/tmp/Guide.PDF".to_string(),
+        file_name: "Guide.PDF".to_string(),
+        fetched_at: fetched_at("2026-05-29T16:30:00Z"),
+        bytes: b"%PDF-1.7\nsource bytes\n%%EOF\n".to_vec(),
+        pages: vec![PdfPage {
+            number: 1,
+            text: String::new(),
+        }],
+    };
+    let rendered_pages = vec![PdfRenderedPage {
+        number: 1,
+        bytes: b"rendered-png-page-1".to_vec(),
+        mime_type: "image/png".to_string(),
+        width: Some(1200),
+        height: Some(1600),
+    }];
+    let mut store = MemoryWikiStore::default();
+
+    let result = ingest_pages_with_vision(
+        temp.path(),
+        &mut store,
+        &ScopeIdentity::global(),
+        snapshot,
+        rendered_pages,
+        VisionEndpoint::Available(&FakePdfVisionClient),
+    )
+    .expect("ingest uppercase extension pdf");
+
+    let raw =
+        std::fs::read_to_string(temp.path().join(&result.raw_path)).expect("raw markdown written");
+    assert!(raw.contains("Visual description for Guide-page-1.png."));
+    assert!(!raw.contains("Guide.PDF-page-1.png"));
+}
+
+#[test]
 fn pdf_markdown_escapes_horizontal_rules() {
     let sanitized = sanitize_pdf_page_markdown("---\n- - -\n___\n* * *\nnot ---");
 

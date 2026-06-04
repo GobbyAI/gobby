@@ -1,6 +1,9 @@
 use super::*;
 use crate::support::text::slugify_with_options;
 use crate::support::time;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn append_raw_index_locked(
     vault_root: &Path,
@@ -134,7 +137,11 @@ pub(crate) fn temp_sibling_path(path: &Path) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
-    path.with_file_name(format!(".{file_name}.{}.{nanos}.tmp", std::process::id()))
+    let suffix = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    path.with_file_name(format!(
+        ".{file_name}.{}.{nanos}.{suffix}.tmp",
+        std::process::id()
+    ))
 }
 
 pub(crate) fn slugify(title: &str) -> String {
@@ -143,4 +150,23 @@ pub(crate) fn slugify(title: &str) -> String {
 
 pub(crate) fn unix_timestamp_ms() -> Result<u64, WikiError> {
     time::unix_timestamp_ms()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    #[test]
+    fn temp_sibling_path_uses_unique_counter_suffix() {
+        let path = Path::new("/tmp/INDEX.md");
+
+        let first = temp_sibling_path(path);
+        let second = temp_sibling_path(path);
+
+        assert_ne!(first, second);
+        assert_eq!(first.parent(), path.parent());
+        assert_eq!(second.parent(), path.parent());
+    }
 }

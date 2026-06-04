@@ -65,6 +65,8 @@ databases.postgres.dsn: postgresql://flat/db
 databases:
   falkordb:
     port: 16379
+ai.embeddings:
+  provider: ollama
 {api_key}: local-api-key
 "#,
         api_key = embedding_keys::AI_API_KEY,
@@ -76,6 +78,7 @@ databases:
         Some("postgresql://flat/db")
     );
     assert_eq!(config.get("databases.falkordb.port"), Some("16379"));
+    assert_eq!(config.get("ai.embeddings.provider"), Some("ollama"));
     assert_eq!(
         config.get(embedding_keys::AI_API_KEY),
         Some("local-api-key")
@@ -548,6 +551,41 @@ fn insufficient_identity_privilege_preserves_hub() {
     };
     assert!(!message.contains("postgresql://"));
     assert!(!message.contains("secret"));
+}
+
+#[test]
+fn override_plus_recorded_hub_preserves_recorded_when_identity_unknown() {
+    let _env = EnvGuard::new();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let home = dir.path().join(".gobby");
+    fs::create_dir_all(&home).expect("create gobby home");
+    write_services_stack(&home);
+    let mut config = StandaloneConfig::empty();
+    config.set("databases.postgres.dsn", "postgresql://recorded/gobby");
+    config
+        .write_at(&gcore_config_path(&home))
+        .expect("write gcore config");
+
+    let (database_url, report) = ensure_hub_with_identity(
+        &EnsureHubOptions::new(home),
+        |name| (name == "GOBBY_POSTGRES_DSN").then(|| "postgresql://override/gobby".to_string()),
+        |url| {
+            matches!(
+                url,
+                "postgresql://recorded/gobby" | "postgresql://override/gobby"
+            )
+        },
+        |_| {
+            Ok(HubIdentityProbeResult::UnknownInsufficientPrivilege {
+                message: "identity_unknown_insufficient_privilege".to_string(),
+            })
+        },
+        |_| panic!("reachable hubs with unknown identity should not provision services"),
+    )
+    .expect("preserve recorded hub when override identity cannot be verified");
+
+    assert_eq!(database_url, "postgresql://recorded/gobby");
+    assert!(report.is_none());
 }
 
 #[derive(Default)]

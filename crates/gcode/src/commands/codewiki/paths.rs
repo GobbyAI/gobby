@@ -122,7 +122,7 @@ pub(crate) fn direct_child_modules<'a>(
 }
 
 pub(crate) fn module_depth(module: &str) -> usize {
-    module.split('/').count()
+    module.split('/').filter(|part| !part.is_empty()).count()
 }
 
 pub(crate) fn file_doc_path(file: &str) -> String {

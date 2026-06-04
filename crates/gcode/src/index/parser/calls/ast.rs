@@ -148,7 +148,8 @@ mod tests {
             "src/app.js",
             &import_context,
             &mut extracted,
-        );
+        )
+        .expect("parse JavaScript import statement");
         extracted.bindings
     }
 
