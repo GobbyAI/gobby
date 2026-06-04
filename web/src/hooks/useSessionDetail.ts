@@ -452,7 +452,7 @@ export function useSessionDetail(sessionId: string | null) {
   ])
 
   const applyRefreshedTailMessages = useCallback((result: MessageLoadResult) => {
-    if (loadingOlderRef.current) return
+    if (loadingOlderRef.current || loadingNewerRef.current) return
 
     const update = applyTailRefreshTranscriptPage(
       transcriptWindowRef.current,

@@ -1074,6 +1074,7 @@ class TestTranscriptReaderWindowed:
         assert "msg 3" in result.groups[0].content
         assert "msg 4" in result.groups[1].content
 
+    @pytest.mark.asyncio
     async def test_archived_window_reblocks_and_uses_gzip_block_index(self, tmp_path: Path) -> None:
         archive_dir = tmp_path / "archives"
         external_id = "archived-window"

@@ -401,7 +401,11 @@ class TestInstallGsqz:
         ):
             result = _install_gsqz()
 
-        assert result == {"installed": False, "skipped": True, "version": MANAGED_BIN_VERSION_PINS["gsqz"]}
+        assert result == {
+            "installed": False,
+            "skipped": True,
+            "version": MANAGED_BIN_VERSION_PINS["gsqz"],
+        }
         mock_latest.assert_not_called()
         mock_github.assert_not_called()
 

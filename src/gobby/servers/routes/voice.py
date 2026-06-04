@@ -33,6 +33,8 @@ logger = logging.getLogger(__name__)
 _AUDIO_REGISTRY_CACHE_TTL_SECONDS = 2.0
 _AUDIO_REGISTRY_CACHE_MAX_SIZE = 8
 _AUDIO_REGISTRY_CACHE: OrderedDict[str, tuple[float, AICapabilityRegistry]] = OrderedDict()
+# Weak keys let per-config signatures disappear with the config object; the
+# separate registry cache remains TTL- and size-bounded by signature.
 _AUDIO_CONFIG_SIGNATURE_CACHE: weakref.WeakKeyDictionary[Any, tuple[tuple[Any, ...], str]] = (
     weakref.WeakKeyDictionary()
 )

@@ -5,7 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -161,6 +161,14 @@ class RecordingResearchCoordinator:
         return handled
 
 
+@pytest.fixture(autouse=True)
+def reset_recording_research_gateway_instances() -> Iterator[None]:
+    RecordingResearchGateway.instances = []
+    yield
+    RecordingResearchGateway.instances = []
+
+
+@pytest.mark.asyncio
 async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
     contract = _contract("gwiki")
     gateway = RecordingGwikiGateway()
@@ -234,6 +242,7 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
             assert "--project" in argv
 
 
+@pytest.mark.asyncio
 async def test_gcode_gateway_argv_conforms_to_vendored_contract() -> None:
     contract = _contract("gcode")
     gateway = RecordingGcodeGateway()
@@ -322,8 +331,8 @@ def test_wiki_mcp_tools_are_backed_by_documented_gwiki_commands() -> None:
     assert set(tool_to_command.values()) <= daemon_commands
 
 
+@pytest.mark.asyncio
 async def test_wiki_research_mcp_routes_d5_options_to_gateway() -> None:
-    RecordingResearchGateway.instances = []
     registry = create_wiki_registry(
         db=None,
         gateway_cls=RecordingResearchGateway,

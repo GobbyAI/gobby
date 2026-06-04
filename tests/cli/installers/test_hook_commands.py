@@ -128,9 +128,7 @@ def test_rewrite_swaps_ghook_prefix_but_keeps_flags() -> None:
                     "hooks": [
                         {
                             "type": "command",
-                            "command": (
-                                "old-ghook --gobby-owned --cli=claude --type=pre-tool-use"
-                            ),
+                            "command": ("old-ghook --gobby-owned --cli=claude --type=pre-tool-use"),
                         }
                     ]
                 },
@@ -168,9 +166,7 @@ def test_rewrite_leaves_foreign_commands_untouched() -> None:
         ghook_bin="/Users/test/.gobby/bin/ghook",
     )
 
-    assert (
-        config["hooks"]["SessionStart"][0]["hooks"][0]["command"] == "some-user-script --foo"
-    )
+    assert config["hooks"]["SessionStart"][0]["hooks"][0]["command"] == "some-user-script --foo"
 
 
 def test_gobby_hook_detection_accepts_ghook_marker() -> None:

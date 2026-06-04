@@ -58,7 +58,7 @@ def _usage_dict(usage: Any) -> dict[str, int] | None:
     result = {
         field: value
         for field, value in data.items()
-        if isinstance(field, str) and isinstance(value, int) and not isinstance(value, bool)
+        if isinstance(value, int) and not isinstance(value, bool)
     }
     return result or None
 

@@ -315,6 +315,8 @@ def _configured_scopes(scopes: Iterable[str] | None, project_id: str) -> list[st
     normalized = [normalize_scope_identity(scope) for scope in values if scope and scope.strip()]
     if normalized:
         return list(dict.fromkeys(normalized))
+    if scopes is not None:
+        return []
     return [default_scope] if default_scope else []
 
 

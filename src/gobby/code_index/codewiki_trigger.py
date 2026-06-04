@@ -10,8 +10,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from gobby.code_index.gcode_gateway import GcodeGateway
-from gobby.gwiki_gateway import GwikiGateway
+import psycopg
+
+from gobby.code_index.gcode_gateway import GcodeGateway, GcodeGatewayError
+from gobby.gwiki_gateway import GwikiGateway, GwikiGatewayError
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +49,7 @@ def _config_store_value(config_store: object | None) -> object | None:
     try:
         value: object = getter(_CONFIG_KEY)
         return value
-    except Exception as exc:
+    except (KeyError, TypeError, ValueError, RuntimeError, psycopg.Error) as exc:
         logger.warning("Failed to read %s config: %s", _CONFIG_KEY, exc)
         return None
 
@@ -171,7 +173,7 @@ class CodewikiRefreshTrigger:
             )
         except asyncio.CancelledError:
             raise
-        except Exception as exc:
+        except (GcodeGatewayError, GwikiGatewayError) as exc:
             logger.warning(
                 "codewiki refresh failed for %s: %s",
                 request.project_id or root,

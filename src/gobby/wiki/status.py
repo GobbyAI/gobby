@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 from gobby.gwiki_gateway import GwikiCommandError, GwikiGatewayError
+
+logger = logging.getLogger(__name__)
 
 
 class WikiStatusGateway(Protocol):
@@ -41,6 +44,7 @@ async def _gateway_probe(
     except GwikiCommandError as exc:
         return exc.to_envelope()
     except GwikiGatewayError as exc:
+        logger.warning("Wiki gateway health probe failed: %s", exc)
         return {
             "ok": False,
             "status": "failed",

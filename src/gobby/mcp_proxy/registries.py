@@ -240,7 +240,6 @@ def setup_internal_registries(
     from gobby.mcp_proxy.tools.wiki import create_wiki_registry
 
     wiki_registry = create_wiki_registry(
-        _config=_config,
         db=db,
         default_project_id=project_id,
     )

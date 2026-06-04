@@ -192,7 +192,10 @@ def _reported_session_context_window(session: Any, db: HubDatabase | None) -> in
             exc_info=True,
         )
         return None
-    if not isinstance(row, Mapping) or row.get("context_usage_confidence") != "reported":
+    if not isinstance(row, Mapping):
+        return None
+    confidence = row.get("context_usage_confidence")
+    if isinstance(confidence, str) and confidence == "reported":
         return None
     return _coerce_positive_int(row.get("context_window"))
 

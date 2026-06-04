@@ -4,7 +4,6 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from gobby.config.app import DaemonConfig
 from gobby.gwiki_gateway import GwikiCommandError, GwikiGateway, GwikiGatewayError
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.wiki.scope_resolution import ResolvedWikiScope, resolve_wiki_scope
@@ -35,7 +34,6 @@ GatewayCall = Callable[[GwikiGateway], Awaitable[dict[str, Any]]]
 
 
 def create_wiki_registry(
-    _config: DaemonConfig | None = None,
     *,
     db: HubDatabase | None = None,
     default_project_id: str | None = None,

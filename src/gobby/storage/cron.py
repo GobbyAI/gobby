@@ -414,7 +414,11 @@ class CronJobStorage:
         enabled: bool | _Unset = UNSET,
         next_run_at: str | None | _Unset = UNSET,
     ) -> CronJob | None:
-        """Repair identity fields on an existing system cron job."""
+        """Repair identity fields on an existing system cron job.
+
+        This does not recompute schedules; callers enabling a parked system
+        job must pass the repaired ``next_run_at`` explicitly.
+        """
         job = self.get_job(job_id)
         if job is None:
             return None
@@ -432,6 +436,10 @@ class CronJobStorage:
         update_fields = {key: value for key, value in fields.items() if value is not UNSET}
         if not update_fields:
             return job
+        if update_fields.get("enabled") is True and update_fields.get("next_run_at") is None:
+            raise ValueError(
+                "enabled=True requires next_run_at when repairing system cron identity"
+            )
 
         update_fields["updated_at"] = _utc_now_iso()
         return self._update_job_fields(job_id, **update_fields)

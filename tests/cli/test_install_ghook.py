@@ -319,7 +319,11 @@ class TestInstallGhook:
         ):
             result = _install_ghook()
 
-        assert result == {"installed": False, "skipped": True, "version": MANAGED_BIN_VERSION_PINS["ghook"]}
+        assert result == {
+            "installed": False,
+            "skipped": True,
+            "version": MANAGED_BIN_VERSION_PINS["ghook"],
+        }
         mock_latest.assert_not_called()
         mock_github.assert_not_called()
 

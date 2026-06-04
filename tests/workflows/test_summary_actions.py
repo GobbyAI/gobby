@@ -733,6 +733,8 @@ class TestRepairMissingSessionTitle:
     def _write_claude_transcript(
         path: Any,
         opening: str = "Fix the Vite HMR websocket subprotocol bug",
+        *,
+        include_assistant: bool = True,
     ) -> None:
         """Write a parser-valid Claude transcript with ``opening`` as the first prompt.
 
@@ -753,23 +755,26 @@ class TestRepairMissingSessionTitle:
                 "message": {"role": "user", "content": opening},
                 "uuid": "11111111-1111-1111-1111-111111111111",
                 "timestamp": "2026-06-01T10:00:00.000Z",
-            },
-            {
-                "parentUuid": "11111111-1111-1111-1111-111111111111",
-                "isSidechain": False,
-                "userType": "external",
-                "cwd": "/work/repo",
-                "sessionId": "623b04fc-96b2-44e5-b420-942ef1638b4f",
-                "version": "2.1.160",
-                "type": "assistant",
-                "message": {
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": "Investigating the proxy handshake."}],
-                },
-                "uuid": "22222222-2222-2222-2222-222222222222",
-                "timestamp": "2026-06-01T10:00:05.000Z",
-            },
+            }
         ]
+        if include_assistant:
+            turns.append(
+                {
+                    "parentUuid": "11111111-1111-1111-1111-111111111111",
+                    "isSidechain": False,
+                    "userType": "external",
+                    "cwd": "/work/repo",
+                    "sessionId": "623b04fc-96b2-44e5-b420-942ef1638b4f",
+                    "version": "2.1.160",
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "Investigating the proxy handshake."}],
+                    },
+                    "uuid": "22222222-2222-2222-2222-222222222222",
+                    "timestamp": "2026-06-01T10:00:05.000Z",
+                }
+            )
         path.write_text("\n".join(json.dumps(t) for t in turns))
 
     @pytest.mark.asyncio
@@ -777,7 +782,7 @@ class TestRepairMissingSessionTitle:
         from gobby.workflows.summary_actions import repair_missing_session_title
 
         transcript = tmp_path / "transcript.jsonl"
-        self._write_claude_transcript(transcript)
+        self._write_claude_transcript(transcript, include_assistant=False)
 
         session = MagicMock()
         session.id = "sess-1"

@@ -891,7 +891,10 @@ async def test_spawn_action_skips_stale_candidate_with_active_run_mutex(
     monkeypatch.setattr(
         dispatcher,
         "spawn_agent",
-        lambda *_args, **_kwargs: spawned.append("run-duplicate") or "run-duplicate",
+        lambda action, **_kwargs: spawned.append(
+            (action.task_id, action.task_ref, action.agent_slug)
+        )
+        or "run-duplicate",
     )
 
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])

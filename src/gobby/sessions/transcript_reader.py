@@ -442,7 +442,6 @@ class TranscriptReader:
                     mtime_ns=st.st_mtime_ns,
                     size=st.st_size,
                 )
-                st = await asyncio.to_thread(os.stat, str(archive_path))
                 index = await get_or_build_index(
                     str(archive_path),
                     source,

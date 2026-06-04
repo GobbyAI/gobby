@@ -244,6 +244,10 @@ class TestInstallGloc:
         ):
             result = _install_gloc()
 
-        assert result == {"installed": False, "skipped": True, "version": MANAGED_BIN_VERSION_PINS["gloc"]}
+        assert result == {
+            "installed": False,
+            "skipped": True,
+            "version": MANAGED_BIN_VERSION_PINS["gloc"],
+        }
         mock_latest.assert_not_called()
         mock_github.assert_not_called()

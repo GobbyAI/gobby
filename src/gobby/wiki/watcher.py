@@ -126,15 +126,16 @@ class WikiWatcher:
             if self._snapshots_initialized:
                 return
             try:
-                snapshots = await asyncio.to_thread(
-                    lambda: {scope.name: self._snapshot(scope) for scope in self._scopes}
-                )
+                snapshots = await asyncio.to_thread(self._snapshot_all_scopes)
             except Exception:
                 logger.warning("Failed to initialize wiki watcher snapshots", exc_info=True)
                 self._snapshots = {}
             else:
                 self._snapshots = snapshots
             self._snapshots_initialized = True
+
+    def _snapshot_all_scopes(self) -> dict[str, dict[Path, tuple[int, int]]]:
+        return {scope.name: self._snapshot(scope) for scope in self._scopes}
 
     async def _scan_once(self) -> None:
         for scope in self._scopes:

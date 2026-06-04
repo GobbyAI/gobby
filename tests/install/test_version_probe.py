@@ -52,5 +52,8 @@ def test_logs_failures_when_logger_and_label_supplied(
     logger = logging.getLogger("test.version_probe")
     runner = MagicMock(side_effect=OSError("no such file"))
     with caplog.at_level(logging.WARNING, logger="test.version_probe"):
-        assert probe_native_bin_version("/bin/ghook", runner=runner, logger=logger, label="ghook") is None
+        assert (
+            probe_native_bin_version("/bin/ghook", runner=runner, logger=logger, label="ghook")
+            is None
+        )
     assert any("ghook" in record.message for record in caplog.records)

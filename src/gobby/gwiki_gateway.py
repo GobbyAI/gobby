@@ -95,6 +95,8 @@ class GwikiGateway:
         require_ai: bool = False,
     ) -> dict[str, Any]:
         args = ["ask", query]
+        if not llm and (ai is not None or require_ai):
+            raise ValueError("ai and require_ai can only be used when llm=True")
         if llm:
             args.append("--llm")
             if ai is not None:

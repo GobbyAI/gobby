@@ -41,7 +41,7 @@ export function useRafCoalescedHandler<T>(handler: (latest: T) => void): (value:
     frameRef.current = requestAnimationFrame(() => {
       frameRef.current = null
       if (!hasPendingRef.current) return
-      const latest = pendingRef.current as T
+      const latest = pendingRef.current!
       hasPendingRef.current = false
       pendingRef.current = undefined
       handlerRef.current(latest)
