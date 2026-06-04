@@ -28,6 +28,10 @@ _TITLE_ORCHESTRATION_BOILERPLATE_RE = re.compile(
     r"^a previous agent produced the plan below\b",
     re.IGNORECASE,
 )
+_TITLE_CONTROL_MARKER_RE = re.compile(
+    r"^\[\s*request\s+interrupted\s+by\s+user(?:\s+[^\]]*)?\s*\]$",
+    re.IGNORECASE,
+)
 # Matches literal prompt placeholders that models sometimes echo instead of
 # replacing; those values must not become persisted titles or digest turns.
 _TEMPLATE_PLACEHOLDER_RE = re.compile(
@@ -119,10 +123,18 @@ def _strip_slash_command_prefix(candidate: str) -> str:
     return " ".join(parts)
 
 
+def _is_control_marker(value: str) -> bool:
+    """Return True for provider control records that are not user intent."""
+    normalized = re.sub(r"\s+", " ", value.strip())
+    return bool(_TITLE_CONTROL_MARKER_RE.fullmatch(normalized))
+
+
 def _build_heuristic_title(prompt_text: Any) -> str | None:
     """Derive a cheap bootstrap title from the first meaningful user prompt."""
     raw_text = _coerce_prompt_text(prompt_text)
     if not raw_text.strip():
+        return None
+    if _is_control_marker(raw_text):
         return None
 
     cleaned = _TITLE_CODE_BLOCK_RE.sub(" ", raw_text)
@@ -137,7 +149,7 @@ def _build_heuristic_title(prompt_text: Any) -> str | None:
     lines: list[str] = []
     for raw_line in cleaned.splitlines():
         line = _TITLE_LINE_CLEANUP_RE.sub("", raw_line).strip()
-        if line:
+        if line and not _is_control_marker(line):
             lines.append(line)
 
     if not lines:
@@ -219,8 +231,10 @@ async def _heuristic_title_from_transcript(
                 record.content if isinstance(record.content, str) else str(record.content or "")
             )
             stripped = content.strip().lower()
-            if not stripped or any(
-                stripped == cmd or stripped.startswith(cmd + " ") for cmd in _LIFECYCLE_CMDS
+            if (
+                not stripped
+                or any(stripped == cmd or stripped.startswith(cmd + " ") for cmd in _LIFECYCLE_CMDS)
+                or _is_control_marker(content)
             ):
                 continue
             title = _build_heuristic_title(content)

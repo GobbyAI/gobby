@@ -154,6 +154,10 @@ class TestBuildHeuristicTitle:
         assert _build_heuristic_title("/clear") is None
         assert _build_heuristic_title("/gobby plan") is None
 
+    def test_returns_none_for_interrupt_control_marker(self) -> None:
+        assert _build_heuristic_title("[Request interrupted by user]") is None
+        assert _build_heuristic_title("[Request interrupted by user for tool use]") is None
+
     def test_rejects_orchestration_boilerplate_without_h1(self) -> None:
         assert (
             _build_heuristic_title(
@@ -354,6 +358,21 @@ class TestHeuristicTitleFromTranscript:
 
         title = await _heuristic_title_from_transcript(str(transcript), "claude")
         assert title == "Refactor the dispatcher rules"
+
+    @pytest.mark.asyncio
+    async def test_skips_interrupt_control_markers(self, tmp_path: Path) -> None:
+        import json
+
+        transcript = tmp_path / "transcript.jsonl"
+        records = [
+            _claude_user_record("[Request interrupted by user]", idx=1),
+            _claude_user_record("[Request interrupted by user for tool use]", idx=2),
+            _claude_user_record("Investigate flaky digest titles", idx=3),
+        ]
+        transcript.write_text("\n".join(json.dumps(r) for r in records))
+
+        title = await _heuristic_title_from_transcript(str(transcript), "claude")
+        assert title == "Investigate flaky digest titles"
 
     @pytest.mark.asyncio
     async def test_opening_prompt_wins_on_long_transcript(self, tmp_path: Path) -> None:
