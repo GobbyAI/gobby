@@ -20,8 +20,10 @@ the ACP path does.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Any
+
+import pytest
 
 from gobby.adapters.gemini_acp_client import StreamEvent
 from gobby.llm.claude_models import ChatEvent, DoneEvent, TextChunk
@@ -230,3 +232,92 @@ async def test_droid_plan_mode_turn_without_content_does_not_broadcast() -> None
 
     assert broadcasts == []
     assert session.has_pending_plan is False
+
+
+# --------------------------------------------------------------------------- #
+# Approve flow (parity with test_acp_plan_mode_switch.py) — both managed CLIs
+# expose no protocol-level mode push, so plan approval relies on the unified
+# mixin's sync_sdk_permission_mode fallback: flip chat_mode, broadcast
+# mode_changed reason plan_approved, and stop the plan gate from re-injecting.
+# --------------------------------------------------------------------------- #
+
+ModeChanges = list[tuple[str, str]]
+ManagedPlanSession = Any
+
+
+def _attach_mode_capture(session: Any) -> ModeChanges:
+    mode_changes: ModeChanges = []
+
+    async def _on_mode_changed(mode: str, reason: str) -> None:
+        mode_changes.append((mode, reason))
+
+    session._on_mode_changed = _on_mode_changed
+    return mode_changes
+
+
+def _make_codex_plan_session() -> tuple[ManagedPlanSession, ModeChanges]:
+    session = CodexManagedChatSession(
+        conversation_id="conv-codex",
+        _backend=_FakeCodexBackend([]),
+    )
+    session.chat_mode = "plan"
+    return session, _attach_mode_capture(session)
+
+
+def _make_droid_plan_session() -> tuple[ManagedPlanSession, ModeChanges]:
+    session = DroidManagedChatSession(
+        conversation_id="conv-droid",
+        _backend=_FakeDroidBackend([]),
+    )
+    session.chat_mode = "plan"
+    return session, _attach_mode_capture(session)
+
+
+_MANAGED_PLAN_FACTORIES: list[Any] = [
+    pytest.param(_make_codex_plan_session, id="codex"),
+    pytest.param(_make_droid_plan_session, id="droid"),
+]
+
+
+@pytest.mark.parametrize("make_session", _MANAGED_PLAN_FACTORIES)
+async def test_managed_approve_flips_mode_broadcasts_and_clears_plan_gate(
+    make_session: Callable[[], tuple[ManagedPlanSession, ModeChanges]],
+) -> None:
+    session, mode_changes = make_session()
+    # A plan is pending (as the send_message hook would have surfaced it).
+    session._pending_plan_content = "## Plan\n1. do it"
+    assert session.has_pending_plan is True
+
+    # Mirror handle_plan_approval_response's has_pending_plan approve branch.
+    session._pending_post_plan_mode = "normal"
+    session.set_chat_mode("normal")
+    session._clear_pending_plan_prompt()
+    await session.sync_sdk_permission_mode()
+    session.provide_plan_decision("approve")
+
+    assert session.chat_mode == "normal"
+    assert mode_changes == [("normal", "plan_approved")]
+    assert session.has_pending_plan is False
+    # The next prompt build no longer injects the plan-mode gate.
+    assert session._pop_plan_mode_context() is None
+
+
+@pytest.mark.parametrize("make_session", _MANAGED_PLAN_FACTORIES)
+async def test_managed_manual_mode_switch_does_not_broadcast_plan_approved(
+    make_session: Callable[[], tuple[ManagedPlanSession, ModeChanges]],
+) -> None:
+    session, mode_changes = make_session()
+    # session_config path: set_chat_mode + sync with no pending post-plan mode.
+    session.set_chat_mode("normal")
+    await session.sync_sdk_permission_mode()
+    assert mode_changes == []
+
+
+@pytest.mark.parametrize("make_session", _MANAGED_PLAN_FACTORIES)
+async def test_managed_sync_while_in_plan_mode_is_noop(
+    make_session: Callable[[], tuple[ManagedPlanSession, ModeChanges]],
+) -> None:
+    session, mode_changes = make_session()
+    session._pending_post_plan_mode = "normal"  # set, but still in plan mode
+    await session.sync_sdk_permission_mode()
+    assert mode_changes == []
