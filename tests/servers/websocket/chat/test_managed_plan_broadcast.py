@@ -361,3 +361,28 @@ async def test_droid_thinking_excluded_from_plan() -> None:
     assert len(broadcasts) == 1
     assert broadcasts[0][0] == "## Plan\n\n1. Do it"
     assert "weighing options" not in (broadcasts[0][0] or "")
+
+
+async def test_droid_intermediate_result_does_not_truncate_plan() -> None:
+    # Droid can emit a `result` (DoneEvent) after the preamble, before its tool
+    # calls and the real plan. The session must NOT broadcast/return on that early
+    # DoneEvent (which truncated the plan to the preamble and cancelled the
+    # in-flight tool, #15642); it defers the broadcast to the full accumulated
+    # text and surfaces a single DoneEvent.
+    session, broadcasts = _make_droid_session(
+        "plan",
+        [
+            _droid_text("I'll research the codebase first. "),
+            _droid_result(),  # intermediate result -- must not truncate or end the turn
+            _droid_text("## Plan\n\n1. Add add(a, b)"),
+            _droid_result(),  # terminal result
+        ],
+    )
+
+    events = [e async for e in session.send_message("draft a plan")]
+
+    assert len(broadcasts) == 1
+    assert broadcasts[0][0] == "I'll research the codebase first. ## Plan\n\n1. Add add(a, b)"
+    assert session.has_pending_plan is True
+    # Exactly one DoneEvent surfaces despite the two `result` events.
+    assert sum(isinstance(e, DoneEvent) for e in events) == 1

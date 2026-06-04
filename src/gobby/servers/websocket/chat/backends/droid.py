@@ -144,6 +144,7 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
             pending_tool_calls: dict[str, dict[str, Any]] = {}
             saw_content_delta = False
             plan_text_parts: list[str] = []
+            final_done: DoneEvent | None = None
 
             try:
                 async for stream_event in self._backend.send_message(self, full_prompt):
@@ -186,14 +187,16 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
                         saw_content_delta = True
 
                     if isinstance(chat_event, DoneEvent):
-                        # Managed CLIs present a plan as a normal assistant turn
-                        # (no ExitPlanMode tool); surface it before the turn's
-                        # DoneEvent so it flows through the shared plan UX.
-                        await self._maybe_broadcast_pending_plan(
-                            "".join(plan_text_parts), saw_content_delta
-                        )
-                        yield chat_event
-                        return
+                        # Droid can emit an intermediate ``result``/DoneEvent
+                        # before the agent is actually done (e.g. after preamble
+                        # text, but before its tool calls and the real plan).
+                        # Returning here truncated the turn (cancelling the
+                        # in-flight tool) and broadcast only the partial preamble
+                        # as the plan (#15642). Remember the latest DoneEvent and
+                        # defer the plan broadcast to the true end of the stream,
+                        # surfacing a single DoneEvent.
+                        final_done = chat_event
+                        continue
 
                     if chat_event is not None:
                         yield chat_event
@@ -201,7 +204,7 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
                 await self._maybe_broadcast_pending_plan(
                     "".join(plan_text_parts), saw_content_delta
                 )
-                yield DoneEvent(
+                yield final_done or DoneEvent(
                     tool_calls_count=0,
                     sdk_session_id=self.sdk_session_id,
                     context_window=self._resolve_context_window(),
