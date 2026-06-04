@@ -1,5 +1,6 @@
 use scraper::{ElementRef, Html, Node, Selector};
 
+use crate::document::{DocumentFailureMode, DocumentUnitCount};
 use crate::ingest::{single_line, text_from_utf8_lossy};
 
 use super::*;
