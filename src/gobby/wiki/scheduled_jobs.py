@@ -340,6 +340,7 @@ def _retire_queryless_system_research_job(
 
 def _configured_scopes(scopes: Iterable[str] | None, project_id: str) -> list[str]:
     default_scope = project_scope(project_id) if project_id else None
+    # None means "use the project default"; an explicit empty iterable means no scopes.
     values = list(scopes) if scopes is not None else ([default_scope] if default_scope else [])
     normalized = [normalize_scope_identity(scope) for scope in values if scope and scope.strip()]
     if normalized:

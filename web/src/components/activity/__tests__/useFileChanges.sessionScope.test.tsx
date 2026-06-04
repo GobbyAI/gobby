@@ -5,8 +5,10 @@ import { useFileChanges } from '../../../hooks/useFileChanges'
 import type { ChatMessage } from '../../../types/chat'
 
 describe('useFileChanges — session scoping', () => {
+  const noMessages: ChatMessage[] = []
+
   beforeEach(() => {
-    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+    const fetchMock = vi.fn((input: RequestInfo | URL): Promise<Response> => {
       const url = String(input)
       let files: { path: string; status: string }[] = []
       if (url.includes('/sessions/sess-A/changes')) {
@@ -24,11 +26,12 @@ describe('useFileChanges — session scoping', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+    vi.restoreAllMocks()
   })
 
   it('fetches the viewed session and re-fetches when the session switches', async () => {
     const { result, rerender } = renderHook(
-      ({ sid }: { sid: string | null }) => useFileChanges(sid, [], false),
+      ({ sid }: { sid: string | null }) => useFileChanges(sid, noMessages, false),
       { initialProps: { sid: 'sess-A' as string | null } },
     )
 
@@ -47,15 +50,39 @@ describe('useFileChanges — session scoping', () => {
   })
 
   it('surfaces an error when the session changes request fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
     vi.stubGlobal(
       'fetch',
-      vi.fn(() => Promise.resolve({ ok: false, status: 500 } as Response)),
+      vi.fn((): Promise<Response> => Promise.resolve({ ok: false, status: 500 } as Response)),
     )
 
-    const { result } = renderHook(() => useFileChanges('sess-A', [], false))
+    const { result } = renderHook(() => useFileChanges('sess-A', noMessages, false))
 
     await waitFor(() => {
       expect(result.current.error).toBe('Could not load changes for this session.')
+    })
+    expect(result.current.changedFiles).toEqual([])
+  })
+
+  it('warns and falls back to an empty list for invalid backend file shapes', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((): Promise<Response> =>
+        Promise.resolve({
+          ok: true,
+          json: async () => ({ files: [{ path: 'src/a.ts' }] }),
+        } as Response),
+      ),
+    )
+
+    const { result } = renderHook(() => useFileChanges('sess-A', noMessages, false))
+
+    await waitFor(() => {
+      expect(warn).toHaveBeenCalledWith(
+        'Invalid session changes files response shape:',
+        { files: [{ path: 'src/a.ts' }] },
+      )
     })
     expect(result.current.changedFiles).toEqual([])
   })

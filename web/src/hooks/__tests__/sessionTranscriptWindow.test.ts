@@ -158,6 +158,7 @@ describe('sessionTranscriptWindow', () => {
     expect(update.state.renderedTotal).toBe(11)
     expect(update.appendedCount).toBe(0)
     expect(update.addedCount).toBe(1)
+    expect(update.needsFetch).toBe(true)
   })
 
   it('appends a live tail row while at the tail but not pinned to bottom', () => {
@@ -168,6 +169,7 @@ describe('sessionTranscriptWindow', () => {
     // Tail-contiguous: the row must render even though atBottom is false; the
     // window is allowed to grow past maxGroups because the head is not trimmed.
     expect(update.appendedCount).toBe(1)
+    expect(update.needsFetch).toBe(false)
     expect(update.trimmedHeadCount).toBe(0)
     expect(update.state.messages.map((item) => item.id)).toEqual([
       'msg-5',

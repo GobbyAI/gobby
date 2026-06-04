@@ -23,7 +23,7 @@ from gobby.memory.digest import (
     memory_sync_export,
     memory_sync_import,
 )
-from gobby.memory.title_heuristics import _build_heuristic_title, _heuristic_title_from_transcript
+from gobby.memory.title_heuristics import build_heuristic_title, heuristic_title_from_transcript
 from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
@@ -149,18 +149,18 @@ class TestBuildHeuristicTitle:
     """Tests for the first-prompt heuristic title bootstrap."""
 
     def test_returns_none_for_empty_or_command_prompt(self) -> None:
-        assert _build_heuristic_title("") is None
-        assert _build_heuristic_title("   ") is None
-        assert _build_heuristic_title("/clear") is None
-        assert _build_heuristic_title("/gobby plan") is None
+        assert build_heuristic_title("") is None
+        assert build_heuristic_title("   ") is None
+        assert build_heuristic_title("/clear") is None
+        assert build_heuristic_title("/gobby plan") is None
 
     def test_returns_none_for_interrupt_control_marker(self) -> None:
-        assert _build_heuristic_title("[Request interrupted by user]") is None
-        assert _build_heuristic_title("[Request interrupted by user for tool use]") is None
+        assert build_heuristic_title("[Request interrupted by user]") is None
+        assert build_heuristic_title("[Request interrupted by user for tool use]") is None
 
     def test_rejects_orchestration_boilerplate_without_h1(self) -> None:
         assert (
-            _build_heuristic_title(
+            build_heuristic_title(
                 "A previous agent produced the plan below to accomplish the user's task. "
                 "Implement the plan in a fresh context."
             )
@@ -168,7 +168,7 @@ class TestBuildHeuristicTitle:
         )
 
     def test_uses_h1_from_orchestration_boilerplate(self) -> None:
-        title = _build_heuristic_title(
+        title = build_heuristic_title(
             "A previous agent produced the plan below to accomplish the user's task.\n\n"
             "# Atomic JSON Digest And Rolling Titles\n\n"
             "Make the existing digest LLM call return JSON."
@@ -176,13 +176,13 @@ class TestBuildHeuristicTitle:
         assert title == "Atomic JSON Digest And Rolling Titles"
 
     def test_strips_leading_phrase_and_truncates(self) -> None:
-        title = _build_heuristic_title(
+        title = build_heuristic_title(
             "I'd like to generate a session title on the first user prompt submit."
         )
         assert title == "Generate a session title on the first"
 
     def test_handles_multimodal_blocks(self) -> None:
-        title = _build_heuristic_title(
+        title = build_heuristic_title(
             [
                 {"type": "text", "text": "Fix the auth bug in login.py"},
                 {"type": "image", "image_url": "ignored"},
@@ -191,26 +191,26 @@ class TestBuildHeuristicTitle:
         assert title == "Fix the auth bug in login.py"
 
     def test_rejects_titles_that_truncate_to_too_short(self) -> None:
-        assert _build_heuristic_title("A") is None
+        assert build_heuristic_title("A") is None
 
     def test_allows_two_character_titles(self) -> None:
-        assert _build_heuristic_title("PR") == "PR"
+        assert build_heuristic_title("PR") == "PR"
 
     def test_strips_gobby_namespace_and_subcommand(self) -> None:
-        title = _build_heuristic_title(
+        title = build_heuristic_title(
             "/gobby plan why aren't tmux titles updating in claude sessions"
         )
         assert title == "Why aren't tmux titles updating in claude"
 
     def test_strips_non_gobby_slash_command(self) -> None:
-        assert _build_heuristic_title("/loop check the deploy") == "Check the deploy"
+        assert build_heuristic_title("/loop check the deploy") == "Check the deploy"
 
     def test_strips_single_slash_command_with_no_args(self) -> None:
-        assert _build_heuristic_title("/help") is None
-        assert _build_heuristic_title("/schedule") is None
+        assert build_heuristic_title("/help") is None
+        assert build_heuristic_title("/schedule") is None
 
     def test_plain_prompt_unaffected_by_slash_stripping(self) -> None:
-        assert _build_heuristic_title("hello world") == "Hello world"
+        assert build_heuristic_title("hello world") == "Hello world"
 
 
 class TestShouldUpdateDigestTitle:
@@ -328,19 +328,19 @@ def _claude_assistant_record(text: str, idx: int = 0) -> dict[str, object]:
 
 
 class TestHeuristicTitleFromTranscript:
-    """Tests for _heuristic_title_from_transcript (opening-prompt extraction)."""
+    """Tests for heuristic_title_from_transcript (opening-prompt extraction)."""
 
     @pytest.mark.asyncio
     async def test_extracts_first_user_prompt_from_real_fixture(self) -> None:
-        title = await _heuristic_title_from_transcript(str(_CLAUDE_FIXTURE), "claude")
+        title = await heuristic_title_from_transcript(str(_CLAUDE_FIXTURE), "claude")
         # The opener wins — tool_result user turns and the later follow-up are
         # not used as the session title.
         assert title == "Fix Claude session titles in VSCode"
 
     @pytest.mark.asyncio
     async def test_returns_none_for_missing_path(self) -> None:
-        assert await _heuristic_title_from_transcript("/nonexistent/path.jsonl", "claude") is None
-        assert await _heuristic_title_from_transcript(None, "claude") is None
+        assert await heuristic_title_from_transcript("/nonexistent/path.jsonl", "claude") is None
+        assert await heuristic_title_from_transcript(None, "claude") is None
 
     @pytest.mark.asyncio
     async def test_skips_lifecycle_and_tool_results(self, tmp_path: Path) -> None:
@@ -356,7 +356,7 @@ class TestHeuristicTitleFromTranscript:
         ]
         transcript.write_text("\n".join(json.dumps(r) for r in records))
 
-        title = await _heuristic_title_from_transcript(str(transcript), "claude")
+        title = await heuristic_title_from_transcript(str(transcript), "claude")
         assert title == "Refactor the dispatcher rules"
 
     @pytest.mark.asyncio
@@ -371,7 +371,7 @@ class TestHeuristicTitleFromTranscript:
         ]
         transcript.write_text("\n".join(json.dumps(r) for r in records))
 
-        title = await _heuristic_title_from_transcript(str(transcript), "claude")
+        title = await heuristic_title_from_transcript(str(transcript), "claude")
         assert title == "Investigate flaky digest titles"
 
     @pytest.mark.asyncio
@@ -399,7 +399,7 @@ class TestHeuristicTitleFromTranscript:
         transcript = tmp_path / "long.jsonl"
         transcript.write_text("\n".join(json.dumps(r) for r in records))
 
-        title = await _heuristic_title_from_transcript(str(transcript), "claude")
+        title = await heuristic_title_from_transcript(str(transcript), "claude")
         assert title == "Add pagination to the search endpoint"
 
 
@@ -666,7 +666,7 @@ class TestBuildTurnAndDigest:
         assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
 
     @pytest.mark.asyncio
-    async def test_cancellation_persists_heuristic_title_from_transcript(
+    async def test_cancellation_persists_public_heuristic_title_from_transcript(
         self,
         mock_memory_manager,
         mock_session_manager,

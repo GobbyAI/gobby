@@ -1,14 +1,33 @@
 import json
+import logging
 from pathlib import Path
 
 import pytest
 
 from gobby.config.sessions import SessionLifecycleConfig
 from gobby.sessions.lifecycle import SessionLifecycleManager
+from gobby.sessions.token_usage import gemini_token_usage
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
+
+
+def test_gemini_token_usage_warns_when_cache_read_exceeds_prompt(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="gobby.sessions.token_usage"):
+        usage = gemini_token_usage(
+            {
+                "promptTokenCount": 10,
+                "cachedContentTokenCount": 25,
+                "candidatesTokenCount": 3,
+            }
+        )
+
+    assert usage.input_tokens == 0
+    assert usage.cache_read_tokens == 25
+    assert any("exceeds promptTokenCount" in record.message for record in caplog.records)
 
 
 @pytest.fixture

@@ -26,6 +26,7 @@ from gobby.sync.memories import MemorySyncManager
 from gobby.sync.tasks import TaskSyncManager
 
 if TYPE_CHECKING:
+    from gobby.code_index.codewiki_trigger import CodewikiRefreshTrigger
     from gobby.events.wake import WakeDispatcher
     from gobby.mcp_proxy.manager import MCPClientManager
 
@@ -94,7 +95,7 @@ class ServiceContainer:
 
     # Code Index
     code_indexer: Any | None = None  # CodeIndexContext
-    codewiki_trigger: Any | None = None  # CodewikiRefreshTrigger
+    codewiki_trigger: CodewikiRefreshTrigger | None = None
 
     # Config
     config_store: Any | None = None  # ConfigStore

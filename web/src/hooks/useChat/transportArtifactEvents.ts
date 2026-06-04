@@ -8,7 +8,7 @@ import type { UseChatTransportParams } from "./transportTypes";
 export function handleArtifactTransportEvent(
   data: Record<string, unknown>,
   ctx: UseChatTransportParams,
-) {
+): void {
   if (data.event === "show_file") {
     if (typeof data.artifact_type !== "string" || typeof data.content !== "string") {
       return;

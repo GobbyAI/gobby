@@ -677,9 +677,8 @@ export function useSessionDetail(sessionId: string | null) {
 
   // Subscribe to real-time session_message events via WebSocket.
   // Broadcasts are RenderedMessage-shaped with content_blocks. Upsert by id.
-  // New tail groups append only while the loaded window reaches the tail and
-  // the viewer is at bottom; otherwise only counts advance so scrolling down
-  // refetches the missing edge.
+  // New tail groups append while the loaded window reaches the tail; when a
+  // live message exposes a gap, counts advance and a newer page fetch starts.
   useWebSocketEvent('session_message', useCallback((data: Record<string, unknown>) => {
     const msgSessionId = data.session_id as string | undefined
     if (!msgSessionId || msgSessionId !== sessionIdRef.current) return
@@ -698,13 +697,16 @@ export function useSessionDetail(sessionId: string | null) {
     if (update.changed) {
       applyTranscriptWindow(update)
     }
+    if (update.needsFetch) {
+      void loadNewer()
+    }
     if (update.addedCount > 0) {
       setTotalMessages((prev) => prev + update.addedCount)
     }
     if (update.state.messages.length > 0) {
       setTranscriptStatus(null)
     }
-  }, [applyTranscriptWindow, setMessageSource]))
+  }, [applyTranscriptWindow, loadNewer, setMessageSource]))
 
   const applyUsageUpdate = useCallback((data: Record<string, unknown>) => {
     const updatedSessionId = typeof data.session_id === 'string' ? data.session_id : null

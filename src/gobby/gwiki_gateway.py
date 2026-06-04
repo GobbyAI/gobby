@@ -94,6 +94,13 @@ class GwikiGateway:
         ai: str | None = None,
         require_ai: bool = False,
     ) -> dict[str, Any]:
+        if not llm and (ai is not None or require_ai):
+            names = []
+            if ai is not None:
+                names.append("ai")
+            if require_ai:
+                names.append("require_ai")
+            raise ValueError(f"{' and '.join(names)} require llm=True")
         args = ["ask", query]
         if llm:
             args.append("--llm")

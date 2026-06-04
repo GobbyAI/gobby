@@ -129,6 +129,33 @@ async def test_refresh_propagates_cancellation(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_refresh_logs_gateway_factory_failures(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def fail_factory() -> FakeGcodeGateway:
+        raise RuntimeError("constructor failed")
+
+    trigger = CodewikiRefreshTrigger(
+        loop=asyncio.get_running_loop(),
+        config_store_provider=lambda: FakeConfigStore(True),
+        gcode_gateway_factory=fail_factory,
+        gwiki_gateway_factory=lambda _root: FakeGwikiGateway(),
+        debounce_seconds=60,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="gobby.code_index.codewiki_trigger"):
+        await trigger._run_refresh(
+            CodewikiRefreshRequest(root_path=str(tmp_path), project_id="proj-1")
+        )
+
+    assert any(
+        "codewiki refresh gateway construction failed" in record.message
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
 async def test_refresh_is_not_scheduled_when_disabled(tmp_path: Path) -> None:
     trigger = CodewikiRefreshTrigger(
         loop=asyncio.get_running_loop(),

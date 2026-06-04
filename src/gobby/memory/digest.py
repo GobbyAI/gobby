@@ -18,11 +18,11 @@ from typing import Any, NoReturn, Protocol
 
 from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.title_heuristics import (
-    _LIFECYCLE_CMDS,
-    _build_heuristic_title,
-    _heuristic_title_from_transcript,
-    _is_template_placeholder,
-    _normalize_title_candidate,
+    LIFECYCLE_CMDS,
+    build_heuristic_title,
+    heuristic_title_from_transcript,
+    is_template_placeholder,
+    normalize_title_candidate,
 )
 from gobby.sync.export_context import in_jsonl_export_context
 from gobby.utils.json_helpers import extract_json_object
@@ -76,7 +76,7 @@ async def _provider_cancelled_fallback(
     if str(getattr(session, "title", "") or "").strip():
         return result
 
-    title = await _heuristic_title_from_transcript(
+    title = await heuristic_title_from_transcript(
         getattr(session, "transcript_path", None),
         getattr(session, "source", None),
     )
@@ -255,7 +255,7 @@ async def _read_undigested_turns(
             for p, r in pairs
             if not any(
                 p.strip().lower() == c or p.strip().lower().startswith(c + " ")
-                for c in _LIFECYCLE_CMDS
+                for c in LIFECYCLE_CMDS
             )
         ]
 
@@ -364,12 +364,12 @@ async def bootstrap_session_title(
     if existing_title:
         return None
 
-    title = _build_heuristic_title(prompt_text)
+    title = build_heuristic_title(prompt_text)
     if not title:
         # Event payload carried no usable prompt (empty/normalization gap on some
         # provider paths). Fall back to the transcript's first user turn so the
         # heuristic does not depend solely on the event data.
-        title = await _heuristic_title_from_transcript(
+        title = await heuristic_title_from_transcript(
             getattr(session, "transcript_path", None),
             getattr(session, "source", None),
         )
@@ -420,7 +420,7 @@ async def _resolve_undigested_pairs(
             return None
         _stripped = user_prompt.strip()
         if any(
-            _stripped.lower() == c or _stripped.lower().startswith(c + " ") for c in _LIFECYCLE_CMDS
+            _stripped.lower() == c or _stripped.lower().startswith(c + " ") for c in LIFECYCLE_CMDS
         ):
             return None
         undigested_pairs = [(user_prompt, "")]
@@ -521,7 +521,7 @@ def _parse_turn_record_response(response_text: str, exchange_count: int) -> _Tur
             exchange_count,
         )
     turn_markdown = turn_markdown.strip()
-    if _is_template_placeholder(turn_markdown):
+    if is_template_placeholder(turn_markdown):
         _raise_turn_record_contract_error(
             "placeholder turn_markdown",
             response_text,
@@ -536,7 +536,7 @@ def _parse_turn_record_response(response_text: str, exchange_count: int) -> _Tur
             exchange_count,
         )
 
-    title_candidate = _normalize_title_candidate(raw_title_candidate)
+    title_candidate = normalize_title_candidate(raw_title_candidate)
     if not title_candidate:
         _raise_turn_record_contract_error(
             f"empty normalized title_candidate (raw_title_candidate={raw_title_candidate!r})",
@@ -620,7 +620,7 @@ async def _synthesize_title(
             llm_timeout,
         )
 
-    title_str = _normalize_title_candidate(title)
+    title_str = normalize_title_candidate(title)
     if title_str:
         updated_session = session_manager.update_title(
             session_id,

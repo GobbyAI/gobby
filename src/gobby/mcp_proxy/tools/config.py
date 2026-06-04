@@ -17,6 +17,8 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+import psycopg
+
 from gobby.config.embedding_keys import (
     external_embedding_config_key_to_runtime_key,
     runtime_embedding_config_entries_to_storage,
@@ -457,7 +459,7 @@ def create_config_registry(
             return {"success": True, "count": len(keys), "keys": keys}
         except ValueError as e:
             return {"success": False, "error": str(e)}
-        except Exception as exc:
+        except psycopg.Error as exc:
             logger.exception("Failed to list config keys")
             message = str(exc).strip() or exc.__class__.__name__
             return {

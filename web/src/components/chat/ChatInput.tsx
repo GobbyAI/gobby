@@ -293,12 +293,12 @@ export function ChatInput({
   useEffect(() => {
     const textarea = textareaRef.current
     if (!textarea) return
-    // Chromium sizes the textarea to content via CSS `field-sizing`, so no JS
-    // layout read is needed — this avoids the forced synchronous reflow that
-    // ran on every keystroke. Only fall back to JS measurement where
-    // field-sizing is unsupported, and run it in a rAF (after the keystroke
-    // paints) so the measurement never adds to input latency. Guard the write
-    // so an unchanged height doesn't commit a redundant layout.
+    // Chromium can size the textarea with CSS `field-sizing`; other browsers
+    // use a rAF resize pass against the actual textarea node. Track the last
+    // applied height in `lastTextareaHeightRef` so repeated input that stays
+    // within the same measured size does not rewrite style, and clamp the
+    // applied height to `MAX_TEXTAREA_HEIGHT` before scrolling the cursor into
+    // view.
     if (supportsFieldSizing()) return
     const frame = requestAnimationFrame(() => {
       textarea.style.height = 'auto'

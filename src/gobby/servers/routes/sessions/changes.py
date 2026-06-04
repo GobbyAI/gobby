@@ -71,12 +71,9 @@ def register_changes_routes(router: APIRouter, server: HTTPServer) -> None:
         try:
             diff = await compute_session_file_diff(workspace, path)
         except Exception as e:
-            logger.debug(
-                "Failed to diff %s for session %s: %s",
-                path,
-                session_id,
-                type(e).__name__,
-                exc_info=True,
+            logger.exception(
+                "Failed to compute session file diff",
+                extra={"session_id": session_id, "path": path},
             )
-            raise HTTPException(500, f"Failed to compute diff for {path}") from e
+            raise HTTPException(500, "Failed to compute session file diff") from e
         return {"diff": diff, "path": path}

@@ -170,8 +170,18 @@ class CodewikiRefreshTrigger:
     async def _run_refresh(self, request: CodewikiRefreshRequest) -> None:
         root = Path(request.root_path).resolve(strict=False)
         out_dir = self._resolve_out_dir(root, request.out_dir)
-        gcode = self._gcode_gateway_factory()
-        gwiki = self._gwiki_gateway_factory(root)
+        try:
+            gcode = self._gcode_gateway_factory()
+            gwiki = self._gwiki_gateway_factory(root)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "codewiki refresh gateway construction failed for %s: %s",
+                request.project_id or root,
+                exc,
+            )
+            return
 
         try:
             result = await gcode.codewiki(root, out_dir, ai=request.ai)

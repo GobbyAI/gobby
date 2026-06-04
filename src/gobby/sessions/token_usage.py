@@ -10,11 +10,14 @@ module right back (a cycle).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from gobby.sessions.transcripts.base import TokenUsage
+
+logger = logging.getLogger(__name__)
 
 
 def _coerce_token_count(value: Any) -> int:
@@ -40,6 +43,11 @@ def gemini_token_usage(usage_data: Mapping[str, Any]) -> TokenUsage:
 
     prompt = _coerce_token_count(usage_data.get("promptTokenCount"))
     cache_read = _coerce_token_count(usage_data.get("cachedContentTokenCount"))
+    if cache_read > prompt:
+        logger.warning(
+            "Gemini cachedContentTokenCount exceeds promptTokenCount; clamping uncached input",
+            extra={"prompt_tokens": prompt, "cache_read_tokens": cache_read},
+        )
     output = _coerce_token_count(usage_data.get("candidatesTokenCount")) + _coerce_token_count(
         usage_data.get("thoughtsTokenCount") or usage_data.get("thinkingTokenCount")
     )

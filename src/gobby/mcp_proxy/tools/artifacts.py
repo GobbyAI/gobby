@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.utils.project_context import get_project_context
 
 logger = logging.getLogger(__name__)
 
@@ -110,11 +111,22 @@ def create_artifacts_registry() -> InternalToolRegistry:
         source = Path(file_path)
         if not source.is_absolute():
             return {"success": False, "error": f"file_path must be absolute: {file_path}"}
+        project_ctx = get_project_context()
+        project_path = project_ctx.get("project_path") if project_ctx else None
+        if not isinstance(project_path, str) or not project_path:
+            return {"success": False, "error": "project context is required"}
+        project_root = Path(project_path).resolve(strict=False)
+        resolved_source = source.resolve(strict=False)
+        if resolved_source != project_root and project_root not in resolved_source.parents:
+            return {"success": False, "error": f"file_path must be under project: {file_path}"}
         if not source.is_file():
             return {"success": False, "error": f"File not found: {file_path}"}
 
-        ext = source.suffix.lower()
-        artifact_type, language = EXTENSION_MAP.get(ext, ("code", ext.lstrip(".") or "text"))
+        ext_clean = source.suffix.lower().lstrip(".")
+        artifact_type, language = EXTENSION_MAP.get(
+            f".{ext_clean}" if ext_clean else "",
+            ("code", ext_clean or "text"),
+        )
 
         # Check file size
         file_size = source.stat().st_size

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from gobby.mcp_proxy.tools.artifacts import (
@@ -38,7 +40,11 @@ def artifact_bc():
 
 
 @pytest.fixture
-def registry():
+def registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.artifacts.get_project_context",
+        lambda: {"project_path": str(tmp_path)},
+    )
     return create_artifacts_registry()
 
 
@@ -104,10 +110,10 @@ async def test_show_file_csv(registry, artifact_bc, tmp_path):
     assert result["language"] is None
 
 
-async def test_show_file_not_found(registry, artifact_bc):
+async def test_show_file_not_found(registry, artifact_bc, tmp_path):
     """Missing files should return an error."""
     tool = registry.get_tool("show_file")
-    result = await tool(file_path="/nonexistent/file.py", conversation_id="conv_1")
+    result = await tool(file_path=str(tmp_path / "missing.py"), conversation_id="conv_1")
 
     assert result["success"] is False
     assert "not found" in result["error"].lower()
@@ -159,6 +165,34 @@ async def test_show_file_unknown_extension(registry, artifact_bc, tmp_path):
     assert result["success"] is True
     assert result["type"] == "code"
     assert result["language"] == "zig"
+
+
+async def test_show_file_dot_suffix_defaults_language_to_text(registry, artifact_bc, tmp_path):
+    f = tmp_path / "notes."
+    f.write_text("plain text\n", encoding="utf-8")
+
+    tool = registry.get_tool("show_file")
+    result = await tool(file_path=str(f), conversation_id="conv_1")
+
+    assert result["success"] is True
+    assert result["type"] == "code"
+    assert result["language"] == "text"
+
+
+async def test_show_file_rejects_absolute_path_outside_project(
+    registry,
+    artifact_bc,
+    tmp_path,
+) -> None:
+    outside = tmp_path.parent / "outside.py"
+    outside.write_text("print('outside')\n", encoding="utf-8")
+
+    tool = registry.get_tool("show_file")
+    result = await tool(file_path=str(outside), conversation_id="conv_1")
+
+    assert result["success"] is False
+    assert "under project" in result["error"]
+    assert artifact_bc.events == []
 
 
 async def test_show_file_custom_title(registry, artifact_bc, tmp_path):

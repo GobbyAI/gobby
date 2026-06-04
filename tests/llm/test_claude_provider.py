@@ -1,6 +1,8 @@
 """Tests for ClaudeLLMProvider methods: generate_summary, synthesize_title."""
 
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -17,23 +19,23 @@ pytestmark = pytest.mark.unit
 
 
 class MockAssistantMessage:
-    def __init__(self, content):
+    def __init__(self, content: list[object]) -> None:
         self.content = content
 
 
 class MockResultMessage:
-    def __init__(self, result=None, usage=None):
+    def __init__(self, result: str | None = None, usage: dict[str, Any] | None = None) -> None:
         self.result = result
         self.usage = usage
 
 
 class MockTextBlock:
-    def __init__(self, text):
+    def __init__(self, text: str) -> None:
         self.text = text
 
 
 class MockToolUseBlock:
-    def __init__(self, id, name, input):
+    def __init__(self, id: str, name: str, input: dict[str, Any]) -> None:
         self.id = id
         self.name = name
         self.input = input
@@ -51,7 +53,7 @@ class MockClaudeAgentOptions:
 
 
 @pytest.fixture
-def claude_config():
+def claude_config() -> DaemonConfig:
     return DaemonConfig(
         llm_providers=LLMProvidersConfig(
             claude=LLMProviderConfig(models="claude-3-5-sonnet"),
@@ -61,7 +63,9 @@ def claude_config():
 
 
 @contextmanager
-def mock_claude_sdk(mock_query_func):
+def mock_claude_sdk(
+    mock_query_func: Callable[[str, object], AsyncIterator[object]],
+) -> Iterator[None]:
     with (
         patch("gobby.llm.claude_cli.shutil.which", return_value="/mock/claude"),
         patch("os.path.exists", return_value=True),
@@ -80,8 +84,8 @@ def mock_claude_sdk(mock_query_func):
 
 
 @pytest.mark.asyncio
-async def test_generate_summary_success(claude_config):
-    async def mock_query(prompt, options):
+async def test_generate_summary_success(claude_config: DaemonConfig) -> None:
+    async def mock_query(_prompt: str, _options: object) -> AsyncIterator[object]:
         yield MockAssistantMessage([MockTextBlock("Summary of session.")])
         yield MockResultMessage(result="Summary of session.")
 
@@ -95,7 +99,7 @@ async def test_generate_summary_success(claude_config):
 
 
 @pytest.mark.asyncio
-async def test_generate_summary_no_cli(claude_config):
+async def test_generate_summary_no_cli(claude_config: DaemonConfig) -> None:
     with patch("gobby.llm.claude_cli.shutil.which", return_value=None):
         provider = ClaudeLLMProvider(claude_config)
         summary = await provider.generate_summary({}, prompt_template="test")
@@ -103,7 +107,7 @@ async def test_generate_summary_no_cli(claude_config):
 
 
 @pytest.mark.asyncio
-async def test_verify_cli_path_retry(claude_config):
+async def test_verify_cli_path_retry(claude_config: DaemonConfig) -> None:
     """Test race condition handling in _verify_cli_path."""
 
     # Mock shutil.which to fail twice then succeed
@@ -116,7 +120,7 @@ async def test_verify_cli_path_retry(claude_config):
 
                 provider._claude_cli_path = "/old/path"
 
-                def exists_side_effect(path):
+                def exists_side_effect(path: str) -> bool:
                     return path == "/found/now"
 
                 with patch("os.path.exists", side_effect=exists_side_effect):
@@ -127,8 +131,8 @@ async def test_verify_cli_path_retry(claude_config):
 
 
 @pytest.mark.asyncio
-async def test_generate_text(claude_config):
-    async def mock_query(prompt, options):
+async def test_generate_text(claude_config: DaemonConfig) -> None:
+    async def mock_query(_prompt: str, _options: object) -> AsyncIterator[object]:
         yield MockAssistantMessage([MockTextBlock("Generated text")])
 
     with mock_claude_sdk(mock_query):
@@ -137,7 +141,7 @@ async def test_generate_text(claude_config):
         assert text == "Generated text"
 
 
-def test_normalize_claude_usage_maps_anthropic_fields():
+def test_normalize_claude_usage_maps_anthropic_fields() -> None:
     assert _normalize_claude_usage({"input_tokens": 10, "output_tokens": 5}) == {
         "prompt_tokens": 10,
         "completion_tokens": 5,
@@ -147,7 +151,7 @@ def test_normalize_claude_usage_maps_anthropic_fields():
     }
 
 
-def test_normalize_claude_usage_preserves_openai_total_and_cache_fields():
+def test_normalize_claude_usage_preserves_openai_total_and_cache_fields() -> None:
     assert _normalize_claude_usage(
         {
             "prompt_tokens": 10,
@@ -163,7 +167,7 @@ def test_normalize_claude_usage_preserves_openai_total_and_cache_fields():
     }
 
 
-def test_normalize_claude_usage_counts_cache_tokens_in_computed_total():
+def test_normalize_claude_usage_counts_cache_tokens_in_computed_total() -> None:
     assert _normalize_claude_usage(
         {
             "input_tokens": 100,
@@ -182,15 +186,17 @@ def test_normalize_claude_usage_counts_cache_tokens_in_computed_total():
     }
 
 
-def test_normalize_claude_usage_returns_none_without_counts():
+def test_normalize_claude_usage_returns_none_without_counts() -> None:
     assert _normalize_claude_usage(None) is None
     assert _normalize_claude_usage({}) is None
     assert _normalize_claude_usage({"foo": "bar"}) is None
 
 
 @pytest.mark.asyncio
-async def test_generate_text_result_surfaces_anthropic_usage(claude_config):
-    async def mock_query(prompt, options):
+async def test_generate_text_result_surfaces_anthropic_usage(
+    claude_config: DaemonConfig,
+) -> None:
+    async def mock_query(_prompt: str, _options: object) -> AsyncIterator[object]:
         yield MockAssistantMessage([MockTextBlock("Generated text")])
         yield MockResultMessage(
             result="Generated text",
@@ -212,8 +218,10 @@ async def test_generate_text_result_surfaces_anthropic_usage(claude_config):
 
 
 @pytest.mark.asyncio
-async def test_generate_text_result_usage_none_without_result_message(claude_config):
-    async def mock_query(prompt, options):
+async def test_generate_text_result_usage_none_without_result_message(
+    claude_config: DaemonConfig,
+) -> None:
+    async def mock_query(_prompt: str, _options: object) -> AsyncIterator[object]:
         yield MockAssistantMessage([MockTextBlock("Generated text")])
 
     with mock_claude_sdk(mock_query):
@@ -225,8 +233,10 @@ async def test_generate_text_result_usage_none_without_result_message(claude_con
 
 
 @pytest.mark.asyncio
-async def test_generate_text_threads_caller_into_operation_name(claude_config):
-    async def mock_query(prompt, options):
+async def test_generate_text_threads_caller_into_operation_name(
+    claude_config: DaemonConfig,
+) -> None:
+    async def mock_query(_prompt: str, _options: object) -> AsyncIterator[object]:
         yield MockAssistantMessage([MockTextBlock("Generated text")])
 
     with mock_claude_sdk(mock_query):
@@ -242,10 +252,10 @@ async def test_generate_text_threads_caller_into_operation_name(claude_config):
         assert mock_execute.await_args.args[0] == "generate_text[code_index.symbol_summary]"
 
 
-def test_auth_mode_default_is_subscription(claude_config):
+def test_auth_mode_default_is_subscription(claude_config: DaemonConfig) -> None:
     """Test default auth_mode is subscription."""
 
-    async def mock_query(prompt, options):
+    async def mock_query(_prompt: str, _options: object) -> AsyncIterator[object]:
         return
         yield  # Makes this an async generator that yields nothing
 
@@ -255,13 +265,16 @@ def test_auth_mode_default_is_subscription(claude_config):
 
 
 @pytest.mark.asyncio
-async def test_describe_image_subscription_mode(claude_config, tmp_path):
+async def test_describe_image_subscription_mode(
+    claude_config: DaemonConfig,
+    tmp_path: Path,
+) -> None:
     """Test describe_image uses SDK in subscription mode."""
     # Create a test image file
     test_image = tmp_path / "test.png"
     test_image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
 
-    async def mock_query(prompt, options):
+    async def mock_query(_prompt: str, _options: object) -> AsyncIterator[object]:
         yield MockAssistantMessage([MockTextBlock("Image description from SDK")])
 
     with mock_claude_sdk(mock_query):

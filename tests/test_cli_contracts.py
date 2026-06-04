@@ -544,7 +544,8 @@ def test_real_cli_contract_sources_include_binary_when_source_exists(
         return binary_contract
 
     monkeypatch.setenv("GOBBY_CLI_REPO", str(repo))
-    monkeypatch.setenv("PATH", str(binary_dir))
+    # _binary_contract is mocked here; keep real tools available for subprocess setup.
+    monkeypatch.setenv("PATH", os.pathsep.join([str(binary_dir), os.environ.get("PATH", "")]))
     monkeypatch.setattr(sys.modules[__name__], "_binary_contract", fake_binary_contract)
 
     sources = _real_cli_contract_sources(tool)

@@ -131,39 +131,24 @@ async def test_ask_uses_read_only_cli_args(monkeypatch: pytest.MonkeyPatch) -> N
     ]
 
 
-async def test_ask_ignores_ai_flags_without_llm(monkeypatch: pytest.MonkeyPatch) -> None:
-    payload = {
-        "command": "ask",
-        "query": "How do hooks work?",
-        "status": "retrieved",
-        "hits": [],
-        "related_pages": [],
-        "sources": [],
-        "gaps": [],
-        "stale_candidates": [],
-        "suggested_questions": [],
-        "warnings": [],
-    }
-    calls = _patch_subprocess(monkeypatch, [FakeProcess(stdout=_json_bytes(payload))])
-
-    result = await GwikiGateway(
-        binary="/bin/gwiki",
-        project_root="/repo",
-        timeout_seconds=1.0,
-    ).ask("How do hooks work?", ai="direct", require_ai=True)
-
-    assert result["payload"] == payload
-    assert calls == [
-        (
-            "/bin/gwiki",
-            "ask",
-            "How do hooks work?",
-            "--project",
-            "/repo",
-            "--format",
-            "json",
-        )
-    ]
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"ai": "direct"}, "ai require llm=True"),
+        ({"require_ai": True}, "require_ai require llm=True"),
+        ({"ai": "direct", "require_ai": True}, "ai and require_ai require llm=True"),
+    ],
+)
+async def test_ask_rejects_ai_flags_without_llm(
+    kwargs: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        await GwikiGateway(
+            binary="/bin/gwiki",
+            project_root="/repo",
+            timeout_seconds=1.0,
+        ).ask("How do hooks work?", **kwargs)
 
 
 async def test_resolve_binary_serializes_concurrent_resolution(

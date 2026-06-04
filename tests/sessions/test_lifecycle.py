@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Any, TypeVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import psycopg
 import pytest
 
 from gobby.config.sessions import SessionLifecycleConfig
@@ -21,6 +22,22 @@ _SESSION_MANAGER_PATCH = "gobby.sessions.lifecycle.SessionManager"
 DROID_FIXTURE_DIR = Path(__file__).parent / "transcripts" / "fixtures" / "droid"
 DROID_FIXTURE_JSONL = DROID_FIXTURE_DIR / "dbf95187-5fa4-43a0-b207-8c24f412baf7.jsonl"
 DROID_FIXTURE_SETTINGS = DROID_FIXTURE_DIR / "dbf95187-5fa4-43a0-b207-8c24f412baf7.settings.json"
+
+
+class EmptyTokenEventStore:
+    def delete_session_events(self, _session_id: str, *, origin: str) -> None:
+        _ = origin
+
+    def get_session_totals(self, _session_id: str) -> dict[str, int]:
+        return {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 0,
+        }
+
+    def record(self, _event: object) -> bool:
+        return False
 
 
 @pytest.fixture
@@ -126,6 +143,61 @@ class TestSessionLifecycleManager:
         )
         manager.session_manager.expire_empty_sessions.assert_called_once_with(timeout_hours=2)
         manager.session_manager.prune_empty_sessions.assert_called_once_with(min_age_hours=1)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "error",
+        [ValueError("bad stats"), psycopg.OperationalError("db unavailable")],
+    )
+    async def test_process_session_transcript_logs_known_stats_errors(
+        self,
+        manager: SessionLifecycleManager,
+        tmp_path: Path,
+        error: Exception,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text(
+            '{"type":"user","message":{"role":"user","content":"hello"}}\n',
+            encoding="utf-8",
+        )
+        manager.token_event_store = EmptyTokenEventStore()
+        session = SimpleNamespace(
+            source="claude",
+            project_id="proj-1",
+            context_window=None,
+            model=None,
+            usage_input_tokens=0,
+            usage_output_tokens=0,
+            usage_cache_creation_tokens=0,
+            usage_cache_read_tokens=0,
+        )
+        manager.session_manager.get.return_value = session
+        manager.session_manager.update_stats.side_effect = error
+
+        with caplog.at_level("WARNING", logger="gobby.sessions.lifecycle"):
+            await manager._process_session_transcript("session-1", str(transcript))
+
+        assert any(getattr(record, "session_id", None) == "session-1" for record in caplog.records)
+        manager.session_manager.update_usage.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_process_session_transcript_propagates_unexpected_stats_errors(
+        self,
+        manager: SessionLifecycleManager,
+        tmp_path: Path,
+    ) -> None:
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text(
+            '{"type":"user","message":{"role":"user","content":"hello"}}\n',
+            encoding="utf-8",
+        )
+        manager.token_event_store = EmptyTokenEventStore()
+        manager.session_manager.get.return_value = SimpleNamespace(source="claude")
+        manager.session_manager.update_stats.side_effect = RuntimeError("bug")
+
+        with pytest.raises(RuntimeError, match="bug"):
+            await manager._process_session_transcript("session-1", str(transcript))
 
     @pytest.mark.asyncio
     async def test_process_pending_transcripts_none_found(self, manager):
@@ -290,6 +362,13 @@ class TestSessionLifecycleManager:
             tool_call_count=1,
             last_assistant_content="Done",
         )
+        stats_payload = manager.session_manager.update_stats.call_args.kwargs
+        assert stats_payload == {
+            "message_count": 4,
+            "turn_count": 2,
+            "tool_call_count": 1,
+            "last_assistant_content": "Done",
+        }
 
     @pytest.mark.asyncio
     async def test_process_session_transcript_missing_file(self, manager):

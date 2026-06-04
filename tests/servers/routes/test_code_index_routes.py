@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -148,15 +149,31 @@ def test_codewiki_refresh_maps_expected_path_errors_to_bad_request(
 def test_codewiki_refresh_maps_unexpected_os_errors_to_500(
     client: TestClient,
     mock_server: MagicMock,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     trigger = MagicMock()
     trigger.request_refresh.side_effect = OSError("unexpected disk failure")
     mock_server.services.codewiki_trigger = trigger
 
-    response = client.post("/api/code-index/codewiki/refresh", params={"root_path": "/repo"})
+    with caplog.at_level(logging.ERROR, logger="gobby.servers.routes.code_index"):
+        response = client.post(
+            "/api/code-index/codewiki/refresh",
+            params={"root_path": "/repo", "project_id": "proj-1", "ai": "daemon"},
+            headers={"x-request-id": "req-1"},
+        )
 
     assert response.status_code == 500
     assert response.json()["detail"] == "Internal server error"
+    record = next(
+        item for item in caplog.records if item.message == "Failed to schedule codewiki refresh"
+    )
+    assert record.method == "POST"
+    assert record.path == "/api/code-index/codewiki/refresh"
+    assert record.request_id == "req-1"
+    assert record.root_path == "/repo"
+    assert record.project_id == "proj-1"
+    assert record.ai == "daemon"
+    assert record.error == "unexpected disk failure"
 
 
 def test_graph_file_delegates(client: TestClient, mock_server: MagicMock) -> None:

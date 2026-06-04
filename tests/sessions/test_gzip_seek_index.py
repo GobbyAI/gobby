@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gzip
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from gobby.sessions.gzip_seek_index import (
     load_gzip_block_index,
     write_blocked_gzip_archive,
     write_blocked_gzip_archive_async,
+    write_blocked_gzip_from_lines,
 )
 
 pytestmark = pytest.mark.unit
@@ -100,3 +102,34 @@ async def test_ensure_gzip_block_index_reblocks_legacy_single_member_archive(
     assert len(index.blocks) > 1
     assert gzip.decompress(archive.read_bytes()) == payload
     assert load_gzip_block_index(str(archive)) == index
+
+
+def test_write_blocked_gzip_from_lines_cleans_temp_on_os_error(tmp_path: Path) -> None:
+    archive = tmp_path / "broken.jsonl.gz"
+
+    def broken_lines() -> Iterator[bytes]:
+        yield b'{"i":1}\n'
+        raise OSError("source read failed")
+
+    with pytest.raises(OSError, match="source read failed"):
+        write_blocked_gzip_from_lines(broken_lines(), str(archive))
+
+    assert not list(tmp_path.glob(".broken.jsonl.gz.*.tmp"))
+
+
+def test_write_blocked_gzip_from_lines_cleans_temp_on_base_exception(
+    tmp_path: Path,
+) -> None:
+    class Sentinel(BaseException):
+        pass
+
+    archive = tmp_path / "interrupted.jsonl.gz"
+
+    def interrupted_lines() -> Iterator[bytes]:
+        yield b'{"i":1}\n'
+        raise Sentinel
+
+    with pytest.raises(Sentinel):
+        write_blocked_gzip_from_lines(interrupted_lines(), str(archive))
+
+    assert not list(tmp_path.glob(".interrupted.jsonl.gz.*.tmp"))

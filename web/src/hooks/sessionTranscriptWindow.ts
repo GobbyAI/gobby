@@ -28,6 +28,7 @@ export interface TranscriptWindowUpdate<TMessage extends TranscriptWindowMessage
   replacedCount: number
   trimmedHeadCount: number
   trimmedTailCount: number
+  needsFetch: boolean
 }
 
 function normalizeCount(count: number): number {
@@ -77,6 +78,7 @@ function updateResult<TMessage extends TranscriptWindowMessage>({
   replacedCount = 0,
   trimmedHeadCount = 0,
   trimmedTailCount = 0,
+  needsFetch = false,
 }: {
   state: TranscriptWindowState<TMessage>
   previous: TranscriptWindowState<TMessage>
@@ -85,6 +87,7 @@ function updateResult<TMessage extends TranscriptWindowMessage>({
   replacedCount?: number
   trimmedHeadCount?: number
   trimmedTailCount?: number
+  needsFetch?: boolean
 }): TranscriptWindowUpdate<TMessage> {
   const changed =
     state !== previous &&
@@ -102,6 +105,7 @@ function updateResult<TMessage extends TranscriptWindowMessage>({
     replacedCount,
     trimmedHeadCount,
     trimmedTailCount,
+    needsFetch,
   }
 }
 
@@ -305,6 +309,7 @@ export function applyLiveTranscriptMessage<TMessage extends TranscriptWindowMess
       state: nextState,
       previous: state,
       addedCount: 1,
+      needsFetch: true,
     })
   }
 

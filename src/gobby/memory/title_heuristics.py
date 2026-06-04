@@ -10,7 +10,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_LIFECYCLE_CMDS = ("/clear", "/exit", "/compact")
+LIFECYCLE_CMDS = ("/clear", "/exit", "/compact")
 _MAX_SESSION_TITLE_LENGTH = 80
 _TITLE_LINE_CLEANUP_RE = re.compile(r"^\s*(?:[-*+>#]+|\d+[.)])\s*")
 _TITLE_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
@@ -42,6 +42,14 @@ _TEMPLATE_PLACEHOLDER_RE = re.compile(
     r")\s*\]?$",
     re.IGNORECASE,
 )
+
+__all__ = [
+    "LIFECYCLE_CMDS",
+    "build_heuristic_title",
+    "heuristic_title_from_transcript",
+    "is_template_placeholder",
+    "normalize_title_candidate",
+]
 
 
 def _coerce_prompt_text(prompt_text: Any) -> str:
@@ -129,7 +137,7 @@ def _is_control_marker(value: str) -> bool:
     return bool(_TITLE_CONTROL_MARKER_RE.fullmatch(normalized))
 
 
-def _build_heuristic_title(prompt_text: Any) -> str | None:
+def build_heuristic_title(prompt_text: Any) -> str | None:
     """Derive a cheap bootstrap title from the first meaningful user prompt."""
     raw_text = _coerce_prompt_text(prompt_text)
     if not raw_text.strip():
@@ -180,7 +188,7 @@ def _build_heuristic_title(prompt_text: Any) -> str | None:
     return candidate[0].upper() + candidate[1:]
 
 
-async def _heuristic_title_from_transcript(
+async def heuristic_title_from_transcript(
     transcript_path: str | None,
     source: str | None,
     *,
@@ -192,7 +200,7 @@ async def _heuristic_title_from_transcript(
     (:meth:`TranscriptParser.parse_lines`) and feeds the first meaningful user
     text message — ``role == "user"`` and ``content_type == "text"``, skipping
     lifecycle commands and tool-result/non-text records — to
-    :func:`_build_heuristic_title`. LLM-free; the provider-agnostic backstop for
+    :func:`build_heuristic_title`. LLM-free; the provider-agnostic backstop for
     sessions whose per-turn title paths never landed. Returns ``None`` when the
     transcript is missing, empty, or yields no usable opening prompt.
 
@@ -233,11 +241,11 @@ async def _heuristic_title_from_transcript(
             stripped = content.strip().lower()
             if (
                 not stripped
-                or any(stripped == cmd or stripped.startswith(cmd + " ") for cmd in _LIFECYCLE_CMDS)
+                or any(stripped == cmd or stripped.startswith(cmd + " ") for cmd in LIFECYCLE_CMDS)
                 or _is_control_marker(content)
             ):
                 continue
-            title = _build_heuristic_title(content)
+            title = build_heuristic_title(content)
             if title:
                 return title
         return None
@@ -246,17 +254,17 @@ async def _heuristic_title_from_transcript(
         return None
 
 
-def _normalize_title_candidate(value: Any) -> str | None:
+def normalize_title_candidate(value: Any) -> str | None:
     """Validate and normalize an LLM-proposed title candidate."""
     if not isinstance(value, str):
         return None
     title = value.strip().strip('"').strip("'")
     title = _truncate_title(title)
-    if _is_template_placeholder(title):
+    if is_template_placeholder(title):
         return None
     return title or None
 
 
-def _is_template_placeholder(value: str) -> bool:
+def is_template_placeholder(value: str) -> bool:
     """Return True for prompt-template placeholders echoed by the LLM."""
     return bool(_TEMPLATE_PLACEHOLDER_RE.fullmatch(value.strip()))

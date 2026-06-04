@@ -386,8 +386,8 @@ class TestProviderModelsRoute:
             "gpt-5.2",
         ]
 
-    def test_current_catalog_preserves_configured_non_claude_models(self) -> None:
-        """Configured model lists apply to every provider, not only Claude."""
+    def test_current_catalog_supports_non_pydantic_non_claude_config_fallback(self) -> None:
+        """Intentional fallback: real LLMProvidersConfig drops Codex config today."""
         app = FastAPI()
         config = SimpleNamespace(
             llm_providers=SimpleNamespace(

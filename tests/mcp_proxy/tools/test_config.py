@@ -6,6 +6,7 @@ Tests the config tools that provide read/write access to daemon configuration.
 
 from unittest.mock import patch
 
+import psycopg
 import pytest
 
 from gobby.config.app import DaemonConfig
@@ -344,14 +345,14 @@ class TestListConfigKeys:
         assert result["success"] is False
         assert "ai.embeddings" in result["error"]
 
-    def test_list_config_keys_reports_store_failure(
+    def test_list_config_keys_reports_psycopg_store_failure(
         self,
         config_registry: InternalToolRegistry,
         config_store: ConfigStore,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         def fail_list_keys(prefix: str | None = None) -> list[str]:
-            raise RuntimeError("config store unavailable")
+            raise psycopg.OperationalError("database unavailable")
 
         monkeypatch.setattr(config_store, "list_keys", fail_list_keys)
 
@@ -360,8 +361,23 @@ class TestListConfigKeys:
 
         assert result["success"] is False
         assert result["error"] == "config store unavailable"
-        assert result["error_type"] == "RuntimeError"
-        assert result["message"] == "config store unavailable"
+        assert result["error_type"] == "OperationalError"
+        assert result["message"] == "database unavailable"
+
+    def test_list_config_keys_propagates_unexpected_store_failure(
+        self,
+        config_registry: InternalToolRegistry,
+        config_store: ConfigStore,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def fail_list_keys(prefix: str | None = None) -> list[str]:
+            raise RuntimeError("bug")
+
+        monkeypatch.setattr(config_store, "list_keys", fail_list_keys)
+
+        tool = config_registry.get_tool("list_config_keys")
+        with pytest.raises(RuntimeError, match="bug"):
+            tool()
 
 
 class TestEnsureDefaults:

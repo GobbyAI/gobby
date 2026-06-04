@@ -19,6 +19,13 @@ from gobby.sessions.transcripts.base import RawLine
 GZIP_BLOCK_SEEK_MODE = "gzip-block"
 GZIP_BLOCK_INDEX_SCHEMA_VERSION = 1
 DEFAULT_GZIP_BLOCK_UNCOMPRESSED_SIZE = 8 * 1024 * 1024
+_GZIP_BLOCK_CLEANUP_ERRORS = (
+    DecompressionError,
+    EOFError,
+    gzip.BadGzipFile,
+    zlib.error,
+    OSError,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,8 +106,11 @@ def write_blocked_gzip_from_lines(
         )
         persist_gzip_block_index(str(dest), index)
         return index
-    except Exception:
-        tmp.unlink(missing_ok=True)
+    except _GZIP_BLOCK_CLEANUP_ERRORS:
+        _unlink_tmp(tmp)
+        raise
+    except BaseException:
+        _unlink_tmp(tmp)
         raise
 
 
@@ -152,8 +162,11 @@ def _ensure_gzip_block_index_sync(
         )
         persist_gzip_block_index(path, index)
         return index
-    except Exception:
-        tmp.unlink(missing_ok=True)
+    except _GZIP_BLOCK_CLEANUP_ERRORS:
+        _unlink_tmp(tmp)
+        raise
+    except BaseException:
+        _unlink_tmp(tmp)
         raise
 
 
@@ -244,6 +257,13 @@ def _tmp_path(dest: Path) -> Path:
     return Path(handle.name)
 
 
+def _unlink_tmp(tmp: Path) -> None:
+    try:
+        tmp.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _write_blocked_members(
     raw_lines: Iterable[bytes],
     dest_path: str,
@@ -290,27 +310,42 @@ def _write_blocked_members(
         )
         member = None
 
+    def discard_open_member() -> None:
+        nonlocal member
+
+        if member is None:
+            return
+        try:
+            member.close()
+        except (OSError, RuntimeError, zlib.error):
+            pass
+        member = None
+
     try:
         with open(dest_path, "wb") as dest:
-            for raw_line in raw_lines:
+            try:
+                for raw_line in raw_lines:
+                    if member is None:
+                        open_block(dest)
+                    elif block_uncompressed_count >= block_size:
+                        close_block(dest)
+                        open_block(dest)
+
+                    if member is None:
+                        raise RuntimeError("gzip block member was not opened before writing")
+                    member.write(raw_line)
+                    total_uncompressed += len(raw_line)
+                    total_lines += 1
+                    block_uncompressed_count += len(raw_line)
+
                 if member is None:
-                    open_block(dest)
-                elif block_uncompressed_count >= block_size:
+                    with gzip.GzipFile(filename="", mode="wb", fileobj=dest, mtime=0):
+                        pass
+                else:
                     close_block(dest)
-                    open_block(dest)
-
-                if member is None:
-                    raise RuntimeError("gzip block member was not opened before writing")
-                member.write(raw_line)
-                total_uncompressed += len(raw_line)
-                total_lines += 1
-                block_uncompressed_count += len(raw_line)
-
-            if member is None:
-                with gzip.GzipFile(filename="", mode="wb", fileobj=dest, mtime=0):
-                    pass
-            else:
-                close_block(dest)
+            except BaseException:
+                discard_open_member()
+                raise
     except (EOFError, gzip.BadGzipFile, zlib.error) as exc:
         raise DecompressionError(
             f"Truncated or malformed gzip archive {source_path}: {exc}"

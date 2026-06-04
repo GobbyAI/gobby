@@ -32,6 +32,32 @@ function sortChanges(files: ChangedFile[]): ChangedFile[] {
   })
 }
 
+function isChangedFile(value: unknown): value is ChangedFile {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { path?: unknown }).path === 'string' &&
+    typeof (value as { status?: unknown }).status === 'string'
+  )
+}
+
+function parseChangedFiles(data: unknown): ChangedFile[] {
+  if (
+    typeof data !== 'object' ||
+    data === null ||
+    !Array.isArray((data as { files?: unknown }).files)
+  ) {
+    console.warn('Invalid session changes response shape:', data)
+    return []
+  }
+  const files = (data as { files: unknown[] }).files
+  if (!files.every(isChangedFile)) {
+    console.warn('Invalid session changes files response shape:', data)
+    return []
+  }
+  return files
+}
+
 /**
  * Scan the live chat transcript for completed edit/write tool calls. Used as a
  * fast optimistic overlay for the active chat only — the authoritative list
@@ -116,7 +142,7 @@ export function useFileChanges(
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const data = await res.json()
         if (!cancelled) {
-          setSessionFiles(Array.isArray(data.files) ? (data.files as ChangedFile[]) : [])
+          setSessionFiles(parseChangedFiles(data))
         }
       } catch (err) {
         if (cancelled) return

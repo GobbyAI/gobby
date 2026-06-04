@@ -203,6 +203,105 @@ describe('useSessionDetail', () => {
     expect(result.current.totalMessages).toBe(1)
   })
 
+  it('fetches newer transcript pages when live messages reveal a tail gap', async () => {
+    await loadModule()
+
+    const total = 300
+    const makeMessages = (start: number, end: number) =>
+      Array.from({ length: end - start }, (_, offset) => {
+        const index = start + offset
+        return {
+          id: `sess-msg-${index}`,
+          role: 'assistant',
+          content: `Output ${index}`,
+          timestamp: `2026-04-09T00:00:${String(index % 60).padStart(2, '0')}Z`,
+        }
+      })
+
+    mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url
+
+      if (/\/api\/sessions\/sess-gap$/.test(url)) {
+        return new Response(
+          JSON.stringify({
+            session: {
+              id: 'sess-gap',
+              external_id: 'gap-ext-1',
+              session_type: 'terminal',
+              status: 'active',
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      const messagesMatch = url.match(
+        /\/api\/sessions\/sess-gap\/messages\?limit=50&offset=(\d+)&order=(head|tail)/,
+      )
+      if (messagesMatch) {
+        const offset = Number(messagesMatch[1])
+        const order = messagesMatch[2]
+        const start =
+          order === 'tail' ? Math.max(0, total - offset - 50) : offset
+        const end =
+          order === 'tail' ? Math.max(0, total - offset) : Math.min(total, offset + 50)
+        return new Response(
+          JSON.stringify({
+            messages: makeMessages(start, end),
+            total_count: total,
+            rendered_count: total,
+            returned_count: end - start,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+
+    const { result } = renderHook(() => useSessionDetail('sess-gap'))
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    for (let i = 0; i < 5; i += 1) {
+      await act(async () => {
+        await result.current.loadMore()
+      })
+    }
+    expect(result.current.hasNewer).toBe(true)
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'session_message',
+        session_id: 'sess-gap',
+        message: {
+          id: 'sess-msg-300',
+          role: 'assistant',
+          content: 'Live output 300',
+          timestamp: '2026-04-09T00:00:00Z',
+        },
+      })
+    })
+
+    await waitFor(() =>
+      expect(
+        mockFetch.fn.mock.calls.some(([url]) =>
+          String(url).includes('/api/sessions/sess-gap/messages?limit=50&offset=250&order=head'),
+        ),
+      ).toBe(true),
+    )
+  })
+
   it('refreshes selected session metadata and transcript tail after matching session events', async () => {
     await loadModule()
 

@@ -523,7 +523,7 @@ async def repair_missing_session_title(session_manager: Any, session: Any) -> st
     transcript's opening user prompt (no LLM) and persist it with
     ``title_source="heuristic"``.
 
-    The transcript is the guard, not a DB stat. ``_heuristic_title_from_transcript``
+    The transcript is the guard, not a DB stat. ``heuristic_title_from_transcript``
     returns ``None`` when there is no usable opening prompt, so the backstop stays
     robust even when ``turn_count`` lags at 0: a session's title comes from its
     first user prompt, which can exist with ``turn_count == 0`` (assistant
@@ -547,9 +547,9 @@ async def repair_missing_session_title(session_manager: Any, session: Any) -> st
     if not session_id:
         return None
 
-    from gobby.memory.title_heuristics import _heuristic_title_from_transcript
+    from gobby.memory.title_heuristics import heuristic_title_from_transcript
 
-    title = await _heuristic_title_from_transcript(
+    title = await heuristic_title_from_transcript(
         getattr(session, "transcript_path", None),
         getattr(session, "source", None),
     )

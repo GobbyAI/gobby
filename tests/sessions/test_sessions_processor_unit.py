@@ -617,10 +617,10 @@ class TestModelExtraction:
         """Codex token_count records should update the context pie source fields."""
 
         class FakeTokenEventStore:
-            def __init__(self, _db):
-                self.records = []
+            def __init__(self, _db: object) -> None:
+                self.records: list[object] = []
 
-            def get_session_totals(self, _session_id):
+            def get_session_totals(self, _session_id: str) -> dict[str, int]:
                 return {
                     "input_tokens": 0,
                     "output_tokens": 0,
@@ -628,7 +628,7 @@ class TestModelExtraction:
                     "cache_read_tokens": 0,
                 }
 
-            def record(self, event):
+            def record(self, event: object) -> bool:
                 self.records.append(event)
                 return True
 
@@ -723,10 +723,10 @@ class TestModelExtraction:
         """Window-only providers should update normalized metadata without token events."""
 
         class FakeTokenEventStore:
-            def __init__(self, _db):
+            def __init__(self, _db: object) -> None:
                 pass
 
-            def get_session_totals(self, _session_id):
+            def get_session_totals(self, _session_id: str) -> dict[str, int]:
                 return {
                     "input_tokens": 0,
                     "output_tokens": 0,
@@ -734,7 +734,7 @@ class TestModelExtraction:
                     "cache_read_tokens": 0,
                 }
 
-            def record(self, _event):
+            def record(self, _event: object) -> bool:
                 raise AssertionError("window-only snapshots must not write token events")
 
         monkeypatch.setattr(
@@ -801,10 +801,10 @@ class TestModelExtraction:
         """Grok messages with real usage select snapshot_from_token_usage, not window-only."""
 
         class FakeTokenEventStore:
-            def __init__(self, _db):
+            def __init__(self, _db: object) -> None:
                 pass
 
-            def get_session_totals(self, _session_id):
+            def get_session_totals(self, _session_id: str) -> dict[str, int]:
                 return {
                     "input_tokens": 0,
                     "output_tokens": 0,
@@ -812,7 +812,7 @@ class TestModelExtraction:
                     "cache_read_tokens": 0,
                 }
 
-            def record(self, _event):
+            def record(self, _event: object) -> bool:
                 return True
 
         monkeypatch.setattr(

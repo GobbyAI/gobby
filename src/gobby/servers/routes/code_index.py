@@ -8,7 +8,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -364,6 +364,7 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
 
     @router.post("/codewiki/refresh", status_code=202)
     async def refresh_codewiki(
+        request: Request,
         root_path: str = Query(..., description="Project root path"),
         project_id: str | None = Query(None, description="Project ID"),
         out_dir: str | None = Query(None, description="Optional codewiki output directory"),
@@ -395,10 +396,34 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         except (FileNotFoundError, NotADirectoryError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except OSError as exc:
-            logger.exception("Failed to schedule codewiki refresh")
+            logger.exception(
+                "Failed to schedule codewiki refresh",
+                extra={
+                    "method": request.method,
+                    "path": request.url.path,
+                    "request_id": getattr(request.state, "request_id", None)
+                    or request.headers.get("x-request-id"),
+                    "root_path": root_value,
+                    "project_id": project_id,
+                    "ai": ai,
+                    "error": str(exc),
+                },
+            )
             raise HTTPException(status_code=500, detail="Internal server error") from exc
         except Exception as exc:
-            logger.exception("Failed to schedule codewiki refresh")
+            logger.exception(
+                "Failed to schedule codewiki refresh",
+                extra={
+                    "method": request.method,
+                    "path": request.url.path,
+                    "request_id": getattr(request.state, "request_id", None)
+                    or request.headers.get("x-request-id"),
+                    "root_path": root_value,
+                    "project_id": project_id,
+                    "ai": ai,
+                    "error": str(exc),
+                },
+            )
             raise HTTPException(status_code=500, detail="Internal server error") from exc
 
         return {

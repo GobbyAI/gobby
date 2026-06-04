@@ -18,6 +18,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
+import psycopg
+
 from gobby.app_context import get_app_context
 from gobby.config.sessions import SessionLifecycleConfig
 from gobby.sessions.context_usage import (
@@ -575,11 +577,16 @@ class SessionLifecycleManager:
                 tool_call_count=stats["tool_call_count"],
                 last_assistant_content=stats["last_assistant_content"],
             )
-        except (ValueError, KeyError, TypeError) as e:
+        except (ValueError, KeyError, TypeError):
             logger.warning(
-                "Failed to persist transcript stats for session %s: %s",
-                session_id,
-                e,
+                "Failed to persist transcript stats from parsed message data",
+                extra={"session_id": session_id},
+                exc_info=True,
+            )
+        except psycopg.Error:
+            logger.warning(
+                "Database error persisting transcript stats",
+                extra={"session_id": session_id},
                 exc_info=True,
             )
 
