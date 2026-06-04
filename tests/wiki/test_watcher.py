@@ -252,7 +252,7 @@ async def test_scan_once_continues_after_record_change_error(
     async def record_change(path: Path) -> None:
         calls.append(path)
         if len(calls) == 1:
-            raise RuntimeError("record failed")
+            raise OSError("record failed")
 
     monkeypatch.setattr(watcher, "record_change", record_change)
 
@@ -260,6 +260,30 @@ async def test_scan_once_continues_after_record_change_error(
 
     assert set(calls) == {first, second}
     assert watcher._snapshots["project"] == {first: (1, 1), second: (2, 2)}
+
+
+@pytest.mark.asyncio
+async def test_scan_once_propagates_unexpected_record_change_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    note = tmp_path / "note.md"
+    watcher = WikiWatcher(
+        scopes=[WikiWatchScope(name="project", root=tmp_path)],
+        coordinator=RecordingCoordinator(),
+        debounce_interval=0.01,
+        poll_interval=0.01,
+    )
+    watcher._snapshots["project"] = {}
+    monkeypatch.setattr(watcher, "_snapshot", lambda _scope: {note: (1, 1)})
+
+    async def record_change(_path: Path) -> None:
+        raise AssertionError("programmer error")
+
+    monkeypatch.setattr(watcher, "record_change", record_change)
+
+    with pytest.raises(AssertionError, match="programmer error"):
+        await watcher._scan_once()
 
 
 @pytest.mark.asyncio

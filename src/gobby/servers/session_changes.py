@@ -23,11 +23,25 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import psycopg
+
+from gobby.storage.tasks import TaskArtifactConstraintError
 from gobby.utils.git import run_git_command
 
 logger = logging.getLogger(__name__)
 
 _GIT_TIMEOUT = 10
+_RECOVERABLE_WORKSPACE_ERRORS = (
+    AttributeError,
+    KeyError,
+    TypeError,
+    ValueError,
+    psycopg.Error,
+)
+_RECOVERABLE_ARTIFACT_ERRORS = (
+    *_RECOVERABLE_WORKSPACE_ERRORS,
+    TaskArtifactConstraintError,
+)
 # Internal paths that should never surface as user-facing changes.
 _IGNORED_PATH_FRAGMENTS = frozenset((".gobby/", ".claude/plans/"))
 
@@ -127,7 +141,7 @@ def resolve_session_workspace(
 
         project = LocalProjectManager(session_manager.db).get(session.project_id)
         repo_path = project.repo_path if project else None
-    except Exception:
+    except _RECOVERABLE_WORKSPACE_ERRORS:
         logger.debug("Failed to resolve project for session %s", session_id, exc_info=True)
 
     isolated = _resolve_isolated_workspace(task_manager, session_id)
@@ -145,13 +159,13 @@ def _resolve_isolated_workspace(task_manager: Any, session_id: str) -> SessionWo
         return None
     try:
         tasks = task_manager.list_tasks(claimed_by_session_id=session_id)
-    except Exception:
+    except _RECOVERABLE_WORKSPACE_ERRORS:
         logger.debug("Failed to list tasks for session %s", session_id, exc_info=True)
         return None
     for task in tasks or []:
         try:
             artifacts = task_manager.artifacts.get_artifacts(task.id)
-        except Exception:
+        except _RECOVERABLE_ARTIFACT_ERRORS:
             continue
         iso_path = artifacts.worktree_path or artifacts.clone_path
         if iso_path and Path(iso_path).is_dir():

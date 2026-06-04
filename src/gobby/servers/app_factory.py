@@ -125,14 +125,14 @@ def create_app(server: "HTTPServer") -> FastAPI:
 
             try:
                 from gobby.code_index.codewiki_trigger import CodewikiRefreshTrigger
-            except ImportError as e:
-                logger.warning(f"Failed to import CodewikiRefreshTrigger: {e}")
-            else:
+
                 server.services.codewiki_trigger = CodewikiRefreshTrigger(
                     loop=asyncio.get_running_loop(),
                     config_store_provider=lambda: server.services.config_store,
                     debounce_seconds=2.0,
                 )
+            except (ImportError, RuntimeError) as e:
+                logger.warning(f"Failed to create CodewikiRefreshTrigger: {e}")
 
         if server.services.config:
             # Pass full log file path from config

@@ -89,7 +89,11 @@ def create_artifacts_registry() -> InternalToolRegistry:
 
     @registry.tool(
         name="show_file",
-        description="Show a file in the web chat artifacts panel with syntax highlighting (code) or rendered markdown (text). Supports code, markdown, images, and CSV files.",
+        description=(
+            "Show a file in the web chat artifacts panel with syntax highlighting "
+            "(code) or rendered markdown (text). Supports code, markdown, images, "
+            "and CSV files."
+        ),
     )
     async def show_file(
         file_path: str,

@@ -186,6 +186,8 @@ def load_gzip_block_index(
             payload = json.load(handle)
     except (FileNotFoundError, OSError, json.JSONDecodeError):
         return None
+    if not isinstance(payload, dict):
+        return None
 
     try:
         if not _payload_matches(payload, path=path, mtime_ns=mtime_ns, size=size):

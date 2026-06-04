@@ -197,7 +197,7 @@ class TestBinInspector:
 
 
 class TestBinUpdater:
-    def test_local_pinned_binary_records_without_github_lookup(
+    def test_floor_satisfied_binary_records_latest_release_without_download(
         self, tmp_path: Path, postgres_db: HubDatabase
     ) -> None:
         db = postgres_db
@@ -205,7 +205,8 @@ class TestBinUpdater:
         spec = _spec()
         _write_binary(bin_dir, spec)
         _write_stamp(bin_dir, spec, "0.4.1")
-        client = FakeClient(resolve_error=AssertionError("github should not be queried"))
+        asset = _asset(spec, "0.4.3")
+        client = FakeClient(asset=asset)
 
         record = update_managed_bin(
             db,
@@ -217,8 +218,8 @@ class TestBinUpdater:
 
         assert record is not None
         assert record.last_status == "up_to_date"
-        assert record.latest_version == "0.4.1"
-        assert record.source_url is None
+        assert record.latest_version == "0.4.3"
+        assert record.source_url == asset.asset_url
         assert client.downloads == 0
 
     def test_github_up_to_date_records_without_downloading(
@@ -241,7 +242,8 @@ class TestBinUpdater:
 
         assert record is not None
         assert record.last_status == "up_to_date"
-        assert record.source_url is None
+        assert record.latest_version == "0.4.1"
+        assert record.source_url == client.asset.asset_url
         assert client.downloads == 0
 
     def test_github_newer_installed_version_records_without_downloading(
@@ -267,6 +269,7 @@ class TestBinUpdater:
         assert record is not None
         assert record.last_status == "up_to_date"
         assert record.installed_version == "0.4.2"
+        assert record.latest_version == "0.4.1"
         assert client.downloads == 0
 
     def test_staged_github_upgrade_promotes_binary_stamp_and_sidecar(
@@ -338,6 +341,7 @@ class TestBinUpdater:
 
         assert record is not None
         assert record.last_status == "up_to_date"
+        assert record.latest_version == "0.4.1"
         assert record.last_error is None
 
     def test_missing_platform_asset_is_ignored_when_installed_at_floor(
@@ -360,6 +364,7 @@ class TestBinUpdater:
 
         assert record is not None
         assert record.last_status == "up_to_date"
+        assert record.latest_version == "0.4.1"
         assert record.last_error is None
 
     def test_atomic_promotion_failure_keeps_existing_binary(

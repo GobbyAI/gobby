@@ -55,14 +55,24 @@ def head_with_breadcrumb(text: str, *, budget: int, breadcrumb: str) -> str:
     breadcrumb. The breadcrumb should tell the reader how to retrieve the full
     text (e.g. via the get_handoff_context MCP tool).
     """
+    if budget <= 0:
+        return ""
     if len(text) <= budget:
         return text
-    cut = text.rfind("\n\n", 0, budget)
-    if cut < budget // 2:
-        newline = text.rfind("\n", 0, budget)
-        cut = newline if newline > budget // 2 else budget
+
+    suffix = f"\n\n{breadcrumb}" if breadcrumb else ""
+    head_budget = budget - len(suffix)
+    if head_budget <= 0:
+        return (breadcrumb or text)[:budget]
+
+    cut = text.rfind("\n\n", 0, head_budget)
+    if cut < head_budget // 2:
+        newline = text.rfind("\n", 0, head_budget)
+        cut = newline if newline > head_budget // 2 else head_budget
     head = text[:cut].rstrip()
-    return f"{head}\n\n{breadcrumb}"
+    if not head:
+        return (breadcrumb or text)[:budget]
+    return f"{head}{suffix}"
 
 
 def truncate_additional_context(

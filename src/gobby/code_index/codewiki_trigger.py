@@ -48,7 +48,7 @@ def _config_store_value(config_store: object | None) -> object | None:
     try:
         value: object = getter(_CONFIG_KEY)
         return value
-    except (KeyError, TypeError, ValueError, RuntimeError, psycopg.Error) as exc:
+    except (KeyError, TypeError, ValueError, psycopg.Error) as exc:
         logger.warning("Failed to read %s config: %s", _CONFIG_KEY, exc)
         return None
 

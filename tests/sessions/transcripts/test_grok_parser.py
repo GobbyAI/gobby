@@ -90,3 +90,39 @@ def test_grok_updates_jsonl_parser_renders_message_and_tool_records() -> None:
             "content": [{"type": "content", "content": {"type": "text", "text": "/repo"}}],
         },
     }
+
+
+def test_grok_usage_aggregates_nested_cache_details() -> None:
+    parser = GrokTranscriptParser(session_id="grok-session")
+    message = parser.parse_line(
+        _event(
+            {
+                "sessionUpdate": "agent_message_chunk",
+                "content": {"type": "text", "text": "Done"},
+                "usage": {
+                    "inputTokens": 100,
+                    "outputTokens": 7,
+                    "inputTokenDetails": {
+                        "cachedTokens": 11,
+                        "cacheCreationTokens": 3,
+                    },
+                    "prompt_tokens_details": {
+                        "cached_tokens": 5,
+                        "cache_creation_input_tokens": 2,
+                    },
+                    "cacheCreationInputTokensDetails": {
+                        "ephemeral5mInputTokens": 4,
+                        "ephemeral_1h_input_tokens": 6,
+                    },
+                },
+            }
+        ),
+        0,
+    )
+
+    assert message is not None
+    assert message.usage is not None
+    assert message.usage.input_tokens == 69
+    assert message.usage.output_tokens == 7
+    assert message.usage.cache_read_tokens == 16
+    assert message.usage.cache_creation_tokens == 15

@@ -51,6 +51,10 @@ def _init_repo(repo: Path) -> str:
     ).stdout.strip()
 
 
+def _raise(exc: Exception) -> None:
+    raise exc
+
+
 @pytest.mark.asyncio
 async def test_compute_session_changes_detects_new_edited_deleted(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
@@ -185,6 +189,134 @@ def test_resolve_session_workspace_falls_back_to_project_repo(
         session_manager=session_manager, task_manager=task_manager, session_id="sess-1"
     )
     assert ws == SessionWorkspace(working_dir=str(repo), base_ref="HEAD", isolation="none")
+
+
+def test_resolve_session_workspace_recovers_from_project_shape_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    session_manager = SimpleNamespace(
+        get=lambda _sid: SimpleNamespace(project_id="proj-1"),
+        db=SimpleNamespace(),
+    )
+
+    monkeypatch.setattr(
+        "gobby.storage.projects.LocalProjectManager",
+        lambda _db: SimpleNamespace(get=lambda _pid: _raise(KeyError("repo"))),
+    )
+    artifacts = SimpleNamespace(
+        worktree_path=str(worktree),
+        clone_path=None,
+        base_commit_sha="abc123",
+    )
+    task_manager = SimpleNamespace(
+        list_tasks=lambda claimed_by_session_id: [SimpleNamespace(id="task-1")],
+        artifacts=SimpleNamespace(get_artifacts=lambda _tid: artifacts),
+    )
+
+    ws = resolve_session_workspace(
+        session_manager=session_manager, task_manager=task_manager, session_id="sess-1"
+    )
+    assert ws == SessionWorkspace(
+        working_dir=str(worktree), base_ref="abc123", isolation="worktree"
+    )
+
+
+def test_resolve_session_workspace_uses_project_repo_after_task_list_shape_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    session_manager = SimpleNamespace(
+        get=lambda _sid: SimpleNamespace(project_id="proj-1"),
+        db=SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "gobby.storage.projects.LocalProjectManager",
+        lambda _db: SimpleNamespace(get=lambda _pid: SimpleNamespace(repo_path=str(repo))),
+    )
+    task_manager = SimpleNamespace(
+        list_tasks=lambda claimed_by_session_id: _raise(ValueError("tasks")),
+        artifacts=SimpleNamespace(get_artifacts=lambda _tid: None),
+    )
+
+    ws = resolve_session_workspace(
+        session_manager=session_manager, task_manager=task_manager, session_id="sess-1"
+    )
+    assert ws == SessionWorkspace(working_dir=str(repo), base_ref="HEAD", isolation="none")
+
+
+def test_resolve_session_workspace_uses_project_repo_after_artifact_shape_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    session_manager = SimpleNamespace(
+        get=lambda _sid: SimpleNamespace(project_id="proj-1"),
+        db=SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "gobby.storage.projects.LocalProjectManager",
+        lambda _db: SimpleNamespace(get=lambda _pid: SimpleNamespace(repo_path=str(repo))),
+    )
+    task_manager = SimpleNamespace(
+        list_tasks=lambda claimed_by_session_id: [SimpleNamespace(id="task-1")],
+        artifacts=SimpleNamespace(get_artifacts=lambda _tid: _raise(ValueError("artifacts"))),
+    )
+
+    ws = resolve_session_workspace(
+        session_manager=session_manager, task_manager=task_manager, session_id="sess-1"
+    )
+    assert ws == SessionWorkspace(working_dir=str(repo), base_ref="HEAD", isolation="none")
+
+
+def test_resolve_session_workspace_propagates_unexpected_project_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_manager = SimpleNamespace(
+        get=lambda _sid: SimpleNamespace(project_id="proj-1"),
+        db=SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "gobby.storage.projects.LocalProjectManager",
+        lambda _db: SimpleNamespace(get=lambda _pid: _raise(RuntimeError("project boom"))),
+    )
+
+    with pytest.raises(RuntimeError, match="project boom"):
+        resolve_session_workspace(
+            session_manager=session_manager,
+            task_manager=SimpleNamespace(list_tasks=lambda claimed_by_session_id: []),
+            session_id="sess-1",
+        )
+
+
+def test_resolve_session_workspace_propagates_unexpected_artifact_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    session_manager = SimpleNamespace(
+        get=lambda _sid: SimpleNamespace(project_id="proj-1"),
+        db=SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "gobby.storage.projects.LocalProjectManager",
+        lambda _db: SimpleNamespace(get=lambda _pid: SimpleNamespace(repo_path=str(repo))),
+    )
+    task_manager = SimpleNamespace(
+        list_tasks=lambda claimed_by_session_id: [SimpleNamespace(id="task-1")],
+        artifacts=SimpleNamespace(get_artifacts=lambda _tid: _raise(RuntimeError("artifact boom"))),
+    )
+
+    with pytest.raises(RuntimeError, match="artifact boom"):
+        resolve_session_workspace(
+            session_manager=session_manager, task_manager=task_manager, session_id="sess-1"
+        )
 
 
 def test_resolve_session_workspace_unknown_session_returns_none() -> None:

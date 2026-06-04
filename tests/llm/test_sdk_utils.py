@@ -127,12 +127,15 @@ class TestHeadWithBreadcrumb:
         text = "para one\n\n" + ("y" * 300)
         result = head_with_breadcrumb(text, budget=50, breadcrumb="CALL get_handoff_context")
         assert result.endswith("CALL get_handoff_context")
+        assert len(result) <= 50
 
     def test_over_budget_cuts_on_paragraph_boundary(self) -> None:
         head = "first paragraph kept intact"
         text = f"{head}\n\n" + ("z" * 500)
-        result = head_with_breadcrumb(text, budget=len(head) + 5, breadcrumb="MORE")
+        budget = len(head) + len("\n\nMORE") + 5
+        result = head_with_breadcrumb(text, budget=budget, breadcrumb="MORE")
         assert result.startswith(head)
+        assert len(result) <= budget
         # The trailing run must not survive the clean cut.
         assert "z" not in result.replace("MORE", "")
 
@@ -141,10 +144,17 @@ class TestHeadWithBreadcrumb:
         text = "alpha\nbeta\ngamma\n" + ("q" * 200)
         result = head_with_breadcrumb(text, budget=16, breadcrumb="MORE")
         assert result.endswith("MORE")
+        assert len(result) <= 16
         assert "q" not in result
 
     def test_no_boundary_hard_cut_at_budget(self) -> None:
         text = "a" * 500  # no newline anywhere
         budget = 40
         result = head_with_breadcrumb(text, budget=budget, breadcrumb="MORE")
-        assert result == ("a" * budget) + "\n\nMORE"
+        assert result == ("a" * (budget - len("\n\nMORE"))) + "\n\nMORE"
+        assert len(result) == budget
+
+    def test_tiny_budget_prioritizes_breadcrumb(self) -> None:
+        result = head_with_breadcrumb("x" * 500, budget=3, breadcrumb="MORE")
+        assert result == "MOR"
+        assert len(result) == 3

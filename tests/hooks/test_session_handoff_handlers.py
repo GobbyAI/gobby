@@ -202,7 +202,7 @@ class TestSessionStartHandoff:
         self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
     ) -> None:
         """A large parent summary is bounded for injection but kept full elsewhere."""
-        from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT, HANDOFF_SUMMARY_INJECT_BUDGET
+        from gobby.llm.sdk_utils import HANDOFF_SUMMARY_INJECT_BUDGET
 
         mock_sv_mgr = MagicMock()
         mock_sv_mgr.get_variables.return_value = {"auto_inject_handoff": True}
@@ -262,7 +262,7 @@ class TestSessionStartHandoff:
         assert handoff_payload["full_session_summary"] == big_summary
         assert injectable != big_summary
         assert len(injectable) < len(big_summary)
-        assert len(injectable) < ADDITIONAL_CONTEXT_LIMIT
+        assert len(injectable) <= HANDOFF_SUMMARY_INJECT_BUDGET
         assert injectable.startswith("# Big Summary")
         assert "get_handoff_context" in injectable
         assert "#42" in injectable
@@ -860,7 +860,11 @@ class TestSessionStartHandoff:
         variables = SessionVariableManager(db).get_variables(session.id)
         assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
         mock_schedule.assert_called_once()
-        assert scheduled == [(session, "Continue where you last left off.")]
+        expected_prompt = (
+            "Continue where you last left off. If you need the full prior-session "
+            "summary, call get_handoff_context (gobby-sessions)."
+        )
+        assert scheduled == [(session, expected_prompt)]
 
     @pytest.mark.parametrize("cli_source", ["codex", "gemini", "qwen", "droid"])
     def test_pending_flag_schedules_continuation_without_compact_source(
@@ -897,7 +901,11 @@ class TestSessionStartHandoff:
         variables = SessionVariableManager(db).get_variables(session.id)
         assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
         mock_schedule.assert_called_once()
-        assert scheduled == [(session, "Continue where you last left off.")]
+        expected_prompt = (
+            "Continue where you last left off. If you need the full prior-session "
+            "summary, call get_handoff_context (gobby-sessions)."
+        )
+        assert scheduled == [(session, expected_prompt)]
 
     def test_manual_compact_without_pending_flag_does_not_schedule_continuation(
         self, hub_db: HubDatabase, mock_dependencies: dict

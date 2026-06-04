@@ -39,6 +39,15 @@ def test_write_blocked_gzip_archive_persists_seekable_sidecar(tmp_path: Path) ->
     assert load_gzip_block_index(str(archive)) == index
 
 
+def test_load_gzip_block_index_ignores_non_object_sidecar(tmp_path: Path) -> None:
+    source, _payload = _write_source(tmp_path)
+    archive = tmp_path / "ext.jsonl.gz"
+    write_blocked_gzip_archive(str(source), str(archive), block_size=160)
+    Path(gzip_block_sidecar_path(str(archive))).write_text("[]", encoding="utf-8")
+
+    assert load_gzip_block_index(str(archive)) is None
+
+
 async def test_write_blocked_gzip_archive_async_persists_seekable_sidecar(
     tmp_path: Path,
 ) -> None:

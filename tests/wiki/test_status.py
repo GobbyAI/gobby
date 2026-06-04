@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from typing import Any
 
@@ -67,6 +68,11 @@ class LiveWatcher:
             "pending_debounce": True,
             "pending_changes": 3,
         }
+
+
+class FailingWatcher:
+    def health(self) -> dict[str, Any]:
+        raise RuntimeError("watcher health failed")
 
 
 @pytest.mark.asyncio
@@ -139,3 +145,24 @@ async def test_status_reads_live_watcher_and_handles_absent_watcher() -> None:
     assert maintenance["gateway"]["degraded"] is True
     assert maintenance["gateway"]["degraded_services"] == ["index"]
     assert maintenance["gateway"]["error"]["message"] == "gwiki health failed"
+
+
+@pytest.mark.asyncio
+async def test_status_logs_watcher_health_failures(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="gobby.wiki.status"):
+        status = await collect_wiki_status(
+            gateway=RecordingGateway(),
+            runner=SimpleNamespace(_wiki_watcher=FailingWatcher()),
+        )
+
+    assert status["payload"]["maintenance"]["watcher"] == {
+        "active": False,
+        "running": False,
+        "scope_count": 0,
+        "last_index_time": None,
+        "pending_debounce": False,
+        "pending_changes": 0,
+    }
+    assert any("Failed to read wiki watcher health" in record.message for record in caplog.records)

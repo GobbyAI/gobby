@@ -113,17 +113,7 @@ def update_managed_bin(
             )
 
         target: str | None = None
-        if is_at_least_version(inspection.installed_version, spec.floor_version):
-            return _record_state(
-                store,
-                inspection=inspection,
-                latest_version=inspection.installed_version,
-                target=platform_target(),
-                status="up_to_date",
-                error=inspection.sidecar_error,
-                source_url=None,
-            )
-
+        floor_satisfied = is_at_least_version(inspection.installed_version, spec.floor_version)
         release_client = client or GithubReleaseClient(
             timeout_seconds=config.github_timeout_seconds
         )
@@ -131,6 +121,16 @@ def update_managed_bin(
             target = platform_target()
             asset = release_client.resolve_latest_asset(spec, target=target)
         except SourceUnavailableError as exc:
+            if floor_satisfied:
+                return _record_state(
+                    store,
+                    inspection=inspection,
+                    latest_version=inspection.installed_version,
+                    target=target,
+                    status="up_to_date",
+                    error=inspection.sidecar_error,
+                    source_url=None,
+                )
             return _record_state(
                 store,
                 inspection=inspection,
@@ -141,6 +141,16 @@ def update_managed_bin(
                 source_url=None,
             )
         except GithubAPIError as exc:
+            if floor_satisfied:
+                return _record_state(
+                    store,
+                    inspection=inspection,
+                    latest_version=inspection.installed_version,
+                    target=target,
+                    status="up_to_date",
+                    error=inspection.sidecar_error,
+                    source_url=None,
+                )
             return _record_state(
                 store,
                 inspection=inspection,
@@ -149,6 +159,17 @@ def update_managed_bin(
                 status="failed",
                 error=str(exc),
                 source_url=None,
+            )
+
+        if floor_satisfied:
+            return _record_state(
+                store,
+                inspection=inspection,
+                latest_version=asset.version,
+                target=target,
+                status="up_to_date",
+                error=inspection.sidecar_error,
+                source_url=asset.asset_url,
             )
 
         if _is_up_to_date(inspection, asset):

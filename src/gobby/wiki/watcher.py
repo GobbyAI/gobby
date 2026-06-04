@@ -127,7 +127,7 @@ class WikiWatcher:
                 return
             try:
                 snapshots = await asyncio.to_thread(self._snapshot_all_scopes)
-            except Exception:
+            except (OSError, RuntimeError):
                 logger.warning("Failed to initialize wiki watcher snapshots", exc_info=True)
                 self._snapshots = {}
             else:
@@ -157,7 +157,7 @@ class WikiWatcher:
             for path in changed:
                 try:
                     await self.record_change(path)
-                except Exception:
+                except (OSError, ValueError, RuntimeError):
                     logger.warning(
                         "Failed to record wiki watcher change for %s",
                         path,

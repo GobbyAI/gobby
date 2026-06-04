@@ -219,11 +219,60 @@ def _extract_usage(update: dict[str, Any]) -> TokenUsage | None:
         or usage.get("cached_input_tokens")
         or usage.get("cachedInputTokens")
     )
+    cache_read += _detail_count(
+        usage,
+        detail_keys=(
+            "input_token_details",
+            "inputTokenDetails",
+            "input_tokens_details",
+            "inputTokensDetails",
+            "prompt_token_details",
+            "promptTokenDetails",
+            "prompt_tokens_details",
+            "promptTokensDetails",
+        ),
+        token_keys=(
+            "cache_read_tokens",
+            "cacheReadTokens",
+            "cached_input_tokens",
+            "cachedInputTokens",
+            "cached_tokens",
+            "cachedTokens",
+        ),
+    )
     cache_creation = _count(
         usage.get("cache_creation_tokens")
         or usage.get("cacheCreationTokens")
         or usage.get("cache_creation_input_tokens")
         or usage.get("cacheCreationInputTokens")
+    )
+    cache_creation += _detail_count(
+        usage,
+        detail_keys=(
+            "input_token_details",
+            "inputTokenDetails",
+            "input_tokens_details",
+            "inputTokensDetails",
+            "prompt_token_details",
+            "promptTokenDetails",
+            "prompt_tokens_details",
+            "promptTokensDetails",
+        ),
+        token_keys=(
+            "cache_creation_tokens",
+            "cacheCreationTokens",
+            "cache_creation_input_tokens",
+            "cacheCreationInputTokens",
+        ),
+    )
+    cache_creation += _numeric_detail_total(
+        usage,
+        (
+            "cache_creation_input_token_details",
+            "cacheCreationInputTokenDetails",
+            "cache_creation_input_tokens_details",
+            "cacheCreationInputTokensDetails",
+        ),
     )
     if input_tokens == output_tokens == cache_read == cache_creation == 0:
         return None
@@ -233,6 +282,30 @@ def _extract_usage(update: dict[str, Any]) -> TokenUsage | None:
         cache_creation_tokens=cache_creation,
         cache_read_tokens=cache_read,
     )
+
+
+def _detail_count(
+    usage: dict[str, Any], *, detail_keys: tuple[str, ...], token_keys: tuple[str, ...]
+) -> int:
+    total = 0
+    for detail_key in detail_keys:
+        details = usage.get(detail_key)
+        if not isinstance(details, dict):
+            continue
+        for token_key in token_keys:
+            total += _count(details.get(token_key))
+    return total
+
+
+def _numeric_detail_total(usage: dict[str, Any], detail_keys: tuple[str, ...]) -> int:
+    total = 0
+    for detail_key in detail_keys:
+        details = usage.get(detail_key)
+        if not isinstance(details, dict):
+            continue
+        for value in details.values():
+            total += _count(value)
+    return total
 
 
 def _count(value: Any) -> int:

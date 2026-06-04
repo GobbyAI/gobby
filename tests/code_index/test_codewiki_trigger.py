@@ -85,6 +85,16 @@ def test_codewiki_on_commit_enabled_defaults_off_when_unset() -> None:
     assert not codewiki_on_commit_enabled(FakeConfigStore(None))
 
 
+def test_codewiki_on_commit_enabled_propagates_runtime_config_errors() -> None:
+    class FailingConfigStore:
+        def get(self, key: str) -> object | None:
+            assert key == "wiki.codewiki_on_commit"
+            raise RuntimeError("config store unavailable")
+
+    with pytest.raises(RuntimeError, match="config store unavailable"):
+        codewiki_on_commit_enabled(FailingConfigStore())
+
+
 @pytest.mark.asyncio
 async def test_refresh_runs_codewiki_and_ingests_changed_docs(tmp_path: Path) -> None:
     gcode = FakeGcodeGateway({"changed_paths": ["repo.md", "files/src/lib.rs.md"]})
