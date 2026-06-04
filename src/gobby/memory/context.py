@@ -30,7 +30,7 @@ def _strip_leading_bullet(content: str) -> str:
 def format_memory_metadata_suffix(
     memory_id: str | None,
     *,
-    score: object | None = None,
+    score: int | float | None = None,
     via: str | None = None,
 ) -> str:
     """Format prompt-visible metadata for rendered project memories."""

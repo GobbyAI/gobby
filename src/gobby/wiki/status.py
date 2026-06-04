@@ -101,8 +101,8 @@ def _watcher_health(watcher: object | None) -> dict[str, Any] | None:
         return None
     try:
         value = health_call()
-    except Exception:
-        logger.warning("Failed to read wiki watcher health", exc_info=True)
+    except (AttributeError, RuntimeError, TypeError):
+        logger.debug("Failed to read wiki watcher health", exc_info=True)
         return None
     return value if isinstance(value, dict) else None
 

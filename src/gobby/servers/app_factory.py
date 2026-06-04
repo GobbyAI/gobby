@@ -131,7 +131,7 @@ def create_app(server: "HTTPServer") -> FastAPI:
                     config_store_provider=lambda: server.services.config_store,
                     debounce_seconds=2.0,
                 )
-            except (ImportError, RuntimeError) as e:
+            except (AttributeError, ImportError) as e:
                 logger.warning(f"Failed to create CodewikiRefreshTrigger: {e}")
 
         if server.services.config:

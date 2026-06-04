@@ -421,6 +421,7 @@ def _build_index_core(
     :class:`GroupBoundary` whenever a new ``current_message`` appears. Group
     content is discarded; only positions/counts/suppression data are retained.
     """
+    _require_gzip_logical_size(seek_mode, logical_size)
     appender = TranscriptIndexAppender(
         source,
         session_id,
@@ -436,6 +437,11 @@ def _build_index_core(
 
 def _stores_byte_offsets(seek_mode: str) -> bool:
     return seek_mode in {"byte", "gzip-block"}
+
+
+def _require_gzip_logical_size(seek_mode: str, logical_size: int | None) -> None:
+    if seek_mode == "gzip-block" and logical_size is None:
+        raise ValueError("logical_size is required for gzip-block transcript indexes")
 
 
 def _free_resolved_tool_calls(state: RenderState) -> None:
@@ -530,6 +536,7 @@ def build_index_from_raw_lines(
     logical_size: int | None = None,
 ) -> TranscriptIndex:
     """Build an index from a caller-owned positioned raw-line stream."""
+    _require_gzip_logical_size(seek_mode, logical_size)
     parser = _get_parser(source, session_id=session_id, transcript_path=transcript_path)
     return _build_index_core(
         raw_lines,
@@ -816,6 +823,7 @@ async def get_or_build_index(
     ``raw_lines`` selects caller-owned positioned streams, otherwise the file is
     streamed.
     """
+    _require_gzip_logical_size(seek_mode, logical_size)
     key: _IndexKey = (os.path.abspath(path), source, seek_mode, mtime_ns, size)
 
     async with _CACHE_LOCK:

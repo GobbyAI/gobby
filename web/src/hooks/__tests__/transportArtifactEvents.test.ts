@@ -1,9 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { handleArtifactTransportEvent } from "../useChat/transportArtifactEvents";
 import type { UseChatTransportParams } from "../useChat/transportTypes";
 
 type ArtifactCall = [string, string, string | undefined, string | undefined];
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function makeContext() {
   const calls: ArtifactCall[] = [];
@@ -50,14 +54,48 @@ describe("handleArtifactTransportEvent", () => {
 
   it("ignores events that are not show_file", () => {
     const { ctx, calls } = makeContext();
-    handleArtifactTransportEvent({ event: "other", artifact_type: "code", content: "x" }, ctx);
+    const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+    const data = { event: "other", artifact_type: "code", content: "x" };
+    handleArtifactTransportEvent(data, ctx);
     expect(calls).toEqual([]);
+    expect(debug).toHaveBeenCalledWith(
+      "Ignoring artifact transport event",
+      expect.objectContaining({
+        data,
+        event: "other",
+        handlerRef: ctx.onArtifactEventRef,
+        reason: "unsupported_event",
+      }),
+    );
   });
 
   it("ignores show_file events missing required fields", () => {
     const { ctx, calls } = makeContext();
-    handleArtifactTransportEvent({ event: "show_file", artifact_type: "code" }, ctx);
-    handleArtifactTransportEvent({ event: "show_file", content: "x" }, ctx);
+    const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+    const missingContent = { event: "show_file", artifact_type: "code" };
+    const missingType = { event: "show_file", content: "x" };
+    handleArtifactTransportEvent(missingContent, ctx);
+    handleArtifactTransportEvent(missingType, ctx);
     expect(calls).toEqual([]);
+    expect(debug).toHaveBeenNthCalledWith(
+      1,
+      "Ignoring artifact transport event",
+      expect.objectContaining({
+        data: missingContent,
+        event: "show_file",
+        handlerRef: ctx.onArtifactEventRef,
+        reason: "invalid_show_file_payload",
+      }),
+    );
+    expect(debug).toHaveBeenNthCalledWith(
+      2,
+      "Ignoring artifact transport event",
+      expect.objectContaining({
+        data: missingType,
+        event: "show_file",
+        handlerRef: ctx.onArtifactEventRef,
+        reason: "invalid_show_file_payload",
+      }),
+    );
   });
 });

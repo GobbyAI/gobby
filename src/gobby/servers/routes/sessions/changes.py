@@ -8,12 +8,14 @@ switches.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Query
 
 from gobby.servers.session_changes import (
+    SessionWorkspace,
     compute_session_changes,
     compute_session_file_diff,
     is_safe_relative_path,
@@ -22,7 +24,6 @@ from gobby.servers.session_changes import (
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
-    from gobby.servers.session_changes import SessionWorkspace
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,9 @@ def register_changes_routes(router: APIRouter, server: HTTPServer) -> None:
         workspace = _resolve(session_id)
         try:
             files = await compute_session_changes(workspace)
-        except Exception as e:
+        except asyncio.CancelledError:
+            raise
+        except (OSError, RuntimeError, ValueError) as e:
             logger.debug(
                 "Failed to compute changes for session %s: %s",
                 session_id,
@@ -70,7 +73,9 @@ def register_changes_routes(router: APIRouter, server: HTTPServer) -> None:
             raise HTTPException(400, "Invalid path")
         try:
             diff = await compute_session_file_diff(workspace, path)
-        except Exception as e:
+        except asyncio.CancelledError:
+            raise
+        except (OSError, RuntimeError, ValueError) as e:
             logger.exception(
                 "Failed to compute session file diff",
                 extra={"session_id": session_id, "path": path},

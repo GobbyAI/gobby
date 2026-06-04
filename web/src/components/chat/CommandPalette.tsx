@@ -328,7 +328,7 @@ function SessionItem({
       aria-selected={isSelected}
     >
       <span className="command-palette-item-dot" />
-      <span className="command-palette-item-ref">{seqLabel}</span>
+      <span className="command-palette-item-ref" data-testid="session-ref">{seqLabel}</span>
       <span className="command-palette-item-title">{titleText}</span>
       <span className="command-palette-item-time">{formatRelativeTime(session.updated_at)}</span>
     </div>

@@ -3374,7 +3374,7 @@ async def test_heartbeat_preserves_no_run_mutex_with_live_lease(
         ttl_seconds=dispatcher.DISPATCH_TTL_SECONDS,
         now=old_acquired_at,
     )
-    spawned: list[str] = []
+    spawned: list[tuple[str, str, str]] = []
     monkeypatch.setattr(
         dispatcher.dispatch_rules,
         "evaluate",

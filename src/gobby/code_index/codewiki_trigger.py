@@ -159,13 +159,16 @@ class CodewikiRefreshTrigger:
 
     def _flush_task_done(self, task: asyncio.Task[None]) -> None:
         try:
-            task.result()
+            exc = task.exception()
         except asyncio.CancelledError:
             return
-        except Exception:
-            logger.exception("codewiki refresh flush task failed")
         finally:
             self._flush_tasks.discard(task)
+        if exc is not None:
+            logger.error(
+                "codewiki refresh flush task failed",
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
 
     async def _run_refresh(self, request: CodewikiRefreshRequest) -> None:
         root = Path(request.root_path).resolve(strict=False)

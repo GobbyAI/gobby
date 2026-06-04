@@ -65,10 +65,14 @@ def head_with_breadcrumb(text: str, *, budget: int, breadcrumb: str) -> str:
     if head_budget <= 0:
         return (breadcrumb or text)[:budget]
 
+    min_clean_cut = head_budget // 2
     cut = text.rfind("\n\n", 0, head_budget)
-    if cut < head_budget // 2:
+    if cut == -1:
         newline = text.rfind("\n", 0, head_budget)
-        cut = newline if newline > head_budget // 2 else head_budget
+        cut = newline if newline > min_clean_cut else head_budget
+    elif cut < min_clean_cut:
+        newline = text.rfind("\n", 0, head_budget)
+        cut = newline if newline > min_clean_cut else head_budget
     head = text[:cut].rstrip()
     if not head:
         return (breadcrumb or text)[:budget]

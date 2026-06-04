@@ -67,17 +67,20 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
     ) -> dict[str, Any]:
         ask_query = _one_query(q, query)
         ai_value = _normalize_ai(ai) if ai is not None else None
-        return await _read(
-            server,
-            project,
-            topic,
-            lambda gateway: gateway.ask(
-                ask_query,
-                llm=llm,
-                ai=ai_value,
-                require_ai=require_ai,
-            ),
-        )
+        try:
+            return await _read(
+                server,
+                project,
+                topic,
+                lambda gateway: gateway.ask(
+                    ask_query,
+                    llm=llm,
+                    ai=ai_value,
+                    require_ai=require_ai,
+                ),
+            )
+        except ValueError as exc:
+            raise HTTPException(400, detail=str(exc) or "Invalid wiki ask request") from exc
 
     @router.get("/read")
     async def read(

@@ -114,10 +114,7 @@ describe("CommandPalette", () => {
       />,
     );
 
-    const refs = screen
-      .getAllByRole("option")
-      .map((el) => el.querySelector(".command-palette-item-ref")?.textContent)
-      .filter((text): text is string => Boolean(text));
+    const refs = screen.getAllByTestId("session-ref").map((el) => el.textContent);
     expect(refs).toEqual(["#42", "#13", "#5"]);
   });
 });

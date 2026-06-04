@@ -114,6 +114,8 @@ def update_managed_bin(
 
         target: str | None = None
         floor_satisfied = is_at_least_version(inspection.installed_version, spec.floor_version)
+        # The floor version is the minimum usable binary. Once it is satisfied,
+        # "up_to_date" means safe to run even if latest release metadata is unavailable.
         release_client = client or GithubReleaseClient(
             timeout_seconds=config.github_timeout_seconds
         )

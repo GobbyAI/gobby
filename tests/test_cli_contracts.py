@@ -17,7 +17,7 @@ from gobby.mcp_proxy.tools.wiki import create_wiki_registry
 
 CONTRACT_DIR = Path(__file__).parent / "contracts"
 CLI_CONTRACT_TOOLS = ("gcode", "gwiki")
-pytestmark = [pytest.mark.integration, pytest.mark.slow]
+pytestmark = pytest.mark.unit
 
 
 def _contract(tool: str) -> dict[str, Any]:
