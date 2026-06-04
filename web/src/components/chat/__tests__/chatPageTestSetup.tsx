@@ -426,6 +426,9 @@ export const useFileChangesMockFactory = () => ({
   useFileChanges: () => ({
     changedFiles: [],
     fetchDiff: vi.fn(),
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
   }),
 });
 

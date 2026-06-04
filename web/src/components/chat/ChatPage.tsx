@@ -54,7 +54,6 @@ export function ChatPage({
   const isMobile = useIsMobile();
   const canvas = useCanvasPanel();
   const activity = useActivityPanel(isMobile);
-  const fileChanges = useFileChanges(chat.messages, projectId ?? null);
   const { confirm, ConfirmDialogElement } = useConfirmDialog();
   const {
     activeTab: activityTab,
@@ -81,6 +80,14 @@ export function ChatPage({
     showTab,
     dismissOnMobile,
   });
+  // The Changes panel follows the session shown in the main chat window — live
+  // web chat, or a watched/attached/resumed session. The message-scan overlay
+  // only applies when that session is the active chat.
+  const fileChanges = useFileChanges(
+    routing.activityPanelChatSessionId ?? null,
+    chat.messages,
+    routing.activityPanelChatSessionId === chat.dbSessionId,
+  );
   const providerState = useChatPageProviderState({
     chat,
     mainSessionMeta: routing.mainSessionMeta,
@@ -215,6 +222,9 @@ export function ChatPage({
         onClearCanvas={canvas.closeCanvas}
         changedFiles={fileChanges.changedFiles}
         fetchDiff={fileChanges.fetchDiff}
+        changesLoading={fileChanges.loading}
+        changesError={fileChanges.error}
+        onRetryChanges={fileChanges.refresh}
         projectId={projectId}
         sessions={activitySessions ?? allProjectSessions}
         sessionsLoading={activitySessionsLoading ?? allProjectSessionsLoading}

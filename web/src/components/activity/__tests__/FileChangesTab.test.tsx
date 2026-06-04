@@ -60,7 +60,7 @@ describe('FileChangesTab', () => {
     })
   })
 
-  it('clears the diff view and logs when fetching a diff fails', async () => {
+  it('shows the empty-diff state and logs when fetching a diff fails', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     const fetchDiff = vi.fn().mockRejectedValue(new Error('boom'))
 
@@ -74,8 +74,9 @@ describe('FileChangesTab', () => {
     fireEvent.click(screen.getByRole('button', { name: /example\.ts/i }))
 
     await waitFor(() => {
-      expect(screen.getByTestId('diff-view').textContent).toBe('src/example.ts:')
+      expect(screen.getByText('No diff available for this file')).toBeInTheDocument()
     })
+    expect(screen.queryByTestId('diff-view')).toBeNull()
     expect(consoleError).toHaveBeenCalled()
 
     consoleError.mockRestore()
@@ -131,5 +132,25 @@ describe('FileChangesTab', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('diff-view')).toBeNull()
     })
+  })
+
+  it('shows a loading state while the changed-file list loads', () => {
+    render(<FileChangesTab changedFiles={[]} fetchDiff={vi.fn()} loading />)
+    expect(screen.getByText('Loading changes…')).toBeInTheDocument()
+  })
+
+  it('shows an error state with a retry action', () => {
+    const onRetry = vi.fn()
+    render(
+      <FileChangesTab
+        changedFiles={[]}
+        fetchDiff={vi.fn()}
+        error="Could not load changes for this session."
+        onRetry={onRetry}
+      />,
+    )
+    expect(screen.getByText('Could not load changes for this session.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }))
+    expect(onRetry).toHaveBeenCalledTimes(1)
   })
 })

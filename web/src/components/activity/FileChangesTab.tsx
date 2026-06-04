@@ -1,4 +1,4 @@
-import { memo, useState, useCallback, useEffect } from 'react'
+import { memo, useState, useCallback, useEffect, useMemo } from 'react'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
 import { DiffBlock } from '../shared/DiffBlock'
 import { parseUnifiedDiffLines } from '../shared/DiffBlock.helpers'
@@ -8,7 +8,13 @@ import { ActivityPanelEmpty, ChangesEmptyIcon } from './ActivityPanelEmpty'
 interface FileChangesTabProps {
   changedFiles: ChangedFile[]
   fetchDiff: (path: string) => Promise<string>
+  loading?: boolean
+  error?: string | null
+  onRetry?: () => void
 }
+
+// Cap rendered diffs so a single huge file can't lock up the panel.
+const MAX_DIFF_LINES = 2000
 
 function statusBadge(status: string) {
   const map: Record<string, { label: string; className: string }> = {
@@ -37,11 +43,20 @@ function fileDir(path: string): string {
 export const FileChangesTab = memo(function FileChangesTab({
   changedFiles,
   fetchDiff,
+  loading = false,
+  error = null,
+  onRetry,
 }: FileChangesTabProps) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [diff, setDiff] = useState<string>('')
   const [loadingDiff, setLoadingDiff] = useState(false)
   const [topHeight, setTopHeight] = useState(35)
+
+  const { displayedDiff, diffTruncated } = useMemo(() => {
+    const lines = diff.split('\n')
+    if (lines.length <= MAX_DIFF_LINES) return { displayedDiff: diff, diffTruncated: false }
+    return { displayedDiff: lines.slice(0, MAX_DIFF_LINES).join('\n'), diffTruncated: true }
+  }, [diff])
 
   const handleSelect = useCallback(
     (path: string) => {
@@ -90,6 +105,31 @@ export const FileChangesTab = memo(function FileChangesTab({
       isStale = true
     }
   }, [changedFiles, fetchDiff, selectedPath])
+
+  if (error && changedFiles.length === 0) {
+    return (
+      <ActivityPanelEmpty
+        icon={<ChangesEmptyIcon />}
+        heading="Changes unavailable"
+        body={error}
+        footer={
+          onRetry ? (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="mt-3 rounded border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted transition-colors"
+            >
+              Retry
+            </button>
+          ) : undefined
+        }
+      />
+    )
+  }
+
+  if (loading && changedFiles.length === 0) {
+    return <ActivityPanelEmpty icon={<ChangesEmptyIcon />} body="Loading changes…" />
+  }
 
   if (changedFiles.length === 0) {
     return (
@@ -152,17 +192,26 @@ export const FileChangesTab = memo(function FileChangesTab({
         <div className="flex-1 flex flex-col min-h-0">
           {loadingDiff ? (
             <ActivityPanelEmpty body="Loading diff…" />
+          ) : !diff ? (
+            <ActivityPanelEmpty body="No diff available for this file" />
           ) : (
-            <DiffBlock
-              lines={parseUnifiedDiffLines(diff)}
-              language="diff"
-              variant="inline"
-              path={selectedPath}
-              header
-              onCopy={() => {
-                navigator.clipboard.writeText(diff).catch(console.error)
-              }}
-            />
+            <>
+              {diffTruncated && (
+                <div className="px-3 py-1.5 text-xs text-muted-foreground border-b border-border bg-muted/20">
+                  Large diff truncated to the first {MAX_DIFF_LINES.toLocaleString()} lines.
+                </div>
+              )}
+              <DiffBlock
+                lines={parseUnifiedDiffLines(displayedDiff)}
+                language="diff"
+                variant="inline"
+                path={selectedPath}
+                header
+                onCopy={() => {
+                  navigator.clipboard.writeText(diff).catch(console.error)
+                }}
+              />
+            </>
           )}
         </div>
       )}

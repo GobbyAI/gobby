@@ -76,6 +76,9 @@ interface ActivityPanelProps {
   // File changes tab
   changedFiles?: { path: string; status: string }[];
   fetchDiff?: (path: string) => Promise<string>;
+  changesLoading?: boolean;
+  changesError?: string | null;
+  onRetryChanges?: () => void;
   // Tasks tab
   projectId?: string | null;
   sessions?: GobbySession[];
@@ -189,6 +192,9 @@ export function ActivityPanel({
   onClearCanvas,
   changedFiles = [],
   fetchDiff,
+  changesLoading = false,
+  changesError = null,
+  onRetryChanges,
   projectId,
   sessions = [],
   sessionsLoading = false,
@@ -326,6 +332,9 @@ export function ActivityPanel({
           <FileChangesTab
             changedFiles={changedFiles}
             fetchDiff={fetchDiff || noopFetchDiff}
+            loading={changesLoading}
+            error={changesError}
+            onRetry={onRetryChanges}
           />
         );
       case "canvas":

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, HTTPException
 
 from gobby.servers.routes.sessions.analytics import register_analytics_routes
+from gobby.servers.routes.sessions.changes import register_changes_routes
 from gobby.servers.routes.sessions.core import (
     _compute_resumability,
     _get_commit_count,
@@ -67,5 +68,6 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
     register_lifecycle_routes(router, server, _get_session_manager, _broadcast_session)
     register_message_routes(router, server, _get_session_manager)
     register_analytics_routes(router, server, _get_session_manager, _broadcast_session)
+    register_changes_routes(router, server)
 
     return router

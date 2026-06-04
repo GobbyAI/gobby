@@ -1,0 +1,70 @@
+"""Session-scoped Changes panel routes.
+
+Expose the viewed session's working-tree changes (resolved against its real
+working directory and diff base) so the Changes activity panel is correct for
+worktree/clone/resumed sessions and switches contents when the session
+switches.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING, Any
+
+from fastapi import APIRouter, HTTPException, Query
+
+from gobby.servers.session_changes import (
+    compute_session_changes,
+    compute_session_file_diff,
+    is_safe_relative_path,
+    resolve_session_workspace,
+)
+
+if TYPE_CHECKING:
+    from gobby.servers.http import HTTPServer
+
+logger = logging.getLogger(__name__)
+
+
+def register_changes_routes(router: APIRouter, server: HTTPServer) -> None:
+    """Register session-scoped Changes routes on the router."""
+
+    def _resolve(session_id: str) -> Any:
+        workspace = resolve_session_workspace(
+            session_manager=server.session_manager,
+            task_manager=server.task_manager,
+            session_id=session_id,
+        )
+        if workspace is None:
+            raise HTTPException(404, "Session working directory not found")
+        return workspace
+
+    @router.get("/{session_id}/changes")
+    async def session_changes(session_id: str) -> dict[str, Any]:
+        """Return the changed-file list for the session's working tree."""
+        workspace = _resolve(session_id)
+        try:
+            files = await compute_session_changes(workspace)
+        except Exception:
+            logger.debug("Failed to compute changes for session %s", session_id, exc_info=True)
+            raise HTTPException(500, "Failed to compute session changes") from None
+        return {
+            "files": [{"path": f.path, "status": f.status} for f in files],
+            "isolation": workspace.isolation,
+        }
+
+    @router.get("/{session_id}/changes/diff")
+    async def session_change_diff(
+        session_id: str,
+        path: str = Query(..., description="Relative file path"),
+    ) -> dict[str, str]:
+        """Return the unified diff for a single file in the session's working tree."""
+        workspace = _resolve(session_id)
+        if not is_safe_relative_path(workspace.working_dir, path):
+            raise HTTPException(400, "Invalid path")
+        try:
+            diff = await compute_session_file_diff(workspace, path)
+        except Exception:
+            logger.debug("Failed to diff %s for session %s", path, session_id, exc_info=True)
+            diff = ""
+        return {"diff": diff, "path": path}
