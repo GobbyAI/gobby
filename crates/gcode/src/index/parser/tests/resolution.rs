@@ -1,5 +1,6 @@
 use super::super::{call_qualifier_path, line_terminator_len, split_qualified_callee};
 use super::common::parse_python;
+use proptest::prelude::*;
 
 #[test]
 fn line_terminator_len_tracks_lf_crlf_and_eof() {
@@ -14,6 +15,36 @@ fn line_terminator_len_tracks_lf_crlf_and_eof() {
 
     let last_start = "import 'a';\r\nhttp.Client();\n".len();
     assert_eq!(line_terminator_len(text, last_start, "last()".len()), 0);
+}
+
+#[test]
+fn line_terminator_len_matches_generated_suffix_cases() {
+    let ascii_line = || proptest::string::string_regex("[ -~]{0,64}").expect("valid line regex");
+    let suffixes = prop_oneof![
+        Just(String::new()),
+        Just("\n".to_string()),
+        Just("\r\n".to_string()),
+        Just("\r".to_string()),
+        Just("next".to_string()),
+    ];
+    let strategy = (ascii_line(), ascii_line(), suffixes);
+
+    proptest::test_runner::TestRunner::default()
+        .run(&strategy, |(prefix, line, suffix)| {
+            let text = format!("{prefix}{line}{suffix}");
+            let expected = match suffix.as_str() {
+                "\r\n" => 2,
+                "\n" => 1,
+                _ => 0,
+            };
+
+            let actual = line_terminator_len(&text, prefix.len(), line.len());
+
+            assert_eq!(actual, expected);
+
+            Ok(())
+        })
+        .expect("line terminator property holds");
 }
 
 #[test]

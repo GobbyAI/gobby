@@ -241,11 +241,11 @@ fn path_filter_for(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::api::IndexOutcome;
+    use crate::index::api::{IndexDurations, IndexOutcome};
     use crate::projection::sync::{
         ProjectionStatus, ProjectionSyncError, ProjectionSyncReport, ProjectionSyncReports,
     };
-    use serde_json::{Value, json};
+    use serde_json::Value;
 
     #[test]
     fn pluralize_handles_index_status_nouns() {
@@ -295,44 +295,45 @@ mod tests {
     #[test]
     fn sync_projections_json_contract() {
         let payload = sync_projections_payload(&sample_outcome(), sample_reports());
-        assert_eq!(
-            serde_json::to_value(&payload).expect("payload serializes"),
-            json!({
-                "indexed_files": 12,
-                "skipped_files": 0,
-                "symbols_indexed": 348,
-                "chunks_indexed": 921,
-                "projections": {
-                    "graph": {
-                        "status": "ok",
-                        "synced_files": 12,
-                        "synced_symbols": 348,
-                        "degraded": false,
-                        "error": null
-                    },
-                    "vector": {
-                        "status": "degraded",
-                        "synced_files": 0,
-                        "synced_symbols": 0,
-                        "degraded": true,
-                        "error": {
-                            "kind": "missing_qdrant_config",
-                            "message": "Qdrant config is required"
-                        }
-                    }
-                }
-            })
-        );
+
+        insta::assert_json_snapshot!("sync_projections_payload", payload);
     }
 
     #[test]
     fn sync_projections_text_contract() {
         let payload = sync_projections_payload(&sample_outcome(), sample_reports());
         let text = sync_projections_text(&payload).expect("text payload");
-        let parsed: Value = serde_json::from_str(&text).expect("text mode is structured JSON");
-        assert_eq!(parsed["indexed_files"], 12);
-        assert_eq!(parsed["projections"]["graph"]["status"], "ok");
-        assert_eq!(parsed["projections"]["vector"]["status"], "degraded");
+
+        insta::assert_snapshot!("sync_projections_text", text);
+    }
+
+    #[test]
+    fn index_outcome_json_contract_redacts_durations() {
+        let mut outcome = sample_outcome();
+        outcome.project_id = "project-1".to_string();
+        outcome.scanned_files = 14;
+        outcome.imports_indexed = 41;
+        outcome.calls_indexed = 73;
+        outcome.unresolved_targets_indexed = 5;
+        outcome.indexed_file_paths = vec!["src/main.rs".to_string(), "src/lib.rs".to_string()];
+        outcome.durations = IndexDurations {
+            discovery_ms: 11,
+            indexing_ms: 22,
+            stats_ms: 33,
+            total_ms: 66,
+        };
+        let mut redacted = serde_json::to_value(outcome).expect("outcome serializes");
+        let Value::Object(durations) = &mut redacted["durations"] else {
+            panic!("durations serialize as object");
+        };
+        for field in ["discovery_ms", "indexing_ms", "stats_ms", "total_ms"] {
+            durations.insert(
+                field.to_string(),
+                Value::String("[duration-ms]".to_string()),
+            );
+        }
+
+        insta::assert_json_snapshot!("index_outcome", redacted);
     }
 
     #[test]
@@ -358,9 +359,6 @@ mod tests {
 
         let text = index_text(&outcome);
 
-        assert!(text.contains("Unsupported file types indexed as text only"));
-        assert!(text.contains(".md: 1 file (example: README.md)"));
-        assert!(text.contains(".txt: 2 files (examples: notes.txt, docs/tasks.txt)"));
-        assert!(text.contains("extensionless: 1 file (example: Dockerfile)"));
+        insta::assert_snapshot!("index_text_unsupported_file_types", text);
     }
 }

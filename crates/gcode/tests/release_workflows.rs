@@ -69,17 +69,33 @@ fn release_workflows_have_one_default_and_one_no_default_check() {
             "{package} no-default clippy step count"
         );
         assert_eq!(
-            count_run_step(workflow, &format!("cargo test -p {package}")),
+            count_run_step(
+                workflow,
+                &format!("cargo nextest run --profile ci -p {package}")
+            ),
             1,
             "{package} default test step count"
         );
         assert_eq!(
+            count_run_step(workflow, &format!("cargo test --doc -p {package}")),
+            1,
+            "{package} default doctest step count"
+        );
+        assert_eq!(
             count_run_step(
                 workflow,
-                &format!("cargo test -p {package} --no-default-features")
+                &format!("cargo nextest run --profile ci -p {package} --no-default-features")
             ),
             1,
             "{package} no-default test step count"
+        );
+        assert_eq!(
+            count_run_step(
+                workflow,
+                &format!("cargo test --doc -p {package} --no-default-features")
+            ),
+            1,
+            "{package} no-default doctest step count"
         );
     }
 }

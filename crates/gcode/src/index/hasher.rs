@@ -29,6 +29,7 @@ pub fn symbol_content_hash(source: &[u8], start: usize, end: usize) -> anyhow::R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn file_content_hash_delegates_to_gobby_core() {
@@ -55,5 +56,31 @@ mod tests {
             content_hash(source),
             gobby_core::indexing::content_hash(source)
         );
+    }
+
+    proptest! {
+        #[test]
+        fn content_hash_matches_gobby_core_for_arbitrary_bytes(
+            source in proptest::collection::vec(any::<u8>(), 0..4096),
+        ) {
+            prop_assert_eq!(
+                content_hash(&source),
+                gobby_core::indexing::content_hash(&source)
+            );
+        }
+
+        #[test]
+        fn symbol_content_hash_matches_gobby_core_for_valid_slices(
+            source in proptest::collection::vec(any::<u8>(), 0..4096),
+            raw_start in 0usize..4096,
+            raw_len in 0usize..4096,
+        ) {
+            let start = raw_start.min(source.len());
+            let end = (start + raw_len).min(source.len());
+            let actual = symbol_content_hash(&source, start, end).expect("valid slice hashes");
+            let expected = gobby_core::indexing::content_hash(&source[start..end]);
+
+            prop_assert_eq!(actual, expected);
+        }
     }
 }

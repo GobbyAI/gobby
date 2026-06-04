@@ -461,15 +461,58 @@ mod tests {
     use super::*;
 
     #[test]
-    fn uuid5_python_parity() {
+    fn symbol_make_id_matches_python_uuid5_golden_vectors() {
         assert_eq!(
             CODE_INDEX_UUID_NAMESPACE.to_string(),
             "c0de1de0-0000-4000-8000-000000000000"
         );
-        assert_eq!(
-            Symbol::make_id("proj1", "src/main.py", "foo", "function", 42),
-            "403e2117-92e7-5390-ad83-226629486481"
-        );
+
+        let cases = [
+            (
+                "proj1",
+                "src/main.py",
+                "foo",
+                "function",
+                42,
+                "403e2117-92e7-5390-ad83-226629486481",
+            ),
+            (
+                "3bf57fe7-2a0c-4074-8912-a83d9cd4df01",
+                "crates/gcode/src/models.rs",
+                "Symbol",
+                "struct",
+                111,
+                "d28e80d3-a95e-5c2a-91c3-92551f75a2b1",
+            ),
+            (
+                "proj-with-dashes",
+                "src/lib.rs",
+                "Widget::render",
+                "method",
+                0,
+                "44da4f31-7218-5b3b-97c4-5a5eca9f0451",
+            ),
+            (
+                "overlay:child",
+                "nested/path/file.ts",
+                "HTTPClient.new",
+                "class",
+                987654321,
+                "f9531553-f2a7-5425-b487-6fb5b31d57bb",
+            ),
+        ];
+
+        for (project_id, file_path, name, kind, byte_start, expected) in cases {
+            assert_eq!(
+                Symbol::make_id(project_id, file_path, name, kind, byte_start),
+                expected,
+                "Python UUID5 parity failed for {project_id}:{file_path}:{name}:{kind}:{byte_start}"
+            );
+        }
+    }
+
+    #[test]
+    fn unresolved_and_external_ids_match_python_uuid5_golden_vectors() {
         assert_eq!(
             make_unresolved_callee_id("proj1", "missing_func"),
             "42693df1-99e6-5daa-be29-3535096cd2b5"
@@ -512,5 +555,42 @@ mod tests {
 
         let serialized = serde_json::to_value(&parsed).expect("graph result serializes");
         assert!(serialized.get("metadata").is_none());
+    }
+
+    #[test]
+    fn graph_result_without_metadata_omits_metadata_when_serialized() {
+        let strategy = (
+            proptest::string::string_regex("[ -~]{0,32}").expect("valid id regex"),
+            proptest::string::string_regex("[ -~]{0,32}").expect("valid name regex"),
+            proptest::string::string_regex("[ -~]{0,64}").expect("valid path regex"),
+            0usize..1_000_000,
+            proptest::option::of(
+                proptest::string::string_regex("[ -~]{0,32}").expect("valid relation regex"),
+            ),
+            proptest::option::of(0usize..1_000),
+        );
+
+        proptest::test_runner::TestRunner::default()
+            .run(
+                &strategy,
+                |(id, name, file_path, line, relation, distance)| {
+                    let result = GraphResult {
+                        id,
+                        name,
+                        file_path,
+                        line,
+                        relation,
+                        distance,
+                        metadata: None,
+                    };
+
+                    let serialized =
+                        serde_json::to_value(&result).expect("graph result serializes");
+                    assert_eq!(serialized.get("metadata"), None);
+
+                    Ok(())
+                },
+            )
+            .expect("metadata omission property holds");
     }
 }

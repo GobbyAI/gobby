@@ -1,0 +1,9 @@
+---
+source: crates/gcode/src/commands/index.rs
+expression: text
+---
+Indexed 12 files (0 skipped), 348 symbols, 921 chunks in 0ms
+Unsupported file types indexed as text only (no AST symbols):
+  .md: 1 file (example: README.md)
+  .txt: 2 files (examples: notes.txt, docs/tasks.txt)
+  extensionless: 1 file (example: Dockerfile)
