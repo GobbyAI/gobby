@@ -906,7 +906,7 @@ mod tests {
         let raw = std::fs::read_to_string(temp.path().join(result.raw_path)).expect("raw source");
         assert!(raw.contains("source_kind: pdf"));
         assert!(raw.contains("page_count: "));
-        assert!(raw.contains("vision_used: false"));
+        assert!(raw.contains("vision_used: \"false\""));
     }
 
     #[cfg(not(feature = "documents"))]

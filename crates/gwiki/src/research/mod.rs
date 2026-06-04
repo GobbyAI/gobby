@@ -250,7 +250,7 @@ pub fn run(options: ResearchOptions) -> Result<ResearchOutcome, WikiError> {
         audit: options.audit,
         status,
         stop_reason,
-        steps_used: usize::from(options.audit),
+        steps_used: 1,
         tokens_used: 0,
         max_steps: options.max_steps,
         max_tokens: options.max_tokens,

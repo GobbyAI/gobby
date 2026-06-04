@@ -609,7 +609,7 @@ mod tests {
         assert!(markdown.contains("transcription_source_language: es"));
         assert!(markdown.contains("transcription_model: whisper-prod"));
         assert!(markdown.contains("transcription_task: transcribe"));
-        assert!(markdown.contains("translated: false"));
+        assert!(markdown.contains("translated: \"false\""));
         assert!(markdown.contains("[00:00:00] Production routed transcript."));
     }
 
@@ -645,7 +645,7 @@ mod tests {
         assert!(markdown.contains("transcription_source_language: es"));
         assert!(markdown.contains("transcription_target_language: en"));
         assert!(markdown.contains("transcription_task: translate"));
-        assert!(markdown.contains("translated: true"));
+        assert!(markdown.contains("translated: \"true\""));
         assert!(markdown.contains("[00:00:00] Translated transcript."));
     }
 
@@ -715,7 +715,7 @@ mod tests {
         assert!(markdown.contains("transcription_source_language: es"));
         assert!(markdown.contains("transcription_target_language: fr"));
         assert!(markdown.contains("transcription_task: translate"));
-        assert!(markdown.contains("translated: true"));
+        assert!(markdown.contains("translated: \"true\""));
         assert!(markdown.contains("[00:00:00] bonjour"));
         assert!(markdown.contains("[00:00:09] monde"));
     }
@@ -753,7 +753,7 @@ mod tests {
         assert!(markdown.contains("transcription_source_language: es"));
         assert!(markdown.contains("transcription_target_language: en"));
         assert!(markdown.contains("transcription_task: translate"));
-        assert!(markdown.contains("translated: true"));
+        assert!(markdown.contains("translated: \"true\""));
         assert!(markdown.contains("[00:00:00] hello"));
         assert!(markdown.contains("[00:00:09] world"));
         assert_eq!(
@@ -826,7 +826,7 @@ mod tests {
         assert!(raw.contains("source_kind: audio"));
         assert!(raw.contains("source_asset: raw/assets/"));
         assert!(raw.contains("audio_mime_type: audio/wav"));
-        assert!(raw.contains("audio_duration_seconds: 12"));
+        assert!(raw.contains("audio_duration_seconds: \"12\""));
 
         let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
         assert_eq!(manifest.entries.len(), 1);

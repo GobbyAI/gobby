@@ -3,13 +3,13 @@ use crate::config::TEST_ENV_LOCK;
 use std::sync::MutexGuard;
 
 struct EnvGuard {
-    _lock: MutexGuard<'static, ()>,
+    lock: MutexGuard<'static, ()>,
 }
 
 impl EnvGuard {
     fn new() -> Self {
         let guard = Self {
-            _lock: TEST_ENV_LOCK
+            lock: TEST_ENV_LOCK
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner()),
         };
@@ -18,14 +18,7 @@ impl EnvGuard {
     }
 
     fn clear(&self) {
-        let lock_is_held = matches!(
-            TEST_ENV_LOCK.try_lock(),
-            Err(std::sync::TryLockError::WouldBlock)
-        );
-        assert!(
-            lock_is_held,
-            "TEST_ENV_LOCK must be held before mutating test environment"
-        );
+        let _held_env_lock = &self.lock;
         for key in [
             "GOBBY_FALKORDB_HOST",
             "GOBBY_FALKORDB_PORT",
@@ -231,12 +224,31 @@ fn writes_ai_embeddings_standalone_api_key() {
 
 #[test]
 fn compose_template_matches_daemon_checkout_when_present() {
-    let daemon = Path::new("/Users/josh/Projects/gobby/src/gobby/data/docker-compose.services.yml");
+    let Some(daemon) = daemon_compose_template_path() else {
+        return;
+    };
     if !daemon.exists() {
         return;
     }
     let daemon_template = fs::read_to_string(daemon).expect("read daemon compose template");
     assert_eq!(COMPOSE_TEMPLATE, daemon_template);
+}
+
+fn daemon_compose_template_path() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("GOBBY_DAEMON_COMPOSE_PATH") {
+        let path = path.trim();
+        if !path.is_empty() {
+            return Some(PathBuf::from(path));
+        }
+    }
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir.parent()?.parent()?;
+    Some(
+        repo_root
+            .parent()?
+            .join("gobby/src/gobby/data/docker-compose.services.yml"),
+    )
 }
 
 #[test]

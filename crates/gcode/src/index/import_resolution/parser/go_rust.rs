@@ -84,11 +84,6 @@ pub(crate) fn parse_rust_import_statement(
 ) {
     let trimmed = text.trim();
     let Some(rest) = trimmed.strip_prefix("use ") else {
-        debug_assert!(
-            trimmed.strip_prefix("use ").is_some(),
-            "expected Rust use statement, got `{}`",
-            trimmed
-        );
         return;
     };
     let rest = rest.trim().trim_end_matches(';').trim();
@@ -195,8 +190,6 @@ fn register_rust_path_import(
 
 #[cfg(test)]
 mod tests {
-    use std::panic::{AssertUnwindSafe, catch_unwind};
-
     use super::*;
 
     #[test]
@@ -216,20 +209,13 @@ mod tests {
     #[test]
     fn non_use_rust_statement_does_not_record_raw_import() {
         let mut extracted = ExtractedImports::default();
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            parse_rust_import_statement(
-                "mod tests;",
-                "lib.rs",
-                &ImportResolutionContext::default(),
-                &mut extracted,
-            );
-        }));
+        parse_rust_import_statement(
+            "mod tests;",
+            "lib.rs",
+            &ImportResolutionContext::default(),
+            &mut extracted,
+        );
 
-        if cfg!(debug_assertions) {
-            assert!(result.is_err());
-        } else {
-            assert!(result.is_ok());
-        }
         assert!(extracted.imports.is_empty());
     }
 }

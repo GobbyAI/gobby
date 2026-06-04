@@ -353,13 +353,13 @@ fn index_update_uses_structural_heading_and_link_checks() {
 }
 
 #[test]
-fn insert_compiled_page_link_errors_without_compiled_heading() {
+fn insert_compiled_page_link_creates_missing_compiled_heading() {
     let mut index = "# Wiki Index\n\n".to_string();
 
-    let error = insert_compiled_page_link(&mut index, "[[wiki/topics/missing|Missing]]")
-        .expect_err("missing heading fails");
+    insert_compiled_page_link(&mut index, "[[wiki/topics/missing|Missing]]")
+        .expect("missing heading is created");
 
-    assert!(matches!(error, WikiError::Config { .. }));
+    assert!(index.contains("## Compiled pages\n\n- [[wiki/topics/missing|Missing]]\n"));
 }
 
 #[test]

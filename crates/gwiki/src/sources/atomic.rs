@@ -75,7 +75,11 @@ fn temp_sibling_path(path: &Path) -> Result<PathBuf, WikiError> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
-    Ok(path.with_file_name(format!(".{file_name}.{}.{nanos}.tmp", std::process::id())))
+    Ok(path.with_file_name(format!(
+        ".{file_name}.{}.{nanos}.{}.tmp",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    )))
 }
 
 fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {

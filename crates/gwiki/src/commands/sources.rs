@@ -56,7 +56,7 @@ pub(crate) fn execute_remove(
         scope.root(),
         &raw_path,
         source.raw_exists,
-        true,
+        !dry_run,
         &mut path_changes,
     )?;
 
@@ -64,7 +64,7 @@ pub(crate) fn execute_remove(
         stage_source_asset(
             scope.root(),
             &asset_path,
-            true,
+            !dry_run,
             keep_asset,
             &mut path_changes,
             &mut degradations,
@@ -74,25 +74,33 @@ pub(crate) fn execute_remove(
     let index_status = if dry_run {
         IndexStatus::not_run()
     } else {
+        let mut removed_record = None;
         match SourceManifest::remove(scope.root(), &record.id) {
             Ok(Some(removed)) => {
                 if let Err(error) = remove_staged_source_files(scope.root(), &mut path_changes) {
-                    rollback_removed_source(scope.root(), removed, &error)?;
+                    rollback_removed_source_state(scope.root(), removed, &path_changes, &error)?;
                     return Err(error);
                 }
+                removed_record = Some(removed);
             }
             Ok(None) => {
                 degradations.push("manifest_entry_missing_after_plan".to_string());
                 path_changes.removed_paths.clear();
+                path_changes.staged_removals.clear();
             }
             Err(error) => {
                 degradations.push(format!("manifest_remove_failed:{error}"));
                 path_changes.removed_paths.clear();
+                path_changes.staged_removals.clear();
             }
         }
         match index::index_resolved_scope(&scope) {
             Ok(counts) => IndexStatus::indexed(counts),
             Err(error) => {
+                if let Some(removed) = removed_record {
+                    rollback_removed_source_state(scope.root(), removed, &path_changes, &error)?;
+                    return Err(error);
+                }
                 degradations.push(format!("index_failed:{error}"));
                 IndexStatus::degraded()
             }
@@ -200,6 +208,13 @@ struct PathChanges {
     removed_paths: Vec<String>,
     kept_paths: Vec<String>,
     missing_paths: Vec<String>,
+    staged_removals: Vec<StagedRemoval>,
+}
+
+#[derive(Debug)]
+struct StagedRemoval {
+    relative_path: String,
+    bytes: Vec<u8>,
 }
 
 fn source_entries(
@@ -288,18 +303,11 @@ fn stage_raw_source(
     vault_root: &Path,
     raw_path: &Path,
     raw_exists: bool,
-    dry_run: bool,
+    cache_bytes: bool,
     path_changes: &mut PathChanges,
 ) -> Result<(), WikiError> {
     if raw_exists {
-        path_changes.removed_paths.push(display_path(raw_path));
-        if !dry_run {
-            fs::remove_file(vault_root.join(raw_path)).map_err(|error| WikiError::Io {
-                action: "remove raw source markdown",
-                path: Some(vault_root.join(raw_path)),
-                source: error,
-            })?;
-        }
+        stage_source_removal(vault_root, raw_path, cache_bytes, path_changes)?;
     } else {
         path_changes.missing_paths.push(display_path(raw_path));
     }
@@ -309,7 +317,7 @@ fn stage_raw_source(
 fn stage_source_asset(
     vault_root: &Path,
     asset_path: &Path,
-    dry_run: bool,
+    cache_bytes: bool,
     keep_asset: bool,
     path_changes: &mut PathChanges,
     degradations: &mut Vec<String>,
@@ -321,14 +329,7 @@ fn stage_source_asset(
 
     let full_path = vault_root.join(asset_path);
     if full_path.is_file() {
-        path_changes.removed_paths.push(display_path(asset_path));
-        if !dry_run {
-            fs::remove_file(&full_path).map_err(|error| WikiError::Io {
-                action: "remove raw source asset",
-                path: Some(full_path),
-                source: error,
-            })?;
-        }
+        stage_source_removal(vault_root, asset_path, cache_bytes, path_changes)?;
         return Ok(());
     }
 
@@ -337,21 +338,49 @@ fn stage_source_asset(
     Ok(())
 }
 
+fn stage_source_removal(
+    vault_root: &Path,
+    relative_path: &Path,
+    cache_bytes: bool,
+    path_changes: &mut PathChanges,
+) -> Result<(), WikiError> {
+    let relative_path = display_path(relative_path);
+    path_changes.removed_paths.push(relative_path.clone());
+    if cache_bytes {
+        let full_path = vault_root.join(&relative_path);
+        let bytes = fs::read(&full_path).map_err(|error| WikiError::Io {
+            action: "read source file before removal",
+            path: Some(full_path),
+            source: error,
+        })?;
+        path_changes.staged_removals.push(StagedRemoval {
+            relative_path,
+            bytes,
+        });
+    }
+    Ok(())
+}
+
 fn remove_staged_source_files(
     vault_root: &Path,
     path_changes: &mut PathChanges,
 ) -> Result<(), WikiError> {
-    let planned = std::mem::take(&mut path_changes.removed_paths);
+    let planned = std::mem::take(&mut path_changes.staged_removals);
     let mut removed = Vec::with_capacity(planned.len());
-    for relative in planned {
-        let full_path = vault_root.join(&relative);
+    let mut staged_removals = Vec::with_capacity(planned.len());
+    for staged in planned {
+        let full_path = vault_root.join(&staged.relative_path);
         match fs::remove_file(&full_path) {
-            Ok(()) => removed.push(relative),
+            Ok(()) => {
+                removed.push(staged.relative_path.clone());
+                staged_removals.push(staged);
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                path_changes.missing_paths.push(relative);
+                path_changes.missing_paths.push(staged.relative_path);
             }
             Err(source) => {
                 path_changes.removed_paths = removed;
+                path_changes.staged_removals = staged_removals;
                 return Err(WikiError::Io {
                     action: "remove source file",
                     path: Some(full_path),
@@ -361,7 +390,74 @@ fn remove_staged_source_files(
         }
     }
     path_changes.removed_paths = removed;
+    path_changes.staged_removals = staged_removals;
     Ok(())
+}
+
+fn restore_removed_source_files(
+    vault_root: &Path,
+    path_changes: &PathChanges,
+    original_error: &WikiError,
+) -> Result<(), WikiError> {
+    let mut restore_errors = Vec::new();
+    for staged in &path_changes.staged_removals {
+        if !path_changes
+            .removed_paths
+            .iter()
+            .any(|removed| removed == &staged.relative_path)
+        {
+            continue;
+        }
+        let full_path = vault_root.join(&staged.relative_path);
+        if let Some(parent) = full_path.parent()
+            && let Err(error) = fs::create_dir_all(parent)
+        {
+            restore_errors.push(format!("{}: {error}", parent.display()));
+            continue;
+        }
+        if full_path.exists() {
+            restore_errors.push(format!(
+                "{}: restore target already exists",
+                full_path.display()
+            ));
+            continue;
+        }
+        if let Err(error) = fs::write(&full_path, &staged.bytes) {
+            restore_errors.push(format!("{}: {error}", full_path.display()));
+        }
+    }
+
+    if restore_errors.is_empty() {
+        return Ok(());
+    }
+
+    Err(WikiError::Config {
+        detail: format!(
+            "failed to restore removed source files after error: {original_error}; restore errors: {}",
+            restore_errors.join("; ")
+        ),
+    })
+}
+
+fn rollback_removed_source_state(
+    vault_root: &Path,
+    record: SourceRecord,
+    path_changes: &PathChanges,
+    original_error: &WikiError,
+) -> Result<(), WikiError> {
+    let manifest_error = rollback_removed_source(vault_root, record, original_error).err();
+    let restore_error =
+        restore_removed_source_files(vault_root, path_changes, original_error).err();
+
+    match (manifest_error, restore_error) {
+        (None, None) => Ok(()),
+        (Some(error), None) | (None, Some(error)) => Err(error),
+        (Some(manifest_error), Some(restore_error)) => Err(WikiError::Config {
+            detail: format!(
+                "failed to fully roll back source removal after error: {original_error}; manifest rollback error: {manifest_error}; file restore error: {restore_error}"
+            ),
+        }),
+    }
 }
 
 fn rollback_removed_source(
@@ -371,7 +467,12 @@ fn rollback_removed_source(
 ) -> Result<(), WikiError> {
     SourceManifest::update(vault_root, |manifest| {
         if manifest.entries.iter().any(|entry| entry.id == record.id) {
-            return Ok(false);
+            return Err(WikiError::Config {
+                detail: format!(
+                    "source manifest already contains source `{}` while rolling back original error: {original_error}",
+                    record.id
+                ),
+            });
         }
         manifest.entries.push(record);
         Ok(true)
@@ -671,6 +772,67 @@ mod tests {
 
         assert_eq!(removed.id, first.id);
         assert_eq!(manifest.entries, vec![second]);
+    }
+
+    #[test]
+    fn removed_source_files_restore_after_later_failure() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let record = seed_manifest_source(temp.path(), CompileStatus::Pending);
+        write_raw_source(temp.path(), &record.id, "");
+        let raw_path = raw_source_path(&record.id).expect("raw path");
+        let raw_bytes = fs::read(temp.path().join(&raw_path)).expect("read raw before removal");
+        let asset_path = PathBuf::from("raw/assets/source.bin");
+        fs::create_dir_all(temp.path().join("raw/assets")).expect("create asset dir");
+        fs::write(temp.path().join(&asset_path), b"asset bytes").expect("write asset");
+        let mut path_changes = PathChanges::default();
+        let mut degradations = Vec::new();
+
+        stage_raw_source(temp.path(), &raw_path, true, true, &mut path_changes)
+            .expect("stage raw source");
+        stage_source_asset(
+            temp.path(),
+            &asset_path,
+            true,
+            false,
+            &mut path_changes,
+            &mut degradations,
+        )
+        .expect("stage source asset");
+        remove_staged_source_files(temp.path(), &mut path_changes).expect("remove staged files");
+
+        assert!(!temp.path().join(&raw_path).exists());
+        assert!(!temp.path().join(&asset_path).exists());
+
+        let original_error = WikiError::Config {
+            detail: "index failed".to_string(),
+        };
+        restore_removed_source_files(temp.path(), &path_changes, &original_error)
+            .expect("restore removed source files");
+
+        assert_eq!(
+            fs::read(temp.path().join(&raw_path)).expect("read restored raw"),
+            raw_bytes
+        );
+        assert_eq!(
+            fs::read(temp.path().join(&asset_path)).expect("read restored asset"),
+            b"asset bytes"
+        );
+    }
+
+    #[test]
+    fn rollback_removed_source_reports_manifest_race() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let record = seed_manifest_source(temp.path(), CompileStatus::Pending);
+        let original_error = WikiError::Config {
+            detail: "remove failed".to_string(),
+        };
+
+        let error = rollback_removed_source(temp.path(), record, &original_error)
+            .expect_err("rollback should reject duplicate manifest entry");
+
+        let rendered = error.to_string();
+        assert!(rendered.contains("already contains source"));
+        assert!(rendered.contains("remove failed"));
     }
 
     #[test]

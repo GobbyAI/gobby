@@ -136,14 +136,15 @@ mod serial_db {
         );
         common::assert_success(&search, "search");
         let search_payload = common::json_stdout(&search);
+        let results = search_payload["results"]
+            .as_array()
+            .expect("search results array");
         assert!(
-            search_payload["results"].as_array().is_some_and(|results| {
-                results.iter().any(|result| {
-                    result["wiki_page"] == "wiki/topics/durable-search.md"
-                        && result["sources"]
-                            .as_array()
-                            .is_some_and(|sources| sources.iter().any(|source| source == "bm25"))
-                })
+            results.iter().any(|result| {
+                result["wiki_page"] == "wiki/topics/durable-search.md"
+                    && result["sources"]
+                        .as_array()
+                        .is_some_and(|sources| sources.iter().any(|source| source == "bm25"))
             }),
             "{search_payload:#}"
         );

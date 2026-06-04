@@ -151,6 +151,15 @@ fn yaml_plain_scalar_is_safe(value: &str) -> bool {
     if value.is_empty() {
         return false;
     }
+    let lower = value.to_ascii_lowercase();
+    if matches!(
+        lower.as_str(),
+        "true" | "false" | "null" | "~" | ".nan" | ".inf" | "+.inf" | "-.inf"
+    ) || value.parse::<i64>().is_ok()
+        || value.parse::<f64>().is_ok()
+    {
+        return false;
+    }
     !value.contains(": ")
         && !value.contains(" #")
         && !value.contains(['"', '\''])
@@ -477,11 +486,15 @@ mod tests {
             ("source_kind", "pdf".to_string()),
             ("source_location", "https://example.com/a: b #c".to_string()),
             ("draft", "true".to_string()),
+            ("empty", "~".to_string()),
+            ("revision", "1.20".to_string()),
         ]);
 
         assert!(metadata.contains("source_kind: pdf\n"));
         assert!(metadata.contains("source_location: \"https://example.com/a: b #c\"\n"));
-        assert!(metadata.contains("draft: true\n"));
+        assert!(metadata.contains("draft: \"true\"\n"));
+        assert!(metadata.contains("empty: \"~\"\n"));
+        assert!(metadata.contains("revision: \"1.20\"\n"));
     }
 
     #[test]

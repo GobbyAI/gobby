@@ -77,7 +77,8 @@ fn serve_http_responses(
                 "timed out waiting for HTTP fixture request"
             );
             let mut buffer = [0_u8; 1024];
-            let _ = stream.read(&mut buffer);
+            let bytes_read = stream.read(&mut buffer).expect("read HTTP fixture request");
+            assert!(bytes_read > 0, "HTTP fixture request should not be empty");
             let response = format!(
                 "HTTP/1.1 {status}\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()

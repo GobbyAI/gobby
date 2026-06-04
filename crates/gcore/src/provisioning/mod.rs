@@ -150,6 +150,7 @@ pub fn default_database_url(port: u16) -> String {
         user = DEFAULT_POSTGRES_USER,
         password = DEFAULT_POSTGRES_PASSWORD,
         host = DEFAULT_POSTGRES_HOST,
+        port = port,
         db = DEFAULT_POSTGRES_DB
     )
 }

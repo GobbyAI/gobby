@@ -50,7 +50,7 @@ log = "0.4"
 percent-encoding = "2"
 url = "2"
 tempfile = "3"
-calamine = { version = "0.30", optional = true }
+calamine = { version = "0.35", optional = true }
 pdf-extract = { version = "0.10", optional = true }
 pdfium-auto = { version = "0.3", default-features = false, features = ["bundled"], optional = true }
 pdfium-render = { version = "0.8.37", default-features = false, features = ["pdfium_latest", "thread_safe"], optional = true }

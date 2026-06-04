@@ -242,6 +242,28 @@ fn release_gsqz_uses_github_cli_release_creation() {
 }
 
 #[test]
+fn release_gloc_uses_github_cli_release_creation_and_upload() {
+    let workflow = include_str!("../../../.github/workflows/release-gloc.yml");
+
+    assert!(
+        !workflow.contains("softprops/action-gh-release"),
+        "release-gloc.yml should use the GitHub CLI instead of softprops"
+    );
+    assert!(
+        workflow.contains("GH_TOKEN: ${{ github.token }}"),
+        "release-gloc.yml should authenticate gh with github.token"
+    );
+    assert!(
+        workflow.contains(r#"gh release create "$tag" --generate-notes --verify-tag"#),
+        "release-gloc.yml should create generated release notes with tag verification"
+    );
+    assert!(
+        workflow.contains(r#"gh release upload "$tag" "${assets[@]}""#),
+        "release-gloc.yml should upload all generated gloc assets"
+    );
+}
+
+#[test]
 fn release_gwiki_validates_dependencies_without_python_helper() {
     let workflow = include_str!("../../../.github/workflows/release-gwiki.yml");
 
@@ -289,6 +311,16 @@ fn release_workflows_generate_and_upload_archive_checksums() {
                     "assets=({tool}-*.tar.gz {tool}-*.zip {tool}-*.sha256)"
                 )),
                 "release-{tool}.yml should add checksum files to the gh release asset array"
+            );
+        } else if tool == "gloc" {
+            assert!(
+                workflow[checksum_step..]
+                    .contains("assets=(gloc-*.tar.gz gloc-*.zip gloc-*.sha256)"),
+                "release-gloc.yml should add checksum files to the gh release asset array"
+            );
+            assert!(
+                workflow[release_upload..].contains(r#"gh release upload "$tag" "${assets[@]}""#),
+                "release-gloc.yml should upload checksum files with gh release upload"
             );
         } else {
             let release_body = &workflow[release_upload..];

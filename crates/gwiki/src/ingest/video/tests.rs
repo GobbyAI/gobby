@@ -255,9 +255,17 @@ fn video_produces_transcript_and_frames() {
         .documents
         .get(&result.derived_path)
         .expect("derived video document indexed");
-    assert!(document.body.contains("video_frame_image_count: 2"));
-    assert!(document.body.contains("video_frame_description_count: 2"));
-    assert!(document.body.contains("video_transcript_segment_count: 1"));
+    assert!(document.body.contains("video_frame_image_count: \"2\""));
+    assert!(
+        document
+            .body
+            .contains("video_frame_description_count: \"2\"")
+    );
+    assert!(
+        document
+            .body
+            .contains("video_transcript_segment_count: \"1\"")
+    );
     assert!(
         document
             .body
@@ -313,10 +321,18 @@ fn frame_interval_zero_disables_frames() {
         .documents
         .get(&result.derived_path)
         .expect("derived video document indexed");
-    assert!(document.body.contains("video_frame_sample_count: 0"));
-    assert!(document.body.contains("video_frame_image_count: 0"));
-    assert!(document.body.contains("video_frame_description_count: 0"));
-    assert!(document.body.contains("video_transcript_segment_count: 1"));
+    assert!(document.body.contains("video_frame_sample_count: \"0\""));
+    assert!(document.body.contains("video_frame_image_count: \"0\""));
+    assert!(
+        document
+            .body
+            .contains("video_frame_description_count: \"0\"")
+    );
+    assert!(
+        document
+            .body
+            .contains("video_transcript_segment_count: \"1\"")
+    );
     assert!(document.body.contains("No frame samples recorded."));
 }
 
@@ -428,8 +444,8 @@ fn video_long_english_translation_reuses_chunk_branch() {
         .expect("derived video document indexed");
     assert!(document.body.contains("transcription_source_language: es"));
     assert!(document.body.contains("transcription_target_language: en"));
-    assert!(document.body.contains("translated: true"));
-    assert!(document.body.contains("transcription_partial: true"));
+    assert!(document.body.contains("translated: \"true\""));
+    assert!(document.body.contains("transcription_partial: \"true\""));
     assert!(
         document
             .body
@@ -473,7 +489,7 @@ fn production_ingest_applies_degradation_matrix() {
     .expect("no ffmpeg degrades");
     assert_asset_preserved(temp.path(), &no_ffmpeg, b"video bytes");
     let no_ffmpeg_doc = read_derived(temp.path(), &no_ffmpeg);
-    assert!(no_ffmpeg_doc.contains("file_size_bytes: 11"));
+    assert!(no_ffmpeg_doc.contains("file_size_bytes: \"11\""));
     assert!(
         no_ffmpeg_doc.contains("media_degradation: audio:ffmpeg_unavailable")
             || no_ffmpeg_doc.contains("media_degradation: frames:ffmpeg_unavailable")
@@ -603,7 +619,7 @@ fn production_ingest_applies_degradation_matrix() {
         )
         .expect("partial chunk aggregate degrades");
         let partial_doc = read_derived(temp.path(), &partial);
-        assert!(partial_doc.contains("transcription_partial: true"));
+        assert!(partial_doc.contains("transcription_partial: \"true\""));
         assert!(partial_doc.contains("transcription_missing_ranges: 9000-19000"));
         assert!(partial_doc.contains("[00:00:00] completed chunk"));
     }
@@ -824,8 +840,8 @@ fn stores_original_video() {
     assert!(raw.contains("source_kind: video"));
     assert!(raw.contains("source_asset: raw/assets/"));
     assert!(raw.contains("video_mime_type: video/mp4"));
-    assert!(raw.contains("video_duration_seconds: 8"));
-    assert!(raw.contains("video_frame_interval_seconds: 4"));
+    assert!(raw.contains("video_duration_seconds: \"8\""));
+    assert!(raw.contains("video_frame_interval_seconds: \"4\""));
 
     let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
     assert_eq!(manifest.entries.len(), 1);
@@ -894,7 +910,11 @@ fn video_derivatives_keep_provenance() {
     assert!(document.body.contains("source_kind: video"));
     assert!(document.body.contains("source_asset: raw/assets/"));
     assert!(document.body.contains("source_raw: raw/"));
-    assert!(document.body.contains("video_frame_interval_seconds: 4"));
+    assert!(
+        document
+            .body
+            .contains("video_frame_interval_seconds: \"4\"")
+    );
     assert!(document.body.contains("scope_kind: project"));
     assert!(document.body.contains("scope_id: project-123"));
     assert!(document.body.contains("Original video: `raw/assets/"));

@@ -105,9 +105,10 @@ pub(crate) fn action_fingerprint(action: &ResearchAction) -> String {
 
 pub(crate) fn normalize_sources(sources: &[String]) -> Vec<String> {
     let mut normalized = Vec::new();
+    let mut seen = HashSet::new();
     for source in sources {
         let source = source.trim();
-        if source.is_empty() || normalized.iter().any(|existing| existing == source) {
+        if source.is_empty() || !seen.insert(source.to_string()) {
             continue;
         }
         normalized.push(source.to_string());

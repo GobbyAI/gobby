@@ -210,9 +210,9 @@ fn office_html_degradation_uses_uniform_metadata() {
     assert!(
         office_doc
             .body
-            .contains(&format!("file_size_bytes: {}", office_bytes.len()))
+            .contains(&format!("file_size_bytes: \"{}\"", office_bytes.len()))
     );
-    assert!(office_doc.body.contains("sheet_count: 0"));
+    assert!(office_doc.body.contains("sheet_count: \"0\""));
 
     let html_bytes = b"<html><head></head><body><script>drop()</script></body></html>".to_vec();
     let html = ingest_sample(
@@ -234,9 +234,9 @@ fn office_html_degradation_uses_uniform_metadata() {
     assert!(
         html_doc
             .body
-            .contains(&format!("file_size_bytes: {}", html_bytes.len()))
+            .contains(&format!("file_size_bytes: \"{}\"", html_bytes.len()))
     );
-    assert!(html_doc.body.contains("page_count: 1"));
+    assert!(html_doc.body.contains("page_count: \"1\""));
 }
 
 #[test]

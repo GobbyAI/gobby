@@ -241,7 +241,16 @@ pub(crate) fn mermaid_label(module: &str) -> String {
     if module.is_empty() {
         "repo".to_string()
     } else {
-        module.replace('\\', "\\\\").replace('"', "\\\"")
+        module
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('[', "&#91;")
+            .replace(']', "&#93;")
+            .replace('(', "&#40;")
+            .replace(')', "&#41;")
+            .replace('{', "&#123;")
+            .replace('}', "&#125;")
+            .replace('|', "&#124;")
     }
 }
 

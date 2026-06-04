@@ -4,13 +4,13 @@ use std::collections::HashMap;
 use std::sync::MutexGuard;
 
 struct EnvGuard {
-    _lock: MutexGuard<'static, ()>,
+    lock: MutexGuard<'static, ()>,
 }
 
 impl EnvGuard {
     fn new() -> Self {
         let guard = Self {
-            _lock: TEST_ENV_LOCK
+            lock: TEST_ENV_LOCK
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner()),
         };
@@ -19,6 +19,7 @@ impl EnvGuard {
     }
 
     fn clear(&self) {
+        let _held_env_lock = &self.lock;
         for key in [
             "GOBBY_FALKORDB_HOST",
             "GOBBY_FALKORDB_PORT",
@@ -41,6 +42,7 @@ impl EnvGuard {
     }
 
     fn set(&self, key: &str, value: &str) {
+        let _held_env_lock = &self.lock;
         unsafe { std::env::set_var(key, value) };
     }
 }

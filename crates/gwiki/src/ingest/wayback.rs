@@ -362,7 +362,7 @@ mod tests {
         assert!(raw.contains(
             "capture_url: https://web.archive.org/web/20260529123456/https://example.com/research"
         ));
-        assert!(raw.contains("capture_timestamp: 20260529123456"));
+        assert!(raw.contains("capture_timestamp: \"20260529123456\""));
         assert!(raw.contains("fetched_at: 2026-05-29T18:10:00Z"));
         assert!(raw.contains("Archived & decoded page body."));
         assert!(!raw.contains("ignore()"));

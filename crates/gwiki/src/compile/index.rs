@@ -50,12 +50,6 @@ pub(crate) fn update_wiki_index(
     };
 
     let link = wiki_link(vault_root, &article.path, &article.title);
-    if !has_compiled_pages_heading(&index) {
-        if !index.ends_with('\n') {
-            index.push('\n');
-        }
-        index.push_str("\n## Compiled pages\n\n");
-    }
     if !has_compiled_page_link(&index, &link) {
         insert_compiled_page_link(&mut index, &link)?;
     }
@@ -70,6 +64,16 @@ pub(crate) fn update_wiki_index(
 
 pub(super) fn insert_compiled_page_link(index: &mut String, link: &str) -> Result<(), WikiError> {
     let heading = "## Compiled pages";
+    if !has_compiled_pages_heading(index) {
+        if !index.is_empty() {
+            if !index.ends_with('\n') {
+                index.push('\n');
+            }
+            index.push('\n');
+        }
+        index.push_str(heading);
+        index.push_str("\n\n");
+    }
     let section_body_start = exact_line_end(index, heading).ok_or_else(|| WikiError::Config {
         detail: "wiki index is missing ## Compiled pages heading".to_string(),
     })?;
@@ -280,5 +284,20 @@ fn lock_file(lock: &fs::File, lock_path: &Path, action: &'static str) -> Result<
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn insert_compiled_page_link_creates_missing_section() {
+        let mut index = "# Wiki Index\n\n## Notes\n\n- [[Existing]]\n".to_string();
+
+        insert_compiled_page_link(&mut index, "[[Compiled/Page]]").expect("insert link");
+
+        assert!(index.contains("## Compiled pages\n\n- [[Compiled/Page]]\n"));
+        assert!(index.contains("## Notes\n\n- [[Existing]]"));
     }
 }

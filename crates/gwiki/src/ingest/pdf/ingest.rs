@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use crate::ScopeIdentity;
 use crate::WikiError;
@@ -149,6 +150,7 @@ fn ingest_pages_with_vision_inner(
     mut degradations: Vec<DocumentDegradation>,
 ) -> Result<IngestResult, WikiError> {
     let title = markdown_title(&snapshot.file_name);
+    let previous_manifest = SourceManifest::read(vault_root)?;
     let draft = SourceDraft {
         location: snapshot.location.clone(),
         kind: SourceKind::Pdf,
@@ -161,7 +163,12 @@ fn ingest_pages_with_vision_inner(
         compile_status: CompileStatus::Pending,
     };
     let record = SourceManifest::register(vault_root, draft)?;
-    let asset_path = write_asset(vault_root, &record, &snapshot.file_name, &snapshot.bytes)?;
+    let asset_path = match write_asset(vault_root, &record, &snapshot.file_name, &snapshot.bytes) {
+        Ok(asset_path) => asset_path,
+        Err(error) => {
+            return rollback_registered_pdf_source(vault_root, &previous_manifest, None, error);
+        }
+    };
     if snapshot
         .pages
         .iter()
@@ -190,11 +197,64 @@ fn ingest_pages_with_vision_inner(
         &pages,
         &summary,
     );
-    let raw_path = write_raw_markdown(vault_root, &record, &markdown)?;
+    let raw_path = match write_raw_markdown(vault_root, &record, &markdown) {
+        Ok(raw_path) => raw_path,
+        Err(error) => {
+            return rollback_registered_pdf_source(
+                vault_root,
+                &previous_manifest,
+                Some(&asset_path),
+                error,
+            );
+        }
+    };
 
     Ok(IngestResult {
         record,
         raw_path,
         asset_path: Some(asset_path),
     })
+}
+
+fn rollback_registered_pdf_source<T>(
+    vault_root: &Path,
+    previous_manifest: &SourceManifest,
+    asset_path: Option<&PathBuf>,
+    original_error: WikiError,
+) -> Result<T, WikiError> {
+    let mut cleanup_errors = Vec::new();
+    if let Some(asset_path) = asset_path {
+        cleanup_pdf_file(vault_root, asset_path, &mut cleanup_errors);
+    }
+    if let Err(rollback_error) = previous_manifest.write(vault_root) {
+        return Err(WikiError::Config {
+            detail: format!(
+                "failed to roll back source manifest after PDF ingest failure: {rollback_error}; original error: {original_error}{}",
+                pdf_cleanup_detail(&cleanup_errors)
+            ),
+        });
+    }
+    if cleanup_errors.is_empty() {
+        return Err(original_error);
+    }
+    Err(WikiError::Config {
+        detail: format!("{original_error}{}", pdf_cleanup_detail(&cleanup_errors)),
+    })
+}
+
+fn cleanup_pdf_file(vault_root: &Path, relative_path: &Path, cleanup_errors: &mut Vec<String>) {
+    let path = vault_root.join(relative_path);
+    match fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => cleanup_errors.push(format!("{}: {error}", path.display())),
+    }
+}
+
+fn pdf_cleanup_detail(cleanup_errors: &[String]) -> String {
+    if cleanup_errors.is_empty() {
+        String::new()
+    } else {
+        format!("; cleanup failures: {}", cleanup_errors.join("; "))
+    }
 }

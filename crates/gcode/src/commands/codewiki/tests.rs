@@ -127,15 +127,17 @@ fn clusters_modules_from_graph() {
 #[test]
 fn file_root_detection_breaks_parent_cycles() {
     let mut parents = HashMap::from([
+        ("c.rs".to_string(), "b.rs".to_string()),
         ("b.rs".to_string(), "a.rs".to_string()),
         ("a.rs".to_string(), "b.rs".to_string()),
     ]);
 
-    let root = find_file_root(&mut parents, "a.rs");
+    let root = find_file_root(&mut parents, "c.rs");
 
     assert_eq!(root, "a.rs");
     assert_eq!(parents.get("a.rs").map(String::as_str), Some("a.rs"));
     assert_eq!(parents.get("b.rs").map(String::as_str), Some("a.rs"));
+    assert_eq!(parents.get("c.rs").map(String::as_str), Some("a.rs"));
 }
 
 #[test]
@@ -149,6 +151,76 @@ fn module_depth_counts_only_non_empty_segments() {
     assert_eq!(module_depth("/"), 0);
     assert_eq!(module_depth("src"), 1);
     assert_eq!(module_depth("src/commands/"), 2);
+}
+
+#[test]
+fn core_file_filter_excludes_specs_mocks_and_test_prefixes() {
+    for file in [
+        "src/test_parser.rs",
+        "src/parser_spec.rs",
+        "src/parser.spec.rs",
+        "src/__mocks__/client.rs",
+        "src/mocks/client.rs",
+    ] {
+        assert!(!is_core_file(file), "{file} should be filtered out");
+    }
+
+    assert!(is_core_file("src/parser.rs"));
+}
+
+#[test]
+fn import_targets_match_exact_path_or_module_components() {
+    let files = vec![
+        "src/domain/service.rs".to_string(),
+        "src/domain/service_extra.rs".to_string(),
+        "src/domain_extra/service.rs".to_string(),
+        "crates/app/src/domain/mod.rs".to_string(),
+        "crates/app/src/application/use_case.rs".to_string(),
+    ];
+
+    assert_eq!(
+        files_for_import_target(&files, "domain.service"),
+        vec!["src/domain/service.rs"]
+    );
+    assert_eq!(
+        files_for_import_target(&files, "domain"),
+        vec![
+            "src/domain/service.rs",
+            "src/domain/service_extra.rs",
+            "crates/app/src/domain/mod.rs"
+        ]
+    );
+    assert!(files_for_import_target(&files, "main.service").is_empty());
+}
+
+#[test]
+fn mermaid_labels_escape_label_metacharacters() {
+    let files = vec![
+        FileDoc {
+            path: "src/api.rs".to_string(),
+            module: "src/api[edge]".to_string(),
+            summary: String::new(),
+            source_spans: Vec::new(),
+            symbols: Vec::new(),
+            component_ids: vec!["api".to_string()],
+        },
+        FileDoc {
+            path: "src/domain.rs".to_string(),
+            module: "src/domain{core}|v1".to_string(),
+            summary: String::new(),
+            source_spans: Vec::new(),
+            symbols: Vec::new(),
+            component_ids: vec!["domain".to_string()],
+        },
+    ];
+    let graph = vec![CodewikiGraphEdge::import("api", "domain")];
+
+    let diagram = render_module_dependency_mermaid("src/api[edge]", &files, &graph)
+        .expect("dependency diagram");
+
+    assert!(diagram.contains("src/api&#91;edge&#93;"));
+    assert!(diagram.contains("src/domain&#123;core&#125;&#124;v1"));
+    assert!(!diagram.contains("src/api[edge]"));
 }
 
 #[test]

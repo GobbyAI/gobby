@@ -14,7 +14,7 @@ use super::types::{DEFAULT_PDF_RENDER_DPI, PdfPage, PdfRenderedPage, PdfSnapshot
 use super::{PdfMarkdownSummary, PdfPageMarkdown};
 use crate::ScopeIdentity;
 use crate::WikiError;
-use crate::sources::{SourceKind, SourceManifest};
+use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
 use crate::store::MemoryWikiStore;
 use crate::vision::{VisionClient, VisionEndpoint, VisionExtraction, VisionRequest};
 
@@ -124,9 +124,9 @@ fn combines_text_layer_and_vision() {
 
     let raw =
         std::fs::read_to_string(temp.path().join(&result.raw_path)).expect("raw markdown written");
-    assert!(raw.contains("page_count: 2"));
-    assert!(raw.contains("has_text_layer: true"));
-    assert!(raw.contains("vision_used: true"));
+    assert!(raw.contains("page_count: \"2\""));
+    assert!(raw.contains("has_text_layer: \"true\""));
+    assert!(raw.contains("vision_used: \"true\""));
     assert!(raw.contains("model: vision-test"));
     assert!(raw.contains("First page fact."));
     assert!(raw.contains("Chart label: Growth"));
@@ -231,6 +231,64 @@ fn pdf_ingest_preserves_page_refs() {
 }
 
 #[test]
+fn pdf_ingest_rolls_back_manifest_and_asset_when_raw_write_fails() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let predictor = tempfile::tempdir().expect("predictor tempdir");
+    let bytes = b"%PDF-1.7\nsource bytes\n%%EOF\n".to_vec();
+    let location = "/tmp/guide.pdf".to_string();
+    let file_name = "guide.pdf".to_string();
+    let fetched_at = fetched_at("2026-05-29T16:30:00Z");
+    let predicted = SourceManifest::register(
+        predictor.path(),
+        SourceDraft {
+            location: location.clone(),
+            kind: SourceKind::Pdf,
+            fetched_at: fetched_at.to_rfc3339(),
+            content: bytes.clone(),
+            title: Some(file_name.clone()),
+            citation: Some(location.clone()),
+            license: None,
+            ingestion_method: IngestionMethod::Manual,
+            compile_status: CompileStatus::Pending,
+        },
+    )
+    .expect("predict source record");
+    let conflicting_raw = temp.path().join("raw").join(format!("{}.md", predicted.id));
+    std::fs::create_dir_all(conflicting_raw.parent().expect("raw parent")).expect("create raw dir");
+    std::fs::write(&conflicting_raw, b"pre-existing raw").expect("write raw conflict");
+    let snapshot = PdfSnapshot {
+        location,
+        file_name,
+        fetched_at,
+        bytes,
+        pages: vec![PdfPage {
+            number: 1,
+            text: "First page fact.".to_string(),
+        }],
+    };
+    let mut store = MemoryWikiStore::default();
+
+    ingest_pages(temp.path(), &mut store, &ScopeIdentity::global(), snapshot)
+        .expect_err("raw write conflict should fail ingest");
+
+    let manifest = SourceManifest::read(temp.path()).expect("read manifest after rollback");
+    assert!(manifest.entries.is_empty());
+    assert_eq!(
+        std::fs::read(&conflicting_raw).expect("raw conflict should remain"),
+        b"pre-existing raw"
+    );
+    let assets_dir = temp.path().join("raw/assets");
+    if assets_dir.exists() {
+        assert_eq!(
+            std::fs::read_dir(assets_dir)
+                .expect("read assets dir")
+                .count(),
+            0
+        );
+    }
+}
+
+#[test]
 fn pdf_page_body_sanitizes_internal_markers_and_fences() {
     let snapshot = PdfSnapshot {
         location: "/tmp/report.pdf".to_string(),
@@ -321,8 +379,8 @@ fn pdf_degradation_uses_uniform_metadata() {
     assert!(raw.contains("media_degradation: pdf_vision_error"));
     assert!(raw.contains("## Document Degradation"));
     assert!(raw.contains("pdf_vision_error"));
-    assert!(raw.contains("file_size_bytes: 28"));
-    assert!(raw.contains("page_count: 1"));
+    assert!(raw.contains("file_size_bytes: \"28\""));
+    assert!(raw.contains("page_count: \"1\""));
     assert!(raw.contains("No extractable page text."));
 
     let asset_path = result.asset_path.expect("pdf asset path");
@@ -379,8 +437,8 @@ fn pdf_degradation_uses_uniform_metadata() {
     let raw =
         std::fs::read_to_string(temp.path().join(&result.raw_path)).expect("raw markdown written");
     assert!(raw.contains("media_degradation: pdf_no_extractable_content"));
-    assert!(raw.contains("file_size_bytes: 10"));
-    assert!(raw.contains("page_count: 0"));
+    assert!(raw.contains("file_size_bytes: \"10\""));
+    assert!(raw.contains("page_count: \"0\""));
 }
 
 #[cfg(feature = "documents")]

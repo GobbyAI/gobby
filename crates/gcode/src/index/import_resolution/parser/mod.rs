@@ -148,8 +148,7 @@ pub(crate) fn resolve_external_callee(
     }
 
     let qualifier_path = qualifier_path?;
-    if qualifier_path.starts_with('\\') {
-        let module = qualifier_path.trim_start_matches('\\');
+    if let Some(module) = qualifier_path.strip_prefix('\\') {
         if module.is_empty() {
             return None;
         }

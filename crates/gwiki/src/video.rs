@@ -877,8 +877,8 @@ mod tests {
         .expect("write degradation metadata doc");
 
         let document = std::fs::read_to_string(temp.path().join(result.path)).expect("read doc");
-        assert!(document.contains("file_size_bytes: 42"));
-        assert!(document.contains("duration_seconds: 13"));
+        assert!(document.contains("file_size_bytes: \"42\""));
+        assert!(document.contains("duration_seconds: \"13\""));
         assert!(document.contains("media_degradation: media:ffmpeg_unavailable"));
         assert!(document.contains("ffmpeg was not found"));
     }

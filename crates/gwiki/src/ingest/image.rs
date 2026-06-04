@@ -295,8 +295,8 @@ mod tests {
         assert_eq!(document.kind, WikiDocumentKind::SourceNote);
         assert!(document.body.contains("scope_kind: project"));
         assert!(document.body.contains("scope_id: project-123"));
-        assert!(document.body.contains("image_width: 640"));
-        assert!(document.body.contains("image_height: 480"));
+        assert!(document.body.contains("image_width: \"640\""));
+        assert!(document.body.contains("image_height: \"480\""));
         assert!(store.sources.contains_key(&result.derived_path));
     }
 

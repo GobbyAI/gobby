@@ -1,13 +1,13 @@
-#[cfg(feature = "http")]
+#[cfg(feature = "local-backend")]
 use std::io::{self, Read, Write};
-#[cfg(feature = "http")]
+#[cfg(feature = "local-backend")]
 use std::net::{TcpStream, ToSocketAddrs};
-#[cfg(feature = "http")]
+#[cfg(feature = "local-backend")]
 use std::time::Duration;
 
 use serde::Deserialize;
 
-#[cfg(feature = "http")]
+#[cfg(feature = "local-backend")]
 const MAX_PROBE_RESPONSE_BYTES: usize = 1024;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -66,7 +66,7 @@ pub fn backend_api_base(backend: &Backend) -> String {
 }
 
 /// Probe backends in order, return the first that responds successfully.
-#[cfg(feature = "http")]
+#[cfg(feature = "local-backend")]
 pub fn detect_backend(backends: &[Backend], timeout_ms: u64) -> Option<Backend> {
     for backend in backends {
         if validate_backend(backend, timeout_ms) {
@@ -77,7 +77,7 @@ pub fn detect_backend(backends: &[Backend], timeout_ms: u64) -> Option<Backend> 
 }
 
 /// Validate that a specific backend is reachable.
-#[cfg(feature = "http")]
+#[cfg(feature = "local-backend")]
 pub fn validate_backend(backend: &Backend, timeout_ms: u64) -> bool {
     let timeout = Duration::from_millis(timeout_ms);
     let url = backend_probe_url(backend);
@@ -113,7 +113,7 @@ pub fn validate_backend(backend: &Backend, timeout_ms: u64) -> bool {
     }
 }
 
-#[cfg(feature = "http")]
+#[cfg(feature = "local-backend")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HttpProbeTarget {
     host: String,
@@ -121,7 +121,7 @@ struct HttpProbeTarget {
     path: String,
 }
 
-#[cfg(feature = "http")]
+#[cfg(feature = "local-backend")]
 impl HttpProbeTarget {
     fn parse(url: &str) -> Option<Self> {
         let rest = url.strip_prefix("http://")?;
@@ -153,7 +153,7 @@ impl HttpProbeTarget {
     }
 }
 
-#[cfg(feature = "http")]
+#[cfg(feature = "local-backend")]
 fn parse_http_authority(authority: &str) -> Option<(String, u16)> {
     if authority.is_empty() || authority.contains('@') {
         return None;
@@ -182,7 +182,7 @@ fn parse_http_authority(authority: &str) -> Option<(String, u16)> {
     }
 }
 
-#[cfg(feature = "http")]
+#[cfg(feature = "local-backend")]
 fn send_probe_request(
     target: &HttpProbeTarget,
     auth_token: &str,
@@ -236,7 +236,7 @@ fn send_probe_request(
     parse_http_status(&response)
 }
 
-#[cfg(feature = "http")]
+#[cfg(feature = "local-backend")]
 fn parse_http_status(response: &[u8]) -> io::Result<u16> {
     let response = String::from_utf8_lossy(response);
     response
@@ -247,7 +247,7 @@ fn parse_http_status(response: &[u8]) -> io::Result<u16> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing HTTP status"))
 }
 
-#[cfg(feature = "http")]
+#[cfg(feature = "local-backend")]
 fn backend_probe_url(backend: &Backend) -> String {
     let base = backend.url.trim_end_matches('/');
     let probe = backend.probe.trim_start_matches('/');
@@ -271,7 +271,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "http")]
+    #[cfg(feature = "local-backend")]
     mod http {
         use super::*;
         use std::io::{Read, Write};

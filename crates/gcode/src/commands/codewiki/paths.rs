@@ -51,8 +51,17 @@ pub(crate) fn is_core_file(file: &str) -> bool {
         || lower.ends_with(".gen.rs")
         || lower.contains(".test.")
         || lower.contains(".spec.")
+        || lower.ends_with("_spec.rs")
+        || lower.ends_with(".spec.rs")
         || lower.ends_with("_test.rs")
         || lower.ends_with("_tests.rs")
+    {
+        return false;
+    }
+    if Path::new(file)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.to_ascii_lowercase().starts_with("test_"))
     {
         return false;
     }
@@ -63,6 +72,8 @@ pub(crate) fn is_core_file(file: &str) -> bool {
             "test"
                 | "tests"
                 | "__tests__"
+                | "__mocks__"
+                | "mocks"
                 | "spec"
                 | "specs"
                 | "fixture"
