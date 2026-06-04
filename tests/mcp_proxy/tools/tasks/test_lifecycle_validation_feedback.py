@@ -170,6 +170,17 @@ def test_quoted_failure_examples_do_not_admit_failure() -> None:
     assert feedback_admits_required_validation_failure(feedback) is False
 
 
+def test_api_validation_error_description_does_not_admit_failure() -> None:
+    feedback = (
+        "All acceptance criteria are satisfied. Non-audit API and MCP research requests "
+        "now return a validation error without query, while audit requests remain queryless."
+    )
+
+    assert matched_successful_validation_pattern(feedback) is not None
+    assert matched_required_validation_failure_pattern(feedback) is None
+    assert feedback_admits_required_validation_failure(feedback) is False
+
+
 @pytest.mark.parametrize(
     "feedback",
     [

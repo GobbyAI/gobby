@@ -163,7 +163,7 @@ class GwikiGateway:
     async def compile(self, output: str | Path | None = None) -> dict[str, Any]:
         args = ["compile"]
         if output is not None:
-            args.extend(["--output", str(output)])
+            args.extend(["--target", str(output)])
         return await self._run_json("compile", args)
 
     async def audit(self) -> dict[str, Any]:

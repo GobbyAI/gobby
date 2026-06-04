@@ -80,8 +80,8 @@ _VALIDATION_GATE_THEN_ERRORS_REMAIN_RE = re.compile(
 )
 _VALIDATION_ERRORS_REMAIN_RE = re.compile(
     # Example: "Validation errors remain in the package."
-    r"\b(?:validation|verification)\s+errors?\b.{0,40}"
-    r"\b(?:remain|remaining|unresolved)\b",
+    r"\b(?:validation|verification)\s+errors?\s+"
+    r"(?:remain|remaining|(?:are|is)\s+unresolved|unresolved)\b",
     _FAILURE_FEEDBACK_FLAGS,
 )
 _ERRORS_REMAIN_THEN_VALIDATION_GATE_RE = re.compile(
