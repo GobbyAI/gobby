@@ -68,6 +68,8 @@ def create_wiki_research_handler(
 ) -> CronHandler:
     async def research_handler(job: CronJob) -> str:
         query = _string_or_none(job.action_config.get("query"))
+        if query is None:
+            raise ValueError("Wiki research cron jobs require action_config.query")
         result = await gateway.research(
             query,
             ai=_string_or_none(job.action_config.get("ai")) or DEFAULT_RESEARCH_AI,
@@ -161,7 +163,7 @@ def register_wiki_cron_jobs(
         gateway = _create_gateway(scope, db, gateway_factory)
         coordinator = WikiUpdateCoordinator(gateway)
 
-        for command, purpose, interval, handler in (
+        for command, purpose, interval, handler, ensure_system_job in (
             (
                 "research",
                 "Nightly wiki research",
@@ -171,6 +173,7 @@ def register_wiki_cron_jobs(
                     coordinator=coordinator,
                     scope=scope,
                 ),
+                False,
             ),
             (
                 "refresh",
@@ -181,12 +184,14 @@ def register_wiki_cron_jobs(
                     coordinator=coordinator,
                     scope=scope,
                 ),
+                True,
             ),
             (
                 "health",
                 "Scheduled wiki health checks",
                 WIKI_HEALTH_INTERVAL_SECONDS,
                 create_wiki_health_handler(gateway=gateway, scope=scope),
+                True,
             ),
             (
                 "audit",
@@ -197,19 +202,23 @@ def register_wiki_cron_jobs(
                     coordinator=coordinator,
                     scope=scope,
                 ),
+                True,
             ),
         ):
             handler_name = wiki_handler_name(command, scope)
             cron_executor.register_handler(handler_name, handler)
-            _ensure_wiki_cron_job(
-                cron_storage=cron_storage,
-                project_id=project_id,
-                command=command,
-                scope=scope,
-                handler_name=handler_name,
-                purpose=purpose,
-                interval_seconds=interval,
-            )
+            if ensure_system_job:
+                _ensure_wiki_cron_job(
+                    cron_storage=cron_storage,
+                    project_id=project_id,
+                    command=command,
+                    scope=scope,
+                    handler_name=handler_name,
+                    purpose=purpose,
+                    interval_seconds=interval,
+                )
+            else:
+                _retire_queryless_system_research_job(cron_storage, scope)
             registered += 1
 
     return registered
@@ -307,6 +316,22 @@ def _ensure_wiki_cron_job(
             schedule_type="interval",
             interval_seconds=interval_seconds,
         )
+
+
+def _retire_queryless_system_research_job(
+    cron_storage: CronJobStorage,
+    scope: str,
+) -> None:
+    existing = cron_storage.get_job_by_name(wiki_job_name("research", scope))
+    if existing is None or not existing.is_system:
+        return
+    if _string_or_none(existing.action_config.get("query")) is not None:
+        return
+    cron_storage.reconcile_system_job_identity(
+        existing.id,
+        enabled=False,
+        next_run_at=None,
+    )
 
 
 def _configured_scopes(scopes: Iterable[str] | None, project_id: str) -> list[str]:

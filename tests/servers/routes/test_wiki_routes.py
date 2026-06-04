@@ -121,8 +121,8 @@ class FakeGateway:
             "collect", payload={"command": "collect", "changed_paths": ["raw/a.md"]}
         )
 
-    async def research(self, query: str | None = None) -> dict[str, Any]:
-        self.calls.append(("research", query))
+    async def research(self, query: str | None = None, *, audit: bool = False) -> dict[str, Any]:
+        self.calls.append(("research", {"query": query, "audit": audit}))
         return self._result(
             "research", payload={"command": "research", "changed_paths": ["raw/r.md"]}
         )
@@ -476,6 +476,16 @@ def test_write_routes_trigger_index(client: TestClient) -> None:
     assert response.status_code == 200
     assert response.json()["index_handoff"]["status"] == "indexed"
     assert FakeGateway.instances[-1].index_calls == 1
+
+
+def test_research_route_requires_query_unless_audit(client: TestClient) -> None:
+    missing_query = client.post("/api/wiki/research", json={})
+    audit = client.post("/api/wiki/research", json={"audit": True})
+
+    assert missing_query.status_code == 400
+    assert missing_query.json()["detail"] == "query is required unless audit is true"
+    assert audit.status_code == 200
+    assert FakeGateway.instances[-1].calls[0] == ("research", {"query": None, "audit": True})
 
 
 def test_write_routes_delegate_to_coordinator(

@@ -11,7 +11,6 @@ from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
 from gobby.storage.projects import LocalProjectManager
 from gobby.wiki.scheduled_jobs import (
-    WIKI_RESEARCH_INTERVAL_SECONDS,
     configured_wiki_cron_scopes,
     create_wiki_audit_handler,
     create_wiki_health_handler,
@@ -122,7 +121,12 @@ def _result(command: str, payload: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "command": command, "payload": payload, "stderr": ""}
 
 
-def _job(command: str, scope: str = "project:alpha") -> CronJob:
+def _job(
+    command: str,
+    scope: str = "project:alpha",
+    action_config: dict[str, Any] | None = None,
+) -> CronJob:
+    config = {"handler": f"wiki:{command}:{scope}", "scope": scope, **(action_config or {})}
     return CronJob(
         id=f"job-{command}",
         project_id=PROJECT_ID,
@@ -131,7 +135,7 @@ def _job(command: str, scope: str = "project:alpha") -> CronJob:
         schedule_type="interval",
         interval_seconds=3600,
         action_type="handler",
-        action_config={"handler": f"wiki:{command}:{scope}", "scope": scope},
+        action_config=config,
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:00+00:00",
     )
@@ -201,10 +205,12 @@ async def test_scheduled_jobs_use_gateway() -> None:
     ]
 
     for command, handler in handlers:
-        output = json.loads(await handler(_job(command)))
+        action_config = {"query": "Find stale wiki gaps"} if command == "research" else None
+        output = json.loads(await handler(_job(command, action_config=action_config)))
         assert output["command"] == command
 
     assert [call[0] for call in gateway.calls] == ["research", "refresh", "health", "research"]
+    assert gateway.calls[0][1]["query"] == "Find stale wiki gaps"
     assert gateway.calls[0][1]["ai"] == "daemon"
     assert gateway.calls[-1][1]["audit"] is True
     assert gateway.calls[-1][1]["ai"] == "daemon"
@@ -243,14 +249,85 @@ def test_wiki_cron_handlers_registered(cron_storage: CronJobStorage, project_id:
         "gobby:wiki-audit:project:alpha",
         "gobby:wiki-health:project:alpha",
         "gobby:wiki-refresh:project:alpha",
-        "gobby:wiki-research:project:alpha",
     ]
     assert all(job.action_type == "handler" for job in jobs)
     assert all(job.is_system for job in jobs)
-    assert WIKI_RESEARCH_INTERVAL_SECONDS == 24 * 60 * 60
-    research_job = cron_storage.get_job_by_name("gobby:wiki-research:project:alpha")
-    assert research_job is not None
-    assert research_job.interval_seconds == WIKI_RESEARCH_INTERVAL_SECONDS
+    assert cron_storage.get_job_by_name("gobby:wiki-research:project:alpha") is None
+
+
+def test_queryless_system_research_jobs_are_retired(
+    cron_storage: CronJobStorage,
+    project_id: str,
+) -> None:
+    existing = cron_storage.create_job(
+        project_id=project_id,
+        name="gobby:wiki-research:project:alpha",
+        description="legacy default research",
+        schedule_type="interval",
+        interval_seconds=3600,
+        action_type="handler",
+        action_config={"handler": "wiki:research:project:alpha", "scope": "project:alpha"},
+        enabled=True,
+        is_system=True,
+    )
+    assert existing.next_run_at is not None
+
+    for _ in range(2):
+        register_wiki_cron_jobs(
+            cron_storage=cron_storage,
+            cron_executor=RecordingExecutor(handlers={}),
+            project_id=project_id,
+            scopes=["project:alpha"],
+            gateway_factory=lambda _scope: RecordingGateway(),
+        )
+
+    retired = cron_storage.get_job(existing.id)
+    assert retired is not None
+    assert retired.enabled is False
+    assert retired.next_run_at is None
+
+
+@pytest.mark.asyncio
+async def test_query_backed_research_jobs_are_preserved_and_routed(
+    cron_storage: CronJobStorage,
+    project_id: str,
+) -> None:
+    query_job = cron_storage.create_job(
+        project_id=project_id,
+        name="gobby:wiki-research:project:alpha",
+        description="explicit research",
+        schedule_type="interval",
+        interval_seconds=3600,
+        action_type="handler",
+        action_config={
+            "handler": "wiki:research:project:alpha",
+            "scope": "project:alpha",
+            "query": "Fill citation gaps",
+        },
+        enabled=True,
+        is_system=False,
+    )
+    gateway = RecordingGateway()
+    executor = RecordingExecutor(handlers={})
+
+    register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=executor,
+        project_id=project_id,
+        scopes=["project:alpha"],
+        gateway_factory=lambda _scope: gateway,
+    )
+
+    preserved = cron_storage.get_job(query_job.id)
+    assert preserved is not None
+    assert preserved.enabled is True
+    assert preserved.action_config["query"] == "Fill citation gaps"
+
+    output = json.loads(await executor.handlers["wiki:research:project:alpha"](preserved))
+
+    assert gateway.calls[0][1]["query"] == "Fill citation gaps"
+    assert gateway.calls[0][1]["ai"] == "daemon"
+    assert output["command"] == "research"
 
 
 def test_default_wiki_cron_scope_resolves_project_root(
@@ -276,7 +353,6 @@ def test_default_wiki_cron_scope_resolves_project_root(
         f"gobby:wiki-audit:project:{project_id}",
         f"gobby:wiki-health:project:{project_id}",
         f"gobby:wiki-refresh:project:{project_id}",
-        f"gobby:wiki-research:project:{project_id}",
     ]
 
 
@@ -333,7 +409,10 @@ def test_wiki_cron_registration_reconciles_bare_uuid_rows(
     assert disabled_refresh.next_run_at is None
     assert cron_storage.get_job(canonical_refresh.id) is not None
     assert cron_storage.get_job_by_name(f"gobby:wiki-research:{project_id}") is None
-    assert cron_storage.get_job_by_name(f"gobby:wiki-research:project:{project_id}") is not None
+    retired_research = cron_storage.get_job_by_name(f"gobby:wiki-research:project:{project_id}")
+    assert retired_research is not None
+    assert retired_research.enabled is False
+    assert retired_research.next_run_at is None
 
 
 @pytest.mark.asyncio
@@ -367,13 +446,15 @@ async def test_research_job_routes_write_result_through_coordinator() -> None:
         scope="project:alpha",
     )
 
-    output = json.loads(await handler(_job("research")))
+    output = json.loads(
+        await handler(_job("research", action_config={"query": "Fill citation gaps"}))
+    )
 
     assert gateway.calls == [
         (
             "research",
             {
-                "query": None,
+                "query": "Fill citation gaps",
                 "audit": False,
                 "source_constraints": None,
                 "max_steps": None,
@@ -387,6 +468,21 @@ async def test_research_job_routes_write_result_through_coordinator() -> None:
     assert len(coordinator.results) == 1
     assert coordinator.results[0]["payload"] == {"status": "completed", "items": 2}
     assert output["result"]["index_handoff"] == {"status": "completed"}
+
+
+@pytest.mark.asyncio
+async def test_queryless_research_job_fails_before_gateway_call() -> None:
+    gateway = RecordingGateway()
+    handler = create_wiki_research_handler(
+        gateway=gateway,
+        coordinator=RecordingCoordinator(),
+        scope="project:alpha",
+    )
+
+    with pytest.raises(ValueError, match="action_config.query"):
+        await handler(_job("research"))
+
+    assert gateway.calls == []
 
 
 @pytest.mark.asyncio

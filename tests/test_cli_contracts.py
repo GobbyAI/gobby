@@ -378,6 +378,39 @@ async def test_wiki_research_mcp_routes_d5_options_to_gateway() -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.asyncio
+async def test_wiki_research_mcp_requires_query_unless_audit() -> None:
+    registry = create_wiki_registry(
+        db=None,
+        gateway_cls=RecordingResearchGateway,
+        update_coordinator_cls=RecordingResearchCoordinator,
+    )
+
+    missing_query = await registry.call("wiki_research", {})
+    audit = await registry.call("wiki_research", {"audit": True})
+
+    gateway = RecordingResearchGateway.instances[-1]
+    assert missing_query == {
+        "success": False,
+        "ok": False,
+        "error": "query is required unless audit is true",
+    }
+    assert gateway.calls == [
+        {
+            "query": None,
+            "audit": True,
+            "source_constraints": [],
+            "max_steps": None,
+            "max_tokens": None,
+            "max_sources": None,
+            "ai": "daemon",
+            "require_ai": False,
+        }
+    ]
+    assert audit["success"] is True
+
+
+@pytest.mark.unit
 def test_gwiki_contract_documents_daemon_parsed_keys() -> None:
     contract = _contract("gwiki")
 
