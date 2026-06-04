@@ -40,6 +40,7 @@ fn generates_hierarchical_docs() {
 
 #[test]
 fn inline_code_uses_commonmark_backtick_delimiters() {
+    assert_eq!(inline_code(""), "``");
     assert_eq!(inline_code("plain"), "`plain`");
     assert_eq!(inline_code("a`b"), "``a`b``");
     assert_eq!(inline_code("a``b"), "```a``b```");

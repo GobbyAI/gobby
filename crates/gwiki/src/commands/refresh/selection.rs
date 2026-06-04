@@ -7,9 +7,10 @@ pub(crate) fn select_sources(entries: &[SourceRecord], source_ids: &[String]) ->
         let mut failed = Vec::new();
         for record in entries {
             match replay_kind(record) {
-                Ok(_) => {
-                    planned.push(RefreshPlan::from_record(record));
-                }
+                Ok(_) => match RefreshPlan::from_record(record) {
+                    Ok(plan) => planned.push(plan),
+                    Err(error) => failed.push(refresh_plan_failure(record, error)),
+                },
                 Err(SelectionFailure::MissingReplayMetadata) => {
                     failed.push(selection_failure(
                         record,
@@ -55,7 +56,10 @@ pub(crate) fn select_sources(entries: &[SourceRecord], source_ids: &[String]) ->
             continue;
         };
         match replay_kind(record) {
-            Ok(_) => planned.push(RefreshPlan::from_record(record)),
+            Ok(_) => match RefreshPlan::from_record(record) {
+                Ok(plan) => planned.push(plan),
+                Err(error) => failed.push(refresh_plan_failure(record, error)),
+            },
             Err(error) => {
                 failed.push(selection_failure(record, error));
             }
@@ -146,6 +150,16 @@ pub(crate) fn selection_failure(record: &SourceRecord, error: SelectionFailure) 
                 record.id, record.kind
             ),
         },
+    }
+}
+
+fn refresh_plan_failure(record: &SourceRecord, error: WikiError) -> RefreshFailure {
+    RefreshFailure {
+        id: record.id.clone(),
+        location: Some(record.location.clone()),
+        source_kind: Some(record.kind.clone()),
+        code: "invalid_source_id".to_string(),
+        message: error.to_string(),
     }
 }
 

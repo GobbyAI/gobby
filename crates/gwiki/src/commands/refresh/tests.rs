@@ -322,6 +322,26 @@ fn explicit_unsupported_and_missing_sources_fail_structurally() {
 }
 
 #[test]
+fn explicit_selection_reports_malformed_raw_source_ids() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let mut record = seed_url(temp.path(), "https://example.test/bad", "then", b"same");
+    record.id = "../bad".to_string();
+    let source_ids = vec![record.id.clone()];
+    let entries = vec![record];
+
+    let selection = select_sources(&entries, &source_ids);
+
+    assert!(selection.planned.is_empty());
+    assert_eq!(selection.failed.len(), 1);
+    assert_eq!(selection.failed[0].code, "invalid_source_id");
+    assert!(
+        selection.failed[0].message.contains("unsafe source id"),
+        "unexpected failure message: {}",
+        selection.failed[0].message
+    );
+}
+
+#[test]
 fn raw_source_path_trims_source_ids() {
     assert_eq!(
         raw_source_path("  src-abc  ").expect("raw path"),

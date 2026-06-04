@@ -11,53 +11,34 @@ use super::{
 };
 
 pub(crate) fn render_entry(entry: &SourceRecord, index: &mut String) -> Result<(), WikiError> {
-    let title = entry.title.as_deref().unwrap_or(&entry.location);
-    index.push_str("- [");
-    index.push_str(&escape_markdown_text(title));
-    index.push_str("](");
-    index.push_str(&escape_markdown_destination(&entry.location));
-    index.push_str(")\n");
-    index.push_str("  - id: `");
-    index.push_str(&entry.id);
-    index.push_str("`\n");
-    index.push_str("  - canonical: `");
-    index.push_str(&entry.canonical_location);
-    index.push_str("`\n");
-    index.push_str("  - kind: `");
-    index.push_str(&entry.kind.to_string());
-    index.push_str("`\n");
-    index.push_str("  - fetched_at: `");
-    index.push_str(&entry.fetched_at);
-    index.push_str("`\n");
-    index.push_str("  - hash: `");
-    index.push_str(&entry.content_hash);
-    index.push_str("`\n");
-    if let Some(citation) = &entry.citation {
-        index.push_str("  - citation: ");
-        index.push_str(&inline_text(citation));
-        index.push('\n');
-    }
-    if let Some(license) = &entry.license {
-        index.push_str("  - license: ");
-        index.push_str(&inline_text(license));
-        index.push('\n');
-    }
-    index.push_str("  - ingestion_method: `");
-    index.push_str(&entry.ingestion_method.to_string());
-    index.push_str("`\n");
-    index.push_str("  - compile_status: `");
-    index.push_str(&entry.compile_status.to_string());
-    index.push_str("`\n");
-
     let metadata = serde_json::to_string(entry).map_err(|error| WikiError::Json {
         action: "serialize raw source index marker",
         path: None,
         source: error,
     })?;
-    index.push_str("  - ");
-    index.push_str(SOURCE_MARKER);
-    index.push_str(&metadata);
-    index.push_str(" -->\n");
+    let title = escape_markdown_text(entry.title.as_deref().unwrap_or(&entry.location));
+    let destination = escape_markdown_destination(&entry.location);
+    let citation = entry
+        .citation
+        .as_ref()
+        .map(|citation| format!("  - citation: {}\n", inline_text(citation)))
+        .unwrap_or_default();
+    let license = entry
+        .license
+        .as_ref()
+        .map(|license| format!("  - license: {}\n", inline_text(license)))
+        .unwrap_or_default();
+
+    index.push_str(&format!(
+        "- [{title}]({destination})\n  - id: `{}`\n  - canonical: `{}`\n  - kind: `{}`\n  - fetched_at: `{}`\n  - hash: `{}`\n{citation}{license}  - ingestion_method: `{}`\n  - compile_status: `{}`\n  - {SOURCE_MARKER}{metadata} -->\n",
+        entry.id,
+        entry.canonical_location,
+        entry.kind,
+        entry.fetched_at,
+        entry.content_hash,
+        entry.ingestion_method,
+        entry.compile_status,
+    ));
     Ok(())
 }
 

@@ -25,6 +25,13 @@ pub struct VisionDegradation {
     pub fallback: String,
 }
 
+pub(crate) fn disabled_degradation() -> VisionDegradation {
+    VisionDegradation {
+        reason: "disabled".to_string(),
+        fallback: "Keep PDF text layer only.".to_string(),
+    }
+}
+
 pub trait VisionClient {
     fn extract(&self, request: &VisionRequest<'_>) -> Result<VisionExtraction, WikiError>;
 }

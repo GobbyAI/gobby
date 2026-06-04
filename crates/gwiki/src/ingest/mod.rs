@@ -346,6 +346,8 @@ fn create_raw_temp_file(path: &Path) -> Result<tempfile::NamedTempFile, WikiErro
         })
 }
 
+/// Syncs the containing directory on Unix so the atomic rename is durable.
+/// Non-Unix platforms keep the file sync but skip directory `sync_all`.
 fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
     #[cfg(not(unix))]
     {

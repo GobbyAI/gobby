@@ -100,28 +100,32 @@ fn ensure_compile_target_parent_inside_vault(
         source: error,
     })?;
     let mut existing_parent = parent;
-    while !existing_parent.exists() {
-        existing_parent = existing_parent
-            .parent()
-            .ok_or_else(|| WikiError::InvalidInput {
-                field: "target_page",
-                message: "compile target page must stay inside the vault".to_string(),
-            })?;
-    }
-    let parent = existing_parent
-        .canonicalize()
-        .map_err(|error| WikiError::Io {
-            action: "resolve compile target directory",
-            path: Some(existing_parent.to_path_buf()),
-            source: error,
-        })?;
-    if parent.starts_with(root) {
-        Ok(())
-    } else {
-        Err(WikiError::InvalidInput {
-            field: "target_page",
-            message: "compile target page must stay inside the vault".to_string(),
-        })
+    loop {
+        match existing_parent.canonicalize() {
+            Ok(parent) if parent.starts_with(&root) => return Ok(()),
+            Ok(_) => {
+                return Err(WikiError::InvalidInput {
+                    field: "target_page",
+                    message: "compile target page must stay inside the vault".to_string(),
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                existing_parent =
+                    existing_parent
+                        .parent()
+                        .ok_or_else(|| WikiError::InvalidInput {
+                            field: "target_page",
+                            message: "compile target page must stay inside the vault".to_string(),
+                        })?;
+            }
+            Err(error) => {
+                return Err(WikiError::Io {
+                    action: "resolve compile target directory",
+                    path: Some(existing_parent.to_path_buf()),
+                    source: error,
+                });
+            }
+        }
     }
 }
 

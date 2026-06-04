@@ -595,7 +595,10 @@ mod tests {
         )
         .expect("ingest audio with production transcript");
 
-        let request = request.join().expect("request").expect("request ok");
+        let request = request
+            .join()
+            .expect("transcription test server thread joins")
+            .expect("transcription request was captured");
         assert!(request.starts_with("POST /v1/audio/transcriptions HTTP/1.1"));
         assert!(result.transcription_degradation.is_none());
 
@@ -628,7 +631,10 @@ mod tests {
         )
         .expect("ingest translated audio");
 
-        let request = request.join().expect("request").expect("request ok");
+        let request = request
+            .join()
+            .expect("translation test server thread joins")
+            .expect("translation request was captured");
         assert!(request.starts_with("POST /v1/audio/translations HTTP/1.1"));
         assert!(result.transcription_degradation.is_none());
 

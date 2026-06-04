@@ -50,16 +50,16 @@ pub(crate) struct RefreshPlan {
 }
 
 impl RefreshPlan {
-    pub(crate) fn from_record(record: &SourceRecord) -> Self {
-        Self {
+    pub(crate) fn from_record(record: &SourceRecord) -> Result<Self, WikiError> {
+        Ok(Self {
             record: record.clone(),
             id: record.id.clone(),
             location: record.location.clone(),
             source_kind: record.kind.clone(),
             replay_kind: replay_kind_name(record),
-            raw_path: raw_source_path(&record.id).unwrap_or_else(|_| PathBuf::from("raw")),
+            raw_path: raw_source_path(&record.id)?,
             content_hash: record.content_hash.clone(),
-        }
+        })
     }
 }
 

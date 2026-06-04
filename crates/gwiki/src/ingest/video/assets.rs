@@ -144,6 +144,7 @@ pub(crate) fn persist_video_frame_assets(
     let mut persisted_paths = Vec::with_capacity(frame_image_paths.len());
     let mut descriptions = frame_descriptions.to_vec();
     let mut desc_index = 0;
+    let mut source_temp_paths = Vec::new();
     for (index, path) in frame_image_paths.iter().enumerate() {
         let cleanup_source_temp = samples
             .get(index)
@@ -152,6 +153,7 @@ pub(crate) fn persist_video_frame_assets(
         let bytes = match std::fs::read(path) {
             Ok(bytes) => bytes,
             Err(source) => {
+                cleanup_deferred_temp_frame_sources(&source_temp_paths);
                 cleanup_sampled_temp_frame_sources(&samples, frame_image_paths);
                 return Err(WikiError::Io {
                     action: "read sampled video frame asset",
@@ -170,10 +172,14 @@ pub(crate) fn persist_video_frame_assets(
         ) {
             Ok(path) => path,
             Err(error) => {
+                cleanup_deferred_temp_frame_sources(&source_temp_paths);
                 cleanup_sampled_temp_frame_sources(&samples, frame_image_paths);
                 return Err(error);
             }
         };
+        if cleanup_source_temp && !source_temp_paths.iter().any(|existing| existing == path) {
+            source_temp_paths.push(path.clone());
+        }
         let reference = path_to_string(&persisted_path);
         if let Some(sample) = samples.get_mut(index) {
             sample.source_asset = persisted_path.clone();
@@ -183,13 +189,16 @@ pub(crate) fn persist_video_frame_assets(
             description.source_reference = reference;
             desc_index += 1;
         }
-        if cleanup_source_temp && let Err(error) = remove_sampled_temp_frame(path) {
+        persisted_paths.push(persisted_path);
+    }
+
+    for path in &source_temp_paths {
+        if let Err(error) = remove_sampled_temp_frame(path) {
             log::warn!(
                 "failed to remove sampled temp video frame {} after persistence: {error}",
                 path.display()
             );
         }
-        persisted_paths.push(persisted_path);
     }
 
     Ok(PersistedVideoFrameAssets {
@@ -197,6 +206,12 @@ pub(crate) fn persist_video_frame_assets(
         image_paths: persisted_paths,
         descriptions,
     })
+}
+
+fn cleanup_deferred_temp_frame_sources(paths: &[PathBuf]) {
+    for path in paths {
+        let _ = remove_sampled_temp_frame(path);
+    }
 }
 
 pub(crate) fn remove_sampled_temp_frame(path: &Path) -> Result<(), WikiError> {

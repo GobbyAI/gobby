@@ -92,6 +92,8 @@ pub(crate) fn scope_selection_from_research_scope(scope: &ResearchScope) -> Scop
     }
 }
 
+/// Rough budget heuristic used only when provider usage metadata is unavailable.
+/// It counts whitespace-separated words, so it can under- or over-estimate model tokens.
 pub(crate) fn estimate_tokens(text: &str) -> usize {
     text.split_whitespace().count()
 }

@@ -97,6 +97,7 @@ pub(crate) fn sanitize_pdf_page_markdown(markdown: &str) -> String {
             } else {
                 line.to_string()
             };
+            // User-visible page markdown must not create internal page split markers.
             line.replace("<!-- gwiki-page:", "<!-- gwiki-page :")
         })
         .collect::<Vec<_>>()

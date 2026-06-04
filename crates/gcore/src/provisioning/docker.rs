@@ -124,9 +124,9 @@ impl DockerHealthChecker for TcpDockerHealthChecker {
             stream.set_read_timeout(Some(Duration::from_secs(3)))?;
             stream.set_write_timeout(Some(Duration::from_secs(3)))?;
             stream.write_all(b"GET /healthz HTTP/1.0\r\nHost: localhost\r\n\r\n")?;
-            let mut body = String::new();
-            stream.read_to_string(&mut body)?;
-            if body.starts_with("HTTP/1.1 200") || body.starts_with("HTTP/1.0 200") {
+            let mut status_line = String::new();
+            std::io::BufReader::new(stream).read_line(&mut status_line)?;
+            if status_line.starts_with("HTTP/1.1 200") || status_line.starts_with("HTTP/1.0 200") {
                 Ok(())
             } else {
                 anyhow::bail!("unexpected Qdrant health response")

@@ -48,7 +48,7 @@ impl ResearchModel for GcoreResearchModel {
                 return self
                     .ai_unavailable(format!("text generation route '{route:?}' is unavailable"));
             }
-            _ => unreachable!("effective route resolution returned unresolved auto route"),
+            _ => unreachable!("effective route resolution returned unresolved route {route:?}"),
         };
 
         let result = match result {

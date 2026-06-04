@@ -2,6 +2,9 @@ use super::*;
 
 pub(crate) fn inline_code(value: &str) -> String {
     let value = value.replace('\n', " ");
+    if value.is_empty() {
+        return "``".to_string();
+    }
     let delimiter = "`".repeat(max_backtick_run(&value).saturating_add(1));
     if value.starts_with('`') || value.ends_with('`') {
         format!("{delimiter} {value} {delimiter}")
@@ -78,6 +81,7 @@ pub(crate) fn is_core_file(file: &str) -> bool {
 }
 
 pub(crate) fn in_scope(file: &str, scopes: &[String]) -> bool {
+    // No scope filter, or an explicitly empty scope, means include every file.
     scopes.is_empty()
         || scopes.iter().any(|scope| scope.is_empty())
         || scopes.iter().any(|scope| {

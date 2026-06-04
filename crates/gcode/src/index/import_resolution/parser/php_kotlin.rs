@@ -22,10 +22,6 @@ pub(crate) fn parse_php_import_statement(
 ) {
     let normalized = text.trim().trim_end_matches(';').trim();
     let Some(rest) = normalized.strip_prefix("use ") else {
-        extracted.imports.push(ImportRelation {
-            file_path: rel_path.to_string(),
-            module_name: normalized.to_string(),
-        });
         return;
     };
     let (kind, rest) = if let Some(target) = rest.strip_prefix("function ") {
@@ -79,10 +75,6 @@ pub(crate) fn parse_kotlin_import_statement(
 ) {
     let normalized = text.trim();
     let Some(rest) = normalized.strip_prefix("import ") else {
-        extracted.imports.push(ImportRelation {
-            file_path: rel_path.to_string(),
-            module_name: normalized.to_string(),
-        });
         return;
     };
 

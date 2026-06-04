@@ -89,6 +89,7 @@ pub(crate) fn parse_csharp_import_statement(
             file_path: rel_path.to_string(),
             module_name: target.clone(),
         });
+        // Empty aliases come from malformed `using = ...` declarations and are ignored.
         if !alias.is_empty() && is_external_csharp_path(&target, import_context) {
             extracted.bindings.member.insert(alias.to_string(), target);
         }

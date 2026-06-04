@@ -8,7 +8,7 @@ use crate::ingest::{
 };
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
-use crate::vision::VisionEndpoint;
+use crate::vision::{VisionEndpoint, disabled_degradation};
 
 use super::markdown::{merge_pdf_pages, render_pdf_markdown};
 use super::render::normalize_page_text;
@@ -30,10 +30,7 @@ pub fn ingest_pages(
         scope,
         snapshot,
         Vec::new(),
-        VisionEndpoint::Unavailable(crate::vision::VisionDegradation {
-            reason: "disabled".to_string(),
-            fallback: "Keep PDF text layer only.".to_string(),
-        }),
+        VisionEndpoint::Unavailable(disabled_degradation()),
     )
 }
 

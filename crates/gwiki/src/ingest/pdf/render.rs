@@ -15,9 +15,9 @@ use super::PdfRenderOutcome;
 #[cfg(feature = "documents")]
 use super::types::{PdfFileSnapshot, PdfPage, PdfRenderedPage};
 
-#[cfg(feature = "documents")]
+#[cfg(any(feature = "documents", test))]
 const MAX_RENDERED_PDF_PAGES: usize = 32;
-#[cfg(feature = "documents")]
+#[cfg(any(feature = "documents", test))]
 const MAX_RENDERED_PDF_TOTAL_BYTES: usize = 32 * 1024 * 1024;
 
 #[cfg(feature = "documents")]
@@ -71,11 +71,13 @@ pub(crate) fn render_pdf_pages(
         let width = bitmap.width() as u32;
         let height = bitmap.height() as u32;
         let encoded = encode_png_rgba(width, height, &bitmap.as_rgba_bytes())?;
-        if total_rendered_bytes.saturating_add(encoded.len()) > MAX_RENDERED_PDF_TOTAL_BYTES {
+        let Some(next_total_rendered_bytes) =
+            next_rendered_byte_total(total_rendered_bytes, encoded.len())
+        else {
             budget_exceeded = true;
             break;
-        }
-        total_rendered_bytes += encoded.len();
+        };
+        total_rendered_bytes = next_total_rendered_bytes;
         rendered_pages.push(PdfRenderedPage {
             number: index + 1,
             bytes: encoded,
@@ -90,6 +92,12 @@ pub(crate) fn render_pdf_pages(
         degradation: budget_exceeded
             .then(|| pdf_render_budget_degradation(total_pages, total_rendered_bytes)),
     })
+}
+
+#[cfg(any(feature = "documents", test))]
+fn next_rendered_byte_total(current: usize, page_bytes: usize) -> Option<usize> {
+    let next = current.checked_add(page_bytes)?;
+    (next <= MAX_RENDERED_PDF_TOTAL_BYTES).then_some(next)
 }
 
 #[cfg(feature = "documents")]
@@ -176,4 +184,22 @@ pub(crate) fn normalize_page_text(text: &str) -> String {
     }
 
     paragraphs.join("\n\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_byte_budget_rejects_overflow_before_updating_total() {
+        assert_eq!(next_rendered_byte_total(usize::MAX, 1), None);
+        assert_eq!(
+            next_rendered_byte_total(MAX_RENDERED_PDF_TOTAL_BYTES - 1, 1),
+            Some(MAX_RENDERED_PDF_TOTAL_BYTES)
+        );
+        assert_eq!(
+            next_rendered_byte_total(MAX_RENDERED_PDF_TOTAL_BYTES, 1),
+            None
+        );
+    }
 }

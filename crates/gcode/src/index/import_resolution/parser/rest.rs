@@ -15,10 +15,6 @@ pub(crate) fn parse_swift_import_statement(
 ) {
     let normalized = text.trim();
     let Some(rest) = normalized.strip_prefix("import ") else {
-        extracted.imports.push(ImportRelation {
-            file_path: rel_path.to_string(),
-            module_name: normalized.to_string(),
-        });
         return;
     };
 
@@ -29,6 +25,9 @@ pub(crate) fn parse_swift_import_statement(
         "class" | "struct" | "enum" | "protocol" | "func" | "typealias" | "var" | "let"
     ) {
         module_token = tokens.next().unwrap_or_default();
+    }
+    if module_token.is_empty() {
+        return;
     }
     let module = module_token.split('.').next().unwrap_or_default();
     extracted.imports.push(ImportRelation {
@@ -99,11 +98,10 @@ pub(crate) fn parse_dart_import_statement(
     extracted: &mut ExtractedImports,
 ) {
     let normalized = collapse_whitespace(text);
+    if !normalized.starts_with("import ") {
+        return;
+    }
     let Some(uri) = extract_quoted_string(&normalized) else {
-        extracted.imports.push(ImportRelation {
-            file_path: rel_path.to_string(),
-            module_name: normalized,
-        });
         return;
     };
 
@@ -112,7 +110,7 @@ pub(crate) fn parse_dart_import_statement(
         module_name: uri.clone(),
     });
 
-    if !normalized.starts_with("import ") || !is_external_dart_uri(&uri, import_context) {
+    if !is_external_dart_uri(&uri, import_context) {
         return;
     }
     if let Some(alias) = dart_import_alias(&normalized) {
@@ -130,12 +128,11 @@ pub(crate) fn parse_elixir_import_statement(
 ) {
     let normalized = collapse_whitespace(text);
     let Some((keyword, rest)) = normalized.split_once(' ') else {
-        extracted.imports.push(ImportRelation {
-            file_path: rel_path.to_string(),
-            module_name: normalized,
-        });
         return;
     };
+    if !matches!(keyword, "alias" | "import" | "require") {
+        return;
+    }
     let target = rest.split([',', ' ']).next().unwrap_or_default().trim();
     extracted.imports.push(ImportRelation {
         file_path: rel_path.to_string(),
@@ -146,7 +143,7 @@ pub(crate) fn parse_elixir_import_statement(
         },
     });
 
-    if !matches!(keyword, "alias" | "import" | "require") || !is_elixir_alias_path(target) {
+    if !is_elixir_alias_path(target) {
         return;
     }
     let Some(root) = target.split('.').next() else {

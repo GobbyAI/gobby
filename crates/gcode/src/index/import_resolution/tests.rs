@@ -710,6 +710,51 @@ fn csharp_non_using_statement_is_ignored() {
 }
 
 #[test]
+fn non_import_statements_are_ignored_for_other_import_parsers() {
+    let cases = [
+        ("php", "namespace App;", "src/sample.php"),
+        ("kotlin", "package com.example", "src/main/kotlin/App.kt"),
+        (
+            "swift",
+            "let value = Foundation.Date()",
+            "Sources/App/main.swift",
+        ),
+        ("dart", "library app;", "lib/main.dart"),
+        ("elixir", "defmodule App do", "lib/app.ex"),
+    ];
+
+    for (language, text, path) in cases {
+        let mut extracted = ExtractedImports::default();
+
+        parse_import_statement(
+            language,
+            text,
+            path,
+            &ImportResolutionContext::default(),
+            &mut extracted,
+        )
+        .expect("ignore non-import statement");
+
+        assert!(
+            extracted.imports.is_empty(),
+            "{language} recorded imports for `{text}`"
+        );
+        assert!(
+            extracted.bindings.member.is_empty(),
+            "{language} recorded member bindings for `{text}`"
+        );
+        assert!(
+            extracted.bindings.external_roots.is_empty(),
+            "{language} recorded external roots for `{text}`"
+        );
+        assert!(
+            extracted.bindings.bare_wildcard_modules.is_empty(),
+            "{language} recorded wildcard modules for `{text}`"
+        );
+    }
+}
+
+#[test]
 fn csharp_declared_types_includes_structs() {
     let names = csharp_declared_types(
         "public struct Point {} class Sample {} interface IThing {} enum Mode {} record Data;",

@@ -143,6 +143,7 @@ fn body_start_offset(text: &str) -> usize {
 }
 
 fn prefixed_value<'a>(line: &'a str, prefixes: &[&str]) -> Option<&'a str> {
+    // Research notes may vary heading/list capitalization; match labels case-insensitively.
     let lower = line.to_ascii_lowercase();
     for prefix in prefixes {
         if lower.starts_with(prefix) {
@@ -156,19 +157,15 @@ fn prefixed_value<'a>(line: &'a str, prefixes: &[&str]) -> Option<&'a str> {
 }
 
 pub(crate) fn extend_unique(target: &mut Vec<String>, values: Vec<String>) {
-    let seen = target
+    let mut seen = target
         .iter()
-        .map(String::as_str)
+        .cloned()
         .collect::<std::collections::HashSet<_>>();
-    let mut additions_seen = std::collections::HashSet::new();
-    let mut additions = Vec::new();
     for value in values {
-        if seen.contains(value.as_str()) || !additions_seen.insert(value.clone()) {
-            continue;
+        if seen.insert(value.clone()) {
+            target.push(value);
         }
-        additions.push(value);
     }
-    target.extend(additions);
 }
 
 fn note_path(root: &Path, path: &Path) -> PathBuf {
@@ -179,6 +176,8 @@ fn note_path(root: &Path, path: &Path) -> PathBuf {
     }
 }
 
+/// Canonicalizes both paths so symlinks are resolved before the scope check.
+/// Returns `WikiError::InvalidInput` when the note resolves outside the wiki root.
 fn require_path_in_scope(path: &Path, root: &Path) -> Result<(), WikiError> {
     let root = match root.canonicalize() {
         Ok(root) => root,
@@ -211,4 +210,35 @@ fn require_path_in_scope(path: &Path, root: &Path) -> Result<(), WikiError> {
             root.display()
         ),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extend_unique_preserves_order_and_removes_existing_or_new_duplicates() {
+        let mut target = vec!["alpha".to_string(), "beta".to_string()];
+
+        extend_unique(
+            &mut target,
+            vec![
+                "beta".to_string(),
+                "gamma".to_string(),
+                "alpha".to_string(),
+                "delta".to_string(),
+                "gamma".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            target,
+            vec![
+                "alpha".to_string(),
+                "beta".to_string(),
+                "gamma".to_string(),
+                "delta".to_string(),
+            ]
+        );
+    }
 }
