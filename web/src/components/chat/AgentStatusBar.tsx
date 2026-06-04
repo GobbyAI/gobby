@@ -3,6 +3,7 @@ import type { ContextUsage, SessionInteractionMode, SessionObservationMeta } fro
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { LinkIcon, PlayIcon, UnlinkIcon } from '../icons'
 import { PlusIcon } from './icons/PlusIcon'
+import { PlanPendingActionStrip } from './PlanPendingActionStrip'
 
 interface AgentStatusBarProps {
   viewingMeta?: SessionObservationMeta | null
@@ -15,6 +16,10 @@ interface AgentStatusBarProps {
   onResume?: () => void
   onDetach?: () => void
   onNewChat?: () => void
+  planPendingApproval?: boolean
+  onApprovePlan?: () => void
+  onRequestPlanChanges?: (feedback: string) => void
+  onViewPlan?: () => void
 }
 
 const CONTEXT_USAGE_REFRESH_MS = 15_000
@@ -60,6 +65,10 @@ export function AgentStatusBar({
   onResume,
   onDetach,
   onNewChat,
+  planPendingApproval = false,
+  onApprovePlan,
+  onRequestPlanChanges,
+  onViewPlan,
 }: AgentStatusBarProps) {
   const [usageClock, setUsageClock] = useState(() => Date.now())
 
@@ -78,7 +87,11 @@ export function AgentStatusBar({
   const canDetach = isAttached && Boolean(onDetach)
 
   return (
-    <div className="agent-status-bar" data-testid="agent-status-bar">
+    <div
+      className="agent-status-bar"
+      data-testid="agent-status-bar"
+      style={planPendingApproval ? { flexWrap: "wrap", rowGap: "0.5rem" } : undefined}
+    >
       <div className="agent-status-bar__summary">
         {viewingMeta && stateText ? (
           <div className="chat-session-status">
@@ -152,6 +165,15 @@ export function AgentStatusBar({
           <span className="chat-new-chat-btn__label">New Chat</span>
         </button>
       </div>
+      {planPendingApproval && onApprovePlan && onRequestPlanChanges && (
+        <div className="agent-status-bar__plan basis-full w-full">
+          <PlanPendingActionStrip
+            onApprove={onApprovePlan}
+            onRequestChanges={onRequestPlanChanges}
+            onView={onViewPlan}
+          />
+        </div>
+      )}
     </div>
   )
 }

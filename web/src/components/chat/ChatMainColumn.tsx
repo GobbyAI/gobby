@@ -182,6 +182,10 @@ export function ChatMainColumn({
           }
           onDetach={chat.attachedSessionId ? chat.onDetachFromSession : undefined}
           onNewChat={() => onNewChat()}
+          planPendingApproval={chat.planPendingApproval}
+          onApprovePlan={chat.onApprovePlan}
+          onRequestPlanChanges={chat.onRequestPlanChanges}
+          onViewPlan={onViewPlan}
         />
 
         {showChatInput && (
@@ -197,7 +201,7 @@ export function ChatMainColumn({
             onPaletteSelect={onPaletteSelect}
             mode={chat.mode}
             onModeChange={handleInputModeChange}
-            modeDisabled={isAutonomousSession}
+            modeDisabled={isAutonomousSession || chat.planPendingApproval}
             modeOptions={isAutonomousSession ? AUTONOMOUS_CHAT_MODES : undefined}
             currentBranch={effectiveBranch}
             worktreePath={chat.worktreePath}
