@@ -106,6 +106,7 @@ class ACPManagedChatSession(
             self._is_first_turn = False
             saw_content_delta = False
             pending_tool_calls: dict[str, dict[str, Any]] = {}
+            plan_text_parts: list[str] = []
 
             try:
                 async for stream_event in self._backend.send_message(self, full_prompt):
@@ -164,7 +165,16 @@ class ACPManagedChatSession(
                         allow_message_fallback=not saw_content_delta,
                     )
                     if chat_event is not None:
+                        if isinstance(chat_event, TextChunk) and stream_event.event_type in {
+                            "content_delta",
+                            "message",
+                        }:
+                            plan_text_parts.append(chat_event.content)
                         yield chat_event
+
+                await self._maybe_broadcast_pending_plan(
+                    "".join(plan_text_parts), saw_content_delta
+                )
 
                 yield DoneEvent(
                     tool_calls_count=0,

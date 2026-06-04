@@ -20,6 +20,7 @@ class ACPWebChatPermissionsMixin:
     conversation_id: str
     chat_mode: str
     _on_mode_changed: Callable[[str, str], Awaitable[None]] | None
+    _on_plan_ready: Callable[[str | None, dict[str, Any]], Awaitable[None]] | None
     _on_pre_tool: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
     _pending_question: dict[str, Any] | None
     _pending_answers: dict[str, str] | None
@@ -91,7 +92,34 @@ class ACPWebChatPermissionsMixin:
 
     @property
     def has_pending_plan(self) -> bool:
-        return False
+        return self._pending_plan_content is not None
+
+    def _clear_pending_plan_prompt(self) -> None:
+        """Clear the in-flight plan approval prompt shown in the UI."""
+        self._pending_plan_content = None
+        self._pending_plan_allowed_prompts = None
+
+    async def _maybe_broadcast_pending_plan(self, plan_text: str, saw_content: bool) -> None:
+        """Surface a presented plan to the web UI for ACP CLIs.
+
+        ACP providers have no ExitPlanMode tool, so a plan is delivered as a
+        normal assistant turn. When a substantive turn completes in plan mode,
+        broadcast plan_pending_approval using the same payload shape as the SDK
+        path so it flows through the shared frontend surfaces.
+        """
+        if self.chat_mode != "plan" or self._plan_approved:
+            return
+        if not saw_content:
+            return
+        text = plan_text.strip()
+        if not text:
+            return
+        if self._pending_plan_content is not None:
+            return
+        self._pending_plan_content = text
+        self._last_plan_content = text
+        if self._on_plan_ready is not None:
+            await self._on_plan_ready(text, {"plan": text})
 
     def _pop_plan_mode_context(self) -> str | None:
         if self.chat_mode != "plan":
