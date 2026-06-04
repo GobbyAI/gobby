@@ -23,15 +23,16 @@ from gobby.servers.websocket.chat.content_blocks import AssistantContentBlocks
 class _FakeTransport:
     """Records every frame the handler broadcasts."""
 
-    def __init__(self) -> None:
+    def __init__(self, fail_on_status: str | None = None) -> None:
         self.sent: list[dict[str, Any]] = []
+        self.fail_on_status = fail_on_status
 
     def base_msg(self, **fields: Any) -> dict[str, Any]:
         return dict(fields)
 
     async def safe_send(self, msg: dict[str, Any]) -> bool:
         self.sent.append(msg)
-        return True
+        return msg.get("status") != self.fail_on_status
 
 
 class _FakePersistence:
@@ -185,3 +186,23 @@ async def test_orphan_result_flushed_as_provisional_on_done() -> None:
     tool_call = blocks.blocks[0]["tool_calls"][0]
     assert tool_call["tool_name"] == "unknown"
     assert tool_call["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_orphan_result_retained_when_terminal_send_fails() -> None:
+    """A failed terminal send must not discard the buffered tool result."""
+    transport = _FakeTransport(fail_on_status="completed")
+    blocks = AssistantContentBlocks()
+    persistence = _FakePersistence()
+    handler = _make_handler(transport, blocks, persistence)
+    event = ToolResultEvent(tool_call_id="orphan-2", success=True, result={"content": "x"})
+
+    await handler._handle_tool_result(event)
+    await handler._handle_done(DoneEvent(tool_calls_count=0), SimpleNamespace())
+
+    assert handler.state.orphan_tool_results == {"orphan-2": event}
+    assert persistence.persisted is True
+    assert [msg["status"] for msg in transport.sent if msg["type"] == "tool_status"] == [
+        "calling",
+        "completed",
+    ]

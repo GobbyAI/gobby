@@ -184,6 +184,7 @@ def _create_or_update_task(
     project_id: str,
     source_session_id: str | None,
 ) -> Any:
+    # resolve_promotion normally supplies both fields before this helper is called.
     if decision.guardrail_target is None:
         raise ValueError("promotion decision requires guardrail_target")
     if decision.category is None:

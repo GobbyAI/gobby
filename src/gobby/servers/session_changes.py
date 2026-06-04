@@ -204,6 +204,8 @@ async def compute_session_file_diff(workspace: SessionWorkspace, path: str) -> s
     """Compute the unified diff for a single file relative to the base ref."""
     cwd = workspace.working_dir
     base = workspace.base_ref
+    if not is_safe_relative_path(cwd, path):
+        raise ValueError("Invalid path")
 
     out = await _git(cwd, ["diff", base, "--", path])
     if out and out.strip():

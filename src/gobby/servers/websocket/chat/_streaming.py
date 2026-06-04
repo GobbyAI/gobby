@@ -230,9 +230,7 @@ class ChatStreamingMixin:
             # Per-CLI plan capability: native (Claude SDK) auto-switches the
             # agent out of plan mode on approval; ACP-backed CLIs cannot at the
             # protocol level, so the UI notes a manual switch is required.
-            session_info_msg["plan_auto_switch"] = bool(
-                getattr(session, "plan_auto_switch", True)
-            )
+            session_info_msg["plan_auto_switch"] = bool(getattr(session, "plan_auto_switch", True))
             await transport.send_direct(session_info_msg)
             return session
         except Exception as exc:

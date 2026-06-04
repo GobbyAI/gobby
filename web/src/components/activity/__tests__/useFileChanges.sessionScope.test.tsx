@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
 
 import { useFileChanges } from '../../../hooks/useFileChanges'
+import type { ChatMessage } from '../../../types/chat'
 
 describe('useFileChanges — session scoping', () => {
   beforeEach(() => {
@@ -60,19 +61,24 @@ describe('useFileChanges — session scoping', () => {
   })
 
   it('merges the live message overlay only for the active chat', async () => {
-    const messages = [
+    const messages: ChatMessage[] = [
       {
+        id: 'msg-1',
         role: 'assistant',
+        content: '',
+        timestamp: new Date(0),
         toolCalls: [
           {
+            id: 'tool-1',
             status: 'completed',
             tool_name: 'Write',
+            server_name: 'builtin',
             tool_type: 'edit',
             arguments: { file_path: 'src/live.ts' },
           },
         ],
       },
-    ] as never[]
+    ]
 
     const { result } = renderHook(() => useFileChanges('sess-A', messages, true))
 

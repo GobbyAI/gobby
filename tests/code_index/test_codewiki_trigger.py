@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 
 import pytest
@@ -45,6 +46,18 @@ class CancelledGcodeGateway:
     ) -> dict:
         _ = ai
         raise asyncio.CancelledError
+
+
+class FailingGcodeGateway:
+    async def codewiki(
+        self,
+        _project_root: Path,
+        _out_dir: Path,
+        *,
+        ai: str | None = None,
+    ) -> dict:
+        _ = ai
+        raise RuntimeError("unexpected refresh failure")
 
 
 class FakeGwikiGateway:
@@ -127,6 +140,31 @@ async def test_refresh_is_not_scheduled_when_disabled(tmp_path: Path) -> None:
 
     assert not accepted
     assert trigger._pending_by_root == {}
+
+
+@pytest.mark.asyncio
+async def test_flush_task_logs_unexpected_failures(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    trigger = CodewikiRefreshTrigger(
+        loop=asyncio.get_running_loop(),
+        config_store_provider=lambda: FakeConfigStore(True),
+        gcode_gateway_factory=FailingGcodeGateway,
+        gwiki_gateway_factory=lambda _root: FakeGwikiGateway(),
+        debounce_seconds=0,
+    )
+    root_key = trigger._root_key(str(tmp_path))
+    trigger._pending_by_root[root_key] = CodewikiRefreshRequest(root_path=str(tmp_path))
+
+    with caplog.at_level(logging.ERROR, logger="gobby.code_index.codewiki_trigger"):
+        trigger._start_flush(root_key)
+        tasks = list(trigger._flush_tasks)
+        assert len(tasks) == 1
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    assert trigger._flush_tasks == set()
+    assert any("codewiki refresh flush task failed" in record.message for record in caplog.records)
 
 
 @pytest.mark.asyncio

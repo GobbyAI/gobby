@@ -806,17 +806,9 @@ def _mount_vite_dev_ui(app: FastAPI, server: "HTTPServer") -> None:
         if request.url.query:
             target += f"?{request.url.query}"
 
-        # Read the request body before the upstream call so a client that goes
-        # away mid-request (HMR sockets, aborted fetches, navigations — constant
-        # over Tailscale) surfaces as a ClientDisconnect here rather than escaping
-        # uncaught and getting logged as a full 500 traceback through every
-        # middleware layer. There is no client left to answer, so exit early
-        # and log at debug.
-        try:
-            body = await request.body()
-        except ClientDisconnect:
-            logger.debug("Vite UI proxy: client disconnected before request body completed")
-            return None
+        async def request_content() -> AsyncGenerator[bytes]:
+            async for chunk in request.stream():
+                yield chunk
 
         try:
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
@@ -824,8 +816,11 @@ def _mount_vite_dev_ui(app: FastAPI, server: "HTTPServer") -> None:
                     request.method,
                     target,
                     headers=_proxied_request_headers(request.headers),
-                    content=body,
+                    content=request_content(),
                 )
+        except ClientDisconnect:
+            logger.debug("Vite UI proxy: client disconnected before request body completed")
+            return Response(status_code=499)
         except httpx.RequestError as exc:
             logger.debug("Vite UI proxy error: %s", exc)
             raise HTTPException(status_code=502, detail="Vite dev server unavailable") from exc

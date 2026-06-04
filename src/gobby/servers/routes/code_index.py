@@ -392,8 +392,11 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
-        except (FileNotFoundError, NotADirectoryError, OSError) as exc:
+        except (FileNotFoundError, NotADirectoryError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            logger.exception("Failed to schedule codewiki refresh")
+            raise HTTPException(status_code=500, detail="Internal server error") from exc
         except Exception as exc:
             logger.exception("Failed to schedule codewiki refresh")
             raise HTTPException(status_code=500, detail="Internal server error") from exc

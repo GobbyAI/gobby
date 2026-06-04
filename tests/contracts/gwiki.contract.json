@@ -548,11 +548,16 @@
       "json_output_keys": [
         "command",
         "scope",
-        "topic",
-        "target_page",
-        "written_path",
-        "changed_paths",
-        "status"
+        "status",
+        "target_kind",
+        "outline",
+        "daemon_synthesis_available",
+        "article_path",
+        "source_paths",
+        "index_path",
+        "handoff_id",
+        "page_writes",
+        "prompt"
       ]
     },
     {

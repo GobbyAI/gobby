@@ -20,8 +20,10 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 
 logger = logging.getLogger(__name__)
 
+ArtifactBroadcaster = Callable[..., Awaitable[None]]
+
 # Artifact broadcaster, wired after creation in the HTTP lifespan.
-_artifact_broadcaster_ref: dict[str, Any] = {"func": None}
+_artifact_broadcaster: ArtifactBroadcaster | None = None
 
 MAX_TEXT_FILE_SIZE = 1 * 1024 * 1024  # 1MB
 MAX_IMAGE_FILE_SIZE = 5 * 1024 * 1024  # 5MB
@@ -72,9 +74,10 @@ EXTENSION_MAP: dict[str, tuple[str, str | None]] = {
 }
 
 
-def set_artifact_broadcaster(callback: Callable[..., Awaitable[None]] | None) -> None:
+def set_artifact_broadcaster(callback: ArtifactBroadcaster | None) -> None:
     """Set the artifact broadcaster after creation (wired in HTTP lifespan)."""
-    _artifact_broadcaster_ref["func"] = callback
+    global _artifact_broadcaster
+    _artifact_broadcaster = callback
 
 
 def create_artifacts_registry() -> InternalToolRegistry:
@@ -140,7 +143,7 @@ def create_artifacts_registry() -> InternalToolRegistry:
 
         actual_title = title or source.name
 
-        bc = _artifact_broadcaster_ref["func"]
+        bc = _artifact_broadcaster
         if bc:
             await bc(
                 event="show_file",

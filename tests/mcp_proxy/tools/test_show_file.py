@@ -17,11 +17,9 @@ pytestmark = pytest.mark.unit
 @pytest.fixture(autouse=True)
 def clean_state():
     """Reset artifact broadcaster state before and after each test."""
-    from gobby.mcp_proxy.tools import artifacts as artifacts_mod
-
-    artifacts_mod._artifact_broadcaster_ref["func"] = None
+    set_artifact_broadcaster(None)
     yield
-    artifacts_mod._artifact_broadcaster_ref["func"] = None
+    set_artifact_broadcaster(None)
 
 
 class MockBroadcaster:

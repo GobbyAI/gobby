@@ -131,6 +131,34 @@ def test_codewiki_refresh_validates_ai(client: TestClient, mock_server: MagicMoc
     assert response.json()["detail"] == "ai must be one of auto, daemon, direct, off"
 
 
+def test_codewiki_refresh_maps_expected_path_errors_to_bad_request(
+    client: TestClient,
+    mock_server: MagicMock,
+) -> None:
+    trigger = MagicMock()
+    trigger.request_refresh.side_effect = FileNotFoundError("missing repo")
+    mock_server.services.codewiki_trigger = trigger
+
+    response = client.post("/api/code-index/codewiki/refresh", params={"root_path": "/repo"})
+
+    assert response.status_code == 400
+    assert "missing repo" in response.json()["detail"]
+
+
+def test_codewiki_refresh_maps_unexpected_os_errors_to_500(
+    client: TestClient,
+    mock_server: MagicMock,
+) -> None:
+    trigger = MagicMock()
+    trigger.request_refresh.side_effect = OSError("unexpected disk failure")
+    mock_server.services.codewiki_trigger = trigger
+
+    response = client.post("/api/code-index/codewiki/refresh", params={"root_path": "/repo"})
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Internal server error"
+
+
 def test_graph_file_delegates(client: TestClient, mock_server: MagicMock) -> None:
     response = client.get(
         "/api/code-index/graph/file/src/app.py",

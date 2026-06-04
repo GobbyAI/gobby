@@ -89,6 +89,7 @@ class CodewikiRefreshTrigger:
         self._debounce_seconds = debounce_seconds
         self._pending_by_root: dict[str, CodewikiRefreshRequest] = {}
         self._flush_timers_by_root: dict[str, asyncio.TimerHandle] = {}
+        self._flush_tasks: set[asyncio.Task[None]] = set()
         self._running_roots: set[str] = set()
 
     def request_refresh(
@@ -150,7 +151,19 @@ class CodewikiRefreshTrigger:
         )
 
     def _start_flush(self, root_key: str) -> None:
-        self._loop.create_task(self._flush(root_key))
+        task = self._loop.create_task(self._flush(root_key))
+        self._flush_tasks.add(task)
+        task.add_done_callback(self._flush_task_done)
+
+    def _flush_task_done(self, task: asyncio.Task[None]) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logger.exception("codewiki refresh flush task failed")
+        finally:
+            self._flush_tasks.discard(task)
 
     async def _run_refresh(self, request: CodewikiRefreshRequest) -> None:
         root = Path(request.root_path).resolve(strict=False)

@@ -185,10 +185,13 @@ class ChatStreamEventHandler:
         # The result may have arrived before this call (out-of-order ACP
         # delivery). Reconcile it now that the tool name is known so the UI
         # transitions calling -> completed in order with the real name.
-        orphan = self.state.orphan_tool_results.pop(event.tool_call_id, None)
+        orphan = self.state.orphan_tool_results.get(event.tool_call_id)
         if orphan is not None and sent:
             self.state.pending_tool_calls.pop(event.tool_call_id, None)
-            return await self._apply_tool_result(orphan)
+            applied = await self._apply_tool_result(orphan)
+            if applied:
+                self.state.orphan_tool_results.pop(event.tool_call_id, None)
+            return applied
         return sent
 
     async def _handle_tool_result(self, event: ToolResultEvent) -> bool:
@@ -243,7 +246,7 @@ class ChatStreamEventHandler:
                 server_name="unknown",
                 arguments={},
             )
-            await self.transport.safe_send(
+            sent = await self.transport.safe_send(
                 self._msg(
                     type="tool_status",
                     tool_call_id=call_id,
@@ -253,8 +256,10 @@ class ChatStreamEventHandler:
                     arguments={},
                 )
             )
-            await self._apply_tool_result(result)
-        self.state.orphan_tool_results.clear()
+            if not sent:
+                continue
+            if await self._apply_tool_result(result):
+                self.state.orphan_tool_results.pop(call_id, None)
 
     async def _handle_done(self, event: DoneEvent, session: Any) -> bool:
         if self.tts_pipeline:

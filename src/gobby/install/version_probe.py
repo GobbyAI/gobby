@@ -61,6 +61,8 @@ def probe_native_bin_version(
             logger.warning("%s: --version probe failed: %s", label, result.stderr.strip())
         return None
 
-    output = (result.stdout or result.stderr).strip()
+    stdout = (result.stdout or "").strip()
+    stderr = (result.stderr or "").strip()
+    output = stdout or stderr
     parts = output.split()
     return parts[-1] if parts else None

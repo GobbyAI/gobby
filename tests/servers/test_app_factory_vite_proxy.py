@@ -1,6 +1,7 @@
 """Tests for the dev-mode Vite proxy's client-disconnect handling."""
 
 import logging
+from collections.abc import AsyncIterable
 from types import SimpleNamespace
 from typing import Any
 
@@ -45,7 +46,7 @@ async def test_vite_proxy_swallows_client_disconnect_without_traceback(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A client that disconnects mid-request exits early without a traceback."""
-    upstream_calls: list[str] = []
+    upstream_urls: list[str] = []
 
     class FakeAsyncClient:
         def __init__(self, **_kwargs: object) -> None:
@@ -57,8 +58,18 @@ async def test_vite_proxy_swallows_client_disconnect_without_traceback(
         async def __aexit__(self, *_args: object) -> None:
             pass
 
-        async def request(self, method: str, url: str, **_kwargs: object) -> httpx.Response:
-            upstream_calls.append(url)
+        async def request(
+            self,
+            method: str,
+            url: str,
+            *,
+            content: AsyncIterable[bytes],
+            **_kwargs: object,
+        ) -> httpx.Response:
+            _ = method
+            upstream_urls.append(url)
+            async for _chunk in content:
+                pass
             return httpx.Response(200, content=b"unexpected")
 
     monkeypatch.setattr(app_factory.httpx, "AsyncClient", FakeAsyncClient)
@@ -76,11 +87,10 @@ async def test_vite_proxy_swallows_client_disconnect_without_traceback(
     request = _make_request("POST", "src/main.tsx", receive_disconnect)
 
     with caplog.at_level(logging.DEBUG, logger=app_factory.logger.name):
-        response: Response | None = await endpoint(request, path="src/main.tsx")
+        response: Response = await endpoint(request, path="src/main.tsx")
 
-    assert response is None
-    # The disconnect must short-circuit before reaching the upstream Vite server.
-    assert upstream_calls == []
+    assert response.status_code == 499
+    assert upstream_urls == ["http://localhost:5173/src/main.tsx"]
     # No error-level traceback should be emitted — only a debug breadcrumb.
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert any("client disconnected" in r.getMessage().lower() for r in caplog.records)
@@ -104,11 +114,17 @@ async def test_vite_proxy_forwards_request_body(
             pass
 
         async def request(
-            self, method: str, url: str, *, content: bytes, **_kwargs: object
+            self,
+            method: str,
+            url: str,
+            *,
+            content: AsyncIterable[bytes],
+            **_kwargs: object,
         ) -> httpx.Response:
+            chunks = [chunk async for chunk in content]
             forwarded["method"] = method
             forwarded["url"] = url
-            forwarded["content"] = content
+            forwarded["content"] = b"".join(chunks)
             return httpx.Response(200, content=b"ok", headers={"content-type": "text/plain"})
 
     monkeypatch.setattr(app_factory.httpx, "AsyncClient", FakeAsyncClient)

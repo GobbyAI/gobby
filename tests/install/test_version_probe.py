@@ -39,6 +39,12 @@ def test_falls_back_to_stderr_when_stdout_empty(tmp_path: Path) -> None:
     assert probe_native_bin_version(binary, runner=runner) == "0.2.0"
 
 
+def test_falls_back_to_stderr_when_stdout_is_whitespace(tmp_path: Path) -> None:
+    binary = _binary(tmp_path, "gwiki")
+    runner = _runner(stdout=" \n", stderr="gwiki 0.2.0\n")
+    assert probe_native_bin_version(binary, runner=runner) == "0.2.0"
+
+
 def test_non_zero_exit_returns_none(tmp_path: Path) -> None:
     binary = _binary(tmp_path, "ghook")
     runner = _runner(returncode=1, stdout="0.1.0\n")

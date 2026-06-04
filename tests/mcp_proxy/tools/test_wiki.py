@@ -179,7 +179,6 @@ def reset_fakes() -> None:
 
 def _registry() -> InternalToolRegistry:
     return create_wiki_registry(
-        _config=DaemonConfig(wiki={"binary": "/bin/gwiki", "timeout_seconds": 4}),
         gateway_cls=FakeGateway,
         update_coordinator_cls=RecordingCoordinator,
     )
@@ -270,7 +269,6 @@ async def test_degradation_passthrough() -> None:
 async def test_project_scope_resolves_to_repo_path(temp_db: Any, tmp_path: Path) -> None:
     project = LocalProjectManager(temp_db).create(name="wiki-mcp", repo_path=str(tmp_path))
     registry = create_wiki_registry(
-        _config=DaemonConfig(wiki={"binary": "/bin/gwiki", "timeout_seconds": 4}),
         db=temp_db,
         default_project_id=project.id,
         gateway_cls=FakeGateway,

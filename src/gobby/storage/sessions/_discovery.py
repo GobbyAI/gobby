@@ -238,13 +238,17 @@ class _DiscoveryMixin:
 
     def find_active_by_terminal_context(
         self: _ManagerState,
-        project_id: str,
+        project_id: str | None,
         parent_pid: Any,
         terminal_context: dict[str, Any] | str | None = None,
     ) -> Session | None:
         """Find the unique active session matching project and terminal identity."""
         normalized_parent_pid = _normalize_context_parent_pid(parent_pid)
-        if not project_id.strip() or normalized_parent_pid is None:
+        if (
+            not isinstance(project_id, str)
+            or not project_id.strip()
+            or normalized_parent_pid is None
+        ):
             return None
 
         rows = self.db.fetchall(

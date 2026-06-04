@@ -72,6 +72,15 @@ def test_enabled_update_allowed_on_system_row(cron_storage: CronJobStorage) -> N
     assert updated.enabled is False
 
 
+def test_enabled_update_requires_effective_next_run_at(cron_storage: CronJobStorage) -> None:
+    job = _job(cron_storage, is_system=True)
+    cron_storage.update_job(job.id, enabled=False)
+    cron_storage.update_system_job_bookkeeping(job.id, next_run_at=None)
+
+    with pytest.raises(ValueError, match="enabled=True requires next_run_at"):
+        cron_storage.update_job(job.id, enabled=True)
+
+
 def test_schedule_field_updates_allowed_on_system_row(cron_storage: CronJobStorage) -> None:
     job = _job(cron_storage, is_system=True)
 

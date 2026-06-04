@@ -22,6 +22,7 @@ from gobby.servers.session_changes import (
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
+    from gobby.servers.session_changes import SessionWorkspace
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ logger = logging.getLogger(__name__)
 def register_changes_routes(router: APIRouter, server: HTTPServer) -> None:
     """Register session-scoped Changes routes on the router."""
 
-    def _resolve(session_id: str) -> Any:
+    def _resolve(session_id: str) -> SessionWorkspace:
         workspace = resolve_session_workspace(
             session_manager=server.session_manager,
             task_manager=server.task_manager,
@@ -45,9 +46,14 @@ def register_changes_routes(router: APIRouter, server: HTTPServer) -> None:
         workspace = _resolve(session_id)
         try:
             files = await compute_session_changes(workspace)
-        except Exception:
-            logger.debug("Failed to compute changes for session %s", session_id, exc_info=True)
-            raise HTTPException(500, "Failed to compute session changes") from None
+        except Exception as e:
+            logger.debug(
+                "Failed to compute changes for session %s: %s",
+                session_id,
+                type(e).__name__,
+                exc_info=True,
+            )
+            raise HTTPException(500, "Failed to compute session changes") from e
         return {
             "files": [{"path": f.path, "status": f.status} for f in files],
             "isolation": workspace.isolation,
@@ -64,7 +70,13 @@ def register_changes_routes(router: APIRouter, server: HTTPServer) -> None:
             raise HTTPException(400, "Invalid path")
         try:
             diff = await compute_session_file_diff(workspace, path)
-        except Exception:
-            logger.debug("Failed to diff %s for session %s", path, session_id, exc_info=True)
-            diff = ""
+        except Exception as e:
+            logger.debug(
+                "Failed to diff %s for session %s: %s",
+                path,
+                session_id,
+                type(e).__name__,
+                exc_info=True,
+            )
+            raise HTTPException(500, f"Failed to compute diff for {path}") from e
         return {"diff": diff, "path": path}

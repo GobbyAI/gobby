@@ -43,7 +43,7 @@ ADDITIONAL_CONTEXT_LIMIT = 9_950
 # breadcrumb still fit under the SDK's 10K aggregate ceiling. The full,
 # untruncated summary stays available on demand via the get_handoff_context
 # MCP tool, so this only bounds the inline copy — it never drops content.
-HANDOFF_SUMMARY_INJECT_BUDGET = 6_500
+HANDOFF_SUMMARY_INJECT_BUDGET: int = 6_500
 
 
 def head_with_breadcrumb(text: str, *, budget: int, breadcrumb: str) -> str:

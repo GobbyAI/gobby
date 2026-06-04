@@ -5,6 +5,7 @@ import pytest
 from gobby.review_learning.lessons import normalize_lesson
 from gobby.review_learning.promotion import PromotionDecision, _create_or_update_task
 from gobby.review_learning.service import ReviewLearningService
+from tests.review_learning.conftest import FakeTaskManager
 
 pytestmark = pytest.mark.unit
 
@@ -146,7 +147,7 @@ async def test_non_promotable_lessons_never_create_tasks(
 
 
 def test_create_or_update_task_rejects_incomplete_promotion_decision(
-    fake_task_manager,
+    fake_task_manager: FakeTaskManager,
 ) -> None:
     lesson = normalize_lesson(
         source_kind="agent_review",

@@ -107,6 +107,16 @@ async def test_compute_session_file_diff_for_edited_and_untracked(tmp_path: Path
     assert "brand new" in fresh_diff
 
 
+@pytest.mark.asyncio
+async def test_compute_session_file_diff_rejects_path_traversal(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    workspace = SessionWorkspace(working_dir=str(repo), base_ref="HEAD", isolation="none")
+
+    with pytest.raises(ValueError, match="Invalid path"):
+        await compute_session_file_diff(workspace, "../outside.txt")
+
+
 def test_is_safe_relative_path(tmp_path: Path) -> None:
     base = str(tmp_path)
     assert is_safe_relative_path(base, "src/file.ts") is True
