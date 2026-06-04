@@ -192,13 +192,13 @@ pub fn contract() -> CliContract {
                 name: "compile",
                 summary: "Compile accepted research notes into wiki articles.",
                 daemon_consumed: true,
-                positionals: vec![],
+                positionals: vec![optional_positional("TOPIC", false)],
                 flags: vec![
-                    FlagContract::value("--topic", "TOPIC"),
-                    FlagContract::value("--outline", "PATH"),
-                    FlagContract::value("--target", "PATH"),
-                    FlagContract::value("--kind", "article|stub"),
-                    FlagContract::value("--output", "PATH"),
+                    FlagContract::repeatable_value("--outline", "HEADING"),
+                    FlagContract::value("--kind", "source|concept|topic")
+                        .allowed(vec!["source", "concept", "topic"]),
+                    FlagContract::value("--target", "PAGE"),
+                    FlagContract::switch("--write-intent"),
                 ],
                 json_output_keys: scoped_keys(vec![
                     "topic",
