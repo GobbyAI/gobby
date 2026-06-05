@@ -226,6 +226,15 @@ class CodexManagedChatSession(
     async def interrupt(self) -> None:
         await self._backend.interrupt(self)
 
+    async def clear_context(self) -> bool:
+        """Real context clear: archive the current thread and start a fresh one.
+
+        Invoked by the plan-approval handler for Codex's "approve + clear
+        context" option; the approved plan is re-seeded into the continuation
+        turn so implementation proceeds on a clean thread.
+        """
+        return bool(await self._backend.clear_session_context(self))
+
     async def _get_transcript_offset(self) -> int:
         if not self._transcript_path:
             return 0
@@ -902,6 +911,34 @@ class CodexWebChatBackend:
 
     async def switch_model(self, session: CodexManagedChatSession, new_model: str) -> None:
         session._model = new_model
+
+    async def clear_session_context(self, session: CodexManagedChatSession) -> bool:
+        """Reset the session's conversation context to a fresh Codex thread.
+
+        Codex has no in-place context wipe, so a real "clear context" archives
+        the current thread and starts a new one. The caller (plan approval with
+        the "approve + clear context" option) re-seeds the approved plan into
+        the next turn, so implementation continues on a clean thread.
+        """
+        if self._client is None or not self._health.available:
+            logger.warning("Codex clear-context requested while backend unavailable")
+            return False
+        old_thread_id = session._thread_id
+        await self.detach_session(session)
+        session._thread_id = None
+        session._turn_id = None
+        session._transcript_path = None
+        if old_thread_id:
+            try:
+                await self._client.archive_thread(old_thread_id)
+            except Exception:
+                logger.debug(
+                    "Failed to archive Codex thread %s during context clear",
+                    old_thread_id,
+                    exc_info=True,
+                )
+        await self.attach_session(session, model=session._model)
+        return True
 
 
 __all__ = [

@@ -12,6 +12,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
+from gobby.adapters.plan_options import serialize_plan_accept_options
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.handlers import plan_approval as _plan
 from gobby.servers.websocket.handlers import session_config as _config
@@ -114,6 +115,8 @@ class SessionControlMixin:
 
             pending_plan_content = getattr(session, "_pending_plan_content", None)
             if isinstance(pending_plan_content, str) and pending_plan_content:
+                raw_source = getattr(session, "provider", None)
+                plan_source = raw_source if isinstance(raw_source, str) else None
                 try:
                     await websocket.send(
                         _json.dumps(
@@ -123,6 +126,12 @@ class SessionControlMixin:
                                 "plan_content": pending_plan_content,
                                 "allowed_prompts": getattr(
                                     session, "_pending_plan_allowed_prompts", None
+                                ),
+                                "source": plan_source,
+                                "options": (
+                                    serialize_plan_accept_options(plan_source)
+                                    if plan_source
+                                    else []
                                 ),
                             }
                         )

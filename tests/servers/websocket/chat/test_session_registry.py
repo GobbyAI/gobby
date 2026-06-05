@@ -15,6 +15,7 @@ from gobby.servers.websocket.chat.session_registry import (
     WEB_CHAT_WAKE_PROMPT,
     WebChatSessionRegistry,
 )
+from gobby.sessions.compact_continuation import COMPACT_SELF_CONTINUE_PROMPT
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.engine.core import RuleEngine
@@ -65,7 +66,7 @@ class TestWebChatSessionRegistry:
         }
         assert [call.args[0] for call in session.send_message.call_args_list] == [
             "/compact",
-            "Continue where you last left off.",
+            COMPACT_SELF_CONTINUE_PROMPT,
         ]
 
     @pytest.mark.asyncio
@@ -129,7 +130,7 @@ class TestWebChatSessionRegistry:
         await queued_task
         assert [call.args[0] for call in session.send_message.call_args_list] == [
             "/compact",
-            "Continue where you last left off.",
+            COMPACT_SELF_CONTINUE_PROMPT,
         ]
 
     @pytest.mark.asyncio
@@ -201,7 +202,7 @@ class TestWebChatSessionRegistry:
             await queued_task
         assert [call.args[0] for call in session.send_message.call_args_list] == [
             "/compact",
-            "Continue where you last left off.",
+            COMPACT_SELF_CONTINUE_PROMPT,
             WEB_CHAT_WAKE_PROMPT,
         ]
 

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 
+from gobby.adapters.plan_options import serialize_plan_accept_options
 from gobby.agents.sandbox import (
     web_chat_policy_mismatch_message,
     web_chat_sandbox_config,
@@ -445,12 +446,18 @@ class ChatSessionMixin:
                 and all(isinstance(prompt, str) for prompt in allowed_prompts)
                 else None
             )
+            raw_source = getattr(session, "provider", None)
+            plan_source = raw_source if isinstance(raw_source, str) else None
             msg = json.dumps(
                 {
                     "type": "plan_pending_approval",
                     "conversation_id": session_key,
                     "plan_content": content,
                     "allowed_prompts": session._pending_plan_allowed_prompts,
+                    "source": plan_source,
+                    "options": (
+                        serialize_plan_accept_options(plan_source) if plan_source else []
+                    ),
                 }
             )
             for ws, meta in list(self.clients.items()):
