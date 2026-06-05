@@ -42,6 +42,7 @@ export interface UseChatPageArtifactsResult {
   handleApprovePlan: (option?: ApprovalOption) => void;
   handleRequestPlanChanges: (feedback: string) => void;
   planPendingApproval: boolean;
+  planApproved: boolean;
   planApprovalOptions?: ApprovalOption[];
 }
 
@@ -284,6 +285,7 @@ export function useChatPageArtifacts({
     handleApprovePlan,
     handleRequestPlanChanges,
     planPendingApproval,
+    planApproved: chat.planApproved,
     planApprovalOptions: chat.planApprovalOptions,
   };
 }

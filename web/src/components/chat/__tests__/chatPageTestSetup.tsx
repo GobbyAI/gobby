@@ -452,6 +452,7 @@ export function createChat(overrides: Partial<ChatState> = {}): ChatState {
     mode: "plan",
     onModeChange: vi.fn(),
     planPendingApproval: false,
+    planApproved: false,
     onApprovePlan: vi.fn(),
     onRequestPlanChanges: vi.fn(),
     provider: "claude",

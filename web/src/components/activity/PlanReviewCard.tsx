@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { memo } from 'react'
 import type { Artifact } from '../../types/artifacts'
 import type { ApprovalOption } from '../../types/chat'
 import { cn } from '../../lib/utils'
@@ -9,6 +9,8 @@ import { useIsMobile } from '../../hooks/useIsMobile'
 interface PlanReviewCardProps {
   plan: Artifact
   planPendingApproval: boolean
+  /** Authoritative approval signal from chat state (backend plan_approved). */
+  planApproved?: boolean
   planApprovalOptions?: ApprovalOption[]
   onApprovePlan?: (option?: ApprovalOption) => void
   onRequestPlanChanges?: (feedback: string) => void
@@ -31,6 +33,7 @@ type ReviewStatus = 'pending' | 'approved' | 'idle'
 export const PlanReviewCard = memo(function PlanReviewCard({
   plan,
   planPendingApproval,
+  planApproved = false,
   planApprovalOptions,
   onApprovePlan,
   onRequestPlanChanges,
@@ -39,41 +42,24 @@ export const PlanReviewCard = memo(function PlanReviewCard({
   // Approval actions live on the agent status bar on desktop; the panel
   // carries them only on mobile, where the status bar may be off-screen.
   const isMobile = useIsMobile()
-  const [approved, setApproved] = useState(false)
-  const [didRequestChanges, setDidRequestChanges] = useState(false)
-  // Track previous props so derived state can be adjusted during render (the
-  // React "store information from previous renders" pattern) rather than in an
-  // effect, which would cascade renders.
-  const [prevPlanId, setPrevPlanId] = useState(plan.id)
-  const [prevPending, setPrevPending] = useState(planPendingApproval)
 
-  // Derive the approved state from the pending -> not-pending transition.
-  // A request-changes also clears pending transiently (the action eagerly
-  // hides the approval UI), so suppress "approved" when the user explicitly
-  // asked for changes; a fresh plan_pending_approval re-arms the cycle.
-  if (plan.id !== prevPlanId) {
-    // A different plan became active — start its review fresh.
-    setPrevPlanId(plan.id)
-    setPrevPending(planPendingApproval)
-    setApproved(false)
-    setDidRequestChanges(false)
-  } else if (planPendingApproval !== prevPending) {
-    setPrevPending(planPendingApproval)
-    if (planPendingApproval) {
-      setApproved(false)
-      setDidRequestChanges(false)
-    } else if (prevPending && !didRequestChanges) {
-      setApproved(true)
-    }
-  }
+  // `planApproved` is the authoritative approval signal from chat state (set
+  // only by the backend plan_approved event). Deriving it from a bare
+  // pending -> not-pending edge could not tell approve from reject, so a
+  // Request Changes from the desktop status bar misrendered as "Plan
+  // approved" (#15681 — the symmetric half of #15663).
+  const status: ReviewStatus = planPendingApproval
+    ? 'pending'
+    : planApproved
+      ? 'approved'
+      : 'idle'
 
-  const status: ReviewStatus = planPendingApproval ? 'pending' : approved ? 'approved' : 'idle'
-
-  const version = plan.versions[plan.currentVersionIndex] ?? plan.versions[plan.versions.length - 1]
+  const version = plan.versions.length > 0
+    ? plan.versions[plan.currentVersionIndex] ?? plan.versions[plan.versions.length - 1]
+    : undefined
   const content = version?.content ?? ''
 
   const handleRequestChanges = (feedback: string) => {
-    setDidRequestChanges(true)
     onRequestPlanChanges?.(feedback)
   }
 

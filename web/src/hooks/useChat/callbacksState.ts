@@ -14,6 +14,10 @@ type ChatLifecycleCallback = (conversationId: string) => void;
 
 export function usePlanArtifactCallbacks() {
   const [planPendingApproval, setPlanPendingApproval] = useState(false);
+  // Authoritative approval signal: true ONLY after the backend plan_approved
+  // event. Reset on each fresh plan_pending_approval and on conversation
+  // switch. Lets the Plans panel tell approve from reject (#15681).
+  const [planApproved, setPlanApproved] = useState(false);
   // Per-CLI plan-accept options carried in the plan_pending_approval payload.
   const [planApprovalOptions, setPlanApprovalOptions] = useState<ApprovalOption[]>([]);
   const planContentRef = useRef<string | null>(null);
@@ -63,6 +67,7 @@ export function usePlanArtifactCallbacks() {
     onPlanReadyRef,
     pendingPlanFeedbackRef,
     planApprovalOptions,
+    planApproved,
     planContentRef,
     planPendingApproval,
     setOnArtifactEvent,
@@ -72,6 +77,7 @@ export function usePlanArtifactCallbacks() {
     setOnModeChanged,
     setOnPlanReady,
     setPlanApprovalOptions,
+    setPlanApproved,
     setPlanPendingApproval,
   };
 }

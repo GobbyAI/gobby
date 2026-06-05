@@ -65,6 +65,7 @@ interface ActivityPanelProps {
   onUpdateArtifactContent?: (id: string, content: string) => void;
   onSetArtifactVersion: (id: string, index: number) => void;
   planPendingApproval?: boolean;
+  planApproved?: boolean;
   planApprovalOptions?: ApprovalOption[];
   onApprovePlan?: (option?: ApprovalOption) => void;
   onRequestPlanChanges?: (feedback: string) => void;
@@ -179,6 +180,7 @@ export function ActivityPanel({
   onUpdateArtifactContent,
   onSetArtifactVersion,
   planPendingApproval,
+  planApproved,
   planApprovalOptions,
   onApprovePlan,
   onRequestPlanChanges,
@@ -314,6 +316,7 @@ export function ActivityPanel({
             onUpdateContent={onUpdateArtifactContent}
             onSetVersion={onSetArtifactVersion}
             planPendingApproval={planPendingApproval}
+            planApproved={planApproved}
             planApprovalOptions={planApprovalOptions}
             onApprovePlan={onApprovePlan}
             onRequestPlanChanges={onRequestPlanChanges}

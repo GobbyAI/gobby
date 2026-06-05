@@ -111,6 +111,7 @@ export interface StateSetters {
   setMessages: Setter<ChatMessage[]>;
   setObservedSessionId: Setter<string | null>;
   setPlanApprovalOptions: Setter<ApprovalOption[]>;
+  setPlanApproved: Setter<boolean>;
   setPlanPendingApproval: Setter<boolean>;
   setProxyDeliveryNotice: Setter<string | null>;
   setSelectedProvider: Setter<string | null>;

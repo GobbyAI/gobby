@@ -13,6 +13,18 @@ import {
 import { MESSAGE_FEEDBACK_DELAY_MS } from "./constants";
 import type { UseChatTransportParams } from "./transportTypes";
 
+function isApprovalOption(value: unknown): value is ApprovalOption {
+  if (!value || typeof value !== "object") return false;
+  const option = value as Record<string, unknown>;
+  const decision = option.decision;
+  return (
+    typeof option.id === "string" &&
+    typeof option.label === "string" &&
+    (option.description === undefined || typeof option.description === "string") &&
+    (decision === undefined || decision === "approve" || decision === "keep_planning")
+  );
+}
+
 export function handlePlanPendingApproval(
   data: Record<string, unknown>,
   ctx: UseChatTransportParams,
@@ -26,10 +38,13 @@ export function handlePlanPendingApproval(
       // Per-CLI plan-accept options (backend registry source of truth).
       // Absent/empty -> the UI degrades to a single generic Approve.
       const options = Array.isArray(data.options)
-        ? (data.options as ApprovalOption[])
+        ? data.options.filter(isApprovalOption)
         : [];
       ctx.setPlanApprovalOptions(options);
       ctx.setPlanPendingApproval(true);
+      // A fresh plan re-arms the cycle: clear any prior approval so a
+      // revised plan does not inherit a stale "approved" state (#15681).
+      ctx.setPlanApproved(false);
       ctx.planContentRef.current = planContent;
       if (planContent !== previousPlanContent) {
         ctx.onPlanReadyRef.current?.(planContent);
@@ -56,6 +71,8 @@ export function handleModeChanged(
       // that may have arrived before this mode_changed.
       if (reason === "plan_approved") {
         ctx.setPlanPendingApproval(false);
+        // Authoritative approval signal for the Plans panel (#15681).
+        ctx.setPlanApproved(true);
         ctx.planContentRef.current = null;
       }
       if (

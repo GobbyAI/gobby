@@ -142,7 +142,9 @@ describe('PlansTab', () => {
     })
     expect(screen.getByTestId('plan-review-status')).toHaveAttribute('data-status', 'pending')
 
-    rerender(<PlansTab {...props} planPendingApproval={false} />)
+    // Backend plan_approved => pending clears AND the authoritative
+    // planApproved signal flips true.
+    rerender(<PlansTab {...props} planPendingApproval={false} planApproved={true} />)
 
     const status = screen.getByTestId('plan-review-status')
     expect(status).toHaveAttribute('data-status', 'approved')
@@ -151,5 +153,20 @@ describe('PlansTab', () => {
     // Approved state is also grayscale-legible (check icon) and stripe-free.
     expect(status.querySelector('svg')).toBeTruthy()
     expect(status.className).not.toContain('border-l')
+  })
+
+  it('does NOT show approved when Request Changes clears pending from the status bar (#15681)', () => {
+    const { props, rerender } = renderPlansTab(makePlan(['plan body']), {
+      planPendingApproval: true,
+    })
+    expect(screen.getByTestId('plan-review-status')).toHaveAttribute('data-status', 'pending')
+
+    // Desktop Request Changes lives on the agent status bar, not the card, so
+    // it clears pending WITHOUT an approval. The card must fall back to idle —
+    // a rejection must never render as "Plan approved" (sibling of #15663).
+    rerender(<PlansTab {...props} planPendingApproval={false} planApproved={false} />)
+
+    expect(screen.queryByText('Plan approved')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('plan-review-status')).not.toBeInTheDocument()
   })
 })

@@ -75,6 +75,7 @@ export function useChat() {
     onPlanReadyRef,
     pendingPlanFeedbackRef,
     planApprovalOptions,
+    planApproved,
     planContentRef,
     planPendingApproval,
     setOnArtifactEvent,
@@ -84,6 +85,7 @@ export function useChat() {
     setOnModeChanged,
     setOnPlanReady,
     setPlanApprovalOptions,
+    setPlanApproved,
     setPlanPendingApproval,
   } = usePlanArtifactCallbacks();
 
@@ -248,6 +250,7 @@ export function useChat() {
     setCurrentBranch(null);
     setWorktreePath(null);
     setPlanPendingApproval(false);
+    setPlanApproved(false);
     planContentRef.current = null;
     setContextUsage(createEmptyContextUsage());
     setMessages([]);
@@ -258,6 +261,7 @@ export function useChat() {
     setContextUsage,
     setCurrentBranch,
     setMainSessionMeta,
+    setPlanApproved,
     setPlanPendingApproval,
     setSessionRef,
     setSessionTitle,
@@ -437,6 +441,7 @@ export function useChat() {
     setMessages,
     setObservedSessionId,
     setPlanApprovalOptions,
+    setPlanApproved,
     setPlanPendingApproval,
     setProxyDeliveryNotice,
     setSelectedProvider,
@@ -679,6 +684,7 @@ export function useChat() {
     respondToQuestion,
     respondToApproval,
     planPendingApproval,
+    planApproved,
     planApprovalOptions,
     approvePlan,
     requestPlanChanges,

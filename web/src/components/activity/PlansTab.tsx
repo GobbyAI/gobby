@@ -13,6 +13,7 @@ interface PlansTabProps {
   onUpdateContent?: (id: string, content: string) => void
   onSetVersion: (id: string, index: number) => void
   planPendingApproval?: boolean
+  planApproved?: boolean
   planApprovalOptions?: ApprovalOption[]
   onApprovePlan?: (option?: ApprovalOption) => void
   onRequestPlanChanges?: (feedback: string) => void
@@ -24,6 +25,7 @@ export const PlansTab = memo(function PlansTab({
   onOpenArtifact,
   onSetVersion,
   planPendingApproval,
+  planApproved,
   planApprovalOptions,
   onApprovePlan,
   onRequestPlanChanges,
@@ -62,6 +64,7 @@ export const PlansTab = memo(function PlansTab({
     <PlanReviewCard
       plan={displayPlan}
       planPendingApproval={!!planPendingApproval}
+      planApproved={!!planApproved}
       planApprovalOptions={planApprovalOptions}
       onApprovePlan={onApprovePlan}
       onRequestPlanChanges={onRequestPlanChanges}

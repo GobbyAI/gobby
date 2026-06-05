@@ -286,6 +286,8 @@ export interface ChatState {
     },
   ) => Promise<string>;
   planPendingApproval: boolean;
+  /** Authoritative approval signal (backend plan_approved); distinguishes approve from reject (#15681). */
+  planApproved: boolean;
   planApprovalOptions?: ApprovalOption[];
   onApprovePlan: (option?: ApprovalOption) => void;
   onRequestPlanChanges: (feedback: string) => void;
