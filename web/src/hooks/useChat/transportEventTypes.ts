@@ -1,4 +1,4 @@
-import type { ToolResult } from "../../types/chat";
+import type { ApprovalOption, ToolResult } from "../../types/chat";
 
 export interface ChatStreamChunk {
   type: "chat_stream";
@@ -160,6 +160,10 @@ export interface PlanPendingApprovalMessage {
   type: "plan_pending_approval";
   conversation_id?: string;
   plan_content?: string;
+  /** Originating CLI (claude, codex, droid, gemini, grok, qwen). */
+  source?: string;
+  /** Per-CLI plan-accept options to render instead of a generic Approve. */
+  options?: ApprovalOption[];
 }
 
 export interface ModeChangedMessage {

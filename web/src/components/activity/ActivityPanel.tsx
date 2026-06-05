@@ -16,6 +16,7 @@ import { TracesTab } from "./TracesTab";
 import { ActivityMcpTab, type ActivityMcpTabProps } from "./ActivityMcpTab";
 import { WikiTab } from "./WikiTab";
 import type { Artifact } from "../../types/artifacts";
+import type { ApprovalOption } from "../../types/chat";
 import type { GobbySession } from "../../types/sessions";
 import type { SessionsFilters } from "./sessionsFilters";
 import type { LayoutMode } from "./useActivityPanel";
@@ -64,7 +65,8 @@ interface ActivityPanelProps {
   onUpdateArtifactContent?: (id: string, content: string) => void;
   onSetArtifactVersion: (id: string, index: number) => void;
   planPendingApproval?: boolean;
-  onApprovePlan?: () => void;
+  planApprovalOptions?: ApprovalOption[];
+  onApprovePlan?: (option?: ApprovalOption) => void;
   onRequestPlanChanges?: (feedback: string) => void;
   // File changes tab
   changedFiles?: { path: string; status: string }[];
@@ -177,6 +179,7 @@ export function ActivityPanel({
   onUpdateArtifactContent,
   onSetArtifactVersion,
   planPendingApproval,
+  planApprovalOptions,
   onApprovePlan,
   onRequestPlanChanges,
   changedFiles = [],
@@ -311,6 +314,7 @@ export function ActivityPanel({
             onUpdateContent={onUpdateArtifactContent}
             onSetVersion={onSetArtifactVersion}
             planPendingApproval={planPendingApproval}
+            planApprovalOptions={planApprovalOptions}
             onApprovePlan={onApprovePlan}
             onRequestPlanChanges={onRequestPlanChanges}
           />

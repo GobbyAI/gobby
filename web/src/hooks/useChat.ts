@@ -74,6 +74,7 @@ export function useChat() {
     onModeChangedRef,
     onPlanReadyRef,
     pendingPlanFeedbackRef,
+    planApprovalOptions,
     planContentRef,
     planPendingApproval,
     setOnArtifactEvent,
@@ -82,6 +83,7 @@ export function useChat() {
     setCurrentMode,
     setOnModeChanged,
     setOnPlanReady,
+    setPlanApprovalOptions,
     setPlanPendingApproval,
   } = usePlanArtifactCallbacks();
 
@@ -434,6 +436,7 @@ export function useChat() {
     setMainSessionMeta,
     setMessages,
     setObservedSessionId,
+    setPlanApprovalOptions,
     setPlanPendingApproval,
     setProxyDeliveryNotice,
     setSelectedProvider,
@@ -676,6 +679,7 @@ export function useChat() {
     respondToQuestion,
     respondToApproval,
     planPendingApproval,
+    planApprovalOptions,
     approvePlan,
     requestPlanChanges,
     switchConversation,

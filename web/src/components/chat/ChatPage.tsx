@@ -196,6 +196,7 @@ export function ChatPage({
         onUpdateArtifactContent={artifacts.updateArtifact}
         onSetArtifactVersion={artifacts.setVersion}
         planPendingApproval={artifacts.planPendingApproval}
+        planApprovalOptions={artifacts.planApprovalOptions}
         onApprovePlan={artifacts.handleApprovePlan}
         onRequestPlanChanges={artifacts.handleRequestPlanChanges}
         changedFiles={fileChanges.changedFiles}

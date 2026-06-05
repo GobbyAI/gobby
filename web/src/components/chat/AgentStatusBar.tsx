@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react'
-import type { ContextUsage, SessionInteractionMode, SessionObservationMeta } from '../../types/chat'
+import type {
+  ApprovalOption,
+  ContextUsage,
+  SessionInteractionMode,
+  SessionObservationMeta,
+} from '../../types/chat'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { LinkIcon, PlayIcon, UnlinkIcon } from '../icons'
 import { PlusIcon } from './icons/PlusIcon'
@@ -17,7 +22,8 @@ interface AgentStatusBarProps {
   onDetach?: () => void
   onNewChat?: () => void
   planPendingApproval?: boolean
-  onApprovePlan?: () => void
+  planApprovalOptions?: ApprovalOption[]
+  onApprovePlan?: (option?: ApprovalOption) => void
   onRequestPlanChanges?: (feedback: string) => void
   onViewPlan?: () => void
 }
@@ -66,6 +72,7 @@ export function AgentStatusBar({
   onDetach,
   onNewChat,
   planPendingApproval = false,
+  planApprovalOptions,
   onApprovePlan,
   onRequestPlanChanges,
   onViewPlan,
@@ -171,6 +178,7 @@ export function AgentStatusBar({
             onApprove={onApprovePlan}
             onRequestChanges={onRequestPlanChanges}
             onView={onViewPlan}
+            options={planApprovalOptions}
           />
         </div>
       )}

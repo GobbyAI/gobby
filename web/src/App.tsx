@@ -102,6 +102,7 @@ export default function App() {
     respondToQuestion,
     respondToApproval,
     planPendingApproval,
+    planApprovalOptions,
     approvePlan,
     requestPlanChanges,
     switchConversation,
@@ -799,6 +800,7 @@ export default function App() {
                     ? undefined
                     : sendWorktreeChange,
                   planPendingApproval,
+                  planApprovalOptions,
                   onApprovePlan: approvePlan,
                   onRequestPlanChanges: requestPlanChanges,
                   setOnPlanReady,

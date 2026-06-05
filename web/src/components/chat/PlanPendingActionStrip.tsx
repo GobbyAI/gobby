@@ -1,10 +1,13 @@
+import type { ApprovalOption } from '../../types/chat'
 import { cn } from '../../lib/utils'
 import { Button } from '../shared/Button'
 import { PlanApprovalActions } from './PlanApprovalActions'
 
 interface PlanPendingActionStripProps {
-  onApprove: () => void
+  onApprove: (option?: ApprovalOption) => void
   onRequestChanges: (feedback: string) => void
+  /** Per-CLI plan-accept options; empty/absent falls back to a single Approve. */
+  options?: ApprovalOption[]
   /** Focus the Plans panel (altitude-3 canonical view). */
   onView?: () => void
   className?: string
@@ -19,6 +22,7 @@ interface PlanPendingActionStripProps {
 export function PlanPendingActionStrip({
   onApprove,
   onRequestChanges,
+  options,
   onView,
   className,
 }: PlanPendingActionStripProps) {
@@ -38,6 +42,7 @@ export function PlanPendingActionStrip({
         <PlanApprovalActions
           onApprove={onApprove}
           onRequestChanges={onRequestChanges}
+          options={options}
           testIdPrefix="plan-strip"
         />
         {onView && (

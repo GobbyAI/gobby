@@ -177,6 +177,7 @@ export function ChatMainColumn({
           onDetach={chat.attachedSessionId ? chat.onDetachFromSession : undefined}
           onNewChat={() => onNewChat()}
           planPendingApproval={chat.planPendingApproval}
+          planApprovalOptions={chat.planApprovalOptions}
           onApprovePlan={chat.onApprovePlan}
           onRequestPlanChanges={chat.onRequestPlanChanges}
           onViewPlan={onViewPlan}

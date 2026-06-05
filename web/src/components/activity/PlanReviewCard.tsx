@@ -1,5 +1,6 @@
 import { memo, useState } from 'react'
 import type { Artifact } from '../../types/artifacts'
+import type { ApprovalOption } from '../../types/chat'
 import { cn } from '../../lib/utils'
 import { Markdown } from '../chat/Markdown'
 import { PlanApprovalActions } from '../chat/PlanApprovalActions'
@@ -8,7 +9,8 @@ import { useIsMobile } from '../../hooks/useIsMobile'
 interface PlanReviewCardProps {
   plan: Artifact
   planPendingApproval: boolean
-  onApprovePlan?: () => void
+  planApprovalOptions?: ApprovalOption[]
+  onApprovePlan?: (option?: ApprovalOption) => void
   onRequestPlanChanges?: (feedback: string) => void
   onSetVersion: (id: string, index: number) => void
 }
@@ -29,6 +31,7 @@ type ReviewStatus = 'pending' | 'approved' | 'idle'
 export const PlanReviewCard = memo(function PlanReviewCard({
   plan,
   planPendingApproval,
+  planApprovalOptions,
   onApprovePlan,
   onRequestPlanChanges,
   onSetVersion,
@@ -97,6 +100,7 @@ export const PlanReviewCard = memo(function PlanReviewCard({
             <PlanApprovalActions
               onApprove={onApprovePlan}
               onRequestChanges={handleRequestChanges}
+              options={planApprovalOptions}
               testIdPrefix="plan-review"
             />
           )}

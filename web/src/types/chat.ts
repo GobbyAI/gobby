@@ -10,6 +10,21 @@ export interface ChatModeInfo {
   level: number; // 0=plan, 1=act, 2=yolo
 }
 
+/**
+ * One selectable plan-acceptance choice surfaced by a managed CLI. Sourced
+ * from the backend per-CLI registry (gobby.adapters.plan_options) and emitted
+ * in the plan_pending_approval payload; the frontend renders whatever it is
+ * given and echoes the id back as option_id. Mirrors the ChatModeInfo
+ * static-metadata pattern.
+ */
+export interface ApprovalOption {
+  id: string;
+  label: string;
+  description?: string;
+  /** "approve" exits plan mode; "keep_planning" re-enters planning. */
+  decision?: "approve" | "keep_planning";
+}
+
 export const CHAT_MODES: ChatModeInfo[] = [
   {
     id: "plan",
@@ -271,7 +286,8 @@ export interface ChatState {
     },
   ) => Promise<string>;
   planPendingApproval: boolean;
-  onApprovePlan: () => void;
+  planApprovalOptions?: ApprovalOption[];
+  onApprovePlan: (option?: ApprovalOption) => void;
   onRequestPlanChanges: (feedback: string) => void;
   setOnPlanReady?: (fn: (content: string | null) => void) => void;
   setOnArtifactEvent?: (

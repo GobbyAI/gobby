@@ -2,6 +2,7 @@
 import { useCallback, useEffect } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type {
+  ApprovalOption,
   ChatMessage,
   ChatMode,
   ContentBlock,
@@ -883,16 +884,26 @@ const respondToApproval = useCallback(
   [],
 );
 
-// Approve the current plan. The backend's mode_changed event is authoritative.
-const approvePlan = useCallback(() => {
+// Approve the current plan, optionally selecting a per-CLI option. The
+// backend resolves option_id against its registry and the mode_changed event
+// is authoritative. A keep_planning option re-enters planning rather than
+// approving.
+const approvePlan = useCallback((option?: ApprovalOption) => {
   if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
   if (!conversationIdRef.current) return;
   if (!planContentRef.current) return;
+  // A keep_planning option (e.g. Ultraplan) does not approve; the agent
+  // re-plans deeper. Eagerly hide the approval UI so the next plan re-arms it.
+  if (option?.decision === "keep_planning") {
+    setPlanPendingApproval(false);
+    planContentRef.current = null;
+  }
   wsRef.current.send(
     JSON.stringify({
       type: "plan_approval_response",
       conversation_id: conversationIdRef.current,
       decision: "approve",
+      ...(option?.id ? { option_id: option.id } : {}),
     }),
   );
 }, []);

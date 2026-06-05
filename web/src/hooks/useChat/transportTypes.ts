@@ -4,6 +4,7 @@ import type {
   SetStateAction,
 } from "react";
 import type {
+  ApprovalOption,
   ChatMessage,
   ChatMode,
   ContextUsage,
@@ -109,6 +110,7 @@ export interface StateSetters {
   setMainSessionMeta: Setter<SessionObservationMeta | null>;
   setMessages: Setter<ChatMessage[]>;
   setObservedSessionId: Setter<string | null>;
+  setPlanApprovalOptions: Setter<ApprovalOption[]>;
   setPlanPendingApproval: Setter<boolean>;
   setProxyDeliveryNotice: Setter<string | null>;
   setSelectedProvider: Setter<string | null>;

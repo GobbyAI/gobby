@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import type { ChatMode } from "../../types/chat";
+import type { ApprovalOption, ChatMode } from "../../types/chat";
 import { normalizeChatMode } from "../../types/chat";
 
 type ModeChangedCallback = (mode: ChatMode) => void;
@@ -14,6 +14,8 @@ type ChatLifecycleCallback = (conversationId: string) => void;
 
 export function usePlanArtifactCallbacks() {
   const [planPendingApproval, setPlanPendingApproval] = useState(false);
+  // Per-CLI plan-accept options carried in the plan_pending_approval payload.
+  const [planApprovalOptions, setPlanApprovalOptions] = useState<ApprovalOption[]>([]);
   const planContentRef = useRef<string | null>(null);
   const currentModeRef = useRef<ChatMode>("plan");
 
@@ -60,6 +62,7 @@ export function usePlanArtifactCallbacks() {
     onModeChangedRef,
     onPlanReadyRef,
     pendingPlanFeedbackRef,
+    planApprovalOptions,
     planContentRef,
     planPendingApproval,
     setOnArtifactEvent,
@@ -68,6 +71,7 @@ export function usePlanArtifactCallbacks() {
     setCurrentMode,
     setOnModeChanged,
     setOnPlanReady,
+    setPlanApprovalOptions,
     setPlanPendingApproval,
   };
 }

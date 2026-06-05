@@ -1,4 +1,5 @@
 import { normalizeChatMode } from "../../types/chat";
+import type { ApprovalOption } from "../../types/chat";
 import {
   saveConversationId,
   saveDbSessionId,
@@ -22,6 +23,12 @@ export function handlePlanPendingApproval(
     const planContent = data.plan_content as string | undefined;
     if (planContent) {
       const previousPlanContent = ctx.planContentRef.current;
+      // Per-CLI plan-accept options (backend registry source of truth).
+      // Absent/empty -> the UI degrades to a single generic Approve.
+      const options = Array.isArray(data.options)
+        ? (data.options as ApprovalOption[])
+        : [];
+      ctx.setPlanApprovalOptions(options);
       ctx.setPlanPendingApproval(true);
       ctx.planContentRef.current = planContent;
       if (planContent !== previousPlanContent) {

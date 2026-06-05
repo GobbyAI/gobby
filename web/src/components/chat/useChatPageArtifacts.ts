@@ -3,7 +3,7 @@ import type { MutableRefObject } from "react";
 
 import { useArtifacts } from "../../hooks/useArtifacts";
 import type { Artifact, ArtifactType } from "../../types/artifacts";
-import type { ChatState } from "../../types/chat";
+import type { ApprovalOption, ChatState } from "../../types/chat";
 import type { ActivityTab } from "../activity/ActivityPanelTabs";
 
 const VALID_ARTIFACT_TYPES = new Set<string>([
@@ -39,9 +39,10 @@ export interface UseChatPageArtifactsResult {
     title?: string,
   ) => void;
   handleCloseArtifact: () => void;
-  handleApprovePlan: () => void;
+  handleApprovePlan: (option?: ApprovalOption) => void;
   handleRequestPlanChanges: (feedback: string) => void;
   planPendingApproval: boolean;
+  planApprovalOptions?: ApprovalOption[];
 }
 
 interface PlanArtifactState {
@@ -195,18 +196,21 @@ export function useChatPageArtifacts({
     chat.setOnArtifactEvent?.(onArtifactEvent);
   }, [chat, onArtifactEvent]);
 
-  const handleApprovePlan = useCallback(() => {
-    setPlanState((prev) => {
-      const nextPlanState =
-        prev.switchKey === conversationSwitchKey
-          ? { ...prev, pendingPlanArtifactId: null }
-          : emptyPlanArtifactState(conversationSwitchKey);
-      planStateRef.current = nextPlanState;
-      return nextPlanState;
-    });
-    chat.onApprovePlan?.();
-    dismissOnMobile();
-  }, [chat, conversationSwitchKey, dismissOnMobile]);
+  const handleApprovePlan = useCallback(
+    (option?: ApprovalOption) => {
+      setPlanState((prev) => {
+        const nextPlanState =
+          prev.switchKey === conversationSwitchKey
+            ? { ...prev, pendingPlanArtifactId: null }
+            : emptyPlanArtifactState(conversationSwitchKey);
+        planStateRef.current = nextPlanState;
+        return nextPlanState;
+      });
+      chat.onApprovePlan?.(option);
+      dismissOnMobile();
+    },
+    [chat, conversationSwitchKey, dismissOnMobile],
+  );
 
   const handleRequestPlanChanges = useCallback(
     (feedback: string) => {
@@ -260,5 +264,6 @@ export function useChatPageArtifacts({
     handleApprovePlan,
     handleRequestPlanChanges,
     planPendingApproval,
+    planApprovalOptions: chat.planApprovalOptions,
   };
 }

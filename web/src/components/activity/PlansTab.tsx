@@ -1,5 +1,6 @@
 import { memo, useEffect } from 'react'
 import type { Artifact } from '../../types/artifacts'
+import type { ApprovalOption } from '../../types/chat'
 import { ActivityPanelEmpty, PlansEmptyIcon } from './ActivityPanelEmpty'
 import { PlanReviewCard } from './PlanReviewCard'
 
@@ -12,7 +13,8 @@ interface PlansTabProps {
   onUpdateContent?: (id: string, content: string) => void
   onSetVersion: (id: string, index: number) => void
   planPendingApproval?: boolean
-  onApprovePlan?: () => void
+  planApprovalOptions?: ApprovalOption[]
+  onApprovePlan?: (option?: ApprovalOption) => void
   onRequestPlanChanges?: (feedback: string) => void
 }
 
@@ -22,6 +24,7 @@ export const PlansTab = memo(function PlansTab({
   onOpenArtifact,
   onSetVersion,
   planPendingApproval,
+  planApprovalOptions,
   onApprovePlan,
   onRequestPlanChanges,
 }: PlansTabProps) {
@@ -59,6 +62,7 @@ export const PlansTab = memo(function PlansTab({
     <PlanReviewCard
       plan={displayPlan}
       planPendingApproval={!!planPendingApproval}
+      planApprovalOptions={planApprovalOptions}
       onApprovePlan={onApprovePlan}
       onRequestPlanChanges={onRequestPlanChanges}
       onSetVersion={onSetVersion}
