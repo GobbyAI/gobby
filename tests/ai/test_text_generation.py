@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
@@ -26,6 +27,8 @@ from gobby.config.local import LocalConfig
 from gobby.llm.base import LLMProvider, LLMTextResult
 
 pytestmark = pytest.mark.unit
+
+TEXT_GENERATION_LOGGER = "gobby.ai.text_generation"
 
 
 class RecordingAdapter:
@@ -128,6 +131,79 @@ async def test_text_generation_service_generate_result_preserves_usage() -> None
     assert result.usage == {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}
     assert result.provider == "local"
     assert adapter.requests[-1].prompt == "summarize"
+
+
+@pytest.mark.asyncio
+async def test_successful_text_generation_omits_feature_llm_call_at_info(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+            )
+        ]
+    )
+    service = TextGenerationService(registry, {"local": RecordingAdapter("local")})
+    caplog.set_level(logging.INFO, logger=TEXT_GENERATION_LOGGER)
+
+    await service.generate_result(TextGenerationRequest(prompt="summarize", provider="local"))
+
+    assert [record for record in caplog.records if record.getMessage() == "feature_llm_call"] == []
+
+
+@pytest.mark.asyncio
+async def test_successful_text_generation_logs_feature_llm_call_at_debug(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+            )
+        ]
+    )
+    service = TextGenerationService(registry, {"local": RecordingAdapter("local")})
+    caplog.set_level(logging.DEBUG, logger=TEXT_GENERATION_LOGGER)
+
+    await service.generate_result(TextGenerationRequest(prompt="summarize", provider="local"))
+
+    records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
+    assert len(records) == 1
+    assert records[0].levelno == logging.DEBUG
+    assert records[0].success is True
+
+
+@pytest.mark.asyncio
+async def test_failed_text_generation_logs_feature_llm_call_at_info(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+            )
+        ]
+    )
+    service = TextGenerationService(registry, {"local": FailingAdapter("boom")})
+    caplog.set_level(logging.INFO, logger=TEXT_GENERATION_LOGGER)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await service.generate_result(TextGenerationRequest(prompt="summarize", provider="local"))
+
+    records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
+    assert len(records) == 1
+    assert records[0].levelno == logging.INFO
+    assert records[0].success is False
 
 
 @pytest.mark.asyncio

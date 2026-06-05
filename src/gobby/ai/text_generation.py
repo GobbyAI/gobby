@@ -291,7 +291,8 @@ class TextGenerationService:
     ) -> None:
         provider = binding.provider if binding else request.provider
         model = request.model or (next(iter(binding.models), None) if binding else None)
-        logger.info(
+        log_event = logger.debug if success else logger.info
+        log_event(
             "feature_llm_call",
             extra={
                 "feature": request.caller,
