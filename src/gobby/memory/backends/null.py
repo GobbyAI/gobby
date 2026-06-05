@@ -13,12 +13,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from gobby.memory.protocol import (
-    MediaAttachment,
-    MemoryCapability,
-    MemoryQuery,
-    MemoryRecord,
-)
+from gobby.memory.protocol import MemoryCapability, MemoryQuery, MemoryRecord
 
 
 class NullBackend:
@@ -48,7 +43,6 @@ class NullBackend:
         tags: list[str] | None = None,
         source_type: str = "agent",
         source_session_id: str | None = None,
-        media: list[MediaAttachment] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> MemoryRecord:
         """Create a memory record (in-memory only, not persisted)."""
@@ -63,7 +57,6 @@ class NullBackend:
             tags=tags or [],
             source_type=source_type,
             source_session_id=source_session_id,
-            media=media or [],
             metadata=metadata or {},
         )
 

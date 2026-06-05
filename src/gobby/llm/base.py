@@ -145,8 +145,7 @@ class LLMProvider(ABC):
         """
         Generate a text description of an image.
 
-        Used for multimodal memory support - converts images to text
-        descriptions that can be stored alongside memory content.
+        Used by daemon vision extraction flows to convert images to text.
 
         Args:
             image_path: Path to the image file to describe
@@ -154,6 +153,6 @@ class LLMProvider(ABC):
                     (e.g., "This is a screenshot of the settings page")
 
         Returns:
-            Text description of the image suitable for memory storage
+            Text description of the image
         """
         pass

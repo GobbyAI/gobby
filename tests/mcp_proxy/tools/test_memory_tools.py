@@ -9,8 +9,6 @@ Tests the memory MCP tools including:
 - get_memory
 - get_related_memories
 - update_memory
-- remember_with_image
-- remember_screenshot
 - memory_stats
 - search_knowledge_graph
 """
@@ -793,8 +791,6 @@ class TestRegistryCreation:
             "get_memory",
             "get_related_memories",
             "update_memory",
-            "remember_with_image",
-            "remember_screenshot",
             "memory_stats",
             "search_knowledge_graph",
         ]
@@ -806,6 +802,9 @@ class TestRegistryCreation:
 
         for tool_name in expected_tools:
             assert tool_name in tool_names, f"Tool {tool_name} not found"
+
+        assert "remember_with_image" not in tool_names
+        assert "remember_screenshot" not in tool_names
 
     def test_registry_with_llm_service(self, mock_memory_manager) -> None:
         """Test registry creation with LLM service (optional parameter)."""

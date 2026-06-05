@@ -3,7 +3,6 @@
 Tests the abstraction layer that enables pluggable memory backends:
 - MemoryCapability enum - capabilities that backends can support
 - MemoryQuery dataclass - search parameters for recall operations
-- MediaAttachment dataclass - for multimodal memory support
 - MemoryRecord dataclass - backend-agnostic memory representation
 - MemoryBackendProtocol - the protocol interface backends must implement
 
@@ -18,7 +17,6 @@ import pytest
 
 # These imports should fail until protocol.py is implemented
 from gobby.memory.protocol import (
-    MediaAttachment,
     MemoryBackendProtocol,
     MemoryCapability,
     MemoryQuery,
@@ -53,7 +51,6 @@ class TestMemoryCapability:
         """Test that advanced capabilities are defined."""
         assert MemoryCapability.TAGS is not None
         assert MemoryCapability.CROSSREF is not None
-        assert MemoryCapability.MEDIA is not None
 
     def test_capability_is_enum_member(self) -> None:
         """Test that capabilities are proper enum members."""
@@ -123,60 +120,6 @@ class TestMemoryQuery:
 
 
 # =============================================================================
-# Test: MediaAttachment Dataclass
-# =============================================================================
-
-
-class TestMediaAttachment:
-    """Tests for MediaAttachment dataclass."""
-
-    def test_create_image_attachment(self) -> None:
-        """Test creating an image attachment."""
-        attachment = MediaAttachment(
-            media_type="image",
-            content_path="/path/to/image.png",
-            mime_type="image/png",
-        )
-        assert attachment.media_type == "image"
-        assert attachment.content_path == "/path/to/image.png"
-        assert attachment.mime_type == "image/png"
-
-    def test_attachment_with_description(self) -> None:
-        """Test attachment with LLM-generated description."""
-        attachment = MediaAttachment(
-            media_type="image",
-            content_path="/path/to/diagram.png",
-            mime_type="image/png",
-            description="Architecture diagram showing microservices layout",
-            description_model="claude-3-haiku",
-        )
-        assert attachment.description == "Architecture diagram showing microservices layout"
-        assert attachment.description_model == "claude-3-haiku"
-
-    def test_attachment_with_metadata(self) -> None:
-        """Test attachment with additional metadata."""
-        attachment = MediaAttachment(
-            media_type="image",
-            content_path="/path/to/photo.jpg",
-            mime_type="image/jpeg",
-            metadata={"width": 1920, "height": 1080, "source": "screenshot"},
-        )
-        assert attachment.metadata["width"] == 1920
-        assert attachment.metadata["source"] == "screenshot"
-
-    def test_default_values(self) -> None:
-        """Test that optional fields have sensible defaults."""
-        attachment = MediaAttachment(
-            media_type="image",
-            content_path="/path/to/file.png",
-            mime_type="image/png",
-        )
-        assert attachment.description is None
-        assert attachment.description_model is None
-        assert attachment.metadata is None or attachment.metadata == {}
-
-
-# =============================================================================
 # Test: MemoryRecord Dataclass
 # =============================================================================
 
@@ -198,11 +141,6 @@ class TestMemoryRecord:
     def test_create_full_record(self) -> None:
         """Test creating a record with all fields."""
         now = datetime.now(UTC)
-        attachment = MediaAttachment(
-            media_type="image",
-            content_path="/path/to/img.png",
-            mime_type="image/png",
-        )
         record = MemoryRecord(
             id="mem-456",
             content="Memory with all fields",
@@ -216,13 +154,11 @@ class TestMemoryRecord:
             source_session_id="sess-xyz",
             access_count=5,
             last_accessed_at=now,
-            media=[attachment],
             metadata={"custom": "data"},
         )
         assert record.id == "mem-456"
         assert record.memory_type == "fact"
         assert record.tags == ["important", "work"]
-        assert len(record.media) == 1
         assert record.metadata["custom"] == "data"
 
     def test_default_values(self) -> None:
@@ -235,7 +171,6 @@ class TestMemoryRecord:
         assert record.memory_type == "fact"  # Default type
         assert record.tags == [] or record.tags is None
         assert record.access_count == 0
-        assert record.media == [] or record.media is None
 
     def test_record_to_dict(self) -> None:
         """Test converting record to dictionary."""
@@ -327,7 +262,6 @@ class TestMemoryBackendProtocolCompliance:
                 tags: list[str] | None = None,
                 source_type: str | None = None,
                 source_session_id: str | None = None,
-                media: list[MediaAttachment] | None = None,
                 metadata: dict | None = None,
             ) -> MemoryRecord:
                 return MemoryRecord(
@@ -442,6 +376,5 @@ class TestModuleExports:
 
         assert "MemoryCapability" in protocol.__all__
         assert "MemoryQuery" in protocol.__all__
-        assert "MediaAttachment" in protocol.__all__
         assert "MemoryRecord" in protocol.__all__
         assert "MemoryBackendProtocol" in protocol.__all__

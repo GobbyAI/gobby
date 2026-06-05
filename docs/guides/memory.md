@@ -185,8 +185,6 @@ for the authoritative signature before calling a tool.
 | `delete_memory` | Delete one memory by ID. |
 | `get_related_memories` | Return cross-reference neighbors for one memory. |
 | `memory_stats` | Return counts and summary stats. |
-| `remember_with_image` | Store an image-derived memory using the configured LLM service. |
-| `remember_screenshot` | Store a base64 screenshot-derived memory. |
 | `search_knowledge_graph` | Search extracted FalkorDB memory entities. |
 | `rebuild_crossrefs` | Rebuild memory-to-memory cross-reference edges. |
 | `rebuild_knowledge_graph` | Extract entities and relationships into FalkorDB. |
@@ -491,8 +489,7 @@ gobby memory rebuild-graph --wait
 | `~/.gobby/bootstrap.yaml` `database_url` | Runtime PostgreSQL hub DSN. |
 | `~/.gobby/bootstrap.yaml` | Bootstrap settings, including Postgres install metadata. |
 | `.gobby/memories.jsonl` | JSONL memory backup/export file. |
-| `.gobby/resources/` | Screenshot/image resources created by multimodal memory tools. |
-| `src/gobby/memory/` | Memory manager, search, graph, indexing, cleanup, and ingestion code. |
+| `src/gobby/memory/` | Memory manager, search, graph, indexing, and maintenance code. |
 | `src/gobby/mcp_proxy/tools/memory.py` | `gobby-memory` MCP tool definitions. |
 | `src/gobby/cli/memory.py` | CLI command implementation. |
 | `src/gobby/servers/routes/memory.py` | HTTP memory routes. |

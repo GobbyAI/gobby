@@ -1,7 +1,7 @@
 """Tests for gobby.mcp_proxy.tools.memory - additional coverage for edge cases.
 
 Focuses on:
-- remember_with_image / remember_screenshot error paths
+- removed image/screenshot ingestion tools
 - sync_import / sync_export
 - build_turn_and_digest
 - rebuild_crossrefs / rebuild_knowledge_graph
@@ -57,8 +57,6 @@ def mock_memory_manager() -> MagicMock:
     manager.get_related = AsyncMock(return_value=[])
     manager.update_memory = AsyncMock(return_value=MockMemory())
     manager.get_stats = MagicMock(return_value={"total": 0})
-    manager.remember_with_image = AsyncMock(return_value=MockMemory())
-    manager.remember_screenshot = AsyncMock(return_value=MockMemory())
     manager.rebuild_crossrefs_for_memory = AsyncMock(return_value=2)
     manager.reindex_embeddings = AsyncMock(return_value={"success": True, "count": 5})
     manager.kg_service = None
@@ -81,135 +79,23 @@ def mock_session_manager() -> MagicMock:
     return MagicMock()
 
 
-# ─── remember_with_image ────────────────────────────────────────────────
+# ─── removed media ingestion tools ───────────────────────────────────────
 
 
-class TestRememberWithImage:
-    """Tests for remember_with_image tool."""
+class TestRemovedMediaIngestionTools:
+    """Tests that obsolete memory media ingestion tools are not registered."""
 
-    @pytest.mark.asyncio
-    async def test_no_llm_service(self, mock_memory_manager: MagicMock) -> None:
-        """Returns error when LLM service not configured."""
-        registry = create_memory_registry(mock_memory_manager, llm_service=None)
-        result = await registry.call(
-            "remember_with_image",
-            {"image_path": "/path/to/image.png"},
-        )
-        assert result["success"] is False
-        assert "LLM service" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_success(
-        self, mock_memory_manager: MagicMock, mock_llm_service: MagicMock
+    def test_image_and_screenshot_tools_not_registered(
+        self,
+        mock_memory_manager: MagicMock,
     ) -> None:
-        """Successful image memory creation."""
-        mock_memory_manager.remember_with_image.return_value = MockMemory(
-            id="mem-img", content="A screenshot of code"
-        )
-        registry = create_memory_registry(mock_memory_manager, llm_service=mock_llm_service)
+        registry = create_memory_registry(mock_memory_manager)
+        tool_names = {
+            tool["name"] if isinstance(tool, dict) else tool.name for tool in registry.list_tools()
+        }
 
-        with patch(
-            "gobby.utils.project_context.get_project_context",
-            return_value={"id": "proj-1"},
-        ):
-            result = await registry.call(
-                "remember_with_image",
-                {"image_path": "/path/to/image.png", "tags": ["screenshot"]},
-            )
-
-        assert result["success"] is True
-        assert result["memory"]["id"] == "mem-img"
-
-    @pytest.mark.asyncio
-    async def test_value_error(
-        self, mock_memory_manager: MagicMock, mock_llm_service: MagicMock
-    ) -> None:
-        """Returns error on ValueError."""
-        mock_memory_manager.remember_with_image.side_effect = ValueError("Invalid image")
-        registry = create_memory_registry(mock_memory_manager, llm_service=mock_llm_service)
-
-        with patch("gobby.utils.project_context.get_project_context", return_value=None):
-            result = await registry.call(
-                "remember_with_image",
-                {"image_path": "/bad.png"},
-            )
-
-        assert result["success"] is False
-        assert "Invalid image" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_general_error(
-        self, mock_memory_manager: MagicMock, mock_llm_service: MagicMock
-    ) -> None:
-        """Returns error on general exception."""
-        mock_memory_manager.remember_with_image.side_effect = RuntimeError("IO error")
-        registry = create_memory_registry(mock_memory_manager, llm_service=mock_llm_service)
-
-        with patch("gobby.utils.project_context.get_project_context", return_value=None):
-            result = await registry.call(
-                "remember_with_image",
-                {"image_path": "/bad.png"},
-            )
-
-        assert result["success"] is False
-        assert "IO error" in result["error"]
-
-
-# ─── remember_screenshot ────────────────────────────────────────────────
-
-
-class TestRememberScreenshot:
-    """Tests for remember_screenshot tool."""
-
-    @pytest.mark.asyncio
-    async def test_no_llm_service(self, mock_memory_manager: MagicMock) -> None:
-        """Returns error when LLM service not configured."""
-        registry = create_memory_registry(mock_memory_manager, llm_service=None)
-        result = await registry.call(
-            "remember_screenshot",
-            {"screenshot_base64": "aGVsbG8="},
-        )
-        assert result["success"] is False
-        assert "LLM service" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_success(
-        self, mock_memory_manager: MagicMock, mock_llm_service: MagicMock
-    ) -> None:
-        """Successful screenshot memory creation."""
-        mock_memory_manager.remember_screenshot.return_value = MockMemory(
-            id="mem-ss", content="Screenshot description"
-        )
-        registry = create_memory_registry(mock_memory_manager, llm_service=mock_llm_service)
-
-        with patch(
-            "gobby.utils.project_context.get_project_context",
-            return_value={"id": "proj-1"},
-        ):
-            result = await registry.call(
-                "remember_screenshot",
-                {"screenshot_base64": "aGVsbG8=", "context": "Error screen"},
-            )
-
-        assert result["success"] is True
-        assert result["memory"]["id"] == "mem-ss"
-
-    @pytest.mark.asyncio
-    async def test_value_error(
-        self, mock_memory_manager: MagicMock, mock_llm_service: MagicMock
-    ) -> None:
-        """Returns error on ValueError."""
-        mock_memory_manager.remember_screenshot.side_effect = ValueError("Bad bytes")
-        registry = create_memory_registry(mock_memory_manager, llm_service=mock_llm_service)
-
-        with patch("gobby.utils.project_context.get_project_context", return_value=None):
-            result = await registry.call(
-                "remember_screenshot",
-                {"screenshot_base64": "aGVsbG8="},
-            )
-
-        assert result["success"] is False
-        assert "Bad bytes" in result["error"]
+        assert "remember_with_image" not in tool_names
+        assert "remember_screenshot" not in tool_names
 
 
 # ─── sync_import / sync_export ──────────────────────────────────────────

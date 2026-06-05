@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from gobby.config.persistence import MemoryConfig
 from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.backends.storage_adapter import StorageAdapter
-from gobby.memory.components.ingestion import IngestionService
 from gobby.memory.context import build_memory_context
 from gobby.memory.falkor_client import FalkorClient
 from gobby.memory.protocol import MemoryBackendProtocol, MemoryRecord
@@ -54,7 +53,7 @@ class MemoryManager:
 
     Wires storage (LocalMemoryManager + async backend), search (SearchService),
     indexing/lifecycle (IndexingService), cross-references (CrossrefService),
-    image ingestion (IngestionService), dedup (DedupService), and the
+    dedup (DedupService), and the
     FalkorDB knowledge graph (KnowledgeGraphService).
 
     Public API is intentionally broad and stable; this class delegates the
@@ -90,11 +89,6 @@ class MemoryManager:
 
         self.storage = LocalMemoryManager(db)
         self._backend: MemoryBackendProtocol = StorageAdapter(self.storage, run_db=run_db)
-        self._ingestion_service = IngestionService(
-            storage=self.storage,
-            backend=self._backend,
-            llm_service=llm_service,
-        )
         self._background_tasks: set[asyncio.Task[Any]] = set()
 
         if falkordb_host:
@@ -217,7 +211,6 @@ class MemoryManager:
     @llm_service.setter
     def llm_service(self, service: LLMService | None) -> None:
         self._llm_service = service
-        self._ingestion_service.llm_service = service
 
     @property
     def falkor_client(self) -> FalkorClient | None:
@@ -256,7 +249,6 @@ class MemoryManager:
                 record.last_accessed_at.isoformat() if record.last_accessed_at else None
             ),
             tags=record.tags or [],
-            media=None,
         )
 
     async def _embed_and_upsert(
@@ -406,60 +398,6 @@ class MemoryManager:
         if self._kg_service:
             self._enqueue_for_graph(memory_id=memory.id, project_id=project_id)
 
-        return memory
-
-    async def remember_with_image(
-        self,
-        image_path: str,
-        context: str | None = None,
-        memory_type: str = "fact",
-        project_id: str | None = None,
-        source_type: str = "user",
-        source_session_id: str | None = None,
-        tags: list[str] | None = None,
-    ) -> Memory:
-        """Store a memory with an image attachment."""
-        memory = await self._ingestion_service.remember_with_image(
-            image_path=image_path,
-            context=context,
-            memory_type=memory_type,
-            project_id=project_id,
-            source_type=source_type,
-            source_session_id=source_session_id,
-            tags=tags,
-        )
-        await self._embed_and_upsert(
-            memory.id,
-            memory.content,
-            payload={"project_id": project_id},
-        )
-        return memory
-
-    async def remember_screenshot(
-        self,
-        screenshot_bytes: bytes,
-        context: str | None = None,
-        memory_type: str = "observation",
-        project_id: str | None = None,
-        source_type: str = "user",
-        source_session_id: str | None = None,
-        tags: list[str] | None = None,
-    ) -> Memory:
-        """Store a memory from raw screenshot bytes."""
-        memory = await self._ingestion_service.remember_screenshot(
-            screenshot_bytes=screenshot_bytes,
-            context=context,
-            memory_type=memory_type,
-            project_id=project_id,
-            source_type=source_type,
-            source_session_id=source_session_id,
-            tags=tags,
-        )
-        await self._embed_and_upsert(
-            memory.id,
-            memory.content,
-            payload={"project_id": project_id},
-        )
         return memory
 
     @staticmethod
@@ -618,9 +556,10 @@ class MemoryManager:
 
     async def alist_memories(
         self,
+        *,
         project_id: str | None = None,
         memory_type: str | None = None,
-        limit: int = DEFAULT_LIST_LIMIT,
+        limit: int | None = DEFAULT_LIST_LIMIT,
         offset: int = 0,
         tags_all: list[str] | None = None,
     ) -> list[Memory]:
@@ -628,7 +567,7 @@ class MemoryManager:
         records = await self._backend.list_memories(
             project_id=project_id,
             memory_type=memory_type,
-            limit=limit,
+            limit=limit or DEFAULT_LIST_LIMIT,
             offset=offset,
             tags_all=tags_all,
         )

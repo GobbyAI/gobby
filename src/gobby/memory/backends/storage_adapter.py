@@ -12,13 +12,11 @@ duplicate-instance problem.
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, cast
 
 from gobby.memory.protocol import (
-    MediaAttachment,
     MemoryCapability,
     MemoryQuery,
     MemoryRecord,
@@ -66,25 +64,8 @@ class StorageAdapter:
         tags: list[str] | None = None,
         source_type: str = "agent",
         source_session_id: str | None = None,
-        media: list[MediaAttachment] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> MemoryRecord:
-        media_json: str | None = None
-        if media:
-            media_json = json.dumps(
-                [
-                    {
-                        "media_type": m.media_type,
-                        "content_path": m.content_path,
-                        "mime_type": m.mime_type,
-                        "description": m.description,
-                        "description_model": m.description_model,
-                        "metadata": m.metadata,
-                    }
-                    for m in media
-                ]
-            )
-
         memory = await self._run_storage(
             self._storage.create_memory,
             content=content,
@@ -93,7 +74,6 @@ class StorageAdapter:
             source_type=source_type,
             source_session_id=source_session_id,
             tags=tags,
-            media=media_json,
         )
         return self._to_record(memory, user_id=user_id, metadata=metadata)
 
@@ -184,24 +164,6 @@ class StorageAdapter:
             datetime.fromisoformat(memory.last_accessed_at) if memory.last_accessed_at else None
         )
 
-        media_list: list[MediaAttachment] = []
-        if memory.media:
-            try:
-                media_data = json.loads(memory.media)
-                media_list = [
-                    MediaAttachment(
-                        media_type=m.get("media_type", "unknown"),
-                        content_path=m.get("content_path", ""),
-                        mime_type=m.get("mime_type", "application/octet-stream"),
-                        description=m.get("description"),
-                        description_model=m.get("description_model"),
-                        metadata=m.get("metadata"),
-                    )
-                    for m in media_data
-                ]
-            except (json.JSONDecodeError, TypeError):
-                media_list = []
-
         return MemoryRecord(
             id=memory.id,
             content=memory.content,
@@ -215,6 +177,5 @@ class StorageAdapter:
             source_session_id=memory.source_session_id,
             access_count=memory.access_count,
             last_accessed_at=last_accessed,
-            media=media_list,
             metadata=metadata or {},
         )

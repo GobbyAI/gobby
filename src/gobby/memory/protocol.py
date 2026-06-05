@@ -7,7 +7,6 @@ memory systems.
 Types:
 - MemoryCapability: Enum of capabilities a backend can support
 - MemoryQuery: Dataclass for search parameters
-- MediaAttachment: Dataclass for multimodal memory support
 - MemoryRecord: Backend-agnostic memory representation
 - MemoryBackendProtocol: Protocol interface that backends must implement
 
@@ -32,7 +31,6 @@ from typing import Any, Protocol, runtime_checkable
 __all__ = [
     "MemoryCapability",
     "MemoryQuery",
-    "MediaAttachment",
     "MemoryRecord",
     "MemoryBackendProtocol",
 ]
@@ -59,7 +57,6 @@ class MemoryCapability(Enum):
     Advanced features:
         TAGS: Tag-based filtering and organization
         CROSSREF: Cross-referencing between related memories
-        MEDIA: Multimodal memory support (images, etc.)
 
     MCP-aligned operations (aliases for compatibility):
         REMEMBER: Alias for CREATE
@@ -85,7 +82,6 @@ class MemoryCapability(Enum):
     # Advanced features
     TAGS = "tags"
     CROSSREF = "crossref"
-    MEDIA = "media"
 
     # MCP-aligned operations (aliases)
     REMEMBER = "remember"
@@ -133,40 +129,6 @@ class MemoryQuery:
 
 
 @dataclass
-class MediaAttachment:
-    """Media attachment for multimodal memory support.
-
-    Enables memories to include images, documents, or other media files.
-    The description field can be populated by an LLM to make the media
-    searchable via text queries.
-
-    Attributes:
-        media_type: Type of media (e.g., "image", "document", "audio")
-        content_path: Path to the media file
-        mime_type: MIME type of the media (e.g., "image/png")
-        description: LLM-generated description of the media content
-        description_model: Model used to generate the description
-        metadata: Additional media-specific metadata
-
-    Example:
-        attachment = MediaAttachment(
-            media_type="image",
-            content_path="/path/to/diagram.png",
-            mime_type="image/png",
-            description="Architecture diagram showing microservices layout",
-            description_model="claude-3-haiku"
-        )
-    """
-
-    media_type: str
-    content_path: str
-    mime_type: str
-    description: str | None = None
-    description_model: str | None = None
-    metadata: dict[str, Any] | None = None
-
-
-@dataclass
 class MemoryRecord:
     """Backend-agnostic representation of a memory.
 
@@ -186,7 +148,6 @@ class MemoryRecord:
         source_session_id: Session that created the memory
         access_count: Number of times memory was accessed
         last_accessed_at: When memory was last accessed
-        media: List of media attachments
         metadata: Additional backend-specific metadata
 
     Example:
@@ -211,7 +172,6 @@ class MemoryRecord:
     source_session_id: str | None = None
     access_count: int = 0
     last_accessed_at: datetime | None = None
-    media: list[MediaAttachment] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -231,17 +191,6 @@ class MemoryRecord:
             "last_accessed_at": (
                 self.last_accessed_at.isoformat() if self.last_accessed_at else None
             ),
-            "media": [
-                {
-                    "media_type": m.media_type,
-                    "content_path": m.content_path,
-                    "mime_type": m.mime_type,
-                    "description": m.description,
-                    "description_model": m.description_model,
-                    "metadata": m.metadata,
-                }
-                for m in (self.media or [])
-            ],
             "metadata": self.metadata,
         }
 
@@ -263,20 +212,6 @@ class MemoryRecord:
         if isinstance(last_accessed_at, str):
             last_accessed_at = datetime.fromisoformat(last_accessed_at)
 
-        # Parse media attachments
-        media_data = data.get("media", [])
-        media = [
-            MediaAttachment(
-                media_type=m.get("media_type", "unknown"),
-                content_path=m.get("content_path", ""),
-                mime_type=m.get("mime_type", "application/octet-stream"),
-                description=m.get("description"),
-                description_model=m.get("description_model"),
-                metadata=m.get("metadata"),
-            )
-            for m in media_data
-        ]
-
         return cls(
             id=data["id"],
             content=data["content"],
@@ -290,7 +225,6 @@ class MemoryRecord:
             source_session_id=data.get("source_session_id"),
             access_count=data.get("access_count", 0),
             last_accessed_at=last_accessed_at,
-            media=media,
             metadata=data.get("metadata", {}),
         )
 
@@ -337,7 +271,6 @@ class MemoryBackendProtocol(Protocol):
         tags: list[str] | None = None,
         source_type: str = "agent",
         source_session_id: str | None = None,
-        media: list[MediaAttachment] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> MemoryRecord:
         """Create a new memory.
@@ -350,7 +283,6 @@ class MemoryBackendProtocol(Protocol):
             tags: List of tags
             source_type: Origin of memory
             source_session_id: Session that created the memory
-            media: List of media attachments
             metadata: Additional metadata
 
         Returns:

@@ -19,7 +19,6 @@ _MEMORY_COLUMNS = (
     "access_count",
     "last_accessed_at",
     "tags",
-    "media",
     "graph_processed",
     "created_at",
     "updated_at",
@@ -129,7 +128,6 @@ class MemoryDreamStore:
             return None
         data = dict(row)
         data["tags"] = _decode(data.get("tags")) or []
-        data["media"] = _decode(data.get("media"))
         return data
 
     def insert_snapshot(
@@ -150,6 +148,8 @@ class MemoryDreamStore:
             """,
             (run_id, memory_id, action, _json(before_data)),
         )
+        if row is None:
+            raise RuntimeError("memory_dream_snapshots insert did not return an id")
         return int(row["id"])
 
     def complete_snapshot(
@@ -206,7 +206,6 @@ class MemoryDreamStore:
     def restore_memory_row(self, data: dict[str, Any]) -> None:
         values = {column: data.get(column) for column in _MEMORY_COLUMNS}
         values["tags"] = _json(values.get("tags") or [])
-        values["media"] = _json(values.get("media"))
         assignments = ", ".join(f"{column} = EXCLUDED.{column}" for column in _MEMORY_COLUMNS[1:])
         self.db.execute(
             f"""

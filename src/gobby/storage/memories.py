@@ -6,20 +6,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
-from gobby.memory.protocol import MediaAttachment
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import newer_than_now_expr
 
 # Stable namespace for deterministic memory UUIDs (uuid5)
 MEMORY_UUID_NAMESPACE = uuid.UUID("a3b2c1d0-1234-5678-9abc-def012345678")
 
-# Re-export MediaAttachment for consumers that import from this module
-__all__ = ["Memory", "MemoryCrossRef", "LocalMemoryManager", "MediaAttachment"]
+__all__ = ["Memory", "MemoryCrossRef", "LocalMemoryManager"]
 
 logger = logging.getLogger(__name__)
-
-# Sentinel for distinguishing "not provided" from explicit None
-_UNSET: Any = object()
 
 
 @dataclass
@@ -62,7 +57,6 @@ class Memory:
     access_count: int = 0
     last_accessed_at: str | None = None
     tags: list[str] | None = None
-    media: str | None = None  # JSON-serialized MediaAttachment data
     similarity: float | None = None  # Set at search time, not persisted
     search_via: str | None = None  # Set at search time, not persisted
     ranking_score: float | None = None  # Hybrid retrieval rank, not persisted
@@ -75,8 +69,6 @@ class Memory:
         tags_json = row["tags"]
         tags = json.loads(tags_json) if tags_json else []
 
-        # Handle media column (may not exist in older databases)
-        media = row["media"] if "media" in row.keys() else None
         raw_source_type = row["source_type"]
         source_type = cast(
             Literal["user", "agent"],
@@ -95,7 +87,6 @@ class Memory:
             access_count=row["access_count"],
             last_accessed_at=row["last_accessed_at"],
             tags=tags,
-            media=media,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -111,7 +102,6 @@ class Memory:
             "access_count": self.access_count,
             "last_accessed_at": self.last_accessed_at,
             "tags": self.tags,
-            "media": self.media,
         }
         if self.similarity is not None:
             data["similarity"] = self.similarity
@@ -151,7 +141,6 @@ class LocalMemoryManager:
         source_type: str = "agent",
         source_session_id: str | None = None,
         tags: list[str] | None = None,
-        media: str | None = None,
     ) -> Memory:
         # Validate that content is not empty
         if not content or not content.strip():
@@ -193,8 +182,8 @@ class LocalMemoryManager:
                 INSERT INTO memories (
                     id, project_id, memory_type, content, source_type,
                     source_session_id, access_count, tags,
-                    media, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, 0, %s, %s, %s, %s)
+                    created_at, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, 0, %s, %s, %s)
                 """,
                 (
                     memory_id,
@@ -204,7 +193,6 @@ class LocalMemoryManager:
                     source_type,
                     source_session_id,
                     tags_json,
-                    media,
                     now,
                     now,
                 ),
@@ -322,7 +310,6 @@ class LocalMemoryManager:
         memory_id: str,
         content: str | None = None,
         tags: list[str] | None = None,
-        media: Any = _UNSET,  # Use sentinel to distinguish None from not-provided
     ) -> Memory:
         updates = []
         params: list[Any] = []
@@ -333,9 +320,6 @@ class LocalMemoryManager:
         if tags is not None:
             updates.append("tags = %s")
             params.append(json.dumps(tags))
-        if media is not _UNSET:  # Allow explicit None to clear media
-            updates.append("media = %s")
-            params.append(media)
 
         if not updates:
             return self.get_memory(memory_id)

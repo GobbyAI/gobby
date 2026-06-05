@@ -188,10 +188,6 @@ def setup_internal_registries(
     if memory_manager is not None:
         from gobby.mcp_proxy.tools.memory import create_memory_registry
 
-        # Set llm_service on memory_manager for remember_with_image support
-        if llm_service is not None:
-            memory_manager.llm_service = llm_service
-
         memory_registry = create_memory_registry(
             memory_manager=memory_manager,
             llm_service=llm_service,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,22 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = REPO_ROOT / "src" / "gobby"
 MIGRATIONS_SOURCE = SRC_ROOT / "storage" / "migrations.py"
 MIGRATION_HELPERS_MODULE = "gobby.storage.migration_helpers"
+
+
+def _tracked_migration_names(migrations_dir: Path) -> list[str]:
+    relative_dir = migrations_dir.relative_to(REPO_ROOT)
+    result = subprocess.run(
+        ["git", "ls-files", "--cached", "--", str(relative_dir)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        return sorted(
+            Path(line).name for line in result.stdout.splitlines() if line.endswith(".sql")
+        )
+    return sorted(path.name for path in migrations_dir.glob("*.sql"))
 
 
 def _storage_module_name(path: Path) -> str:
@@ -83,7 +100,7 @@ def test_legacy_migration_api_is_absent_from_source_and_runtime() -> None:
 def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
     migrations_dir = SRC_ROOT / "storage" / "migrations"
 
-    assert sorted(path.name for path in migrations_dir.glob("*.sql")) == [
+    assert _tracked_migration_names(migrations_dir) == [
         "261_implementation_domain.sql",
         "262_neo4j_config_to_falkordb.sql",
         "264_drop_migration_state.sql",
@@ -96,6 +113,8 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
         "271_embeddings_namespace_to_ai_embeddings.sql",
         "272_drop_embedding_provider_config.sql",
         "273_task_merge_status.sql",
+        "274_memory_dream.sql",
+        "275_drop_memory_media.sql",
     ]
 
 

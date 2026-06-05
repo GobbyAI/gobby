@@ -493,13 +493,6 @@ and the optional FalkorDB knowledge graph.
 | `get_related_memories` | Memories linked via cross-references. |
 | `memory_stats` | Statistics about the memory system. |
 
-### Image Capture
-
-| Tool | Description |
-| :--- | :--- |
-| `remember_with_image` | Create a memory from an image path (uses LLM). |
-| `remember_screenshot` | Create a memory from base64-encoded screenshot bytes. |
-
 ### Knowledge Graph and Embeddings
 
 | Tool | Description |

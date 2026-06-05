@@ -680,11 +680,10 @@ CREATE TABLE memories (
     source_session_id TEXT REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
     access_count INTEGER DEFAULT 0,
     last_accessed_at TIMESTAMPTZ,
-    tags JSONB,
-    media JSONB,
-    graph_processed BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+tags JSONB,
+graph_processed BOOLEAN DEFAULT TRUE,
+created_at TIMESTAMPTZ NOT NULL,
+updated_at TIMESTAMPTZ NOT NULL
 );
 
 CREATE INDEX idx_memories_project ON memories(project_id);

@@ -40,6 +40,6 @@ passes `code_index.summary_profile` and `code_index.summary_candidates` directly
 `VisionExtractService`, selects an `AICapability.VISION_EXTRACT` binding, and invokes the
 provider adapter. It is not routed through low/mid/high feature profiles.
 
-Image-backed memory ingestion still uses the configured default LLM provider's
-`describe_image(...)` path. gwiki image/file flows are gateway/CLI ingestion paths rather
-than feature-profile routed `call_feature` calls.
+File and image ingestion belongs to gwiki. MCP `wiki_attach` / `wiki_ingest`, HTTP
+`/api/wiki/attach`, and `GwikiGateway.ingest_file` route those files through the gwiki
+gateway/CLI path rather than memory storage or feature-profile `call_feature` calls.
