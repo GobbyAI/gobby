@@ -28,6 +28,8 @@ class VerificationCommands:
     type_check: str | None = None
     lint: str | None = None
     format: str | None = None
+    build: str | None = None
+    doc_tests: str | None = None
     integration: str | None = None
     custom: dict[str, str] = field(default_factory=dict)
 
@@ -42,11 +44,32 @@ class VerificationCommands:
             result["lint"] = self.lint
         if self.format:
             result["format"] = self.format
+        if self.build:
+            result["build"] = self.build
+        if self.doc_tests:
+            result["doc_tests"] = self.doc_tests
         if self.integration:
             result["integration"] = self.integration
         if self.custom:
             result["custom"] = self.custom
         return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> VerificationCommands:
+        """Create commands from project verification data."""
+        custom = data.get("custom", {})
+        return cls(
+            unit_tests=data.get("unit_tests") if isinstance(data.get("unit_tests"), str) else None,
+            type_check=data.get("type_check") if isinstance(data.get("type_check"), str) else None,
+            lint=data.get("lint") if isinstance(data.get("lint"), str) else None,
+            format=data.get("format") if isinstance(data.get("format"), str) else None,
+            build=data.get("build") if isinstance(data.get("build"), str) else None,
+            doc_tests=data.get("doc_tests") if isinstance(data.get("doc_tests"), str) else None,
+            integration=data.get("integration")
+            if isinstance(data.get("integration"), str)
+            else None,
+            custom={str(k): str(v) for k, v in custom.items()} if isinstance(custom, dict) else {},
+        )
 
 
 @dataclass
@@ -97,98 +120,12 @@ def detect_verification_commands(cwd: Path) -> VerificationCommands:
     Returns:
         VerificationCommands with detected commands.
     """
-    verification = VerificationCommands()
-    detected_any = False
+    from gobby.project_verification.refresh import refresh_project_verification_deterministic
 
-    # Check for Python project (pyproject.toml)
-    pyproject_path = cwd / "pyproject.toml"
-    if pyproject_path.exists():
-        logger.debug("Detected Python project (pyproject.toml)")
-        detected_any = True
-
-        # Check for tests directory
-        tests_dir = cwd / "tests"
-        if tests_dir.exists() and tests_dir.is_dir():
-            verification.unit_tests = "uv run pytest tests/ -v"
-
-        # Check for src directory (common pattern)
-        src_dir = cwd / "src"
-        if src_dir.exists() and src_dir.is_dir():
-            verification.type_check = "uv run mypy src/"
-            verification.lint = "uv run ruff check src/"
-            verification.format = "uv run ruff format --check src/"
-        else:
-            # Fall back to current directory
-            verification.type_check = "uv run mypy ."
-            verification.lint = "uv run ruff check ."
-            verification.format = "uv run ruff format --check ."
-
-    # Check for Node.js project (package.json) — root and common subdirectories
-    frontend_dirs = _find_frontend_dirs(cwd)
-    for frontend_dir, subdir_name in frontend_dirs:
-        logger.debug(f"Detected Node.js project ({subdir_name}/package.json)")
-        detected_any = True
-
-        try:
-            with open(frontend_dir / "package.json") as f:
-                package_data = json.load(f)
-
-            scripts = package_data.get("scripts", {})
-            # Commands need cd prefix if in a subdirectory
-            prefix = f"cd {subdir_name} && " if subdir_name != "." else ""
-
-            if verification.unit_tests:
-                # Another language already claimed primary slots — use custom
-                if "test" in scripts:
-                    verification.custom["frontend_tests"] = f"{prefix}npm test"
-                if "lint" in scripts:
-                    verification.custom["frontend_lint"] = f"{prefix}npm run lint"
-                for script_name in ["type-check", "typecheck", "types", "tsc"]:
-                    if script_name in scripts:
-                        verification.custom["ts_check"] = f"{prefix}npm run {script_name}"
-                        break
-            else:
-                # Node.js is the primary language
-                if "test" in scripts:
-                    verification.unit_tests = f"{prefix}npm test"
-                if "lint" in scripts:
-                    verification.lint = f"{prefix}npm run lint"
-                for script_name in ["type-check", "typecheck", "types", "tsc"]:
-                    if script_name in scripts:
-                        verification.type_check = f"{prefix}npm run {script_name}"
-                        break
-
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning(f"Failed to parse {subdir_name}/package.json: {e}")
-
-    # Check for Rust project (Cargo.toml)
-    cargo_path = cwd / "Cargo.toml"
-    if cargo_path.exists():
-        logger.debug("Detected Rust project (Cargo.toml)")
-        detected_any = True
-        if not verification.unit_tests:
-            verification.unit_tests = "cargo test"
-            verification.lint = "cargo clippy"
-        else:
-            verification.custom["cargo_test"] = "cargo test"
-            verification.custom["clippy"] = "cargo clippy"
-
-    # Check for Go project (go.mod)
-    go_mod_path = cwd / "go.mod"
-    if go_mod_path.exists():
-        logger.debug("Detected Go project (go.mod)")
-        detected_any = True
-        if not verification.unit_tests:
-            verification.unit_tests = "go test ./..."
-            verification.lint = "go vet ./..."
-        else:
-            verification.custom["go_test"] = "go test ./..."
-            verification.custom["go_vet"] = "go vet ./..."
-
-    if not detected_any:
+    result = refresh_project_verification_deterministic(cwd)
+    if not result.after:
         logger.debug("No recognized project type detected")
-
-    return verification
+    return VerificationCommands.from_dict(result.after)
 
 
 def initialize_project(
@@ -229,10 +166,12 @@ def initialize_project(
     if project_context and project_context.get("id"):
         logger.debug(f"Project already initialized: {project_context.get('name')}")
 
-        # Re-detect and update verification commands on re-init
-        verification = detect_verification_commands(cwd)
-        if verification.to_dict():
-            _update_project_json_verification(cwd, verification)
+        # Re-detect and merge verification commands on re-init
+        from gobby.project_verification.refresh import refresh_project_verification_deterministic
+
+        refresh_result = refresh_project_verification_deterministic(cwd, fix=True)
+        verification = VerificationCommands.from_dict(refresh_result.after)
+        if refresh_result.written:
             logger.info("Updated verification commands in project.json")
 
         return InitResult(

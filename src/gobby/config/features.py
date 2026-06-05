@@ -7,6 +7,7 @@ Contains MCP proxy and tool feature Pydantic config models:
 - ImportMCPServerConfig: MCP server import settings
 - MetricsConfig: Metrics endpoint settings
 - ProjectVerificationConfig: Project verification command settings
+- ProjectVerificationSynthesisConfig: Project verification AI synthesis settings
 
 Extracted from app.py using Strangler Fig pattern for code decomposition.
 """
@@ -24,6 +25,7 @@ __all__ = [
     "MergeResolutionConfig",
     "MetricsConfig",
     "ProjectVerificationConfig",
+    "ProjectVerificationSynthesisConfig",
     "HookStageConfig",
     "HooksConfig",
     "SkillDescriptionConfig",
@@ -158,6 +160,21 @@ class MetricsConfig(BaseModel):
         return v
 
 
+class ProjectVerificationSynthesisConfig(FeatureDefaultConfig):
+    """LLM configuration for project verification command synthesis."""
+
+    profile: FeatureProfile = Field(
+        default=FeatureProfile.MID,
+        description="Provider-agnostic capability profile for verification synthesis.",
+    )
+    confidence_threshold: float = Field(
+        default=0.75,
+        ge=0.0,
+        le=1.0,
+        description="Minimum AI confidence required to accept a synthesized command.",
+    )
+
+
 class ProjectVerificationConfig(BaseModel):
     """Project verification commands configuration.
 
@@ -182,6 +199,14 @@ class ProjectVerificationConfig(BaseModel):
         default=None,
         description="Command to check formatting (e.g., 'uv run ruff format --check src/')",
     )
+    build: str | None = Field(
+        default=None,
+        description="Command to verify project build succeeds",
+    )
+    doc_tests: str | None = Field(
+        default=None,
+        description="Command to run documentation tests",
+    )
     integration: str | None = Field(
         default=None,
         description="Command to run integration tests",
@@ -205,6 +230,8 @@ class ProjectVerificationConfig(BaseModel):
         "type_check",
         "lint",
         "format",
+        "build",
+        "doc_tests",
         "integration",
         "security",
         "code_review",

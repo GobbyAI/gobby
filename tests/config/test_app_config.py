@@ -36,6 +36,8 @@ from gobby.config.features import (
     ChatConfig,
     ImportMCPServerConfig,
     MetricsConfig,
+    ProjectVerificationConfig,
+    ProjectVerificationSynthesisConfig,
     RecommendToolsConfig,
     ToolSummarizerConfig,
 )
@@ -416,6 +418,7 @@ class TestDaemonConfig:
         assert config.daemon_port == 60887
         assert config.daemon_health_check_interval == 10.0
         assert isinstance(config.bin_freshness, BinFreshnessConfig)
+        assert isinstance(config.project_verification_synthesis, ProjectVerificationSynthesisConfig)
         assert "conductor" not in DaemonConfig.model_fields
         assert not hasattr(config, "conductor")
 
@@ -446,10 +449,15 @@ class TestDaemonConfig:
         config = DaemonConfig()
         verification_config = config.get_verification_defaults()
         assert verification_config is config.verification_defaults
-        # Verify it returns the correct type
-        from gobby.config.features import ProjectVerificationConfig
 
         assert isinstance(verification_config, ProjectVerificationConfig)
+
+    def test_get_project_verification_synthesis_config(self) -> None:
+        """Test get_project_verification_synthesis_config returns synthesis config."""
+        config = DaemonConfig()
+        synthesis_config = config.get_project_verification_synthesis_config()
+        assert synthesis_config is config.project_verification_synthesis
+        assert isinstance(synthesis_config, ProjectVerificationSynthesisConfig)
 
     def test_rejects_removed_conductor_section(self) -> None:
         """Stale top-level conductor config should fail loudly."""
@@ -1205,6 +1213,36 @@ class TestImportMCPServerConfig:
         assert config.prompt_path is None  # Uses DEFAULT_IMPORT_MCP_SERVER_PROMPT
 
 
+class TestProjectVerificationConfig:
+    """Tests for ProjectVerificationConfig."""
+
+    def test_build_and_doc_tests_are_first_class_commands(self) -> None:
+        """build and doc_tests load and appear in command lookups."""
+        config = ProjectVerificationConfig(
+            build="uv build",
+            doc_tests="uv run pytest --doctest-modules src/",
+            custom={"frontend_tests": "cd web && npm test"},
+        )
+
+        assert config.get_command("build") == "uv build"
+        assert config.get_command("doc_tests") == "uv run pytest --doctest-modules src/"
+        assert config.all_commands()["build"] == "uv build"
+        assert config.all_commands()["doc_tests"] == "uv run pytest --doctest-modules src/"
+        assert config.all_commands()["frontend_tests"] == "cd web && npm test"
+
+
+class TestProjectVerificationSynthesisConfig:
+    """Tests for ProjectVerificationSynthesisConfig."""
+
+    def test_default_values(self) -> None:
+        """Default synthesis uses feature_mid with a 0.75 threshold."""
+        config = ProjectVerificationSynthesisConfig()
+
+        assert config.profile == FeatureProfile.MID
+        assert config.confidence_threshold == 0.75
+        assert config.candidates
+
+
 class TestDigestConfig:
     """Tests for DigestConfig."""
 
@@ -1575,6 +1613,8 @@ class TestDaemonConfigComposition:
         assert isinstance(config.workflow, WorkflowConfig)
         assert isinstance(config.metrics, MetricsConfig)
         assert isinstance(config.bin_freshness, BinFreshnessConfig)
+        assert isinstance(config.verification_defaults, ProjectVerificationConfig)
+        assert isinstance(config.project_verification_synthesis, ProjectVerificationSynthesisConfig)
 
         # Memory
         assert isinstance(config.memory, MemoryConfig)
@@ -1592,6 +1632,10 @@ class TestDaemonConfigComposition:
         assert config.get_memory_sync_config() is config.memory_sync
         assert config.get_gobby_tasks_config() is config.gobby_tasks
         assert config.get_metrics_config() is config.metrics
+        assert (
+            config.get_project_verification_synthesis_config()
+            is config.project_verification_synthesis
+        )
 
     def test_yaml_round_trip(self, temp_dir: Path) -> None:
         """Test config survives YAML export and reimport."""
@@ -1638,7 +1682,7 @@ class TestChatConfig:
 
 
 class TestAllConfigClassesInstantiate:
-    """Verify all 30 config classes can be instantiated with defaults."""
+    """Verify all 29 config classes can be instantiated with defaults."""
 
     def test_all_classes_instantiate(self) -> None:
         """Test all config classes instantiate without error."""
@@ -1652,6 +1696,8 @@ class TestAllConfigClassesInstantiate:
             ToolSummarizerConfig(),
             RecommendToolsConfig(),
             ImportMCPServerConfig(),
+            ProjectVerificationConfig(),
+            ProjectVerificationSynthesisConfig(),
             MCPClientProxyConfig(),
             GobbyTasksConfig(),
             LLMProviderConfig(models="test-model"),  # Required field
@@ -1673,6 +1719,6 @@ class TestAllConfigClassesInstantiate:
             DaemonConfig(),
         ]
 
-        assert len(configs) == 27
+        assert len(configs) == 29
         for config in configs:
             assert config is not None

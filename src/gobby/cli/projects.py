@@ -2,6 +2,7 @@
 Project management CLI commands.
 """
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -24,6 +25,25 @@ def resolve_project(manager: LocalProjectManager, ref: str) -> Project:
         click.echo(f"Project not found: {ref}", err=True)
         raise SystemExit(1)
     return project
+
+
+def resolve_refresh_root(project_ref: str | None) -> Path:
+    """Resolve refresh target root from current directory or project ref."""
+    if project_ref is None:
+        root = Path.cwd().resolve()
+    else:
+        project = resolve_project(get_project_manager(), project_ref)
+        if not project.repo_path:
+            click.echo(f"Project {project_ref} has no repo_path.", err=True)
+            raise SystemExit(1)
+        root = Path(project.repo_path).resolve()
+
+    project_json = root / ".gobby" / "project.json"
+    if not project_json.exists():
+        click.echo(f"No .gobby/project.json found in {root}.", err=True)
+        click.echo(f"Run 'gobby init -C {root}' to initialize this project.", err=True)
+        raise SystemExit(1)
+    return root
 
 
 @click.group()
@@ -208,6 +228,105 @@ def update_project(
     else:
         click.echo(f"Failed to update project: {project.name}", err=True)
         raise SystemExit(1)
+
+
+@projects.command("refresh-verification")
+@click.argument("project_ref", required=False)
+@click.option("--fix", is_flag=True, help="Write refreshed verification commands")
+@click.option(
+    "--ai",
+    "ai_mode",
+    type=click.Choice(["auto", "on", "off"]),
+    default="auto",
+    show_default=True,
+    help="AI synthesis mode",
+)
+@click.option(
+    "--profile",
+    type=click.Choice(["feature_low", "feature_mid", "feature_high"]),
+    default=None,
+    help="Override synthesis feature profile",
+)
+@click.option(
+    "--candidate",
+    "candidates",
+    multiple=True,
+    help="Provider/model candidate for AI synthesis; repeatable",
+)
+@click.option("--json", "json_format", is_flag=True, help="Output as JSON")
+def refresh_verification(
+    project_ref: str | None,
+    fix: bool,
+    ai_mode: str,
+    profile: str | None,
+    candidates: tuple[str, ...],
+    json_format: bool,
+) -> None:
+    """Refresh .gobby/project.json verification commands."""
+    from gobby.project_verification.refresh import (
+        ProjectVerificationAIError,
+        refresh_project_verification,
+        refresh_project_verification_deterministic,
+    )
+
+    root = resolve_refresh_root(project_ref)
+    try:
+        if ai_mode == "off":
+            result = refresh_project_verification_deterministic(root, fix=fix)
+        else:
+            from gobby.ai import build_daemon_text_generation_service
+            from gobby.config.app import load_config
+            from gobby.config.feature_base import FeatureProfile
+            from gobby.config.features import ProjectVerificationSynthesisConfig
+
+            config = load_config()
+            synthesis_data = config.project_verification_synthesis.model_dump()
+            if profile:
+                synthesis_data["profile"] = FeatureProfile(profile)
+                if not candidates:
+                    synthesis_data["candidates"] = []
+            if candidates:
+                synthesis_data["candidates"] = list(candidates)
+            synthesis_config = ProjectVerificationSynthesisConfig(**synthesis_data)
+            service = build_daemon_text_generation_service(config)
+            result = asyncio.run(
+                refresh_project_verification(
+                    root,
+                    fix=fix,
+                    ai_mode=ai_mode,  # type: ignore[arg-type]
+                    synthesis_config=synthesis_config,
+                    text_generation_service=service,
+                )
+            )
+    except ProjectVerificationAIError as exc:
+        if json_format:
+            click.echo(json.dumps({"error": str(exc)}, indent=2))
+        else:
+            click.echo(str(exc), err=True)
+        raise SystemExit(1) from exc
+
+    if json_format:
+        click.echo(json.dumps(result.to_dict(), indent=2))
+        return
+
+    if result.changed:
+        if result.written:
+            click.echo(f"Updated verification commands in {result.project_json_path}.")
+        else:
+            click.echo(f"Previewing verification refresh for {result.project_json_path}.")
+        if result.diff:
+            click.echo(result.diff)
+        if not fix:
+            click.echo("Run with --fix to write changes.")
+    else:
+        click.echo("Verification commands already up to date.")
+
+    if result.ai_error and ai_mode == "auto":
+        click.echo(
+            f"AI synthesis unavailable; used deterministic refresh: {result.ai_error}", err=True
+        )
+    if result.ai_rejected:
+        click.echo(f"Rejected {len(result.ai_rejected)} AI command(s).", err=True)
 
 
 @projects.command("repair")

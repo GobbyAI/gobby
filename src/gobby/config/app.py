@@ -39,6 +39,7 @@ from gobby.config.features import (
     MergeResolutionConfig,
     MetricsConfig,
     ProjectVerificationConfig,
+    ProjectVerificationSynthesisConfig,
     RecommendToolsConfig,
     SkillDescriptionConfig,
     ToolSummarizerConfig,
@@ -390,6 +391,10 @@ class DaemonConfig(BaseModel):
         default_factory=ProjectVerificationConfig,
         description="Default verification commands for projects without auto-detected config",
     )
+    project_verification_synthesis: ProjectVerificationSynthesisConfig = Field(
+        default_factory=ProjectVerificationSynthesisConfig,
+        description="LLM synthesis configuration for project verification refresh",
+    )
     validation_detection: ValidationDetectionConfig = Field(
         default_factory=default_validation_detection_config,
         description="Validation command detection matchers for completion evidence",
@@ -511,6 +516,10 @@ class DaemonConfig(BaseModel):
     def get_verification_defaults(self) -> ProjectVerificationConfig:
         """Get default verification commands configuration."""
         return self.verification_defaults
+
+    def get_project_verification_synthesis_config(self) -> ProjectVerificationSynthesisConfig:
+        """Get project verification synthesis configuration."""
+        return self.project_verification_synthesis
 
     def get_search_config(self) -> SearchConfig:
         """Get search configuration."""

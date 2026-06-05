@@ -332,6 +332,8 @@ class TestGetVerificationConfig:
                 "unit_tests": "uv run pytest tests/ -v",
                 "type_check": "uv run mypy src/",
                 "lint": "uv run ruff check src/",
+                "build": "uv build",
+                "doc_tests": "uv run pytest --doctest-modules src/",
                 "integration": "uv run pytest tests/integration/",
                 "custom": {"e2e": "playwright test"},
             },
@@ -344,8 +346,12 @@ class TestGetVerificationConfig:
         assert result.unit_tests == "uv run pytest tests/ -v"
         assert result.type_check == "uv run mypy src/"
         assert result.lint == "uv run ruff check src/"
+        assert result.build == "uv build"
+        assert result.doc_tests == "uv run pytest --doctest-modules src/"
         assert result.integration == "uv run pytest tests/integration/"
         assert result.custom == {"e2e": "playwright test"}
+        assert result.all_commands()["build"] == "uv build"
+        assert result.all_commands()["doc_tests"] == "uv run pytest --doctest-modules src/"
 
     def test_get_verification_config_partial_fields(self, tmp_path: Path) -> None:
         """Test getting verification config with only some fields populated."""
