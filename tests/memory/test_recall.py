@@ -108,14 +108,19 @@ def _event(
     )
 
 
-def _memory(memory_id: str, content: str = "Useful project convention") -> Memory:
+def _memory(
+    memory_id: str,
+    content: str = "Useful project convention",
+    *,
+    tags: list[str] | None = None,
+) -> Memory:
     return Memory(
         id=memory_id,
         memory_type="fact",
         content=content,
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:00+00:00",
-        tags=["test"],
+        tags=tags or ["test"],
         similarity=0.91,
         search_via="semantic",
     )
@@ -198,11 +203,41 @@ async def test_runner_selects_memory_with_json_feature_call_and_no_child_session
             "project_id": "project-1",
             "limit": 8,
             "min_score": 0.5,
+            "tags_none": ["review-lesson"],
         }
     ]
     assert llm.calls[0]["caller"] == "memory.recall"
     assert llm.calls[0]["feature_config"] is config
     assert LocalAgentRunManager(temp_db).list_by_parent(SESSION_ID) == []
+
+
+@pytest.mark.asyncio
+async def test_runner_excludes_review_lessons_from_prompt_recall(
+    temp_db: HubDatabase,
+) -> None:
+    SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
+    raw_review_lesson = "# Review Lesson: Raw diagnostic should not be prompted"
+    memory_manager = FakeMemoryManager(
+        [
+            _memory("review-1", raw_review_lesson, tags=["review-lesson", "confirmed"]),
+            _memory("mem-1", "Use task-linked commits."),
+        ]
+    )
+    llm = FakeLLMService({"memory_ids": ["review-1", "mem-1"]})
+    config = MemoryRecallConfig(candidate_limit=8, selected_limit=2, min_score=0.5)
+    runner = MemoryRecallRunner(
+        db=temp_db,
+        memory_manager=memory_manager,  # type: ignore[arg-type]
+        llm_service=llm,
+        config=config,
+    )
+
+    payload = await runner.run(_event(), SESSION_ID, _variables())
+
+    assert payload is not None
+    assert [memory["id"] for memory in payload.memories] == ["mem-1"]
+    assert raw_review_lesson not in llm.calls[0]["prompt"]
+    assert memory_manager.calls[0]["tags_none"] == ["review-lesson"]
 
 
 @pytest.mark.asyncio

@@ -42,8 +42,11 @@ def _set_injected(db: HubDatabase, session_id: str, ids: list[str]) -> None:
     SessionVariableManager(db).set_variable(session_id, "injected_memory_ids", ids)
 
 
-def _memory(mid: str) -> dict[str, Any]:
-    return {"id": mid, "content": f"content-sentinel-{mid}"}
+def _memory(mid: str, *, tags: list[str] | None = None) -> dict[str, Any]:
+    memory: dict[str, Any] = {"id": mid, "content": f"content-sentinel-{mid}"}
+    if tags is not None:
+        memory["tags"] = tags
+    return memory
 
 
 def _memory_recall_message(
@@ -332,6 +335,27 @@ def test_search_memories_formatter_dedup(engine: RuleEngine, db: HubDatabase) ->
     assert "content-sentinel-m2" in second
     assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1", "m2"]
     assert engine._format_search_memories_result({"memories": []}, "plat-Y", _variables()) is None
+
+
+def test_search_memories_formatter_skips_review_lessons_before_tracking(
+    engine: RuleEngine,
+    db: HubDatabase,
+) -> None:
+    formatted = engine._format_search_memories_result(
+        {
+            "memories": [
+                _memory("review-raw", tags=["review-lesson", "confirmed"]),
+                _memory("m1"),
+            ]
+        },
+        "plat-Y",
+        _variables(),
+    )
+
+    assert formatted is not None
+    assert "content-sentinel-review-raw" not in formatted
+    assert "content-sentinel-m1" in formatted
+    assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1"]
 
 
 def test_review_lesson_formatter_dedup(engine: RuleEngine, db: HubDatabase) -> None:

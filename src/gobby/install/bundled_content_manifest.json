@@ -221,7 +221,7 @@
     "workflows/rules/memory-lifecycle/digest-on-response.yaml": "97b0c2f5c9d84c4e3699b3e28612c907b3ce0684840a856c600789b8a4cb5e0f",
     "workflows/rules/memory-lifecycle/increment-parent-turn-seq.yaml": "4ec100000dc8599fc5cb6e753157c573996469088c627e3f1d02147d69edebda",
     "workflows/rules/memory-lifecycle/memory-capture-nudge.yaml": "b2916a3e9c04a559140b356213840389997a071264d64fd11d84aba06a854918",
-    "workflows/rules/memory-lifecycle/memory-recall-on-prompt.yaml": "eda3feb0fb62da611d023960cef981e294ee07cc70f7823a98e1644ad91ee963",
+    "workflows/rules/memory-lifecycle/memory-recall-on-prompt.yaml": "8c04e0f48a04926ac34f3d4716ac94b2fb72cefd38ba06b10e9a8eee8f36ec54",
     "workflows/rules/memory-lifecycle/require-memory-review-before-status.yaml": "81724afbfbf851fa040525353271ef2220d07f2acbe99f0c9dc07b91ead43216",
     "workflows/rules/memory-lifecycle/reset-memory-tracking-on-start.yaml": "eeb0d4944ccdb850994137d3a4aa2fdfe49e4cdade0e8ad39e33efa9376ee2ff",
     "workflows/rules/messaging/deliver-pending-messages.yaml": "af09701ecc000c53be16d24bbf541af0fe8644e542ad293a156bc3b3da5c1647",

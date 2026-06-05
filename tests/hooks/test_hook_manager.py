@@ -546,6 +546,33 @@ class TestFormatDiscoveryResult:
         ) in result
         assert result.count("memory_id: mm-abc123") == 1
 
+    def test_format_search_memories_omits_review_lesson_memories(self) -> None:
+        """Keeps raw review lessons out of generic project-memory injection."""
+        dr = {
+            "tool": "search_memories",
+            "result": {
+                "memories": [
+                    {
+                        "id": "review-raw",
+                        "content": "# Review Lesson: Raw diagnostic should stay hidden",
+                        "tags": ["review-lesson", "confirmed"],
+                    },
+                    {
+                        "id": "mem-ok",
+                        "content": "Use task-linked commits.",
+                        "tags": ["test"],
+                    },
+                ]
+            },
+        }
+
+        result = HookManager._format_discovery_result(dr)
+
+        assert "# Review Lesson" not in result
+        assert "review-raw" not in result
+        assert "Use task-linked commits." in result
+        assert "memory_id: mem-ok" in result
+
     def test_format_memory_json_fallback_does_not_add_memory_id(self) -> None:
         """Leaves raw memory tool JSON results on their existing id field."""
         dr = {

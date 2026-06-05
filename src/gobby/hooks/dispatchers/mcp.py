@@ -19,6 +19,8 @@ from gobby.memory.context import format_memory_metadata_suffix
 from gobby.review_learning.guidance import format_review_lesson_guidance
 from gobby.skills.formatting import skill_fetch_directive
 
+REVIEW_LESSON_TAG = "review-lesson"
+
 
 def run_coro_blocking(
     coro: Any,
@@ -155,6 +157,7 @@ def format_discovery_result(dr: dict[str, Any]) -> str:
 
     elif tool == "search_memories":
         memories = result.get("memories", [])
+        memories = [m for m in memories if not _is_review_lesson_memory(m)]
         if not memories:
             return ""
         lines = ["<project-memory>"]
@@ -221,6 +224,15 @@ def format_discovery_result(dr: dict[str, Any]) -> str:
 
     else:
         return f"**{tool} result:**\n```json\n{json.dumps(result, indent=2, default=str)}\n```"
+
+
+def _is_review_lesson_memory(memory: Any) -> bool:
+    if not isinstance(memory, dict):
+        return False
+    tags = memory.get("tags")
+    if not isinstance(tags, (list, tuple, set, frozenset)):
+        return False
+    return REVIEW_LESSON_TAG in tags
 
 
 def dispatch_mcp_calls(

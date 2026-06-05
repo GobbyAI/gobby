@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 WAKE_PROMPT_PREFIX = "Message from Gobby daemon: New activity available."
 SYSTEM_ACTIVITY_SOURCES = frozenset({"daemon", "system", "pipeline", "gobby_build", "build"})
+REVIEW_LESSON_TAG = "review-lesson"
 RECALL_SYSTEM_PROMPT = (
     "Select only memories that are directly useful for the user's current turn. "
     "Return strict JSON and no prose."
@@ -142,6 +143,7 @@ class MemoryRecallRunner:
                 project_id=project_id,
                 limit=self.config.candidate_limit,
                 min_score=self.config.min_score,
+                tags_none=[REVIEW_LESSON_TAG],
             )
         except Exception as exc:  # noqa: BLE001 - hook recall must fail open
             self.logger.warning("Memory recall candidate search failed: %s", exc)
@@ -158,6 +160,8 @@ class MemoryRecallRunner:
         for memory in candidates:
             memory_id = getattr(memory, "id", None)
             if not isinstance(memory_id, str) or not memory_id:
+                continue
+            if _has_review_lesson_tag(getattr(memory, "tags", None)):
                 continue
             if memory_id in seen or memory_id in injected:
                 continue
@@ -279,6 +283,12 @@ def _memory_to_payload(memory: Memory) -> dict[str, Any]:
         if value is not None:
             payload[field] = value
     return payload
+
+
+def _has_review_lesson_tag(tags: Any) -> bool:
+    if not isinstance(tags, (list, tuple, set, frozenset)):
+        return False
+    return REVIEW_LESSON_TAG in tags
 
 
 def _parse_selected_memory_ids(response: Any) -> list[str]:

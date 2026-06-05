@@ -18,6 +18,8 @@ from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
 logger = logging.getLogger(__name__)
 
+REVIEW_LESSON_TAG = "review-lesson"
+
 
 def _is_empty_inject_payload(result: Any) -> bool:
     """Decide whether an mcp_call result represents nothing worth injecting."""
@@ -34,6 +36,15 @@ def _is_empty_inject_payload(result: Any) -> bool:
     if content_keys <= {"lessons", "message"} and not result.get("lessons"):
         return True
     return False
+
+
+def _is_review_lesson_memory(memory: Any) -> bool:
+    if not isinstance(memory, dict):
+        return False
+    tags = memory.get("tags")
+    if not isinstance(tags, (list, tuple, set, frozenset)):
+        return False
+    return REVIEW_LESSON_TAG in tags
 
 
 class EffectsMixin:
@@ -376,6 +387,7 @@ class EffectsMixin:
             return None
 
         memories = result.get("memories") or []
+        memories = [memory for memory in memories if not _is_review_lesson_memory(memory)]
         if not memories:
             return None
         new_memories = self._filter_and_track_new_memories(memories, platform_session_id)
