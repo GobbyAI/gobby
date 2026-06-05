@@ -28,6 +28,7 @@ Bare `gcode grep "pattern"` is regex-backed. Use `-F` for literal text containin
 ## Retrieval
 
 - `gcode outline path/to/file.py` — hierarchical symbol map (much cheaper than Read)
+- `gcode symbol-at path/to/file.py:42` or `gcode symbol-at path/to/file.py:42:7` — retrieve the symbol containing a known file location, falling back to the nearest visible symbol
 - `gcode symbol <full-uuid>` — retrieve one symbol by exact stored ID (O(1) via byte offsets)
 - `gcode symbols <full-uuid> <full-uuid> ...` — batch-retrieve symbols by exact stored IDs
 
@@ -38,11 +39,11 @@ Symbol IDs must be full stored UUIDs from `gcode search`, `gcode search-symbol`,
 When navigating code for context or understanding:
 
 1. **Locate with gcode**: `gcode grep -w <identifier> [PATH ...] -m 50` for identifier text search, `gcode grep -F "literal string" [PATH ...] -m 50` for literal strings and call sites, `gcode grep "regex" [PATH ...] -m 50` for regex text search, `gcode search "concept"` for fuzzy concepts, `gcode search-symbol "name"` for known symbols, or `gcode search-content "text"` for ranked file-content hits.
-2. **Survey file structure**: `gcode outline path/to/file` to see the symbol hierarchy without reading the whole file.
-3. **Retrieve exact code**: `gcode symbol <full-uuid>` or `gcode symbols <full-uuid> <full-uuid> ...` using IDs from search or outline.
+2. **Known file/line**: use `gcode symbol-at path/to/file.py:42` when a diagnostic, grep hit, stack trace, or user message already gives a file and line.
+3. **Navigate by structure/ID**: use `gcode outline path/to/file` to survey structure, then `gcode symbol <full-uuid>` or `gcode symbols <full-uuid> <full-uuid> ...` using IDs from search or outline.
 4. **Fetch tight neighboring context only when needed**: use `sed`/`awk` only for tight neighboring context (1-3 lines) after symbol retrieval.
 
-Search output is intentionally snippet-sized. Broad file reads and wide line ranges can be truncated or compressed by `gsqz`, so use `gcode outline` and `gcode symbol` before reaching for broad `sed`, `awk`, or full-file reads.
+Search output is intentionally snippet-sized. Broad file reads and wide line ranges can be truncated or compressed by `gsqz`, so use `gcode symbol-at` when a file/line is known, or `gcode outline` then `gcode symbol` when navigating by structure/ID, before reaching for broad `sed`, `awk`, or full-file reads.
 
 ## Navigation
 
@@ -83,6 +84,7 @@ for the UI, but graph sync/read/lifecycle behavior lives in `gcode`.
 | An identifier-like text occurrence | `gcode grep -w <identifier> [PATH ...]` |
 | An exact string literal, call site, dotted config key, quoted string, doc phrase, config value, comment, script line, CSS rule | `gcode grep -F "literal" [PATH ...]` |
 | Ranked content search across comments/docs/config/source text | `gcode search-content "query" [PATH ...]` |
+| Source code at a known file and line | `gcode symbol-at path/to/file:42` |
 | Structure of a file without reading it | `gcode outline path/to/file` |
 | Source code of a specific symbol | `gcode symbol <full-uuid>` |
 | What breaks if I change X | `gcode blast-radius <name>` |

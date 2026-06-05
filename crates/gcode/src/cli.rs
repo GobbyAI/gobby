@@ -13,6 +13,7 @@ const DEFAULT_CODEWIKI_GRAPH_EDGE_LIMIT: usize = 5000;
   find call sites:   gcode grep \"spawn_ui_server(\" [PATH...] -m 50
   read function:    gcode search-symbol \"spawn_ui_server\" --kind function
                     gcode symbol <id>
+  locate by line:   gcode symbol-at src/auth.ts:42
   find config key:  gcode grep \"config.ui.mode\" -F [PATH...] -m 50"
 )]
 pub(crate) struct Cli {
@@ -322,6 +323,13 @@ pub(crate) enum Command {
     },
     /// Fetch symbol source code by ID (byte-offset read)
     Symbol { id: String },
+    /// Fetch symbol source code at PATH:LINE or PATH:LINE:COLUMN
+    SymbolAt {
+        #[arg(value_name = "PATH[:LINE[:COLUMN]]")]
+        location: String,
+        #[arg(value_name = "LINE", value_parser = positive_usize)]
+        line: Option<usize>,
+    },
     /// Batch retrieve symbols by ID
     Symbols { ids: Vec<String> },
     /// List distinct symbol kinds in the index
@@ -556,3 +564,6 @@ fn first_set_flag(flags: &[(&'static str, bool)]) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod symbol_at_tests;

@@ -8,5 +8,6 @@ pub(crate) mod scope;
 pub mod search;
 pub mod setup;
 pub mod status;
+pub mod symbol_at;
 pub mod symbols;
 pub mod vector;

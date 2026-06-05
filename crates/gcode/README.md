@@ -138,6 +138,7 @@ gcode search-content "query" docs/**/*.md crates/gcode/src
 
 # Symbol retrieval
 gcode outline src/auth.ts                 # Hierarchical symbol tree
+gcode symbol-at src/auth.ts:42            # Symbol containing or nearest to a line
 gcode symbol <id>                         # Source code by symbol ID
 gcode symbols <id1> <id2> ...             # Batch retrieve
 gcode tree                                # File tree with symbol counts

@@ -415,6 +415,11 @@ fn run() -> anyhow::Result<()> {
             ensure_symbol_fresh(&ctx, cli.no_freshness, &id)?;
             commands::symbols::symbol(&ctx, &id, format)
         }
+        Command::SymbolAt { location, line } => {
+            let file = commands::symbol_at::requested_file_for_freshness(&ctx, &location, line)?;
+            ensure_file_fresh(&ctx, cli.no_freshness, &file)?;
+            commands::symbol_at::run(&ctx, &location, line, format)
+        }
         Command::Symbols { ids } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::symbols::symbols(&ctx, &ids, format)
