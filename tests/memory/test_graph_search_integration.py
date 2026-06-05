@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.config.persistence import MemoryKnowledgeGraphConfig
 from gobby.memory.falkor_client import FalkorConnectionError
 from gobby.memory.identity import entity_key
 from gobby.memory.services.knowledge_graph import (
@@ -46,15 +47,22 @@ def mock_prompt_loader() -> MagicMock:
 
 
 @pytest.fixture
+def mock_feature_config() -> MemoryKnowledgeGraphConfig:
+    return MemoryKnowledgeGraphConfig()
+
+
+@pytest.fixture
 def service(
     mock_falkor: AsyncMock,
     mock_llm: AsyncMock,
     mock_embed_fn: AsyncMock,
     mock_prompt_loader: MagicMock,
+    mock_feature_config: MemoryKnowledgeGraphConfig,
 ) -> KnowledgeGraphService:
     return KnowledgeGraphService(
         falkor_client=mock_falkor,
-        llm_provider=mock_llm,
+        llm_service=mock_llm,
+        feature_config=mock_feature_config,
         embed_fn=mock_embed_fn,
         prompt_loader=mock_prompt_loader,
     )
@@ -70,7 +78,7 @@ class TestEntityLabelAndMemoryLinkage:
         mock_llm: AsyncMock,
     ) -> None:
         """add_to_graph passes type labels while _Entity identity is client-owned."""
-        mock_llm.generate_json = AsyncMock(
+        mock_llm.call_json_feature = AsyncMock(
             side_effect=[
                 {"entities": [{"entity": "Josh", "entity_type": "person"}]},
                 {"relations": []},
@@ -91,7 +99,7 @@ class TestEntityLabelAndMemoryLinkage:
         mock_llm: AsyncMock,
     ) -> None:
         """add_to_graph creates Memory node and MENTIONED_IN relationships when memory_id provided."""
-        mock_llm.generate_json = AsyncMock(
+        mock_llm.call_json_feature = AsyncMock(
             side_effect=[
                 {"entities": [{"entity": "Python", "entity_type": "tool"}]},
                 {"relations": []},
@@ -118,7 +126,7 @@ class TestEntityLabelAndMemoryLinkage:
         mock_llm: AsyncMock,
     ) -> None:
         """add_to_graph skips MENTIONED_IN when no memory_id is provided."""
-        mock_llm.generate_json = AsyncMock(
+        mock_llm.call_json_feature = AsyncMock(
             side_effect=[
                 {"entities": [{"entity": "Python", "entity_type": "tool"}]},
                 {"relations": []},

@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.falkor_client import FalkorConnectionError, FalkorQueryError
 
 from .code_linker import KnowledgeGraphCodeLinker
-from .extraction import JSONFeatureProvider, KnowledgeGraphExtractor
+from .extraction import KnowledgeGraphExtractor
 from .maintenance import KnowledgeGraphMaintenance
 from .models import (
     Entity,
@@ -27,37 +27,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from gobby.config.persistence import MemoryKnowledgeGraphConfig
+    from gobby.llm.service import LLMService
     from gobby.memory.falkor_client import FalkorClient
     from gobby.memory.vectorstore import VectorStore
     from gobby.prompts.loader import PromptLoader
 
 logger = logging.getLogger(__name__)
-
-
-class _LegacyLLMProviderAdapter:
-    """Adapt the old LLMProvider JSON API to feature-routed extraction."""
-
-    def __init__(self, provider: Any) -> None:
-        self._provider = provider
-
-    async def call_json_feature(
-        self,
-        feature_config: Any,
-        prompt: str,
-        system_prompt: str | None = None,
-        *,
-        caller: str | None = None,
-    ) -> dict[str, Any]:
-        del feature_config
-        response = await self._provider.generate_json(
-            prompt,
-            system_prompt=system_prompt,
-            model=None,
-            caller=caller,
-        )
-        if not isinstance(response, dict):
-            raise TypeError(f"legacy llm_provider.generate_json returned {type(response).__name__}")
-        return cast(dict[str, Any], response)
 
 
 class KnowledgeGraphService:
@@ -75,24 +50,13 @@ class KnowledgeGraphService:
         falkor_client: FalkorClient,
         embed_fn: Callable[..., Any] | None,
         prompt_loader: PromptLoader,
-        llm_service: JSONFeatureProvider | None = None,
-        feature_config: MemoryKnowledgeGraphConfig | None = None,
+        llm_service: LLMService,
+        feature_config: MemoryKnowledgeGraphConfig,
         vector_store: VectorStore | None = None,
         code_link_min_score: float = 0.82,
         code_symbol_collection_prefix: str = "code_symbols_",
         embedding_dim: int = 768,
-        *,
-        llm_provider: Any | None = None,
     ) -> None:
-        if llm_service is None:
-            if llm_provider is None:
-                raise TypeError("KnowledgeGraphService requires llm_service or llm_provider")
-            llm_service = _LegacyLLMProviderAdapter(llm_provider)
-        if feature_config is None:
-            from gobby.config.persistence import MemoryKnowledgeGraphConfig
-
-            feature_config = MemoryKnowledgeGraphConfig()
-
         self._falkor = falkor_client
         self._embed_fn = embed_fn
         self._prompt_loader = prompt_loader
