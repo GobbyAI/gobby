@@ -84,6 +84,7 @@ export function useChatPageArtifacts({
   const planArtifactIdRef = useRef<string | null>(null);
   const planStateRef = useRef<PlanArtifactState>(planState);
   const lastPlanArtifactContentRef = useRef<string | null>(null);
+  const prevChatPendingRef = useRef(chat.planPendingApproval);
 
   const planArtifactId =
     planState.switchKey === conversationSwitchKey ? planState.planArtifactId : null;
@@ -96,6 +97,25 @@ export function useChatPageArtifacts({
     planStateRef.current = planState;
     planArtifactIdRef.current = planArtifactId;
   }, [planArtifactId, planState]);
+
+  // The status-bar approve path calls chat.onApprovePlan directly (it never
+  // runs handleApprovePlan), so it cannot clear the local pendingPlanArtifactId
+  // marker. When the authoritative chat state resolves the plan
+  // (planPendingApproval true -> false), clear the marker too so the Plans
+  // panel banner clears in lockstep with the status bar — regardless of which
+  // surface triggered approval. Guard on the true -> false transition so a
+  // freshly-arrived plan isn't cleared before chat state catches up.
+  useEffect(() => {
+    const wasPending = prevChatPendingRef.current;
+    prevChatPendingRef.current = chat.planPendingApproval;
+    if (wasPending && !chat.planPendingApproval) {
+      setPlanState((prev) =>
+        prev.switchKey === conversationSwitchKey && prev.pendingPlanArtifactId !== null
+          ? { ...prev, pendingPlanArtifactId: null }
+          : prev,
+      );
+    }
+  }, [chat.planPendingApproval, conversationSwitchKey]);
 
   useEffect(() => {
     clearArtifacts();

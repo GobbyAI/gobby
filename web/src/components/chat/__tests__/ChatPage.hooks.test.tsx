@@ -542,6 +542,39 @@ describe("useChatPageArtifacts", () => {
     });
   });
 
+  it("clears the Plans-panel pending banner when chat resolves the plan from the status bar (#15663)", async () => {
+    // Repro: approving from the agent status-bar strip calls chat.onApprovePlan
+    // directly (never handleApprovePlan), so the only signal the Plans panel
+    // gets is chat.planPendingApproval flipping false via the backend
+    // mode_changed. The local pendingPlanArtifactId marker must clear with it,
+    // or the panel stays stuck on "Awaiting approval".
+    let onPlanReady: ((content: string | null) => void) | null = null;
+    const setOnPlanReady = (fn: (content: string | null) => void) =>
+      void (onPlanReady = fn);
+    const { result, rerender } = renderHook(
+      ({ pending }: { pending: boolean }) =>
+        useChatPageArtifacts({
+          chat: createChat({ planPendingApproval: pending, setOnPlanReady }),
+          showTab: vi.fn(),
+          dismissOnMobile: vi.fn(),
+          closeIfAutoOpened: vi.fn(),
+        }),
+      { initialProps: { pending: true } },
+    );
+
+    await waitFor(() => expect(onPlanReady).toBeTruthy());
+    act(() => {
+      onPlanReady?.("# Plan\n\nStep 1");
+    });
+    await waitFor(() => expect(result.current.planPendingApproval).toBe(true));
+
+    // Backend resolves the approval (status-bar path): chat.planPendingApproval
+    // goes false without the hook's handleApprovePlan ever running.
+    rerender({ pending: false });
+
+    await waitFor(() => expect(result.current.planPendingApproval).toBe(false));
+  });
+
   it("exposes showPlanRef for reopening the plan artifact", async () => {
     let onPlanReady: ((content: string | null) => void) | null = null;
     const showTab = vi.fn();
