@@ -206,7 +206,7 @@ class TestTaskExpansionConfigCustom:
         from gobby.config.tasks import TaskExpansionConfig
 
         config = TaskExpansionConfig(candidates=["claude/claude-sonnet-4-5"])
-        assert config.candidates == ["claude/claude-sonnet-4-5"]
+        assert config.candidates == ["claude/sonnet"]
 
     def test_custom_candidate_provider(self) -> None:
         """Test setting custom candidate provider."""
@@ -260,9 +260,10 @@ class TestTaskValidationConfigDefaults:
         assert config.enabled is True
         assert config.profile == FeatureProfile.MID
         assert "codex/gpt-5.3-codex-spark" in config.candidates
-        assert "codex/gpt-5.4-mini" in config.candidates
+        assert "codex/gpt-5.4-mini" not in config.candidates
         assert "local/Qwen3-Coder-Next" in config.candidates
         assert "claude/sonnet" in config.candidates
+        assert config.candidates[-1] == "local/Qwen3-Coder-Next"
         assert config.prompt_path is None
         assert config.max_iterations == 10
         assert config.max_consecutive_errors == 3
@@ -418,7 +419,7 @@ class TestGobbyTasksConfigCustom:
 
         expansion = TaskExpansionConfig(candidates=["claude/claude-sonnet-4-5"])
         config = GobbyTasksConfig(expansion=expansion)
-        assert config.expansion.candidates == ["claude/claude-sonnet-4-5"]
+        assert config.expansion.candidates == ["claude/sonnet"]
 
     def test_custom_validation_config(self) -> None:
         """Test custom validation config."""

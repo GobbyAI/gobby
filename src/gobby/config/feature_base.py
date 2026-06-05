@@ -24,19 +24,19 @@ class FeatureProfile(StrEnum):
 DEFAULT_PROFILE_CANDIDATES: dict[FeatureProfile, tuple[str, ...]] = {
     FeatureProfile.LOW: (
         "codex/gpt-5.3-codex-spark",
-        "local/Qwen3-Coder-30B-A3B-Instruct",
+        "codex/gpt-5.4-mini",
         "claude/haiku",
+        "local/Qwen3-Coder-30B-A3B-Instruct",
     ),
     FeatureProfile.MID: (
         "codex/gpt-5.3-codex-spark",
-        "codex/gpt-5.4-mini",
-        "local/Qwen3-Coder-Next",
         "claude/sonnet",
+        "local/Qwen3-Coder-Next",
     ),
     FeatureProfile.HIGH: (
         "codex/gpt-5.3-codex",
-        "local/Qwen3-Coder-Next",
         "claude/opus",
+        "local/Qwen3-Coder-Next",
     ),
 }
 
