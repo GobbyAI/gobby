@@ -43,6 +43,10 @@ body {
   color: var(--text-primary);
 }
 
+.source-icon-grok {
+  color: var(--text-primary);
+}
+
 .app {
   display: flex;
   flex-direction: column;

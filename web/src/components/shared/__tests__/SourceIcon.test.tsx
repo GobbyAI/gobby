@@ -13,6 +13,16 @@ describe("SourceIcon", () => {
     expect(container.querySelector("img.source-icon-codex")).toBeNull();
   });
 
+  it("renders the Grok icon as an inline svg", () => {
+    const { container } = render(<SourceIcon source="grok" size={16} />);
+
+    const icon = container.querySelector("svg.source-icon-grok");
+    expect(icon).toBeTruthy();
+    expect(icon?.querySelector("path")).toBeTruthy();
+    expect(container.querySelector("img.source-icon-grok")).toBeNull();
+    expect(container.querySelector("circle")).toBeNull();
+  });
+
   it("renders provider assets as images when available", () => {
     const { container } = render(<SourceIcon source="claude" size={16} />);
 
