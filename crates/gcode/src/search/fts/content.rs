@@ -7,11 +7,12 @@ use crate::visibility::TOMBSTONE_LANGUAGE;
 
 use super::common::{
     PgParam, bm25_score_expr, escape_like, param_refs, push_param, push_path_filter,
-    sanitize_pg_search_query,
+    sanitize_pg_search_query, trusted_row_id,
 };
 
 fn content_bm25_order_by_sql(tiebreakers: &[&str]) -> String {
-    let mut order_by = format!("{} DESC", bm25_score_expr("c.id"));
+    let row_id = trusted_row_id("c.id");
+    let mut order_by = format!("{} DESC", bm25_score_expr(&row_id));
     for tiebreaker in tiebreakers {
         order_by.push_str(", ");
         order_by.push_str(tiebreaker);

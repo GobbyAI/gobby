@@ -661,10 +661,27 @@ impl From<SetupArgs> for gobby_wiki::SetupOptions {
 
 #[cfg(test)]
 mod tests {
+    use clap::CommandFactory;
     use gobby_core::ai_context::AiContext;
     use gobby_core::config::{AiRouting, EnvOnlySource};
 
     use super::*;
+
+    #[test]
+    fn cli_subcommands_match_clap_variants() {
+        let mut listed = CLI_SUBCOMMANDS
+            .iter()
+            .map(|command| command.to_string())
+            .collect::<Vec<_>>();
+        listed.sort_unstable();
+        let mut actual = Cli::command()
+            .get_subcommands()
+            .map(|command| command.get_name().to_string())
+            .collect::<Vec<_>>();
+        actual.sort_unstable();
+
+        assert_eq!(actual, listed);
+    }
 
     #[test]
     fn project_flag_normalization_handles_every_subcommand() {

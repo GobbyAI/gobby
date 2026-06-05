@@ -204,13 +204,7 @@ fn extract_spreadsheet(bytes: &[u8]) -> Result<DocumentExtraction, WikiError> {
         let rows = range
             .rows()
             .take(max_rows_per_sheet)
-            .map(|row| {
-                row.iter()
-                    .take(max_columns_per_sheet)
-                    .map(cell_text)
-                    .collect::<Vec<_>>()
-            })
-            .filter(|row| row.iter().any(|cell| !cell.is_empty()))
+            .filter_map(|row| spreadsheet_row_text(row, max_columns_per_sheet))
             .collect::<Vec<_>>();
         if rows.is_empty() {
             continue;
@@ -324,22 +318,48 @@ fn extract_xml_paragraphs(xml: &str) -> Result<Vec<String>, WikiError> {
     reader.config_mut().trim_text(true);
     let mut paragraphs = Vec::new();
     let mut current = String::new();
+    let mut in_paragraph = false;
     let mut in_text = false;
+    let mut paragraph_saw_text_element = false;
+    let mut paragraph_saw_ignored_text = false;
+    let mut paragraph_saw_unknown_xml = false;
 
     loop {
         match reader.read_event() {
             Ok(Event::Start(event)) => match local_name(event.name().as_ref()) {
-                b"p" => current.clear(),
-                b"t" => in_text = true,
-                _ => {}
+                b"p" => {
+                    current.clear();
+                    in_paragraph = true;
+                    paragraph_saw_text_element = false;
+                    paragraph_saw_ignored_text = false;
+                    paragraph_saw_unknown_xml = false;
+                }
+                b"t" => {
+                    in_text = true;
+                    if in_paragraph {
+                        paragraph_saw_text_element = true;
+                    }
+                }
+                _ => {
+                    if in_paragraph {
+                        paragraph_saw_unknown_xml = true;
+                    }
+                }
             },
             Ok(Event::End(event)) => match local_name(event.name().as_ref()) {
                 b"p" => {
                     let paragraph = single_line(&decode_xml_entities(&current));
                     if !paragraph.is_empty() {
                         paragraphs.push(paragraph);
+                    } else {
+                        warn_empty_office_paragraph(
+                            paragraph_saw_text_element,
+                            paragraph_saw_ignored_text,
+                            paragraph_saw_unknown_xml,
+                        );
                     }
                     current.clear();
+                    in_paragraph = false;
                 }
                 b"t" => in_text = false,
                 _ => {}
@@ -350,12 +370,63 @@ fn extract_xml_paragraphs(xml: &str) -> Result<Vec<String>, WikiError> {
             Ok(Event::CData(text)) if in_text => {
                 current.push_str(&String::from_utf8_lossy(text.as_ref()));
             }
+            Ok(Event::Text(text)) => {
+                warn_ignored_office_text(
+                    text.as_ref(),
+                    in_paragraph,
+                    &mut paragraph_saw_ignored_text,
+                );
+            }
+            Ok(Event::CData(text)) => {
+                warn_ignored_office_text(
+                    text.as_ref(),
+                    in_paragraph,
+                    &mut paragraph_saw_ignored_text,
+                );
+            }
             Ok(Event::Eof) => break,
             Ok(_) => {}
             Err(error) => return Err(document_error(format!("parse xml: {error}"))),
         }
     }
     Ok(paragraphs)
+}
+
+fn spreadsheet_row_text(row: &[Data], max_columns: usize) -> Option<Vec<String>> {
+    let row = row
+        .iter()
+        .take(max_columns)
+        .map(cell_text)
+        .collect::<Vec<_>>();
+    row.iter().any(|cell| !cell.is_empty()).then_some(row)
+}
+
+fn warn_ignored_office_text(text: &[u8], in_paragraph: bool, saw_ignored_text: &mut bool) {
+    if !in_paragraph {
+        return;
+    }
+    let text = single_line(&String::from_utf8_lossy(text));
+    if text.is_empty() {
+        return;
+    }
+    *saw_ignored_text = true;
+    log::warn!("office XML paragraph text outside <t> element was ignored");
+}
+
+fn warn_empty_office_paragraph(
+    saw_text_element: bool,
+    saw_ignored_text: bool,
+    saw_unknown_xml: bool,
+) {
+    if saw_ignored_text {
+        log::warn!("office XML paragraph contained text outside recognized <t> elements");
+    } else if saw_text_element {
+        log::warn!("office XML paragraph was empty after text extraction");
+    } else if saw_unknown_xml {
+        log::warn!("office XML paragraph contained no recognized text runs");
+    } else {
+        log::warn!("office XML paragraph was empty");
+    }
 }
 
 pub(crate) fn markdown_table(rows: &[Vec<String>]) -> String {
@@ -408,4 +479,29 @@ fn slide_number(name: &str) -> Option<usize> {
         .strip_suffix(".xml")?
         .parse()
         .ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spreadsheet_row_text_filters_fully_empty_rows() {
+        let empty = [Data::Empty, Data::String("   ".to_string())];
+        let row = [Data::Empty, Data::String("value".to_string())];
+
+        assert_eq!(spreadsheet_row_text(&empty, 8), None);
+        assert_eq!(
+            spreadsheet_row_text(&row, 8),
+            Some(vec![String::new(), "value".to_string()])
+        );
+    }
+
+    #[test]
+    fn xml_paragraphs_ignore_text_outside_t_without_api_change() {
+        let paragraphs = extract_xml_paragraphs("<w:p>ignored<w:r><w:t>kept</w:t></w:r></w:p>")
+            .expect("parse xml");
+
+        assert_eq!(paragraphs, vec!["kept".to_string()]);
+    }
 }

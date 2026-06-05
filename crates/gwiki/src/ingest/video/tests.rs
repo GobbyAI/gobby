@@ -257,17 +257,9 @@ fn video_produces_transcript_and_frames() {
         .documents
         .get(&result.derived_path)
         .expect("derived video document indexed");
-    assert!(document.body.contains("video_frame_image_count: \"2\""));
-    assert!(
-        document
-            .body
-            .contains("video_frame_description_count: \"2\"")
-    );
-    assert!(
-        document
-            .body
-            .contains("video_transcript_segment_count: \"1\"")
-    );
+    assert!(document.body.contains("video_frame_image_count: 2"));
+    assert!(document.body.contains("video_frame_description_count: 2"));
+    assert!(document.body.contains("video_transcript_segment_count: 1"));
     assert!(
         document
             .body
@@ -323,18 +315,10 @@ fn frame_interval_zero_disables_frames() {
         .documents
         .get(&result.derived_path)
         .expect("derived video document indexed");
-    assert!(document.body.contains("video_frame_sample_count: \"0\""));
-    assert!(document.body.contains("video_frame_image_count: \"0\""));
-    assert!(
-        document
-            .body
-            .contains("video_frame_description_count: \"0\"")
-    );
-    assert!(
-        document
-            .body
-            .contains("video_transcript_segment_count: \"1\"")
-    );
+    assert!(document.body.contains("video_frame_sample_count: 0"));
+    assert!(document.body.contains("video_frame_image_count: 0"));
+    assert!(document.body.contains("video_frame_description_count: 0"));
+    assert!(document.body.contains("video_transcript_segment_count: 1"));
     assert!(document.body.contains("No frame samples recorded."));
 }
 
@@ -496,7 +480,7 @@ fn production_ingest_applies_degradation_matrix() {
     .expect("no ffmpeg degrades");
     assert_asset_preserved(temp.path(), &no_ffmpeg, b"video bytes");
     let no_ffmpeg_doc = read_derived(temp.path(), &no_ffmpeg);
-    assert!(no_ffmpeg_doc.contains("file_size_bytes: \"11\""));
+    assert!(no_ffmpeg_doc.contains("file_size_bytes: 11"));
     assert!(
         no_ffmpeg_doc.contains("audio:ffmpeg_unavailable")
             || no_ffmpeg_doc.contains("frames:ffmpeg_unavailable")
@@ -919,11 +903,7 @@ fn video_derivatives_keep_provenance() {
     assert!(document.body.contains("source_kind: video"));
     assert!(document.body.contains("source_asset: raw/assets/"));
     assert!(document.body.contains("source_raw: raw/"));
-    assert!(
-        document
-            .body
-            .contains("video_frame_interval_seconds: \"4\"")
-    );
+    assert!(document.body.contains("video_frame_interval_seconds: 4"));
     assert!(document.body.contains("scope_kind: project"));
     assert!(document.body.contains("scope_id: project-123"));
     assert!(document.body.contains("Original video: `raw/assets/"));

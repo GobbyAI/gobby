@@ -320,7 +320,9 @@ pub fn run(
             "wrote {} file docs, {} module docs, and repo.md to {}",
             summary.files, summary.modules, summary.out_dir
         )),
-    }
+    }?;
+
+    Ok(())
 }
 
 fn validate_edge_limit(edge_limit: usize) -> anyhow::Result<()> {

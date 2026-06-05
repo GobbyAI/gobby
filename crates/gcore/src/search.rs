@@ -15,15 +15,29 @@ pub const BM25_SCORE_FUNCTION: &str = "pdb.score";
 /// Regprocedure signature required by runtime schema validation.
 pub const BM25_SCORE_REGPROCEDURE: &str = "pdb.score(anyelement)";
 
+/// SQL row identifier trusted by the caller to be static query text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrustedRowId(String);
+
+impl TrustedRowId {
+    /// Construct a trusted row identifier without validating SQL syntax.
+    ///
+    /// # Safety
+    ///
+    /// `row_id` is interpolated into SQL. Callers must pass static, trusted
+    /// table aliases or schema-qualified columns, never user-controlled text.
+    pub unsafe fn new_unchecked(row_id: &str) -> Self {
+        Self(row_id.to_string())
+    }
+
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// Render a BM25 score expression for a table row identifier.
-///
-/// # Safety
-///
-/// `row_id` is interpolated into SQL. Callers must pass a trusted row
-/// identifier such as a static table alias or schema-qualified column, never
-/// user-controlled text.
-pub fn bm25_score_expr(row_id: &str) -> String {
-    format!("{BM25_SCORE_FUNCTION}({row_id})")
+pub fn bm25_score_expr(row_id: &TrustedRowId) -> String {
+    format!("{}({})", BM25_SCORE_FUNCTION, row_id.as_str())
 }
 
 /// A search result from any source, with opaque identity and metadata.
@@ -210,7 +224,9 @@ mod tests {
 
     #[test]
     fn bm25_score_expression_uses_pdb_score() {
-        assert_eq!(bm25_score_expr("row.id"), "pdb.score(row.id)");
+        let row_id = unsafe { TrustedRowId::new_unchecked("row.id") };
+
+        assert_eq!(bm25_score_expr(&row_id), "pdb.score(row.id)");
     }
 
     #[test]

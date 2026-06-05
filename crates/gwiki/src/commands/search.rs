@@ -108,16 +108,7 @@ fn run_search_attached(
     let qdrant = qdrant
         .filter(qdrant_config_has_url)
         .ok_or_else(|| required_search_config("Qdrant"))?;
-    let falkor = falkor.ok_or_else(|| required_search_config("FalkorDB"))?;
-    let mut graph_backend: Box<dyn wiki_search::graph_boost::GraphBoostBackend> =
-        match wiki_search::graph_boost::FalkorGraphBoostBackend::new(&falkor) {
-            Ok(backend) => Box::new(backend),
-            Err(error) => Box::new(
-                wiki_search::graph_boost::UnavailableGraphBoostBackend::unreachable(
-                    error.to_string(),
-                ),
-            ),
-        };
+    let mut graph_backend = graph_backend_from_falkor_config(falkor);
     let mut bm25_backend = wiki_search::bm25::PostgresBm25Backend::new(&mut conn);
     let mut semantic_backend = wiki_search::semantic::GobbySemanticBackend::new(
         Some(embedding),
@@ -137,6 +128,26 @@ fn run_search_attached(
             include_semantic,
         },
     )
+}
+
+fn graph_backend_from_falkor_config(
+    falkor: Option<gobby_core::config::FalkorConfig>,
+) -> Box<dyn wiki_search::graph_boost::GraphBoostBackend> {
+    let Some(falkor) = falkor else {
+        return Box::new(
+            wiki_search::graph_boost::UnavailableGraphBoostBackend::unreachable(
+                "FalkorDB required infrastructure is not configured; graph search is degraded"
+                    .to_string(),
+            ),
+        );
+    };
+
+    match wiki_search::graph_boost::FalkorGraphBoostBackend::new(&falkor) {
+        Ok(backend) => Box::new(backend),
+        Err(error) => Box::new(
+            wiki_search::graph_boost::UnavailableGraphBoostBackend::unreachable(error.to_string()),
+        ),
+    }
 }
 
 fn required_search_config(service: &'static str) -> WikiError {
@@ -344,5 +355,25 @@ mod tests {
             url: Some("http://qdrant.local".to_string()),
             api_key: None,
         }));
+    }
+
+    #[test]
+    fn missing_falkor_config_degrades_graph_search() {
+        let mut backend = graph_backend_from_falkor_config(None);
+        let outcome = backend
+            .search_graph_boost(wiki_search::graph_boost::GraphBoostRequest {
+                scope: wiki_search::SearchScope::project("project-1"),
+                seed_paths: Vec::new(),
+                limit: 10,
+            })
+            .expect("unavailable backend returns degradation");
+
+        assert!(outcome.hits.is_empty());
+        let degradation = outcome.degradation.expect("graph degradation");
+        assert_eq!(degradation_label(&degradation), "gwiki_graph_unreachable");
+        assert!(
+            format!("{degradation:?}")
+                .contains("FalkorDB required infrastructure is not configured")
+        );
     }
 }

@@ -224,8 +224,8 @@ pub fn resolve_recorded_hub_database_url(
                     identity_status: RecordedHubIdentityStatus::SingleReachable,
                 })),
                 (true, true) => {
-                    let existing_redacted = redacted_postgres_dsn_placeholder();
-                    let daemon_redacted = redacted_postgres_dsn_placeholder();
+                    let existing_redacted = redacted_postgres_dsn_placeholder("existing");
+                    let daemon_redacted = redacted_postgres_dsn_placeholder("daemon");
                     let existing_identity = identity_probe(&existing).with_context(|| {
                         format!("failed to probe PostgreSQL hub identity for {existing_redacted}")
                     })?;
@@ -278,8 +278,8 @@ pub fn resolve_recorded_hub_database_url(
     }
 }
 
-fn redacted_postgres_dsn_placeholder() -> String {
-    "<redacted-postgres-dsn>".to_string()
+fn redacted_postgres_dsn_placeholder(source: &str) -> String {
+    format!("<redacted-{source}-postgres-dsn>")
 }
 
 #[cfg(feature = "postgres")]
@@ -464,7 +464,7 @@ fn explicit_database_url_reachable(
     // later if it actually needs PostgreSQL access.
     log::warn!(
         "postgres feature is disabled; preserving configured PostgreSQL hub {} without a reachability probe",
-        redacted_postgres_dsn_placeholder()
+        redacted_postgres_dsn_placeholder("explicit")
     );
     true
 }

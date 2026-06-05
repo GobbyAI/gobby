@@ -12,7 +12,7 @@ pub(crate) use types::{
     ResearchNoteWriter, ResearchObservation, SourceIngestor, WikiAsk, WikiRead, WikiSearch,
 };
 #[cfg(test)]
-pub(crate) use types::{ResearchAction, ResearchLoopDepsBuilder};
+pub(crate) use types::{ResearchAction, ResearchLoopDepsBuildError, ResearchLoopDepsBuilder};
 
 #[cfg(test)]
 mod tests;

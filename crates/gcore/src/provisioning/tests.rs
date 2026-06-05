@@ -143,11 +143,11 @@ fn gcore_yaml_write_rejects_scalar_to_nested_mapping_collision() {
 #[test]
 fn gcore_yaml_rejects_excessive_nesting() {
     let mut yaml = String::new();
-    for depth in 0..=65 {
+    for depth in 0..=64 {
         yaml.push_str(&"  ".repeat(depth));
         yaml.push_str(&format!("k{depth}:\n"));
     }
-    yaml.push_str(&"  ".repeat(66));
+    yaml.push_str(&"  ".repeat(65));
     yaml.push_str("value: too-deep\n");
 
     let error = StandaloneConfig::from_yaml_str(&yaml).expect_err("too-deep YAML must fail");
@@ -226,7 +226,7 @@ fn nested_yaml_str<'a>(value: &'a serde_yaml::Value, path: &[&str]) -> Option<&'
     for key in path {
         current = current
             .as_mapping()?
-            .get(&serde_yaml::Value::String((*key).to_string()))?;
+            .get(serde_yaml::Value::String((*key).to_string()))?;
     }
     current.as_str()
 }

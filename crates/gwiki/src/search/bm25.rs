@@ -2,7 +2,7 @@ use std::path::PathBuf;
 #[cfg(test)]
 use std::sync::Arc;
 
-use gobby_core::search::{bm25_score_expr, sanitize_pg_search_query};
+use gobby_core::search::{TrustedRowId, bm25_score_expr, sanitize_pg_search_query};
 
 use crate::search::{
     ChunkProvenance, SearchError, SearchHitKind, SearchProvenance, SearchScope, SearchSource,
@@ -71,8 +71,8 @@ pub fn build_bm25_sql(query: &str, scope: &SearchScope, limit: usize) -> Option<
 
     let chunk_searchable_path_predicate = searchable_path_predicate("c.path");
     let document_searchable_path_predicate = searchable_path_predicate("d.path");
-    let chunk_score_expr = bm25_score_expr("c.id");
-    let document_score_expr = bm25_score_expr("d.id");
+    let chunk_score_expr = bm25_score_expr(&trusted_row_id("c.id"));
+    let document_score_expr = bm25_score_expr(&trusted_row_id("d.id"));
     let sql = format!(
         r#"
 WITH hits AS (
@@ -145,6 +145,11 @@ LIMIT $4
             limit,
         },
     })
+}
+
+fn trusted_row_id(row_id: &str) -> TrustedRowId {
+    // SAFETY: BM25 SQL builders pass static row identifiers for local table aliases.
+    unsafe { TrustedRowId::new_unchecked(row_id) }
 }
 
 pub fn is_keyword_searchable_path(path: &str) -> bool {

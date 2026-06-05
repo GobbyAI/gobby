@@ -10,27 +10,14 @@ use crate::{
     support::time,
 };
 
-const DEFAULT_PROJECT_ID: &str = "current";
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ResearchScope {
-    Project {
-        #[serde(default = "default_project_id")]
-        project_id: String,
-        root: PathBuf,
-    },
-    Topic {
-        name: String,
-        root: PathBuf,
-    },
+    Project { project_id: String, root: PathBuf },
+    Topic { name: String, root: PathBuf },
 }
 
 impl ResearchScope {
-    pub fn project(root: impl Into<PathBuf>) -> Self {
-        Self::project_for_id(default_project_id(), root)
-    }
-
     pub fn project_for_id(project_id: impl Into<String>, root: impl Into<PathBuf>) -> Self {
         Self::Project {
             project_id: project_id.into(),
@@ -61,10 +48,6 @@ impl From<&ResolvedScope> for ResearchScope {
             }
         }
     }
-}
-
-fn default_project_id() -> String {
-    DEFAULT_PROJECT_ID.to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -302,7 +285,7 @@ mod tests {
     #[test]
     fn compile_state_is_resumable() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let scope = ResearchScope::project(temp.path());
+        let scope = ResearchScope::project_for_id("project-1", temp.path());
         let mut session = ResearchSession::new(
             "How should compile state resume?",
             scope.clone(),
@@ -344,7 +327,7 @@ mod tests {
         fs::create_dir_all(&other).expect("create other root");
         let session = ResearchSession::new(
             "Which root?",
-            ResearchScope::project(&other),
+            ResearchScope::project_for_id("project-1", &other),
             Vec::new(),
             1,
             None,
@@ -366,7 +349,7 @@ mod tests {
         fs::create_dir_all(expected.join(".gwiki/research")).expect("create checkpoint dir");
         let session = ResearchSession::new(
             "Which root?",
-            ResearchScope::project("."),
+            ResearchScope::project_for_id("project-1", "."),
             Vec::new(),
             1,
             None,

@@ -318,7 +318,7 @@ fn pdf_page_body_sanitizes_internal_markers_and_fences() {
 
     assert!(markdown.contains("<!-- gwiki-page: 1 -->"));
     assert!(!markdown.contains("<!-- gwiki-page: 99 -->"));
-    assert!(markdown.contains("<!-- gwiki-page : 99 -->"));
+    assert!(markdown.contains("<! -- gwiki-page: 99 -->"));
     assert!(markdown.contains("\n\\---\n"));
     assert!(markdown.contains("\n\\----\n"));
 }

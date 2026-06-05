@@ -24,7 +24,7 @@ fn session_with_note(scope: &ResearchScope, title: &str, relative_path: &str) ->
 #[test]
 fn compile_bundle_contains_required_sections() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let scope = ResearchScope::project(temp.path());
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
     let note_path = scope.root().join("raw/research/compile.md");
     std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
     std::fs::write(
@@ -71,7 +71,7 @@ fn compile_bundle_contains_required_sections() {
 #[test]
 fn compile_handoff_is_non_destructive_by_default() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let scope = ResearchScope::project(temp.path());
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
     let page_path = scope.root().join("compile-behavior.md");
     std::fs::write(&page_path, "human-authored wiki page").expect("page written");
     let note_path = scope.root().join("raw/research/compile.md");
@@ -101,7 +101,7 @@ fn compile_handoff_is_non_destructive_by_default() {
 #[test]
 fn prepare_handoff_does_not_write_target_page() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let scope = ResearchScope::project(temp.path());
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
     let page_path = scope.root().join("compile-behavior.md");
     std::fs::write(&page_path, "human-authored wiki page").expect("page written");
     let note_path = scope.root().join("raw/research/compile.md");
@@ -131,7 +131,7 @@ fn prepare_handoff_does_not_write_target_page() {
 fn compile_fails_on_out_of_scope_accepted_note() {
     let in_scope = tempfile::tempdir().expect("in scope tempdir");
     let out_of_scope = tempfile::tempdir().expect("out of scope tempdir");
-    let scope = ResearchScope::project(in_scope.path());
+    let scope = ResearchScope::project_for_id("project-1", in_scope.path());
     let in_scope_path = scope.root().join("raw/research/in-scope.md");
     std::fs::create_dir_all(in_scope_path.parent().expect("note parent")).expect("raw dir");
     std::fs::write(&in_scope_path, "Citation: In-scope citation").expect("note written");
@@ -167,7 +167,7 @@ fn compile_fails_on_out_of_scope_accepted_note() {
 #[test]
 fn compile_rejects_absolute_or_escaping_target_pages() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let scope = ResearchScope::project(temp.path());
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
     let note_path = scope.root().join("raw/research/compile.md");
     std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
     std::fs::write(&note_path, "Citation: Example Docs").expect("note written");
@@ -237,10 +237,44 @@ fn compile_rejects_target_page_through_symlinked_parent() {
     ));
 }
 
+#[cfg(windows)]
+#[test]
+fn compile_rejects_target_page_through_symlinked_parent() {
+    let vault = tempfile::tempdir().expect("vault tempdir");
+    let outside = tempfile::tempdir().expect("outside tempdir");
+    if let Err(error) =
+        std::os::windows::fs::symlink_dir(outside.path(), vault.path().join("linked"))
+    {
+        if matches!(
+            error.kind(),
+            std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported
+        ) {
+            eprintln!("skipping Windows symlink assertion: {error}");
+            return;
+        }
+        panic!("symlink outside: {error}");
+    }
+
+    let error = write_target_page(
+        vault.path(),
+        &vault.path().join("linked/outside.md"),
+        "# Outside\n",
+    )
+    .expect_err("symlinked target parent rejected");
+
+    assert!(matches!(
+        error,
+        WikiError::InvalidInput {
+            field: "target_page",
+            ..
+        }
+    ));
+}
+
 #[test]
 fn compile_writes_obsidian_markdown() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let scope = ResearchScope::project(temp.path());
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
     let note_path = scope.root().join("raw/research/compile.md");
     std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
     std::fs::write(
@@ -294,7 +328,7 @@ fn compile_writes_obsidian_markdown() {
 #[test]
 fn index_update_preserves_unrelated_entries() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let scope = ResearchScope::project(temp.path());
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
     std::fs::write(
         scope.root().join("_index.md"),
         "# Wiki Index\n\n- [[wiki/topics/existing|Existing Entry]]\n",

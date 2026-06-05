@@ -98,10 +98,37 @@ pub(crate) fn sanitize_pdf_page_markdown(markdown: &str) -> String {
                 line.to_string()
             };
             // User-visible page markdown must not create internal page split markers.
-            line.replace("<!-- gwiki-page:", "<!-- gwiki-page :")
+            neutralize_gwiki_page_marker_variants(&line)
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn neutralize_gwiki_page_marker_variants(line: &str) -> String {
+    let lower = line.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
+    let mut output = String::new();
+    let mut start = 0usize;
+    while let Some(offset) = lower[start..].find("<!--") {
+        let marker_start = start + offset;
+        let mut cursor = marker_start + "<!--".len();
+        while bytes
+            .get(cursor)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            cursor += 1;
+        }
+        if lower[cursor..].starts_with("gwiki-page") {
+            output.push_str(&line[start..marker_start]);
+            output.push_str("<! --");
+            start = marker_start + "<!--".len();
+        } else {
+            output.push_str(&line[start..cursor]);
+            start = cursor;
+        }
+    }
+    output.push_str(&line[start..]);
+    output
 }
 
 fn is_markdown_horizontal_rule(trimmed: &str) -> bool {
@@ -285,7 +312,7 @@ fn dedupe_ocr_text(text_layer: &str, ocr_text: &str) -> Option<String> {
 fn overlap_key(value: &str) -> String {
     single_line(value)
         .chars()
-        .filter(|character| character.is_alphanumeric())
+        .filter(|character| !character.is_whitespace())
         .flat_map(char::to_lowercase)
         .collect()
 }
@@ -302,4 +329,31 @@ fn rendered_page_file_name(file_name: &str, page_number: usize) -> String {
         .and_then(|stem| stem.to_str())
         .unwrap_or(file_name);
     format!("{stem}-page-{page_number}.png")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn page_markdown_neutralizes_marker_variants() {
+        let sanitized = sanitize_pdf_page_markdown(
+            "<!--gwiki-page: 1 -->\n<!--   gwiki-page: 2 -->\n<!-- GwIkI-PaGe: 3 -->",
+        );
+
+        assert_eq!(
+            sanitized,
+            "<! --gwiki-page: 1 -->\n<! --   gwiki-page: 2 -->\n<! -- GwIkI-PaGe: 3 -->"
+        );
+    }
+
+    #[test]
+    fn ocr_overlap_key_preserves_punctuation_collisions() {
+        assert_ne!(overlap_key("A/B"), overlap_key("AB"));
+        assert_eq!(
+            dedupe_ocr_text("Account A/B", "Account AB"),
+            Some("Account AB".to_string())
+        );
+        assert_eq!(dedupe_ocr_text("Account A/B", "Account A/B"), None);
+    }
 }

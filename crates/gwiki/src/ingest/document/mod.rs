@@ -154,8 +154,14 @@ pub(crate) fn ingest_document_with_endpoint_without_index(
     )?;
     let asset_path = write_asset(vault_root, &record, &snapshot.file_name, &snapshot.bytes)?;
     let raw_markdown = render_raw_document_markdown(&snapshot, &record.content_hash, &asset_path);
-    let raw_path = write_raw_markdown(vault_root, &record, &raw_markdown)?;
-    let derived_path = write_document_derived_markdown(
+    let raw_path = match write_raw_markdown(vault_root, &record, &raw_markdown) {
+        Ok(path) => path,
+        Err(error) => {
+            remove_document_asset_after_failure(vault_root, &asset_path, "raw markdown write");
+            return Err(error);
+        }
+    };
+    let derived_path = match write_document_derived_markdown(
         vault_root,
         &scope,
         &record,
@@ -164,7 +170,13 @@ pub(crate) fn ingest_document_with_endpoint_without_index(
         &asset_path,
         extraction.as_ref(),
         degradation.as_ref(),
-    )?;
+    ) {
+        Ok(path) => path,
+        Err(error) => {
+            remove_document_asset_after_failure(vault_root, &asset_path, "derived markdown write");
+            return Err(error);
+        }
+    };
 
     Ok(DocumentIngestResult {
         record,
@@ -173,6 +185,16 @@ pub(crate) fn ingest_document_with_endpoint_without_index(
         derived_path,
         document_degradation: degradation,
     })
+}
+
+fn remove_document_asset_after_failure(vault_root: &Path, asset_path: &Path, context: &str) {
+    let full_path = vault_root.join(asset_path);
+    if let Err(error) = std::fs::remove_file(&full_path) {
+        log::warn!(
+            "failed to remove document asset {} after {context} failure: {error}",
+            full_path.display()
+        );
+    }
 }
 
 impl DocumentExtractor for LocalDocumentExtractor {

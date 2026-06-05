@@ -32,16 +32,16 @@ jobs:
         run: cargo clippy -p gobby-core --all-targets -- -D warnings
 
       - name: Run tests
-        run: cargo nextest run --profile ci -p gobby-core
+        run: cargo nextest run --profile ci --workspace
 
       - name: Run tests without default features
-        run: cargo nextest run --profile ci -p gobby-core --no-default-features
+        run: cargo nextest run --profile ci --workspace --no-default-features
 
       - name: Run doctests
-        run: cargo test --doc -p gobby-core
+        run: cargo test --doc --workspace
 
       - name: Run doctests without default features
-        run: cargo test --doc -p gobby-core --no-default-features
+        run: cargo test --doc --workspace --no-default-features
 
   publish:
     name: Publish

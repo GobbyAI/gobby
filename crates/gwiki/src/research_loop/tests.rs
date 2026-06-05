@@ -131,7 +131,7 @@ fn research_loop_deps_builder_reports_missing_required_fields() {
         Err(field) => field,
         Ok(_) => panic!("builder should require model"),
     };
-    assert_eq!(missing_model, "model");
+    assert_eq!(missing_model, ResearchLoopDepsBuildError::Model);
 
     let mut model = FakeModel::default();
     let mut ask = FakeAsk;
@@ -149,7 +149,7 @@ fn research_loop_deps_builder_reports_missing_required_fields() {
         Err(field) => field,
         Ok(_) => panic!("builder should require note_writer"),
     };
-    assert_eq!(missing_writer, "note_writer");
+    assert_eq!(missing_writer, ResearchLoopDepsBuildError::NoteWriter);
 }
 
 #[test]

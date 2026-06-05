@@ -10,8 +10,8 @@ use crate::visibility;
 
 // Keep BM25 query sanitation centralized in gobby-core so gcode and gwiki
 // escape pg_search's DSL identically.
-pub(super) use gobby_core::search::bm25_score_expr;
 pub use gobby_core::search::sanitize_pg_search_query;
+pub(super) use gobby_core::search::{TrustedRowId, bm25_score_expr};
 
 pub(super) type PgParam = Box<dyn ToSql + Sync>;
 
@@ -38,7 +38,10 @@ pub(super) enum SymbolOrder {
 impl SymbolOrder {
     fn sql(&self) -> String {
         match self {
-            Self::Bm25Score => format!("{} DESC, cs.id ASC", bm25_score_expr("cs.id")),
+            Self::Bm25Score => {
+                let row_id = trusted_row_id("cs.id");
+                format!("{} DESC, cs.id ASC", bm25_score_expr(&row_id))
+            }
             Self::Name => "cs.name ASC, cs.file_path ASC, cs.line_start ASC".to_string(),
             Self::ExactCaseFirst(query_param) => format!(
                 "CASE WHEN cs.name = {q} OR cs.qualified_name = {q} THEN 0 ELSE 1 END,
@@ -48,6 +51,11 @@ impl SymbolOrder {
             ),
         }
     }
+}
+
+pub(super) fn trusted_row_id(row_id: &str) -> TrustedRowId {
+    // SAFETY: FTS callers pass static SQL row identifiers for local table aliases.
+    unsafe { TrustedRowId::new_unchecked(row_id) }
 }
 
 pub const FILTERED_FETCH_CAP: usize = 10_000;
@@ -337,7 +345,8 @@ mod tests {
 
     #[test]
     fn bm25_score_expression_uses_pdb_score() {
-        let sql = bm25_score_expr("cs.id");
+        let row_id = trusted_row_id("cs.id");
+        let sql = bm25_score_expr(&row_id);
 
         assert_eq!(sql, "pdb.score(cs.id)");
         assert!(!sql.contains("pg_search.score"));

@@ -1,6 +1,7 @@
 use super::*;
 use crate::IngestFileOptions;
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceReplay};
+use std::fs;
 use std::path::PathBuf;
 
 fn test_scope(root: &Path) -> ResolvedScope {

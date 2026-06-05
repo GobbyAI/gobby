@@ -209,6 +209,17 @@ pub(crate) struct ResearchLoopDepsBuilder<'a> {
 }
 
 #[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ResearchLoopDepsBuildError {
+    Model,
+    Ask,
+    Search,
+    Read,
+    Ingest,
+    NoteWriter,
+}
+
+#[cfg(test)]
 impl<'a> ResearchLoopDepsBuilder<'a> {
     pub(crate) fn model(mut self, model: &'a mut dyn ResearchModel) -> Self {
         self.model = Some(model);
@@ -240,14 +251,16 @@ impl<'a> ResearchLoopDepsBuilder<'a> {
         self
     }
 
-    pub(crate) fn build(self) -> Result<ResearchLoopDeps<'a>, &'static str> {
+    pub(crate) fn build(self) -> Result<ResearchLoopDeps<'a>, ResearchLoopDepsBuildError> {
         Ok(ResearchLoopDeps {
-            model: self.model.ok_or("model")?,
-            ask: self.ask.ok_or("ask")?,
-            search: self.search.ok_or("search")?,
-            read: self.read.ok_or("read")?,
-            ingest: self.ingest.ok_or("ingest")?,
-            note_writer: self.note_writer.ok_or("note_writer")?,
+            model: self.model.ok_or(ResearchLoopDepsBuildError::Model)?,
+            ask: self.ask.ok_or(ResearchLoopDepsBuildError::Ask)?,
+            search: self.search.ok_or(ResearchLoopDepsBuildError::Search)?,
+            read: self.read.ok_or(ResearchLoopDepsBuildError::Read)?,
+            ingest: self.ingest.ok_or(ResearchLoopDepsBuildError::Ingest)?,
+            note_writer: self
+                .note_writer
+                .ok_or(ResearchLoopDepsBuildError::NoteWriter)?,
         })
     }
 }

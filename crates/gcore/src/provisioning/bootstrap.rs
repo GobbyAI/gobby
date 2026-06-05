@@ -1,5 +1,7 @@
 use super::*;
 
+// Bound nested YAML paths before flattening config into dotted keys. This keeps
+// hostile or accidental deeply nested input from driving unbounded recursion.
 const MAX_YAML_FLATTEN_DEPTH: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,6 +105,8 @@ fn flatten_yaml_value_at_depth(
     output: &mut BTreeMap<String, String>,
     depth: usize,
 ) -> anyhow::Result<()> {
+    // Depth starts at the root value, so a path with 64 nested mappings is the
+    // last accepted level; the next recursive descent fails before matching.
     if depth > MAX_YAML_FLATTEN_DEPTH {
         anyhow::bail!(
             "gcore.yaml path `{}` exceeds maximum depth of {MAX_YAML_FLATTEN_DEPTH}",

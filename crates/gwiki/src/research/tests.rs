@@ -64,7 +64,7 @@ research_status: completed
 #[test]
 fn research_reloads_checkpoint_without_daemon_dispatch() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let scope = ResearchScope::project(temp.path());
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
     let checkpoint = ResearchSession {
         session_id: "research-existing".to_string(),
         question: "What changed in the parser?".to_string(),
@@ -98,7 +98,7 @@ fn enrichment_rejects_ai_off() {
     let temp = tempfile::tempdir().expect("tempdir");
     let mut options = default_options(
         "What should be researched?",
-        ResearchScope::project(temp.path()),
+        ResearchScope::project_for_id("project-1", temp.path()),
     );
     options.ai = AiRouting::Off;
     let error = run(options).expect_err("AI off should be rejected for enrichment");
@@ -109,7 +109,7 @@ fn enrichment_rejects_ai_off() {
 #[test]
 fn accepted_notes_land_in_raw_research() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let scope = ResearchScope::project(temp.path());
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
     write_test_source(scope.root());
 
     let mut options = default_options("How should events be monitored?", scope.clone());
@@ -326,7 +326,10 @@ fn deterministic_audit_reports_untracked_completed_note() {
     )
     .expect("orphan note");
 
-    let mut options = default_options("Audit wiki scope", ResearchScope::project(root));
+    let mut options = default_options(
+        "Audit wiki scope",
+        ResearchScope::project_for_id("project-1", root),
+    );
     options.audit = true;
     options.ai = AiRouting::Off;
     let outcome = run(options).expect("audit ran");
@@ -349,7 +352,7 @@ fn deterministic_audit_reports_untracked_completed_note() {
 #[test]
 fn deterministic_audit_uses_checkpoint_inventory() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let scope = ResearchScope::project(temp.path());
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
     write_test_source(scope.root());
     let mut options = default_options("Record accepted note", scope.clone());
     options.max_steps = 0;

@@ -111,7 +111,7 @@ fn development_guide_documents_foundation_boundary() {
         "`qdrant`",
         "`indexing`",
         "`search`",
-        "`http`",
+        "`local-backend`",
         "`full`",
         "Feature-gated modules",
         "Adding a New Helper",

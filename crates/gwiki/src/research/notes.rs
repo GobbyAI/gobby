@@ -65,12 +65,12 @@ pub(crate) fn write_accepted_note(
 
     let body = render_accepted_note_body(session_id, note, &draft_id, "completed", true)?;
     if let Err(error) = write_file_atomically(&path, body.as_bytes(), "accepted research note") {
-        let _ = fs::remove_file(&path);
+        remove_accepted_note_after_failure(&path, "write accepted research note");
         return Err(error);
     }
 
     if let Err(error) = append_raw_index(vault_root, &note.title, &path) {
-        let _ = fs::remove_file(&path);
+        remove_accepted_note_after_failure(&path, "append raw index");
         return Err(error);
     }
 
@@ -82,6 +82,15 @@ pub(crate) fn write_accepted_note(
         created: true,
         write_conflict,
     })
+}
+
+fn remove_accepted_note_after_failure(path: &Path, context: &str) {
+    if let Err(error) = fs::remove_file(path) {
+        log::warn!(
+            "failed to remove accepted research note {} after {context} failure: {error}",
+            path.display()
+        );
+    }
 }
 
 pub(crate) enum AcceptedNoteSlot {

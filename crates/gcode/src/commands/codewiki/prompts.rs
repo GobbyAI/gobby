@@ -17,14 +17,16 @@ pub fn symbol_prompt(symbol: &Symbol) -> String {
         .as_deref()
         .filter(|value| !value.is_empty())
     {
-        let _ = write!(prompt, "\nSignature: {signature}");
+        prompt.push_str("\nSignature: ");
+        prompt.push_str(signature);
     }
     if let Some(docstring) = symbol
         .docstring
         .as_deref()
         .filter(|value| !value.is_empty())
     {
-        let _ = write!(prompt, "\nExisting docs: {docstring}");
+        prompt.push_str("\nExisting docs: ");
+        prompt.push_str(docstring);
     }
     prompt
 }

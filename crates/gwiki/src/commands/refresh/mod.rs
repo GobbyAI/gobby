@@ -1,6 +1,5 @@
 use std::collections::BTreeSet;
-use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use serde_json::json;

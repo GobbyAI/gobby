@@ -33,4 +33,17 @@ mod tests {
 
         assert_eq!(text, "First line wraps here.\n\nSecond paragraph.");
     }
+
+    #[test]
+    fn normalize_page_text_handles_whitespace_edges() {
+        assert_eq!(normalize_page_text(" \t \n\n"), "");
+        assert_eq!(
+            normalize_page_text("First\t line\r\nwraps   here.\r\n\r\n\r\nSecond"),
+            "First line wraps here.\n\nSecond"
+        );
+        assert_eq!(
+            normalize_page_text("\n  First paragraph.  \n \n  Second paragraph.  \n"),
+            "First paragraph.\n\nSecond paragraph."
+        );
+    }
 }

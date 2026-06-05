@@ -134,21 +134,52 @@ pub(crate) fn write_raw_then_index(
 }
 
 pub(crate) fn markdown_metadata(fields: &[(&str, String)]) -> String {
+    let fields = fields
+        .iter()
+        .map(|(key, value)| (*key, MetadataValue::string(value.clone())))
+        .collect::<Vec<_>>();
+    markdown_metadata_values(&fields)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum MetadataValue {
+    String(String),
+    Number(String),
+}
+
+impl MetadataValue {
+    pub(crate) fn string(value: impl Into<String>) -> Self {
+        Self::String(value.into())
+    }
+
+    pub(crate) fn number(value: impl ToString) -> Self {
+        Self::Number(value.to_string())
+    }
+}
+
+pub(crate) fn markdown_metadata_values(fields: &[(&str, MetadataValue)]) -> String {
     let mut metadata = String::from("---\n");
     for (key, value) in fields {
         metadata.push_str(key);
         metadata.push_str(": ");
-        metadata.push_str(&yaml_metadata_scalar(key, value));
+        metadata.push_str(&yaml_metadata_value(key, value));
         metadata.push('\n');
     }
     metadata.push_str("---\n\n");
     metadata
 }
 
+fn yaml_metadata_value(key: &str, value: &MetadataValue) -> String {
+    match value {
+        MetadataValue::String(value) => yaml_metadata_scalar(key, value),
+        MetadataValue::Number(value) => yaml_numeric_scalar(value),
+    }
+}
+
 fn yaml_metadata_scalar(key: &str, value: &str) -> String {
     if key == "content_type" {
         let value = single_line(value);
-        return serde_json::to_string(&value).unwrap_or_else(|_| "\"\"".to_string());
+        return quote_yaml_string(&value);
     }
     yaml_safe_single_line_scalar(value)
 }
@@ -158,7 +189,16 @@ fn yaml_safe_single_line_scalar(value: &str) -> String {
     if yaml_plain_scalar_is_safe(&value) {
         value
     } else {
-        serde_json::to_string(&value).unwrap_or_else(|_| "\"\"".to_string())
+        quote_yaml_string(&value)
+    }
+}
+
+fn yaml_numeric_scalar(value: &str) -> String {
+    let value = single_line(value);
+    if yaml_numeric_scalar_is_safe(&value) {
+        value
+    } else {
+        quote_yaml_string(&value)
     }
 }
 
@@ -172,6 +212,7 @@ fn yaml_plain_scalar_is_safe(value: &str) -> bool {
         "true" | "false" | "null" | "~" | ".nan" | ".inf" | "+.inf" | "-.inf"
     ) || value.parse::<i64>().is_ok()
         || value.parse::<f64>().is_ok()
+        || yaml_plain_scalar_is_timestamp(value)
     {
         return false;
     }
@@ -181,6 +222,28 @@ fn yaml_plain_scalar_is_safe(value: &str) -> bool {
         && !value.starts_with([
             '-', '?', ':', '#', '{', '}', '[', ']', ',', '&', '*', '!', '|', '>', '%', '@', '`',
         ])
+}
+
+fn yaml_numeric_scalar_is_safe(value: &str) -> bool {
+    value.parse::<i64>().is_ok() || value.parse::<f64>().is_ok_and(|number| number.is_finite())
+}
+
+fn yaml_plain_scalar_is_timestamp(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    has_yaml_date_prefix(bytes) && matches!(bytes.get(10), None | Some(b'T' | b't' | b' '))
+}
+
+fn has_yaml_date_prefix(bytes: &[u8]) -> bool {
+    bytes.len() >= 10
+        && bytes[0..4].iter().all(u8::is_ascii_digit)
+        && bytes[4] == b'-'
+        && bytes[5..7].iter().all(u8::is_ascii_digit)
+        && bytes[7] == b'-'
+        && bytes[8..10].iter().all(u8::is_ascii_digit)
+}
+
+fn quote_yaml_string(value: &str) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
 }
 
 pub(crate) fn single_line(value: &str) -> String {
@@ -244,8 +307,9 @@ fn write_immutable_file(
     vault_root: &Path,
     relative: &Path,
     source_path: &Path,
-    _content_hash: &str,
+    content_hash: &str,
 ) -> Result<(), WikiError> {
+    let source_hash = validate_source_file_hash(source_path, content_hash)?;
     let path = vault_root.join(relative);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| WikiError::Io {
@@ -256,7 +320,7 @@ fn write_immutable_file(
     }
 
     if path.exists() {
-        return validate_existing_raw_file(&path, relative, source_path);
+        return validate_existing_raw_file(&path, relative, &source_hash);
     }
     let mut temp_file = create_raw_temp_file(&path)?;
     let mut source = std::fs::File::open(source_path).map_err(|error| WikiError::Io {
@@ -281,7 +345,7 @@ fn write_immutable_file(
     match temp_file.persist_noclobber(&path) {
         Ok(_) => sync_parent_dir(&path),
         Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
-            validate_existing_raw_file(&path, relative, source_path)
+            validate_existing_raw_file(&path, relative, &source_hash)
         }
         Err(error) => Err(WikiError::Io {
             action: "write raw source",
@@ -311,7 +375,7 @@ fn validate_existing_raw_bytes(
 fn validate_existing_raw_file(
     path: &Path,
     relative: &Path,
-    source_path: &Path,
+    source_hash: &str,
 ) -> Result<(), WikiError> {
     let existing_hash =
         gobby_core::indexing::file_content_hash(path).map_err(|error| WikiError::Io {
@@ -319,16 +383,29 @@ fn validate_existing_raw_file(
             path: Some(path.to_path_buf()),
             source: error,
         })?;
+    if existing_hash == source_hash {
+        return Ok(());
+    }
+    Err(immutable_exists_error(relative))
+}
+
+fn validate_source_file_hash(source_path: &Path, content_hash: &str) -> Result<String, WikiError> {
     let source_hash =
         gobby_core::indexing::file_content_hash(source_path).map_err(|error| WikiError::Io {
             action: "hash raw source",
             path: Some(source_path.to_path_buf()),
             source: error,
         })?;
-    if existing_hash == source_hash {
-        return Ok(());
+    if source_hash == content_hash {
+        return Ok(source_hash);
     }
-    Err(immutable_exists_error(relative))
+    Err(WikiError::InvalidInput {
+        field: "content_hash",
+        message: format!(
+            "declared content hash does not match source file {}",
+            source_path.display()
+        ),
+    })
 }
 
 fn immutable_exists_error(relative: &Path) -> WikiError {
@@ -407,7 +484,10 @@ fn sanitize_extension(extension: &str) -> String {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::{asset_path, markdown_metadata, write_asset_from_path};
+    use super::{
+        MetadataValue, asset_path, markdown_metadata, markdown_metadata_values,
+        write_asset_from_path,
+    };
     use gobby_core::ai_context::AiContext;
     use gobby_core::config::EnvOnlySource;
     use gobby_core::indexing::content_hash;
@@ -484,6 +564,9 @@ mod tests {
             ("draft", "true".to_string()),
             ("empty", "~".to_string()),
             ("revision", "1.20".to_string()),
+            ("date", "2026-06-05".to_string()),
+            ("timestamp", "2026-06-05T10:11:12Z".to_string()),
+            ("timestamp_space", "2026-06-05 10:11:12".to_string()),
             ("content_type", "text/html".to_string()),
         ]);
 
@@ -494,11 +577,47 @@ mod tests {
         assert!(metadata.contains("draft: \"true\"\n"));
         assert!(metadata.contains("empty: \"~\"\n"));
         assert!(metadata.contains("revision: \"1.20\"\n"));
+        assert!(metadata.contains("date: \"2026-06-05\"\n"));
+        assert!(metadata.contains("timestamp: \"2026-06-05T10:11:12Z\"\n"));
+        assert!(metadata.contains("timestamp_space: \"2026-06-05 10:11:12\"\n"));
         assert!(metadata.contains("content_type: \"text/html\"\n"));
     }
 
     #[test]
-    fn immutable_file_existing_match_hashes_actual_source_path() {
+    fn markdown_metadata_allows_explicit_numeric_values() {
+        let metadata = markdown_metadata_values(&[
+            ("file_size_bytes", MetadataValue::number(42)),
+            ("duration_seconds", MetadataValue::number(13)),
+            ("unsafe_number", MetadataValue::Number("NaN".to_string())),
+        ]);
+
+        assert!(metadata.contains("file_size_bytes: 42\n"));
+        assert!(metadata.contains("duration_seconds: 13\n"));
+        assert!(metadata.contains("unsafe_number: \"NaN\"\n"));
+    }
+
+    #[test]
+    fn immutable_file_requires_declared_source_hash_before_copy() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let record = test_source_record();
+        let source = temp.path().join("source.txt");
+        std::fs::write(&source, "source bytes").expect("write source");
+
+        let error = write_asset_from_path(
+            temp.path(),
+            &record,
+            "source.txt",
+            &source,
+            "intentionally-stale-hash",
+        )
+        .expect_err("stale hash rejected before copy");
+
+        assert_eq!(error.code(), "invalid_input");
+        assert!(!temp.path().join("raw/assets/source-1.txt").exists());
+    }
+
+    #[test]
+    fn immutable_file_existing_match_requires_declared_hash() {
         let temp = tempfile::tempdir().expect("tempdir");
         let record = test_source_record();
         let first_source = temp.path().join("first.txt");
@@ -507,13 +626,16 @@ mod tests {
         std::fs::write(&first_source, "same bytes").expect("write first");
         std::fs::write(&second_source, "same bytes").expect("write second");
         std::fs::write(&different_source, "different bytes").expect("write different");
+        let same_hash = gobby_core::indexing::file_content_hash(&first_source).expect("hash first");
+        let different_hash =
+            gobby_core::indexing::file_content_hash(&different_source).expect("hash different");
 
         let asset_path = write_asset_from_path(
             temp.path(),
             &record,
             "source.txt",
             &first_source,
-            "intentionally-stale-hash",
+            &same_hash,
         )
         .expect("first asset write");
         write_asset_from_path(
@@ -521,19 +643,28 @@ mod tests {
             &record,
             "source.txt",
             &second_source,
-            "another-stale-hash",
+            &same_hash,
         )
         .expect("matching existing asset is idempotent");
+        let stale_error = write_asset_from_path(
+            temp.path(),
+            &record,
+            "source.txt",
+            &second_source,
+            "another-stale-hash",
+        )
+        .expect_err("matching existing asset still requires declared hash");
         let error = write_asset_from_path(
             temp.path(),
             &record,
             "source.txt",
             &different_source,
-            "stale-hash",
+            &different_hash,
         )
         .expect_err("different source rejected");
 
         assert_eq!(asset_path, PathBuf::from("raw/assets/source-1.txt"));
+        assert_eq!(stale_error.code(), "invalid_input");
         assert_eq!(error.code(), "invalid_input");
     }
 

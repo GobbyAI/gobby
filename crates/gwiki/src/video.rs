@@ -3,7 +3,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
-use crate::ingest::{markdown_metadata, markdown_title, single_line};
+use crate::ingest::{MetadataValue, markdown_metadata_values, markdown_title, single_line};
 use crate::sources::SourceRecord;
 use crate::support::text::display_path;
 use crate::transcribe::{
@@ -340,132 +340,143 @@ fn render_video_derived_markdown(
     let audio_reference = audio_reference_for_video(request.asset_path);
     let audio_source_reference = audio_reference.source_reference;
     let mut fields = vec![
-        ("title".to_string(), title.clone()),
-        ("source_kind".to_string(), "video".to_string()),
-        ("source_location".to_string(), record.location.clone()),
-        ("source_hash".to_string(), record.content_hash.clone()),
-        ("source_asset".to_string(), asset_path.clone()),
-        ("source_raw".to_string(), raw_path.clone()),
-        ("fetched_at".to_string(), record.fetched_at.clone()),
-        ("scope_kind".to_string(), scope.kind.as_str().to_string()),
-        ("scope_id".to_string(), scope.id.clone()),
+        ("title", MetadataValue::string(title.clone())),
+        ("source_kind", MetadataValue::string("video")),
         (
-            "video_frame_interval_seconds".to_string(),
-            request.frame_interval_seconds.to_string(),
+            "source_location",
+            MetadataValue::string(record.location.clone()),
         ),
         (
-            "video_frame_sample_count".to_string(),
-            request.frame_samples.len().to_string(),
+            "source_hash",
+            MetadataValue::string(record.content_hash.clone()),
+        ),
+        ("source_asset", MetadataValue::string(asset_path.clone())),
+        ("source_raw", MetadataValue::string(raw_path.clone())),
+        (
+            "fetched_at",
+            MetadataValue::string(record.fetched_at.clone()),
+        ),
+        ("scope_kind", MetadataValue::string(scope.kind.as_str())),
+        ("scope_id", MetadataValue::string(scope.id.clone())),
+        (
+            "video_frame_interval_seconds",
+            MetadataValue::number(request.frame_interval_seconds),
         ),
         (
-            "video_frame_image_count".to_string(),
-            request.frame_image_paths.len().to_string(),
+            "video_frame_sample_count",
+            MetadataValue::number(request.frame_samples.len()),
         ),
         (
-            "video_frame_description_count".to_string(),
-            request.frame_descriptions.len().to_string(),
+            "video_frame_image_count",
+            MetadataValue::number(request.frame_image_paths.len()),
         ),
         (
-            "video_transcript_segment_count".to_string(),
-            request.transcript_segments.len().to_string(),
+            "video_frame_description_count",
+            MetadataValue::number(request.frame_descriptions.len()),
         ),
         (
-            "audio_reference".to_string(),
-            audio_source_reference.clone(),
+            "video_transcript_segment_count",
+            MetadataValue::number(request.transcript_segments.len()),
         ),
         (
-            "transcription_status".to_string(),
-            if request.transcription.is_some() {
-                "transcribed".to_string()
+            "audio_reference",
+            MetadataValue::string(audio_source_reference.clone()),
+        ),
+        (
+            "transcription_status",
+            MetadataValue::string(if request.transcription.is_some() {
+                "transcribed"
             } else if request.transcription_degradation.is_some() {
-                "degraded".to_string()
+                "degraded"
             } else {
-                "unavailable".to_string()
-            },
+                "unavailable"
+            }),
         ),
     ];
     if let Some(mime_type) = request.mime_type {
-        fields.push(("video_mime_type".to_string(), mime_type.to_string()));
+        fields.push(("video_mime_type", MetadataValue::string(mime_type)));
     }
     if let Some(duration_seconds) = request.duration_seconds {
         fields.push((
-            "video_duration_seconds".to_string(),
-            duration_seconds.to_string(),
+            "video_duration_seconds",
+            MetadataValue::number(duration_seconds),
         ));
     }
     if let Some(metadata) = &request.media_metadata {
         fields.push((
-            "file_size_bytes".to_string(),
-            metadata.file_size_bytes.to_string(),
+            "file_size_bytes",
+            MetadataValue::number(metadata.file_size_bytes),
         ));
         if let Some(duration_seconds) = metadata.duration_seconds {
-            fields.push(("duration_seconds".to_string(), duration_seconds.to_string()));
+            fields.push(("duration_seconds", MetadataValue::number(duration_seconds)));
         }
     }
     if !request.media_degradations.is_empty() {
         fields.push((
-            "media_degradation".to_string(),
-            request
-                .media_degradations
-                .iter()
-                .map(|degradation| format!("{}:{}", degradation.kind, degradation.reason))
-                .collect::<Vec<_>>()
-                .join(","),
+            "media_degradation",
+            MetadataValue::string(
+                request
+                    .media_degradations
+                    .iter()
+                    .map(|degradation| format!("{}:{}", degradation.kind, degradation.reason))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
         ));
     }
     if let Some(degradation) = request.transcription_degradation {
         fields.push((
-            "transcription_degradation".to_string(),
-            degradation.reason.clone(),
+            "transcription_degradation",
+            MetadataValue::string(degradation.reason.clone()),
         ));
     }
     if let Some(output) = request.transcription {
         if let Some(language) = &output.language {
-            fields.push(("transcription_language".to_string(), language.clone()));
+            fields.push((
+                "transcription_language",
+                MetadataValue::string(language.clone()),
+            ));
         }
         if let Some(model) = &output.model {
-            fields.push(("transcription_model".to_string(), model.clone()));
+            fields.push(("transcription_model", MetadataValue::string(model.clone())));
         }
         if let Some(source_language) = &output.source_language {
             fields.push((
-                "transcription_source_language".to_string(),
-                source_language.clone(),
+                "transcription_source_language",
+                MetadataValue::string(source_language.clone()),
             ));
         }
         if let Some(task) = &output.task {
-            fields.push(("transcription_task".to_string(), task.clone()));
+            fields.push(("transcription_task", MetadataValue::string(task.clone())));
         }
         if let Some(target_language) = &output.target_language {
             fields.push((
-                "transcription_target_language".to_string(),
-                target_language.clone(),
+                "transcription_target_language",
+                MetadataValue::string(target_language.clone()),
             ));
         }
-        fields.push(("translated".to_string(), output.translated.to_string()));
+        fields.push((
+            "translated",
+            MetadataValue::string(output.translated.to_string()),
+        ));
         if !output.completed_ranges.is_empty() {
             fields.push((
-                "transcription_completed_ranges".to_string(),
-                format_ranges_ms(&output.completed_ranges),
+                "transcription_completed_ranges",
+                MetadataValue::string(format_ranges_ms(&output.completed_ranges)),
             ));
         }
         if output.partial {
-            fields.push(("transcription_partial".to_string(), "true".to_string()));
+            fields.push(("transcription_partial", MetadataValue::string("true")));
             if !output.missing_ranges.is_empty() {
                 fields.push((
-                    "transcription_missing_ranges".to_string(),
-                    format_ranges_ms(&output.missing_ranges),
+                    "transcription_missing_ranges",
+                    MetadataValue::string(format_ranges_ms(&output.missing_ranges)),
                 ));
             }
         }
     }
 
-    let mut markdown = {
-        let field_refs = fields
-            .iter()
-            .map(|(key, value)| (key.as_str(), value.clone()))
-            .collect::<Vec<_>>();
-        markdown_metadata(&field_refs)
-    };
+    let mut markdown = markdown_metadata_values(&fields);
     markdown.push_str("# ");
     markdown.push_str(&title);
     markdown.push_str("\n\n");
@@ -877,8 +888,9 @@ mod tests {
         .expect("write degradation metadata doc");
 
         let document = std::fs::read_to_string(temp.path().join(result.path)).expect("read doc");
-        assert!(document.contains("file_size_bytes: \"42\""));
-        assert!(document.contains("duration_seconds: \"13\""));
+        assert!(document.contains("video_duration_seconds: 13"));
+        assert!(document.contains("file_size_bytes: 42"));
+        assert!(document.contains("duration_seconds: 13"));
         assert!(document.contains("media_degradation: \"media:ffmpeg_unavailable\""));
         assert!(document.contains("ffmpeg was not found"));
     }
