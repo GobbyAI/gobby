@@ -6,10 +6,13 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from click.testing import CliRunner
 
 from gobby.cli.projects import projects
 from gobby.config.app import DaemonConfig
+
+pytestmark = [pytest.mark.unit]
 
 
 def write_project(root: Path, verification: dict[str, Any] | None = None) -> None:
@@ -33,7 +36,7 @@ def add_python_project(root: Path) -> None:
 
 def test_refresh_verification_preview_does_not_write(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     write_project(tmp_path)
     add_python_project(tmp_path)
@@ -50,7 +53,7 @@ def test_refresh_verification_preview_does_not_write(
 
 def test_refresh_verification_fix_writes_project_json(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     write_project(tmp_path)
     add_python_project(tmp_path)
@@ -60,13 +63,15 @@ def test_refresh_verification_fix_writes_project_json(
 
     assert result.exit_code == 0
     project_data = json.loads((tmp_path / ".gobby" / "project.json").read_text(encoding="utf-8"))
-    assert project_data["verification"]["unit_tests"] == "uv run pytest tests/ -v"
+    assert (
+        project_data["verification"]["unit_tests"] == "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
+    )
     assert project_data["verification"]["lint"] == "uv run ruff check src/"
 
 
 def test_refresh_verification_json_output(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     write_project(tmp_path)
     add_python_project(tmp_path)
@@ -77,13 +82,13 @@ def test_refresh_verification_json_output(
     assert result.exit_code == 0
     payload = json.loads(result.output)
     assert payload["changed"] is True
-    assert payload["after"]["unit_tests"] == "uv run pytest tests/ -v"
+    assert payload["after"]["unit_tests"] == "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
     assert payload["ai"]["mode"] == "off"
 
 
 def test_refresh_verification_auto_falls_back_when_ai_unavailable(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     write_project(tmp_path)
     add_python_project(tmp_path)
@@ -100,7 +105,7 @@ def test_refresh_verification_auto_falls_back_when_ai_unavailable(
 
 def test_refresh_verification_ai_on_requires_service(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     write_project(tmp_path)
     add_python_project(tmp_path)
@@ -116,7 +121,7 @@ def test_refresh_verification_ai_on_requires_service(
 
 def test_refresh_verification_uninitialized_path_has_init_hint(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
 

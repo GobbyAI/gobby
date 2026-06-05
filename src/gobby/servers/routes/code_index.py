@@ -6,7 +6,7 @@ import asyncio
 import inspect
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -38,7 +38,28 @@ class CodewikiRefreshRequest(BaseModel):
     root_path: str
     project_id: str | None = None
     out_dir: str | None = None
-    ai: str = "auto"
+    ai: Literal["auto", "on", "off"] = "auto"
+
+
+def _log_schedule_refresh_error(
+    request: Request,
+    root_value: str,
+    body: CodewikiRefreshRequest,
+    exc: BaseException,
+) -> None:
+    logger.exception(
+        "Failed to schedule codewiki refresh",
+        extra={
+            "method": request.method,
+            "path": request.url.path,
+            "request_id": getattr(request.state, "request_id", None)
+            or request.headers.get("x-request-id"),
+            "root_path": root_value,
+            "project_id": body.project_id,
+            "ai": body.ai,
+            "error": str(exc),
+        },
+    )
 
 
 def _require_project_id(project_id: str | None) -> str:
@@ -402,34 +423,10 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         except OSError as exc:
             if isinstance(exc, (FileNotFoundError, NotADirectoryError)):
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
-            logger.exception(
-                "Failed to schedule codewiki refresh",
-                extra={
-                    "method": request.method,
-                    "path": request.url.path,
-                    "request_id": getattr(request.state, "request_id", None)
-                    or request.headers.get("x-request-id"),
-                    "root_path": root_value,
-                    "project_id": body.project_id,
-                    "ai": body.ai,
-                    "error": str(exc),
-                },
-            )
+            _log_schedule_refresh_error(request, root_value, body, exc)
             raise HTTPException(status_code=500, detail="Internal server error") from exc
         except Exception as exc:
-            logger.exception(
-                "Failed to schedule codewiki refresh",
-                extra={
-                    "method": request.method,
-                    "path": request.url.path,
-                    "request_id": getattr(request.state, "request_id", None)
-                    or request.headers.get("x-request-id"),
-                    "root_path": root_value,
-                    "project_id": body.project_id,
-                    "ai": body.ai,
-                    "error": str(exc),
-                },
-            )
+            _log_schedule_refresh_error(request, root_value, body, exc)
             raise HTTPException(status_code=500, detail="Internal server error") from exc
 
         return {

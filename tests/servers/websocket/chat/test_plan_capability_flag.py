@@ -12,12 +12,16 @@ The permission/plan helpers are unified in a single protocol-neutral
 
 from __future__ import annotations
 
+import pytest
+
 from gobby.servers.websocket.chat.backends import (
     CodexManagedChatSession,
     DroidManagedChatSession,
 )
 from gobby.servers.websocket.chat.backends.acp_session import ACPManagedChatSession
 from gobby.servers.websocket.chat.permissions import ManagedWebChatPermissionsMixin
+
+pytestmark = pytest.mark.unit
 
 
 def _session_info_capability(session: object) -> bool:

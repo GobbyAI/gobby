@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 from dataclasses import dataclass, field
@@ -22,6 +23,7 @@ from gobby.project_verification.evidence import collect_evidence
 from gobby.project_verification.synthesis import RejectedCommand, synthesize_verification_commands
 
 AIMode = Literal["auto", "on", "off"]
+logger = logging.getLogger(__name__)
 
 
 class ProjectVerificationAIError(RuntimeError):
@@ -117,6 +119,8 @@ async def refresh_project_verification(
                     candidates,
                 )
             except Exception as exc:
+                if isinstance(exc, MemoryError):
+                    raise
                 ai_error = str(exc)
                 if ai_mode == "on":
                     raise ProjectVerificationAIError(
@@ -200,8 +204,8 @@ def _write_verification(project_json_path: Path, verification: dict[str, Any]) -
     except Exception:
         try:
             os.unlink(tmp_name)
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.debug("Failed to clean up temp file %s: %s", tmp_name, exc)
         raise
 
 

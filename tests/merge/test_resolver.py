@@ -7,6 +7,7 @@ Tests for MergeResolver class implementing tiered resolution:
 - Tier 4: Human review fallback (marks as needs-human-review)
 """
 
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -21,10 +22,10 @@ def _merge_config() -> MergeResolutionConfig:
 
 
 class _StaticLLMService:
-    def __init__(self, response: str):
+    def __init__(self, response: str) -> None:
         self.response = response
 
-    async def call_feature(self, *_args, **_kwargs) -> str:
+    async def call_feature(self, *_args: Any, **_kwargs: Any) -> str:
         return self.response
 
 

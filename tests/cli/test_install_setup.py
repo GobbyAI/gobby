@@ -802,7 +802,7 @@ class TestGwikiHelpers:
         binstall.assert_called_once_with(bin_dir, GWIKI_PIN)
         cargo_install.assert_called_once_with(bin_dir, GWIKI_PIN)
 
-    def test_install_gwiki_reports_success_without_binary(self, tmp_path):
+    def test_install_gwiki_detects_missing_binary_after_install(self, tmp_path) -> None:
         with (
             patch("gobby.cli.install_setup.sys.platform", "darwin"),
             patch("gobby.cli.install_setup.platform.machine", return_value="arm64"),

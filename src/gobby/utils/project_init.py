@@ -59,15 +59,13 @@ class VerificationCommands:
         """Create commands from project verification data."""
         custom = data.get("custom", {})
         return cls(
-            unit_tests=data.get("unit_tests") if isinstance(data.get("unit_tests"), str) else None,
-            type_check=data.get("type_check") if isinstance(data.get("type_check"), str) else None,
-            lint=data.get("lint") if isinstance(data.get("lint"), str) else None,
-            format=data.get("format") if isinstance(data.get("format"), str) else None,
-            build=data.get("build") if isinstance(data.get("build"), str) else None,
-            doc_tests=data.get("doc_tests") if isinstance(data.get("doc_tests"), str) else None,
-            integration=data.get("integration")
-            if isinstance(data.get("integration"), str)
-            else None,
+            unit_tests=_optional_str(data.get("unit_tests")),
+            type_check=_optional_str(data.get("type_check")),
+            lint=_optional_str(data.get("lint")),
+            format=_optional_str(data.get("format")),
+            build=_optional_str(data.get("build")),
+            doc_tests=_optional_str(data.get("doc_tests")),
+            integration=_optional_str(data.get("integration")),
             custom={str(k): str(v) for k, v in custom.items()} if isinstance(custom, dict) else {},
         )
 

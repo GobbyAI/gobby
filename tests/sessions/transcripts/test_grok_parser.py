@@ -122,6 +122,8 @@ def test_grok_usage_aggregates_nested_cache_details() -> None:
 
     assert message is not None
     assert message.usage is not None
+    # input = 100 - (11 + 5 cached reads) - (3 + 2 + 4 + 6 cache creations);
+    # cache_read = 11 + 5, cache_creation = 3 + 2 + 4 + 6.
     assert message.usage.input_tokens == 69
     assert message.usage.output_tokens == 7
     assert message.usage.cache_read_tokens == 16

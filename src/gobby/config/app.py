@@ -870,8 +870,8 @@ def load_config(
                     logger.warning(f"Failed to read config file {config_path}: {e}")
 
         # Layer 3: DB values (runtime overrides via config_store)
-        flat_db = config_store.get_all()
         reject_stale_default_feature_candidate_rows(config_store)
+        flat_db = config_store.get_all()
         flat_db = _drop_legacy_neo4j_config_store_keys(flat_db, config_store)
         flat_db = _drop_legacy_embedding_config_store_keys(flat_db, config_store)
         flat_db = _migrate_default_ui_mode_config_store_row(flat_db, config_store)

@@ -39,7 +39,7 @@ def probe_native_bin_version(
             logger.warning("%s: invalid --version probe path: %s", label, exc)
         return None
 
-    if not resolved_path.is_absolute() or not resolved_path.is_file():
+    if not resolved_path.is_file():
         if logger is not None and label is not None:
             logger.warning("%s: invalid --version probe path: %s", label, resolved_path)
         return None

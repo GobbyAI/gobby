@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -131,8 +131,8 @@ class EvidenceBundle:
             "existing_verification": self.existing_verification,
             "items": [item.to_prompt_dict() for item in self.items],
             "manifests": {
-                "python": self.python.__dict__ if self.python else None,
-                "packages": [pkg.__dict__ for pkg in self.packages],
+                "python": asdict(self.python) if self.python else None,
+                "packages": [asdict(pkg) for pkg in self.packages],
                 "cargo": self.has_cargo,
                 "nextest": self.has_nextest,
                 "go": self.has_go_mod,

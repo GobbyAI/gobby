@@ -63,10 +63,11 @@ def head_with_breadcrumb(text: str, *, budget: int, breadcrumb: str) -> str:
     suffix = f"\n\n{breadcrumb}" if breadcrumb else ""
     head_budget = budget - len(suffix)
     if head_budget <= 0:
-        return (breadcrumb or text)[:budget]
+        return text[:budget]
 
-    # Keep the breadcrumb from consuming so much budget that the retained head
-    # collapses into a tiny fragment.
+    # Require clean cuts to keep at least half of the head budget. This prevents
+    # the breadcrumb from crowding out content and falls back to a hard cut when
+    # paragraph/newline boundaries are too close to the start.
     min_clean_cut = head_budget // 2
     # Prefer a paragraph boundary; this is the cleanest place to cut pasted
     # handoff/summary prose.

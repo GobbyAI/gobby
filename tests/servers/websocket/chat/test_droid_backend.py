@@ -21,8 +21,8 @@ from gobby.llm.claude_models import (
 from gobby.servers.websocket.chat.backends.droid import (
     DroidManagedChatSession,
     DroidWebChatBackend,
-    _droid_tool_name_adapter,
-    _parse_droid_stream_line,
+    droid_tool_name_adapter,
+    parse_droid_stream_line,
 )
 
 pytestmark = pytest.mark.unit
@@ -189,16 +189,16 @@ def _permission_request_line(
 
 
 def test_droid_tool_name_adapter() -> None:
-    assert _droid_tool_name_adapter("gobby___list_mcp_servers") == ("mcp__gobby__list_mcp_servers")
-    assert _droid_tool_name_adapter("mcp__gobby__list") == "mcp__gobby__list"
-    assert _droid_tool_name_adapter("Execute") == "Bash"
-    assert _droid_tool_name_adapter("Read") == "Read"
+    assert droid_tool_name_adapter("gobby___list_mcp_servers") == ("mcp__gobby__list_mcp_servers")
+    assert droid_tool_name_adapter("mcp__gobby__list") == "mcp__gobby__list"
+    assert droid_tool_name_adapter("Execute") == "Bash"
+    assert droid_tool_name_adapter("Read") == "Read"
 
 
 def test_parse_stream_json_normalizes_content_blocks() -> None:
     events = []
     for line in _fixture_lines("tool_call.jsonl"):
-        events.extend(_parse_droid_stream_line(line))
+        events.extend(parse_droid_stream_line(line))
 
     assert [event.event_type for event in events] == ["content_delta", "content_delta", "result"]
     assert events[0].data["kind"] == "tool_use"
@@ -216,7 +216,7 @@ async def test_managed_session_translates_text_thinking_and_done() -> None:
 
     async def fake_send_message(_session: Any, _prompt: str):
         for line in _fixture_lines("thinking.jsonl"):
-            for event in _parse_droid_stream_line(line):
+            for event in parse_droid_stream_line(line):
                 yield event
 
     backend.send_message = fake_send_message
@@ -237,7 +237,7 @@ async def test_managed_session_translates_structured_tool_events() -> None:
 
     async def fake_send_message(_session: Any, _prompt: str):
         for line in _fixture_lines("tool_call.jsonl"):
-            for event in _parse_droid_stream_line(line):
+            for event in parse_droid_stream_line(line):
                 yield event
 
     backend.send_message = fake_send_message

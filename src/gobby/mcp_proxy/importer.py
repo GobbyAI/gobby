@@ -24,9 +24,9 @@ SECRET_PLACEHOLDER_PATTERN = re.compile(r"<YOUR_[A-Z0-9_]+>")
 def _claude_model_candidate(candidates: list[str]) -> str:
     for candidate in candidates:
         provider, separator, model = candidate.partition("/")
-        if separator and provider.strip() == "claude" and model.strip():
+        if separator and provider.strip().casefold() == "claude" and model.strip():
             return model.strip()
-    raise RuntimeError("Tool-based MCP import requires a claude/* candidate")
+    raise ValueError("Tool-based MCP import requires a valid claude/* candidate")
 
 
 class MCPServerImporter:
@@ -58,6 +58,7 @@ class MCPServerImporter:
         self.mcp_client_manager = mcp_client_manager
         self.llm_service = llm_service
         self.import_config = config.get_import_mcp_server_config()
+        self._claude_import_model = _claude_model_candidate(self.import_config.candidates)
 
         # Initialize prompt loader
         self._loader = PromptLoader(db=self.db)
@@ -206,7 +207,7 @@ class MCPServerImporter:
                 system_prompt=system_prompt,
                 allowed_tools=["WebFetch"],
                 max_turns=3,
-                model=_claude_model_candidate(self.import_config.candidates),
+                model=self._claude_import_model,
             )
 
             # Parse and add if no secrets needed
@@ -261,7 +262,7 @@ class MCPServerImporter:
                 system_prompt=system_prompt,
                 allowed_tools=["WebSearch", "WebFetch"],
                 max_turns=5,
-                model=_claude_model_candidate(self.import_config.candidates),
+                model=self._claude_import_model,
             )
 
             # Parse and add if no secrets needed

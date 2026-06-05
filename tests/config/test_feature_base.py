@@ -77,14 +77,18 @@ class TestFeatureDefaultConfig:
         cfg = FeatureDefaultConfig(candidates=[candidate])
         assert cfg.candidates == [expected]
 
-    @pytest.mark.parametrize("old_key", ["provider", "model", "tier"])
-    def test_rejects_removed_feature_keys(self, old_key: str) -> None:
-        with pytest.raises(ValidationError):
-            FeatureDefaultConfig(**{old_key: "claude"})  # type: ignore[arg-type]
+    def test_migrates_legacy_feature_keys(self) -> None:
+        cfg = FeatureDefaultConfig(
+            **{"provider": "claude", "model": "claude-sonnet-4-5", "tier": "high"}
+        )
 
-    def test_rejects_unscoped_candidate(self) -> None:
+        assert cfg.profile == FeatureProfile.HIGH
+        assert cfg.candidates[0] == "claude/sonnet"
+
+    @pytest.mark.parametrize("candidate", ["haiku", "claude/", "/sonnet"])
+    def test_rejects_malformed_candidate(self, candidate: str) -> None:
         with pytest.raises(ValidationError, match="provider/model"):
-            FeatureDefaultConfig(candidates=["haiku"])
+            FeatureDefaultConfig(candidates=[candidate])
 
 
 class TestFeatureConfigInheritance:

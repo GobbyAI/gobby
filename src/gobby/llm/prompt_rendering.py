@@ -33,10 +33,21 @@ def render_summary_prompt(prompt_template: str, context: Mapping[str, Any]) -> s
     formatted_context = _format_summary_context(context)
     if "{{" in prompt_template or "{%" in prompt_template or "{#" in prompt_template:
         from jinja2 import Environment
+        from jinja2.exceptions import TemplateError
 
         env = Environment(autoescape=False)  # nosec B701 # generating text prompts
-        return str(env.from_string(prompt_template).render(**formatted_context))
-    return prompt_template.format(**formatted_context)
+        try:
+            return str(env.from_string(prompt_template).render(**formatted_context))
+        except TemplateError as exc:
+            raise ValueError(f"Failed to render summary prompt with Jinja template: {exc}") from exc
+    try:
+        return prompt_template.format(**formatted_context)
+    except KeyError as exc:
+        raise ValueError(
+            f"Failed to render summary prompt: missing placeholder {exc.args[0]!r}"
+        ) from exc
+    except ValueError as exc:
+        raise ValueError(f"Failed to render summary prompt with format template: {exc}") from exc
 
 
 def _format_summary_context(context: Mapping[str, Any]) -> dict[str, Any]:

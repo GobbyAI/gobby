@@ -144,7 +144,7 @@ class SessionEndMixin(EventHandlersBase):
         if session_id and self._session_manager:
             try:
                 try:
-                    end_reason = SessionEndReason(event.data.get("reason"))
+                    end_reason: SessionEndReason = SessionEndReason(event.data.get("reason"))
                 except (TypeError, ValueError):
                     end_reason = SessionEndReason.OTHER
                 handoff_reasons = {SessionEndReason.CLEAR, SessionEndReason.COMPACT}

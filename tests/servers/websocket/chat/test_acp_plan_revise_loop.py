@@ -16,9 +16,13 @@ import types
 from collections.abc import AsyncIterator
 from typing import Any
 
+import pytest
+
 from gobby.adapters.acp_client import StreamEvent
 from gobby.servers.websocket.chat.backends.acp_session import ACPManagedChatSession
 from gobby.servers.websocket.handlers.plan_approval import handle_plan_approval_response
+
+pytestmark = [pytest.mark.unit]
 
 
 class _RecordingBackend:
@@ -42,6 +46,7 @@ class _FakeWS:
         self.sent.append(msg)
 
 
+@pytest.mark.asyncio
 async def test_request_changes_then_revised_plan_rebroadcasts_with_feedback() -> None:
     prompts: list[str] = []
     broadcasts: list[tuple[str | None, dict[str, Any]]] = []

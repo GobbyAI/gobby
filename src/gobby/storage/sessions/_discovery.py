@@ -244,9 +244,10 @@ class _DiscoveryMixin:
     ) -> Session | None:
         """Find the unique active session matching project and terminal identity."""
         normalized_parent_pid = _normalize_context_parent_pid(parent_pid)
+        normalized_project_id = project_id.strip() if isinstance(project_id, str) else None
         if (
             not isinstance(project_id, str)
-            or not project_id.strip()
+            or not normalized_project_id
             or normalized_parent_pid is None
         ):
             return None
@@ -260,7 +261,7 @@ class _DiscoveryMixin:
             ORDER BY updated_at DESC
             LIMIT %s
             """,
-            (project_id, "active", MAX_ACTIVE_SESSION_SCAN),
+            (normalized_project_id, "active", MAX_ACTIVE_SESSION_SCAN),
         )
 
         requested_context = _parse_terminal_context_value(terminal_context)

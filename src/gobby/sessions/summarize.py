@@ -13,7 +13,7 @@ import asyncio
 import json
 import logging
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -41,10 +41,23 @@ class SessionManagerProtocol(Protocol):
     def update_status(self, session_id: str, status: str) -> Any: ...
 
 
+class FeatureConfigProtocol(Protocol):
+    @property
+    def profile(self) -> Any: ...
+
+    @property
+    def candidates(self) -> Sequence[str]: ...
+
+
+class SessionSummaryConfigProtocol(FeatureConfigProtocol, Protocol):
+    @property
+    def prompt(self) -> str | None: ...
+
+
 class LLMServiceProtocol(Protocol):
     async def call_feature(
         self,
-        feature_config: Any,
+        feature_config: FeatureConfigProtocol,
         prompt: str,
         system_prompt: str | None = None,
         max_tokens: int | None = None,
@@ -100,7 +113,7 @@ async def generate_session_summaries(
     session_id: str,
     session_manager: SessionManagerProtocol,
     llm_service: LLMServiceProtocol | None = None,
-    session_summary_config: Any | None = None,
+    session_summary_config: SessionSummaryConfigProtocol | None = None,
     db: HubDatabase | None = None,
     write_file: bool = False,
     output_path: str = ".gobby/session_summaries",
@@ -419,7 +432,7 @@ async def _generate_full_summary(
     turns: list[dict[str, Any]],
     handoff_ctx: Any,
     llm_service: LLMServiceProtocol | None,
-    session_summary_config: Any | None,
+    session_summary_config: SessionSummaryConfigProtocol | None,
     db: HubDatabase | None,
     session_manager: SessionManagerProtocol,
     run_db: Callable[..., Awaitable[Any]] | None = None,

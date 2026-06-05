@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -18,7 +19,7 @@ pytestmark = pytest.mark.unit
 
 class FakeTextGeneration:
     def __init__(self) -> None:
-        self.requests = []
+        self.requests: list[Any] = []
         self.registry = AICapabilityRegistry(
             [
                 CapabilityBinding(
@@ -31,11 +32,11 @@ class FakeTextGeneration:
             ]
         )
 
-    async def generate(self, request):
+    async def generate(self, request: Any) -> str:
         self.requests.append(request)
         return "generated text"
 
-    async def generate_json(self, request):
+    async def generate_json(self, request: Any) -> dict[str, Any]:
         self.requests.append(request)
         return {"ok": True}
 
@@ -73,9 +74,8 @@ def test_get_provider_claude_caches_instance(llm_config: DaemonConfig) -> None:
 
 @pytest.mark.asyncio
 async def test_call_feature_delegates_to_text_generation(llm_config: DaemonConfig) -> None:
-    service = LLMService(llm_config)
     fake_generation = FakeTextGeneration()
-    service._text_generation = fake_generation
+    service = LLMService(llm_config, text_generation=fake_generation)
     config = DigestConfig(candidates=["claude/haiku"])
 
     result = await service.call_feature(config, "prompt", system_prompt="system", caller="test")
@@ -91,9 +91,8 @@ async def test_call_feature_delegates_to_text_generation(llm_config: DaemonConfi
 
 @pytest.mark.asyncio
 async def test_call_json_feature_delegates_to_text_generation(llm_config: DaemonConfig) -> None:
-    service = LLMService(llm_config)
     fake_generation = FakeTextGeneration()
-    service._text_generation = fake_generation
+    service = LLMService(llm_config, text_generation=fake_generation)
     config = DigestConfig(candidates=["claude/haiku"])
 
     result = await service.call_json_feature(config, "prompt", system_prompt="system")
@@ -105,9 +104,8 @@ async def test_call_json_feature_delegates_to_text_generation(llm_config: Daemon
 
 
 def test_enabled_providers_reflects_text_generation_registry(llm_config: DaemonConfig) -> None:
-    service = LLMService(llm_config)
     fake_generation = FakeTextGeneration()
-    service._text_generation = fake_generation
+    service = LLMService(llm_config, text_generation=fake_generation)
 
     assert service.enabled_providers == ["claude"]
 

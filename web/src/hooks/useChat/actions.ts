@@ -897,6 +897,7 @@ const approvePlan = useCallback((option?: ApprovalOption) => {
   if (option?.decision === "keep_planning") {
     setPlanPendingApproval(false);
     planContentRef.current = null;
+    return;
   }
   wsRef.current.send(
     JSON.stringify({

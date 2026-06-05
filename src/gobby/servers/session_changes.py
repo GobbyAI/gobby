@@ -117,7 +117,7 @@ def is_safe_relative_path(working_dir: str, path: str) -> bool:
         target = (base / path).resolve()
     except (OSError, ValueError):
         return False
-    return base in target.parents
+    return target == base or base in target.parents
 
 
 def resolve_session_workspace(
@@ -223,7 +223,9 @@ async def compute_session_file_diff(workspace: SessionWorkspace, path: str) -> s
     cwd = workspace.working_dir
     base = workspace.base_ref
     if not is_safe_relative_path(cwd, path):
-        raise ValueError("Invalid path")
+        raise ValueError(
+            f"unsafe or not a safe relative path: path={path!r} under working_dir={cwd!r}"
+        )
 
     out = await _git(cwd, ["diff", base, "--", path])
     if out and out.strip():

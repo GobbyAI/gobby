@@ -120,7 +120,7 @@ def _memory(
         content=content,
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:00+00:00",
-        tags=tags or ["test"],
+        tags=tags if tags is not None else ["test"],
         similarity=0.91,
         search_via="semantic",
     )

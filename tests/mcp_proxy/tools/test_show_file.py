@@ -182,16 +182,23 @@ async def test_show_file_dot_suffix_defaults_language_to_text(registry, artifact
 async def test_show_file_rejects_absolute_path_outside_project(
     registry,
     artifact_bc,
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
-    outside = tmp_path.parent / "outside.py"
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    outside = tmp_path / "outside.py"
     outside.write_text("print('outside')\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.artifacts.get_project_context",
+        lambda: {"project_path": str(project_dir)},
+    )
 
     tool = registry.get_tool("show_file")
     result = await tool(file_path=str(outside), conversation_id="conv_1")
 
     assert result["success"] is False
-    assert "under project" in result["error"]
+    assert "allowed project roots" in result["error"]
     assert artifact_bc.events == []
 
 

@@ -78,7 +78,9 @@ class _SlowTextGenerateAdapter(_FakeTextGenerateAdapter):
         self.max_active = max(self.max_active, self.active)
         await asyncio.sleep(0.01)
         self.active -= 1
-        return f"summary for {request.prompt.split('Name: ', 1)[1].splitlines()[0]}"
+        _prefix, separator, name_text = request.prompt.partition("Name: ")
+        name = name_text.splitlines()[0] if separator and name_text else "unknown"
+        return f"summary for {name}"
 
 
 def _text_generation_service(

@@ -154,12 +154,23 @@ if [ -n "$CHANGED_FILES" ]; then
                 ROOT_PATH=$(git rev-parse --show-toplevel 2>/dev/null)
                 if [ -n "$ROOT_PATH" ] && command -v curl >/dev/null 2>&1; then
                     DAEMON_PORT="${GOBBY_DAEMON_PORT:-60887}"
-                    JSON_ROOT=$(printf '%s' "$ROOT_PATH" | sed 's/\\/\\\\/g; s/"/\\"/g')
-                    if ! curl -fsS --connect-timeout 2 --max-time 10 -X POST \
-                        -H "Content-Type: application/json" \
-                        --data "{\"root_path\":\"$JSON_ROOT\"}" \
-                        "http://localhost:${DAEMON_PORT}/api/code-index/codewiki/refresh" >/dev/null 2>&1; then
-                        echo "gobby: codewiki refresh request failed for $ROOT_PATH" >&2
+                    if command -v jq >/dev/null 2>&1; then
+                        if ! jq -n --arg root "$ROOT_PATH" '{"root_path":$root}' | curl -fsS --connect-timeout 2 --max-time 10 -X POST \
+                            -H "Content-Type: application/json" \
+                            --data-binary @- \
+                            "http://localhost:${DAEMON_PORT}/api/code-index/codewiki/refresh" >/dev/null 2>&1; then
+                            echo "gobby: codewiki refresh request failed for $ROOT_PATH" >&2
+                        fi
+                    elif printf '%s' "$ROOT_PATH" | LC_ALL=C grep -q '[[:cntrl:]]'; then
+                        echo "gobby: codewiki refresh skipped; ROOT_PATH contains control characters" >&2
+                    else
+                        JSON_ROOT=$(printf '%s' "$ROOT_PATH" | sed 's/\\/\\\\/g; s/"/\\"/g')
+                        if ! curl -fsS --connect-timeout 2 --max-time 10 -X POST \
+                            -H "Content-Type: application/json" \
+                            --data "{\"root_path\":\"$JSON_ROOT\"}" \
+                            "http://localhost:${DAEMON_PORT}/api/code-index/codewiki/refresh" >/dev/null 2>&1; then
+                            echo "gobby: codewiki refresh request failed for $ROOT_PATH" >&2
+                        fi
                     fi
                 fi
             fi

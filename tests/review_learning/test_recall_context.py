@@ -80,10 +80,14 @@ async def test_recall_fails_open_on_memory_search_errors(
     assert result["findings"] == [{"finding_index": 0, "matches": []}]
     assert result["matches"] == []
     record = next(
-        record
-        for record in caplog.records
-        if record.message.startswith("Review-learning recall failed open")
+        (
+            record
+            for record in caplog.records
+            if record.message.startswith("Review-learning recall failed open")
+        ),
+        None,
     )
+    assert record is not None, "Expected fail-open recall warning log record"
     assert "finding_index=0" in record.message
     assert "exception_class=RuntimeError" in record.message
     assert record.finding_index == 0

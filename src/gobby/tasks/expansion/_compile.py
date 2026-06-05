@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections import defaultdict
 from pathlib import Path
@@ -29,6 +30,11 @@ _BUNDLED_PROMPTS_DIR = Path(__file__).resolve().parents[2] / "install" / "shared
 
 
 def _expansion_feature_config(expansion_config: Any, run: ExpansionRun) -> Any:
+    """Resolve run provider/model overrides into one feature candidate.
+
+    Missing provider/model values inherit from expansion_config: absent provider uses
+    the first configured candidate, and absent model uses the first candidate for the provider.
+    """
     if expansion_config is None:
         expansion_config = TaskExpansionConfig()
     if not run.provider and not run.model:
@@ -44,6 +50,7 @@ def _expansion_feature_config(expansion_config: Any, run: ExpansionRun) -> Any:
 
 
 def _model_for_provider(candidates: list[str], provider: str) -> str:
+    """Return the first model suffix for provider, or raise ValueError if absent."""
     prefix = f"{provider}/"
     for candidate in candidates:
         if candidate.startswith(prefix):
@@ -224,8 +231,21 @@ async def _invoke_llm_compile(
             caller="tasks.expansion.compile",
         )
         return cast(dict[str, Any], result)
-    except Exception as e:
-        raise ValueError(f"Expansion compiler did not return valid JSON for {scope}") from e
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Expansion compiler did not return valid JSON for {scope}: {exc!r}"
+        ) from exc
+    except ValueError as exc:
+        if not _is_json_parse_error(exc):
+            raise
+        raise ValueError(
+            f"Expansion compiler did not return valid JSON for {scope}: {exc!r}"
+        ) from exc
+
+
+def _is_json_parse_error(exc: ValueError) -> bool:
+    message = str(exc).lower()
+    return "json" in message or "parse" in message or "decode" in message
 
 
 def _build_prompt_context(self: Any, run: ExpansionRun, task: Task) -> dict[str, Any]:

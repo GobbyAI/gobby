@@ -245,7 +245,6 @@ class GcodeGateway:
         *,
         ai: str | None = None,
     ) -> dict[str, Any]:
-        await self._ensure_version()
         args = [
             "codewiki",
             "--project",

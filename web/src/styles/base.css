@@ -39,10 +39,7 @@ body {
   background-size: contain;
 }
 
-.source-icon-codex {
-  color: var(--text-primary);
-}
-
+.source-icon-codex,
 .source-icon-grok {
   color: var(--text-primary);
 }

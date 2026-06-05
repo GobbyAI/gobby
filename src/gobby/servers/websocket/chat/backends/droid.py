@@ -34,6 +34,7 @@ from gobby.servers.tool_approvals import (
     DEFAULT_GLOBAL_APPROVAL_RULES,
     find_out_of_repo_write_path,
     get_global_approval_rules,
+    is_gcode_shell_command,
     is_tool_auto_allowed,
     load_project_approval_rules_async,
     normalize_approved_tool_keys,
@@ -44,7 +45,7 @@ from gobby.servers.websocket.chat.backends.base import (
     _extract_text,
     _log_upstream_error_event,
 )
-from gobby.servers.websocket.chat.backends.droid_stream import _parse_droid_stream_line
+from gobby.servers.websocket.chat.backends.droid_stream import parse_droid_stream_line
 from gobby.servers.websocket.chat.permissions import ManagedWebChatPermissionsMixin
 from gobby.storage.config_store import ConfigStore
 
@@ -61,10 +62,11 @@ DROID_PERMISSION_PROCEED_ONCE = "proceed_once"
 @dataclass(slots=True)
 class _DroidProcessHandle:
     process: asyncio.subprocess.Process
+    stderr_task: asyncio.Task[None] | None = None
     request_counter: int = 0
 
 
-def _droid_tool_name_adapter(raw_tool_name: str) -> str:
+def droid_tool_name_adapter(raw_tool_name: str) -> str:
     """Normalize Droid MCP tool names into Gobby's canonical form."""
     if raw_tool_name == "Execute":
         return "Bash"
@@ -96,7 +98,7 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
         return "droid"
 
     def _tool_name_adapter(self) -> Any:
-        return _droid_tool_name_adapter
+        return droid_tool_name_adapter
 
     async def send_message(self, content: str | list[dict[str, Any]]) -> AsyncIterator[ChatEvent]:
         if not self._connected:
@@ -209,7 +211,7 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
                     sdk_session_id=self.sdk_session_id,
                     context_window=self._resolve_context_window(),
                 )
-            except Exception as exc:
+            except (RuntimeError, OSError, ConnectionError, asyncio.CancelledError) as exc:
                 logger.error("Droid managed session %s error: %s", self.conversation_id, exc)
                 yield TextChunk(content=f"Generation failed: {exc}")
                 yield DoneEvent(
@@ -383,9 +385,15 @@ class DroidWebChatBackend:
             env=env,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
         )
-        handle = _DroidProcessHandle(process)
+        stderr_task = None
+        process_stderr = getattr(process, "stderr", None)
+        if process_stderr is not None:
+            stderr_task = asyncio.create_task(
+                self._log_process_stderr(process_stderr, session.conversation_id)
+            )
+        handle = _DroidProcessHandle(process, stderr_task=stderr_task)
         self._handles[session.conversation_id] = handle
         try:
             init_event = await self._initialize_session(handle, session, cwd)
@@ -558,7 +566,7 @@ class DroidWebChatBackend:
                     },
                 )
                 return
-            for event in _parse_droid_stream_line(line):
+            for event in parse_droid_stream_line(line):
                 event_request_id = event.data.get("request_id")
                 if event.event_type == "init" and event_request_id == request_id:
                     yield event
@@ -588,7 +596,7 @@ class DroidWebChatBackend:
                     data={"code": "eof", "message": "Droid stream ended before result"},
                 )
                 return
-            events = _parse_droid_stream_line(line)
+            events = parse_droid_stream_line(line)
             permission_events = [
                 event
                 for event in events
@@ -616,7 +624,7 @@ class DroidWebChatBackend:
     @staticmethod
     def _permission_tool_payload(event: StreamEvent) -> tuple[str, dict[str, Any], str]:
         raw_name = event.data.get("tool_name") or event.data.get("name") or "unknown"
-        tool_name = _droid_tool_name_adapter(str(raw_name))
+        tool_name = droid_tool_name_adapter(str(raw_name))
         tool_input = event.data.get("tool_input") or event.data.get("input") or {}
         if not isinstance(tool_input, dict):
             tool_input = {}
@@ -730,25 +738,41 @@ class DroidWebChatBackend:
                 or not _PLAN_FILE_PATTERN.match(file_path)
             )
         if tool_name == "Bash":
+            if is_gcode_shell_command(tool_input):
+                return False
             return bool(_BASH_WRITE_PATTERNS.search(str(tool_input.get("command", ""))))
         return False
 
     async def _terminate_handle(self, handle: _DroidProcessHandle) -> None:
         if handle.process.stdin is not None:
             handle.process.stdin.close()
-        if handle.process.returncode is not None:
-            return
-        handle.process.terminate()
+        if handle.process.returncode is None:
+            handle.process.terminate()
+            try:
+                await asyncio.wait_for(handle.process.wait(), timeout=2.0)
+            except TimeoutError:
+                handle.process.kill()
+                await handle.process.wait()
+        if handle.stderr_task is not None and not handle.stderr_task.done():
+            handle.stderr_task.cancel()
+            try:
+                await handle.stderr_task
+            except asyncio.CancelledError:
+                pass
+
+    async def _log_process_stderr(self, stderr: asyncio.StreamReader, conversation_id: str) -> None:
         try:
-            await asyncio.wait_for(handle.process.wait(), timeout=2.0)
-        except TimeoutError:
-            handle.process.kill()
-            await handle.process.wait()
+            while line := await stderr.readline():
+                text = line.decode("utf-8", errors="replace").rstrip()
+                if text:
+                    logger.warning("Droid process %s stderr: %s", conversation_id, text)
+        except (RuntimeError, OSError) as exc:
+            logger.debug("Failed to read Droid process stderr for %s: %s", conversation_id, exc)
 
 
 __all__ = [
     "DroidManagedChatSession",
     "DroidWebChatBackend",
-    "_droid_tool_name_adapter",
-    "_parse_droid_stream_line",
+    "droid_tool_name_adapter",
+    "parse_droid_stream_line",
 ]

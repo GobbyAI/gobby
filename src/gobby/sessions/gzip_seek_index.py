@@ -333,8 +333,7 @@ def _write_blocked_members(
                         close_block(dest)
                         open_block(dest)
 
-                    if member is None:
-                        raise RuntimeError("gzip block member was not opened before writing")
+                    assert member is not None
                     member.write(raw_line)
                     total_uncompressed += len(raw_line)
                     total_lines += 1

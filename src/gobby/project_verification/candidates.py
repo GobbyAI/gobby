@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass
 from typing import Any
 
@@ -73,11 +74,9 @@ def generate_candidates(bundle: EvidenceBundle) -> list[CommandCandidate]:
         primary_claimed = True
 
     for package in bundle.packages:
-        package_primary = not primary_claimed
-        candidates.extend(
-            _package_candidates(package.subdir, package.scripts, custom=not package_primary)
-        )
-        if package_primary and any(_script_slot(name) for name in package.scripts):
+        is_custom = primary_claimed
+        candidates.extend(_package_candidates(package.subdir, package.scripts, custom=is_custom))
+        if not is_custom and any(_script_slot(name) for name in package.scripts):
             primary_claimed = True
 
     for item in bundle.items:
@@ -147,7 +146,10 @@ def classify_command(command: str) -> str | None:
 def is_safe_validation_command(command: str, slot: str | None = None) -> bool:
     """Reject mutating forms that are inappropriate for verification."""
     lowered = command.lower()
-    if any(token in lowered for token in (" --fix", " --write", " npm run format", " yarn format")):
+    if any(
+        lowered.startswith(token) or f" {token}" in lowered
+        for token in ("--fix", "--write", "npm run format", "yarn format")
+    ):
         return False
     if "ruff format" in lowered and "--check" not in lowered:
         return False
@@ -205,7 +207,13 @@ def _python_candidates(bundle: EvidenceBundle, *, custom: bool) -> list[CommandC
     candidates: list[CommandCandidate] = []
     if python.has_tests or python.has_pytest_config:
         candidates.append(
-            _candidate("unit_tests", "uv run pytest tests/ -v", 0.58, "pyproject.toml", "manifest")
+            _candidate(
+                "unit_tests",
+                "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v",
+                0.58,
+                "pyproject.toml",
+                "manifest",
+            )
         )
     type_command = f"uv run mypy {target}"
     if python.mypy_strict:
@@ -344,7 +352,7 @@ def _ordered_scripts(scripts: dict[str, str]) -> list[str]:
 
 def _package_script_command(subdir: str, script: str) -> str:
     command = "npm test" if script == "test" else f"npm run {script}"
-    return command if subdir == "." else f"cd {subdir} && {command}"
+    return command if subdir == "." else f"cd {shlex.quote(subdir)} && {command}"
 
 
 def _package_custom_name(subdir: str, slot: str) -> str:

@@ -31,9 +31,9 @@ class LocalGenerationConfig(BaseModel):
     def validate_enabled_endpoint(self) -> LocalGenerationConfig:
         """Require endpoint and model when local generation is enabled."""
         if self.enabled:
-            if not (self.api_base or "").strip():
+            if not self.api_base or not self.api_base.strip():
                 raise ValueError("api_base must be set when local generation is enabled")
-            if not (self.model or "").strip():
+            if not self.model or not self.model.strip():
                 raise ValueError("model must be set when local generation is enabled")
         return self
 

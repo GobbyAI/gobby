@@ -211,7 +211,7 @@ def create_wiki_registry(
         require_ai: bool = False,
     ) -> dict[str, Any]:
         async def call() -> dict[str, Any]:
-            audit_enabled = audit is True
+            audit_enabled = audit
             if query is None and not audit_enabled:
                 return _validation_error("query is required unless audit is true")
             ai_value = _normalize_ai(ai)

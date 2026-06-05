@@ -45,8 +45,13 @@ def gemini_token_usage(usage_data: Mapping[str, Any]) -> TokenUsage:
     cache_read = _coerce_token_count(usage_data.get("cachedContentTokenCount"))
     if cache_read > prompt:
         logger.warning(
-            "Gemini cachedContentTokenCount exceeds promptTokenCount; clamping uncached input",
-            extra={"prompt_tokens": prompt, "cache_read_tokens": cache_read},
+            "Gemini cachedContentTokenCount exceeds promptTokenCount; anomalous "
+            "usage data will be clamped when uncached input tokens are computed",
+            extra={
+                "prompt_tokens": prompt,
+                "cache_read_tokens": cache_read,
+                "action": "will_clamp_later",
+            },
         )
     output = _coerce_token_count(usage_data.get("candidatesTokenCount")) + _coerce_token_count(
         usage_data.get("thoughtsTokenCount") or usage_data.get("thinkingTokenCount")

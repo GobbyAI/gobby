@@ -73,7 +73,6 @@ def _make_handler(
     )
 
 
-@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_tool_result_before_tool_call_resolves_real_name() -> None:
     """A result that beats its call is buffered, then reconciled with the real name."""
@@ -113,7 +112,6 @@ async def test_tool_result_before_tool_call_resolves_real_name() -> None:
     assert tool_call["status"] == "completed"
 
 
-@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_orphan_result_retained_when_reconciled_send_fails() -> None:
     """A failed reconciled terminal send must keep call and result state retryable."""
@@ -141,7 +139,6 @@ async def test_orphan_result_retained_when_reconciled_send_fails() -> None:
     ]
 
 
-@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_tool_call_then_result_in_order_unchanged() -> None:
     """In-order delivery still completes immediately and never buffers."""
@@ -171,7 +168,6 @@ async def test_tool_call_then_result_in_order_unchanged() -> None:
     assert tool_call["status"] == "completed"
 
 
-@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_failed_result_before_call_resolves_error_status() -> None:
     """Out-of-order failures reconcile to the error status with the real name."""
@@ -199,7 +195,6 @@ async def test_failed_result_before_call_resolves_error_status() -> None:
     assert tool_call["error"] == "boom"
 
 
-@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_orphan_result_flushed_as_provisional_on_done(
     caplog: pytest.LogCaptureFixture,
@@ -236,7 +231,6 @@ async def test_orphan_result_flushed_as_provisional_on_done(
     assert record.result_length == 1
 
 
-@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_orphan_result_retained_when_terminal_send_fails() -> None:
     """A failed terminal send must not discard the buffered tool result."""

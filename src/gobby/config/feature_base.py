@@ -1,6 +1,8 @@
 """Base configuration for LLM-backed feature routing."""
 
+import re
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -42,6 +44,16 @@ DEFAULT_PROFILE_CANDIDATES: dict[FeatureProfile, tuple[str, ...]] = {
 
 
 _CLAUDE_FAMILY_ALIASES = ("haiku", "sonnet", "opus")
+_LEGACY_TIER_PROFILE_ALIASES = {
+    "low": FeatureProfile.LOW,
+    "fast": FeatureProfile.LOW,
+    "haiku": FeatureProfile.LOW,
+    "mid": FeatureProfile.MID,
+    "medium": FeatureProfile.MID,
+    "sonnet": FeatureProfile.MID,
+    "high": FeatureProfile.HIGH,
+    "opus": FeatureProfile.HIGH,
+}
 
 
 def default_candidates_for_profile(profile: FeatureProfile | str) -> tuple[str, ...]:
@@ -54,11 +66,28 @@ def normalize_feature_candidate(candidate: str) -> str:
     provider, separator, model = candidate.partition("/")
     if not separator or provider != "claude":
         return candidate
-    model_label = model.lower()
-    for alias in _CLAUDE_FAMILY_ALIASES:
-        if alias in model_label:
-            return f"{provider}/{alias}"
+    model_label = model.strip().lower()
+    if model_label in _CLAUDE_FAMILY_ALIASES:
+        return f"{provider}/{model_label}"
+    if model_label.startswith(("claude-", "claude_")):
+        for token in re.split(r"[-_]", model_label)[1:]:
+            if token in _CLAUDE_FAMILY_ALIASES:
+                return f"{provider}/{token}"
     return candidate
+
+
+def _legacy_profile(value: Any) -> Any:
+    if isinstance(value, FeatureProfile):
+        return value
+    if not isinstance(value, str):
+        return value
+    stripped = value.strip()
+    if not stripped:
+        return value
+    try:
+        return FeatureProfile(stripped)
+    except ValueError:
+        return _LEGACY_TIER_PROFILE_ALIASES.get(stripped.lower(), value)
 
 
 class FeatureDefaultConfig(BaseModel):
@@ -78,12 +107,35 @@ class FeatureDefaultConfig(BaseModel):
         ),
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_fields(cls, data: Any) -> Any:
+        """Translate legacy provider/model/tier config before extras are rejected."""
+        if not isinstance(data, dict):
+            return data
+        values = dict(data)
+        provider = values.pop("provider", None)
+        model = values.pop("model", None)
+        tier = values.pop("tier", None)
+        if provider is not None and model is not None:
+            legacy_candidate = normalize_feature_candidate(f"{provider}/{model}")
+            raw_candidates = values.get("candidates")
+            existing = list(raw_candidates) if isinstance(raw_candidates, (list, tuple)) else []
+            values["candidates"] = [legacy_candidate, *existing]
+        if tier is not None and "profile" not in values:
+            values["profile"] = _legacy_profile(tier)
+        return values
+
     @model_validator(mode="after")
     def populate_and_validate_candidates(self) -> "FeatureDefaultConfig":
         """Fill profile defaults and validate provider-scoped candidate labels."""
         if not self.candidates:
             self.candidates = list(default_candidates_for_profile(self.profile))
-        invalid = [candidate for candidate in self.candidates if "/" not in candidate]
+        invalid = []
+        for candidate in self.candidates:
+            provider, separator, model = candidate.partition("/")
+            if not separator or not provider.strip() or not model.strip():
+                invalid.append(candidate)
         if invalid:
             joined = ", ".join(repr(candidate) for candidate in invalid)
             raise ValueError(f"feature candidates must use provider/model format: {joined}")

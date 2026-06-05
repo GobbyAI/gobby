@@ -30,6 +30,8 @@ from gobby.llm.claude_models import ChatEvent, DoneEvent, TextChunk, ThinkingEve
 from gobby.servers.websocket.chat.backends.codex import CodexManagedChatSession
 from gobby.servers.websocket.chat.backends.droid import DroidManagedChatSession
 
+pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
+
 Broadcasts = list[tuple[str | None, dict[str, Any]]]
 
 

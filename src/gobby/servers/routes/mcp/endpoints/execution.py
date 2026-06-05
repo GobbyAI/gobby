@@ -177,7 +177,7 @@ def _set_context_for_request(
     # enforcement apply to the caller.
     session_id = header_session_id or argument_session_id
     session_ref_origin: Literal["explicit", "ambient"] = (
-        "ambient" if header_session_id else "explicit"
+        "explicit" if header_session_id else "ambient"
     )
 
     # HTTP-specific bootstrap: old clients send only X-Gobby-Project-Id as a

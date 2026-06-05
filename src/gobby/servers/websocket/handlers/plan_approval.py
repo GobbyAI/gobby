@@ -80,7 +80,7 @@ def _clear_pending_plan_prompt(session: Any) -> None:
 
 async def _inject_turn(
     mixin: SessionControlMixin, websocket: Any, conversation_id: str, content: str
-) -> None:
+) -> bool:
     """Inject a synthetic user turn through the normal chat-message path.
 
     Managed CLIs (Codex, Droid, Gemini, Grok, Qwen) present a plan as a
@@ -94,7 +94,8 @@ async def _inject_turn(
             "Cannot inject continuation turn for %s: no chat-message ingress",
             conversation_id[:8],
         )
-        return
+        await _send_injection_failed(mixin, websocket, conversation_id, "no chat-message ingress")
+        return False
     try:
         await handler(
             websocket,
@@ -104,8 +105,36 @@ async def _inject_turn(
                 "content": content,
             },
         )
+        return True
     except Exception:
         logger.exception("Failed to inject continuation turn for %s", conversation_id[:8])
+        await _send_injection_failed(
+            mixin, websocket, conversation_id, "chat-message injection failed"
+        )
+        return False
+
+
+async def _send_injection_failed(
+    mixin: SessionControlMixin, websocket: Any, conversation_id: str, reason: str
+) -> None:
+    sender = getattr(mixin, "_send_error", None)
+    message = f"Plan continuation failed for {conversation_id[:8]}: {reason}"
+    try:
+        if callable(sender):
+            await sender(websocket, message, code="PLAN_CONTINUATION_FAILED")
+            return
+        await websocket.send(
+            json.dumps(
+                {
+                    "type": "error",
+                    "code": "PLAN_CONTINUATION_FAILED",
+                    "message": message,
+                    "conversation_id": conversation_id,
+                }
+            )
+        )
+    except (ConnectionClosed, ConnectionClosedError):
+        pass
 
 
 async def _auto_continue_after_approval(
@@ -114,7 +143,7 @@ async def _auto_continue_after_approval(
     conversation_id: str,
     *,
     plan_seed: str | None = None,
-) -> None:
+) -> bool:
     """Start a continuation turn so an approved plan actually executes.
 
     The agent proceeds in the now-active execution mode (chat_mode was already
@@ -133,7 +162,7 @@ async def _auto_continue_after_approval(
         )
     else:
         content = "The plan is approved. Proceed with the implementation."
-    await _inject_turn(mixin, websocket, conversation_id, content)
+    return await _inject_turn(mixin, websocket, conversation_id, content)
 
 
 async def _maybe_clear_context(session: Any, conversation_id: str) -> bool:
@@ -227,7 +256,11 @@ async def handle_plan_approval_response(
                 mode="plan",
                 reason="plan_changes_requested",
             )
-            await _inject_turn(mixin, websocket, conversation_id, directive)
+            if not await _inject_turn(mixin, websocket, conversation_id, directive):
+                logger.warning(
+                    "Plan keep-planning injection failed for conversation %s",
+                    conversation_id[:8],
+                )
             logger.info(
                 "Plan keep-planning (%s, managed re-plan) for conversation %s",
                 option.id,
@@ -262,9 +295,13 @@ async def handle_plan_approval_response(
             # was a completed assistant turn. Native Claude (plan_auto_switch)
             # continues the paused turn itself, so only auto-continue managed.
             if not getattr(session, "plan_auto_switch", False) and should_auto_continue:
-                await _auto_continue_after_approval(
+                if not await _auto_continue_after_approval(
                     mixin, websocket, conversation_id, plan_seed=plan_seed
-                )
+                ):
+                    logger.warning(
+                        "Plan approval continuation injection failed for conversation %s",
+                        conversation_id[:8],
+                    )
         else:
             session._pending_post_plan_mode = post_plan_mode
             session.set_chat_mode(post_plan_mode)

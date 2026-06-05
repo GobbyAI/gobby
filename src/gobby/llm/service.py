@@ -1,9 +1,12 @@
 """LLM service facade for feature generation and direct provider access."""
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
-from gobby.ai.text_generation import TextGenerationRequest, build_daemon_text_generation_service
+from gobby.ai.text_generation import (
+    TextGenerationRequest,
+    build_daemon_text_generation_service,
+)
 
 if TYPE_CHECKING:
     from gobby.config.app import (
@@ -12,6 +15,14 @@ if TYPE_CHECKING:
     from gobby.llm.base import LLMProvider
 
 logger = logging.getLogger(__name__)
+
+
+class TextGenerationDependency(Protocol):
+    registry: Any
+
+    async def generate(self, request: TextGenerationRequest) -> str: ...
+
+    async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]: ...
 
 
 def _feature_request(
@@ -42,7 +53,11 @@ class LLMService:
     generation through the daemon text generation capability registry.
     """
 
-    def __init__(self, config: "DaemonConfig"):
+    def __init__(
+        self,
+        config: "DaemonConfig",
+        text_generation: TextGenerationDependency | None = None,
+    ) -> None:
         """
         Initialize LLM service with configuration.
 
@@ -52,7 +67,7 @@ class LLMService:
         self._config = config
         self._providers: dict[str, LLMProvider] = {}
         self._initialized_providers: set[str] = set()
-        self._text_generation = build_daemon_text_generation_service(config)
+        self._text_generation = text_generation or build_daemon_text_generation_service(config)
 
         # Log enabled providers
         enabled = self.enabled_providers

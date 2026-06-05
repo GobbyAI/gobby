@@ -5,6 +5,7 @@ Project management CLI commands.
 import asyncio
 import json
 from pathlib import Path
+from typing import Literal
 
 import click
 
@@ -257,7 +258,7 @@ def update_project(
 def refresh_verification(
     project_ref: str | None,
     fix: bool,
-    ai_mode: str,
+    ai_mode: Literal["auto", "on", "off"],
     profile: str | None,
     candidates: tuple[str, ...],
     json_format: bool,
@@ -293,7 +294,7 @@ def refresh_verification(
                 refresh_project_verification(
                     root,
                     fix=fix,
-                    ai_mode=ai_mode,  # type: ignore[arg-type]
+                    ai_mode=ai_mode,
                     synthesis_config=synthesis_config,
                     text_generation_service=service,
                 )

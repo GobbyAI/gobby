@@ -49,8 +49,6 @@ def format_memory_metadata_suffix(
     if score is not None:
         if isinstance(score, (int, float)) and not isinstance(score, bool):
             fields.append(f"score: {score:.4f}")
-        else:
-            fields.append(f"score: {score}")
     if via:
         fields.append(f"via: {via}")
     if not fields:

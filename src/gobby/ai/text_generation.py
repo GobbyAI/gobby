@@ -152,7 +152,11 @@ class TextGenerationService:
         """Select a text_generate binding and invoke its adapter with usage."""
         candidates = self._candidate_requests(request)
         last_error: Exception | None = None
+        attempted_candidates: list[str] = []
+        candidate_errors: dict[str, str] = {}
         for candidate in candidates:
+            candidate_label = _candidate_debug_label(candidate)
+            attempted_candidates.append(candidate_label)
             start = time.perf_counter()
             binding: CapabilityBinding | None = None
             try:
@@ -175,6 +179,7 @@ class TextGenerationService:
                 return text_result
             except Exception as exc:
                 last_error = exc
+                candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
                 self._log_generation_event(
                     request=candidate,
                     binding=binding,
@@ -184,13 +189,20 @@ class TextGenerationService:
                 )
                 if len(candidates) == 1:
                     raise
-        raise RuntimeError("No text generation candidate succeeded") from last_error
+        raise RuntimeError(
+            "No text generation candidate succeeded "
+            f"(tried: {attempted_candidates}; errors: {candidate_errors})"
+        ) from last_error
 
     async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
         """Select a text_generate binding and return structured JSON."""
         candidates = self._candidate_requests(request)
         last_error: Exception | None = None
+        attempted_candidates: list[str] = []
+        candidate_errors: dict[str, str] = {}
         for candidate in candidates:
+            candidate_label = _candidate_debug_label(candidate)
+            attempted_candidates.append(candidate_label)
             start = time.perf_counter()
             binding: CapabilityBinding | None = None
             parse_outcome = "not_attempted"
@@ -220,6 +232,7 @@ class TextGenerationService:
                 return result
             except Exception as exc:
                 last_error = exc
+                candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
                 if parse_outcome == "not_attempted" and isinstance(
                     exc, (ValueError, json.JSONDecodeError)
                 ):
@@ -234,7 +247,10 @@ class TextGenerationService:
                 )
                 if len(candidates) == 1:
                     raise
-        raise RuntimeError("No JSON generation candidate succeeded") from last_error
+        raise RuntimeError(
+            "No JSON generation candidate succeeded; "
+            f"attempted candidates: {attempted_candidates}; errors: {candidate_errors}"
+        ) from last_error
 
     def _candidate_requests(
         self, request: TextGenerationRequest
@@ -553,8 +569,14 @@ def _coerce_text_result(result: str | LLMTextResult) -> LLMTextResult:
     return text_result_type(text=cast(str, result))
 
 
+def _candidate_debug_label(candidate: TextGenerationRequest) -> str:
+    provider = candidate.provider or "<auto>"
+    model = candidate.model or "<auto>"
+    return f"{provider}/{model}"
+
+
 def _parse_candidate(candidate: str) -> tuple[str, str]:
-    provider, separator, model = candidate.partition("/")
+    provider, separator, model = candidate.rpartition("/")
     if not separator or not provider.strip() or not model.strip():
         raise ValueError(f"Feature candidate must use provider/model format: {candidate!r}")
     return provider.strip(), model.strip()

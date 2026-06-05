@@ -118,14 +118,14 @@ async def test_compute_session_file_diff_rejects_path_traversal(tmp_path: Path) 
     _init_repo(repo)
     workspace = SessionWorkspace(working_dir=str(repo), base_ref="HEAD", isolation="none")
 
-    with pytest.raises(ValueError, match="Invalid path"):
+    with pytest.raises(ValueError, match="unsafe or not a safe relative path"):
         await compute_session_file_diff(workspace, "../outside.txt")
 
 
 def test_is_safe_relative_path(tmp_path: Path) -> None:
     base = str(tmp_path)
     assert is_safe_relative_path(base, "src/file.ts") is True
-    assert is_safe_relative_path(base, ".") is False
+    assert is_safe_relative_path(base, ".") is True
     assert is_safe_relative_path(base, "") is False
     assert is_safe_relative_path(base, "/etc/passwd") is False
     assert is_safe_relative_path(base, "../../etc/passwd") is False

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import aiofiles
 
 if TYPE_CHECKING:
+    from gobby.config.sessions import SessionSummaryConfig
     from gobby.sessions.analyzer import HandoffContext
 
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
@@ -571,7 +572,7 @@ async def generate_summary(
     session_id: str,
     llm_service: Any,
     transcript_processor: Any,
-    session_summary_config: Any | None = None,
+    session_summary_config: SessionSummaryConfig | None = None,
     template: str | None = None,
     previous_summary: str | None = None,
     mode: Literal["clear", "compact"] = "clear",

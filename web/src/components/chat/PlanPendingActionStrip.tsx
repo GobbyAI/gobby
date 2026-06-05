@@ -29,6 +29,9 @@ export function PlanPendingActionStrip({
   return (
     <div
       data-testid="plan-pending-strip"
+      role="status"
+      aria-live="polite"
+      aria-label="Plan awaiting approval"
       className={cn(
         'flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-md border border-[color-mix(in_srgb,var(--color-warning-foreground)_24%,transparent)] bg-[var(--color-warning-soft)] px-2.5 py-1.5',
         className,

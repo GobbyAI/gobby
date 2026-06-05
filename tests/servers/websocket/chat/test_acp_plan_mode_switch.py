@@ -10,7 +10,11 @@ fire on a plain manual mode switch.
 
 from __future__ import annotations
 
+import pytest
+
 from gobby.servers.websocket.chat.backends.acp_session import ACPManagedChatSession
+
+pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 
 def _make_session() -> tuple[ACPManagedChatSession, list[tuple[str, str]]]:

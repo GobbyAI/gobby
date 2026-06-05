@@ -298,7 +298,7 @@ def _stream_events_from_droid_record(record: dict[str, Any]) -> list[StreamEvent
     return [_content_delta("text", content=text)] if isinstance(text, str) and text else []
 
 
-def _parse_droid_stream_line(line: bytes | str) -> list[StreamEvent]:
+def parse_droid_stream_line(line: bytes | str) -> list[StreamEvent]:
     text = line.decode("utf-8", errors="replace") if isinstance(line, bytes) else line
     text = text.strip()
     if not text:
@@ -314,4 +314,4 @@ def _parse_droid_stream_line(line: bytes | str) -> list[StreamEvent]:
     return _stream_events_from_droid_record(record)
 
 
-__all__ = ["_parse_droid_stream_line"]
+__all__ = ["parse_droid_stream_line"]

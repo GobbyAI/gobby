@@ -585,11 +585,15 @@ def _encode_adjustment_value(value: Any) -> Any:
     try:
         json.dumps(value)
     except TypeError:
+        try:
+            value_length = len(value)
+        except Exception:
+            value_length = None
         logger.debug(
             "Skipping non-serializable transcript index adjustment value",
             extra={
                 "value_type": type(value).__name__,
-                "value_length": len(value) if hasattr(value, "__len__") else None,
+                "value_length": value_length,
                 "value_redacted": True,
             },
         )

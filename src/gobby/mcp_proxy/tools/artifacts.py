@@ -123,10 +123,13 @@ def create_artifacts_registry() -> InternalToolRegistry:
             return {"success": False, "error": f"file_path must be absolute: {file_path}"}
         project_ctx = get_project_context()
         if project_ctx is None:
-            return {"success": False, "error": "project context is required"}
+            return {"success": False, "error": "project context missing"}
         project_path = project_ctx.get("project_path")
         if not isinstance(project_path, str) or not project_path:
-            return {"success": False, "error": "project context is required"}
+            return {
+                "success": False,
+                "error": "project_path is required and must be a non-empty string",
+            }
         try:
             resolved_source = source.resolve(strict=True)
         except FileNotFoundError:
@@ -140,10 +143,20 @@ def create_artifacts_registry() -> InternalToolRegistry:
             return {"success": False, "error": f"File not found: {file_path}"}
 
         allowed_roots = _artifact_allowed_roots(project_ctx)
+        allowed_root_values = [str(root) for root in allowed_roots]
         if not any(_is_relative_to(resolved_source, root) for root in allowed_roots):
-            return {"success": False, "error": f"file_path must be under project: {file_path}"}
+            return {
+                "success": False,
+                "error": (
+                    "file_path must be under one of the allowed project roots: "
+                    f"{file_path}; allowed_roots={allowed_root_values}"
+                ),
+            }
         if not resolved_source.is_file():
-            return {"success": False, "error": f"File not found: {file_path}"}
+            return {
+                "success": False,
+                "error": f"File not found: {file_path}; allowed_roots={allowed_root_values}",
+            }
 
         ext_clean = resolved_source.suffix.lower().lstrip(".")
         artifact_type, language = EXTENSION_MAP.get(

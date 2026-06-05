@@ -6,6 +6,8 @@ import json
 import logging
 from typing import Any
 
+import psycopg
+
 from gobby.config.feature_base import FeatureProfile
 
 logger = logging.getLogger(__name__)
@@ -46,17 +48,11 @@ def reject_stale_default_feature_candidate_rows(config_store: Any | None) -> Non
             "SELECT key, value FROM config_store WHERE source = %s",
             ("defaults",),
         )
-    except Exception as exc:
+    except psycopg.Error as exc:
         logger.debug("Failed to inspect defaults-seeded feature candidate rows: %s", exc)
         return
 
-    stale_keys = sorted(
-        key
-        for row in rows
-        if (key := _row_value(row, "key", 0)) in _FEATURE_CANDIDATE_PROFILES
-        and _decoded_value(_row_value(row, "value", 1))
-        == _OLD_CLAUDE_ONLY_CANDIDATES[_FEATURE_CANDIDATE_PROFILES[key]]
-    )
+    stale_keys = sorted(key for row in rows if (key := _get_stale_candidate_key(row)) is not None)
     if not stale_keys:
         return
 
@@ -69,10 +65,24 @@ def reject_stale_default_feature_candidate_rows(config_store: Any | None) -> Non
     )
 
 
+def _get_stale_candidate_key(row: Any) -> str | None:
+    key = _row_value(row, "key", 0)
+    if not isinstance(key, str) or key not in _FEATURE_CANDIDATE_PROFILES:
+        return None
+    value = _decoded_value(_row_value(row, "value", 1))
+    expected = _OLD_CLAUDE_ONLY_CANDIDATES[_FEATURE_CANDIDATE_PROFILES[key]]
+    return key if value == expected else None
+
+
 def _row_value(row: Any, key: str, index: int) -> Any:
-    if isinstance(row, dict):
-        return row.get(key)
-    return row[index]
+    try:
+        if isinstance(row, dict):
+            return row.get(key, None)
+        if isinstance(row, (list, tuple)):
+            return row[index]
+    except (KeyError, IndexError, TypeError):
+        return None
+    return None
 
 
 def _decoded_value(value: Any) -> Any:

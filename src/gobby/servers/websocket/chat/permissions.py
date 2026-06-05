@@ -31,7 +31,13 @@ logger = logging.getLogger(__name__)
 
 
 class ManagedWebChatPermissionsMixin:
-    """Permission and plan helpers for managed (non-SDK) web-chat sessions."""
+    """Permission and plan helpers for managed (non-SDK) web-chat sessions.
+
+    Composing sessions must provide conversation_id/chat_mode strings plus the
+    pending question, approval, plan, and mode-persistence attributes annotated
+    below; callback attributes are optional and may be None. ``plan_auto_switch``
+    defaults to False for managed CLIs unless a backend explicitly overrides it.
+    """
 
     # ACP CLIs expose no protocol-level mode push (no session/set_mode), so
     # plan approval cannot auto-switch the agent at the protocol level: 1c's

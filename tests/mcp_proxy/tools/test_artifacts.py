@@ -29,7 +29,7 @@ async def test_show_file_rejects_symlink_escape(tmp_path: Path) -> None:
         reset_project_context(token)
 
     assert result["success"] is False
-    assert "under project" in result["error"]
+    assert "allowed project roots" in result["error"]
 
 
 @pytest.mark.asyncio

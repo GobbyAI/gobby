@@ -800,7 +800,7 @@ def _mount_vite_dev_ui(app: FastAPI, server: "HTTPServer") -> None:
         return
     ui_port = config.ui.port
 
-    async def vite_proxy(request: Request, path: str = "") -> Any:
+    async def vite_proxy(request: Request, path: str = "") -> Response:
         if _is_daemon_owned_ui_path(path):
             raise HTTPException(status_code=404)
 

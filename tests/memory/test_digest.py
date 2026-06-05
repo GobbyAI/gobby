@@ -5,8 +5,8 @@ Relocated from tests/workflows/test_memory_actions.py as part of dead-code clean
 
 import hashlib
 import logging
+from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -33,8 +33,13 @@ pytestmark = pytest.mark.unit
 _CLAUDE_FIXTURE = Path(__file__).parent / "fixtures" / "claude_transcript_titles.jsonl"
 
 
-def _digest_config(**kwargs: object) -> SimpleNamespace:
-    return SimpleNamespace(digest=DigestConfig(candidates=["claude/haiku"], **kwargs))
+@dataclass(frozen=True)
+class _DigestTestConfig:
+    digest: DigestConfig
+
+
+def _digest_config(**kwargs: object) -> _DigestTestConfig:
+    return _DigestTestConfig(digest=DigestConfig(candidates=["claude/haiku"], **kwargs))
 
 
 def _turn_record_json(

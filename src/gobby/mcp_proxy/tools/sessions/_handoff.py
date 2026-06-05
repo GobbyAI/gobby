@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from gobby.config.sessions import SessionSummaryConfig
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.storage.inter_session_messages import InterSessionMessageManager
     from gobby.storage.sessions import SessionManager
@@ -18,7 +19,7 @@ def register_handoff_tools(
     session_manager: SessionManager | None,
     llm_service: Any | None = None,
     transcript_processor: Any | None = None,
-    session_summary_config: Any | None = None,
+    session_summary_config: SessionSummaryConfig | None = None,
     inter_session_message_manager: InterSessionMessageManager | None = None,
 ) -> None:
     """

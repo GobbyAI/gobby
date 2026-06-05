@@ -334,6 +334,7 @@ def test_droid_sidecar_usage_is_post_pass_adjustment(tmp_path: Path) -> None:
     assert loaded_adjustment.value.output_tokens == 7
 
 
+@pytest.mark.unit
 def test_gzip_block_sidecar_requires_logical_size_before_persist(tmp_path: Path) -> None:
     raw_lines = [
         RawLine(byte_offset=0, raw_line_no=index, text=line)
@@ -355,6 +356,7 @@ def test_gzip_block_sidecar_requires_logical_size_before_persist(tmp_path: Path)
         persist_index_sidecar(str(tmp_path / "transcript.jsonl.gz"), index)
 
 
+@pytest.mark.unit
 def test_nonserializable_adjustment_log_redacts_value(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,

@@ -576,8 +576,13 @@ async def _synthesize_title(
     """Synthesize session title from digest via LLM and update tmux window.
 
     Uses the digest feature config so candidate fallback stays centralized
-    in ``LLMService``.
+    in ``LLMService``. ``llm_service`` and ``digest_config`` are required
+    non-None dependencies whenever title synthesis is attempted.
     """
+    if llm_service is None:
+        raise TypeError("llm_service is required for memory digest title synthesis")
+    if digest_config is None:
+        raise TypeError("digest_config is required for memory digest title synthesis")
     if not _should_update_digest_title(session):
         return None
 
@@ -592,9 +597,7 @@ async def _synthesize_title(
     except Exception:
         title_prompt = _build_title_synthesis_prompt(updated_digest)
 
-    llm_timeout = getattr(digest_config, "timeout", 30) if digest_config is not None else 30
-    if llm_service is None or digest_config is None:
-        raise RuntimeError("memory digest feature config not available")
+    llm_timeout = getattr(digest_config, "timeout", 30)
     title = await asyncio.wait_for(
         llm_service.call_feature(
             digest_config,

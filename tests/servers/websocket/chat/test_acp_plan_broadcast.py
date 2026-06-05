@@ -12,9 +12,13 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Any
 
+import pytest
+
 from gobby.adapters.acp_client import StreamEvent
 from gobby.llm.claude_models import DoneEvent
 from gobby.servers.websocket.chat.backends.acp_session import ACPManagedChatSession
+
+pytestmark = [pytest.mark.unit]
 
 
 class _FakeBackend:
@@ -45,6 +49,7 @@ def _make_session(
     return session, broadcasts
 
 
+@pytest.mark.asyncio
 async def test_plan_turn_broadcasts_pending_plan() -> None:
     session, broadcasts = _make_session(
         "plan",
@@ -64,6 +69,7 @@ async def test_plan_turn_broadcasts_pending_plan() -> None:
     assert any(isinstance(e, DoneEvent) for e in events)
 
 
+@pytest.mark.asyncio
 async def test_non_plan_turn_does_not_broadcast() -> None:
     session, broadcasts = _make_session(
         "normal",
@@ -76,6 +82,7 @@ async def test_non_plan_turn_does_not_broadcast() -> None:
     assert session.has_pending_plan is False
 
 
+@pytest.mark.asyncio
 async def test_plan_mode_turn_without_content_does_not_broadcast() -> None:
     # A turn with no substantive assistant text is not a presented plan.
     session, broadcasts = _make_session("plan", [])
@@ -86,6 +93,7 @@ async def test_plan_mode_turn_without_content_does_not_broadcast() -> None:
     assert session.has_pending_plan is False
 
 
+@pytest.mark.asyncio
 async def test_clear_pending_plan_prompt_resets_for_revise_cycle() -> None:
     session, broadcasts = _make_session(
         "plan",
@@ -110,6 +118,7 @@ async def test_clear_pending_plan_prompt_resets_for_revise_cycle() -> None:
     assert broadcasts[1][0] == "the revised plan"
 
 
+@pytest.mark.asyncio
 async def test_thinking_chunks_excluded_from_broadcast_plan() -> None:
     # Reasoning arrives as thinking_delta (translated to ThinkingEvent, not a
     # TextChunk) so it must never pollute the plan text the Plans panel renders

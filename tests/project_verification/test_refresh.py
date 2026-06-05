@@ -19,6 +19,8 @@ from gobby.project_verification.evidence import collect_evidence
 from gobby.project_verification.refresh import refresh_project_verification_deterministic
 from gobby.project_verification.synthesis import synthesize_verification_commands
 
+pytestmark = [pytest.mark.unit]
+
 
 def write_project_json(root: Path, verification: dict[str, Any]) -> Path:
     gobby_dir = root / ".gobby"
@@ -62,7 +64,7 @@ def test_python_and_node_evidence_generates_expected_commands(tmp_path: Path) ->
 
     result = refresh_project_verification_deterministic(tmp_path)
 
-    assert result.after["unit_tests"] == "uv run pytest tests/ -v"
+    assert result.after["unit_tests"] == "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
     assert result.after["type_check"] == "uv run mypy src/ --no-incremental --strict"
     assert result.after["lint"] == "uv run ruff check src/"
     assert result.after["format"] == "uv run ruff format --check src/"
@@ -183,7 +185,7 @@ async def test_synthesis_uses_profile_candidates_and_accepts_evidenced_json(
         {
             "commands": {
                 "unit_tests": {
-                    "command": "uv run pytest tests/ -v",
+                    "command": "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v",
                     "confidence": 0.91,
                     "sources": ["pyproject.toml"],
                     "rationale": "tests directory exists",
@@ -195,7 +197,7 @@ async def test_synthesis_uses_profile_candidates_and_accepts_evidenced_json(
 
     result = await synthesize_verification_commands(service, config, bundle, candidates)  # type: ignore[arg-type]
 
-    assert result.accepted["unit_tests"].command == "uv run pytest tests/ -v"
+    assert result.accepted["unit_tests"].command == "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
     assert service.request is not None
     assert service.request.profile == "feature_mid"
     assert service.request.candidates == ("local/test-model",)
