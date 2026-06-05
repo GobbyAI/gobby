@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use gobby_core::ai_context::{AiConfigSource, AiContext, LocalAiConfigSource};
-use gobby_core::config::ConfigSource;
+use gobby_core::config::{ConfigSource, resolve_falkordb_config};
 use postgres::Client;
 use serde_json::json;
 
@@ -40,6 +40,7 @@ pub(crate) fn index_resolved_scope(
             let mut store = postgres_store_for_search(&mut conn, &search_scope);
             indexer::index_vault(scope.root(), &mut store)?;
         }
+        sync_falkor_graph(&mut conn, &search_scope, "gwiki index")?;
         return indexed_counts_for_postgres(&mut conn, &search_scope, true);
     }
 
@@ -91,6 +92,7 @@ pub(crate) fn execute_ingest_file(
             )?
         };
         let counts = indexed_counts_for_postgres(&mut conn, &search_scope, true)?;
+        sync_falkor_graph(&mut conn, &search_scope, "gwiki ingest-file")?;
         return Ok(render_ingest_file(&path, output_scope, &result, counts));
     }
 
@@ -138,6 +140,9 @@ pub(crate) fn execute_ingest_url(
         };
         let counts =
             indexed_counts_for_postgres(&mut conn, &search_scope, !result.accepted.is_empty())?;
+        if !result.accepted.is_empty() {
+            sync_falkor_graph(&mut conn, &search_scope, "gwiki ingest-url")?;
+        }
         return Ok(render_ingest_url(output_scope, &result, counts));
     }
 
@@ -231,6 +236,27 @@ fn postgres_store_for_search<'a>(
     search_scope: &SearchScope,
 ) -> store::PostgresWikiStore<'a> {
     store::PostgresWikiStore::new(conn, store_scope_for_search(search_scope))
+}
+
+fn sync_falkor_graph(
+    conn: &mut Client,
+    search_scope: &SearchScope,
+    command: &'static str,
+) -> Result<(), WikiError> {
+    let gobby_home = gobby_home()?;
+    let primary = PostgresConfigSource { conn };
+    let mut source =
+        AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home).map_err(|error| {
+            WikiError::Config {
+                detail: format!("failed to resolve FalkorDB config for {command}: {error}"),
+            }
+        })?;
+    let falkor = resolve_falkordb_config(&mut source).ok_or_else(|| WikiError::Config {
+        detail: format!(
+            "{command} requires FalkorDB; run `gwiki setup --standalone` or attach to Gobby's full datastore stack"
+        ),
+    })?;
+    crate::falkor_graph::sync_scope_from_postgres(conn, search_scope, &falkor)
 }
 
 fn indexed_counts_for_postgres(

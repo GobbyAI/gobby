@@ -30,6 +30,8 @@ pub mod document;
 pub(crate) mod events;
 pub mod exports;
 #[allow(dead_code)]
+pub(crate) mod falkor_graph;
+#[allow(dead_code)]
 pub(crate) mod frontmatter;
 #[allow(dead_code)]
 pub(crate) mod graph;

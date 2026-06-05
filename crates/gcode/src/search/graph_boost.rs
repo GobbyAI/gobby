@@ -15,7 +15,8 @@ use crate::visibility;
 /// Get symbol IDs related to query via the call/import graph.
 ///
 /// Returns a ranked list of symbol IDs for use as an RRF source.
-/// Returns empty vec when FalkorDB is unavailable (graceful degradation).
+/// FalkorDB is required runtime infrastructure; an empty result means no graph
+/// neighbors were found for this query or projection state.
 pub fn graph_boost(ctx: &Context, conn: Option<&mut postgres::Client>, query: &str) -> Vec<String> {
     if ctx.falkordb.is_none() {
         return vec![];

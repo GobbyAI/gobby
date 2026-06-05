@@ -157,7 +157,7 @@ pub(crate) enum Command {
     },
 
     // ── Search (works in all modes) ──────────────────────────────────
-    /// Hybrid search: pg_search BM25 + optional semantic (Qdrant) + optional graph boost (FalkorDB)
+    /// Hybrid search: pg_search BM25 + semantic (Qdrant) + graph boost (FalkorDB)
     #[command(
         after_help = "`gcode search` is hybrid/fuzzy concept search. Use `gcode grep \"pattern\" [PATH...] -m 50` for exact literals, call sites, dotted config keys, quoted strings, and paths. Use `gcode search-content \"query\" [PATH...]` for ranked file-content matches."
     )]

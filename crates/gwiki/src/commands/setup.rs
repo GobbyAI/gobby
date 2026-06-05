@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use gobby_core::config::embedding_keys;
+use gobby_core::config::{embedding_keys, resolve_falkordb_config, resolve_qdrant_config};
 use gobby_core::provisioning::{
     DockerProvisioningReport, DockerServiceOptions, EnsureHubOptions, StandaloneConfig,
     compose_file_path, ensure_hub, gcore_config_path,
@@ -191,8 +191,32 @@ fn write_gwiki_gcore_config(
     }
 
     apply_embedding_options(options, &mut config)?;
+    validate_required_service_config(&mut config)?;
     config.write_at(&path)?;
     Ok(path)
+}
+
+fn validate_required_service_config(config: &mut StandaloneConfig) -> anyhow::Result<()> {
+    let Some(_falkor) = resolve_falkordb_config(config) else {
+        anyhow::bail!(
+            "standalone gwiki setup requires FalkorDB config; provision services or pass --falkordb-host"
+        );
+    };
+    let Some(qdrant) = resolve_qdrant_config(config) else {
+        anyhow::bail!(
+            "standalone gwiki setup requires Qdrant config; provision services or pass --qdrant-url"
+        );
+    };
+    if qdrant
+        .url
+        .as_deref()
+        .is_none_or(|url| url.trim().is_empty())
+    {
+        anyhow::bail!(
+            "standalone gwiki setup requires Qdrant URL; provision services or pass --qdrant-url"
+        );
+    }
+    Ok(())
 }
 
 fn apply_embedding_options(
@@ -322,6 +346,7 @@ mod tests {
             .expect("write existing standalone config");
 
         let options = SetupOptions {
+            falkordb_host: Some("127.0.0.1".to_string()),
             qdrant_url: Some("http://localhost:7333".to_string()),
             ..SetupOptions::default()
         };
@@ -360,6 +385,8 @@ mod tests {
         let path = gcore_config_path(home.path());
         let mut existing = StandaloneConfig::empty();
         existing.set("databases.postgres.dsn", "postgresql://localhost/gcode");
+        existing.set("databases.falkordb.host", "127.0.0.1");
+        existing.set("databases.qdrant.url", "http://localhost:6333");
         existing.set("code.index.schema", "public");
         existing.write_at(&path).expect("write existing config");
 

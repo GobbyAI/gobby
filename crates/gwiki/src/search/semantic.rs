@@ -7,7 +7,7 @@ use gobby_core::ai::daemon;
 #[cfg(feature = "ai")]
 use gobby_core::ai_context::AiContext;
 use gobby_core::config::{EmbeddingConfig, QdrantConfig};
-use gobby_core::degradation::{DegradationKind, ServiceState};
+use gobby_core::degradation::DegradationKind;
 use gobby_core::qdrant::{CollectionScope, SearchHit, SearchRequest, collection_name};
 use serde_json::{Map, Value, json};
 
@@ -79,13 +79,19 @@ where
     }
 
     let Some(embedding) = embedding else {
-        return Ok(degraded("embeddings", ServiceState::NotConfigured));
+        return Err(required_service_error(
+            "embeddings",
+            "embedding endpoint is not configured",
+        ));
     };
     let Some(qdrant) = qdrant else {
-        return Ok(degraded("qdrant", ServiceState::NotConfigured));
+        return Err(required_service_error("qdrant", "Qdrant is not configured"));
     };
     if qdrant.url.as_deref().is_none_or(str::is_empty) {
-        return Ok(degraded("qdrant", ServiceState::NotConfigured));
+        return Err(required_service_error(
+            "qdrant",
+            "Qdrant URL is not configured",
+        ));
     }
 
     let embedding_query = match embedding {
@@ -95,15 +101,13 @@ where
     };
     let vector = match embedder.embed_query(embedding, &embedding_query) {
         Ok(vector) if !vector.is_empty() => vector,
-        Ok(_) => return Ok(degraded("embeddings", ServiceState::NotConfigured)),
-        Err(error) => {
-            return Ok(degraded(
+        Ok(_) => {
+            return Err(required_service_error(
                 "embeddings",
-                ServiceState::Unreachable {
-                    message: error.to_string(),
-                },
+                "embedding endpoint returned an empty vector",
             ));
         }
+        Err(error) => return Err(required_service_error("embeddings", &error.to_string())),
     };
 
     let collection = collection_for_scope(&request.scope);
@@ -115,14 +119,7 @@ where
     };
     let hits = match vector_backend.search(qdrant, &collection, qdrant_request) {
         Ok(hits) => hits,
-        Err(error) => {
-            return Ok(degraded(
-                "qdrant",
-                ServiceState::Unreachable {
-                    message: error.to_string(),
-                },
-            ));
-        }
+        Err(error) => return Err(required_service_error("qdrant", &error.to_string())),
     };
 
     let hits = hits
@@ -365,14 +362,10 @@ impl VectorSearchBackend for GobbyQdrantBackend {
     }
 }
 
-fn degraded(service: &str, state: ServiceState) -> SemanticSearchOutcome {
-    SemanticSearchOutcome {
-        hits: Vec::new(),
-        degradation: Some(DegradationKind::ServiceUnavailable {
-            service: service.to_string(),
-            state,
-        }),
-    }
+fn required_service_error(service: &str, detail: &str) -> SearchError {
+    SearchError::Backend(format!(
+        "semantic search requires {service}; {detail}. Run `gwiki setup --standalone` or attach to Gobby's full datastore stack"
+    ))
 }
 
 fn payload_matches_scope(payload: &Map<String, Value>, scope: &SearchScope) -> bool {
@@ -454,7 +447,21 @@ impl SemanticSearchBackend for UnavailableSemanticBackend {
         &mut self,
         _request: SemanticSearchRequest,
     ) -> Result<SemanticSearchOutcome, SearchError> {
-        Ok(degraded("qdrant", ServiceState::NotConfigured))
+        Ok(degraded(
+            "qdrant",
+            gobby_core::degradation::ServiceState::NotConfigured,
+        ))
+    }
+}
+
+#[cfg(test)]
+fn degraded(service: &str, state: gobby_core::degradation::ServiceState) -> SemanticSearchOutcome {
+    SemanticSearchOutcome {
+        hits: Vec::new(),
+        degradation: Some(DegradationKind::ServiceUnavailable {
+            service: service.to_string(),
+            state,
+        }),
     }
 }
 
@@ -577,6 +584,55 @@ mod tests {
                 ]
             }))
         );
+    }
+
+    #[test]
+    fn semantic_search_requires_embedding_and_qdrant_config() {
+        let qdrant = QdrantConfig {
+            url: Some("http://qdrant.local".to_string()),
+            api_key: None,
+        };
+        let mut embedder = FixedEmbedder::new(vec![0.1, 0.2, 0.3]);
+        let mut vector = RecordingVectorBackend::new(Vec::new());
+
+        let missing_embedding = search_semantic(
+            SemanticSearchRequest {
+                query: "ownership".to_string(),
+                scope: SearchScope::project("project-1"),
+                limit: 5,
+            },
+            None,
+            Some(&qdrant),
+            &mut embedder,
+            &mut vector,
+        )
+        .expect_err("missing embedding config must fail");
+        assert!(
+            missing_embedding
+                .to_string()
+                .contains("requires embeddings")
+        );
+
+        let embedding = EmbeddingConfig {
+            api_base: "http://embeddings.local/v1".to_string(),
+            model: "embed-model".to_string(),
+            api_key: None,
+            query_prefix: None,
+            timeout_seconds: 10,
+        };
+        let missing_qdrant = search_semantic(
+            SemanticSearchRequest {
+                query: "ownership".to_string(),
+                scope: SearchScope::project("project-1"),
+                limit: 5,
+            },
+            Some(&SemanticEmbedding::Direct(embedding)),
+            None,
+            &mut embedder,
+            &mut vector,
+        )
+        .expect_err("missing Qdrant config must fail");
+        assert!(missing_qdrant.to_string().contains("requires qdrant"));
     }
 
     #[cfg(feature = "ai")]
