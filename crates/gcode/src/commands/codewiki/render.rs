@@ -202,11 +202,24 @@ pub(crate) fn bounded_component_edges(
         }
     }
 
-    edges
+    let mut reachable_edges = edges
         .iter()
         .filter(|(source, target)| distances.contains_key(source) && distances.contains_key(target))
+        .map(|(source, target)| {
+            let source_distance = distances[source];
+            let target_distance = distances[target];
+            (
+                source_distance.max(target_distance),
+                source.clone(),
+                target.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    reachable_edges.sort();
+    reachable_edges
+        .into_iter()
         .take(max_edges)
-        .cloned()
+        .map(|(_, source, target)| (source, target))
         .collect()
 }
 

@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 
 use gobby_core::config::FalkorConfig;
+use gobby_core::degradation::DegradationKind;
 use gobby_core::falkor::{GraphClient, Row};
 use postgres::Client;
 use serde_json::Value;
@@ -15,6 +16,12 @@ use crate::search::{SearchError, SearchScope};
 use crate::support::text::slugify;
 
 pub const FALKORDB_GRAPH_NAME: &str = "gobby_wiki";
+
+pub(crate) struct GraphBoostData {
+    pub documents: Vec<crate::search::graph_boost::GraphBoostDocument>,
+    pub links: Vec<crate::search::graph_boost::GraphBoostLink>,
+    pub degradation: Option<DegradationKind>,
+}
 
 pub(crate) fn sync_scope_from_postgres(
     conn: &mut Client,
@@ -39,16 +46,25 @@ pub(crate) fn load_graph_boost_data(
     scope: &SearchScope,
     document_limit: i64,
     link_limit: i64,
-) -> Result<
-    (
-        Vec<crate::search::graph_boost::GraphBoostDocument>,
-        Vec<crate::search::graph_boost::GraphBoostLink>,
-    ),
-    SearchError,
-> {
+) -> Result<GraphBoostData, SearchError> {
     let documents = query_documents(client, scope, document_limit)?;
     let links = query_links(client, scope, link_limit)?;
-    Ok((documents, links))
+    let mut capped = Vec::new();
+    if documents.capped {
+        capped.push(format!("documents>{document_limit}"));
+    }
+    if links.capped {
+        capped.push(format!("links>{link_limit}"));
+    }
+    let degradation = partial_graph_degradation(&capped);
+    if let Some(degradation) = &degradation {
+        log::warn!("loaded partial FalkorDB wiki graph boost data: {degradation:?}");
+    }
+    Ok(GraphBoostData {
+        documents: documents.items,
+        links: links.items,
+        degradation,
+    })
 }
 
 fn clear_scope(client: &mut GraphClient, scope: &SearchScope) -> anyhow::Result<()> {
@@ -72,7 +88,7 @@ fn query_documents(
     client: &mut GraphClient,
     scope: &SearchScope,
     limit: i64,
-) -> Result<Vec<crate::search::graph_boost::GraphBoostDocument>, SearchError> {
+) -> Result<LimitedQuery<crate::search::graph_boost::GraphBoostDocument>, SearchError> {
     let rows = query_limited(
         client,
         scope,
@@ -82,7 +98,9 @@ fn query_documents(
         "document",
         limit,
     )?;
-    rows.into_iter()
+    let items = rows
+        .items
+        .into_iter()
         .map(|row| {
             let path = row_string(&row, "path")?;
             Ok(crate::search::graph_boost::GraphBoostDocument {
@@ -90,14 +108,18 @@ fn query_documents(
                 title: optional_row_string(&row, "title"),
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>, SearchError>>()?;
+    Ok(LimitedQuery {
+        items,
+        capped: rows.capped,
+    })
 }
 
 fn query_links(
     client: &mut GraphClient,
     scope: &SearchScope,
     limit: i64,
-) -> Result<Vec<crate::search::graph_boost::GraphBoostLink>, SearchError> {
+) -> Result<LimitedQuery<crate::search::graph_boost::GraphBoostLink>, SearchError> {
     let rows = query_limited(
         client,
         scope,
@@ -109,7 +131,9 @@ fn query_links(
         "link",
         limit,
     )?;
-    rows.into_iter()
+    let items = rows
+        .items
+        .into_iter()
         .map(|row| {
             let source_path = row_string(&row, "path")?;
             let target_path = row_string(&row, "target_path")?;
@@ -118,7 +142,16 @@ fn query_links(
                 target_path,
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>, SearchError>>()?;
+    Ok(LimitedQuery {
+        items,
+        capped: rows.capped,
+    })
+}
+
+struct LimitedQuery<T> {
+    items: Vec<T>,
+    capped: bool,
 }
 
 fn query_limited(
@@ -127,7 +160,7 @@ fn query_limited(
     base_query: &str,
     component: &'static str,
     limit: i64,
-) -> Result<Vec<Row>, SearchError> {
+) -> Result<LimitedQuery<Row>, SearchError> {
     let limit = limit.max(0);
     let fetch_limit = usize::try_from(limit)
         .map_err(|_| SearchError::Backend(format!("invalid graph {component} limit {limit}")))?
@@ -138,17 +171,29 @@ fn query_limited(
         .map_err(|error| {
             SearchError::Backend(format!("query FalkorDB wiki {component}s: {error}"))
         })?;
-    if rows.len() == fetch_limit && fetch_limit > 0 {
-        return Err(SearchError::Backend(format!(
-            "FalkorDB wiki graph {component} count exceeds limit {limit}; refusing partial graph boost data"
-        )));
-    }
+    let capped = rows.len() == fetch_limit && fetch_limit > 0;
     if let Ok(limit) = usize::try_from(limit)
         && rows.len() > limit
     {
         rows.truncate(limit);
     }
-    Ok(rows)
+    Ok(LimitedQuery {
+        items: rows,
+        capped,
+    })
+}
+
+fn partial_graph_degradation(capped: &[String]) -> Option<DegradationKind> {
+    if capped.is_empty() {
+        return None;
+    }
+    Some(DegradationKind::PartialData {
+        component: "gwiki_graph".to_string(),
+        message: format!(
+            "FalkorDB wiki graph exceeded configured caps ({}); graph boost used capped data",
+            capped.join(", ")
+        ),
+    })
 }
 
 fn load_wiki_graph_facts(
@@ -327,14 +372,8 @@ fn is_external_target(target: &str) -> bool {
 
 fn scope_params(scope: &SearchScope) -> HashMap<String, String> {
     HashMap::from([
-        (
-            "scope_kind".to_string(),
-            cypher_string_literal(scope.scope_kind()),
-        ),
-        (
-            "scope_id".to_string(),
-            cypher_string_literal(scope.scope_value()),
-        ),
+        ("scope_kind".to_string(), scope.scope_kind().to_string()),
+        ("scope_id".to_string(), scope.scope_value().to_string()),
     ])
 }
 
@@ -349,20 +388,25 @@ fn optional_row_string(row: &Row, key: &'static str) -> Option<String> {
         .map(ToString::to_string)
 }
 
+#[cfg(test)]
 fn cypher_string_literal(value: &str) -> String {
     format!("'{}'", escape_string_contents(value))
 }
 
+#[cfg(test)]
 fn escape_string_contents(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for ch in value.chars() {
         match ch {
             '\\' => escaped.push_str(r"\\"),
             '\'' => escaped.push_str(r"\'"),
+            '"' => escaped.push_str("\\\""),
             '\n' => escaped.push_str(r"\n"),
             '\r' => escaped.push_str(r"\r"),
             '\t' => escaped.push_str(r"\t"),
-            ch if ch.is_control() => escaped.push_str(&format!(r"\u{:04x}", ch as u32)),
+            '\u{0008}' => escaped.push_str(r"\b"),
+            '\u{000C}' => escaped.push_str(r"\f"),
+            ch if ch.is_control() => escaped.push_str(&format!(r"\u{:04X}", ch as u32)),
             ch => escaped.push(ch),
         }
     }
@@ -433,6 +477,39 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn graph_scope_params_are_raw_driver_values() {
+        let params = scope_params(&SearchScope::topic("rust'async"));
+
+        assert_eq!(params.get("scope_kind").map(String::as_str), Some("topic"));
+        assert_eq!(
+            params.get("scope_id").map(String::as_str),
+            Some("rust'async")
+        );
+    }
+
+    #[test]
+    fn cypher_string_literal_escapes_like_gcode() {
+        assert_eq!(
+            cypher_string_literal("a\"b\\c'd\n\r\t\u{0008}\u{000C}\u{001F}"),
+            "'a\\\"b\\\\c\\'d\\n\\r\\t\\b\\f\\u001F'"
+        );
+    }
+
+    #[test]
+    fn partial_graph_degradation_reports_capped_components() {
+        let degradation =
+            partial_graph_degradation(&["documents>10".to_string(), "links>20".to_string()])
+                .expect("partial data degradation");
+
+        let DegradationKind::PartialData { component, message } = degradation else {
+            panic!("expected partial data degradation");
+        };
+        assert_eq!(component, "gwiki_graph");
+        assert!(message.contains("documents>10"));
+        assert!(message.contains("links>20"));
     }
 
     #[test]

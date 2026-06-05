@@ -151,18 +151,19 @@ fn ingest_pages_with_vision_inner(
 ) -> Result<IngestResult, WikiError> {
     let title = markdown_title(&snapshot.file_name);
     let previous_manifest = SourceManifest::read(vault_root)?;
+    let content_hash = gobby_core::indexing::content_hash(&snapshot.bytes);
     let draft = SourceDraft {
         location: snapshot.location.clone(),
         kind: SourceKind::Pdf,
         fetched_at: snapshot.fetched_at.to_rfc3339(),
-        content: snapshot.bytes.clone(),
+        content: Vec::new(),
         title: Some(title.clone()),
         citation: Some(snapshot.location.clone()),
         license: None,
         ingestion_method: IngestionMethod::Manual,
         compile_status: CompileStatus::Pending,
     };
-    let record = SourceManifest::register(vault_root, draft)?;
+    let record = SourceManifest::register_with_content_hash(vault_root, draft, content_hash)?;
     let asset_path = match write_asset(vault_root, &record, &snapshot.file_name, &snapshot.bytes) {
         Ok(asset_path) => asset_path,
         Err(error) => {

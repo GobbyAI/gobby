@@ -797,7 +797,7 @@ mod tests {
 
         let transcript_only_doc =
             std::fs::read_to_string(temp.path().join(transcript_only.path)).expect("read doc");
-        assert!(transcript_only_doc.contains("media_degradation: frames:extraction_failed"));
+        assert!(transcript_only_doc.contains("media_degradation: \"frames:extraction_failed\""));
         assert!(transcript_only_doc.contains("Transcript survives frame extraction failure."));
         assert!(transcript_only_doc.contains("No frame samples recorded."));
 
@@ -879,7 +879,7 @@ mod tests {
         let document = std::fs::read_to_string(temp.path().join(result.path)).expect("read doc");
         assert!(document.contains("file_size_bytes: \"42\""));
         assert!(document.contains("duration_seconds: \"13\""));
-        assert!(document.contains("media_degradation: media:ffmpeg_unavailable"));
+        assert!(document.contains("media_degradation: \"media:ffmpeg_unavailable\""));
         assert!(document.contains("ffmpeg was not found"));
     }
 

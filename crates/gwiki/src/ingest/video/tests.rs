@@ -498,8 +498,8 @@ fn production_ingest_applies_degradation_matrix() {
     let no_ffmpeg_doc = read_derived(temp.path(), &no_ffmpeg);
     assert!(no_ffmpeg_doc.contains("file_size_bytes: \"11\""));
     assert!(
-        no_ffmpeg_doc.contains("media_degradation: audio:ffmpeg_unavailable")
-            || no_ffmpeg_doc.contains("media_degradation: frames:ffmpeg_unavailable")
+        no_ffmpeg_doc.contains("audio:ffmpeg_unavailable")
+            || no_ffmpeg_doc.contains("frames:ffmpeg_unavailable")
     );
 
     let frames_fail = ingest_with_media(
@@ -516,7 +516,7 @@ fn production_ingest_applies_degradation_matrix() {
     )
     .expect("frame extraction degrades");
     let frames_fail_doc = read_derived(temp.path(), &frames_fail);
-    assert!(frames_fail_doc.contains("media_degradation: frames:extraction_failed"));
+    assert!(frames_fail_doc.contains("media_degradation: \"frames:extraction_failed\""));
     assert!(frames_fail_doc.contains("Audio-first transcript from extracted video audio."));
     assert!(frames_fail_doc.contains("No frame samples recorded."));
 
@@ -537,7 +537,7 @@ fn production_ingest_applies_degradation_matrix() {
     )
     .expect("vision unavailable degrades");
     let vision_unavailable_doc = read_derived(temp.path(), &vision_unavailable);
-    assert!(vision_unavailable_doc.contains("media_degradation: frames:vision_unavailable"));
+    assert!(vision_unavailable_doc.contains("media_degradation: \"frames:vision_unavailable\""));
     assert!(vision_unavailable_doc.contains("No frame samples recorded."));
 
     let transcription_unavailable = ingest_with_media(
@@ -654,19 +654,21 @@ fn video_media_degradation_classifies_only_unavailable_ffmpeg_errors() {
 }
 
 #[test]
-fn frame_vision_failure_drops_sampled_temp_frames_before_keep() {
+fn frame_vision_failure_keeps_sample_without_description() {
     let frame = temp_file_with_bytes(".jpg", b"frame-zero").expect("frame temp");
-    let frame_path = frame.path().to_path_buf();
 
-    let err = describe_frame_images(
+    let described = describe_frame_images(
         "lecture.mp4",
         vec![(0, frame)],
         VisionEndpoint::Available(&FailingVisionClient),
     )
-    .expect_err("vision failure should degrade caller");
+    .expect("vision failure should keep frame sample");
 
-    assert!(err.to_string().contains("vision provider failed"));
-    assert!(!frame_path.exists(), "temp frame should be cleaned up");
+    assert_eq!(described.samples.len(), 1);
+    assert_eq!(described.paths.len(), 1);
+    assert!(described.descriptions.is_empty());
+    assert!(described.paths[0].exists(), "frame should be persisted");
+    cleanup_kept_temp_frames(&described.paths);
 }
 
 #[test]

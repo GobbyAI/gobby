@@ -191,32 +191,27 @@ fn write_gwiki_gcore_config(
     }
 
     apply_embedding_options(options, &mut config)?;
-    validate_required_service_config(&mut config)?;
+    diagnose_optional_service_config(&mut config);
     config.write_at(&path)?;
     Ok(path)
 }
 
-fn validate_required_service_config(config: &mut StandaloneConfig) -> anyhow::Result<()> {
-    let Some(_falkor) = resolve_falkordb_config(config) else {
-        anyhow::bail!(
-            "standalone gwiki setup requires FalkorDB config; provision services or pass --falkordb-host"
-        );
-    };
-    let Some(qdrant) = resolve_qdrant_config(config) else {
-        anyhow::bail!(
-            "standalone gwiki setup requires Qdrant config; provision services or pass --qdrant-url"
-        );
-    };
-    if qdrant
-        .url
-        .as_deref()
-        .is_none_or(|url| url.trim().is_empty())
-    {
-        anyhow::bail!(
-            "standalone gwiki setup requires Qdrant URL; provision services or pass --qdrant-url"
+fn diagnose_optional_service_config(config: &mut StandaloneConfig) {
+    if resolve_falkordb_config(config).is_none() {
+        log::warn!(
+            "standalone gwiki setup has no FalkorDB config; graph features will be disabled until configured"
         );
     }
-    Ok(())
+    let qdrant = resolve_qdrant_config(config);
+    if qdrant
+        .as_ref()
+        .and_then(|config| config.url.as_deref())
+        .is_none_or(|url| url.trim().is_empty())
+    {
+        log::warn!(
+            "standalone gwiki setup has no Qdrant URL; semantic features will be disabled until configured"
+        );
+    }
 }
 
 fn apply_embedding_options(
@@ -408,6 +403,32 @@ mod tests {
             Some("postgresql://localhost/gcode")
         );
         assert_eq!(config.get("code.index.schema"), Some("public"));
+    }
+
+    #[test]
+    fn standalone_config_allows_missing_optional_services() {
+        let home = tempfile::tempdir().expect("temp home");
+        let path = gcore_config_path(home.path());
+        let service_options = DockerServiceOptions::new(home.path().to_path_buf());
+
+        write_gwiki_gcore_config(
+            home.path(),
+            &SetupOptions::default(),
+            &service_options,
+            "postgresql://localhost/gwiki",
+            None,
+        )
+        .expect("write gwiki config without optional services");
+
+        let config = StandaloneConfig::read_at(&path)
+            .expect("read config")
+            .expect("config present");
+        assert_eq!(
+            config.get("databases.postgres.dsn"),
+            Some("postgresql://localhost/gwiki")
+        );
+        assert_eq!(config.get("databases.falkordb.host"), None);
+        assert_eq!(config.get("databases.qdrant.url"), None);
     }
 
     #[test]

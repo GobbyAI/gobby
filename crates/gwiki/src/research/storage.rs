@@ -34,6 +34,7 @@ pub(crate) fn append_raw_index_locked(
             path: Some(lock_path.clone()),
             source: error,
         })?;
+    // This protects the raw index read-modify-write sequence, not just the final write.
     lock_raw_index(&lock, &lock_path)?;
     let mut contents = match fs::read_to_string(&index_path) {
         Ok(contents) => contents,

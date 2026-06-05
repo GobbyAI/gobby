@@ -96,9 +96,7 @@ pub(crate) fn slugify_with_options(
             last_was_dash = true;
         }
     }
-    while slug.ends_with('-') {
-        slug.pop();
-    }
+    slug = slug.trim_end_matches('-').to_string();
     if slug.is_empty() {
         fallback.unwrap_or_default().to_string()
     } else {

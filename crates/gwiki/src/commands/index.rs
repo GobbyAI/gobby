@@ -251,11 +251,10 @@ fn sync_falkor_graph(
                 detail: format!("failed to resolve FalkorDB config for {command}: {error}"),
             }
         })?;
-    let falkor = resolve_falkordb_config(&mut source).ok_or_else(|| WikiError::Config {
-        detail: format!(
-            "{command} requires FalkorDB; run `gwiki setup --standalone` or attach to Gobby's full datastore stack"
-        ),
-    })?;
+    let Some(falkor) = resolve_falkordb_config(&mut source) else {
+        log::warn!("{command}: FalkorDB config not found; skipping gwiki graph sync");
+        return Ok(());
+    };
     crate::falkor_graph::sync_scope_from_postgres(conn, search_scope, &falkor)
 }
 

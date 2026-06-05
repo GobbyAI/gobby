@@ -386,7 +386,21 @@ fn remove_relative_file_rejects_unsafe_paths_before_join() {
 }
 
 #[test]
-fn refresh_url_accepts_case_insensitive_http_prefix_without_allocation() {
+fn remove_relative_file_normalizes_current_dir_components() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let raw_dir = temp.path().join("raw");
+    fs::create_dir_all(&raw_dir).expect("raw dir");
+    fs::write(raw_dir.join("source.md"), "raw").expect("raw file");
+
+    assert!(
+        remove_relative_file(temp.path(), Path::new("raw/./source.md"))
+            .expect("remove normalized file")
+    );
+    assert!(!raw_dir.join("source.md").exists());
+}
+
+#[test]
+fn refresh_url_accepts_case_insensitive_http_scheme() {
     let temp = tempfile::tempdir().expect("tempdir");
     let mut record = seed_url(
         temp.path(),
@@ -397,6 +411,17 @@ fn refresh_url_accepts_case_insensitive_http_prefix_without_allocation() {
     record.canonical_location = "https://canonical.example/page".to_string();
 
     assert_eq!(refresh_url(&record), "HTTPS://Example.test/Page");
+}
+
+#[test]
+fn invalid_http_like_locations_are_not_url_sources() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let record = seed_url(temp.path(), "https://", "unix-ms:1", b"body");
+
+    assert_eq!(
+        replay_kind(&record),
+        Err(SelectionFailure::UnsupportedSourceKind)
+    );
 }
 
 #[test]

@@ -81,10 +81,8 @@ fn safe_refresh_relative_path(relative_path: &Path) -> Result<PathBuf, WikiError
     for component in relative_path.components() {
         match component {
             Component::Normal(part) => normalized.push(part),
-            Component::CurDir
-            | Component::ParentDir
-            | Component::RootDir
-            | Component::Prefix(_) => {
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
                 return Err(WikiError::InvalidInput {
                     field: "relative_path",
                     message: format!(

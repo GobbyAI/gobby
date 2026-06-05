@@ -78,11 +78,14 @@ pub(crate) fn ingest_video_file_with_processing_without_index(
     let mut transcription_degradation = None;
     let mut suppress_frame_sampling = false;
 
-    if !matches!(
-        &transcription_endpoint,
-        TranscriptionEndpoint::Unavailable(_)
-    ) {
-        match media.extract_audio(&snapshot.path) {
+    match transcription_endpoint {
+        TranscriptionEndpoint::Unavailable(reason) => {
+            transcription_degradation = Some(crate::transcribe::TranscriptionDegradation {
+                reason: "unavailable".to_string(),
+                fallback: format!("{}: {}", reason.reason, reason.fallback),
+            });
+        }
+        endpoint => match media.extract_audio(&snapshot.path) {
             Ok(audio) => match std::fs::read(audio.path()) {
                 Ok(audio_bytes) => {
                     let request = TranscriptionRequest {
@@ -91,7 +94,7 @@ pub(crate) fn ingest_video_file_with_processing_without_index(
                         asset_path: audio.path(),
                         bytes: &audio_bytes,
                     };
-                    match transcribe_for_markdown(&request, transcription_endpoint) {
+                    match transcribe_for_markdown(&request, endpoint) {
                         TranscriptionMarkdownInput::Transcribed(output) => {
                             snapshot.transcript_segments = output.segments.clone();
                             snapshot.transcription = Some(output);
@@ -117,12 +120,7 @@ pub(crate) fn ingest_video_file_with_processing_without_index(
                 "extraction_failed",
                 error,
             )),
-        }
-    } else if let TranscriptionEndpoint::Unavailable(reason) = &transcription_endpoint {
-        transcription_degradation = Some(crate::transcribe::TranscriptionDegradation {
-            reason: "unavailable".to_string(),
-            fallback: format!("{}: {}", reason.reason, reason.fallback),
-        });
+        },
     }
 
     if frame_interval_seconds != 0 {
@@ -212,9 +210,9 @@ fn message_is_ffmpeg_unavailable(message: &str) -> bool {
 
 #[derive(Debug)]
 pub(crate) struct DescribedFrameImages {
-    samples: Vec<VideoFrameSample>,
-    paths: Vec<PathBuf>,
-    descriptions: Vec<VideoFrameDescription>,
+    pub(crate) samples: Vec<VideoFrameSample>,
+    pub(crate) paths: Vec<PathBuf>,
+    pub(crate) descriptions: Vec<VideoFrameDescription>,
 }
 
 pub(crate) struct PendingFrameImage {
@@ -240,21 +238,38 @@ pub(crate) fn describe_frame_images(
         let timestamp = format_timestamp(timestamp_seconds);
         let path = frame.path().to_path_buf();
         let description = if let Some(client) = client {
-            let bytes = std::fs::read(&path).map_err(|source| WikiError::Io {
-                action: "read sampled video frame",
-                path: Some(path.clone()),
-                source,
-            })?;
-            let file_name = format!("{video_file_name}.frame-{index:04}.jpg");
-            let extraction = client.extract(&VisionRequest {
-                file_name: &file_name,
-                mime_type: Some("image/jpeg"),
-                asset_path: &path,
-                bytes: &bytes,
-                width: None,
-                height: None,
-            })?;
-            Some(extraction.description)
+            match std::fs::read(&path) {
+                Ok(bytes) => {
+                    let file_name = format!("{video_file_name}.frame-{index:04}.jpg");
+                    match client.extract(&VisionRequest {
+                        file_name: &file_name,
+                        mime_type: Some("image/jpeg"),
+                        asset_path: &path,
+                        bytes: &bytes,
+                        width: None,
+                        height: None,
+                    }) {
+                        Ok(extraction) => Some(extraction.description),
+                        Err(error) => {
+                            log::warn!(
+                                "video frame vision failed for {} at {}: {error}",
+                                video_file_name,
+                                timestamp
+                            );
+                            None
+                        }
+                    }
+                }
+                Err(source) => {
+                    log::warn!(
+                        "failed to read sampled video frame {} for {} at {}: {source}",
+                        path.display(),
+                        video_file_name,
+                        timestamp
+                    );
+                    None
+                }
+            }
         } else {
             None
         };

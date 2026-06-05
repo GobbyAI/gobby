@@ -160,11 +160,11 @@ fn yaml_plain_scalar_is_safe(value: &str) -> bool {
     {
         return false;
     }
-    !value.contains(": ")
+    !value.contains(':')
         && !value.contains(" #")
         && !value.contains(['"', '\''])
         && !value.starts_with([
-            '-', '?', '{', '}', '[', ']', ',', '&', '*', '!', '|', '>', '%', '@', '`',
+            '-', '?', ':', '#', '{', '}', '[', ']', ',', '&', '*', '!', '|', '>', '%', '@', '`',
         ])
 }
 
@@ -485,6 +485,8 @@ mod tests {
         let metadata = markdown_metadata(&[
             ("source_kind", "pdf".to_string()),
             ("source_location", "https://example.com/a: b #c".to_string()),
+            ("compact_colon", "key:value".to_string()),
+            ("comment", "# heading".to_string()),
             ("draft", "true".to_string()),
             ("empty", "~".to_string()),
             ("revision", "1.20".to_string()),
@@ -492,6 +494,8 @@ mod tests {
 
         assert!(metadata.contains("source_kind: pdf\n"));
         assert!(metadata.contains("source_location: \"https://example.com/a: b #c\"\n"));
+        assert!(metadata.contains("compact_colon: \"key:value\"\n"));
+        assert!(metadata.contains("comment: \"# heading\"\n"));
         assert!(metadata.contains("draft: \"true\"\n"));
         assert!(metadata.contains("empty: \"~\"\n"));
         assert!(metadata.contains("revision: \"1.20\"\n"));

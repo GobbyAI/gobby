@@ -1,12 +1,11 @@
 use std::fs;
+use std::io::ErrorKind;
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::path::Path;
 use std::process::Output;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[path = "../common/mod.rs"]
 mod common;
@@ -55,27 +54,29 @@ fn serve_http_responses(
     responses: Vec<(&'static str, &'static str)>,
 ) -> (String, thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind HTTP fixture");
+    listener
+        .set_nonblocking(true)
+        .expect("configure nonblocking HTTP fixture");
     let base_url = format!("http://{}", listener.local_addr().expect("local addr"));
-    let wake_addr = listener.local_addr().expect("local addr");
     let handle = thread::spawn(move || {
         for (status, body) in responses {
-            let accepted = Arc::new(AtomicBool::new(false));
-            let timed_out = Arc::new(AtomicBool::new(false));
-            let watchdog_accepted = Arc::clone(&accepted);
-            let watchdog_timed_out = Arc::clone(&timed_out);
-            thread::spawn(move || {
-                thread::sleep(Duration::from_secs(5));
-                if !watchdog_accepted.load(Ordering::Acquire) {
-                    watchdog_timed_out.store(true, Ordering::Release);
-                    let _ = TcpStream::connect(wake_addr);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(connection) => break connection,
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                        assert!(
+                            Instant::now() < deadline,
+                            "timed out waiting for HTTP fixture request"
+                        );
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("accept HTTP fixture request: {error}"),
                 }
-            });
-            let (mut stream, _) = listener.accept().expect("accept HTTP fixture request");
-            accepted.store(true, Ordering::Release);
-            assert!(
-                !timed_out.load(Ordering::Acquire),
-                "timed out waiting for HTTP fixture request"
-            );
+            };
+            stream
+                .set_nonblocking(false)
+                .expect("configure blocking HTTP fixture stream");
             let mut buffer = [0_u8; 1024];
             let bytes_read = stream.read(&mut buffer).expect("read HTTP fixture request");
             assert!(bytes_read > 0, "HTTP fixture request should not be empty");

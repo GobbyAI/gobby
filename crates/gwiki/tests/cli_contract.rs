@@ -55,6 +55,4 @@ fn compile_contract_tracks_compile_json_payload_keys() {
     ];
 
     assert_eq!(compile.json_output_keys, expected_keys);
-    assert!(compile.json_output_keys.contains(&"article_path"));
-    assert!(!compile.json_output_keys.contains(&"written_path"));
 }

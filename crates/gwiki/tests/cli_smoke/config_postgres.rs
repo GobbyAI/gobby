@@ -1,38 +1,191 @@
 use super::*;
 
 #[test]
-fn command_modules_do_not_define_static_placeholder_results() {
-    let commands_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands");
-    let placeholder_patterns = [
-        "\"objects\": []",
-        "\"created\": []",
-        "\"results\": []",
-        "\"backlinks\": []",
-        "\"suggestions\": []",
-        "\"documents\": 0",
-        "\"chunks\": 0",
-        "\"links\": 0",
-        "Init ready",
-        "Setup ready",
-        "Index ready",
-        "Ingest file ready",
+fn command_outputs_do_not_emit_static_placeholder_results() {
+    let fixture = common::GwikiFixture::new();
+    let topic = common::unique_topic("placeholder-output");
+    let source = fixture.root().join("placeholder-source.md");
+    fs::write(
+        &source,
+        "# Placeholder Source\n\nPlaceholder fixture content for ingest.\n",
+    )
+    .expect("write source");
+
+    let init = gwiki(
+        &fixture,
+        fixture.root(),
+        &["--format", "json", "init", "--topic", &topic],
+    );
+    common::assert_success(&init, "init");
+
+    let vault = fixture.topic_vault(&topic);
+    fs::create_dir_all(vault.join("wiki/topics")).expect("create topic dir");
+    fs::write(
+        vault.join("wiki/topics/ownership.md"),
+        "# Ownership\n\nOwnership placeholderneedle evidence.\n",
+    )
+    .expect("write ownership page");
+    fs::write(
+        vault.join("wiki/topics/rust.md"),
+        "# Rust\n\nRust links to [[Ownership]]. Missing [[Borrow checker]].\n",
+    )
+    .expect("write rust page");
+
+    let setup = gwiki(
+        &fixture,
+        fixture.root(),
+        &["--format", "json", "setup", "--topic", &topic],
+    );
+    common::assert_success(&setup, "setup");
+
+    let ingest = gwiki(
+        &fixture,
+        fixture.root(),
+        &[
+            "--format",
+            "json",
+            "ingest-file",
+            "--topic",
+            &topic,
+            source.to_str().expect("source path utf8"),
+        ],
+    );
+    common::assert_success(&ingest, "ingest-file");
+
+    let index = gwiki(
+        &fixture,
+        fixture.root(),
+        &["--format", "json", "index", "--topic", &topic],
+    );
+    common::assert_success(&index, "index");
+
+    let search = gwiki(
+        &fixture,
+        fixture.root(),
+        &[
+            "--format",
+            "json",
+            "search",
+            "--topic",
+            &topic,
+            "placeholderneedle",
+        ],
+    );
+    common::assert_success(&search, "search");
+
+    let backlinks = gwiki(
+        &fixture,
+        fixture.root(),
+        &[
+            "--format",
+            "json",
+            "backlinks",
+            "--topic",
+            &topic,
+            "wiki/topics/ownership.md",
+        ],
+    );
+    common::assert_success(&backlinks, "backlinks");
+
+    let suggestions = gwiki(
+        &fixture,
+        fixture.root(),
+        &[
+            "--format",
+            "json",
+            "link-suggest",
+            "--topic",
+            &topic,
+            "--limit",
+            "3",
+        ],
+    );
+    common::assert_success(&suggestions, "link-suggest");
+
+    let text_topic = common::unique_topic("placeholder-text");
+    let text_init = gwiki(&fixture, fixture.root(), &["init", "--topic", &text_topic]);
+    common::assert_success(&text_init, "text init");
+    let text_source = fixture.root().join("placeholder-source-text.md");
+    fs::write(
+        &text_source,
+        "# Placeholder Text Source\n\nDifferent content for text ingest.\n",
+    )
+    .expect("write text source");
+    let text_setup = gwiki(&fixture, fixture.root(), &["setup", "--topic", &topic]);
+    common::assert_success(&text_setup, "text setup");
+    let text_index = gwiki(&fixture, fixture.root(), &["index", "--topic", &topic]);
+    common::assert_success(&text_index, "text index");
+    let text_ingest = gwiki(
+        &fixture,
+        fixture.root(),
+        &[
+            "ingest-file",
+            "--topic",
+            &topic,
+            text_source.to_str().expect("text source path utf8"),
+        ],
+    );
+    common::assert_success(&text_ingest, "text ingest-file");
+
+    let init_json = common::json_stdout(&init);
+    let checks = [
+        (
+            "init",
+            serde_json::to_string_pretty(&init_json).expect("pretty init JSON"),
+            vec!["\"created\": []"],
+        ),
+        ("setup", pretty_stdout(&setup), vec!["\"objects\": []"]),
+        ("ingest", pretty_stdout(&ingest), vec!["\"created\": []"]),
+        (
+            "index",
+            pretty_stdout(&index),
+            vec!["\"documents\": 0", "\"chunks\": 0", "\"links\": 0"],
+        ),
+        ("search", pretty_stdout(&search), vec!["\"results\": []"]),
+        (
+            "backlinks",
+            pretty_stdout(&backlinks),
+            vec!["\"backlinks\": []"],
+        ),
+        (
+            "suggestions",
+            pretty_stdout(&suggestions),
+            vec!["\"suggestions\": []"],
+        ),
+        (
+            "text init",
+            String::from_utf8_lossy(&text_init.stdout).into_owned(),
+            vec!["Init ready"],
+        ),
+        (
+            "text setup",
+            String::from_utf8_lossy(&text_setup.stdout).into_owned(),
+            vec!["Setup ready"],
+        ),
+        (
+            "text index",
+            String::from_utf8_lossy(&text_index.stdout).into_owned(),
+            vec!["Index ready"],
+        ),
+        (
+            "text ingest",
+            String::from_utf8_lossy(&text_ingest.stdout).into_owned(),
+            vec!["Ingest file ready"],
+        ),
     ];
 
-    for entry in fs::read_dir(commands_dir).expect("read commands dir") {
-        let path = entry.expect("read command entry").path();
-        if path.extension().and_then(|extension| extension.to_str()) != Some("rs") {
-            continue;
-        }
-
-        let source = fs::read_to_string(&path).expect("read command source");
-        for pattern in placeholder_patterns {
+    for (label, output, patterns) in checks {
+        for pattern in patterns {
             assert!(
-                !source.contains(pattern),
-                "{} still contains placeholder pattern {pattern:?}",
-                path.display()
+                !output.contains(pattern),
+                "{label} output still contains placeholder pattern {pattern:?}:\n{output}"
             );
         }
     }
+}
+
+fn pretty_stdout(output: &std::process::Output) -> String {
+    serde_json::to_string_pretty(&common::json_stdout(output)).expect("pretty JSON stdout")
 }
 
 #[test]

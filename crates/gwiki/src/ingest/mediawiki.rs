@@ -102,10 +102,10 @@ mod tests {
             .expect("raw markdown written");
         assert!(raw.contains("# Gobby Editor"));
         assert!(raw.contains("source_kind: mediawiki"));
-        assert!(raw.contains("source_url: https://wiki.example.test/wiki/Gobby Editor"));
-        assert!(!raw.contains("source_url: https://wiki.example.test/wiki/Gobby\nEditor"));
+        assert!(raw.contains("source_url: \"https://wiki.example.test/wiki/Gobby Editor\""));
+        assert!(!raw.contains("source_url: \"https://wiki.example.test/wiki/Gobby\nEditor\""));
         assert!(raw.contains("revision_id: \"123456\""));
-        assert!(raw.contains("revision_timestamp: 2026-05-29T12:00:00Z"));
+        assert!(raw.contains("revision_timestamp: \"2026-05-29T12:00:00Z\""));
         assert!(raw.contains("category: Software"));
         assert!(!raw.contains("\n\nCategory: Software\n\n"));
         assert!(raw.contains("'''Gobby''' is a collaborative editor."));

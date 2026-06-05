@@ -176,11 +176,8 @@ pub(crate) fn refresh_url(record: &SourceRecord) -> &str {
 }
 
 fn is_http_url(value: &str) -> bool {
-    let value = value.trim();
-    value
-        .get(..7)
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("http://"))
-        || value
-            .get(..8)
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"))
+    let Ok(url) = url::Url::parse(value.trim()) else {
+        return false;
+    };
+    matches!(url.scheme(), "http" | "https") && url.host_str().is_some_and(|host| !host.is_empty())
 }

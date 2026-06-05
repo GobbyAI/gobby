@@ -123,17 +123,21 @@ impl GraphBoostBackend for FalkorGraphBoostBackend {
             });
         }
 
-        let (documents, links) = crate::falkor_graph::load_graph_boost_data(
+        let data = crate::falkor_graph::load_graph_boost_data(
             &mut self.client,
             &request.scope,
             self.config.document_query_limit,
             self.config.link_query_limit,
         )?;
-        let ranked_paths =
-            rank_link_neighborhood(&documents, &links, &request.seed_paths, request.limit);
+        let ranked_paths = rank_link_neighborhood(
+            &data.documents,
+            &data.links,
+            &request.seed_paths,
+            request.limit,
+        );
         Ok(GraphBoostOutcome {
             hits: graph_boost_hits(request.scope, ranked_paths, request.limit),
-            degradation: None,
+            degradation: data.degradation,
         })
     }
 }

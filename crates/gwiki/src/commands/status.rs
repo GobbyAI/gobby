@@ -55,40 +55,36 @@ fn runtime_status() -> Result<RuntimeStatus, WikiError> {
             .map_err(|error| WikiError::Config {
                 detail: format!("failed to resolve runtime config for gwiki status: {error}"),
             })?;
-    let falkor = gobby_core::config::resolve_falkordb_config(&mut source)
-        .ok_or_else(|| required_status_config("FalkorDB"))?;
-    let qdrant = gobby_core::config::resolve_qdrant_config(&mut source)
-        .filter(|config| {
-            config
-                .url
-                .as_deref()
-                .is_some_and(|url| !url.trim().is_empty())
-        })
-        .ok_or_else(|| required_status_config("Qdrant"))?;
-    let embedding = gobby_core::config::resolve_embedding_config(&mut source)
-        .ok_or_else(|| required_status_config("embedding endpoint"))?;
+    let falkor = gobby_core::config::resolve_falkordb_config(&mut source);
+    let qdrant = gobby_core::config::resolve_qdrant_config(&mut source).filter(|config| {
+        config
+            .url
+            .as_deref()
+            .is_some_and(|url| !url.trim().is_empty())
+    });
+    let embedding = gobby_core::config::resolve_embedding_config(&mut source);
     Ok(RuntimeStatus {
         status: "datastore-ready",
         mode: "postgres",
         services: json!({
             "postgres": {"configured": true},
-            "falkordb": {"configured": true, "host": falkor.host, "port": falkor.port},
-            "qdrant": {"configured": true, "url": qdrant.url},
-            "embeddings": {
-                "configured": true,
-                "api_base": embedding.api_base,
-                "model": embedding.model
-            },
+            "falkordb": falkor
+                .map(|config| json!({"configured": true, "host": config.host, "port": config.port}))
+                .unwrap_or_else(|| json!({"configured": false})),
+            "qdrant": qdrant
+                .map(|config| json!({"configured": true, "url": config.url}))
+                .unwrap_or_else(|| json!({"configured": false})),
+            "embeddings": embedding
+                .map(|config| {
+                    json!({
+                        "configured": true,
+                        "api_base": config.api_base,
+                        "model": config.model
+                    })
+                })
+                .unwrap_or_else(|| json!({"configured": false})),
         }),
     })
-}
-
-fn required_status_config(service: &'static str) -> WikiError {
-    WikiError::Config {
-        detail: format!(
-            "gwiki status requires {service} when PostgreSQL is configured; run `gwiki setup --standalone` or attach to Gobby's full datastore stack"
-        ),
-    }
 }
 
 fn gobby_home() -> Result<std::path::PathBuf, WikiError> {

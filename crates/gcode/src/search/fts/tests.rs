@@ -209,13 +209,17 @@ mod serial_db {
 
 #[test]
 fn resolve_graph_symbol_by_id_resolves_exact_symbol() {
-    let Some((mut conn, _database_url)) = connect_overlay_visibility_test_db() else {
+    let Some((mut conn, database_url)) = connect_overlay_visibility_test_db() else {
         return;
     };
 
     let project_id = unique_test_id("gcode-graph-symbol-by-id");
     cleanup_single_project(&mut conn, &project_id);
     insert_project(&mut conn, &project_id, "/tmp/gcode-graph-symbol-by-id");
+    let _cleanup = SingleProjectCleanup {
+        database_url,
+        project_id: project_id.clone(),
+    };
     insert_file(&mut conn, &project_id, "src/target.rs", "rust", 1);
     insert_symbol(
         &mut conn,
@@ -229,7 +233,6 @@ fn resolve_graph_symbol_by_id_resolves_exact_symbol() {
     let resolved = resolve_graph_symbol_by_id(&mut conn, &symbol_id, &project_id)
         .expect("resolve symbol by id")
         .expect("symbol resolves");
-    cleanup_single_project(&mut conn, &project_id);
 
     assert_eq!(resolved.id, symbol_id);
     assert_eq!(resolved.display_name, "target_symbol");
@@ -342,6 +345,19 @@ impl OverlayFixtureCleanup {
 impl Drop for OverlayFixtureCleanup {
     fn drop(&mut self) {
         let _ = self.cleanup();
+    }
+}
+
+struct SingleProjectCleanup {
+    database_url: String,
+    project_id: String,
+}
+
+impl Drop for SingleProjectCleanup {
+    fn drop(&mut self) {
+        if let Ok(mut conn) = gobby_core::postgres::connect_readwrite(&self.database_url) {
+            cleanup_single_project(&mut conn, &self.project_id);
+        }
     }
 }
 

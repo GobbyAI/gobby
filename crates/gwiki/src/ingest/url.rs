@@ -740,8 +740,8 @@ mod tests {
         let raw = std::fs::read_to_string(temp.path().join(&result.raw_path))
             .expect("raw markdown written");
         assert!(raw.contains("# Durable Wikis"));
-        assert!(raw.contains("canonical_url: https://example.com/docs/wiki"));
-        assert!(raw.contains("fetched_at: 2026-05-29T16:00:00Z"));
+        assert!(raw.contains("canonical_url: \"https://example.com/docs/wiki\""));
+        assert!(raw.contains("fetched_at: \"2026-05-29T16:00:00Z\""));
         assert!(raw.contains("content_type: text/html"));
         assert!(raw.contains(&format!("source_hash: {expected_hash}")));
         assert!(raw.contains("Capture source material."));

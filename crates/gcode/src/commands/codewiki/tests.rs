@@ -404,6 +404,23 @@ fn emits_bounded_mermaid() {
 }
 
 #[test]
+fn bounded_component_edges_prefers_edges_nearest_seed() {
+    let seed_components = BTreeSet::from(["seed".to_string()]);
+    let edges = BTreeSet::from([
+        ("a1".to_string(), "a2".to_string()),
+        ("seed".to_string(), "a2".to_string()),
+        ("seed".to_string(), "z1".to_string()),
+    ]);
+
+    let bounded = render::bounded_component_edges(&seed_components, &edges, 2, 1);
+
+    assert_eq!(
+        bounded,
+        BTreeSet::from([("seed".to_string(), "a2".to_string())])
+    );
+}
+
+#[test]
 fn mermaid_degrades_without_falkordb() {
     let input = CodewikiInput {
         files: vec!["src/api/handler.rs".to_string()],

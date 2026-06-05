@@ -287,7 +287,7 @@ pub(crate) enum Command {
         /// Unsupported: use raw rg for filesystem grep
         #[arg(short = 'v', long = "invert-match", hide = true, action = ArgAction::SetTrue)]
         unsupported_invert_match: bool,
-        /// Unsupported: use raw rg for filesystem grep
+        /// Unsupported long alias; short -w is reserved for --word
         #[arg(long = "word-regexp", hide = true, action = ArgAction::SetTrue)]
         unsupported_word_regexp: bool,
         /// Unsupported: use raw rg for filesystem grep

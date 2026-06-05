@@ -358,12 +358,12 @@ mod tests {
             .expect("raw markdown written");
         assert!(raw.contains("# research"));
         assert!(raw.contains("source_kind: wayback"));
-        assert!(raw.contains("original_url: https://example.com/research"));
+        assert!(raw.contains("original_url: \"https://example.com/research\""));
         assert!(raw.contains(
-            "capture_url: https://web.archive.org/web/20260529123456/https://example.com/research"
+            "capture_url: \"https://web.archive.org/web/20260529123456/https://example.com/research\""
         ));
         assert!(raw.contains("capture_timestamp: \"20260529123456\""));
-        assert!(raw.contains("fetched_at: 2026-05-29T18:10:00Z"));
+        assert!(raw.contains("fetched_at: \"2026-05-29T18:10:00Z\""));
         assert!(raw.contains("Archived & decoded page body."));
         assert!(!raw.contains("ignore()"));
         assert!(!raw.contains("display:none"));

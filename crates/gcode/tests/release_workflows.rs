@@ -117,14 +117,8 @@ fn release_workflows_pin_github_release_action_by_sha() {
             assert!(
                 release_uses
                     .iter()
-                    .any(|uses| *uses == release_ref.as_str()),
+                    .all(|uses| *uses == release_ref.as_str()),
                 "release-{tool}.yml should pin softprops/action-gh-release by SHA"
-            );
-            assert!(
-                !release_uses
-                    .iter()
-                    .any(|uses| *uses == "softprops/action-gh-release@v2"),
-                "release-{tool}.yml should not use a mutable softprops/action-gh-release tag"
             );
         }
     }

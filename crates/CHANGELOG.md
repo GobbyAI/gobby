@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### gcode
 
+- **Breaking:** `gcode grep -w` now maps to `--word` for indexed ASCII
+  identifier matching. The hidden `--word-regexp` compatibility flag remains
+  unsupported and no longer owns the `-w` short flag.
 - Added `gcode grep -w/--word` for ASCII identifier whole-word matching while
   preserving Rust regex patterns such as `\bidentifier\b` and clear invalid
   regex errors.
