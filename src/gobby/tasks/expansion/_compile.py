@@ -7,6 +7,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, cast
 
+from gobby.config.tasks import TaskExpansionConfig
 from gobby.plans.parser import Kind
 from gobby.storage.expansion_runs import ExpansionRun
 from gobby.storage.tasks import Task
@@ -21,11 +22,33 @@ from gobby.tasks.expansion._common import (
     _strip_frontmatter,
     list_agent_definitions,
 )
-from gobby.utils.json_helpers import extract_json_object
 from gobby.utils.project_context import get_project_context
 
 logger = logging.getLogger(__name__)
 _BUNDLED_PROMPTS_DIR = Path(__file__).resolve().parents[2] / "install" / "shared" / "prompts"
+
+
+def _expansion_feature_config(expansion_config: Any, run: ExpansionRun) -> Any:
+    if expansion_config is None:
+        expansion_config = TaskExpansionConfig()
+    if not run.provider and not run.model:
+        return expansion_config
+
+    provider = run.provider
+    model = run.model
+    if provider is None:
+        provider, _separator, _model = expansion_config.candidates[0].partition("/")
+    if model is None:
+        model = _model_for_provider(expansion_config.candidates, provider)
+    return expansion_config.model_copy(update={"candidates": [f"{provider}/{model}"]})
+
+
+def _model_for_provider(candidates: list[str], provider: str) -> str:
+    prefix = f"{provider}/"
+    for candidate in candidates:
+        if candidate.startswith(prefix):
+            return candidate.removeprefix(prefix)
+    raise ValueError(f"No expansion candidate configured for provider {provider!r}")
 
 
 async def compile_run(
@@ -191,33 +214,18 @@ async def _invoke_llm_compile(
     )
     system_prompt = self._render_prompt(system_path, {"tdd_mode": True, **prompt_context})
     user_prompt = self._render_prompt(prompt_path, prompt_context)
-    provider_name = run.provider or (expansion_config.provider if expansion_config else "claude")
-    model_name = run.model or (expansion_config.model if expansion_config else "opus")
-
-    provider = self.llm_service.get_provider(provider_name)
     scope = f"run={run.id}" + (f" phase={phase_number}" if phase_number is not None else "")
+    feature_config = _expansion_feature_config(expansion_config, run)
     try:
-        result = await provider.generate_json(
-            user_prompt, system_prompt=system_prompt, model=model_name
+        result = await self.llm_service.call_json_feature(
+            feature_config,
+            user_prompt,
+            system_prompt=system_prompt,
+            caller="tasks.expansion.compile",
         )
         return cast(dict[str, Any], result)
     except Exception as e:
-        logger.debug(
-            "generate_json failed for expansion %s; falling back to generate_text",
-            scope,
-            exc_info=True,
-        )
-        response_text = await provider.generate_text(
-            user_prompt,
-            system_prompt=system_prompt,
-            model=model_name,
-            max_tokens=8000,
-            caller="tasks.expansion.text_fallback",
-        )
-        parsed = extract_json_object(response_text)
-        if parsed is None:
-            raise ValueError("Expansion compiler did not return valid JSON") from e
-        return parsed
+        raise ValueError(f"Expansion compiler did not return valid JSON for {scope}") from e
 
 
 def _build_prompt_context(self: Any, run: ExpansionRun, task: Task) -> dict[str, Any]:

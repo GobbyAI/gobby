@@ -1,10 +1,14 @@
 """Code index configuration."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from gobby.config.feature_base import FeatureProfile, default_candidates_for_profile
 
 
 class CodeIndexConfig(BaseModel):
     """Configuration for native AST-based code indexing."""
+
+    model_config = ConfigDict(extra="forbid")
 
     enabled: bool = Field(
         default=True,
@@ -81,13 +85,18 @@ class CodeIndexConfig(BaseModel):
         default=20,
         description="Max symbols to summarize per maintenance pass",
     )
-    summary_provider: str = Field(
-        default="claude",
-        description="LLM provider for summary generation",
+    summary_profile: FeatureProfile = Field(
+        default=FeatureProfile.LOW,
+        description="Capability profile for symbol summary generation",
     )
-    summary_model: str = Field(
-        default="haiku",
-        description="Model for summary generation (cheap/fast recommended)",
+    summary_candidates: list[str] = Field(
+        default_factory=list,
+        description="Ordered provider/model candidates for symbol summary generation",
+    )
+    summary_max_concurrency: int = Field(
+        default=2,
+        ge=1,
+        description="Maximum concurrent symbol summary LLM calls",
     )
     sync_worker_interval_seconds: float = Field(
         default=5.0,
@@ -121,3 +130,14 @@ class CodeIndexConfig(BaseModel):
         ],
         description="Additional file extensions to index for content search only (no AST parsing)",
     )
+
+    @model_validator(mode="after")
+    def populate_summary_candidates(self) -> "CodeIndexConfig":
+        """Fill default summary candidates from the summary profile."""
+        if not self.summary_candidates:
+            self.summary_candidates = list(default_candidates_for_profile(self.summary_profile))
+        invalid = [candidate for candidate in self.summary_candidates if "/" not in candidate]
+        if invalid:
+            joined = ", ".join(repr(candidate) for candidate in invalid)
+            raise ValueError(f"summary_candidates must use provider/model format: {joined}")
+        return self

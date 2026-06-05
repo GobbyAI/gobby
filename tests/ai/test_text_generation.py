@@ -50,6 +50,28 @@ class UsageAdapter:
         )
 
 
+class FailingAdapter:
+    def __init__(self, message: str = "boom") -> None:
+        self.message = message
+        self.requests: list[TextGenerationRequest] = []
+
+    async def generate(self, request: TextGenerationRequest) -> str:
+        self.requests.append(request)
+        raise RuntimeError(self.message)
+
+
+class JSONAdapter(RecordingAdapter):
+    async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
+        self.requests.append(request)
+        return {"provider": self.provider, "model": request.model}
+
+
+class JSONTextAdapter(RecordingAdapter):
+    async def generate(self, request: TextGenerationRequest) -> str:
+        self.requests.append(request)
+        return '```json\n{"ok": true, "model": "%s"}\n```' % (request.model or "")
+
+
 @pytest.mark.asyncio
 async def test_text_generation_service_selects_available_registry_binding() -> None:
     providers = {
@@ -104,7 +126,95 @@ async def test_text_generation_service_generate_result_preserves_usage() -> None
 
     assert result.text == "Generated text"
     assert result.usage == {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}
+    assert result.provider == "local"
     assert adapter.requests[-1].prompt == "summarize"
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_falls_back_across_profile_candidates() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("qwen-local",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                available=True,
+                models=("haiku",),
+            ),
+        ]
+    )
+    local = FailingAdapter()
+    claude = RecordingAdapter("claude")
+    service = TextGenerationService(registry, {"local": local, "claude": claude})
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="summarize",
+            profile="feature_low",
+            candidates=("local/qwen-local", "claude/haiku"),
+        )
+    )
+
+    assert result.text == "claude:summarize"
+    assert result.provider == "claude"
+    assert result.model == "haiku"
+    assert local.requests[0].model == "qwen-local"
+    assert claude.requests[0].model == "haiku"
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_uses_native_json_adapter() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("qwen-local",),
+            )
+        ]
+    )
+    adapter = JSONAdapter("local")
+    service = TextGenerationService(registry, {"local": adapter})
+
+    result = await service.generate_json(
+        TextGenerationRequest(prompt="classify", provider="local", model="qwen-local")
+    )
+
+    assert result == {"provider": "local", "model": "qwen-local"}
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_parses_json_text_fallback() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.3-codex",),
+            )
+        ]
+    )
+    adapter = JSONTextAdapter("codex")
+    service = TextGenerationService(registry, {"codex": adapter})
+
+    result = await service.generate_json(
+        TextGenerationRequest(prompt="classify", provider="codex", model="gpt-5.3-codex")
+    )
+
+    assert result == {"ok": True, "model": "gpt-5.3-codex"}
+    assert adapter.requests[0].system_prompt is not None
+    assert "valid JSON object" in adapter.requests[0].system_prompt
 
 
 @pytest.mark.asyncio

@@ -21,6 +21,14 @@ logger = logging.getLogger(__name__)
 SECRET_PLACEHOLDER_PATTERN = re.compile(r"<YOUR_[A-Z0-9_]+>")
 
 
+def _claude_model_candidate(candidates: list[str]) -> str:
+    for candidate in candidates:
+        provider, separator, model = candidate.partition("/")
+        if separator and provider.strip() == "claude" and model.strip():
+            return model.strip()
+    raise RuntimeError("Tool-based MCP import requires a claude/* candidate")
+
+
 class MCPServerImporter:
     """Handles importing MCP servers from various sources."""
 
@@ -198,7 +206,7 @@ class MCPServerImporter:
                 system_prompt=system_prompt,
                 allowed_tools=["WebFetch"],
                 max_turns=3,
-                model=self.import_config.model,
+                model=_claude_model_candidate(self.import_config.candidates),
             )
 
             # Parse and add if no secrets needed
@@ -253,7 +261,7 @@ class MCPServerImporter:
                 system_prompt=system_prompt,
                 allowed_tools=["WebSearch", "WebFetch"],
                 max_turns=5,
-                model=self.import_config.model,
+                model=_claude_model_candidate(self.import_config.candidates),
             )
 
             # Parse and add if no secrets needed

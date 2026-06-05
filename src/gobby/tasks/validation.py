@@ -22,7 +22,6 @@ from gobby.config.tasks import TaskValidationConfig
 from gobby.llm import LLMService
 from gobby.prompts import PromptLoader
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.json_helpers import extract_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -706,28 +705,17 @@ class TaskValidator:
         prompt = self._loader.render(prompt_path, template_context)
 
         try:
-            provider = self.llm_service.get_provider(self.config.provider)
-            response_content = await provider.generate_text(
-                prompt=prompt,
+            result_data = await self.llm_service.call_json_feature(
+                self.config,
+                prompt,
                 system_prompt=self.config.system_prompt,
-                model=self.config.model,
                 caller="tasks.validation",
             )
 
-            if not response_content or not response_content.strip():
+            if not result_data:
                 logger.warning(f"Empty LLM response for task {task_id} validation")
                 return ValidationResult(
                     status="pending", feedback="Validation failed: Empty response from LLM"
-                )
-
-            logger.debug(f"Validation LLM response for {task_id}: {response_content[:200]}...")
-
-            # Extract JSON using shared utility
-            result_data = extract_json_object(response_content)
-            if result_data is None:
-                logger.warning(f"Failed to parse JSON from validation response for {task_id}")
-                return ValidationResult(
-                    status="pending", feedback="Validation failed: Could not parse response"
                 )
 
             return ValidationResult(

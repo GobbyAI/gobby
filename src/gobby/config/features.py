@@ -13,7 +13,7 @@ Extracted from app.py using Strangler Fig pattern for code decomposition.
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from gobby.config.feature_base import FeatureDefaultConfig, ModelTier
+from gobby.config.feature_base import FeatureDefaultConfig, FeatureProfile
 
 __all__ = [
     "ChatConfig",
@@ -60,21 +60,11 @@ class ToolSummarizerConfig(FeatureDefaultConfig):
 
 
 class MergeResolutionConfig(FeatureDefaultConfig):
-    """Configuration for merge conflict resolution LLM calls.
+    """Configuration for merge conflict resolution LLM calls."""
 
-    `model` is the primary model choice (e.g. "sonnet"). `tier` (ModelTier) is
-    only consulted as a fallback selector when the primary/local provider fails
-    — see LLMService.call_feature() for the fallback path. `model` is
-    authoritative for normal operation.
-    """
-
-    model: str = Field(
-        default="sonnet",
-        description="Primary model for merge resolution. Authoritative under normal operation.",
-    )
-    tier: ModelTier = Field(
-        default=ModelTier.MID,
-        description="Fallback complexity tier — determines fallback model when the primary/local provider fails",
+    profile: FeatureProfile = Field(
+        default=FeatureProfile.MID,
+        description="Capability profile for merge resolution.",
     )
 
 
@@ -104,13 +94,9 @@ class RecommendToolsConfig(FeatureDefaultConfig):
         default=True,
         description="Enable tool recommendation MCP tool",
     )
-    model: str = Field(
-        default="sonnet",
-        description="Model to use for tool recommendations",
-    )
-    tier: ModelTier = Field(
-        default=ModelTier.MID,
-        description="Complexity tier — determines fallback model when local provider fails",
+    profile: FeatureProfile = Field(
+        default=FeatureProfile.MID,
+        description="Capability profile for tool recommendations.",
     )
 
     prompt_path: str | None = Field(
@@ -261,13 +247,9 @@ class ProjectVerificationConfig(BaseModel):
 class ChatConfig(FeatureDefaultConfig):
     """Chat mode configuration."""
 
-    model: str = Field(
-        default="opus",
-        description="Default model for chat sessions",
-    )
-    tier: ModelTier = Field(
-        default=ModelTier.HIGH,
-        description="Complexity tier — determines fallback model when local provider fails",
+    profile: FeatureProfile = Field(
+        default=FeatureProfile.HIGH,
+        description="Capability profile for chat sessions.",
     )
     default_mode: str = Field(
         default="plan",

@@ -14,7 +14,7 @@ Extracted from app.py using Strangler Fig pattern for code decomposition.
 
 from pydantic import BaseModel, Field, field_validator
 
-from gobby.config.feature_base import FeatureDefaultConfig, ModelTier
+from gobby.config.feature_base import FeatureDefaultConfig
 
 __all__ = [
     "ChatHistoryConfig",
@@ -101,14 +101,6 @@ class SessionSummaryConfig(FeatureDefaultConfig):
         default=True,
         description="Enable LLM-based session summary generation",
     )
-    model: str = Field(
-        default="sonnet",
-        description="Model to use for session summary generation",
-    )
-    tier: ModelTier = Field(
-        default=ModelTier.MID,
-        description="Complexity tier — determines fallback model when local provider fails",
-    )
     prompt: str = Field(
         default="""Generate a concise session summary for handoff to another agent or future session.
 
@@ -159,10 +151,6 @@ class MemoryRecallConfig(FeatureDefaultConfig):
     enabled: bool = Field(
         default=True,
         description="Enable the LLM-driven memory recall runner.",
-    )
-    tier: ModelTier = Field(
-        default=ModelTier.LOW,
-        description="Complexity tier for memory recall model fallback.",
     )
     timeout: int = Field(
         default=60,

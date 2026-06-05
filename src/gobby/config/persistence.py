@@ -15,7 +15,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, field_validator
 
-from gobby.config.feature_base import FeatureDefaultConfig, ModelTier
+from gobby.config.feature_base import FeatureDefaultConfig
 
 logger = logging.getLogger(__name__)
 
@@ -240,15 +240,6 @@ class EmbeddingsConfig(BaseModel):
 class MemoryKnowledgeGraphConfig(FeatureDefaultConfig):
     """LLM configuration for memory knowledge-graph extraction."""
 
-    model: str = Field(
-        default="haiku",
-        description="Model for KG extraction (cheap/fast recommended)",
-    )
-    tier: ModelTier = Field(
-        default=ModelTier.LOW,
-        description="Complexity tier — determines fallback model when local provider fails",
-    )
-
 
 class MemoryStaleAuditConfig(FeatureDefaultConfig):
     """LLM configuration for stale memory audit classification."""
@@ -256,14 +247,6 @@ class MemoryStaleAuditConfig(FeatureDefaultConfig):
     enabled: bool = Field(
         default=True,
         description="Enable LLM-backed stale memory classification",
-    )
-    model: str = Field(
-        default="haiku",
-        description="Model for stale memory classification (cheap/fast recommended)",
-    )
-    tier: ModelTier = Field(
-        default=ModelTier.LOW,
-        description="Complexity tier — determines fallback model when local provider fails",
     )
     prompt_path: str = Field(
         default="memory/stale_audit",

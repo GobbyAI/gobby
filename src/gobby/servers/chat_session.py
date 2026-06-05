@@ -283,22 +283,6 @@ class ChatSession(ChatSessionPermissionsMixin):
 
         resolved_model = await self._resolve_requested_model(model, env)
 
-        # Route through local LLM endpoint when configured. A model='local'
-        # selection above takes precedence and has already injected env.
-        if (
-            "ANTHROPIC_BASE_URL" not in env
-            and self._config
-            and hasattr(self._config, "local_llm")
-            and self._config.local_llm.enabled
-        ):
-            local_llm = self._config.local_llm
-            if local_llm.endpoint and "claude" in local_llm.providers:
-                env["ANTHROPIC_BASE_URL"] = local_llm.endpoint
-                logger.info(
-                    f"ChatSession {self.conversation_id} using local LLM endpoint: "
-                    f"{local_llm.endpoint}"
-                )
-
         resolved_effort = self._resolve_reasoning_effort()
         settings_path = await materialize_claude_settings_async(
             base_settings_path=_HEADLESS_SETTINGS,

@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.config.tasks import TaskValidationConfig
-from gobby.llm import LLMProvider, LLMService
+from gobby.llm import LLMService
 from gobby.tasks.validation import (
     TaskValidator,
     ValidationResult,
@@ -498,20 +498,18 @@ class TestTaskValidatorTestStrategy:
     @pytest.fixture
     def mock_llm(self):
         llm = MagicMock(spec=LLMService)
-        provider = AsyncMock(spec=LLMProvider)
-        llm.get_provider.return_value = provider
+        llm.call_json_feature = AsyncMock()
         return llm
 
     @pytest.fixture
     def config(self):
-        return TaskValidationConfig(enabled=True, provider="claude", model="test-model")
+        return TaskValidationConfig(enabled=True, candidates=["claude/test-model"])
 
     @pytest.mark.asyncio
     async def test_validate_with_manual_category(self, config, mock_llm):
         """Manual category uses the normal test strategy prompt section."""
         validator = TaskValidator(config, mock_llm)
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.return_value = '{"status": "valid", "feedback": "OK"}'
+        mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "OK"}
 
         result = await validator.validate_task(
             task_id="task-1",
@@ -522,8 +520,8 @@ class TestTaskValidatorTestStrategy:
         )
 
         assert result.status == "valid"
-        call_args = mock_provider.generate_text.call_args
-        prompt = call_args.kwargs["prompt"]
+        call_args = mock_llm.call_json_feature.call_args
+        prompt = call_args.args[1]
         assert "Test Strategy: manual" in prompt
         assert "MANUAL testing" not in prompt
         assert "Do NOT require automated test files" not in prompt
@@ -532,8 +530,7 @@ class TestTaskValidatorTestStrategy:
     async def test_validate_with_manual_category_uppercase(self, config, mock_llm):
         """Uppercase manual category does not trigger a special prompt branch."""
         validator = TaskValidator(config, mock_llm)
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.return_value = '{"status": "valid", "feedback": "OK"}'
+        mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "OK"}
 
         result = await validator.validate_task(
             task_id="task-1",
@@ -544,8 +541,8 @@ class TestTaskValidatorTestStrategy:
         )
 
         assert result.status == "valid"
-        call_args = mock_provider.generate_text.call_args
-        prompt = call_args.kwargs["prompt"]
+        call_args = mock_llm.call_json_feature.call_args
+        prompt = call_args.args[1]
         assert "Test Strategy: MANUAL" in prompt
         assert "MANUAL testing" not in prompt
         assert "Do NOT require automated test files" not in prompt
@@ -554,8 +551,7 @@ class TestTaskValidatorTestStrategy:
     async def test_validate_with_automated_category(self, config, mock_llm):
         """Test validation with category='automated' (lines 531-532)."""
         validator = TaskValidator(config, mock_llm)
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.return_value = '{"status": "valid", "feedback": "OK"}'
+        mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "OK"}
 
         result = await validator.validate_task(
             task_id="task-1",
@@ -566,8 +562,8 @@ class TestTaskValidatorTestStrategy:
         )
 
         assert result.status == "valid"
-        call_args = mock_provider.generate_text.call_args
-        prompt = call_args.kwargs["prompt"]
+        call_args = mock_llm.call_json_feature.call_args
+        prompt = call_args.args[1]
         assert "Test Strategy: automated" in prompt
         # Should not have obsolete manual-specific guidance
         assert "MANUAL testing" not in prompt
@@ -576,8 +572,7 @@ class TestTaskValidatorTestStrategy:
     async def test_validate_without_category(self, config, mock_llm):
         """Test validation without category parameter."""
         validator = TaskValidator(config, mock_llm)
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.return_value = '{"status": "valid", "feedback": "OK"}'
+        mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "OK"}
 
         result = await validator.validate_task(
             task_id="task-1",
@@ -587,8 +582,8 @@ class TestTaskValidatorTestStrategy:
         )
 
         assert result.status == "valid"
-        call_args = mock_provider.generate_text.call_args
-        prompt = call_args.kwargs["prompt"]
+        call_args = mock_llm.call_json_feature.call_args
+        prompt = call_args.args[1]
         # Should not have test strategy section
         assert "Test Strategy:" not in prompt
 
@@ -596,8 +591,7 @@ class TestTaskValidatorTestStrategy:
     async def test_validate_with_custom_category(self, config, mock_llm):
         """Test validation with custom category value."""
         validator = TaskValidator(config, mock_llm)
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.return_value = '{"status": "valid", "feedback": "OK"}'
+        mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "OK"}
 
         result = await validator.validate_task(
             task_id="task-1",
@@ -608,8 +602,8 @@ class TestTaskValidatorTestStrategy:
         )
 
         assert result.status == "valid"
-        call_args = mock_provider.generate_text.call_args
-        prompt = call_args.kwargs["prompt"]
+        call_args = mock_llm.call_json_feature.call_args
+        prompt = call_args.args[1]
         assert "Test Strategy: integration" in prompt
         # Should not have obsolete manual-specific guidance
         assert "MANUAL testing" not in prompt
@@ -648,26 +642,23 @@ class TestTaskValidatorCustomPrompt:
     @pytest.fixture
     def mock_llm(self):
         llm = MagicMock(spec=LLMService)
-        provider = AsyncMock(spec=LLMProvider)
-        llm.get_provider.return_value = provider
+        llm.call_json_feature = AsyncMock()
         return llm
 
     @pytest.fixture
     def config(self):
-        return TaskValidationConfig(enabled=True, provider="claude", model="test-model")
+        return TaskValidationConfig(enabled=True, candidates=["claude/test-model"])
 
     @pytest.mark.asyncio
     async def test_validate_uses_system_prompt(self, mock_llm):
         """Test validation passes system_prompt to provider."""
         config = TaskValidationConfig(
             enabled=True,
-            provider="claude",
-            model="test-model",
+            candidates=["claude/test-model"],
             system_prompt="You are a code reviewer",
         )
         validator = TaskValidator(config, mock_llm)
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.return_value = '{"status": "valid", "feedback": "OK"}'
+        mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "OK"}
 
         await validator.validate_task(
             task_id="task-1",
@@ -676,7 +667,7 @@ class TestTaskValidatorCustomPrompt:
             changes_summary="Changes",
         )
 
-        call_args = mock_provider.generate_text.call_args
+        call_args = mock_llm.call_json_feature.call_args
         assert call_args.kwargs["system_prompt"] == "You are a code reviewer"
 
 
@@ -772,20 +763,18 @@ class TestIntegrationScenarios:
     @pytest.fixture
     def mock_llm(self):
         llm = MagicMock(spec=LLMService)
-        provider = AsyncMock(spec=LLMProvider)
-        llm.get_provider.return_value = provider
+        llm.call_json_feature = AsyncMock()
         return llm
 
     @pytest.fixture
     def config(self):
-        return TaskValidationConfig(enabled=True, provider="claude", model="test-model")
+        return TaskValidationConfig(enabled=True, candidates=["claude/test-model"])
 
     @pytest.mark.asyncio
     async def test_validation_with_large_file_context(self, config, mock_llm, tmp_path):
         """Test validation with large file context gets truncated."""
         validator = TaskValidator(config, mock_llm)
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.return_value = '{"status": "valid", "feedback": "OK"}'
+        mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "OK"}
 
         # Create a large file
         large_file = tmp_path / "large.py"
@@ -801,8 +790,8 @@ class TestIntegrationScenarios:
 
         assert result.status == "valid"
         # Verify the prompt was called and context was truncated
-        call_args = mock_provider.generate_text.call_args
-        prompt = call_args.kwargs["prompt"]
+        call_args = mock_llm.call_json_feature.call_args
+        prompt = call_args.args[1]
         # Context should be truncated to 50000 chars
         assert len(prompt) < 150000  # Reasonable upper bound
 
@@ -901,13 +890,12 @@ class TestTaskValidatorMerged:
     @pytest.fixture
     def mock_llm(self):
         llm = MagicMock(spec=LLMService)
-        provider = AsyncMock(spec=LLMProvider)
-        llm.get_provider.return_value = provider
+        llm.call_json_feature = AsyncMock()
         return llm
 
     @pytest.fixture
     def config(self):
-        return TaskValidationConfig(enabled=True, provider="claude", model="test-model")
+        return TaskValidationConfig(enabled=True, candidates=["claude/test-model"])
 
     @pytest.mark.asyncio
     async def test_validate_task_disabled(self, mock_llm):
@@ -929,17 +917,13 @@ class TestTaskValidatorMerged:
     @pytest.mark.asyncio
     async def test_validate_task_success(self, config, mock_llm):
         validator = TaskValidator(config, mock_llm)
-
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.return_value = (
-            '```json\n{"status": "valid", "feedback": "Good job"}\n```'
-        )
+        mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "Good job"}
 
         result = await validator.validate_task("task-1", "title", "instr", "summary")
 
         assert result.status == "valid"
         assert result.feedback == "Good job"
-        mock_provider.generate_text.assert_called_once()
+        mock_llm.call_json_feature.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_validate_task_with_context(self, config, mock_llm, tmp_path):
@@ -948,8 +932,7 @@ class TestTaskValidatorMerged:
         test_file = tmp_path / "test.txt"
         test_file.write_text("file content")
 
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.return_value = '{"status": "invalid", "feedback": "Bad"}'
+        mock_llm.call_json_feature.return_value = {"status": "invalid", "feedback": "Bad"}
 
         result = await validator.validate_task(
             "task-1", "title", "instr", "summary", context_files=[str(test_file)]
@@ -957,15 +940,14 @@ class TestTaskValidatorMerged:
 
         assert result.status == "invalid"
         # Verify context was gathered
-        call_args = mock_provider.generate_text.call_args
-        prompt = call_args.kwargs["prompt"]
+        call_args = mock_llm.call_json_feature.call_args
+        prompt = call_args.args[1]
         assert "file content" in prompt
 
     @pytest.mark.asyncio
     async def test_validate_task_llm_error(self, config, mock_llm):
         validator = TaskValidator(config, mock_llm)
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.side_effect = Exception("LLM Error")
+        mock_llm.call_json_feature.side_effect = Exception("LLM Error")
 
         result = await validator.validate_task("task-1", "title", "instr", "summary")
         assert result.status == "pending"
@@ -974,8 +956,7 @@ class TestTaskValidatorMerged:
     @pytest.mark.asyncio
     async def test_validate_task_bad_json(self, config, mock_llm):
         validator = TaskValidator(config, mock_llm)
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.return_value = "Not JSON"
+        mock_llm.call_json_feature.side_effect = ValueError("Invalid JSON")
 
         result = await validator.validate_task("task-1", "title", "instr", "summary")
         assert result.status == "pending"  # JSON decode error caught
@@ -1299,20 +1280,18 @@ class TestTaskValidatorAdditionalEdgeCases:
     @pytest.fixture
     def mock_llm(self):
         llm = MagicMock(spec=LLMService)
-        provider = AsyncMock(spec=LLMProvider)
-        llm.get_provider.return_value = provider
+        llm.call_json_feature = AsyncMock()
         return llm
 
     @pytest.fixture
     def config(self):
-        return TaskValidationConfig(enabled=True, provider="claude", model="test-model")
+        return TaskValidationConfig(enabled=True, candidates=["claude/test-model"])
 
     @pytest.mark.asyncio
     async def test_validate_with_validation_criteria_only(self, config, mock_llm):
         """Test validation with validation_criteria but no description."""
         validator = TaskValidator(config, mock_llm)
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.return_value = '{"status": "valid", "feedback": "OK"}'
+        mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "OK"}
 
         result = await validator.validate_task(
             task_id="task-1",
@@ -1324,8 +1303,8 @@ class TestTaskValidatorAdditionalEdgeCases:
 
         assert result.status == "valid"
         # Verify criteria was used in prompt
-        call_args = mock_provider.generate_text.call_args
-        prompt = call_args.kwargs["prompt"]
+        call_args = mock_llm.call_json_feature.call_args
+        prompt = call_args.args[1]
         assert "Validation Criteria" in prompt
         assert "Must have tests" in prompt
 
@@ -1333,8 +1312,7 @@ class TestTaskValidatorAdditionalEdgeCases:
     async def test_validate_with_git_diff_context(self, config, mock_llm):
         """Test validation detects git diff format in changes_summary."""
         validator = TaskValidator(config, mock_llm)
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.return_value = '{"status": "valid", "feedback": "OK"}'
+        mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "OK"}
 
         # Git diff formatted summary
         git_diff = """Git diff from HEAD~1:
@@ -1353,8 +1331,8 @@ class TestTaskValidatorAdditionalEdgeCases:
         )
 
         assert result.status == "valid"
-        call_args = mock_provider.generate_text.call_args
-        prompt = call_args.kwargs["prompt"]
+        call_args = mock_llm.call_json_feature.call_args
+        prompt = call_args.args[1]
         # Should include git diff context hint
         assert "Code Changes (git diff)" in prompt or "ACTUAL code changes" in prompt
 
@@ -1362,8 +1340,7 @@ class TestTaskValidatorAdditionalEdgeCases:
     async def test_validate_with_at_symbol_diff(self, config, mock_llm):
         """Test that @@ in changes_summary triggers git diff detection."""
         validator = TaskValidator(config, mock_llm)
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.return_value = '{"status": "valid", "feedback": "OK"}'
+        mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "OK"}
 
         result = await validator.validate_task(
             task_id="task-1",
@@ -1376,10 +1353,9 @@ class TestTaskValidatorAdditionalEdgeCases:
 
     @pytest.mark.asyncio
     async def test_validate_empty_llm_response(self, config, mock_llm):
-        """Test handling of empty string LLM response."""
+        """Test handling of empty JSON result."""
         validator = TaskValidator(config, mock_llm)
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.return_value = ""
+        mock_llm.call_json_feature.return_value = {}
 
         result = await validator.validate_task(
             task_id="task-1",
@@ -1393,10 +1369,9 @@ class TestTaskValidatorAdditionalEdgeCases:
 
     @pytest.mark.asyncio
     async def test_validate_whitespace_only_response(self, config, mock_llm):
-        """Test handling of whitespace-only LLM response."""
+        """Test handling of missing JSON result."""
         validator = TaskValidator(config, mock_llm)
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.return_value = "   \n\t  "
+        mock_llm.call_json_feature.return_value = None
 
         result = await validator.validate_task(
             task_id="task-1",
@@ -1410,12 +1385,12 @@ class TestTaskValidatorAdditionalEdgeCases:
 
     @pytest.mark.asyncio
     async def test_validate_json_without_code_block(self, config, mock_llm):
-        """Test parsing JSON without markdown code block."""
+        """Test handling a structured invalid result."""
         validator = TaskValidator(config, mock_llm)
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.return_value = (
-            '{"status": "invalid", "feedback": "Missing tests"}'
-        )
+        mock_llm.call_json_feature.return_value = {
+            "status": "invalid",
+            "feedback": "Missing tests",
+        }
 
         result = await validator.validate_task(
             task_id="task-1",
@@ -1429,13 +1404,12 @@ class TestTaskValidatorAdditionalEdgeCases:
 
     @pytest.mark.asyncio
     async def test_validate_json_with_preamble(self, config, mock_llm):
-        """Test parsing JSON with LLM preamble text."""
+        """Test handling a structured valid result."""
         validator = TaskValidator(config, mock_llm)
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.return_value = (
-            "Based on my analysis, here is my assessment:\n"
-            '{"status": "valid", "feedback": "All criteria met"}'
-        )
+        mock_llm.call_json_feature.return_value = {
+            "status": "valid",
+            "feedback": "All criteria met",
+        }
 
         result = await validator.validate_task(
             task_id="task-1",
@@ -1449,10 +1423,9 @@ class TestTaskValidatorAdditionalEdgeCases:
 
     @pytest.mark.asyncio
     async def test_validate_malformed_json(self, config, mock_llm):
-        """Test handling of malformed JSON response."""
+        """Test handling a structured JSON service failure."""
         validator = TaskValidator(config, mock_llm)
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.return_value = '{"status": "valid", feedback: missing quotes}'
+        mock_llm.call_json_feature.side_effect = ValueError("Malformed JSON")
 
         result = await validator.validate_task(
             task_id="task-1",
@@ -1468,8 +1441,7 @@ class TestTaskValidatorAdditionalEdgeCases:
     async def test_validate_missing_status_field(self, config, mock_llm):
         """Test handling of JSON response missing status field."""
         validator = TaskValidator(config, mock_llm)
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.return_value = '{"feedback": "Looks good"}'
+        mock_llm.call_json_feature.return_value = {"feedback": "Looks good"}
 
         result = await validator.validate_task(
             task_id="task-1",
@@ -1485,8 +1457,7 @@ class TestTaskValidatorAdditionalEdgeCases:
     async def test_validate_with_file_context_error(self, config, mock_llm, tmp_path):
         """Test graceful handling when context file cannot be read."""
         validator = TaskValidator(config, mock_llm)
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.return_value = '{"status": "valid", "feedback": "OK"}'
+        mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "OK"}
 
         # Non-existent file
         missing_file = tmp_path / "nonexistent.py"
@@ -1509,18 +1480,17 @@ class TestTaskValidatorLLMErrors:
     @pytest.fixture
     def mock_llm(self):
         llm = MagicMock(spec=LLMService)
-        provider = AsyncMock(spec=LLMProvider)
-        llm.get_provider.return_value = provider
+        llm.call_json_feature = AsyncMock()
         return llm
 
     @pytest.fixture
     def config(self):
-        return TaskValidationConfig(enabled=True, provider="claude", model="test-model")
+        return TaskValidationConfig(enabled=True, candidates=["claude/test-model"])
 
     @pytest.mark.asyncio
     async def test_validate_provider_not_found(self, config, mock_llm):
         """Test handling when LLM provider is not found."""
-        mock_llm.get_provider.side_effect = ValueError("Provider not configured")
+        mock_llm.call_json_feature.side_effect = ValueError("Provider not configured")
         validator = TaskValidator(config, mock_llm)
 
         result = await validator.validate_task(
@@ -1536,9 +1506,7 @@ class TestTaskValidatorLLMErrors:
     @pytest.mark.asyncio
     async def test_validate_timeout_error(self, config, mock_llm):
         """Test handling of timeout during LLM call."""
-
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.side_effect = TimeoutError("Request timed out")
+        mock_llm.call_json_feature.side_effect = TimeoutError("Request timed out")
         validator = TaskValidator(config, mock_llm)
 
         result = await validator.validate_task(
@@ -1554,8 +1522,7 @@ class TestTaskValidatorLLMErrors:
     @pytest.mark.asyncio
     async def test_validate_connection_error(self, config, mock_llm):
         """Test handling of connection error during LLM call."""
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.side_effect = ConnectionError("Network error")
+        mock_llm.call_json_feature.side_effect = ConnectionError("Network error")
         validator = TaskValidator(config, mock_llm)
 
         result = await validator.validate_task(
@@ -1579,7 +1546,7 @@ class TestGatherValidationContext:
 
     @pytest.fixture
     def config(self):
-        return TaskValidationConfig(enabled=True, provider="claude", model="test-model")
+        return TaskValidationConfig(enabled=True, candidates=["claude/test-model"])
 
     @pytest.mark.asyncio
     async def test_gather_single_file(self, config, mock_llm, tmp_path):

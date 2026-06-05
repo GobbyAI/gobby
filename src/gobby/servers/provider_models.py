@@ -226,6 +226,8 @@ def _merge_models(
 def _configured_models_for_provider(
     config: DaemonConfig | None, provider: str
 ) -> list[dict[str, Any]]:
+    if provider != "claude":
+        return []
     providers = getattr(config, "llm_providers", None)
     provider_config = getattr(providers, provider, None) if providers is not None else None
     fields_set = getattr(providers, "model_fields_set", None)

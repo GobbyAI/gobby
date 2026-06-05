@@ -42,6 +42,8 @@ class TextGeneratePayload(BaseModel):
 
     prompt: str = Field(min_length=1)
     provider: str | None = None
+    profile: str | None = None
+    candidates: tuple[str, ...] = ()
     system_prompt: str | None = None
     model: str | None = None
     max_tokens: int | None = Field(default=None, gt=0)
@@ -67,15 +69,12 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
 
         service = build_daemon_text_generation_service(config)
         try:
-            binding = service.registry.select(
-                AICapability.TEXT_GENERATE,
-                provider=payload.provider,
-                model=payload.model,
-            )
             result = await service.generate_result(
                 TextGenerationRequest(
                     prompt=payload.prompt,
                     provider=payload.provider,
+                    profile=payload.profile,
+                    candidates=payload.candidates,
                     system_prompt=payload.system_prompt,
                     model=payload.model,
                     max_tokens=payload.max_tokens,
@@ -86,8 +85,8 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
             response: dict[str, Any] = {
                 "text": result.text,
                 "capability": AICapability.TEXT_GENERATE.value,
-                "provider": binding.provider,
-                "model": payload.model or next(iter(binding.models), None),
+                "provider": result.provider,
+                "model": result.model,
             }
             if result.usage is not None:
                 response["usage"] = result.usage

@@ -1,20 +1,10 @@
-"""Generation capability binding configuration module.
+"""Claude generation capability binding configuration module."""
 
-This module keeps daemon-owned LLMProvider binding config. CLI/app-server
-providers such as Codex own their authentication and model configuration.
-"""
+from typing import Literal
 
-import logging
-from typing import Any, Literal
-
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = ["LLMProviderConfig", "LLMProvidersConfig"]
-
-
-logger = logging.getLogger(__name__)
-
-_OBSOLETE_CLI_PROVIDER_KEYS = frozenset({"codex", "gemini", "grok", "qwen"})
 
 
 class LLMProviderConfig(BaseModel):
@@ -44,7 +34,7 @@ class LLMProviderConfig(BaseModel):
 
 
 class LLMProvidersConfig(BaseModel):
-    """Configuration for LLMProvider-backed generation capability bindings.
+    """Claude SDK generation capability binding configuration.
 
     Example YAML:
     ```yaml
@@ -56,17 +46,6 @@ class LLMProvidersConfig(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-
-    @model_validator(mode="before")
-    @classmethod
-    def drop_obsolete_cli_provider_keys(cls, data: Any) -> Any:
-        """Ignore removed CLI/app-server provider entries from older configs."""
-        if not isinstance(data, dict):
-            return data
-        dropped = sorted(key for key in data if key in _OBSOLETE_CLI_PROVIDER_KEYS)
-        if dropped:
-            logger.warning("Ignored deprecated provider config: %s", ", ".join(dropped))
-        return {key: value for key, value in data.items() if key not in _OBSOLETE_CLI_PROVIDER_KEYS}
 
     default_model: str | None = Field(
         default="opus",

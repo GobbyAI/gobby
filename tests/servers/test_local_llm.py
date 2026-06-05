@@ -1,142 +1,65 @@
-"""Tests for local LLM support via ANTHROPIC_BASE_URL."""
+"""Tests for local generation configuration."""
 
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
-from gobby.config.app import DaemonConfig, LocalConfig, LocalLLMConfig
+from gobby.config.ai import LocalGenerationConfig
+from gobby.config.app import DaemonConfig, LocalConfig
 
 pytestmark = pytest.mark.unit
 
 
-class TestLocalLLMConfig:
-    """Tests for LocalLLMConfig model."""
+class TestLocalGenerationConfig:
+    """Tests for ai.generation.local config."""
 
     def test_defaults(self) -> None:
-        """LocalLLMConfig defaults to disabled with empty endpoint."""
-        cfg = LocalLLMConfig()
+        cfg = LocalGenerationConfig()
+
         assert cfg.enabled is False
-        assert cfg.endpoint == ""
-        assert cfg.providers == ["claude"]
+        assert cfg.api_base is None
+        assert cfg.model is None
+        assert cfg.api_key is None
 
-    def test_enabled_with_endpoint(self) -> None:
-        """LocalLLMConfig can be enabled with a custom endpoint."""
-        cfg = LocalLLMConfig(
+    def test_enabled_with_endpoint_and_model(self) -> None:
+        cfg = LocalGenerationConfig(
             enabled=True,
-            endpoint="http://localhost:1234/v1",
-            providers=["claude", "gemini"],
+            api_base="http://localhost:1234/v1",
+            model="qwen-coder",
+            api_key="local-key",
         )
+
         assert cfg.enabled is True
-        assert cfg.endpoint == "http://localhost:1234/v1"
-        assert cfg.providers == ["claude", "gemini"]
+        assert cfg.api_base == "http://localhost:1234/v1"
+        assert cfg.model == "qwen-coder"
+        assert cfg.api_key == "local-key"
 
-    def test_daemon_config_has_local_llm(self) -> None:
-        """DaemonConfig includes local_llm field with defaults."""
+    def test_enabled_requires_endpoint(self) -> None:
+        with pytest.raises(ValidationError, match="api_base"):
+            LocalGenerationConfig(enabled=True, model="qwen-coder")
+
+    def test_enabled_requires_model(self) -> None:
+        with pytest.raises(ValidationError, match="model"):
+            LocalGenerationConfig(enabled=True, api_base="http://localhost:1234/v1")
+
+    def test_daemon_config_has_ai_generation_local(self) -> None:
         config = DaemonConfig()
-        assert hasattr(config, "local_llm")
-        assert isinstance(config.local_llm, LocalLLMConfig)
-        assert config.local_llm.enabled is False
+
+        assert config.ai.generation.local.enabled is False
+
+    def test_daemon_config_rejects_removed_local_llm(self) -> None:
+        with pytest.raises(ValidationError, match="local_llm config has been removed"):
+            DaemonConfig(local_llm={"enabled": True, "endpoint": "http://localhost:1234/v1"})
 
 
-class TestChatSessionLocalLLM:
-    """Tests for ANTHROPIC_BASE_URL injection in ChatSession.start()."""
-
-    @pytest.mark.asyncio
-    async def test_env_includes_base_url_when_local_llm_enabled(self) -> None:
-        """ChatSession.start() sets ANTHROPIC_BASE_URL when local_llm is enabled."""
-        from gobby.servers.chat_session import ChatSession
-
-        session = ChatSession(conversation_id="test-conv")
-        config = MagicMock()
-        config.local_llm = LocalLLMConfig(
-            enabled=True,
-            endpoint="http://localhost:8080/v1",
-            providers=["claude"],
-        )
-        session._config = config
-
-        # Mock out the actual SDK client creation
-        with (
-            patch("gobby.servers.chat_session._find_cli_path", return_value="/usr/bin/claude"),
-            patch("gobby.servers.chat_session._find_project_root", return_value=None),
-            patch("gobby.servers.chat_session._load_chat_system_prompt", return_value="test"),
-            patch("gobby.servers.chat_session._build_gobby_mcp_entry", return_value={}),
-            patch("gobby.servers.chat_session.ClaudeSDKClient") as mock_sdk,
-        ):
-            mock_client = AsyncMock()
-            mock_sdk.return_value = mock_client
-
-            await session.start(model="opus")
-
-            # Verify the ClaudeSDKClient was created with ANTHROPIC_BASE_URL in env
-            call_kwargs = mock_sdk.call_args
-            options = call_kwargs.kwargs.get("options") or call_kwargs.args[0]
-            assert options.env.get("ANTHROPIC_BASE_URL") == "http://localhost:8080/v1"
-            assert mock_client.connect.await_count == 1
-
-    @pytest.mark.asyncio
-    async def test_env_omits_base_url_when_local_llm_disabled(self) -> None:
-        """ChatSession.start() does NOT set ANTHROPIC_BASE_URL when local_llm is disabled."""
-        from gobby.servers.chat_session import ChatSession
-
-        session = ChatSession(conversation_id="test-conv-2")
-        config = MagicMock()
-        config.local_llm = LocalLLMConfig(enabled=False, endpoint="http://localhost:8080/v1")
-        session._config = config
-
-        with (
-            patch("gobby.servers.chat_session._find_cli_path", return_value="/usr/bin/claude"),
-            patch("gobby.servers.chat_session._find_project_root", return_value=None),
-            patch("gobby.servers.chat_session._load_chat_system_prompt", return_value="test"),
-            patch("gobby.servers.chat_session._build_gobby_mcp_entry", return_value={}),
-            patch("gobby.servers.chat_session.ClaudeSDKClient") as mock_sdk,
-        ):
-            mock_client = AsyncMock()
-            mock_sdk.return_value = mock_client
-
-            await session.start(model="opus")
-
-            call_kwargs = mock_sdk.call_args
-            options = call_kwargs.kwargs.get("options") or call_kwargs.args[0]
-            assert "ANTHROPIC_BASE_URL" not in options.env
-            assert mock_client.connect.await_count == 1
-
-    @pytest.mark.asyncio
-    async def test_env_omits_base_url_when_provider_not_claude(self) -> None:
-        """ChatSession.start() does NOT set ANTHROPIC_BASE_URL when claude not in providers."""
-        from gobby.servers.chat_session import ChatSession
-
-        session = ChatSession(conversation_id="test-conv-3")
-        config = MagicMock()
-        config.local_llm = LocalLLMConfig(
-            enabled=True,
-            endpoint="http://localhost:8080/v1",
-            providers=["gemini"],  # Not claude
-        )
-        session._config = config
-
-        with (
-            patch("gobby.servers.chat_session._find_cli_path", return_value="/usr/bin/claude"),
-            patch("gobby.servers.chat_session._find_project_root", return_value=None),
-            patch("gobby.servers.chat_session._load_chat_system_prompt", return_value="test"),
-            patch("gobby.servers.chat_session._build_gobby_mcp_entry", return_value={}),
-            patch("gobby.servers.chat_session.ClaudeSDKClient") as mock_sdk,
-        ):
-            mock_client = AsyncMock()
-            mock_sdk.return_value = mock_client
-
-            await session.start(model="opus")
-
-            call_kwargs = mock_sdk.call_args
-            options = call_kwargs.kwargs.get("options") or call_kwargs.args[0]
-            assert "ANTHROPIC_BASE_URL" not in options.env
-            assert mock_client.connect.await_count == 1
+class TestChatSessionLocalModel:
+    """Tests for explicit model='local' routing in ChatSession.start()."""
 
     @pytest.mark.asyncio
     async def test_model_local_uses_configured_local_endpoint(self) -> None:
-        """Selecting model='local' resolves the configured local endpoint + model."""
         from gobby.servers.chat_session import ChatSession
 
         session = ChatSession(conversation_id="test-local-model")
@@ -146,7 +69,6 @@ class TestChatSessionLocalLLM:
             model="qwen-coder-32b",
             api_key="test-local-key",
         )
-        config.local_llm = LocalLLMConfig()
         session._config = config
 
         with (

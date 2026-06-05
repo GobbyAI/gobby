@@ -1,12 +1,13 @@
 """LLM-based symbol summary generation.
 
-Uses a cheap/fast model (Haiku by default) for one-sentence summaries of code symbols.
-Summaries are cached in code_symbols.summary and invalidated on content_hash change
-(see CodeIndexStorage.upsert_symbols).
+Uses the configured low-cost feature profile for one-sentence summaries of code
+symbols. Summaries are cached in code_symbols.summary and invalidated on
+content_hash change (see CodeIndexStorage.upsert_symbols).
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -39,8 +40,9 @@ class SymbolSummarizer:
         config: CodeIndexConfig,
     ) -> None:
         self._text_generation = text_generation
-        self._provider_name = config.summary_provider
-        self._model_name = config.summary_model
+        self._profile = str(config.summary_profile)
+        self._candidates = tuple(config.summary_candidates)
+        self._semaphore = asyncio.Semaphore(config.summary_max_concurrency)
 
     async def summarize_one(self, symbol: Symbol, source: str) -> str | None:
         """Generate a one-sentence summary for a single symbol.
@@ -61,15 +63,16 @@ class SymbolSummarizer:
         )
 
         try:
-            text = await self._text_generation.generate(
-                TextGenerationRequest(
-                    prompt=prompt,
-                    provider=self._provider_name,
-                    model=self._model_name,
-                    max_tokens=100,
-                    caller="code_index.symbol_summary",
+            async with self._semaphore:
+                text = await self._text_generation.generate(
+                    TextGenerationRequest(
+                        prompt=prompt,
+                        profile=self._profile,
+                        candidates=self._candidates,
+                        max_tokens=100,
+                        caller="code_index.symbol_summary",
+                    )
                 )
-            )
             text = text.strip()
             return text if text else None
         except Exception as e:
@@ -90,12 +93,18 @@ class SymbolSummarizer:
         Returns:
             Dict of {symbol_id: summary} for successful summaries.
         """
-        results: dict[str, str] = {}
+        jobs: list[tuple[Symbol, str]] = []
         for symbol in symbols:
             source = read_source(symbol)
             if not source:
                 continue
-            summary = await self.summarize_one(symbol, source)
+            jobs.append((symbol, source))
+
+        results: dict[str, str] = {}
+        summaries = await asyncio.gather(
+            *(self.summarize_one(symbol, source) for symbol, source in jobs)
+        )
+        for (symbol, _source), summary in zip(jobs, summaries, strict=True):
             if summary:
                 results[symbol.id] = summary
         return results

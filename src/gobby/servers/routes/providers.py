@@ -127,6 +127,8 @@ def _friendly_label(provider: str, model: str) -> str:
 
 
 def _configured_model_entries(config: Any, provider: str) -> list[dict[str, Any]]:
+    if provider != "claude":
+        return []
     providers = getattr(config, "llm_providers", None)
     provider_config = getattr(providers, provider, None) if providers is not None else None
     fields_set = getattr(providers, "model_fields_set", None)
@@ -202,8 +204,10 @@ def _build_model_catalog(
                 source,
             )
 
-    local_cfg = getattr(config, "local", None) if config is not None else None
-    if local_cfg and getattr(local_cfg, "model", None):
+    ai_cfg = getattr(config, "ai", None) if config is not None else None
+    generation_cfg = getattr(ai_cfg, "generation", None)
+    local_cfg = getattr(generation_cfg, "local", None)
+    if local_cfg and local_cfg.enabled and local_cfg.model:
         claude_entries, source = catalog["claude"]
         if not any(entry["value"] == "local" for entry in claude_entries):
             claude_entries.append({"value": "local", "label": f"Local ({local_cfg.model})"})

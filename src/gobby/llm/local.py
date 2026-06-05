@@ -4,9 +4,9 @@ Local LLM provider implementation.
 Routes LLM calls to a local OpenAI-compatible endpoint (LM Studio, Ollama,
 vLLM, llama.cpp server, etc.) via the ``openai`` Python SDK.
 
-Used when a feature config sets ``provider: "local"`` — e.g. for title
-synthesis — giving lightweight, zero-cost inference with automatic
-fallback to Claude via the tier system when the local server is down.
+Used when feature candidate routing selects a ``local/<model>`` candidate,
+giving lightweight, zero-cost inference while preserving profile fallback to
+the next configured candidate when the local server is down.
 """
 
 import json
@@ -69,8 +69,10 @@ class LocalLLMProvider(LLMProvider):
     Talks to any server that implements the ``/v1/chat/completions``
     endpoint (LM Studio, Ollama, vLLM, etc.) using the ``openai`` SDK.
 
-    Configuration is read from ``DaemonConfig.local`` (``LocalConfig``):
-    - ``url``: Base URL (e.g. ``http://localhost:1234/v1``)
+    Configuration is read from ``DaemonConfig.ai.generation.local`` for
+    feature text generation, with ``DaemonConfig.local`` retained for local
+    vision/local-agent paths:
+    - ``api_base``/``url``: Base URL (e.g. ``http://localhost:1234/v1``)
     - ``model``: Default model name to request
     - ``api_key``: Optional API key (some local servers require one)
     """
@@ -87,21 +89,32 @@ class LocalLLMProvider(LLMProvider):
         """Initialise from DaemonConfig.
 
         Args:
-            config: DaemonConfig instance — must have a non-None ``local`` field.
+            config: DaemonConfig instance with local generation or local endpoint config.
 
         Raises:
-            ValueError: If ``config.local`` is not configured.
+            ValueError: If no local endpoint is configured.
         """
-        local_cfg = getattr(config, "local", None)
+        ai_cfg = getattr(config, "ai", None)
+        generation_cfg = getattr(ai_cfg, "generation", None)
+        local_generation_cfg = getattr(generation_cfg, "local", None)
+        local_cfg = None
+        if local_generation_cfg and getattr(local_generation_cfg, "enabled", False):
+            local_cfg = local_generation_cfg
+        elif getattr(config, "local", None):
+            local_cfg = config.local
         if not local_cfg:
             raise ValueError(
-                "Provider 'local' requires the 'local' config section "
-                "(url, model). Configure it in your daemon YAML."
+                "Provider 'local' requires ai.generation.local or local endpoint config. "
+                "Configure ai.generation.local for feature generation."
             )
 
-        self._url: str = local_cfg.url
-        self._default_model: str = local_cfg.model
-        self._api_key: str = local_cfg.api_key or "not-needed"
+        url = getattr(local_cfg, "api_base", None) or getattr(local_cfg, "url", None)
+        model = getattr(local_cfg, "model", None)
+        if not url or not model:
+            raise ValueError("Provider 'local' requires a local endpoint URL and model")
+        self._url = str(url)
+        self._default_model = str(model)
+        self._api_key = str(getattr(local_cfg, "api_key", None) or "not-needed")
         self._client: Any | None = None
 
         try:

@@ -16,6 +16,9 @@ class LLMTextResult:
 
     text: str
     usage: dict[str, int] | None = None
+    provider: str | None = None
+    model: str | None = None
+    profile: str | None = None
 
 
 class LLMProviderCancellation(RuntimeError):

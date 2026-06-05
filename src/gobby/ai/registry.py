@@ -539,16 +539,18 @@ def _text_generate_binding(
 
 
 def _local_text_generate_binding(config: DaemonConfig | None) -> CapabilityBinding:
-    local_config = config.local if config and config.local else None
+    ai_config = getattr(config, "ai", None)
+    generation_config = getattr(ai_config, "generation", None)
+    local_config = getattr(generation_config, "local", None)
     metadata: dict[str, object] = {"display_name": "Local"}
-    if local_config:
-        metadata["api_base"] = local_config.url
+    if local_config and local_config.enabled:
+        metadata["api_base"] = local_config.api_base or ""
         return CapabilityBinding(
             capability=AICapability.TEXT_GENERATE,
             provider="local",
             adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
             available=True,
-            models=(local_config.model,),
+            models=(local_config.model,) if local_config.model else (),
             metadata=metadata,
         )
 

@@ -155,19 +155,13 @@ class TestLLMProvidersConfigGetEnabledProviders:
         config = LLMProvidersConfig(claude=LLMProviderConfig(models="claude-haiku-4-5"))
         assert config.get_enabled_providers() == ["claude"]
 
-    def test_ignores_removed_cli_provider_config_keys(self) -> None:
-        """CLI/app-server providers no longer become LLMProvider config entries."""
+    @pytest.mark.parametrize("provider", ["codex", "gemini", "grok", "qwen"])
+    def test_rejects_removed_cli_provider_config_keys(self, provider: str) -> None:
+        """CLI/app-server providers are no longer accepted under llm_providers."""
         from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
 
-        config = LLMProvidersConfig(
-            codex=LLMProviderConfig(models="gpt-5.4"),
-            gemini=LLMProviderConfig(models="gemini-pro"),
-            grok=LLMProviderConfig(models="grok"),
-            qwen=LLMProviderConfig(models="qwen"),
-        )
-
-        assert config.get_enabled_providers() == ["claude"]
-        assert not hasattr(config, "codex")
+        with pytest.raises(ValidationError):
+            LLMProvidersConfig(**{provider: LLMProviderConfig(models="removed")})
 
     def test_rejects_unknown_provider_config_keys(self) -> None:
         """Unknown provider keys still fail validation."""

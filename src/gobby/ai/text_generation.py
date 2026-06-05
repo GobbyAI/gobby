@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
+import logging
 import os
 import shlex
 import shutil
-from collections.abc import AsyncIterator, Callable, Mapping
-from dataclasses import dataclass
-from typing import Any, Protocol
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from dataclasses import dataclass, replace
+from typing import Any, Protocol, cast
 
 from gobby.adapters.acp_client import ACPClient, StreamEvent
 from gobby.adapters.gemini_acp_client import GeminiACPClient
@@ -18,10 +21,14 @@ from gobby.adapters.qwen_acp_client import QwenACPClient
 from gobby.ai.registry import (
     AICapability,
     AICapabilityRegistry,
+    CapabilityBinding,
     build_daemon_ai_capability_registry,
 )
 from gobby.config.app import DaemonConfig
+from gobby.config.feature_base import default_candidates_for_profile
 from gobby.llm.base import LLMProvider, LLMTextResult
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -30,6 +37,8 @@ class TextGenerationRequest:
 
     prompt: str
     provider: str | None = None
+    profile: str | None = None
+    candidates: tuple[str, ...] = ()
     system_prompt: str | None = None
     model: str | None = None
     max_tokens: int | None = None
@@ -42,6 +51,13 @@ class TextGenerateAdapter(Protocol):
 
     async def generate(self, request: TextGenerationRequest) -> str | LLMTextResult:
         """Generate text for the request."""
+
+
+class TextGenerateJSONAdapter(Protocol):
+    """Adapter with provider-native JSON generation support."""
+
+    async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
+        """Generate and parse JSON for the request."""
 
 
 TextGenerateAdapterFactory = Callable[[], TextGenerateAdapter]
@@ -71,33 +87,160 @@ class TextGenerationService:
 
     async def generate_result(self, request: TextGenerationRequest) -> LLMTextResult:
         """Select a text_generate binding and invoke its adapter with usage."""
-        binding = self._registry.select(
+        candidates = self._candidate_requests(request)
+        last_error: Exception | None = None
+        for candidate in candidates:
+            start = time.perf_counter()
+            binding: CapabilityBinding | None = None
+            try:
+                binding = self._select_binding(candidate)
+                adapter = self._adapter_for_provider(binding.provider)
+                result = await adapter.generate(candidate)
+                text_result = (
+                    result if isinstance(result, LLMTextResult) else LLMTextResult(text=result)
+                )
+                text_result = replace(
+                    text_result,
+                    provider=binding.provider,
+                    model=candidate.model or next(iter(binding.models), None),
+                    profile=candidate.profile,
+                )
+                self._log_generation_event(
+                    request=candidate,
+                    binding=binding,
+                    latency_ms=_elapsed_ms(start),
+                    success=True,
+                )
+                return text_result
+            except Exception as exc:
+                last_error = exc
+                self._log_generation_event(
+                    request=candidate,
+                    binding=binding,
+                    latency_ms=_elapsed_ms(start),
+                    success=False,
+                    error=exc,
+                )
+                if len(candidates) == 1:
+                    raise
+        raise RuntimeError("No text generation candidate succeeded") from last_error
+
+    async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
+        """Select a text_generate binding and return structured JSON."""
+        candidates = self._candidate_requests(request)
+        last_error: Exception | None = None
+        for candidate in candidates:
+            start = time.perf_counter()
+            binding: CapabilityBinding | None = None
+            parse_outcome = "not_attempted"
+            try:
+                binding = self._select_binding(candidate)
+                adapter = self._adapter_for_provider(binding.provider)
+                json_adapter = getattr(adapter, "generate_json", None)
+                if callable(json_adapter):
+                    typed_json_adapter = cast(
+                        Callable[[TextGenerationRequest], Awaitable[dict[str, Any]]],
+                        json_adapter,
+                    )
+                    result = await typed_json_adapter(candidate)
+                    parse_outcome = "provider_structured"
+                else:
+                    text = await adapter.generate(_json_request(candidate))
+                    raw = text.text if isinstance(text, LLMTextResult) else text
+                    result = _parse_json_text(raw)
+                    parse_outcome = "parsed_text"
+                self._log_generation_event(
+                    request=candidate,
+                    binding=binding,
+                    latency_ms=_elapsed_ms(start),
+                    success=True,
+                    json_parse_outcome=parse_outcome,
+                )
+                return result
+            except Exception as exc:
+                last_error = exc
+                if parse_outcome == "not_attempted" and isinstance(
+                    exc, (ValueError, json.JSONDecodeError)
+                ):
+                    parse_outcome = "parse_failed"
+                self._log_generation_event(
+                    request=candidate,
+                    binding=binding,
+                    latency_ms=_elapsed_ms(start),
+                    success=False,
+                    error=exc,
+                    json_parse_outcome=parse_outcome,
+                )
+                if len(candidates) == 1:
+                    raise
+        raise RuntimeError("No JSON generation candidate succeeded") from last_error
+
+    def _candidate_requests(
+        self, request: TextGenerationRequest
+    ) -> tuple[TextGenerationRequest, ...]:
+        candidates = request.candidates
+        if not candidates and request.profile:
+            candidates = default_candidates_for_profile(request.profile)
+        if not candidates:
+            return (request,)
+        return tuple(
+            replace(request, provider=provider, model=model)
+            for provider, model in (_parse_candidate(candidate) for candidate in candidates)
+        )
+
+    def _select_binding(self, request: TextGenerationRequest) -> CapabilityBinding:
+        return self._registry.select(
             AICapability.TEXT_GENERATE,
             provider=request.provider,
             model=request.model,
         )
-        adapter = self._adapters.get(binding.provider)
+
+    def _adapter_for_provider(self, provider: str) -> TextGenerateAdapter:
+        adapter = self._adapters.get(provider)
+        if adapter is not None:
+            return adapter
+
+        factory = self._adapter_factories.get(provider)
+        if factory is None:
+            raise RuntimeError(f"No text_generate adapter registered for provider {provider!r}")
+        try:
+            adapter = factory()
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to initialize text_generate adapter for provider {provider!r}"
+            ) from exc
         if adapter is None:
-            factory = self._adapter_factories.get(binding.provider)
-            if factory is None:
-                raise RuntimeError(
-                    f"No text_generate adapter registered for provider {binding.provider!r}"
-                )
-            try:
-                adapter = factory()
-            except Exception as exc:
-                raise RuntimeError(
-                    f"Failed to initialize text_generate adapter for provider {binding.provider!r}"
-                ) from exc
-            if adapter is None:
-                raise RuntimeError(
-                    f"text_generate adapter factory for provider {binding.provider!r} returned None"
-                )
-            self._adapters[binding.provider] = adapter
-        result = await adapter.generate(request)
-        if isinstance(result, LLMTextResult):
-            return result
-        return LLMTextResult(text=result)
+            raise RuntimeError(
+                f"text_generate adapter factory for provider {provider!r} returned None"
+            )
+        self._adapters[provider] = adapter
+        return adapter
+
+    def _log_generation_event(
+        self,
+        *,
+        request: TextGenerationRequest,
+        binding: CapabilityBinding | None,
+        latency_ms: float,
+        success: bool,
+        error: Exception | None = None,
+        json_parse_outcome: str | None = None,
+    ) -> None:
+        provider = binding.provider if binding else request.provider
+        model = request.model or (next(iter(binding.models), None) if binding else None)
+        logger.info(
+            "feature_llm_call",
+            extra={
+                "feature": request.caller,
+                "profile": request.profile,
+                "provider": provider,
+                "model": model,
+                "latency_ms": round(latency_ms, 2),
+                "success": success,
+                "error": str(error) if error else None,
+                "json_parse_outcome": json_parse_outcome,
+            },
+        )
 
 
 class LLMProviderTextGenerateAdapter:
@@ -112,6 +255,14 @@ class LLMProviderTextGenerateAdapter:
             system_prompt=request.system_prompt,
             model=request.model,
             max_tokens=request.max_tokens,
+            caller=request.caller,
+        )
+
+    async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
+        return await self._provider.generate_json(
+            request.prompt,
+            system_prompt=request.system_prompt,
+            model=request.model,
             caller=request.caller,
         )
 
@@ -284,7 +435,7 @@ def _daemon_text_generation_adapter_factories(
         "qwen": lambda: ACPTextGenerateAdapter(QwenACPClient),
         "droid": DroidCLITextGenerateAdapter,
     }
-    if config.local:
+    if config.ai.generation.local.enabled:
         factories["local"] = lambda: _local_text_generate_adapter(config)
     return factories
 
@@ -305,6 +456,42 @@ def _codex_app_server_client() -> CodexAppServerClientLike:
     from gobby.adapters.codex_impl.client import CodexAppServerClient
 
     return CodexAppServerClient()
+
+
+def _parse_candidate(candidate: str) -> tuple[str, str]:
+    provider, separator, model = candidate.partition("/")
+    if not separator or not provider.strip() or not model.strip():
+        raise ValueError(f"Feature candidate must use provider/model format: {candidate!r}")
+    return provider.strip(), model.strip()
+
+
+def _elapsed_ms(start: float) -> float:
+    return (time.perf_counter() - start) * 1000
+
+
+def _json_request(request: TextGenerationRequest) -> TextGenerationRequest:
+    system_prompt = request.system_prompt
+    json_instruction = "Respond with a single valid JSON object. Do not include markdown."
+    if system_prompt:
+        system_prompt = f"{system_prompt}\n\n{json_instruction}"
+    else:
+        system_prompt = json_instruction
+    return replace(request, system_prompt=system_prompt)
+
+
+def _parse_json_text(raw: str) -> dict[str, Any]:
+    stripped = raw.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if lines and lines[0].strip().startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        stripped = "\n".join(lines).strip()
+    parsed = json.loads(stripped)
+    if not isinstance(parsed, dict):
+        raise ValueError("Generated JSON must be an object")
+    return parsed
 
 
 def _compose_prompt(request: TextGenerationRequest) -> str:

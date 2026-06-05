@@ -1,12 +1,9 @@
-"""
-LLM Service for multi-provider support.
-
-Provides a unified interface for accessing multiple LLM providers (Claude, Codex)
-based on the multi-provider config structure with feature-specific provider routing.
-"""
+"""LLM service facade for feature generation and direct provider access."""
 
 import logging
 from typing import TYPE_CHECKING, Any
+
+from gobby.ai.text_generation import TextGenerationRequest, build_daemon_text_generation_service
 
 if TYPE_CHECKING:
     from gobby.config.app import (
@@ -16,32 +13,40 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_CLAUDE_MODEL_ALIASES = frozenset({"haiku", "sonnet", "opus"})
+
+def _parse_feature_candidate(candidate: str) -> tuple[str, str]:
+    provider, separator, model = candidate.partition("/")
+    if not separator or not provider.strip() or not model.strip():
+        raise ValueError(f"Feature candidate must use provider/model format: {candidate!r}")
+    return provider.strip(), model.strip()
 
 
-# Type alias for feature configs that have provider/model/prompt fields
-FeatureConfig = "SessionSummaryConfig | DigestConfig | RecommendToolsConfig"
+def _feature_request(
+    feature_config: Any,
+    prompt: str,
+    *,
+    system_prompt: str | None,
+    max_tokens: int | None = None,
+    caller: str | None,
+) -> TextGenerationRequest:
+    candidates = tuple(getattr(feature_config, "candidates", ()) or ())
+    profile = getattr(feature_config, "profile", None)
+    return TextGenerationRequest(
+        prompt=prompt,
+        profile=str(profile) if profile else None,
+        candidates=candidates,
+        system_prompt=system_prompt,
+        max_tokens=max_tokens,
+        caller=caller,
+    )
 
 
 class LLMService:
     """
     Service for managing multiple LLM providers.
 
-    Provides unified access to configured LLM providers and routes requests
-    to the appropriate provider based on feature configuration.
-
-    Example usage:
-        # Initialize with config
-        service = LLMService(config)
-
-        # Get provider by name
-        claude = service.get_provider("claude")
-
-        # Get provider for a feature (uses feature's provider/model config)
-        provider, model, prompt = service.get_provider_for_feature(config.session_summary)
-
-        # Use provider
-        result = await provider.generate_summary(context, prompt_template=prompt)
+    Provides direct access to LLMProvider-backed providers and routes feature
+    generation through the daemon text generation capability registry.
     """
 
     def __init__(self, config: "DaemonConfig"):
@@ -49,20 +54,15 @@ class LLMService:
         Initialize LLM service with configuration.
 
         Args:
-            config: Client configuration containing llm_providers settings.
-
-        Raises:
-            ValueError: If llm_providers is not configured.
+            config: Daemon configuration.
         """
         self._config = config
         self._providers: dict[str, LLMProvider] = {}
         self._initialized_providers: set[str] = set()
-
-        if not config.llm_providers:
-            raise ValueError("llm_providers config is required for LLMService")
+        self._text_generation = build_daemon_text_generation_service(config)
 
         # Log enabled providers
-        enabled = config.llm_providers.get_enabled_providers()
+        enabled = self.enabled_providers
         logger.debug(f"LLMService initialized with providers: {enabled}")
 
     def _get_provider_instance(self, name: str) -> "LLMProvider":
@@ -81,17 +81,24 @@ class LLMService:
         if name in self._providers:
             return self._providers[name]
 
-        # Handle "local" provider specially — its config lives on
-        # DaemonConfig.local, not inside llm_providers.
+        # Handle "local" provider specially; feature text generation uses
+        # ai.generation.local, while local vision/local-agent paths can still
+        # use the existing top-level local endpoint.
         if name == "local":
-            if not self._config.local:
+            local_generation = self._config.ai.generation.local
+            if not local_generation.enabled and not self._config.local:
                 raise ValueError(
-                    "Provider 'local' requires the 'local' config section (url, model)"
+                    "Provider 'local' requires ai.generation.local or local endpoint config"
                 )
             from gobby.llm.local import LocalLLMProvider
 
             provider: LLMProvider = LocalLLMProvider(self._config)
-            logger.debug("Initialized Local provider (url: %s)", self._config.local.url)
+            if local_generation.enabled:
+                local_url = local_generation.api_base
+            else:
+                assert self._config.local is not None
+                local_url = self._config.local.url
+            logger.debug("Initialized Local provider (url: %s)", local_url)
             self._providers[name] = provider
             self._initialized_providers.add(name)
             return provider
@@ -148,13 +155,12 @@ class LLMService:
         """
         Get provider, model, and prompt for a feature configuration.
 
-        Feature configs (SessionSummaryConfig, DigestConfig, etc.) specify
-        which provider and model to use for that feature. This method returns
-        the appropriate provider instance along with the configured model and prompt.
+        Feature configs now specify profile/candidates. This legacy helper
+        returns the first LLMProvider-backed candidate only.
 
         Args:
-            feature_config: Feature configuration object with provider, model, and
-                           optionally prompt fields.
+            feature_config: Feature configuration object with candidates and
+                optionally prompt fields.
 
         Returns:
             Tuple of (provider, model, prompt) where:
@@ -170,33 +176,21 @@ class LLMService:
             provider, model, prompt = service.get_provider_for_feature(config.session_summary)
             result = await provider.generate_summary(context, prompt_template=prompt)
         """
-        # Extract provider name from feature config
-        provider_name = getattr(feature_config, "provider", None)
-        if not provider_name:
-            raise ValueError(
-                f"Feature config {type(feature_config).__name__} missing 'provider' field"
-            )
-
-        # Extract model
-        model = getattr(feature_config, "model", None)
-        if not model:
-            raise ValueError(
-                f"Feature config {type(feature_config).__name__} missing 'model' field"
-            )
-
-        if provider_name != "claude" and model.strip().lower() in _CLAUDE_MODEL_ALIASES:
-            raise ValueError(
-                f"Feature config {type(feature_config).__name__} uses Claude model alias "
-                f"'{model}' with provider '{provider_name}'. "
-                "Only provider='claude' accepts haiku/sonnet/opus aliases."
-            )
-
-        # Extract prompt (optional)
+        candidates = tuple(getattr(feature_config, "candidates", ()) or ())
+        if not candidates:
+            raise ValueError(f"Feature config {type(feature_config).__name__} missing candidates")
+        provider_name: str | None = None
+        model: str | None = None
+        for candidate in candidates:
+            candidate_provider, candidate_model = _parse_feature_candidate(candidate)
+            if candidate_provider in {"claude", "local"}:
+                provider_name = candidate_provider
+                model = candidate_model
+                break
+        if provider_name is None or model is None:
+            raise ValueError("Feature config has no LLMProvider-backed candidates")
         prompt = getattr(feature_config, "prompt", None)
-
-        # Get provider instance
         provider = self._get_provider_instance(provider_name)
-
         return provider, model, prompt
 
     def get_default_provider(self) -> "LLMProvider":
@@ -232,15 +226,11 @@ class LLMService:
         *,
         caller: str | None = None,
     ) -> str:
-        """Call generate_text for a feature config with tier-based fallback.
-
-        When the primary provider is ``"local"`` and the call fails with a
-        local feature error, this method automatically retries with the Claude
-        provider using the tier-appropriate model (haiku / sonnet / opus).
+        """Call text generation for a feature config through profile candidates.
 
         Args:
             feature_config: A FeatureDefaultConfig (or subclass) with
-                provider, model, and tier fields.
+                profile and candidates fields.
             prompt: User prompt.
             system_prompt: Optional system prompt.
             max_tokens: Optional max output tokens.
@@ -248,31 +238,15 @@ class LLMService:
         Returns:
             Generated text from the LLM.
         """
-        provider, model, _ = self.get_provider_for_feature(feature_config)
-        try:
-            return await provider.generate_text(
-                prompt,
-                system_prompt,
-                model,
-                max_tokens,
-                caller=caller,
-            )
-        except (ValueError, RuntimeError) as e:
-            if provider.provider_name != "local":
-                raise
-
-            fallback, fallback_model = self._local_fallback_provider(
+        return await self._text_generation.generate(
+            _feature_request(
                 feature_config,
-                e,
-                operation="text",
-            )
-            return await fallback.generate_text(
                 prompt,
-                system_prompt,
-                fallback_model,
-                max_tokens,
+                system_prompt=system_prompt,
+                max_tokens=max_tokens,
                 caller=caller,
             )
+        )
 
     async def call_json_feature(
         self,
@@ -284,78 +258,28 @@ class LLMService:
     ) -> dict[str, Any]:
         """Call JSON generation for an LLM-backed feature.
 
-        Uses get_provider_for_feature(feature_config) to select provider and model, then calls
-        provider.generate_json(prompt, system_prompt, model, caller=caller). max_tokens is not
-        configurable here because generate_json uses provider-internal token limits.
-
-        Args:
-            feature_config: Feature config used by get_provider_for_feature.
-            prompt: User prompt to send to the selected provider.
-            system_prompt: Optional system prompt for JSON generation.
-            caller: Optional caller identifier for logging/tracing.
-
-        Returns:
-            Parsed JSON object as a dict.
-
-        When the selected provider is "local" and it raises a local feature error,
-        falls back to claude using
-        TIER_FALLBACK_MODEL[getattr(feature_config, "tier", ModelTier.LOW)] via
-        get_provider("claude").
+        Uses profile/candidate fallback and provider-native JSON support where
+        the selected adapter exposes it.
         """
-        provider, model, _ = self.get_provider_for_feature(feature_config)
-        try:
-            return await provider.generate_json(
-                prompt,
-                system_prompt,
-                model,
-                caller=caller,
-            )
-        except (ValueError, RuntimeError) as e:
-            if provider.provider_name != "local":
-                raise
-
-            fallback, fallback_model = self._local_fallback_provider(
+        return await self._text_generation.generate_json(
+            _feature_request(
                 feature_config,
-                e,
-                operation="JSON",
-            )
-            return await fallback.generate_json(
                 prompt,
-                system_prompt,
-                fallback_model,
+                system_prompt=system_prompt,
                 caller=caller,
             )
-
-    def _local_fallback_provider(
-        self,
-        feature_config: Any,
-        error: Exception,
-        *,
-        operation: str,
-    ) -> tuple["LLMProvider", str]:
-        """Return Claude fallback provider/model for a failed local feature call."""
-        from gobby.config.feature_base import TIER_FALLBACK_MODEL, ModelTier
-
-        tier = getattr(feature_config, "tier", ModelTier.LOW)
-        fallback_model = TIER_FALLBACK_MODEL[tier]
-        logger.warning(
-            "Local provider %s call failed (%s), falling back to claude/%s",
-            operation,
-            error,
-            fallback_model,
         )
-        return self.get_provider("claude"), fallback_model
 
     @property
     def enabled_providers(self) -> list[str]:
         """Get list of enabled provider names."""
-        if not self._config.llm_providers:
-            return []
-        # Copy before mutating — get_enabled_providers may return a cached list
-        providers = list(self._config.llm_providers.get_enabled_providers())
-        if self._config.local:
-            providers.append("local")
-        return providers
+        return [
+            binding.provider
+            for binding in self._text_generation.registry.bindings_for(
+                "text_generate",
+                include_unavailable=False,
+            )
+        ]
 
     @property
     def initialized_providers(self) -> list[str]:

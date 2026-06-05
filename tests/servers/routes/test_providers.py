@@ -9,7 +9,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from gobby.config.app import DaemonConfig, LocalConfig
+from gobby.config.ai import AIConfig, GenerationConfig, LocalGenerationConfig
+from gobby.config.app import DaemonConfig
 from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
 from gobby.servers.routes.providers import create_providers_router
 
@@ -328,10 +329,18 @@ class TestProviderModelsRoute:
         assert providers["codex"]["source"] == "live"
 
     def test_includes_local_claude_model_when_configured(self) -> None:
-        """Claude model catalog exposes a local option when daemon local config exists."""
+        """Claude model catalog exposes a local option for local generation config."""
         app = FastAPI()
         config = DaemonConfig(
-            local=LocalConfig(url="http://localhost:1234/v1", model="qwen-coder-32b"),
+            ai=AIConfig(
+                generation=GenerationConfig(
+                    local=LocalGenerationConfig(
+                        enabled=True,
+                        api_base="http://localhost:1234/v1",
+                        model="qwen-coder-32b",
+                    )
+                )
+            ),
         )
         server = SimpleNamespace(services=SimpleNamespace(config=config))
         app.include_router(create_providers_router(server))
@@ -386,8 +395,8 @@ class TestProviderModelsRoute:
             "gpt-5.2",
         ]
 
-    def test_current_catalog_supports_non_pydantic_non_claude_config_fallback(self) -> None:
-        """Intentional fallback: real LLMProvidersConfig drops Codex config today."""
+    def test_current_catalog_ignores_non_claude_provider_config(self) -> None:
+        """Only Claude reads llm_providers; Codex comes from provider discovery/static catalog."""
         app = FastAPI()
         config = SimpleNamespace(
             llm_providers=SimpleNamespace(
@@ -403,7 +412,8 @@ class TestProviderModelsRoute:
         response = client.get("/api/providers/models")
         providers = {p["provider"]: p for p in response.json()["providers"]}
 
-        assert providers["codex"]["models"][0]["value"] == "gpt-custom"
+        assert providers["codex"]["models"][0]["value"] == "gpt-5.5"
+        assert "gpt-custom" not in [m["value"] for m in providers["codex"]["models"]]
 
     def test_current_catalog_uses_static_gemini_preview_models(self) -> None:
         """Gemini models come from current provider catalog, not llm_providers config."""

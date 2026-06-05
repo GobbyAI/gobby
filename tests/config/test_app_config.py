@@ -31,6 +31,7 @@ from gobby.config.extensions import (
     WebhooksConfig,
     WebSocketBroadcastConfig,
 )
+from gobby.config.feature_base import FeatureProfile
 from gobby.config.features import (
     ChatConfig,
     ImportMCPServerConfig,
@@ -288,8 +289,8 @@ class TestSessionSummaryConfig:
         """Test default session summary config."""
         config = SessionSummaryConfig()
         assert config.enabled is True
-        assert config.provider == "claude"
-        assert config.model == "sonnet"
+        assert config.profile == FeatureProfile.LOW
+        assert "claude/haiku" in config.candidates
         # prompt now has a default template with placeholders
         assert config.prompt is not None
         assert "Generate a concise session summary" in config.prompt
@@ -298,13 +299,13 @@ class TestSessionSummaryConfig:
         """Test custom session summary config."""
         config = SessionSummaryConfig(
             enabled=False,
-            provider="gemini",
-            model="gemini-2.0-flash",
+            profile=FeatureProfile.MID,
+            candidates=["gemini/gemini-2.0-flash"],
             prompt="Custom prompt",
         )
         assert config.enabled is False
-        assert config.provider == "gemini"
-        assert config.model == "gemini-2.0-flash"
+        assert config.profile == FeatureProfile.MID
+        assert config.candidates == ["gemini/gemini-2.0-flash"]
         assert config.prompt == "Custom prompt"
 
 
@@ -377,21 +378,11 @@ class TestLLMProvidersConfig:
         providers = config.get_enabled_providers()
         assert providers == ["claude"]
 
-    def test_removed_cli_provider_configs_are_ignored(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """CLI/app-server providers do not become LLMProvider config entries."""
-        with caplog.at_level("WARNING", logger="gobby.config.llm_providers"):
-            config = LLMProvidersConfig(
-                codex=LLMProviderConfig(models="removed"),
-                gemini=LLMProviderConfig(models="removed"),
-                grok=LLMProviderConfig(models="removed"),
-                qwen=LLMProviderConfig(models="removed"),
-            )
-
-        assert config.get_enabled_providers() == ["claude"]
-        assert not hasattr(config, "codex")
-        assert "Ignored deprecated provider config: codex, gemini, grok, qwen" in caplog.text
+    @pytest.mark.parametrize("provider", ["codex", "gemini", "grok", "qwen"])
+    def test_removed_cli_provider_configs_fail_fast(self, provider: str) -> None:
+        """CLI/app-server providers are not accepted under llm_providers."""
+        with pytest.raises(ValidationError):
+            LLMProvidersConfig(**{provider: LLMProviderConfig(models="removed")})
 
     def test_unknown_provider_configs_are_rejected(self) -> None:
         """Unknown provider keys still fail validation."""
@@ -681,8 +672,8 @@ class TestLoadConfig:
                 config_store=DummyConfigStore(),
             )
 
-    def test_load_config_migrates_memory_kg_keys_from_db(self, temp_dir: Path) -> None:
-        """Legacy memory.kg_provider/kg_model DB keys migrate to memory.kg.*."""
+    def test_load_config_ignores_legacy_memory_kg_model_rows(self, temp_dir: Path) -> None:
+        """Legacy memory.kg_provider/kg_model DB rows no longer affect feature routing."""
 
         class DummyConfigStore:
             def get_all(self) -> dict[str, object]:
@@ -696,8 +687,8 @@ class TestLoadConfig:
             config_store=DummyConfigStore(),
         )
 
-        assert config.memory.kg.provider == "codex"
-        assert config.memory.kg.model == "gpt-5-mini"
+        assert config.memory.kg.profile == FeatureProfile.LOW
+        assert config.memory.kg.candidates[0] == "codex/gpt-5.3-codex-spark"
 
     def test_ai_embeddings_normalized_at_load(self, temp_dir: Path) -> None:
         """Canonical DB embedding keys populate the runtime embeddings model."""
@@ -1124,8 +1115,8 @@ class TestRecommendToolsConfig:
         """Test default recommend tools config."""
         config = RecommendToolsConfig()
         assert config.enabled is True
-        assert config.provider == "claude"
-        assert config.model == "sonnet"
+        assert config.profile == FeatureProfile.MID
+        assert "claude/sonnet" in config.candidates
         assert config.prompt_path is None  # Uses default prompt from prompts/
 
 
@@ -1136,8 +1127,8 @@ class TestImportMCPServerConfig:
         """Test default import MCP server config."""
         config = ImportMCPServerConfig()
         assert config.enabled is True
-        assert config.provider == "claude"
-        assert config.model == "haiku"
+        assert config.profile == FeatureProfile.LOW
+        assert "claude/haiku" in config.candidates
         assert config.prompt_path is None  # Uses DEFAULT_IMPORT_MCP_SERVER_PROMPT
 
 
@@ -1148,8 +1139,8 @@ class TestDigestConfig:
         """Test default digest config."""
         config = DigestConfig()
         assert config.enabled is True
-        assert config.provider == "claude"
-        assert config.model == "haiku"
+        assert config.profile == FeatureProfile.LOW
+        assert "claude/haiku" in config.candidates
         assert config.timeout == 30
 
     def test_timeout_validation(self) -> None:
@@ -1190,9 +1181,8 @@ class TestTaskExpansionConfig:
         """Test default task expansion config."""
         config = TaskExpansionConfig()
         assert config.enabled is True
-        assert config.provider == "claude"
-        assert config.model == "opus"  # Uses opus for complex task expansion
-        assert config.tier == "high"
+        assert config.profile == FeatureProfile.HIGH
+        assert "claude/opus" in config.candidates
         assert config.prompt_path is None  # Uses default prompt from prompts/
 
 
@@ -1203,9 +1193,8 @@ class TestTaskValidationConfig:
         """Test default task validation config."""
         config = TaskValidationConfig()
         assert config.enabled is True
-        assert config.provider == "claude"
-        assert config.model == "sonnet"
-        assert config.tier == "mid"
+        assert config.profile == FeatureProfile.MID
+        assert "claude/sonnet" in config.candidates
         assert config.prompt_path is None  # Uses default prompt from prompts/
 
 
@@ -1271,8 +1260,8 @@ class TestMemoryConfig:
         assert config.backend == "local"
         assert config.crossref_threshold == 0.3
         assert config.access_debounce_seconds == 60
-        assert config.kg.provider == "claude"
-        assert config.kg.model == "haiku"
+        assert config.kg.profile == FeatureProfile.LOW
+        assert "claude/haiku" in config.kg.candidates
 
     def test_crossref_threshold_validation(self) -> None:
         """Test crossref_threshold validation."""
@@ -1333,8 +1322,8 @@ class TestToolSummarizerConfig:
         """Test default tool summarizer config."""
         config = ToolSummarizerConfig()
         assert config.enabled is True
-        assert config.provider == "claude"
-        assert config.model == "haiku"
+        assert config.profile == FeatureProfile.LOW
+        assert "claude/haiku" in config.candidates
         assert config.prompt_path is None  # Uses default prompt from prompts/
 
 

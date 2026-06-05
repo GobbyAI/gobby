@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import MagicMock
 
 import pytest
@@ -23,8 +24,9 @@ pytestmark = pytest.mark.unit
 
 def _make_config(**overrides: object) -> MagicMock:
     cfg = MagicMock()
-    cfg.summary_provider = overrides.get("summary_provider", "claude")
-    cfg.summary_model = overrides.get("summary_model", "haiku")
+    cfg.summary_profile = overrides.get("summary_profile", "feature_low")
+    cfg.summary_candidates = overrides.get("summary_candidates", ["claude/haiku"])
+    cfg.summary_max_concurrency = overrides.get("summary_max_concurrency", 2)
     return cfg
 
 
@@ -62,6 +64,21 @@ class _FakeTextGenerateAdapter:
         if self.error is not None:
             raise self.error
         return self.response
+
+
+class _SlowTextGenerateAdapter(_FakeTextGenerateAdapter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.active = 0
+        self.max_active = 0
+
+    async def generate(self, request: TextGenerationRequest) -> str:
+        self.requests.append(request)
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        await asyncio.sleep(0.01)
+        self.active -= 1
+        return f"summary for {request.prompt.split('Name: ', 1)[1].splitlines()[0]}"
 
 
 def _text_generation_service(
@@ -112,8 +129,8 @@ async def test_summarize_one(
 
     request = fake_text_adapter.requests[0]
     assert request.caller == "code_index.symbol_summary"
-    assert request.provider == "claude"
-    assert request.model == "haiku"
+    assert request.profile == "feature_low"
+    assert request.candidates == ("claude/haiku",)
     assert request.max_tokens == 100
 
 
@@ -201,6 +218,24 @@ async def test_summarize_batch(summarizer: SymbolSummarizer) -> None:
     assert len(results) == 2
     assert "sym-1" in results
     assert "sym-2" in results
+
+
+@pytest.mark.asyncio
+async def test_summarize_batch_limits_concurrent_generation() -> None:
+    adapter = _SlowTextGenerateAdapter()
+    service = _text_generation_service(adapter)
+    summarizer = SymbolSummarizer(service, _make_config(summary_max_concurrency=2))
+    symbols = [_make_symbol(f"symbol_{index}") for index in range(5)]
+    for index, symbol in enumerate(symbols):
+        symbol.id = f"sym-{index}"
+
+    def read_source(sym: Symbol) -> str | None:
+        return f"def {sym.name}(): pass"
+
+    results = await summarizer.summarize_batch(symbols, read_source)
+
+    assert len(results) == 5
+    assert adapter.max_active == 2
 
 
 @pytest.mark.asyncio

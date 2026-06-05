@@ -1,63 +1,74 @@
-"""
-Base configuration for LLM-backed features.
+"""Base configuration for LLM-backed feature routing."""
 
-Provides FeatureDefaultConfig — a shared base class with provider, model,
-and tier fields — plus ModelTier enum and TIER_FALLBACK_MODEL mapping for
-graceful degradation when the local provider is unavailable.
-"""
+from enum import StrEnum
 
-from enum import Enum
-
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 __all__ = [
+    "DEFAULT_PROFILE_CANDIDATES",
     "FeatureDefaultConfig",
-    "ModelTier",
-    "TIER_FALLBACK_MODEL",
+    "FeatureProfile",
+    "default_candidates_for_profile",
 ]
 
 
-class ModelTier(str, Enum):
-    """Complexity tier for LLM feature routing.
+class FeatureProfile(StrEnum):
+    """Provider-agnostic feature generation profiles."""
 
-    Determines which Claude model to fall back to when a local provider
-    is unavailable or fails.
-    """
-
-    LOW = "low"  # haiku — fast/cheap (title synthesis, tool summarization)
-    MID = "mid"  # sonnet — moderate (session summaries, merge resolution)
-    HIGH = "high"  # opus — heavy (code review, chat)
+    LOW = "feature_low"
+    MID = "feature_mid"
+    HIGH = "feature_high"
 
 
-TIER_FALLBACK_MODEL: dict[ModelTier, str] = {
-    ModelTier.LOW: "haiku",
-    ModelTier.MID: "sonnet",
-    ModelTier.HIGH: "opus",
+DEFAULT_PROFILE_CANDIDATES: dict[FeatureProfile, tuple[str, ...]] = {
+    FeatureProfile.LOW: (
+        "codex/gpt-5.3-codex-spark",
+        "local/Qwen3-Coder-30B-A3B-Instruct",
+        "claude/haiku",
+    ),
+    FeatureProfile.MID: (
+        "codex/gpt-5.3-codex-spark",
+        "codex/gpt-5.4-mini",
+        "local/Qwen3-Coder-Next",
+        "claude/sonnet",
+    ),
+    FeatureProfile.HIGH: (
+        "codex/gpt-5.3-codex",
+        "local/Qwen3-Coder-Next",
+        "claude/opus",
+    ),
 }
 
 
+def default_candidates_for_profile(profile: FeatureProfile | str) -> tuple[str, ...]:
+    """Return default provider/model candidates for a feature profile."""
+    return DEFAULT_PROFILE_CANDIDATES[FeatureProfile(profile)]
+
+
 class FeatureDefaultConfig(BaseModel):
-    """Base config for LLM-backed features.
+    """Base config for LLM-backed features."""
 
-    Provides standardized provider/model/tier fields so that every feature
-    config gets tier-based fallback for free when using the local provider.
+    model_config = ConfigDict(extra="forbid")
 
-    Subclasses override defaults as needed::
-
-        class SessionSummaryConfig(FeatureDefaultConfig):
-            model: str = Field(default="sonnet", ...)
-            tier: ModelTier = Field(default=ModelTier.MID, ...)
-    """
-
-    provider: str = Field(
-        default="claude",
-        description="LLM provider to use (claude, codex, local)",
+    profile: FeatureProfile = Field(
+        default=FeatureProfile.LOW,
+        description="Provider-agnostic capability profile requested by this feature.",
     )
-    model: str = Field(
-        default="haiku",
-        description="Model name to use for this feature",
+    candidates: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Ordered provider/model candidates, for example "
+            "['codex/gpt-5.3-codex-spark', 'local/Qwen3-Coder-30B-A3B-Instruct']."
+        ),
     )
-    tier: ModelTier = Field(
-        default=ModelTier.LOW,
-        description="Complexity tier — determines fallback model when local provider fails",
-    )
+
+    @model_validator(mode="after")
+    def populate_and_validate_candidates(self) -> "FeatureDefaultConfig":
+        """Fill profile defaults and validate provider-scoped candidate labels."""
+        if not self.candidates:
+            self.candidates = list(default_candidates_for_profile(self.profile))
+        invalid = [candidate for candidate in self.candidates if "/" not in candidate]
+        if invalid:
+            joined = ", ".join(repr(candidate) for candidate in invalid)
+            raise ValueError(f"feature candidates must use provider/model format: {joined}")
+        return self

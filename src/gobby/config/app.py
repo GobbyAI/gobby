@@ -20,6 +20,7 @@ import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Internal imports for DaemonConfig fields - NOT re-exported
+from gobby.config.ai import AIConfig
 from gobby.config.bin_freshness import BinFreshnessConfig
 from gobby.config.code_index import CodeIndexConfig
 from gobby.config.communications import CommunicationsConfig
@@ -42,7 +43,7 @@ from gobby.config.features import (
     ToolSummarizerConfig,
 )
 from gobby.config.llm_providers import LLMProvidersConfig
-from gobby.config.local import LocalConfig, LocalLLMConfig
+from gobby.config.local import LocalConfig
 from gobby.config.persistence import (
     DatabasesConfig,
     EmbeddingsConfig,
@@ -204,8 +205,8 @@ class DaemonConfig(BaseModel):
         if isinstance(data, dict):
             if "session_title" in data:
                 raise ValueError(
-                    "session_title config has been removed. Use digest.provider, digest.model, "
-                    "and digest.timeout instead."
+                    "session_title config has been removed. Use digest.profile, "
+                    "digest.candidates, and digest.timeout instead."
                 )
             if "conductor" in data:
                 raise ValueError(
@@ -214,6 +215,10 @@ class DaemonConfig(BaseModel):
             if "memory_recall_helper" in data:
                 raise ValueError(
                     "memory_recall_helper config has been removed. Use memory_recall instead."
+                )
+            if "local_llm" in data:
+                raise ValueError(
+                    "local_llm config has been removed. Use ai.generation.local instead."
                 )
         return data
 
@@ -348,6 +353,10 @@ class DaemonConfig(BaseModel):
         default_factory=EmbeddingsConfig,
         description="Embedding model configuration (shared by memory, tools, code index)",
     )
+    ai: AIConfig = Field(
+        default_factory=AIConfig,
+        description="Daemon-owned AI generation configuration",
+    )
     memory: MemoryConfig = Field(
         default_factory=MemoryConfig,
         description="Memory system configuration",
@@ -460,10 +469,6 @@ class DaemonConfig(BaseModel):
         default=None,
         description="Local model endpoint configuration (e.g., LMStudio). "
         "When configured, agents with model='local' resolve endpoint and model from here.",
-    )
-    local_llm: LocalLLMConfig = Field(
-        default_factory=LocalLLMConfig,
-        description="Route providers through a local LLM endpoint via ANTHROPIC_BASE_URL.",
     )
 
     def get_recommend_tools_config(self) -> RecommendToolsConfig:
@@ -706,20 +711,6 @@ def _migrate_legacy_config(config_dict: dict[str, Any]) -> dict[str, Any]:
         gobby_tasks = config_dict.get(key)
         if isinstance(gobby_tasks, dict):
             gobby_tasks.pop("enrichment", None)
-
-    memory = config_dict.get("memory")
-    if isinstance(memory, dict):
-        legacy_kg_provider = memory.pop("kg_provider", None)
-        legacy_kg_model = memory.pop("kg_model", None)
-        if legacy_kg_provider is not None or legacy_kg_model is not None:
-            kg = memory.get("kg")
-            if not isinstance(kg, dict):
-                kg = {}
-                memory["kg"] = kg
-            if legacy_kg_provider is not None and "provider" not in kg:
-                kg["provider"] = legacy_kg_provider
-            if legacy_kg_model is not None and "model" not in kg:
-                kg["model"] = legacy_kg_model
 
     return config_dict
 

@@ -7,10 +7,11 @@ Configuration classes are organized into submodules by functionality:
 Module structure:
 - app.py: Main DaemonConfig aggregator and utility functions
 - bootstrap.py: Pre-DB bootstrap settings from bootstrap.yaml
+- ai.py: Daemon-owned AI generation configs
 - local.py: Local model endpoint configs
 - ui.py: Web UI, auth, and tool approval configs
 - servers.py: WebSocket and MCP proxy configs
-- llm_providers.py: Claude/Codex generation capability binding configs
+- llm_providers.py: Claude SDK generation capability binding configs
 - persistence.py: Memory storage configs
 - tasks.py: Task expansion, validation, and workflow configs
 - extensions.py: Hook extension configs (webhooks, plugins)

@@ -17,7 +17,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from gobby.config.feature_base import FeatureDefaultConfig, ModelTier
+from gobby.config.feature_base import FeatureDefaultConfig, FeatureProfile
 
 __all__ = [
     "CompactHandoffConfig",
@@ -103,17 +103,13 @@ class PatternCriteriaConfig(BaseModel):
 class TaskExpansionConfig(FeatureDefaultConfig):
     """Configuration for task expansion (breaking down broad tasks/epics)."""
 
+    profile: FeatureProfile = Field(
+        default=FeatureProfile.HIGH,
+        description="Capability profile for task expansion.",
+    )
     enabled: bool = Field(
         default=True,
         description="Enable automated task expansion",
-    )
-    model: str = Field(
-        default="opus",
-        description="Model to use for expansion",
-    )
-    tier: ModelTier = Field(
-        default=ModelTier.HIGH,
-        description="Complexity tier — determines fallback model when local provider fails",
     )
 
     prompt_path: str | None = Field(
@@ -166,17 +162,13 @@ class TaskExpansionConfig(FeatureDefaultConfig):
 class TaskValidationConfig(FeatureDefaultConfig):
     """Configuration for task validation (checking completion against criteria)."""
 
+    profile: FeatureProfile = Field(
+        default=FeatureProfile.MID,
+        description="Capability profile for task validation.",
+    )
     enabled: bool = Field(
         default=True,
         description="Enable automated task validation",
-    )
-    model: str = Field(
-        default="sonnet",
-        description="Model to use for validation",
-    )
-    tier: ModelTier = Field(
-        default=ModelTier.MID,
-        description="Complexity tier — determines fallback model when local provider fails",
     )
     system_prompt: str = Field(
         default="You are a QA validator. Output ONLY valid JSON. No markdown, no explanation, no code blocks. Just the raw JSON object.",

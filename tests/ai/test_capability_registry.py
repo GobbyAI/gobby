@@ -11,6 +11,7 @@ from gobby.ai import (
     CapabilityUnavailableError,
     build_daemon_ai_capability_registry,
 )
+from gobby.config.ai import AIConfig, GenerationConfig, LocalGenerationConfig
 from gobby.config.app import DaemonConfig
 from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
 from gobby.config.local import LocalConfig
@@ -103,7 +104,15 @@ def test_daemon_registry_keeps_web_chat_and_text_generate_separate() -> None:
 def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
     registry = build_daemon_ai_capability_registry(
         DaemonConfig(
-            local=LocalConfig(url="http://localhost:1234/v1", model="llama"),
+            ai=AIConfig(
+                generation=GenerationConfig(
+                    local=LocalGenerationConfig(
+                        enabled=True,
+                        api_base="http://localhost:1234/v1",
+                        model="llama",
+                    )
+                )
+            ),
             llm_providers=LLMProvidersConfig(
                 claude=LLMProviderConfig(
                     models="haiku,sonnet",

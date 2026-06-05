@@ -6,6 +6,7 @@ import pytest
 import yaml
 
 from gobby.config.app import DaemonConfig, load_yaml
+from gobby.config.feature_base import FeatureProfile
 from gobby.config.sessions import MemoryRecallConfig
 
 pytestmark = pytest.mark.unit
@@ -14,9 +15,8 @@ pytestmark = pytest.mark.unit
 def test_memory_recall_config_shape(temp_dir: Path) -> None:
     """Memory recall config exposes daemon-owned runner controls."""
     assert set(MemoryRecallConfig.model_fields) == {
-        "provider",
-        "model",
-        "tier",
+        "profile",
+        "candidates",
         "enabled",
         "timeout",
         "candidate_limit",
@@ -25,9 +25,8 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
     }
     cfg = MemoryRecallConfig()
     assert cfg.enabled is True
-    assert cfg.provider == "claude"
-    assert cfg.model == "haiku"
-    assert cfg.tier == "low"
+    assert cfg.profile == FeatureProfile.LOW
+    assert "claude/haiku" in cfg.candidates
     assert cfg.timeout == 60
     assert cfg.candidate_limit == 8
     assert cfg.selected_limit == 3
@@ -40,8 +39,7 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
             {
                 "memory_recall": {
                     "enabled": False,
-                    "provider": "local",
-                    "model": "llama",
+                    "candidates": ["local/llama"],
                     "timeout": 12,
                     "candidate_limit": 5,
                     "selected_limit": 2,
@@ -52,8 +50,7 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
     )
     disabled_config = DaemonConfig(**load_yaml(str(disabled_config_file)))
     assert disabled_config.memory_recall.enabled is False
-    assert disabled_config.memory_recall.provider == "local"
-    assert disabled_config.memory_recall.model == "llama"
+    assert disabled_config.memory_recall.candidates == ["local/llama"]
     assert disabled_config.memory_recall.timeout == 12
     assert disabled_config.memory_recall.candidate_limit == 5
     assert disabled_config.memory_recall.selected_limit == 2
