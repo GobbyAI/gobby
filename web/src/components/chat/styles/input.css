@@ -798,6 +798,26 @@
   min-height: var(--status-bar-control-height);
 }
 
+/* Pending-plan affordance (#15634): the approval strip wraps onto its own row
+   inside the bar. The bar's primary row keeps parity with .command-bar /
+   .activity-panel-tabs (both key off --activity-panel-bar-height); the strip
+   and its controls are pinned to --status-bar-control-height so the approval
+   controls cannot stretch the bar the way ad-hoc heights did. */
+.agent-status-bar--pending {
+  flex-wrap: wrap;
+  row-gap: 0.375rem;
+}
+
+.agent-status-bar__plan {
+  flex-basis: 100%;
+  min-width: 0;
+}
+
+.agent-status-bar__plan button {
+  height: var(--status-bar-control-height);
+  min-height: var(--status-bar-control-height);
+}
+
 .chat-session-status {
   display: flex;
   align-items: center;

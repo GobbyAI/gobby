@@ -5,6 +5,7 @@ import type {
   SessionInteractionMode,
   SessionObservationMeta,
 } from '../../types/chat'
+import { cn } from '../../lib/utils'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { LinkIcon, PlayIcon, UnlinkIcon } from '../icons'
 import { PlusIcon } from './icons/PlusIcon'
@@ -95,9 +96,8 @@ export function AgentStatusBar({
 
   return (
     <div
-      className="agent-status-bar"
+      className={cn('agent-status-bar', planPendingApproval && 'agent-status-bar--pending')}
       data-testid="agent-status-bar"
-      style={planPendingApproval ? { flexWrap: "wrap", rowGap: "0.5rem" } : undefined}
     >
       <div className="agent-status-bar__summary">
         {viewingMeta && stateText ? (
@@ -173,7 +173,7 @@ export function AgentStatusBar({
         </button>
       </div>
       {planPendingApproval && onApprovePlan && onRequestPlanChanges && (
-        <div className="agent-status-bar__plan basis-full w-full">
+        <div className="agent-status-bar__plan">
           <PlanPendingActionStrip
             onApprove={onApprovePlan}
             onRequestChanges={onRequestPlanChanges}

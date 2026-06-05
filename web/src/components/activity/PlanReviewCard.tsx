@@ -83,7 +83,7 @@ export const PlanReviewCard = memo(function PlanReviewCard({
         <div
           data-testid="plan-review-status"
           data-status="pending"
-          className="flex flex-col gap-3 border-b border-[color-mix(in_srgb,var(--color-warning-foreground)_22%,var(--border))] bg-[color-mix(in_srgb,var(--color-warning-foreground)_7%,transparent)] px-4 py-3"
+          className="flex flex-col gap-3 border-b border-[color-mix(in_srgb,var(--color-warning-foreground)_22%,transparent)] bg-[var(--color-warning-soft)] px-4 py-3"
         >
           <div className="flex items-center gap-2">
             <ClockIcon className="shrink-0 text-[var(--color-warning-foreground)]" />

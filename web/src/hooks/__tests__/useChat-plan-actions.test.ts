@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
+import type { ApprovalOption } from "../../types/chat";
 import {
   cleanupUseChatTestContext,
   createUseChatTestContext,
@@ -157,7 +158,7 @@ describe("useChat plan actions", () => {
     const ws = mockWs.instances[0];
     act(() => ws.simulateOpen());
 
-    const options = [
+    const options: ApprovalOption[] = [
       { id: "approve_bypass", label: "Approve, bypass permissions", decision: "approve" },
       { id: "ultraplan", label: "Refine with Ultraplan", decision: "keep_planning" },
     ];

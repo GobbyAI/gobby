@@ -30,7 +30,7 @@ export function PlanPendingActionStrip({
     <div
       data-testid="plan-pending-strip"
       className={cn(
-        'flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-[color-mix(in_srgb,var(--color-warning-foreground)_24%,var(--border))] bg-[color-mix(in_srgb,var(--color-warning-foreground)_7%,transparent)] px-2.5 py-2',
+        'flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-md border border-[color-mix(in_srgb,var(--color-warning-foreground)_24%,transparent)] bg-[var(--color-warning-soft)] px-2.5 py-1.5',
         className,
       )}
     >
