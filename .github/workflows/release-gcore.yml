@@ -25,6 +25,8 @@ jobs:
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@f5b277aa8941a90c16bc1cd6ab9363e0502b7d31
+        with:
+          tool: nextest
 
       - name: Clippy
         run: cargo clippy -p gobby-core --all-targets -- -D warnings

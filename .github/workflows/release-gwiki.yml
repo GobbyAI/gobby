@@ -32,6 +32,8 @@ jobs:
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@f5b277aa8941a90c16bc1cd6ab9363e0502b7d31
+        with:
+          tool: nextest
 
       - name: Verify tag matches Cargo.toml version
         # Tag-only: on a workflow_dispatch run GITHUB_REF is refs/heads/<branch>,
