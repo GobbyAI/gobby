@@ -892,12 +892,15 @@ const approvePlan = useCallback((option?: ApprovalOption) => {
   if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
   if (!conversationIdRef.current) return;
   if (!planContentRef.current) return;
-  // A keep_planning option (e.g. Ultraplan) does not approve; the agent
-  // re-plans deeper. Eagerly hide the approval UI so the next plan re-arms it.
+  // A keep_planning option (e.g. Ultraplan) does not approve the plan, but it
+  // MUST still send the plan_approval_response below: the backend keep-planning
+  // primitive (plan_approval.py) only re-enters planning when the option_id
+  // arrives. Sending nothing makes "Refine with Ultraplan" a silent no-op.
+  // Eagerly hide the approval UI here so the next plan re-arms it, then fall
+  // through to send.
   if (option?.decision === "keep_planning") {
     setPlanPendingApproval(false);
     planContentRef.current = null;
-    return;
   }
   wsRef.current.send(
     JSON.stringify({
