@@ -355,7 +355,7 @@ def install_ghook(module: Any, force: bool = False) -> dict[str, Any]:
         "version": resolved_version,
         "method": method,
     }
-    compatibility_stamp = bin_dir / module._GHOOK_COMPATIBILITY_STAMP
-    if compatibility_stamp.exists():
-        result["compatibility"] = str(compatibility_stamp)
+    runtime_stamp = bin_dir / module._GHOOK_RUNTIME_STAMP
+    if runtime_stamp.exists():
+        result["runtime_stamp"] = str(runtime_stamp)
     return result

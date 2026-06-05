@@ -447,7 +447,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
 
             from gobby.cli.utils import get_gobby_home as _ghome2
 
-            source_file = _ghome2() / "shutdown_source.json"
+            source_file = _ghome2() / "shutdown_intent_active.json"
             if source_file.exists():
                 data = _json.loads(source_file.read_text())
                 last_shutdown = data.get("source", "unknown")

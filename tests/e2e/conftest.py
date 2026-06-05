@@ -1039,7 +1039,7 @@ def _production_daemon_running() -> bool:
 
 
 # Known daemon artifacts that the production daemon may create/touch
-_DAEMON_ARTIFACTS = {"gobby.pid", "ui.pid", "shutdown_source.json"}
+_DAEMON_ARTIFACTS = {"gobby.pid", "ui.pid", "shutdown_intent_active.json"}
 
 # Transient per-daemon-instance files that we never flag as a leak. The test
 # daemon runs with HOME overridden to a tmp dir, so any write to real ~/.gobby/
@@ -1049,7 +1049,7 @@ _DAEMON_ARTIFACTS = {"gobby.pid", "ui.pid", "shutdown_source.json"}
 # window, the prod-running TCP/PID-file detector may not catch it in time.
 # A real sandbox escape would also leak db/config files that aren't listed
 # here, so these omissions do not weaken the check.
-_ALWAYS_EXEMPT_BASENAMES = {"shutdown_source.json"}
+_ALWAYS_EXEMPT_BASENAMES = {"shutdown_intent_active.json"}
 _ALWAYS_EXEMPT_PREFIXES = ("hooks/inbox/",)
 
 

@@ -30,7 +30,7 @@ def test_read_shutdown_intent_missing_marker_defaults_to_stop(tmp_path: Path) ->
 
 
 def test_read_shutdown_intent_consumes_stale_marker(tmp_path: Path) -> None:
-    marker = tmp_path / "shutdown_source.json"
+    marker = tmp_path / "shutdown_intent_active.json"
     payload = {
         "source": "cli_restart",
         "intent": "restart",
@@ -50,7 +50,7 @@ def test_read_shutdown_intent_consumes_stale_marker(tmp_path: Path) -> None:
 
 
 def test_read_shutdown_intent_preserves_stale_marker_without_consume(tmp_path: Path) -> None:
-    marker = tmp_path / "shutdown_source.json"
+    marker = tmp_path / "shutdown_intent_active.json"
     marker.write_text(
         json.dumps(
             {
@@ -71,7 +71,7 @@ def test_read_shutdown_intent_preserves_stale_marker_without_consume(tmp_path: P
 
 
 def test_restart_intent_round_trip_consume_false_then_default(tmp_path: Path) -> None:
-    marker = tmp_path / "shutdown_source.json"
+    marker = tmp_path / "shutdown_intent_active.json"
     write_shutdown_intent("cli_restart", ShutdownIntent.RESTART, sender_pid=456, home=tmp_path)
 
     preview = read_shutdown_intent(home=tmp_path, consume=False)
@@ -87,43 +87,41 @@ def test_restart_intent_round_trip_consume_false_then_default(tmp_path: Path) ->
     assert consumed.source == "cli_restart"
     assert consumed.sender_pid == 456
     assert not marker.exists()
-    assert get_active_shutdown_marker_path(tmp_path).exists()
 
 
 def test_read_shutdown_intent_consumes_malformed_marker(tmp_path: Path) -> None:
-    marker = tmp_path / "shutdown_source.json"
+    marker = tmp_path / "shutdown_intent_active.json"
     marker.write_text("{not-json", encoding="utf-8")
 
     record = read_shutdown_intent(home=tmp_path)
 
     assert record.error is not None
     assert not marker.exists()
-    malformed = tmp_path / "shutdown_source.json.malformed"
+    malformed = tmp_path / "shutdown_intent_active.json.malformed"
     assert malformed.read_text(encoding="utf-8") == "{not-json"
 
 
 def test_read_shutdown_intent_preserves_malformed_marker_without_consume(tmp_path: Path) -> None:
-    marker = tmp_path / "shutdown_source.json"
+    marker = tmp_path / "shutdown_intent_active.json"
     marker.write_text("{not-json", encoding="utf-8")
 
     record = read_shutdown_intent(home=tmp_path, consume=False)
 
     assert record.error is not None
     assert marker.exists()
-    assert not (tmp_path / "shutdown_source.json.malformed").exists()
+    assert not (tmp_path / "shutdown_intent_active.json.malformed").exists()
 
 
-def test_write_shutdown_intent_records_non_consuming_active_marker(tmp_path: Path) -> None:
+def test_write_shutdown_intent_records_active_marker(tmp_path: Path) -> None:
     write_shutdown_intent("cli_restart", "restart", home=tmp_path)
 
     record = read_shutdown_intent(home=tmp_path)
 
     assert record.intent is ShutdownIntent.RESTART
-    assert not (tmp_path / "shutdown_source.json").exists()
-    assert get_active_shutdown_marker_path(tmp_path).exists()
+    assert not (tmp_path / "shutdown_intent_active.json").exists()
 
 
-def test_read_active_shutdown_intent_survives_consuming_source_marker(
+def test_read_active_shutdown_intent_returns_none_after_consuming_marker(
     tmp_path: Path,
 ) -> None:
     write_shutdown_intent("cli_restart", ShutdownIntent.RESTART, sender_pid=789, home=tmp_path)
@@ -132,11 +130,7 @@ def test_read_active_shutdown_intent_survives_consuming_source_marker(
     active = read_active_shutdown_intent(home=tmp_path)
 
     assert consumed.intent is ShutdownIntent.RESTART
-    assert active is not None
-    assert active.intent is ShutdownIntent.RESTART
-    assert active.source == "cli_restart"
-    assert active.sender_pid == 789
-    assert active.stale is False
+    assert active is None
 
 
 def test_read_active_shutdown_intent_returns_stale_record(tmp_path: Path) -> None:
@@ -165,7 +159,7 @@ def test_read_shutdown_intent_logs_malformed_content(
     caplog: pytest.LogCaptureFixture,
     enable_log_propagation: None,
 ) -> None:
-    marker = tmp_path / "shutdown_source.json"
+    marker = tmp_path / "shutdown_intent_active.json"
     marker.write_text("[]", encoding="utf-8")
     caplog.set_level("WARNING", logger="gobby.shutdown_intent")
 

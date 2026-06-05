@@ -489,12 +489,12 @@ class TestShutdownDaemonServices:
         )
 
     @pytest.mark.asyncio
-    async def test_shutdown_marker_is_removed_after_cleanup(
+    async def test_shutdown_intent_marker_is_removed_after_cleanup(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        marker = tmp_path / "shutdown_source.json"
+        marker = tmp_path / "shutdown_intent_active.json"
         marker.write_text("{}", encoding="utf-8")
         cleanup_saw_marker = False
         runner = SimpleNamespace(
@@ -1385,7 +1385,7 @@ class TestSignalHandlerBehavior:
         assert source_logs[0].message == (
             "Shutdown source: source=cli_restart, intent=restart, sender_pid=123"
         )
-        assert "unknown (no shutdown_source.json - external SIGTERM)" not in caplog.text
+        assert "unknown (no shutdown_intent_active.json - external SIGTERM)" not in caplog.text
         assert any(
             record.levelno == logging.DEBUG
             and "Shutdown already in progress" in record.message

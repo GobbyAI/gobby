@@ -1,8 +1,4 @@
-"""Shutdown intent marker helpers.
-
-The marker lives at the legacy ``shutdown_source.json`` path so existing
-diagnostics keep working while restart/stop can carry explicit policy.
-"""
+"""Shutdown intent marker helpers."""
 
 from __future__ import annotations
 
@@ -63,23 +59,16 @@ def coerce_shutdown_intent(value: str | ShutdownIntent | None) -> ShutdownIntent
     return ShutdownIntent.STOP
 
 
-def infer_shutdown_intent(source: str) -> ShutdownIntent:
-    """Infer intent for legacy source-only markers."""
-    return ShutdownIntent.RESTART if "restart" in source.lower() else ShutdownIntent.STOP
-
-
 def get_shutdown_marker_path(home: Path | None = None) -> Path:
     """Return the shutdown marker path."""
     if home is None:
         home = Path(os.environ.get("GOBBY_HOME", str(Path.home() / ".gobby")))
-    return home / "shutdown_source.json"
+    return home / "shutdown_intent_active.json"
 
 
 def get_active_shutdown_marker_path(home: Path | None = None) -> Path:
-    """Return the non-consuming shutdown marker path used by hook guards."""
-    if home is None:
-        home = Path(os.environ.get("GOBBY_HOME", str(Path.home() / ".gobby")))
-    return home / "shutdown_intent_active.json"
+    """Return the shutdown marker path used by hook guards."""
+    return get_shutdown_marker_path(home)
 
 
 def write_shutdown_intent(
@@ -89,7 +78,7 @@ def write_shutdown_intent(
     *,
     home: Path | None = None,
 ) -> None:
-    """Write a fresh shutdown marker with explicit intent and legacy source."""
+    """Write a fresh shutdown marker with explicit intent and source."""
     marker = get_shutdown_marker_path(home)
     marker.parent.mkdir(parents=True, exist_ok=True)
     data = {
@@ -99,16 +88,6 @@ def write_shutdown_intent(
         "timestamp": time.time(),
     }
     marker.write_text(json.dumps(data), encoding="utf-8")
-    active_marker = get_active_shutdown_marker_path(home)
-    try:
-        active_marker.write_text(json.dumps(data), encoding="utf-8")
-    except OSError as exc:
-        logger.warning(
-            "Failed to write active shutdown marker %s for intent %s: %s",
-            active_marker,
-            data["intent"],
-            exc,
-        )
 
 
 def write_stop_intent(source: str, sender_pid: int | None = None) -> None:
@@ -129,7 +108,7 @@ def read_shutdown_intent(
 ) -> ShutdownIntentRecord:
     """Read and optionally remove the shutdown marker.
 
-    Missing, stale, malformed, or legacy unknown markers resolve to ``stop``.
+    Missing, stale, or malformed markers resolve to ``stop``.
     """
     marker = get_shutdown_marker_path(home)
     try:
@@ -237,9 +216,7 @@ def _record_from_marker_data(
 
     raw_intent = data.get("intent")
     intent = (
-        coerce_shutdown_intent(str(raw_intent))
-        if raw_intent is not None
-        else infer_shutdown_intent(source)
+        coerce_shutdown_intent(str(raw_intent)) if raw_intent is not None else ShutdownIntent.STOP
     )
     return ShutdownIntentRecord(
         intent=intent,
@@ -253,11 +230,11 @@ def _record_from_marker_data(
 def format_shutdown_source(record: ShutdownIntentRecord) -> str:
     """Format a marker for shutdown logs."""
     if record.error:
-        return f"unknown (error reading shutdown_source.json: {record.error})"
+        return f"unknown (error reading shutdown_intent_active.json: {record.error})"
     if record.timestamp is None and record.source == "external_sigterm":
-        return "unknown (no shutdown_source.json - external SIGTERM)"
+        return "unknown (no shutdown_intent_active.json - external SIGTERM)"
     if record.stale:
-        return f"stale shutdown_source.json: {record.raw}"
+        return f"stale shutdown_intent_active.json: {record.raw}"
     return f"source={record.source}, intent={record.intent.value}, sender_pid={record.sender_pid}"
 
 

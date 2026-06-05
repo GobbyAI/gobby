@@ -1445,7 +1445,7 @@ def test_stop_daemon_graceful_shutdown(tmp_path: Path) -> None:
     assert not pid_file.exists()
 
 
-def test_stop_daemon_writes_shutdown_source_inside_safe_gobby_home(
+def test_stop_daemon_writes_shutdown_intent_inside_safe_gobby_home(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Real shutdown provenance writes must stay inside the fixture-provided Gobby home."""
@@ -1457,11 +1457,11 @@ def test_stop_daemon_writes_shutdown_source_inside_safe_gobby_home(
     monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
 
     safe_home = Path(os.environ["GOBBY_HOME"])
-    shutdown_marker = safe_home / "shutdown_source.json"
+    shutdown_marker = safe_home / "shutdown_intent_active.json"
     shutdown_marker.unlink(missing_ok=True)
 
-    expanded_home_marker = Path(os.path.expanduser("~/.gobby/shutdown_source.json"))
-    assert expanded_home_marker == home_root / ".gobby" / "shutdown_source.json"
+    expanded_home_marker = Path(os.path.expanduser("~/.gobby/shutdown_intent_active.json"))
+    assert expanded_home_marker == home_root / ".gobby" / "shutdown_intent_active.json"
     assert not expanded_home_marker.exists()
 
     pid_file = safe_home / "gobby.pid"
@@ -1488,7 +1488,7 @@ def test_stop_daemon_writes_shutdown_source_inside_safe_gobby_home(
         result = stop_daemon(quiet=False)
 
     assert result is True
-    assert shutdown_marker.exists()
+    assert not shutdown_marker.exists()
     assert not expanded_home_marker.exists()
 
 

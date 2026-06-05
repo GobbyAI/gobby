@@ -751,11 +751,11 @@ def write_shutdown_source(
 ) -> None:
     """Write a marker file identifying why/who is sending SIGTERM."""
     try:
-        from gobby.shutdown_intent import infer_shutdown_intent, write_shutdown_intent
+        from gobby.shutdown_intent import ShutdownIntent, write_shutdown_intent
 
         write_shutdown_intent(
             source,
-            intent or infer_shutdown_intent(source),
+            intent or ShutdownIntent.STOP,
             sender_pid=sender_pid,
             home=get_gobby_home(),
         )

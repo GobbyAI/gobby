@@ -624,7 +624,7 @@ _GHOOK_RELEASE_TAG_PREFIX = "ghook-v"
 _GHOOK_CRATES_API = "https://crates.io/api/v1/crates/gobby-hooks"
 _GHOOK_VERSION_STAMP = ".ghook-version"
 _GHOOK_INSTALL_SIDECAR = ".ghook-install.json"
-_GHOOK_COMPATIBILITY_STAMP = ".ghook-compatibility"
+_GHOOK_RUNTIME_STAMP = ".ghook-runtime.json"
 _GHOOK_BIN_NAME = "ghook.exe" if sys.platform == "win32" else "ghook"
 _GHOOK_TARGETS = _PLATFORM_TARGETS
 _GHOOK_INSTALL_VERSION_ENV = "GOBBY_INSTALL_GHOOK_VERSION"

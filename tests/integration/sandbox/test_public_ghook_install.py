@@ -9,9 +9,9 @@ from pathlib import Path
 import pytest
 
 from gobby.cli.install_setup import (
-    _GHOOK_COMPATIBILITY_STAMP,
     _GHOOK_INSTALL_METHOD_ENV,
     _GHOOK_INSTALL_VERSION_ENV,
+    _GHOOK_RUNTIME_STAMP,
     _GHOOK_VERSION_STAMP,
     _install_ghook,
     ensure_daemon_config,
@@ -70,7 +70,7 @@ def test_public_ghook_install_and_live_sandbox_contract(
         env=os.environ.copy(),
     )
     assert version_probe.returncode == 0, version_probe.stderr or version_probe.stdout
-    assert (ghook_bin.parent / _GHOOK_COMPATIBILITY_STAMP).exists()
+    assert (ghook_bin.parent / _GHOOK_RUNTIME_STAMP).exists()
     assert ALL_SANDBOX_SPECS, "Expected at least one sandbox spec to validate public ghook install"
 
     for spec in ALL_SANDBOX_SPECS:
