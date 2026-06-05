@@ -44,6 +44,51 @@ fn warn_if_busy(ctx: &config::Context, status: freshness::FreshnessStatus) {
     }
 }
 
+fn service_config_selection(command: &Command) -> config::ServiceConfigSelection {
+    use config::ServiceConfigSelection;
+
+    match command {
+        Command::Index { .. } => ServiceConfigSelection::all(),
+        Command::Status => ServiceConfigSelection {
+            falkordb: true,
+            qdrant: true,
+            embedding: false,
+            code_vectors: false,
+        },
+        Command::Graph { .. }
+        | Command::Codewiki { .. }
+        | Command::Callers { .. }
+        | Command::Usages { .. }
+        | Command::Imports { .. }
+        | Command::BlastRadius { .. } => ServiceConfigSelection::falkordb_only(),
+        Command::Vector { .. } | Command::Embeddings { .. } => ServiceConfigSelection::vectors(),
+        Command::Search { .. } => ServiceConfigSelection::hybrid_search(),
+        Command::SearchSymbol { with_graph, .. } => {
+            if *with_graph {
+                ServiceConfigSelection::falkordb_only()
+            } else {
+                ServiceConfigSelection::database_only()
+            }
+        }
+        Command::Contract
+        | Command::Init
+        | Command::Setup { .. }
+        | Command::Projects
+        | Command::Prune { .. }
+        | Command::Invalidate { .. }
+        | Command::SearchText { .. }
+        | Command::SearchContent { .. }
+        | Command::Grep { .. }
+        | Command::Outline { .. }
+        | Command::Symbol { .. }
+        | Command::SymbolAt { .. }
+        | Command::Symbols { .. }
+        | Command::Kinds
+        | Command::Tree
+        | Command::RepoOutline => ServiceConfigSelection::database_only(),
+    }
+}
+
 fn dispatch_early_command<F>(
     cli: &Cli,
     format: output::Format,
@@ -165,7 +210,11 @@ fn run() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let ctx = config::Context::resolve(cli.project.as_deref(), cli.quiet)?;
+    let ctx = config::Context::resolve_with_services(
+        cli.project.as_deref(),
+        cli.quiet,
+        service_config_selection(&cli.command),
+    )?;
 
     match cli.command {
         // These commands are handled before Context::resolve(); this arm keeps the
