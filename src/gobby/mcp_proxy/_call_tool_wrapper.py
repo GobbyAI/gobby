@@ -70,7 +70,7 @@ def canonicalize_call_tool_wrapper(
 ) -> CanonicalCallToolWrapper:
     """Canonicalize public ``call_tool`` wrapper inputs.
 
-    Top-level wrapper fields win. Missing server/tool/project wrapper fields are
+    Top-level wrapper fields win. Missing server/tool wrapper fields are
     hoisted from the ``arguments``/``args`` payload when present. If the hoisted
     payload also contains nested ``arguments``/``args``, that nested value becomes
     the target tool arguments. Wrapper fields are then stripped so only inner tool
@@ -119,13 +119,18 @@ def canonicalize_call_tool_wrapper(
     canonical_server_name = _pick_wrapper_value(server_name, nested.get("server_name"))
     canonical_tool_name = _pick_wrapper_value(tool_name, nested.get("tool_name"))
     canonical_session_id = session_id if isinstance(session_id, str) and session_id else None
-    canonical_project_id = _pick_wrapper_value(project_id, nested.get("project_id"))
+    wrapper_route_from_nested = server_name_from_nested or tool_name_from_nested
+    canonical_project_id = project_id if isinstance(project_id, str) and project_id else None
+    if canonical_project_id is None and wrapper_route_from_nested:
+        canonical_project_id = _pick_wrapper_value(None, nested.get("project_id"))
 
     # Only unwrap nested payloads when routing came from the nested wrapper; top-level
     # server/tool values preserve malformed target arguments for downstream validation.
-    if (server_name_from_nested or tool_name_from_nested) and isinstance(canonical_arguments, dict):
+    unwrapped_target_arguments = False
+    if wrapper_route_from_nested and isinstance(canonical_arguments, dict):
         for field in CALL_TOOL_ARGUMENT_FIELDS:
             if field in canonical_arguments:
+                unwrapped_target_arguments = True
                 raw_nested_arguments = canonical_arguments[field]
                 if raw_nested_arguments is None:
                     canonical_arguments = {}
@@ -136,7 +141,12 @@ def canonicalize_call_tool_wrapper(
                 break
 
     if canonical_arguments is not None:
-        for field in CALL_TOOL_WRAPPER_FIELDS:
+        fields_to_strip = (
+            CALL_TOOL_WRAPPER_FIELDS
+            if wrapper_route_from_nested and not unwrapped_target_arguments
+            else ()
+        )
+        for field in fields_to_strip:
             if isinstance(canonical_arguments, dict):
                 canonical_arguments.pop(field, None)
 

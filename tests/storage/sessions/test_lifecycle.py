@@ -2,6 +2,7 @@
 
 import pytest
 
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
@@ -494,11 +495,128 @@ class TestSessionManagerLifecycle:
         assert counts.get("active") == 2
         assert counts.get("paused") == 2
 
+        project_counts = session_manager.count_by_status(project_id=sample_project["id"])
+        assert project_counts.get("active") == 1
+        assert project_counts.get("paused") == 2
+
     def test_count_by_status_empty(self, session_manager: SessionManager) -> None:
         """Test count_by_status with no user sessions (only bootstrapped system session)."""
         counts = session_manager.count_by_status()
         # The bootstrapped system session is always present
         assert counts == {"active": 1}
+
+    def test_renumber_project_sessions_dry_run_leaves_rows_unchanged(
+        self,
+        session_manager: SessionManager,
+        temp_db,
+    ) -> None:
+        """Dry-run reports dense refs without mutating rows."""
+        project = LocalProjectManager(temp_db).create(name="renumber-dry", repo_path="/tmp/dry")
+        first = session_manager.register(
+            external_id="dry-1",
+            machine_id="m1",
+            source="claude",
+            project_id=project.id,
+            title="First",
+        )
+        second = session_manager.register(
+            external_id="dry-2",
+            machine_id="m1",
+            source="claude",
+            project_id=project.id,
+            title="Second",
+        )
+        with temp_db.transaction() as conn:
+            conn.execute(
+                "UPDATE sessions SET seq_num = %s, created_at = %s WHERE id = %s",
+                (10, "2026-01-01T00:00:00+00:00", first.id),
+            )
+            conn.execute(
+                "UPDATE sessions SET seq_num = %s, created_at = %s WHERE id = %s",
+                (30, "2026-01-02T00:00:00+00:00", second.id),
+            )
+
+        mapping = session_manager.renumber_project_sessions(project.id, dry_run=True)
+
+        assert [(item["old_seq_num"], item["new_seq_num"]) for item in mapping] == [
+            (10, 1),
+            (30, 2),
+        ]
+        assert session_manager.get(first.id).seq_num == 10
+        assert session_manager.get(second.id).seq_num == 30
+
+    def test_renumber_project_sessions_apply_is_project_scoped_and_tails_deleted(
+        self,
+        session_manager: SessionManager,
+        temp_db,
+    ) -> None:
+        """Apply compacts one project and moves retained deleted rows after visible rows."""
+        project_manager = LocalProjectManager(temp_db)
+        project = project_manager.create(name="renumber-apply", repo_path="/tmp/apply")
+        other_project = project_manager.create(name="renumber-other", repo_path="/tmp/other")
+
+        visible_first = session_manager.register(
+            external_id="apply-1",
+            machine_id="m1",
+            source="claude",
+            project_id=project.id,
+            title="Visible first",
+        )
+        deleted = session_manager.register(
+            external_id="apply-deleted",
+            machine_id="m1",
+            source="claude",
+            project_id=project.id,
+            title="Deleted",
+        )
+        visible_second = session_manager.register(
+            external_id="apply-2",
+            machine_id="m1",
+            source="claude",
+            project_id=project.id,
+            title="Visible second",
+        )
+        other = session_manager.register(
+            external_id="other-1",
+            machine_id="m1",
+            source="claude",
+            project_id=other_project.id,
+            title="Other",
+        )
+
+        with temp_db.transaction() as conn:
+            conn.execute(
+                "UPDATE sessions SET seq_num = %s, created_at = %s WHERE id = %s",
+                (10, "2026-01-01T00:00:00+00:00", visible_first.id),
+            )
+            conn.execute(
+                """
+                UPDATE sessions
+                SET seq_num = %s, created_at = %s, status = %s
+                WHERE id = %s
+                """,
+                (20, "2026-01-02T00:00:00+00:00", "deleted", deleted.id),
+            )
+            conn.execute(
+                "UPDATE sessions SET seq_num = %s, created_at = %s WHERE id = %s",
+                (30, "2026-01-03T00:00:00+00:00", visible_second.id),
+            )
+            conn.execute("UPDATE sessions SET seq_num = %s WHERE id = %s", (50, other.id))
+
+        mapping = session_manager.renumber_project_sessions(project.id, dry_run=False)
+
+        assert [
+            (item["session_id"], item["old_seq_num"], item["new_seq_num"], item["status"])
+            for item in mapping
+        ] == [
+            (visible_first.id, 10, 1, "active"),
+            (visible_second.id, 30, 2, "active"),
+            (deleted.id, 20, 3, "deleted"),
+        ]
+        assert session_manager.get(visible_first.id).seq_num == 1
+        assert session_manager.get(visible_second.id).seq_num == 2
+        assert session_manager.get(deleted.id).seq_num == 3
+        assert session_manager.get(other.id).seq_num == 50
 
     def test_list_without_filters(
         self,

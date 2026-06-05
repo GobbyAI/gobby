@@ -417,6 +417,28 @@ async def test_session_stats(mock_session_manager, full_sessions_registry):
     assert result["total"] == 10
     assert result["by_status"]["active"] == 3
     assert result["by_status"]["expired"] == 7
+    mock_session_manager.count_by_status.assert_called_once_with(project_id=None)
+
+
+async def test_session_stats_scopes_project_aggregates(
+    mock_session_manager, full_sessions_registry
+):
+    """Test session_stats forwards project filters to every aggregate."""
+    mock_session_manager.count.side_effect = [4, 2, 0, 0, 1, 0, 0, 0]
+    mock_session_manager.count_by_status.return_value = {
+        "active": 3,
+        "paused": 1,
+    }
+
+    result = await full_sessions_registry.call("session_stats", {"project_id": "proj-123"})
+
+    assert result["total"] == 4
+    assert result["by_status"] == {"active": 3, "paused": 1}
+    assert result["by_source"] == {"claude": 2, "qwen": 1}
+    mock_session_manager.count_by_status.assert_called_once_with(project_id="proj-123")
+    assert mock_session_manager.count.call_args_list[0].kwargs == {"project_id": "proj-123"}
+    for call in mock_session_manager.count.call_args_list[1:]:
+        assert call.kwargs["project_id"] == "proj-123"
 
 
 @pytest.mark.asyncio

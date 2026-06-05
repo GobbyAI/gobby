@@ -55,6 +55,47 @@ def test_top_level_route_preserves_target_argument_named_arguments() -> None:
     assert canonical.arguments == {"arguments": {"value": "target-owned"}}
 
 
+def test_top_level_route_preserves_target_project_id() -> None:
+    canonical = canonicalize_call_tool_wrapper(
+        server_name="gobby-sessions",
+        tool_name="session_stats",
+        arguments={"project_id": "target-project"},
+    )
+
+    assert canonical.project_id is None
+    assert canonical.arguments == {"project_id": "target-project"}
+
+
+def test_top_level_project_id_stays_wrapper_context() -> None:
+    canonical = canonicalize_call_tool_wrapper(
+        server_name="gobby-sessions",
+        tool_name="session_stats",
+        arguments={"project_id": "target-project"},
+        project_id="wrapper-project",
+    )
+
+    assert canonical.project_id == "wrapper-project"
+    assert canonical.arguments == {"project_id": "target-project"}
+
+
+def test_nested_wrapper_preserves_nested_target_project_id() -> None:
+    canonical = canonicalize_call_tool_wrapper(
+        server_name=None,
+        tool_name=None,
+        arguments={
+            "server_name": "gobby-sessions",
+            "tool_name": "session_stats",
+            "project_id": "wrapper-project",
+            "arguments": {"project_id": "target-project"},
+        },
+    )
+
+    assert canonical.server_name == "gobby-sessions"
+    assert canonical.tool_name == "session_stats"
+    assert canonical.project_id == "wrapper-project"
+    assert canonical.arguments == {"project_id": "target-project"}
+
+
 def test_invalid_wrapper_json_still_raises_without_top_level_route() -> None:
     with pytest.raises(CallToolWrapperInputError):
         canonicalize_call_tool_wrapper(

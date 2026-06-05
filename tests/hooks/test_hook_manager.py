@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.hooks.dispatchers.mcp import PROJECT_MEMORY_CONTEXT_BUDGET
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID
@@ -572,6 +573,41 @@ class TestFormatDiscoveryResult:
         assert "review-raw" not in result
         assert "Use task-linked commits." in result
         assert "memory_id: mem-ok" in result
+
+    def test_format_search_memories_bounds_output_before_adapter_truncation(self) -> None:
+        """Keeps oversized project-memory output closed and traceable."""
+        dr = {
+            "tool": "search_memories",
+            "result": {
+                "memories": [
+                    {
+                        "id": "mem-big",
+                        "content": "A" * (PROJECT_MEMORY_CONTEXT_BUDGET + 500),
+                        "similarity": 0.99,
+                    },
+                    {
+                        "id": "mem-dropped-1",
+                        "content": "lower ranked one",
+                        "similarity": 0.8,
+                    },
+                    {
+                        "id": "mem-dropped-2",
+                        "content": "lower ranked two",
+                        "similarity": 0.7,
+                    },
+                ]
+            },
+        }
+
+        result = HookManager._format_discovery_result(dr)
+
+        assert len(result) <= PROJECT_MEMORY_CONTEXT_BUDGET
+        assert result.startswith("<project-memory>")
+        assert result.endswith("</project-memory>")
+        assert "memory_id: mem-big" in result
+        assert "2 lower-ranked memories omitted due to context budget" in result
+        assert "mem-dropped-1" not in result
+        assert "mem-dropped-2" not in result
 
     def test_format_memory_json_fallback_does_not_add_memory_id(self) -> None:
         """Leaves raw memory tool JSON results on their existing id field."""

@@ -233,7 +233,8 @@ class CodexManagedChatSession(
         context" option; the approved plan is re-seeded into the continuation
         turn so implementation proceeds on a clean thread.
         """
-        return bool(await self._backend.clear_session_context(self))
+        cleared = await self._backend.clear_session_context(self)
+        return bool(cleared)
 
     async def _get_transcript_offset(self) -> int:
         if not self._transcript_path:

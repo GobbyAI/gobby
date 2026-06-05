@@ -4,12 +4,14 @@ Session management CLI commands.
 
 import asyncio
 import json
+from pathlib import Path
 from typing import Any
 
 import click
 
 from gobby.cli.utils import resolve_project_ref, resolve_session_id
 from gobby.storage.hub.runtime import open_runtime_hub_database, runtime_hub_database
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 
 
@@ -17,6 +19,41 @@ def get_session_manager() -> SessionManager:
     """Get initialized session manager."""
     db = open_runtime_hub_database(apply_migrations=False)
     return SessionManager(db)
+
+
+def _normalize_project_path(path: str) -> str:
+    try:
+        return str(Path(path).expanduser().resolve())
+    except OSError:
+        return str(Path(path).expanduser())
+
+
+def _resolve_project_ref_or_path(project_ref: str, manager: SessionManager) -> str:
+    project_manager = LocalProjectManager(manager.db)
+
+    project = project_manager.get(project_ref)
+    if project:
+        return project.id
+
+    project = project_manager.get_by_name(project_ref)
+    if project:
+        return project.id
+
+    target_path = _normalize_project_path(project_ref)
+    for candidate in project_manager.list():
+        if candidate.repo_path and _normalize_project_path(candidate.repo_path) == target_path:
+            return candidate.id
+
+    raise click.ClickException(f"Project not found: {project_ref}")
+
+
+def _format_seq_range(values: list[int | None]) -> str:
+    seq_nums = [value for value in values if value is not None]
+    if not seq_nums:
+        return "none"
+    low = min(seq_nums)
+    high = max(seq_nums)
+    return f"#{low}" if low == high else f"#{low}..#{high}"
 
 
 def _format_turns_for_llm(turns: list[dict[str, Any]]) -> str:
@@ -64,12 +101,15 @@ def list_sessions(
     """List sessions with optional filtering."""
     project_id = resolve_project_ref(project_ref) if project_ref else None
     manager = get_session_manager()
-    sessions_list = manager.list(
-        project_id=project_id,
-        status=status,
-        source=source,
-        limit=limit,
-    )
+    try:
+        sessions_list = manager.list(
+            project_id=project_id,
+            status=status,
+            source=source,
+            limit=limit,
+        )
+    finally:
+        manager.db.close()
 
     if json_format:
         click.echo(json.dumps([s.to_dict() for s in sessions_list], indent=2, default=str))
@@ -272,6 +312,47 @@ def session_stats(project_ref: str | None) -> None:
     click.echo("\n  By Source:")
     for source, count in sorted(by_source.items()):
         click.echo(f"    {source}: {count}")
+
+
+@sessions.command("renumber")
+@click.option("--project", "-p", "project_ref", required=True, help="Project name, UUID, or path")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Preview the new dense refs without writing updates. This is the default.",
+)
+@click.option("--apply", "apply_changes", is_flag=True, help="Write the new dense refs.")
+def renumber_sessions(project_ref: str, dry_run: bool, apply_changes: bool) -> None:
+    """Compact per-project session refs."""
+    if dry_run and apply_changes:
+        raise click.UsageError("Use either --dry-run or --apply, not both.")
+
+    manager = get_session_manager()
+    try:
+        project_id = _resolve_project_ref_or_path(project_ref, manager)
+        should_write = apply_changes
+        mapping = manager.renumber_project_sessions(project_id, dry_run=not should_write)
+    finally:
+        manager.db.close()
+
+    mode = "Applied" if apply_changes else "Dry run"
+    click.echo(f"{mode}: scanned {len(mapping)} session(s) for project {project_id}.")
+    click.echo(f"Mapping count: {len(mapping)}")
+
+    if not mapping:
+        return
+
+    changed = sum(1 for item in mapping if item["old_seq_num"] != item["new_seq_num"])
+    old_range = _format_seq_range([item["old_seq_num"] for item in mapping])
+    new_range = _format_seq_range([item["new_seq_num"] for item in mapping])
+    max_ref = max(item["new_seq_num"] for item in mapping)
+
+    click.echo(f"Changed refs: {changed}")
+    click.echo(f"Old ref range: {old_range}")
+    click.echo(f"New ref range: {new_range}")
+    click.echo(f"Final max ref: #{max_ref}")
+    if not apply_changes:
+        click.echo("No changes written. Re-run with --apply to mutate refs.")
 
 
 @sessions.command("create-handoff")

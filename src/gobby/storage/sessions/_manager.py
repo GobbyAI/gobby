@@ -17,6 +17,7 @@ from ._field_update import _FieldUpdateMixin
 from ._lifecycle_delegate import _LifecycleDelegateMixin
 from ._query import _QueryMixin
 from ._registration_cache import _RegistrationCacheMixin
+from ._renumber import _RenumberMixin
 from ._terminal import _TerminalMixin
 from ._transcript import _TranscriptMixin
 from ._usage import _UsageMixin
@@ -35,6 +36,7 @@ class SessionManager(
     _RegistrationCacheMixin,
     _BulkUpdateMixin,
     _QueryMixin,
+    _RenumberMixin,
     _LifecycleDelegateMixin,
     _TranscriptMixin,
     _UsageMixin,

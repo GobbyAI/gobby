@@ -27,6 +27,7 @@ from gobby.storage.hub.protocol import (
     Savepoint,
     SessionRecoveryByProject,
     SessionRegistration,
+    SessionSeqMutation,
     SystemSessionBootstrap,
     TaskLifecycleMutation,
     TaskSeqAllocation,
@@ -542,6 +543,8 @@ def _advisory_lock_keys(lock: LockTarget) -> tuple[str, ...]:
             f"{lock.external_id}|{lock.machine_id}|{lock.source}|"
             f"{lock.project_id or ''}|{lock.session_type}",
         )
+    if isinstance(lock, SessionSeqMutation):
+        return (f"session_seq:{lock.project_id}",)
     if isinstance(lock, SessionRecoveryByProject):
         return (f"session_recovery:{lock.project_id}",)
     if isinstance(lock, WebChatSessionBootstrap):

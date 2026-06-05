@@ -181,15 +181,19 @@ class GobbyDaemonTools:
         Args:
             server_name: Target MCP server name.
             tool_name: Tool to call on the server.
-            arguments: Tool arguments (dict or JSON string).
+            arguments: Tool arguments (dict or JSON string). When
+                server_name/tool_name are supplied at the wrapper level,
+                arguments.project_id belongs to the target tool and is passed
+                through unchanged.
             session_id: Wrapper context for context resolution and workflow checks.
                 Use arguments.session_id only to target a different session.
                 Local #N refs resolve in the caller project; cross-project
                 target sessions should be supplied as UUIDs.
-            project_id: Optional project UUID or name. When provided, overrides
-                session-derived project context, enabling cross-project tool
-                operations (e.g., an agent in project A creating a task in
-                project B).
+            project_id: Optional wrapper project UUID or name. When provided,
+                overrides session-derived wrapper context for routing,
+                workflow checks, and cross-project operations. Use
+                arguments.project_id for target tools that expose their own
+                project filter.
         """
         try:
             canonical = canonicalize_call_tool_wrapper(

@@ -11,6 +11,7 @@ from gobby.storage.hub.protocol import (
     HubDatabase,
     SessionRecoveryByProject,
     SessionRegistration,
+    SessionSeqMutation,
     WebChatSessionBootstrap,
 )
 from gobby.storage.session_models import Session
@@ -191,6 +192,8 @@ class _SessionCRUDMixin:
                     parent_session_id=parent_session_id,
                     context="session registration",
                 )
+                if project_id:
+                    conn.acquire_additional_lock(SessionSeqMutation(project_id=project_id))
                 max_seq_row = conn.execute(
                     "SELECT MAX(seq_num) as max_seq FROM sessions WHERE project_id = %s",
                     (project_id,),

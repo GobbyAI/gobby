@@ -3,20 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from typing import Any
 
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.memory.dream.service import DreamRunOptions, MemoryDreamService
 
 _BACKGROUND_DREAM_TASKS: set[asyncio.Task[Any]] = set()
 
 
 def register_memory_dream_tools(
-    registry: Any,
+    registry: InternalToolRegistry,
     *,
     memory_manager: Any,
     llm_service: Any | None,
     config: Any | None,
-    get_project_id: Any,
+    get_project_id: Callable[[], str | None],
 ) -> None:
     """Register memory dream tools on the gobby-memory registry."""
 

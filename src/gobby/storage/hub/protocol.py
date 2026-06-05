@@ -20,6 +20,7 @@ __all__ = [
     "Savepoint",
     "SessionRecoveryByProject",
     "SessionRegistration",
+    "SessionSeqMutation",
     "SessionVariableMutation",
     "SystemSessionBootstrap",
     "TaskLifecycleMutation",
@@ -104,6 +105,14 @@ class SessionRegistration:
     source: str
     project_id: str | None
     session_type: str
+
+
+@dataclass(frozen=True)
+class SessionSeqMutation:
+    """Serializes project-scoped session sequence allocation and compaction."""
+
+    PRIORITY: ClassVar[int] = 750
+    project_id: str
 
 
 @dataclass(frozen=True)

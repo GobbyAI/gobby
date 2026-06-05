@@ -239,7 +239,7 @@ This tool is for browsing/listing sessions, not for self-identification.""",
             return {"error": "Session manager not available"}
 
         total = session_manager.count(project_id=project_id)
-        by_status = session_manager.count_by_status()
+        by_status = session_manager.count_by_status(project_id=project_id)
 
         # Count by source
         by_source: dict[str, int] = {}

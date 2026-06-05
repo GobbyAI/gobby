@@ -14,12 +14,16 @@ import logging
 from typing import Any, Literal
 
 from gobby.hooks.events import HookEvent
+from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT
 from gobby.mcp_proxy.server_list import compact_mcp_server_list
 from gobby.memory.context import format_memory_metadata_suffix
 from gobby.review_learning.guidance import format_review_lesson_guidance
 from gobby.skills.formatting import skill_fetch_directive
 
 REVIEW_LESSON_TAG = "review-lesson"
+PROJECT_MEMORY_CONTEXT_BUDGET = min(4_000, ADDITIONAL_CONTEXT_LIMIT // 2)
+PROJECT_MEMORY_OPEN_TAG = "<project-memory>"
+PROJECT_MEMORY_CLOSE_TAG = "</project-memory>"
 
 
 def run_coro_blocking(
@@ -158,21 +162,7 @@ def format_discovery_result(dr: dict[str, Any]) -> str:
     elif tool == "search_memories":
         memories = result.get("memories", [])
         memories = [m for m in memories if not _is_review_lesson_memory(m)]
-        if not memories:
-            return ""
-        lines = ["<project-memory>"]
-        for m in memories:
-            content = m.get("content", "").strip()
-            if content:
-                memory_id = m.get("id")
-                if memory_id is not None:
-                    memory_id = str(memory_id)
-                score = m.get("similarity")
-                via = m.get("search_via")
-                suffix = format_memory_metadata_suffix(memory_id, score=score, via=via)
-                lines.append(f"- {content}{suffix}")
-        lines.append("</project-memory>")
-        return "\n".join(lines)
+        return _format_project_memories(memories)
 
     elif tool == "recall_review_lessons_for_files":
         lessons = result.get("lessons", [])
@@ -227,12 +217,97 @@ def format_discovery_result(dr: dict[str, Any]) -> str:
 
 
 def _is_review_lesson_memory(memory: Any) -> bool:
+    """Return True when ``memory`` is a review lesson tagged with ``REVIEW_LESSON_TAG``.
+
+    Expects a dict with a ``tags`` iterable; non-dicts or non-iterable tag values
+    return False.
+    """
     if not isinstance(memory, dict):
         return False
     tags = memory.get("tags")
     if not isinstance(tags, (list, tuple, set, frozenset)):
         return False
     return REVIEW_LESSON_TAG in tags
+
+
+def _project_memory_omitted_line(count: int) -> str:
+    noun = "memory" if count == 1 else "memories"
+    return f"- ... {count} lower-ranked {noun} omitted due to context budget."
+
+
+def _render_project_memory(body_lines: list[str], omitted_count: int = 0) -> str:
+    lines = [PROJECT_MEMORY_OPEN_TAG, *body_lines]
+    if omitted_count:
+        lines.append(_project_memory_omitted_line(omitted_count))
+    lines.append(PROJECT_MEMORY_CLOSE_TAG)
+    return "\n".join(lines)
+
+
+def _fit_memory_line(content: str, suffix: str, max_len: int) -> str | None:
+    prefix = "- "
+    marker = "..."
+    minimum_len = len(prefix) + len(marker) + len(suffix)
+    if max_len < minimum_len:
+        return None
+
+    full_line = f"{prefix}{content}{suffix}"
+    if len(full_line) <= max_len:
+        return full_line
+
+    content_budget = max_len - len(prefix) - len(marker) - len(suffix)
+    truncated = content[:content_budget].rstrip()
+    return f"{prefix}{truncated}{marker}{suffix}"
+
+
+def _format_project_memories(
+    memories: list[Any],
+    *,
+    budget: int = PROJECT_MEMORY_CONTEXT_BUDGET,
+) -> str:
+    candidates: list[tuple[str, str]] = []
+    for memory in memories:
+        if not isinstance(memory, dict):
+            continue
+        content = str(memory.get("content", "")).strip()
+        if not content:
+            continue
+
+        memory_id = memory.get("id")
+        if memory_id is not None:
+            memory_id = str(memory_id)
+        score = memory.get("similarity")
+        via = memory.get("search_via")
+        suffix = format_memory_metadata_suffix(memory_id, score=score, via=via)
+        candidates.append((content, suffix))
+
+    if not candidates:
+        return ""
+
+    body_lines: list[str] = []
+    omitted_count = 0
+    for index, (content, suffix) in enumerate(candidates):
+        remaining_after_current = len(candidates) - index - 1
+        full_line = f"- {content}{suffix}"
+        if len(_render_project_memory(body_lines + [full_line], remaining_after_current)) <= budget:
+            body_lines.append(full_line)
+            continue
+
+        base_len = len(_render_project_memory(body_lines, remaining_after_current))
+        max_line_len = budget - base_len - 1
+        truncated_line = _fit_memory_line(content, suffix, max_line_len)
+        if truncated_line:
+            body_lines.append(truncated_line)
+            omitted_count = remaining_after_current
+        else:
+            omitted_count = len(candidates) - index
+        break
+
+    result = _render_project_memory(body_lines, omitted_count)
+    while len(result) > budget and body_lines:
+        body_lines.pop()
+        omitted_count += 1
+        result = _render_project_memory(body_lines, omitted_count)
+    return result
 
 
 def dispatch_mcp_calls(

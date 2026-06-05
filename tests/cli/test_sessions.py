@@ -114,3 +114,74 @@ def test_session_stats(mock_session_manager) -> None:
     assert "Total Sessions: 1" in result.output
     assert "active: 1" in result.output
     assert "claude_code: 1" in result.output
+
+
+def test_renumber_sessions_defaults_to_dry_run(mock_session_manager) -> None:
+    """Test 'sessions renumber' previews by default."""
+    mock_session_manager.renumber_project_sessions.return_value = [
+        {
+            "session_id": "s1",
+            "old_seq_num": 10,
+            "new_seq_num": 1,
+            "status": "active",
+            "title": "First",
+        },
+        {
+            "session_id": "s2",
+            "old_seq_num": 30,
+            "new_seq_num": 2,
+            "status": "active",
+            "title": "Second",
+        },
+    ]
+
+    runner = CliRunner()
+    with patch("gobby.cli.sessions._resolve_project_ref_or_path", return_value="proj-1"):
+        result = runner.invoke(sessions, ["renumber", "--project", "/tmp/project"])
+
+    assert result.exit_code == 0
+    assert "Dry run: scanned 2 session(s) for project proj-1." in result.output
+    assert "Mapping count: 2" in result.output
+    assert "Changed refs: 2" in result.output
+    assert "Old ref range: #10..#30" in result.output
+    assert "New ref range: #1..#2" in result.output
+    assert "Final max ref: #2" in result.output
+    assert "No changes written" in result.output
+    mock_session_manager.renumber_project_sessions.assert_called_once_with("proj-1", dry_run=True)
+
+
+def test_renumber_sessions_apply_writes_refs(mock_session_manager) -> None:
+    """Test 'sessions renumber --apply' writes through the storage helper."""
+    mock_session_manager.renumber_project_sessions.return_value = [
+        {
+            "session_id": "s1",
+            "old_seq_num": 1,
+            "new_seq_num": 1,
+            "status": "active",
+            "title": "First",
+        },
+    ]
+
+    runner = CliRunner()
+    with patch("gobby.cli.sessions._resolve_project_ref_or_path", return_value="proj-1"):
+        result = runner.invoke(sessions, ["renumber", "--project", "proj-1", "--apply"])
+
+    assert result.exit_code == 0
+    assert "Applied: scanned 1 session(s) for project proj-1." in result.output
+    assert "Changed refs: 0" in result.output
+    assert "Final max ref: #1" in result.output
+    assert "No changes written" not in result.output
+    mock_session_manager.renumber_project_sessions.assert_called_once_with("proj-1", dry_run=False)
+
+
+def test_renumber_sessions_rejects_apply_and_dry_run(mock_session_manager) -> None:
+    """Test 'sessions renumber' rejects contradictory mutation flags."""
+    runner = CliRunner()
+    result = runner.invoke(
+        sessions,
+        ["renumber", "--project", "proj-1", "--dry-run", "--apply"],
+    )
+
+    assert result.exit_code != 0
+    assert "Use either --dry-run or --apply" in result.output
+    mock_session_manager.renumber_project_sessions.assert_not_called()
