@@ -66,7 +66,7 @@ impl ResearchModel for GcoreResearchModel {
                 return self
                     .ai_unavailable(format!("text generation route '{route:?}' is unavailable"));
             }
-            _ => {
+            AiRouting::Auto => {
                 return self
                     .ai_unavailable(format!("text generation route '{route:?}' is unavailable"));
             }

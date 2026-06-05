@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-mod atomic;
+pub(crate) mod atomic;
 mod manifest;
 mod render;
 mod types;

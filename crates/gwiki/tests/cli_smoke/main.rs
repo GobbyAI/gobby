@@ -78,8 +78,21 @@ fn serve_http_responses(
                 .set_nonblocking(false)
                 .expect("configure blocking HTTP fixture stream");
             let mut buffer = [0_u8; 1024];
-            let bytes_read = stream.read(&mut buffer).expect("read HTTP fixture request");
-            assert!(bytes_read > 0, "HTTP fixture request should not be empty");
+            let mut request = Vec::new();
+            loop {
+                let bytes_read = stream.read(&mut buffer).expect("read HTTP fixture request");
+                if bytes_read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..bytes_read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            assert!(
+                request.windows(4).any(|window| window == b"\r\n\r\n"),
+                "HTTP fixture request headers should be complete"
+            );
             let response = format!(
                 "HTTP/1.1 {status}\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()

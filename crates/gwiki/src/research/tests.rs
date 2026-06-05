@@ -272,7 +272,7 @@ fn accepted_note_waits_for_materializing_marker_to_complete() {
     let completed_draft = draft.clone();
     let completed_id = draft_id.clone();
     let (wait_observed_tx, wait_observed_rx) = std::sync::mpsc::channel();
-    set_materializing_wait_signal(wait_observed_tx);
+    let _wait_signal_guard = set_materializing_wait_signal(wait_observed_tx);
     let completer = std::thread::spawn(move || {
         wait_observed_rx.recv().expect("wait observed");
         let body = render_accepted_note_body(

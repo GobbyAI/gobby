@@ -3,6 +3,8 @@ use super::*;
 use std::collections::HashMap;
 use std::sync::MutexGuard;
 
+// All process-environment mutation in this module must happen through
+// EnvGuard, which holds TEST_ENV_LOCK for the full test scope.
 struct EnvGuard {
     lock: MutexGuard<'static, ()>,
 }

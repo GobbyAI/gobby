@@ -8,9 +8,10 @@ use serde::Deserialize;
 
 const GCODE_DATABASE_URL_ENV: &str = "GCODE_DATABASE_URL";
 const GOBBY_POSTGRES_DSN_ENV: &str = "GOBBY_POSTGRES_DSN";
+const GCODE_BROKER_TIMEOUT_MS_ENV: &str = "GCODE_BROKER_TIMEOUT_MS";
 const GCODE_CONFIG_FILENAME: &str = "gcode.yaml";
 const LOCAL_CLI_TOKEN_FILENAME: &str = "local_cli_token";
-const BROKER_TIMEOUT: Duration = Duration::from_secs(3);
+const DEFAULT_BROKER_TIMEOUT: Duration = Duration::from_millis(7000);
 
 #[derive(Debug, Deserialize)]
 struct BrokerDatabaseUrlResponse {
@@ -302,17 +303,43 @@ fn request_broker_database_url(daemon_url: &str, token: &str) -> anyhow::Result<
         "{}/api/local/runtime/database-url",
         daemon_url.trim_end_matches('/')
     );
-    let agent = ureq::AgentBuilder::new().timeout(BROKER_TIMEOUT).build();
+    let timeout = broker_timeout();
+    let agent = ureq::AgentBuilder::new().timeout(timeout).build();
     let response = agent
         .post(&url)
         .set("X-Gobby-Local-Token", token)
         .call()
-        .map_err(|err| anyhow!("database_url broker request failed: {err}"))?;
+        .map_err(|err| {
+            anyhow!(
+                "database_url broker request failed after {}ms: {err}",
+                timeout.as_millis()
+            )
+        })?;
     let body: BrokerDatabaseUrlResponse = response
         .into_json()
         .context("database_url broker response was not valid JSON")?;
     let database_url = body.database_url.trim().to_string();
     validate_broker_database_url(&database_url)
+}
+
+fn broker_timeout() -> Duration {
+    broker_timeout_from_env(|name| std::env::var(name).ok())
+}
+
+fn broker_timeout_from_env(env: impl Fn(&str) -> Option<String>) -> Duration {
+    let Some(raw) = env(GCODE_BROKER_TIMEOUT_MS_ENV) else {
+        return DEFAULT_BROKER_TIMEOUT;
+    };
+    match raw.trim().parse::<u64>() {
+        Ok(value) if value > 0 => Duration::from_millis(value),
+        _ => {
+            log::warn!(
+                "invalid {GCODE_BROKER_TIMEOUT_MS_ENV}={raw:?}; using default {}ms",
+                DEFAULT_BROKER_TIMEOUT.as_millis()
+            );
+            DEFAULT_BROKER_TIMEOUT
+        }
+    }
 }
 
 fn validate_loopback_daemon_url(daemon_url: &str) -> anyhow::Result<()> {
@@ -677,6 +704,31 @@ mod tests {
         let _ = request.join().expect("read request");
 
         assert_eq!(resolved, "postgresql://broker/db");
+    }
+
+    #[test]
+    fn broker_timeout_defaults_to_seven_seconds() {
+        let timeout = broker_timeout_from_env(|_| None);
+
+        assert_eq!(timeout, Duration::from_millis(7000));
+    }
+
+    #[test]
+    fn broker_timeout_reads_positive_env_value() {
+        let timeout = broker_timeout_from_env(|name| {
+            (name == GCODE_BROKER_TIMEOUT_MS_ENV).then(|| "1250".to_string())
+        });
+
+        assert_eq!(timeout, Duration::from_millis(1250));
+    }
+
+    #[test]
+    fn broker_timeout_ignores_invalid_env_value() {
+        let timeout = broker_timeout_from_env(|name| {
+            (name == GCODE_BROKER_TIMEOUT_MS_ENV).then(|| "0".to_string())
+        });
+
+        assert_eq!(timeout, DEFAULT_BROKER_TIMEOUT);
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use super::*;
+use serde::ser::SerializeStruct;
 
 #[derive(Debug)]
 pub(crate) struct Selection {
@@ -36,29 +37,34 @@ pub(crate) struct RefreshRender {
     pub(crate) explicit: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub(crate) struct RefreshPlan {
-    #[serde(skip)]
     pub(crate) record: SourceRecord,
-    pub(crate) id: String,
-    pub(crate) location: String,
-    pub(crate) source_kind: SourceKind,
-    pub(crate) replay_kind: &'static str,
-    pub(crate) raw_path: PathBuf,
-    pub(crate) content_hash: String,
 }
 
 impl RefreshPlan {
     pub(crate) fn from_record(record: &SourceRecord) -> Result<Self, WikiError> {
+        let _ = raw_source_path(&record.id)?;
         Ok(Self {
             record: record.clone(),
-            id: record.id.clone(),
-            location: record.location.clone(),
-            source_kind: record.kind.clone(),
-            replay_kind: replay_kind_name(record),
-            raw_path: raw_source_path(&record.id)?,
-            content_hash: record.content_hash.clone(),
         })
+    }
+}
+
+impl serde::Serialize for RefreshPlan {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let raw_path = raw_source_path(&self.record.id).map_err(serde::ser::Error::custom)?;
+        let mut state = serializer.serialize_struct("RefreshPlan", 6)?;
+        state.serialize_field("id", &self.record.id)?;
+        state.serialize_field("location", &self.record.location)?;
+        state.serialize_field("source_kind", &self.record.kind)?;
+        state.serialize_field("replay_kind", replay_kind_name(&self.record))?;
+        state.serialize_field("raw_path", &raw_path)?;
+        state.serialize_field("content_hash", &self.record.content_hash)?;
+        state.end()
     }
 }
 

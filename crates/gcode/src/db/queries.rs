@@ -249,6 +249,10 @@ fn call_target_kind_from_str(value: &str) -> anyhow::Result<CallTargetKind> {
 }
 
 pub fn symbol_select_columns(alias: &str) -> String {
+    assert!(
+        safe_symbol_select_alias(alias),
+        "symbol_select_columns alias must be empty or a safe SQL identifier"
+    );
     let prefix = if alias.is_empty() {
         String::new()
     } else {
@@ -263,4 +267,33 @@ pub fn symbol_select_columns(alias: &str) -> String {
          {p}created_at::TEXT AS created_at, {p}updated_at::TEXT AS updated_at",
         p = prefix
     )
+}
+
+fn safe_symbol_select_alias(alias: &str) -> bool {
+    if alias.is_empty() {
+        return true;
+    }
+    let mut chars = alias.chars();
+    chars
+        .next()
+        .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn symbol_select_columns_accepts_empty_or_safe_alias() {
+        assert!(symbol_select_columns("").starts_with("id, project_id"));
+        assert!(symbol_select_columns("cs").starts_with("cs.id, cs.project_id"));
+        assert!(symbol_select_columns("_symbols1").starts_with("_symbols1.id"));
+    }
+
+    #[test]
+    #[should_panic(expected = "safe SQL identifier")]
+    fn symbol_select_columns_rejects_unsafe_alias() {
+        let _ = symbol_select_columns("cs;DROP TABLE code_symbols");
+    }
 }

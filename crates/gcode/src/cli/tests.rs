@@ -549,6 +549,13 @@ fn parse_codewiki_edge_limit_flag() {
         Err(error) => error,
     };
     assert!(error.to_string().contains("positive integer"));
+
+    let too_large = (MAX_POSITIVE_USIZE_ARG + 1).to_string();
+    let error = match Cli::try_parse_from(["gcode", "codewiki", "--edge-limit", &too_large]) {
+        Ok(_) => panic!("oversized edge limit must fail"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("no more than 1000000000"));
 }
 
 #[test]
@@ -767,6 +774,13 @@ fn parse_grep_max_count() {
         }
         _ => panic!("expected grep command"),
     }
+
+    let too_large = (MAX_GREP_MAX_COUNT + 1).to_string();
+    let error = match Cli::try_parse_from(["gcode", "grep", "needle", "--max-count", &too_large]) {
+        Ok(_) => panic!("oversized grep max-count must fail"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("no more than 10000"));
 }
 
 #[test]

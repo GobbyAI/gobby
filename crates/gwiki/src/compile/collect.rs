@@ -17,12 +17,39 @@ pub(crate) fn collect_accepted_sources(
 
     for note in &session.accepted_notes {
         let path = note_path(session.scope.root(), &note.path);
+        match path.try_exists() {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(WikiError::NotFound {
+                    resource: "accepted_note",
+                    id: path.display().to_string(),
+                });
+            }
+            Err(error) => {
+                return Err(WikiError::Io {
+                    action: "check accepted research note",
+                    path: Some(path.clone()),
+                    source: error,
+                });
+            }
+        }
         require_path_in_scope(&path, session.scope.root())?;
-        let text = fs::read_to_string(&path).map_err(|error| WikiError::Io {
-            action: "read accepted research note",
-            path: Some(path.clone()),
-            source: error,
-        })?;
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(WikiError::NotFound {
+                    resource: "accepted_note",
+                    id: path.display().to_string(),
+                });
+            }
+            Err(error) => {
+                return Err(WikiError::Io {
+                    action: "read accepted research note",
+                    path: Some(path.clone()),
+                    source: error,
+                });
+            }
+        };
         let note_sections = parse_note_sections(&text);
         extend_unique(&mut citations, note_sections.citations);
         extend_unique(&mut conflicting_claims, note_sections.conflicting_claims);
@@ -239,5 +266,34 @@ mod tests {
                 "delta".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn missing_accepted_note_returns_not_found() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut session = ResearchSession::new(
+            "question",
+            crate::session::ResearchScope::topic("topic", temp.path()),
+            Vec::new(),
+            1,
+            None,
+        )
+        .expect("session");
+        session
+            .accepted_notes
+            .push(crate::session::AcceptedResearchNote {
+                title: "Missing".to_string(),
+                path: PathBuf::from("raw/research/missing.md"),
+            });
+
+        let error = collect_accepted_sources(&session).expect_err("missing note must fail");
+
+        assert!(matches!(
+            error,
+            WikiError::NotFound {
+                resource: "accepted_note",
+                ..
+            }
+        ));
     }
 }

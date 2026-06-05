@@ -35,9 +35,24 @@ static MATERIALIZING_WAIT_SIGNAL: std::sync::OnceLock<
 > = std::sync::OnceLock::new();
 
 #[cfg(test)]
-fn set_materializing_wait_signal(sender: std::sync::mpsc::Sender<()>) {
+struct MaterializingWaitSignalGuard;
+
+#[cfg(test)]
+impl Drop for MaterializingWaitSignalGuard {
+    fn drop(&mut self) {
+        if let Some(signal) = MATERIALIZING_WAIT_SIGNAL.get() {
+            *signal.lock().expect("materializing wait signal lock") = None;
+        }
+    }
+}
+
+#[cfg(test)]
+fn set_materializing_wait_signal(
+    sender: std::sync::mpsc::Sender<()>,
+) -> MaterializingWaitSignalGuard {
     let signal = MATERIALIZING_WAIT_SIGNAL.get_or_init(|| std::sync::Mutex::new(None));
     *signal.lock().expect("materializing wait signal lock") = Some(sender);
+    MaterializingWaitSignalGuard
 }
 
 #[cfg(test)]

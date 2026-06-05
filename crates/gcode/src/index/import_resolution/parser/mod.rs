@@ -1,5 +1,6 @@
 use crate::models::{ImportRelation, Symbol};
 
+use super::UNPARSED_IMPORT_PREFIX;
 use super::context::{
     ExternalCallTarget, ExternalRootBinding, ExtractedImports, ImportBindings,
     ImportResolutionContext,
@@ -33,9 +34,9 @@ pub(crate) fn parse_import_statement(
     extracted: &mut ExtractedImports,
 ) -> anyhow::Result<()> {
     match language {
-        "python" => parse_python_import_statement(text, rel_path, import_context, extracted),
+        "python" => parse_python_import_statement(text, rel_path, import_context, extracted)?,
         "javascript" | "typescript" => {
-            parse_js_import_statement(text, rel_path, import_context, extracted)
+            parse_js_import_statement(text, rel_path, import_context, extracted)?
         }
         "go" => parse_go_import_statement(text, rel_path, import_context, extracted)?,
         "rust" => parse_rust_import_statement(text, rel_path, import_context, extracted),
@@ -47,11 +48,28 @@ pub(crate) fn parse_import_statement(
         "ruby" => parse_ruby_import_statement(text, rel_path, import_context, extracted),
         "dart" => parse_dart_import_statement(text, rel_path, import_context, extracted),
         "elixir" => parse_elixir_import_statement(text, rel_path, import_context, extracted),
-        _ => extracted.imports.push(ImportRelation {
-            file_path: rel_path.to_string(),
-            module_name: text.to_string(),
-        }),
+        _ => push_unparsed_import(rel_path, text, extracted)?,
     }
+    Ok(())
+}
+
+pub(super) fn push_unparsed_import(
+    rel_path: &str,
+    text: &str,
+    extracted: &mut ExtractedImports,
+) -> anyhow::Result<()> {
+    let text = text.trim();
+    if text.is_empty() {
+        anyhow::bail!("unparsed import fallback for `{rel_path}` was empty");
+    }
+    if text.lines().count() != 1 {
+        anyhow::bail!("unparsed import fallback for `{rel_path}` must be a single line");
+    }
+    log::debug!("recording unparsed import fallback in {rel_path}: {text}");
+    extracted.imports.push(ImportRelation {
+        file_path: rel_path.to_string(),
+        module_name: format!("{UNPARSED_IMPORT_PREFIX}{text}"),
+    });
     Ok(())
 }
 
@@ -132,7 +150,14 @@ pub(crate) fn resolve_external_callee(
                 callee_name: callee_name.to_string(),
             });
         }
-        // Multiple wildcard imports make the source module ambiguous, so fail closed.
+        // Multiple wildcard imports make the source module ambiguous. Picking
+        // any one would create a deterministic-looking but false graph edge.
+        if import_bindings.bare_wildcard_modules.len() > 1 {
+            log::debug!(
+                "skipping ambiguous bare call `{callee_name}` with {} wildcard imports",
+                import_bindings.bare_wildcard_modules.len()
+            );
+        }
         return None;
     }
 

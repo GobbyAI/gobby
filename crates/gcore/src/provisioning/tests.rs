@@ -152,11 +152,7 @@ fn gcore_yaml_rejects_excessive_nesting() {
 
     let error = StandaloneConfig::from_yaml_str(&yaml).expect_err("too-deep YAML must fail");
 
-    assert!(
-        error
-            .to_string()
-            .contains("gcore.yaml nesting exceeds maximum depth of 64")
-    );
+    assert!(error.to_string().contains("exceeds maximum depth of 64"));
 }
 
 #[test]
@@ -173,7 +169,7 @@ ai:
 
     assert!(
         err.to_string()
-            .contains("gcore.yaml scalar config fields cannot be sequences"),
+            .contains("gcore.yaml path `ai.embeddings.provider` cannot be a sequence"),
         "unexpected error: {err}"
     );
 }

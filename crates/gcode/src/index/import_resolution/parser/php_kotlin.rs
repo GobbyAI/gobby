@@ -44,6 +44,9 @@ pub(crate) fn parse_php_import_statement(
     }
 
     if rest.contains('{') || rest.contains('}') {
+        // Unsupported or malformed PHP grouped use syntax is skipped rather
+        // than preserved as a literal brace path.
+        log::debug!("skipping unsupported PHP use statement with brace pattern: {rest}");
         return;
     }
 

@@ -269,7 +269,7 @@ fn lock_source_manifest(lock: &File, lock_path: &Path) -> Result<(), WikiError> 
     let started = Instant::now();
 
     loop {
-        match fs4::FileExt::try_lock(lock) {
+        match try_lock_exclusive(lock) {
             Ok(()) => return Ok(()),
             Err(fs4::TryLockError::WouldBlock) => {
                 let elapsed = started.elapsed();
@@ -294,6 +294,12 @@ fn lock_source_manifest(lock: &File, lock_path: &Path) -> Result<(), WikiError> 
             }
         }
     }
+}
+
+fn try_lock_exclusive(lock: &File) -> Result<(), fs4::TryLockError> {
+    // fs4 names the exclusive lock attempt `try_lock`; shared locking is
+    // exposed separately as `try_lock_shared`.
+    fs4::FileExt::try_lock(lock)
 }
 
 fn source_manifest_lock_timeout() -> Duration {

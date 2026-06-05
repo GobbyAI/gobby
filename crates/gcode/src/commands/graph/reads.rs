@@ -416,8 +416,12 @@ mod tests {
         "code_indexed_files",
     ];
 
+    fn graph_resolution_database_url() -> Option<String> {
+        std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL").ok()
+    }
+
     fn connect_graph_resolution_test_db() -> Option<Client> {
-        let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL").ok()?;
+        let database_url = graph_resolution_database_url()?;
         match gobby_core::postgres::connect_readwrite(&database_url) {
             Ok(mut conn) => {
                 if let Err(err) = crate::schema::validate_runtime_schema(&mut conn) {
@@ -444,19 +448,55 @@ mod tests {
         uuid::Uuid::new_v5(&crate::models::CODE_INDEX_UUID_NAMESPACE, key.as_bytes()).to_string()
     }
 
+    struct GraphResolutionProjectCleanup {
+        database_url: String,
+        project_id: String,
+    }
+
+    impl GraphResolutionProjectCleanup {
+        fn new(project_id: &str) -> Self {
+            Self {
+                database_url: graph_resolution_database_url()
+                    .expect("graph resolution database URL"),
+                project_id: project_id.to_string(),
+            }
+        }
+    }
+
+    impl Drop for GraphResolutionProjectCleanup {
+        fn drop(&mut self) {
+            match gobby_core::postgres::connect_readwrite(&self.database_url) {
+                Ok(mut conn) => {
+                    if let Err(error) =
+                        try_cleanup_graph_resolution_project(&mut conn, &self.project_id)
+                    {
+                        eprintln!("graph resolution cleanup failed: {error}");
+                    }
+                }
+                Err(error) => eprintln!("graph resolution cleanup connect failed: {error}"),
+            }
+        }
+    }
+
     fn cleanup_graph_resolution_project(conn: &mut Client, project_id: &str) {
-        let mut tx = conn.transaction().expect("cleanup transaction");
+        try_cleanup_graph_resolution_project(conn, project_id)
+            .expect("cleanup graph resolution project");
+    }
+
+    fn try_cleanup_graph_resolution_project(
+        conn: &mut Client,
+        project_id: &str,
+    ) -> Result<(), postgres::Error> {
+        let mut tx = conn.transaction()?;
         for table in GRAPH_RESOLUTION_CHILD_TABLES {
             let sql = format!("DELETE FROM {table} WHERE project_id = $1");
-            tx.execute(&sql, &[&project_id])
-                .expect("delete graph resolution child rows");
+            tx.execute(&sql, &[&project_id])?;
         }
         tx.execute(
             "DELETE FROM code_indexed_projects WHERE id = $1",
             &[&project_id],
-        )
-        .expect("delete graph resolution project");
-        tx.commit().expect("commit graph resolution cleanup");
+        )?;
+        tx.commit()
     }
 
     fn insert_project(conn: &mut Client, project_id: &str) {
@@ -515,6 +555,7 @@ mod tests {
             };
             let project_id = unique_uuid("project");
             cleanup_graph_resolution_project(&mut conn, &project_id);
+            let _cleanup = GraphResolutionProjectCleanup::new(&project_id);
             insert_project(&mut conn, &project_id);
             insert_file(&mut conn, &project_id, "src/target.rs", 1);
 
@@ -531,7 +572,6 @@ mod tests {
             let (resolved, suggestions) =
                 resolve_symbol_with_connection(&mut conn, &project_id, &symbol_id)
                     .expect("resolve graph symbol by uuid");
-            cleanup_graph_resolution_project(&mut conn, &project_id);
 
             assert!(suggestions.is_empty());
             let resolved = resolved.expect("symbol should resolve");
@@ -547,6 +587,7 @@ mod tests {
             };
             let project_id = unique_uuid("project");
             cleanup_graph_resolution_project(&mut conn, &project_id);
+            let _cleanup = GraphResolutionProjectCleanup::new(&project_id);
             insert_project(&mut conn, &project_id);
             insert_file(&mut conn, &project_id, "src/name.rs", 1);
 
@@ -563,7 +604,6 @@ mod tests {
             let (resolved, suggestions) =
                 resolve_symbol_with_connection(&mut conn, &project_id, &uuid_shaped_name)
                     .expect("resolve unknown uuid");
-            cleanup_graph_resolution_project(&mut conn, &project_id);
 
             assert!(resolved.is_none());
             assert!(suggestions.is_empty());
@@ -577,6 +617,7 @@ mod tests {
             };
             let project_id = unique_uuid("project");
             cleanup_graph_resolution_project(&mut conn, &project_id);
+            let _cleanup = GraphResolutionProjectCleanup::new(&project_id);
             insert_project(&mut conn, &project_id);
             insert_file(&mut conn, &project_id, "src/a.rs", 1);
             insert_file(&mut conn, &project_id, "src/b.rs", 1);
@@ -601,7 +642,6 @@ mod tests {
             let (resolved, suggestions) =
                 resolve_symbol_with_connection(&mut conn, &project_id, "shared_lookup")
                     .expect("resolve ambiguous name");
-            cleanup_graph_resolution_project(&mut conn, &project_id);
 
             assert!(resolved.is_none());
             assert_eq!(suggestions.len(), 2);

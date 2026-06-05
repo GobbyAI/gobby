@@ -1,4 +1,16 @@
-use super::*;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use crate::commands::index;
+use crate::ingest;
+use crate::ingest::url::{UrlIngestFailure, UrlSnapshot};
+use crate::scope::ResolvedScope;
+use crate::sources::{SourceManifest, SourceRecord};
+use crate::{ScopeIdentity, WikiError};
+
+use super::model::{ChangedRefresh, RefreshFailure, RefreshResult, RefreshSinks, RefreshedSource};
+use super::selection::{SelectionFailure, local_file_replay, selection_failure};
+use super::vault::{raw_source_path, remove_relative_file, source_asset_paths_for_id};
 
 pub(crate) fn refresh_url_candidate(
     vault_root: &Path,
@@ -269,17 +281,17 @@ fn finalize_changed_refresh(
     degradations: Vec<String>,
 ) -> Result<ChangedRefresh, WikiError> {
     let mut removed_paths = Vec::new();
-    for path in previous_paths {
-        if path == result.raw_path
+    for previous_path in previous_paths {
+        if previous_path == result.raw_path
             || result
                 .asset_path
                 .as_ref()
-                .is_some_and(|asset| *asset == path)
+                .is_some_and(|asset| *asset == previous_path)
         {
             continue;
         }
-        if remove_relative_file(vault_root, &path)? {
-            removed_paths.push(path);
+        if remove_relative_file(vault_root, &previous_path)? {
+            removed_paths.push(previous_path);
         }
     }
 

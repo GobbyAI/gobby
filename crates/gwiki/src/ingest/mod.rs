@@ -12,13 +12,13 @@ pub mod url;
 pub mod video;
 pub mod wayback;
 
-use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::WikiError;
 use crate::indexer;
 use crate::sources::SourceRecord;
+pub(crate) use crate::sources::atomic::sync_parent_dir;
 use crate::store::WikiIndexStore;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -372,27 +372,6 @@ fn create_raw_temp_file(path: &Path) -> Result<tempfile::NamedTempFile, WikiErro
 
 /// Syncs the containing directory on Unix so the atomic rename is durable.
 /// Non-Unix platforms keep the file sync but skip directory `sync_all`.
-pub(crate) fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        Ok(())
-    }
-    #[cfg(unix)]
-    {
-        let Some(parent) = path.parent() else {
-            return Ok(());
-        };
-        File::open(parent)
-            .and_then(|dir| dir.sync_all())
-            .map_err(|error| WikiError::Io {
-                action: "sync parent directory",
-                path: Some(parent.to_path_buf()),
-                source: error,
-            })
-    }
-}
-
 pub(crate) fn asset_path(record: &SourceRecord, file_name: &str) -> PathBuf {
     let extension = sanitized_extension_for_file_name(file_name);
     PathBuf::from("raw")

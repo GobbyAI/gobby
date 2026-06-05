@@ -82,16 +82,13 @@ pub(crate) fn slugify_with_options(
     let mut slug = String::new();
     let mut last_was_dash = false;
     for ch in value.chars().flat_map(char::to_lowercase) {
+        if max_len.is_some_and(|max_len| slug.len() >= max_len) {
+            break;
+        }
         if ch.is_ascii_alphanumeric() {
-            if max_len.is_some_and(|max_len| slug.len() >= max_len) {
-                break;
-            }
             slug.push(ch);
             last_was_dash = false;
         } else if !last_was_dash && !slug.is_empty() {
-            if max_len.is_some_and(|max_len| slug.len() >= max_len) {
-                break;
-            }
             slug.push('-');
             last_was_dash = true;
         }

@@ -847,6 +847,57 @@ fn non_import_statements_are_ignored_for_other_import_parsers() {
 }
 
 #[test]
+fn python_and_js_fallback_imports_are_marked_unparsed() {
+    let mut extracted = ExtractedImports::default();
+    parse_import_statement(
+        "python",
+        "include plugin_imports",
+        "src/plugin.py",
+        &ImportResolutionContext::default(),
+        &mut extracted,
+    )
+    .expect("record python fallback import");
+
+    assert_eq!(
+        extracted.imports[0].module_name,
+        "UNPARSED:include plugin_imports"
+    );
+
+    let mut extracted = ExtractedImports::default();
+    parse_import_statement(
+        "javascript",
+        "sideEffectOnly();",
+        "src/plugin.js",
+        &ImportResolutionContext::default(),
+        &mut extracted,
+    )
+    .expect("record JS fallback import");
+
+    assert_eq!(
+        extracted.imports[0].module_name,
+        "UNPARSED:sideEffectOnly();"
+    );
+}
+
+#[test]
+fn unknown_language_fallback_rejects_empty_or_multiline_text() {
+    for text in ["", "import one\nimport two"] {
+        let mut extracted = ExtractedImports::default();
+        let error = parse_import_statement(
+            "unknown",
+            text,
+            "src/sample.unknown",
+            &ImportResolutionContext::default(),
+            &mut extracted,
+        )
+        .expect_err("invalid fallback text must fail");
+
+        assert!(error.to_string().contains("unparsed import fallback"));
+        assert!(extracted.imports.is_empty());
+    }
+}
+
+#[test]
 fn csharp_declared_types_includes_structs() {
     let names = csharp_declared_types(
         "public struct Point {} class Sample {} interface IThing {} enum Mode {} record Data;",

@@ -1,4 +1,5 @@
 use std::io::{Cursor, Read};
+use std::sync::LazyLock;
 
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
 use quick_xml::Reader as XmlReader;
@@ -19,8 +20,21 @@ pub(crate) const MAX_COLUMNS_PER_SHEET: usize = 16;
 /// Maximum PPTX slides parsed during bounded extraction.
 pub(crate) const MAX_SLIDES: usize = 200;
 /// Maximum uncompressed XML bytes read from a ZIP entry.
-pub(crate) const MAX_ENTRY_BYTES: u64 = 2 * 1024 * 1024;
+pub(crate) const MAX_ENTRY_BYTES: u64 = 5 * 1024 * 1024;
 const ZIP_ENTRY_READ_CHUNK_BYTES: usize = 8 * 1024;
+const OFFICE_MAX_ENTRY_BYTES_ENV: &str = "OFFICE_MAX_ENTRY_BYTES";
+const OFFICE_MAX_SLIDES_ENV: &str = "OFFICE_MAX_SLIDES";
+const OFFICE_MAX_ROWS_PER_SHEET_ENV: &str = "OFFICE_MAX_ROWS_PER_SHEET";
+const OFFICE_MAX_COLUMNS_PER_SHEET_ENV: &str = "OFFICE_MAX_COLUMNS_PER_SHEET";
+
+static OFFICE_MAX_ENTRY_BYTES: LazyLock<u64> =
+    LazyLock::new(|| office_env_u64(OFFICE_MAX_ENTRY_BYTES_ENV, MAX_ENTRY_BYTES));
+static OFFICE_MAX_SLIDES: LazyLock<usize> =
+    LazyLock::new(|| office_env_usize(OFFICE_MAX_SLIDES_ENV, MAX_SLIDES));
+static OFFICE_MAX_ROWS_PER_SHEET: LazyLock<usize> =
+    LazyLock::new(|| office_env_usize(OFFICE_MAX_ROWS_PER_SHEET_ENV, MAX_ROWS_PER_SHEET));
+static OFFICE_MAX_COLUMNS_PER_SHEET: LazyLock<usize> =
+    LazyLock::new(|| office_env_usize(OFFICE_MAX_COLUMNS_PER_SHEET_ENV, MAX_COLUMNS_PER_SHEET));
 
 pub(crate) fn extract_office_document(
     file_name: &str,
@@ -34,6 +48,48 @@ pub(crate) fn extract_office_document(
             "unsupported office extension .{extension}"
         ))),
         None => Err(document_error("missing office extension")),
+    }
+}
+
+fn office_max_entry_bytes() -> u64 {
+    *OFFICE_MAX_ENTRY_BYTES
+}
+
+fn office_max_slides() -> usize {
+    *OFFICE_MAX_SLIDES
+}
+
+fn office_max_rows_per_sheet() -> usize {
+    *OFFICE_MAX_ROWS_PER_SHEET
+}
+
+fn office_max_columns_per_sheet() -> usize {
+    *OFFICE_MAX_COLUMNS_PER_SHEET
+}
+
+fn office_env_u64(name: &str, default: u64) -> u64 {
+    let Some(raw) = std::env::var(name).ok() else {
+        return default;
+    };
+    match raw.trim().parse::<u64>() {
+        Ok(value) if value > 0 => value,
+        _ => {
+            log::warn!("invalid {name}={raw:?}; using default {default}");
+            default
+        }
+    }
+}
+
+fn office_env_usize(name: &str, default: usize) -> usize {
+    let Some(raw) = std::env::var(name).ok() else {
+        return default;
+    };
+    match raw.trim().parse::<usize>() {
+        Ok(value) if value > 0 => value,
+        _ => {
+            log::warn!("invalid {name}={raw:?}; using default {default}");
+            default
+        }
     }
 }
 
@@ -63,9 +119,14 @@ pub(crate) fn extract_pptx(bytes: &[u8]) -> Result<DocumentExtraction, WikiError
     if slide_names.is_empty() {
         return Err(document_error("pptx contained no slide XML"));
     }
-    let slides_truncated = slide_names.len() > MAX_SLIDES;
+    let max_slides = office_max_slides();
+    let slides_truncated = slide_names.len() > max_slides;
     if slides_truncated {
-        slide_names.truncate(MAX_SLIDES);
+        log::warn!(
+            "pptx extraction truncated slides: {} slides exceed {OFFICE_MAX_SLIDES_ENV}={max_slides}",
+            slide_names.len()
+        );
+        slide_names.truncate(max_slides);
     }
 
     let mut markdown = String::new();
@@ -100,7 +161,9 @@ pub(crate) fn extract_pptx(bytes: &[u8]) -> Result<DocumentExtraction, WikiError
         DocumentDegradation::new(
             DocumentFailureMode::OfficeBoundedExtraction,
             DocumentUnitCount::slides(slide_count),
-            format!("rendered {slide_count} slides from a deck exceeding MAX_SLIDES={MAX_SLIDES}"),
+            format!(
+                "rendered {slide_count} slides from a deck exceeding {OFFICE_MAX_SLIDES_ENV}={max_slides}"
+            ),
         )
     });
     Ok(DocumentExtraction {
@@ -124,18 +187,26 @@ fn extract_spreadsheet(bytes: &[u8]) -> Result<DocumentExtraction, WikiError> {
     let mut markdown = String::new();
     let mut rendered_sheets = 0;
     let sheets_truncated = sheet_names.len() > MAX_SHEETS;
+    if sheets_truncated {
+        log::warn!(
+            "spreadsheet extraction truncated sheets: {} sheets exceed MAX_SHEETS={MAX_SHEETS}",
+            sheet_names.len()
+        );
+    }
     let mut spreadsheet_truncated = sheets_truncated;
     let mut title = None;
+    let max_rows_per_sheet = office_max_rows_per_sheet();
+    let max_columns_per_sheet = office_max_columns_per_sheet();
     for sheet_name in sheet_names.iter().take(MAX_SHEETS) {
         let range = workbook
             .worksheet_range(sheet_name)
             .map_err(|error| document_error(format!("read sheet {sheet_name}: {error}")))?;
         let rows = range
             .rows()
-            .take(MAX_ROWS_PER_SHEET)
+            .take(max_rows_per_sheet)
             .map(|row| {
                 row.iter()
-                    .take(MAX_COLUMNS_PER_SHEET)
+                    .take(max_columns_per_sheet)
                     .map(cell_text)
                     .collect::<Vec<_>>()
             })
@@ -156,8 +227,18 @@ fn extract_spreadsheet(bytes: &[u8]) -> Result<DocumentExtraction, WikiError> {
         markdown.push_str("\n\n");
         markdown.push_str(&markdown_table(&rows));
         markdown.push('\n');
-        if range.height() > MAX_ROWS_PER_SHEET || range.width() > MAX_COLUMNS_PER_SHEET {
+        if range.height() > max_rows_per_sheet || range.width() > max_columns_per_sheet {
             spreadsheet_truncated = true;
+            log::warn!(
+                "spreadsheet extraction truncated sheet `{}`: {} rows x {} columns exceed {}={} or {}={}",
+                sheet_name,
+                range.height(),
+                range.width(),
+                OFFICE_MAX_ROWS_PER_SHEET_ENV,
+                max_rows_per_sheet,
+                OFFICE_MAX_COLUMNS_PER_SHEET_ENV,
+                max_columns_per_sheet
+            );
             markdown.push_str("\n_Table truncated for bounded extraction._\n");
         }
     }
@@ -178,7 +259,8 @@ fn extract_spreadsheet(bytes: &[u8]) -> Result<DocumentExtraction, WikiError> {
                 DocumentUnitCount::sheets(rendered_sheets),
                 format!(
                     "rendered {rendered_sheets} sheets within MAX_SHEETS={MAX_SHEETS}, \
-MAX_ROWS_PER_SHEET={MAX_ROWS_PER_SHEET}, and MAX_COLUMNS_PER_SHEET={MAX_COLUMNS_PER_SHEET}"
+{OFFICE_MAX_ROWS_PER_SHEET_ENV}={max_rows_per_sheet}, and \
+{OFFICE_MAX_COLUMNS_PER_SHEET_ENV}={max_columns_per_sheet}"
                 ),
             )
         }),
@@ -197,9 +279,14 @@ fn read_zip_entry_from_archive(
     let mut entry = archive
         .by_name(name)
         .map_err(|error| document_error(format!("read {name}: {error}")))?;
-    if entry.size() > MAX_ENTRY_BYTES {
+    let max_entry_bytes = office_max_entry_bytes();
+    if entry.size() > max_entry_bytes {
+        log::warn!(
+            "office ZIP entry `{name}` is {} bytes and exceeds {OFFICE_MAX_ENTRY_BYTES_ENV}={max_entry_bytes}",
+            entry.size()
+        );
         return Err(document_error(format!(
-            "{name} is {} bytes; maximum supported XML entry is {MAX_ENTRY_BYTES} bytes",
+            "{name} is {} bytes; maximum supported XML entry is {max_entry_bytes} bytes",
             entry.size()
         )));
     }
@@ -214,9 +301,12 @@ fn read_zip_entry_from_archive(
             break;
         }
         total = total.saturating_add(read as u64);
-        if total > MAX_ENTRY_BYTES {
+        if total > max_entry_bytes {
+            log::warn!(
+                "office ZIP entry `{name}` exceeded {OFFICE_MAX_ENTRY_BYTES_ENV}={max_entry_bytes} while reading"
+            );
             return Err(document_error(format!(
-                "{name} exceeds maximum supported XML entry size of {MAX_ENTRY_BYTES} bytes"
+                "{name} exceeds maximum supported XML entry size of {max_entry_bytes} bytes"
             )));
         }
         bytes.extend_from_slice(&buffer[..read]);

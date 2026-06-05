@@ -50,9 +50,25 @@ pub fn project_changed_since(
     // without a fragile path-set diff. An unreadable mtime is treated as a
     // change, so we never skip a refresh for a file we cannot stat.
     for path in candidates.iter().chain(content_only.iter()) {
-        match path.metadata().and_then(|meta| meta.modified()) {
-            Ok(modified) if modified <= threshold => {}
-            _ => return true,
+        match path.metadata() {
+            Ok(meta) => match meta.modified() {
+                Ok(modified) if modified <= threshold => {}
+                Ok(_) => return true,
+                Err(error) => {
+                    log::debug!(
+                        "treating project as changed: failed to read mtime for {}: {error}",
+                        path.display()
+                    );
+                    return true;
+                }
+            },
+            Err(error) => {
+                log::debug!(
+                    "treating project as changed: failed to read metadata for {}: {error}",
+                    path.display()
+                );
+                return true;
+            }
         }
     }
 

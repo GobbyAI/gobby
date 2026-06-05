@@ -3,6 +3,8 @@ use gobby_code::output;
 use gobby_core::config::AiRouting;
 
 const DEFAULT_CODEWIKI_GRAPH_EDGE_LIMIT: usize = 5000;
+const MAX_POSITIVE_USIZE_ARG: usize = 1_000_000_000;
+const MAX_GREP_MAX_COUNT: usize = 10_000;
 
 #[derive(Parser)]
 #[command(
@@ -263,8 +265,8 @@ pub(crate) enum Command {
         /// (bare globs match basenames; slash globs match paths)
         #[arg(short = 'g', long)]
         glob: Vec<String>,
-        /// Maximum matching lines to include
-        #[arg(short = 'm', long)]
+        /// Maximum matching lines to include, up to 10000
+        #[arg(short = 'm', long, value_parser = grep_max_count)]
         max_count: Option<usize>,
         /// Show line numbers (always shown, deprecated flag for compatibility)
         #[arg(short = 'n', long)]
@@ -325,8 +327,10 @@ pub(crate) enum Command {
     Symbol { id: String },
     /// Fetch symbol source code at PATH:LINE or PATH:LINE:COLUMN
     SymbolAt {
+        /// Location containing line information; conflicts with separate LINE
         #[arg(value_name = "PATH[:LINE[:COLUMN]]")]
         location: String,
+        /// 1-based line number; do not pass when LOCATION already includes a line
         #[arg(value_name = "LINE", value_parser = positive_usize)]
         line: Option<usize>,
     },
@@ -488,11 +492,21 @@ fn non_empty_grep_pattern(value: &str) -> Result<String, String> {
 }
 
 fn positive_usize(value: &str) -> Result<usize, String> {
+    bounded_positive_usize(value, MAX_POSITIVE_USIZE_ARG, "value")
+}
+
+fn grep_max_count(value: &str) -> Result<usize, String> {
+    bounded_positive_usize(value, MAX_GREP_MAX_COUNT, "--max-count")
+}
+
+fn bounded_positive_usize(value: &str, max: usize, name: &str) -> Result<usize, String> {
     let parsed = value
         .parse::<usize>()
-        .map_err(|_| "value must be a positive integer".to_string())?;
+        .map_err(|_| format!("{name} must be a positive integer"))?;
     if parsed == 0 {
-        Err("value must be a positive integer".to_string())
+        Err(format!("{name} must be a positive integer"))
+    } else if parsed > max {
+        Err(format!("{name} must be no more than {max}"))
     } else {
         Ok(parsed)
     }

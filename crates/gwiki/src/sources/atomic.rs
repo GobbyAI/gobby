@@ -82,7 +82,7 @@ fn temp_sibling_path(path: &Path) -> Result<PathBuf, WikiError> {
     )))
 }
 
-fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
+pub(crate) fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
     #[cfg(not(unix))]
     {
         let _ = path;

@@ -12,6 +12,7 @@ use anyhow::Context as _;
 
 use crate::config::Context;
 use crate::graph::typed_query::{TypedQuery, TypedValue};
+use crate::index::import_resolution::UNPARSED_IMPORT_PREFIX;
 use crate::models::{
     CallRelation, CallTargetKind, ImportRelation, Symbol, make_external_symbol_id,
     make_unresolved_callee_id,
@@ -407,7 +408,7 @@ fn usize_value(value: usize) -> anyhow::Result<TypedValue> {
 #[derive(Debug, Clone)]
 pub(super) struct ImportGraphItem {
     pub(super) source_file: String,
-    target_module: String,
+    pub(super) target_module: String,
 }
 
 #[derive(Debug, Clone)]
@@ -442,7 +443,10 @@ pub(super) fn import_graph_items(
 ) -> Vec<ImportGraphItem> {
     imports
         .iter()
-        .filter(|import| !import.module_name.is_empty())
+        .filter(|import| {
+            !import.module_name.is_empty()
+                && !import.module_name.starts_with(UNPARSED_IMPORT_PREFIX)
+        })
         .map(|import| ImportGraphItem {
             source_file: file_path.to_string(),
             target_module: import.module_name.clone(),

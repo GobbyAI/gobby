@@ -87,10 +87,14 @@ pub(crate) fn is_core_file(file: &str) -> bool {
     })
 }
 
+/// Return whether an indexed file is included by the codewiki scope filters.
+///
+/// No filters and an explicit empty filter both mean "all files".
 pub(crate) fn in_scope(file: &str, scopes: &[String]) -> bool {
-    // No scope filter, or an explicitly empty scope, means include every file.
-    scopes.is_empty()
-        || scopes.iter().any(|scope| scope.is_empty())
+    let no_filter = scopes.is_empty();
+    let explicit_all = scopes.iter().any(|scope| scope.is_empty());
+    no_filter
+        || explicit_all
         || scopes.iter().any(|scope| {
             file == scope || file.starts_with(&format!("{}/", scope.trim_end_matches('/')))
         })

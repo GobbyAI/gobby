@@ -10,6 +10,8 @@ use crate::{
     support::time,
 };
 
+const DEFAULT_PROJECT_ID: &str = "current";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ResearchScope {
@@ -62,7 +64,7 @@ impl From<&ResolvedScope> for ResearchScope {
 }
 
 fn default_project_id() -> String {
-    "current".to_string()
+    DEFAULT_PROJECT_ID.to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

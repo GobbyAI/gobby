@@ -6,16 +6,17 @@ use super::super::helpers::{
     split_top_level,
 };
 use super::super::predicates::{is_external_js_module, is_external_python_module};
+use super::push_unparsed_import;
 
 pub(crate) fn parse_python_import_statement(
     text: &str,
     rel_path: &str,
     import_context: &ImportResolutionContext,
     extracted: &mut ExtractedImports,
-) {
+) -> anyhow::Result<()> {
     if let Some(rest) = text.strip_prefix("import ") {
         let Ok(entries) = split_top_level(rest, ',') else {
-            return;
+            return Ok(());
         };
         for entry in entries {
             let entry = entry.trim();
@@ -42,27 +43,21 @@ pub(crate) fn parse_python_import_statement(
                     .insert(local_alias, module.to_string());
             }
         }
-        return;
+        return Ok(());
     }
 
     let Some(rest) = text.strip_prefix("from ") else {
-        extracted.imports.push(ImportRelation {
-            file_path: rel_path.to_string(),
-            module_name: text.to_string(),
-        });
-        return;
+        push_unparsed_import(rel_path, text, extracted)?;
+        return Ok(());
     };
     let Some((module, imported)) = rest.split_once(" import ") else {
-        extracted.imports.push(ImportRelation {
-            file_path: rel_path.to_string(),
-            module_name: text.to_string(),
-        });
-        return;
+        push_unparsed_import(rel_path, text, extracted)?;
+        return Ok(());
     };
 
     let module = module.trim();
     if module.is_empty() {
-        return;
+        return Ok(());
     }
     extracted.imports.push(ImportRelation {
         file_path: rel_path.to_string(),
@@ -70,16 +65,19 @@ pub(crate) fn parse_python_import_statement(
     });
 
     if !is_external_python_module(module, import_context) {
-        return;
+        return Ok(());
     }
 
     let imported = imported.trim().trim_matches(|ch| matches!(ch, '(' | ')'));
     let Ok(entries) = split_top_level(imported, ',') else {
-        return;
+        return Ok(());
     };
     for entry in entries {
         let entry = entry.trim();
         if entry.is_empty() || entry == "*" {
+            // Wildcard imports are valid import edges, but they do not name
+            // stable local call bindings. External bare-call resolution handles
+            // wildcard modules only when a parser records unambiguous state.
             continue;
         }
         let (imported_name, alias) = split_alias(entry);
@@ -96,6 +94,7 @@ pub(crate) fn parse_python_import_statement(
             .member
             .insert(local_alias, module.to_string());
     }
+    Ok(())
 }
 
 pub(crate) fn parse_js_import_statement(
@@ -103,14 +102,11 @@ pub(crate) fn parse_js_import_statement(
     rel_path: &str,
     import_context: &ImportResolutionContext,
     extracted: &mut ExtractedImports,
-) {
+) -> anyhow::Result<()> {
     let normalized = collapse_whitespace(text);
     let Some(specifier) = extract_js_module_specifier(&normalized) else {
-        extracted.imports.push(ImportRelation {
-            file_path: rel_path.to_string(),
-            module_name: normalized,
-        });
-        return;
+        push_unparsed_import(rel_path, &normalized, extracted)?;
+        return Ok(());
     };
 
     extracted.imports.push(ImportRelation {
@@ -119,19 +115,19 @@ pub(crate) fn parse_js_import_statement(
     });
 
     if !is_external_js_module(&specifier, import_context) {
-        return;
+        return Ok(());
     }
 
     let Some(clause) = extract_js_import_clause(&normalized) else {
-        return;
+        return Ok(());
     };
     let clause = clause.trim();
     if clause.is_empty() || clause.starts_with("type ") {
-        return;
+        return Ok(());
     }
 
     let Ok(parts) = split_top_level(clause, ',') else {
-        return;
+        return Ok(());
     };
     for part in parts {
         let part = part.trim();
@@ -151,7 +147,7 @@ pub(crate) fn parse_js_import_statement(
         if part.starts_with('{') && part.ends_with('}') {
             let inner = &part[1..part.len() - 1];
             let Ok(items) = split_top_level(inner, ',') else {
-                return;
+                return Ok(());
             };
             for item in items {
                 let item = item.trim();
@@ -194,4 +190,5 @@ pub(crate) fn parse_js_import_statement(
             .member
             .insert(alias.to_string(), specifier.clone());
     }
+    Ok(())
 }

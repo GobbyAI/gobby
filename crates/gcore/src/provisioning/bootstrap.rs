@@ -104,14 +104,20 @@ fn flatten_yaml_value_at_depth(
     depth: usize,
 ) -> anyhow::Result<()> {
     if depth > MAX_YAML_FLATTEN_DEPTH {
-        anyhow::bail!("gcore.yaml nesting exceeds maximum depth of {MAX_YAML_FLATTEN_DEPTH}");
+        anyhow::bail!(
+            "gcore.yaml path `{}` exceeds maximum depth of {MAX_YAML_FLATTEN_DEPTH}",
+            yaml_path(prefix)
+        );
     }
     match value {
         serde_yaml::Value::Null => Ok(()),
         serde_yaml::Value::Mapping(mapping) => {
             for (key, value) in mapping {
                 let Some(key) = key.as_str() else {
-                    anyhow::bail!("gcore.yaml keys must be strings");
+                    anyhow::bail!(
+                        "gcore.yaml path `{}` has a non-string key",
+                        yaml_path(prefix)
+                    );
                 };
                 let joined = match prefix {
                     Some(prefix) if !prefix.is_empty() => format!("{prefix}.{key}"),
@@ -124,7 +130,7 @@ fn flatten_yaml_value_at_depth(
                         flatten_yaml_value_at_depth(Some(&joined), value, output, depth + 1)?;
                     }
                     _ => {
-                        if let Some(text) = scalar_to_string(value)? {
+                        if let Some(text) = scalar_to_string(&joined, value)? {
                             output.insert(joined, text);
                         }
                     }
@@ -134,9 +140,9 @@ fn flatten_yaml_value_at_depth(
         }
         _ => {
             let Some(prefix) = prefix else {
-                anyhow::bail!("gcore.yaml must be a mapping");
+                anyhow::bail!("gcore.yaml path `<root>` must be a mapping");
             };
-            if let Some(text) = scalar_to_string(value)? {
+            if let Some(text) = scalar_to_string(prefix, value)? {
                 output.insert(prefix.to_string(), text);
             }
             Ok(())
@@ -144,20 +150,76 @@ fn flatten_yaml_value_at_depth(
     }
 }
 
-fn scalar_to_string(value: &serde_yaml::Value) -> anyhow::Result<Option<String>> {
+fn scalar_to_string(path: &str, value: &serde_yaml::Value) -> anyhow::Result<Option<String>> {
     Ok(match value {
         serde_yaml::Value::Null => None,
         serde_yaml::Value::String(value) => Some(value.clone()),
         serde_yaml::Value::Bool(value) => Some(value.to_string()),
         serde_yaml::Value::Number(value) => Some(value.to_string()),
         serde_yaml::Value::Sequence(_) => {
-            anyhow::bail!("gcore.yaml scalar config fields cannot be sequences")
+            anyhow::bail!("gcore.yaml path `{path}` cannot be a sequence")
         }
         serde_yaml::Value::Mapping(_) => {
-            anyhow::bail!("gcore.yaml scalar config fields cannot be mappings")
+            anyhow::bail!("gcore.yaml path `{path}` cannot be a mapping")
         }
         // Tagged values may wrap scalars or collections; preserve serde_yaml's
         // spelling instead of inventing a lossy custom representation.
-        other => Some(serde_yaml::to_string(other)?.trim().to_string()),
+        other => Some(
+            serde_yaml::to_string(other)
+                .with_context(|| format!("convert gcore.yaml path `{path}` to string"))?
+                .trim()
+                .to_string(),
+        ),
     })
+}
+
+fn yaml_path(prefix: Option<&str>) -> &str {
+    prefix.filter(|path| !path.is_empty()).unwrap_or("<root>")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn flatten(contents: &str) -> anyhow::Result<BTreeMap<String, String>> {
+        let value = serde_yaml::from_str(contents)?;
+        let mut output = BTreeMap::new();
+        flatten_yaml_value(None, &value, &mut output)?;
+        Ok(output)
+    }
+
+    #[test]
+    fn flatten_yaml_errors_include_root_path() {
+        let error = flatten("true").expect_err("root scalar must fail");
+
+        assert!(error.to_string().contains("`<root>`"));
+    }
+
+    #[test]
+    fn flatten_yaml_errors_include_mapping_path_for_non_string_keys() {
+        let error = flatten("ai:\n  ? [bad]\n  : value\n").expect_err("non-string key must fail");
+
+        assert!(error.to_string().contains("`ai`"));
+    }
+
+    #[test]
+    fn flatten_yaml_errors_include_scalar_path() {
+        let error = flatten("ai:\n  embeddings:\n    provider:\n      - openai\n")
+            .expect_err("sequence scalar must fail");
+
+        assert!(error.to_string().contains("`ai.embeddings.provider`"));
+    }
+
+    #[test]
+    fn flatten_yaml_depth_errors_include_current_path() {
+        let mut contents = String::new();
+        for index in 0..=MAX_YAML_FLATTEN_DEPTH + 1 {
+            contents.push_str(&"  ".repeat(index));
+            contents.push_str(&format!("k{index}:\n"));
+        }
+
+        let error = flatten(&contents).expect_err("too-deep nesting must fail");
+
+        assert!(error.to_string().contains("k0.k1"));
+    }
 }
