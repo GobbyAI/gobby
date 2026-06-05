@@ -22,6 +22,17 @@ const GWIKI_SCOPE_TABLES: &[&str] = &[
     "gwiki_documents",
 ];
 
+fn validated_gwiki_scope_table_name(table: &str) -> Option<&'static str> {
+    match table {
+        "gwiki_ingestions" => Some("gwiki_ingestions"),
+        "gwiki_links" => Some("gwiki_links"),
+        "gwiki_chunks" => Some("gwiki_chunks"),
+        "gwiki_sources" => Some("gwiki_sources"),
+        "gwiki_documents" => Some("gwiki_documents"),
+        _ => None,
+    }
+}
+
 pub struct GwikiFixture {
     _tempdir: TempDir,
     root: PathBuf,
@@ -254,8 +265,9 @@ fn cleanup_gwiki_scope(database_url: &str, scope_kind: &str, scope_id: &str) {
         return;
     };
     for table in GWIKI_SCOPE_TABLES {
-        // Safe interpolation: `table` comes only from `GWIKI_SCOPE_TABLES`,
-        // a closed whitelist of gwiki-owned table names above.
+        let Some(table) = validated_gwiki_scope_table_name(table) else {
+            continue;
+        };
         let sql = format!("DELETE FROM {table} WHERE scope_kind = $1 AND scope_id = $2");
         let _ = client.execute(&sql, &[&scope_kind, &scope_id]);
     }

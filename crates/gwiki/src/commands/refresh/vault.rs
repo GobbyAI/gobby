@@ -17,6 +17,11 @@ pub(crate) fn raw_source_path(id: &str) -> Result<PathBuf, WikiError> {
     Ok(Path::new("raw").join(format!("{id}.md")))
 }
 
+/// Returns vault-relative raw asset paths whose file stem matches `id`.
+///
+/// `vault_root` is the vault root and `id` is trimmed before matching. Missing
+/// `raw/assets` directories and unmatched IDs return an empty vector. Directory
+/// read failures are returned as `WikiError::Io`.
 pub(crate) fn source_asset_paths_for_id(
     vault_root: &Path,
     id: &str,

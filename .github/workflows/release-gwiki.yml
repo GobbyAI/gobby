@@ -323,6 +323,9 @@ jobs:
           elif [ "$code" = "404" ]; then
             echo "gobby-wiki ${version} not on crates.io (HTTP 404); will publish."
             echo "skip=false" >> "$GITHUB_OUTPUT"
+          elif [ "$code" = "403" ]; then
+            echo "::error::crates.io denied version check for gobby-wiki ${version}: HTTP 403 (curl exit ${curl_status}). Verify registry access and trusted publishing permissions." >&2
+            exit 1
           elif [ "$curl_status" -ne 0 ]; then
             echo "::error::crates.io version check failed (curl exit ${curl_status}, HTTP ${code:-unknown})." >&2
             exit "$curl_status"

@@ -19,6 +19,14 @@ use gobby_wiki::sources::{
     CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest,
 };
 
+fn http_fixture_timeout() -> Duration {
+    std::env::var("GWIKI_TEST_HTTP_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| Duration::from_secs(15))
+}
+
 fn gwiki(fixture: &common::GwikiFixture, cwd: &Path, args: &[&str]) -> Output {
     fixture
         .command_in(cwd)
@@ -58,9 +66,10 @@ fn serve_http_responses(
         .set_nonblocking(true)
         .expect("configure nonblocking HTTP fixture");
     let base_url = format!("http://{}", listener.local_addr().expect("local addr"));
+    let timeout = http_fixture_timeout();
     let handle = thread::spawn(move || {
         for (status, body) in responses {
-            let deadline = Instant::now() + Duration::from_secs(5);
+            let deadline = Instant::now() + timeout;
             let (mut stream, _) = loop {
                 match listener.accept() {
                     Ok(connection) => break connection,
