@@ -79,7 +79,7 @@ class ReviewLearningService:
 
     async def recall_context(
         self,
-        findings: list[dict[str, Any]],
+        findings: list[dict[str, Any] | str],
         proposed_changes: Any | None = None,
         source: str | None = None,
         source_kind: str | None = None,
@@ -89,21 +89,31 @@ class ReviewLearningService:
     ) -> dict[str, Any]:
         """Search memories for review-context relevant to each finding."""
         project_id, _ = self._resolve_scope(session_id)
+        normalized_findings = _normalize_recall_findings(findings)
         grouped: list[dict[str, Any]] = []
         flat_matches: list[dict[str, Any]] = []
-        for index, finding in enumerate(findings):
+        for index, finding in enumerate(normalized_findings):
+            queries = build_recall_queries(
+                finding=finding,
+                proposed_changes=proposed_changes,
+                source=source,
+                source_kind=source_kind,
+                repo=repo,
+                language=language,
+            )
             try:
-                queries = build_recall_queries(
-                    finding=finding,
-                    proposed_changes=proposed_changes,
-                    source=source,
-                    source_kind=source_kind,
-                    repo=repo,
-                    language=language,
-                )
                 matches = await self._search_recall_matches(project_id, index, queries)
-            except (AttributeError, RuntimeError, ValueError, OSError) as exc:
-                logger.debug("Review-learning recall failed open: %s", exc, exc_info=True)
+            except (RuntimeError, ValueError, OSError) as exc:
+                logger.warning(
+                    "Review-learning recall failed open for finding_index=%s exception_class=%s",
+                    index,
+                    exc.__class__.__name__,
+                    exc_info=True,
+                    extra={
+                        "finding_index": index,
+                        "exception_class": exc.__class__.__name__,
+                    },
+                )
                 matches = []
             grouped.append({"finding_index": index, "matches": matches})
             flat_matches.extend(matches)
@@ -389,6 +399,23 @@ def build_recall_queries(
     if len(compact) > 240:
         queries.append(compact[:240])
     return queries
+
+
+def _normalize_recall_findings(findings: list[dict[str, Any] | str]) -> list[dict[str, Any]]:
+    """Normalize supported recall finding shapes before backend fail-open handling."""
+    if not isinstance(findings, list):
+        raise ValueError("findings must be an array")
+
+    normalized: list[dict[str, Any]] = []
+    for index, finding in enumerate(findings):
+        if isinstance(finding, dict):
+            normalized.append(dict(finding))
+            continue
+        if isinstance(finding, str):
+            normalized.append({"message": finding})
+            continue
+        raise ValueError(f"findings[{index}] must be an object or string")
+    return normalized
 
 
 def _current_project_id() -> str:

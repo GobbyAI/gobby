@@ -43,6 +43,30 @@ def test_create_review_learning_registry_registers_two_tools() -> None:
     }
 
 
+def test_recall_review_context_schema_documents_finding_shapes() -> None:
+    registry = create_review_learning_registry(FakeMemoryManager(), FakeTaskManager())
+
+    schema = registry.get_schema("recall_review_context")
+
+    assert schema is not None
+    findings_schema = schema["inputSchema"]["properties"]["findings"]
+    assert findings_schema["type"] == "array"
+    item_variants = findings_schema["items"]["oneOf"]
+    object_schema = next(item for item in item_variants if item["type"] == "object")
+    string_schema = next(item for item in item_variants if item["type"] == "string")
+    assert string_schema["description"] == "Plain finding message."
+    for property_name in (
+        "title",
+        "message",
+        "suggestion",
+        "path",
+        "symbol",
+        "rule_id",
+        "query_hints",
+    ):
+        assert "description" in object_schema["properties"][property_name]
+
+
 @pytest.mark.asyncio
 async def test_recall_review_context_groups_matches_per_finding() -> None:
     memory_manager = FakeMemoryManager()
@@ -61,6 +85,41 @@ async def test_recall_review_context_groups_matches_per_finding() -> None:
     assert result["success"] is True
     assert result["findings"][0]["finding_index"] == 0
     assert result["findings"][0]["matches"][0]["memory_id"] == "mem-1"
+
+
+@pytest.mark.asyncio
+async def test_recall_review_context_accepts_string_findings() -> None:
+    memory_manager = FakeMemoryManager()
+    await memory_manager.create_memory(
+        "Local memory",
+        tags=["review-lesson", "pattern:example"],
+        project_id="_personal",
+    )
+    registry = create_review_learning_registry(memory_manager, FakeTaskManager())
+
+    result = await registry.call(
+        "recall_review_context",
+        {"findings": ["Local memory"]},
+    )
+
+    assert result["success"] is True
+    assert result["findings"][0]["matches"][0]["memory_id"] == "mem-1"
+    assert memory_manager.search_queries[0]["query"] == "Local memory"
+
+
+@pytest.mark.asyncio
+async def test_recall_review_context_rejects_invalid_finding_items() -> None:
+    registry = create_review_learning_registry(FakeMemoryManager(), FakeTaskManager())
+
+    result = await registry.call(
+        "recall_review_context",
+        {"findings": [123]},
+    )
+
+    assert result == {
+        "success": False,
+        "error": "findings[0] must be an object or string",
+    }
 
 
 @pytest.mark.asyncio

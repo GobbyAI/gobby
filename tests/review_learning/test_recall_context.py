@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from gobby.review_learning.service import ReviewLearningService, build_recall_queries
@@ -67,12 +69,22 @@ async def test_recall_returns_ordinary_and_review_lesson_memories(
 
 @pytest.mark.asyncio
 async def test_recall_fails_open_on_memory_search_errors(
-    fake_memory_manager, fake_task_manager
+    fake_memory_manager, fake_task_manager, caplog: pytest.LogCaptureFixture
 ) -> None:
     fake_memory_manager.raise_on_search = True
     service = ReviewLearningService(fake_memory_manager, fake_task_manager)
 
-    result = await service.recall_context(findings=[{"title": "anything"}])
+    with caplog.at_level(logging.WARNING, logger="gobby.review_learning.service"):
+        result = await service.recall_context(findings=[{"title": "anything"}])
 
     assert result["findings"] == [{"finding_index": 0, "matches": []}]
     assert result["matches"] == []
+    record = next(
+        record
+        for record in caplog.records
+        if record.message.startswith("Review-learning recall failed open")
+    )
+    assert "finding_index=0" in record.message
+    assert "exception_class=RuntimeError" in record.message
+    assert record.finding_index == 0
+    assert record.exception_class == "RuntimeError"

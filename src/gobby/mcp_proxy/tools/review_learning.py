@@ -8,6 +8,53 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.review_learning.promotion import PromotionTaskManager
 from gobby.review_learning.service import ReviewLearningMemoryManager, ReviewLearningService
 
+_FINDING_OBJECT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "description": "Structured review finding.",
+    "additionalProperties": True,
+    "properties": {
+        "title": {"type": "string", "description": "Short finding title."},
+        "message": {"type": "string", "description": "Finding message or diagnostic text."},
+        "suggestion": {"type": "string", "description": "Reviewer-suggested change."},
+        "path": {"type": "string", "description": "Repository path the finding applies to."},
+        "symbol": {"type": "string", "description": "Code symbol the finding applies to."},
+        "rule_id": {"type": "string", "description": "Reviewer or analyzer rule identifier."},
+        "query_hints": {
+            "description": "Additional recall search terms.",
+            "oneOf": [
+                {"type": "array", "items": {"type": "string"}},
+                {"type": "string"},
+            ],
+        },
+    },
+}
+
+_RECALL_REVIEW_CONTEXT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "findings": {
+            "type": "array",
+            "description": "Review findings as structured objects or plain finding text.",
+            "items": {
+                "oneOf": [
+                    _FINDING_OBJECT_SCHEMA,
+                    {"type": "string", "description": "Plain finding message."},
+                ]
+            },
+        },
+        "proposed_changes": {
+            "type": "object",
+            "description": "Optional proposed change context for recall search.",
+        },
+        "source": {"type": "string", "description": "Review source identifier."},
+        "source_kind": {"type": "string", "description": "Kind of review signal."},
+        "session_id": {"type": "string", "description": "Session scope for project resolution."},
+        "repo": {"type": "string", "description": "Repository identifier."},
+        "language": {"type": "string", "description": "Programming language context."},
+    },
+    "required": ["findings"],
+}
+
 
 def create_review_learning_registry(
     memory_manager: ReviewLearningMemoryManager,
@@ -20,12 +67,8 @@ def create_review_learning_registry(
         description="Review signal learning - recall lessons and record confirmed findings",
     )
 
-    @registry.tool(
-        name="recall_review_context",
-        description="Recall project memories and review lessons relevant to review findings.",
-    )
     async def recall_review_context(
-        findings: list[dict[str, Any]],
+        findings: list[dict[str, Any] | str],
         proposed_changes: Any | None = None,
         source: str | None = None,
         source_kind: str | None = None,
@@ -45,8 +88,15 @@ def create_review_learning_registry(
                 language=language,
             )
             return {"success": True, **result}
-        except (AttributeError, ValueError, RuntimeError, OSError) as exc:
+        except (ValueError, RuntimeError, OSError) as exc:
             return {"success": False, "error": str(exc)}
+
+    registry.register(
+        name="recall_review_context",
+        description="Recall project memories and review lessons relevant to review findings.",
+        input_schema=_RECALL_REVIEW_CONTEXT_SCHEMA,
+        func=recall_review_context,
+    )
 
     @registry.tool(
         name="recall_review_lessons_for_files",
