@@ -44,6 +44,7 @@ jobs:
         run: cargo test --doc -p gobby-core --no-default-features
 
   publish:
+    name: Publish
     needs: test
     runs-on: ubuntu-latest
 

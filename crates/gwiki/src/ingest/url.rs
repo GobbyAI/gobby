@@ -735,7 +735,7 @@ mod tests {
         assert!(raw.contains("# Durable Wikis"));
         assert!(raw.contains("canonical_url: \"https://example.com/docs/wiki\""));
         assert!(raw.contains("fetched_at: \"2026-05-29T16:00:00Z\""));
-        assert!(raw.contains("content_type: text/html"));
+        assert!(raw.contains("content_type: \"text/html\""));
         assert!(raw.contains(&format!("source_hash: {expected_hash}")));
         assert!(raw.contains("Capture source material."));
 

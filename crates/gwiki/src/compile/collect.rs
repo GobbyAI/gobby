@@ -158,7 +158,8 @@ fn prefixed_value<'a>(line: &'a str, prefixes: &[&str]) -> Option<&'a str> {
 }
 
 pub(crate) fn extend_unique(target: &mut Vec<String>, values: Vec<String>) {
-    let mut seen: HashSet<String> = target.iter().cloned().collect();
+    let mut seen = HashSet::with_capacity(target.len() + values.len());
+    seen.extend(target.iter().cloned());
     for value in values {
         if seen.insert(value.clone()) {
             target.push(value);

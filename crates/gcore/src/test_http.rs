@@ -1,16 +1,17 @@
-#![allow(dead_code)]
-
 use std::io::{self, ErrorKind, Read, Write};
 use std::net::TcpListener;
 use std::thread;
 use std::time::Duration;
 
+#[allow(dead_code)] // Used by integration-style test targets outside the lib test target.
 pub(crate) type RequestHandle = thread::JoinHandle<io::Result<String>>;
 
+#[allow(dead_code)] // Used by integration-style test targets outside the lib test target.
 pub(crate) fn spawn_json_response(body: impl Into<String>) -> io::Result<(String, RequestHandle)> {
     spawn_response(200, "OK", "application/json", body.into())
 }
 
+#[allow(dead_code)] // Used by integration-style test targets outside the lib test target.
 pub(crate) fn spawn_json_response_with_status(
     status: u16,
     body: impl Into<String>,
@@ -23,6 +24,7 @@ pub(crate) fn spawn_json_response_with_status(
     )
 }
 
+#[allow(dead_code)] // Used when status-response helpers are compiled into caller test targets.
 fn reason_phrase(status: u16) -> &'static str {
     match status {
         200 => "OK",
@@ -44,6 +46,7 @@ fn reason_phrase(status: u16) -> &'static str {
     }
 }
 
+#[allow(dead_code)] // Used by integration-style test targets outside the lib test target.
 pub(crate) fn spawn_response(
     status: u16,
     reason: &'static str,

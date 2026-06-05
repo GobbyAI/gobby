@@ -111,9 +111,9 @@ fn command_outputs_do_not_emit_static_placeholder_results() {
         "# Placeholder Text Source\n\nDifferent content for text ingest.\n",
     )
     .expect("write text source");
-    let text_setup = gwiki(&fixture, fixture.root(), &["setup", "--topic", &topic]);
+    let text_setup = gwiki(&fixture, fixture.root(), &["setup", "--topic", &text_topic]);
     common::assert_success(&text_setup, "text setup");
-    let text_index = gwiki(&fixture, fixture.root(), &["index", "--topic", &topic]);
+    let text_index = gwiki(&fixture, fixture.root(), &["index", "--topic", &text_topic]);
     common::assert_success(&text_index, "text index");
     let text_ingest = gwiki(
         &fixture,
@@ -121,7 +121,7 @@ fn command_outputs_do_not_emit_static_placeholder_results() {
         &[
             "ingest-file",
             "--topic",
-            &topic,
+            &text_topic,
             text_source.to_str().expect("text source path utf8"),
         ],
     );

@@ -261,7 +261,7 @@ mod tests {
         let degradation = document_degradation_for_error(&request, "missing text".to_string());
 
         assert_eq!(degradation.reason(), "pdf_text_layer_error");
-        assert_eq!(degradation.unit_count.key(), "pages");
+        assert_eq!(degradation.unit_count.key(), "page_count");
     }
 
     #[test]

@@ -178,6 +178,53 @@ ai:
     );
 }
 
+#[test]
+fn gcore_yaml_stringifies_tagged_scalar_values() {
+    let config = StandaloneConfig::from_yaml_str(
+        r#"
+ai:
+  embeddings:
+    provider: !provider ollama
+"#,
+    )
+    .expect("tagged scalar is stringified");
+    let tagged: serde_yaml::Value = serde_yaml::from_str("!provider ollama").expect("tagged yaml");
+    let expected = serde_yaml::to_string(&tagged)
+        .expect("stringify tagged yaml")
+        .trim()
+        .to_string();
+
+    assert_eq!(
+        config.get("ai.embeddings.provider"),
+        Some(expected.as_str())
+    );
+}
+
+#[test]
+fn gcore_yaml_stringifies_tagged_sequence_values() {
+    let config = StandaloneConfig::from_yaml_str(
+        r#"
+ai:
+  embeddings:
+    provider: !providers
+      - ollama
+      - lmstudio
+"#,
+    )
+    .expect("tagged sequence is stringified");
+    let tagged: serde_yaml::Value =
+        serde_yaml::from_str("!providers\n- ollama\n- lmstudio").expect("tagged yaml");
+    let expected = serde_yaml::to_string(&tagged)
+        .expect("stringify tagged yaml")
+        .trim()
+        .to_string();
+
+    assert_eq!(
+        config.get("ai.embeddings.provider"),
+        Some(expected.as_str())
+    );
+}
+
 fn nested_yaml_str<'a>(value: &'a serde_yaml::Value, path: &[&str]) -> Option<&'a str> {
     let mut current = value;
     for key in path {

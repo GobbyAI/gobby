@@ -53,6 +53,27 @@ fn oversized_pptx(slide_count: usize) -> Vec<u8> {
 }
 
 fn sample_xlsx() -> Vec<u8> {
+    xlsx_with_sheet_data(
+        r#"<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>City</t></is></c><c r="B1" t="inlineStr"><is><t>Count</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Duluth</t></is></c><c r="B2"><v>3</v></c></row></sheetData>"#,
+    )
+}
+
+fn oversized_xlsx(row_count: usize) -> Vec<u8> {
+    let rows = (1..=row_count)
+        .map(|row| {
+            format!(
+                r#"<row r="{row}"><c r="A{row}" t="inlineStr"><is><t>City {row}</t></is></c></row>"#
+            )
+        })
+        .collect::<String>();
+    xlsx_with_sheet_data(&format!("<sheetData>{rows}</sheetData>"))
+}
+
+fn xlsx_with_sheet_data(sheet_data: &str) -> Vec<u8> {
+    let worksheet = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">{sheet_data}</worksheet>"#
+    );
+
     zip_bytes(&[
         (
             "[Content_Types].xml",
@@ -70,10 +91,7 @@ fn sample_xlsx() -> Vec<u8> {
             "xl/_rels/workbook.xml.rels",
             r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#,
         ),
-        (
-            "xl/worksheets/sheet1.xml",
-            r#"<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>City</t></is></c><c r="B1" t="inlineStr"><is><t>Count</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Duluth</t></is></c><c r="B2"><v>3</v></c></row></sheetData></worksheet>"#,
-        ),
+        ("xl/worksheets/sheet1.xml", worksheet.as_str()),
     ])
 }
 
@@ -260,11 +278,42 @@ fn pptx_slide_count_is_bounded() {
         extract_pptx(&oversized_pptx(MAX_SLIDES + 1)).expect("oversized slide deck is truncated");
 
     assert_eq!(extraction.units_count, MAX_SLIDES);
+    let degradation = extraction
+        .degradation
+        .as_ref()
+        .expect("truncated pptx reports degradation");
+    assert_eq!(degradation.reason(), "office_bounded_extraction");
+    assert_eq!(degradation.unit_count.key(), "slide_count");
+    assert_eq!(degradation.unit_count.count(), MAX_SLIDES);
+    assert!(degradation.fallback.contains("MAX_SLIDES"));
     assert!(
         extraction
             .markdown
             .contains("_Slides truncated for bounded extraction._")
     );
+}
+
+#[test]
+fn xlsx_table_bounds_report_degradation() {
+    let extraction =
+        extract_office_document("oversized.xlsx", &oversized_xlsx(MAX_ROWS_PER_SHEET + 1))
+            .expect("oversized spreadsheet is truncated");
+
+    assert_eq!(extraction.units_label, "sheet_count");
+    assert_eq!(extraction.units_count, 1);
+    assert!(
+        extraction
+            .markdown
+            .contains("_Table truncated for bounded extraction._")
+    );
+    let degradation = extraction
+        .degradation
+        .as_ref()
+        .expect("truncated xlsx reports degradation");
+    assert_eq!(degradation.reason(), "office_bounded_extraction");
+    assert_eq!(degradation.unit_count.key(), "sheet_count");
+    assert_eq!(degradation.unit_count.count(), 1);
+    assert!(degradation.fallback.contains("MAX_ROWS_PER_SHEET"));
 }
 
 #[test]

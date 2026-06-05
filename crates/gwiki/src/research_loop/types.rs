@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::WikiError;
 use crate::research::{AcceptedNoteDraft, ResearchGap, ResearchStopReason};
@@ -94,7 +94,7 @@ pub(crate) trait ResearchNoteWriter {
     fn write_note(&mut self, note: &AcceptedNoteDraft) -> Result<NoteWriteOutcome, WikiError>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub(crate) enum ResearchAction {
     Ask {

@@ -156,6 +156,8 @@ fn scalar_to_string(value: &serde_yaml::Value) -> anyhow::Result<Option<String>>
         serde_yaml::Value::Mapping(_) => {
             anyhow::bail!("gcore.yaml scalar config fields cannot be mappings")
         }
+        // Tagged values may wrap scalars or collections; preserve serde_yaml's
+        // spelling instead of inventing a lossy custom representation.
         other => Some(serde_yaml::to_string(other)?.trim().to_string()),
     })
 }

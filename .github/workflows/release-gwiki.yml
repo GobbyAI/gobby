@@ -11,6 +11,9 @@ on:
 permissions:
   contents: read
 
+env:
+  PDFIUM_VERSION: "7690"
+
 concurrency:
   group: release-gwiki-${{ github.ref }}
   cancel-in-progress: false
@@ -127,6 +130,24 @@ jobs:
       - name: Run doctests without default features
         run: cargo test --doc -p gobby-wiki --no-default-features
 
+      - name: Verify pdfium-auto version pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest_path="$(
+            cargo metadata --format-version=1 |
+              jq -er 'first(.packages[] | select(.name == "pdfium-auto") | .manifest_path)'
+          )"
+          build_rs="${manifest_path%/Cargo.toml}/build.rs"
+          pdfium_auto_version="$(
+            grep -E 'PDFIUM_VERSION: &str = "[0-9]+"' "$build_rs" |
+              sed -E 's/.*"([0-9]+)".*/\1/'
+          )"
+          if [ "$pdfium_auto_version" != "$PDFIUM_VERSION" ]; then
+            echo "::error::release-gwiki PDFIUM_VERSION=${PDFIUM_VERSION} but pdfium-auto build.rs pins ${pdfium_auto_version}." >&2
+            exit 1
+          fi
+
   build:
     needs: test
     strategy:
@@ -148,13 +169,11 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             cross: false
-            pdfium_version: "7690"
             pdfium_archive: pdfium-win-x64.tgz
             pdfium_sha: 06ef95ac4f9b8897731224639ddf0f185693cb48bc9ee650f1e92f71e0d2a94e
           - target: aarch64-pc-windows-msvc
             os: windows-latest
             cross: true
-            pdfium_version: "7690"
             pdfium_archive: pdfium-win-arm64.tgz
             pdfium_sha: e01a0df46347d40c591a11f2060a371004ef5c423cf890c6cb431594ccbd2b9b
 
@@ -187,18 +206,18 @@ jobs:
 
       - name: Provision pdfium (Windows)
         # gwiki's `documents` feature embeds pdfium via pdfium-auto's `bundled`
-        # build script, which by default curl-downloads the chromium/7690 archive
+        # build script, which by default curl-downloads a pinned chromium archive
         # at build time. On the windows-msvc runners we provision it deterministically:
         # download the pinned bblanchon archive, verify its SHA-256 (fail-closed), and
         # point pdfium-auto at it via PDFIUM_BUNDLE_LIB — its priority-1 source — so the
         # build never depends on the build script's own network fetch. macOS/Linux keep
         # using pdfium-auto's auto-download (already proven in CI).
-        # Keep `version` in sync with pdfium-auto's PDFIUM_VERSION constant (now 7690).
+        # Keep env.PDFIUM_VERSION in sync with pdfium-auto's PDFIUM_VERSION constant.
         if: startsWith(matrix.os, 'windows')
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
-          PDFIUM_VERSION: ${{ matrix.pdfium_version }}
+          PDFIUM_VERSION: ${{ env.PDFIUM_VERSION }}
           PDFIUM_ARCHIVE: ${{ matrix.pdfium_archive }}
           PDFIUM_SHA: ${{ matrix.pdfium_sha }}
         run: |

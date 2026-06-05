@@ -4,6 +4,7 @@ use crate::ingest::single_line;
 pub enum DocumentFailureMode {
     UnsupportedSource,
     OfficeParseError,
+    OfficeBoundedExtraction,
     HtmlParseError,
     HtmlNoContent,
     PdfTextLayerError,
@@ -19,6 +20,7 @@ impl DocumentFailureMode {
         match self {
             Self::UnsupportedSource => "unsupported_source",
             Self::OfficeParseError => "office_parse_error",
+            Self::OfficeBoundedExtraction => "office_bounded_extraction",
             Self::HtmlParseError => "html_parse_error",
             Self::HtmlNoContent => "html_no_content",
             Self::PdfTextLayerError => "pdf_text_layer_error",
@@ -134,6 +136,12 @@ mod tests {
                 DocumentFailureMode::OfficeParseError,
                 DocumentUnitCount::sheets(0),
                 "office_parse_error",
+                "sheet_count",
+            ),
+            (
+                DocumentFailureMode::OfficeBoundedExtraction,
+                DocumentUnitCount::sheets(1),
+                "office_bounded_extraction",
                 "sheet_count",
             ),
             (

@@ -5,16 +5,17 @@ use quick_xml::Reader as XmlReader;
 use quick_xml::events::Event;
 use zip::ZipArchive;
 
+use crate::document::{DocumentDegradation, DocumentFailureMode, DocumentUnitCount};
 use crate::ingest::single_line;
 
 use super::*;
 
 /// Maximum spreadsheet sheets rendered into markdown during bounded extraction.
-const MAX_SHEETS: usize = 8;
+pub(crate) const MAX_SHEETS: usize = 8;
 /// Maximum rows rendered per spreadsheet sheet before truncation is reported.
-const MAX_ROWS_PER_SHEET: usize = 64;
+pub(crate) const MAX_ROWS_PER_SHEET: usize = 64;
 /// Maximum columns rendered per spreadsheet sheet before truncation is reported.
-const MAX_COLUMNS_PER_SHEET: usize = 16;
+pub(crate) const MAX_COLUMNS_PER_SHEET: usize = 16;
 /// Maximum PPTX slides parsed during bounded extraction.
 pub(crate) const MAX_SLIDES: usize = 200;
 /// Maximum uncompressed XML bytes read from a ZIP entry.
@@ -95,12 +96,19 @@ pub(crate) fn extract_pptx(bytes: &[u8]) -> Result<DocumentExtraction, WikiError
     if slides_truncated {
         markdown.push_str("_Slides truncated for bounded extraction._\n\n");
     }
+    let degradation = slides_truncated.then(|| {
+        DocumentDegradation::new(
+            DocumentFailureMode::OfficeBoundedExtraction,
+            DocumentUnitCount::slides(slide_count),
+            format!("rendered {slide_count} slides from a deck exceeding MAX_SLIDES={MAX_SLIDES}"),
+        )
+    });
     Ok(DocumentExtraction {
         title,
         markdown: markdown.trim_end().to_string(),
         units_label: "slide_count",
         units_count: slide_count,
-        degradation: None,
+        degradation,
     })
 }
 
@@ -115,6 +123,8 @@ fn extract_spreadsheet(bytes: &[u8]) -> Result<DocumentExtraction, WikiError> {
 
     let mut markdown = String::new();
     let mut rendered_sheets = 0;
+    let sheets_truncated = sheet_names.len() > MAX_SHEETS;
+    let mut spreadsheet_truncated = sheets_truncated;
     let mut title = None;
     for sheet_name in sheet_names.iter().take(MAX_SHEETS) {
         let range = workbook
@@ -147,18 +157,31 @@ fn extract_spreadsheet(bytes: &[u8]) -> Result<DocumentExtraction, WikiError> {
         markdown.push_str(&markdown_table(&rows));
         markdown.push('\n');
         if range.height() > MAX_ROWS_PER_SHEET || range.width() > MAX_COLUMNS_PER_SHEET {
+            spreadsheet_truncated = true;
             markdown.push_str("\n_Table truncated for bounded extraction._\n");
         }
     }
     if markdown.trim().is_empty() {
         return Err(document_error("spreadsheet contained no cell text"));
     }
+    if sheets_truncated {
+        markdown.push_str("\n_Sheets truncated for bounded extraction._\n");
+    }
     Ok(DocumentExtraction {
         title,
         markdown: markdown.trim_end().to_string(),
         units_label: "sheet_count",
         units_count: rendered_sheets,
-        degradation: None,
+        degradation: spreadsheet_truncated.then(|| {
+            DocumentDegradation::new(
+                DocumentFailureMode::OfficeBoundedExtraction,
+                DocumentUnitCount::sheets(rendered_sheets),
+                format!(
+                    "rendered {rendered_sheets} sheets within MAX_SHEETS={MAX_SHEETS}, \
+MAX_ROWS_PER_SHEET={MAX_ROWS_PER_SHEET}, and MAX_COLUMNS_PER_SHEET={MAX_COLUMNS_PER_SHEET}"
+                ),
+            )
+        }),
     })
 }
 

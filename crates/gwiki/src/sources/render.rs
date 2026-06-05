@@ -10,6 +10,8 @@ use super::{
     SOURCE_MARKER,
 };
 
+const EMPTY_CONTENT_HASH_SENTINEL: &str = "0000000000000000";
+
 pub(crate) fn render_entry(entry: &SourceRecord, index: &mut String) -> Result<(), WikiError> {
     let metadata = serde_json::to_string(entry).map_err(|error| WikiError::Json {
         action: "serialize raw source index marker",
@@ -166,7 +168,11 @@ fn lower_url_scheme_and_authority(location: &str) -> String {
 pub(crate) fn source_id(canonical_location: &str, content_hash: &str) -> String {
     // Sixteen hex chars gives a 64-bit collision space while keeping source IDs
     // readable in Markdown manifests.
-    let hash_prefix = &content_hash[..content_hash.len().min(SOURCE_ID_HASH_PREFIX_LEN)];
+    let hash_prefix = if content_hash.is_empty() {
+        EMPTY_CONTENT_HASH_SENTINEL
+    } else {
+        &content_hash[..content_hash.len().min(SOURCE_ID_HASH_PREFIX_LEN)]
+    };
     let slug = slugify_with_options(canonical_location, None, Some(48));
 
     if slug.is_empty() {
@@ -220,5 +226,10 @@ mod tests {
             inline_text("alpha\r\n  beta\tgamma\rdone"),
             "alpha beta gamma done"
         );
+    }
+
+    #[test]
+    fn source_id_uses_empty_hash_sentinel() {
+        assert_eq!(source_id("", ""), "src-0000000000000000");
     }
 }

@@ -100,7 +100,7 @@ fn extract_json_object(response: &str) -> Result<&str, String> {
 }
 
 pub(crate) fn action_fingerprint(action: &ResearchAction) -> String {
-    format!("{action:?}")
+    serde_json::to_string(action).unwrap_or_else(|_| format!("{action:?}"))
 }
 
 pub(crate) fn normalize_sources(sources: &[String]) -> Vec<String> {
@@ -215,5 +215,22 @@ pub(crate) fn default_stop_message(stop_reason: ResearchStopReason) -> &'static 
         ResearchStopReason::SourceBlocked => "research stopped on unsupported source",
         ResearchStopReason::WriteConflict => "research stopped on write conflict",
         ResearchStopReason::AiUnavailable => "research stopped because AI is unavailable",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn action_fingerprint_uses_stable_json() {
+        let action = ResearchAction::Search {
+            query: "rust parser".to_string(),
+        };
+
+        assert_eq!(
+            action_fingerprint(&action),
+            r#"{"action":"search","query":"rust parser"}"#
+        );
     }
 }

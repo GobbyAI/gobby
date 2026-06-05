@@ -379,6 +379,8 @@ fn collect_error_with_cleanup<T>(
         } => WikiError::Io {
             action,
             path,
+            // Preserve ErrorKind for callers; std::io::Error reconstruction drops
+            // source chains until cleanup_failures can carry Vec<String> natively.
             source: std::io::Error::new(source.kind(), format!("{source}{cleanup_detail}")),
         },
         error => WikiError::Config {

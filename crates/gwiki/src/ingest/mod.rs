@@ -138,11 +138,19 @@ pub(crate) fn markdown_metadata(fields: &[(&str, String)]) -> String {
     for (key, value) in fields {
         metadata.push_str(key);
         metadata.push_str(": ");
-        metadata.push_str(&yaml_safe_single_line_scalar(value));
+        metadata.push_str(&yaml_metadata_scalar(key, value));
         metadata.push('\n');
     }
     metadata.push_str("---\n\n");
     metadata
+}
+
+fn yaml_metadata_scalar(key: &str, value: &str) -> String {
+    if key == "content_type" {
+        let value = single_line(value);
+        return serde_json::to_string(&value).unwrap_or_else(|_| "\"\"".to_string());
+    }
+    yaml_safe_single_line_scalar(value)
 }
 
 fn yaml_safe_single_line_scalar(value: &str) -> String {
@@ -497,6 +505,7 @@ mod tests {
             ("draft", "true".to_string()),
             ("empty", "~".to_string()),
             ("revision", "1.20".to_string()),
+            ("content_type", "text/html".to_string()),
         ]);
 
         assert!(metadata.contains("source_kind: pdf\n"));
@@ -506,6 +515,7 @@ mod tests {
         assert!(metadata.contains("draft: \"true\"\n"));
         assert!(metadata.contains("empty: \"~\"\n"));
         assert!(metadata.contains("revision: \"1.20\"\n"));
+        assert!(metadata.contains("content_type: \"text/html\"\n"));
     }
 
     #[test]
