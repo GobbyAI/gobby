@@ -6,7 +6,7 @@ to make the client CLI-agnostic.
 
 Usage:
     service = create_llm_service(config)
-    provider, model, prompt = service.get_provider_for_feature(config.session_summary)
+    summary = await service.call_feature(config.session_summary, "Summarize this session.")
 """
 
 from gobby.llm.base import AuthMode, LLMProvider

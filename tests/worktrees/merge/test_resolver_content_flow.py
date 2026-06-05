@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.config.features import MergeResolutionConfig
 from gobby.worktrees.merge.resolver import (
     MergeResolver,
     MergeResult,
@@ -87,7 +88,10 @@ def test_merge_result_to_dict_includes_resolved_content_by_file() -> None:
 
 @pytest.fixture
 def resolver_with_llm() -> MergeResolver:
-    return MergeResolver(llm_service=MagicMock())
+    return MergeResolver(
+        llm_service=MagicMock(),
+        config=MergeResolutionConfig(candidates=["claude/sonnet"]),
+    )
 
 
 @pytest.mark.asyncio
@@ -99,10 +103,8 @@ async def test_resolve_file_tier2_populates_content(
         "x = 1\n<<<<<<< HEAD\ny_ours = 2\n=======\ny_theirs = 3\n>>>>>>> feature\nz = 4\n"
     )
 
-    provider = MagicMock()
-    provider.generate_text = AsyncMock(return_value="y = 2 + 3")
     assert resolver_with_llm.llm_service is not None
-    resolver_with_llm.llm_service.get_default_provider.return_value = provider
+    resolver_with_llm.llm_service.call_feature = AsyncMock(return_value="y = 2 + 3")
 
     hunks = [{"ours": "y_ours = 2", "theirs": "y_theirs = 3"}]
     result = await resolver_with_llm.resolve_file(file_path, hunks)
@@ -128,12 +130,10 @@ async def test_resolve_file_tier2_preserves_intentional_empty_hunk(
         "after\n"
     )
 
-    provider = MagicMock()
-    provider.generate_text = AsyncMock(
+    assert resolver_with_llm.llm_service is not None
+    resolver_with_llm.llm_service.call_feature = AsyncMock(
         return_value="__GOBBY_EMPTY_HUNK__\n---HUNK SEPARATOR---\nnew()"
     )
-    assert resolver_with_llm.llm_service is not None
-    resolver_with_llm.llm_service.get_default_provider.return_value = provider
 
     hunks = [
         {"ours": "remove_me()", "theirs": "remove_me()"},
@@ -155,10 +155,8 @@ async def test_resolve_file_uses_worktree_path_for_relative_file(
         "x = 1\n<<<<<<< HEAD\ny_ours = 2\n=======\ny_theirs = 3\n>>>>>>> feature\nz = 4\n"
     )
 
-    provider = MagicMock()
-    provider.generate_text = AsyncMock(return_value="y = 2 + 3")
     assert resolver_with_llm.llm_service is not None
-    resolver_with_llm.llm_service.get_default_provider.return_value = provider
+    resolver_with_llm.llm_service.call_feature = AsyncMock(return_value="y = 2 + 3")
 
     hunks = [{"ours": "y_ours = 2", "theirs": "y_theirs = 3"}]
     result = await resolver_with_llm.resolve_file("src/small.py", hunks, worktree_path=tmp_path)
@@ -178,10 +176,10 @@ async def test_resolve_file_tier3_populates_content_when_tier2_fails(
 
     full_file_response = "RESOLVED FULL FILE"
     tier2_response = "chunk1\n---HUNK SEPARATOR---\nchunk2\n"
-    provider = MagicMock()
-    provider.generate_text = AsyncMock(side_effect=[tier2_response, full_file_response])
     assert resolver_with_llm.llm_service is not None
-    resolver_with_llm.llm_service.get_default_provider.return_value = provider
+    resolver_with_llm.llm_service.call_feature = AsyncMock(
+        side_effect=[tier2_response, full_file_response]
+    )
 
     hunks = [{"ours": "ours", "theirs": "theirs"}]
     result = await resolver_with_llm.resolve_file(file_path, hunks)
@@ -197,10 +195,8 @@ async def test_resolve_file_human_review_has_empty_content(
 ) -> None:
     file_path = tmp_path / "stuck.py"
     file_path.write_text("<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature\n")
-    provider = MagicMock()
-    provider.generate_text = AsyncMock(return_value=None)
     assert resolver_with_llm.llm_service is not None
-    resolver_with_llm.llm_service.get_default_provider.return_value = provider
+    resolver_with_llm.llm_service.call_feature = AsyncMock(return_value=None)
 
     hunks = [{"ours": "ours", "theirs": "theirs"}]
     result = await resolver_with_llm.resolve_file(file_path, hunks)

@@ -14,13 +14,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _parse_feature_candidate(candidate: str) -> tuple[str, str]:
-    provider, separator, model = candidate.partition("/")
-    if not separator or not provider.strip() or not model.strip():
-        raise ValueError(f"Feature candidate must use provider/model format: {candidate!r}")
-    return provider.strip(), model.strip()
-
-
 def _feature_request(
     feature_config: Any,
     prompt: str,
@@ -145,53 +138,9 @@ class LLMService:
 
         Example:
             claude = service.get_provider("claude")
-            result = await claude.generate_summary(context)
+            result = await claude.describe_image("/tmp/screenshot.png")
         """
         return self._get_provider_instance(name)
-
-    def get_provider_for_feature(
-        self, feature_config: Any
-    ) -> tuple["LLMProvider", str, str | None]:
-        """
-        Get provider, model, and prompt for a feature configuration.
-
-        Feature configs now specify profile/candidates. This legacy helper
-        returns the first LLMProvider-backed candidate only.
-
-        Args:
-            feature_config: Feature configuration object with candidates and
-                optionally prompt fields.
-
-        Returns:
-            Tuple of (provider, model, prompt) where:
-            - provider: LLMProvider instance
-            - model: Model name string
-            - prompt: Optional prompt template string (or None if not configured)
-
-        Raises:
-            ValueError: If feature config is missing required fields
-            ValueError: If specified provider is not configured
-
-        Example:
-            provider, model, prompt = service.get_provider_for_feature(config.session_summary)
-            result = await provider.generate_summary(context, prompt_template=prompt)
-        """
-        candidates = tuple(getattr(feature_config, "candidates", ()) or ())
-        if not candidates:
-            raise ValueError(f"Feature config {type(feature_config).__name__} missing candidates")
-        provider_name: str | None = None
-        model: str | None = None
-        for candidate in candidates:
-            candidate_provider, candidate_model = _parse_feature_candidate(candidate)
-            if candidate_provider in {"claude", "local"}:
-                provider_name = candidate_provider
-                model = candidate_model
-                break
-        if provider_name is None or model is None:
-            raise ValueError("Feature config has no LLMProvider-backed candidates")
-        prompt = getattr(feature_config, "prompt", None)
-        provider = self._get_provider_instance(provider_name)
-        return provider, model, prompt
 
     def get_default_provider(self) -> "LLMProvider":
         """

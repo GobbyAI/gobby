@@ -10,7 +10,6 @@ from .models import Entity, Relationship, _GraphEntity
 
 if TYPE_CHECKING:
     from gobby.config.persistence import MemoryKnowledgeGraphConfig
-    from gobby.llm.base import LLMProvider
     from gobby.prompts.loader import PromptLoader
 
 logger = logging.getLogger(__name__)
@@ -75,15 +74,11 @@ class KnowledgeGraphExtractor:
 
     def __init__(
         self,
-        llm_provider: LLMProvider,
         prompt_loader: PromptLoader,
-        model: str | None = None,
-        llm_service: JSONFeatureProvider | None = None,
-        feature_config: MemoryKnowledgeGraphConfig | None = None,
+        llm_service: JSONFeatureProvider,
+        feature_config: MemoryKnowledgeGraphConfig,
     ) -> None:
-        self._llm = llm_provider
         self._prompt_loader = prompt_loader
-        self._model = model
         self._llm_service = llm_service
         self._feature_config = feature_config
 
@@ -94,26 +89,19 @@ class KnowledgeGraphExtractor:
         system_prompt: str | None = None,
         caller: str,
     ) -> dict[str, Any]:
-        if self._feature_config is not None and self._llm_service is not None:
-            response = await self._llm_service.call_json_feature(
-                self._feature_config,
-                prompt,
-                system_prompt=system_prompt,
-                caller=caller,
-            )
-            if not isinstance(response, dict):
-                feature_id = type(self._feature_config).__name__
-                raise TypeError(
-                    f"{caller} expected call_json_feature to return dict for "
-                    f"{feature_id}, got {type(response).__name__}"
-                )
-            return response
-        return await self._llm.generate_json(
+        response = await self._llm_service.call_json_feature(
+            self._feature_config,
             prompt,
             system_prompt=system_prompt,
-            model=self._model,
             caller=caller,
         )
+        if not isinstance(response, dict):
+            feature_id = type(self._feature_config).__name__
+            raise TypeError(
+                f"{caller} expected call_json_feature to return dict for "
+                f"{feature_id}, got {type(response).__name__}"
+            )
+        return response
 
     async def extract_entities(self, content: str) -> list[Entity]:
         """Extract entities from content using LLM."""

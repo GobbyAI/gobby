@@ -67,6 +67,9 @@ def create_session_messages_registry(
         name="gobby-sessions",
         description="Session management and message querying - CRUD, retrieval, search",
     )
+    session_summary_config = (
+        getattr(config, "session_summary", None) if config is not None else None
+    )
 
     # --- Message Tools ---
     # Register if transcript_reader or session_manager is available
@@ -79,6 +82,9 @@ def create_session_messages_registry(
         register_handoff_tools(
             registry,
             session_manager,
+            llm_service=llm_service,
+            transcript_processor=transcript_processor,
+            session_summary_config=session_summary_config,
             inter_session_message_manager=inter_session_message_manager,
         )
 
@@ -124,6 +130,7 @@ def create_session_messages_registry(
             session_manager,
             db,
             llm_service=llm_service,
+            session_summary_config=session_summary_config,
             web_chat_session_registry=web_chat_session_registry,
         )
 

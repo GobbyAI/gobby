@@ -6,10 +6,12 @@ Relocated from tests/workflows/test_memory_actions.py as part of dead-code clean
 import hashlib
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.config.sessions import DigestConfig
 from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.digest import (
     _get_next_turn_number,
@@ -29,6 +31,10 @@ from tests._timing import wait_forever
 pytestmark = pytest.mark.unit
 
 _CLAUDE_FIXTURE = Path(__file__).parent / "fixtures" / "claude_transcript_titles.jsonl"
+
+
+def _digest_config(**kwargs: object) -> SimpleNamespace:
+    return SimpleNamespace(digest=DigestConfig(candidates=["claude/haiku"], **kwargs))
 
 
 def _turn_record_json(
@@ -522,8 +528,7 @@ class TestBuildTurnAndDigest:
     @pytest.fixture
     def mock_llm_service(self):
         service = MagicMock()
-        provider = MagicMock()
-        provider.generate_text = AsyncMock(
+        service.call_feature = AsyncMock(
             side_effect=[
                 _turn_record_json(
                     "User asked to fix a bug. Agent found the root cause in auth.py line 42.",
@@ -531,7 +536,6 @@ class TestBuildTurnAndDigest:
                 ),
             ]
         )
-        service.get_default_provider.return_value = provider
         return service
 
     @pytest.mark.asyncio
@@ -543,6 +547,7 @@ class TestBuildTurnAndDigest:
             session_manager=mock_session_manager,
             session_id="s1",
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
         assert result is None
 
@@ -565,6 +570,7 @@ class TestBuildTurnAndDigest:
             session_manager=sm,
             session_id="nonexistent",
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
         assert result is None
 
@@ -579,6 +585,7 @@ class TestBuildTurnAndDigest:
             session_id="s1",
             prompt_text=None,
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
         assert result is None
 
@@ -593,6 +600,7 @@ class TestBuildTurnAndDigest:
                 session_id="s1",
                 prompt_text=cmd,
                 llm_service=mock_llm_service,
+                config=_digest_config(),
             )
             assert result is None
 
@@ -610,6 +618,7 @@ class TestBuildTurnAndDigest:
             session_id="session-123",
             prompt_text="Fix the authentication bug in auth.py",
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
 
         assert result is not None
@@ -633,9 +642,8 @@ class TestBuildTurnAndDigest:
         # Verify title was included in the same persistence call.
         assert call_args.kwargs["title"] == "Fix Auth Bug"
         assert call_args.kwargs["title_source"] == "llm"
-        provider = mock_llm_service.get_default_provider.return_value
-        assert provider.generate_text.await_count == 1
-        assert provider.generate_text.await_args.kwargs["caller"] == "memory.turn_record"
+        assert mock_llm_service.call_feature.await_count == 1
+        assert mock_llm_service.call_feature.await_args.kwargs["caller"] == "memory.turn_record"
 
     @pytest.mark.asyncio
     async def test_provider_shutdown_cancellation_returns_cancelled_without_error_log(
@@ -645,8 +653,7 @@ class TestBuildTurnAndDigest:
         mock_llm_service,
         caplog,
     ):
-        provider = mock_llm_service.get_default_provider.return_value
-        provider.generate_text.side_effect = LLMProviderCancellation(
+        mock_llm_service.call_feature.side_effect = LLMProviderCancellation(
             "generate_text[memory.turn_record] cancelled: provider exited [exit_code=143]"
         )
 
@@ -657,6 +664,7 @@ class TestBuildTurnAndDigest:
                 session_id="session-123",
                 prompt_text="Summarize this turn",
                 llm_service=mock_llm_service,
+                config=_digest_config(),
             )
 
         assert result is not None
@@ -679,8 +687,7 @@ class TestBuildTurnAndDigest:
         session.transcript_path = str(_CLAUDE_FIXTURE)
         session.source = "claude"
 
-        provider = mock_llm_service.get_default_provider.return_value
-        provider.generate_text.side_effect = LLMProviderCancellation(
+        mock_llm_service.call_feature.side_effect = LLMProviderCancellation(
             "generate_text[memory.turn_record] cancelled: provider exited [exit_code=143]"
         )
 
@@ -690,6 +697,7 @@ class TestBuildTurnAndDigest:
             session_id="session-123",
             prompt_text="Summarize this turn",
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
 
         assert result is not None
@@ -720,6 +728,7 @@ class TestBuildTurnAndDigest:
                 session_id="session-123",
                 prompt_text="Fix the authentication bug in auth.py",
                 llm_service=mock_llm_service,
+                config=_digest_config(),
             )
 
         mock_session_manager.persist_digest_state.assert_called_once()
@@ -737,8 +746,7 @@ class TestBuildTurnAndDigest:
         mock_llm_service,
     ):
         """Invalid turn-record JSON fails after retries without persisting digest state."""
-        provider = mock_llm_service.get_default_provider.return_value
-        provider.generate_text = AsyncMock(return_value="not json")
+        mock_llm_service.call_feature = AsyncMock(return_value="not json")
 
         result = await build_turn_and_digest(
             memory_manager=mock_memory_manager,
@@ -746,11 +754,12 @@ class TestBuildTurnAndDigest:
             session_id="session-123",
             prompt_text="Fix the authentication bug in auth.py",
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
 
         assert result is not None
         assert "invalid JSON contract" in result["error"]
-        assert provider.generate_text.await_count == 3
+        assert mock_llm_service.call_feature.await_count == 3
         mock_session_manager.persist_digest_state.assert_not_called()
         mock_session_manager.update_last_turn_markdown.assert_not_called()
         mock_session_manager.update_digest_markdown.assert_not_called()
@@ -765,8 +774,7 @@ class TestBuildTurnAndDigest:
         mock_llm_service,
     ):
         """Transient invalid turn-record JSON retries and persists the valid response."""
-        provider = mock_llm_service.get_default_provider.return_value
-        provider.generate_text = AsyncMock(
+        mock_llm_service.call_feature = AsyncMock(
             side_effect=[
                 "not json",
                 '{"turn_markdown":"","title_candidate":"Digest JSON Titles"}',
@@ -783,16 +791,17 @@ class TestBuildTurnAndDigest:
             session_id="session-123",
             prompt_text="Fix the authentication bug in auth.py",
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
 
         assert result is not None
         assert "error" not in result
         assert result["title"] == "Retry Digest JSON"
-        assert provider.generate_text.await_count == 3
-        calls = provider.generate_text.await_args_list
-        assert "## Correction" not in calls[0].args[0]
-        assert "## Correction" in calls[1].args[0]
-        assert "## Correction" in calls[2].args[0]
+        assert mock_llm_service.call_feature.await_count == 3
+        calls = mock_llm_service.call_feature.await_args_list
+        assert "## Correction" not in calls[0].args[1]
+        assert "## Correction" in calls[1].args[1]
+        assert "## Correction" in calls[2].args[1]
         mock_session_manager.persist_digest_state.assert_called_once()
         assert (
             mock_session_manager.persist_digest_state.call_args.kwargs["title"]
@@ -808,8 +817,7 @@ class TestBuildTurnAndDigest:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """One retried contract failure emits a single WARNING, not a duplicate pair."""
-        provider = mock_llm_service.get_default_provider.return_value
-        provider.generate_text = AsyncMock(
+        mock_llm_service.call_feature = AsyncMock(
             side_effect=[
                 "not json",
                 _turn_record_json("User asked for a fix. Agent recovered.", "Recovered"),
@@ -823,6 +831,7 @@ class TestBuildTurnAndDigest:
                 session_id="session-123",
                 prompt_text="Fix the authentication bug in auth.py",
                 llm_service=mock_llm_service,
+                config=_digest_config(),
             )
 
         assert "error" not in result
@@ -846,8 +855,7 @@ class TestBuildTurnAndDigest:
         response,
     ):
         """Missing or empty turn_markdown fails without persisting digest state."""
-        provider = mock_llm_service.get_default_provider.return_value
-        provider.generate_text = AsyncMock(return_value=response)
+        mock_llm_service.call_feature = AsyncMock(return_value=response)
 
         result = await build_turn_and_digest(
             memory_manager=mock_memory_manager,
@@ -855,6 +863,7 @@ class TestBuildTurnAndDigest:
             session_id="session-123",
             prompt_text="Fix the authentication bug in auth.py",
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
 
         assert result is not None
@@ -873,8 +882,7 @@ class TestBuildTurnAndDigest:
         mock_llm_service,
     ):
         """Missing title_candidate fails the strict turn-record contract."""
-        provider = mock_llm_service.get_default_provider.return_value
-        provider.generate_text = AsyncMock(return_value='{"turn_markdown":"Did the work"}')
+        mock_llm_service.call_feature = AsyncMock(return_value='{"turn_markdown":"Did the work"}')
 
         result = await build_turn_and_digest(
             memory_manager=mock_memory_manager,
@@ -882,6 +890,7 @@ class TestBuildTurnAndDigest:
             session_id="session-123",
             prompt_text="Fix the authentication bug in auth.py",
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
 
         assert result is not None
@@ -900,8 +909,7 @@ class TestBuildTurnAndDigest:
         mock_llm_service,
     ):
         """Template-placeholder titles fail the strict turn-record contract."""
-        provider = mock_llm_service.get_default_provider.return_value
-        provider.generate_text = AsyncMock(
+        mock_llm_service.call_feature = AsyncMock(
             return_value=_turn_record_json(
                 turn_markdown="User asked why a session title regressed.",
                 title_candidate="[3-5 word session title]",
@@ -914,6 +922,7 @@ class TestBuildTurnAndDigest:
             session_id="session-123",
             prompt_text="Why did the title become a placeholder?",
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
 
         assert result is not None
@@ -932,8 +941,7 @@ class TestBuildTurnAndDigest:
         mock_llm_service,
     ):
         """Template-placeholder turn records fail without persisting state."""
-        provider = mock_llm_service.get_default_provider.return_value
-        provider.generate_text = AsyncMock(
+        mock_llm_service.call_feature = AsyncMock(
             return_value=_turn_record_json(
                 turn_markdown="[accurate summary of the full turn with user request + agent response]",
                 title_candidate="Investigate Session Titles",
@@ -946,6 +954,7 @@ class TestBuildTurnAndDigest:
             session_id="session-123",
             prompt_text="Why did the title become a placeholder?",
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
 
         assert result is not None
@@ -974,14 +983,14 @@ class TestBuildTurnAndDigest:
             session_id="session-123",
             prompt_text="Fix the authentication bug in auth.py",
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
 
         assert result is not None
         assert "title" not in result
         mock_session_manager.update_title.assert_not_called()
-        provider = mock_llm_service.get_default_provider.return_value
-        assert provider.generate_text.await_count == 1
-        assert provider.generate_text.await_args.kwargs["caller"] == "memory.turn_record"
+        assert mock_llm_service.call_feature.await_count == 1
+        assert mock_llm_service.call_feature.await_args.kwargs["caller"] == "memory.turn_record"
 
     @pytest.mark.asyncio
     async def test_appends_to_existing_digest(
@@ -1000,6 +1009,7 @@ class TestBuildTurnAndDigest:
             session_id="session-123",
             prompt_text="Next task please",
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
 
         assert result is not None
@@ -1030,6 +1040,7 @@ class TestBuildTurnAndDigest:
             session_id="session-123",
             prompt_text="Fix the authentication bug in auth.py",
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
 
         assert result is not None
@@ -1050,8 +1061,7 @@ class TestBuildTurnAndDigest:
         session = mock_session_manager.get.return_value
         session.title = "Old Session Title"
         session.title_source = "llm"
-        provider = mock_llm_service.get_default_provider.return_value
-        provider.generate_text = AsyncMock(
+        mock_llm_service.call_feature = AsyncMock(
             return_value=_turn_record_json(
                 "User asked for title updates. Agent implemented rolling titles.",
                 "Rolling Digest Titles",
@@ -1064,6 +1074,7 @@ class TestBuildTurnAndDigest:
             session_id="session-123",
             prompt_text="Keep the title rolling",
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
 
         assert result is not None
@@ -1075,7 +1086,7 @@ class TestBuildTurnAndDigest:
         )
         assert mock_session_manager.persist_digest_state.call_args.kwargs["title_source"] == "llm"
         mock_session_manager.update_title.assert_not_called()
-        assert provider.generate_text.await_count == 1
+        assert mock_llm_service.call_feature.await_count == 1
 
     @pytest.mark.asyncio
     async def test_preserves_non_empty_legacy_unknown_title(
@@ -1095,6 +1106,7 @@ class TestBuildTurnAndDigest:
             session_id="session-123",
             prompt_text="Keep the legacy title",
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
 
         assert result is not None
@@ -1151,22 +1163,20 @@ class TestBuildTurnAndDigest:
             session_id="session-123",
             prompt_text=None,  # Simulates stop event
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
 
         assert result is not None
         assert result["turn_num"] == 1
         # Verify the LLM was called with transcript content
-        provider = mock_llm_service.get_default_provider.return_value
-        call_args = provider.generate_text.call_args_list[0]
-        prompt = call_args[0][0]
+        call_args = mock_llm_service.call_feature.call_args_list[0]
+        prompt = call_args.args[1]
         assert "Implement the feature" in prompt or "feature" in prompt.lower()
         assert call_args.kwargs["caller"] == "memory.turn_record"
 
     @pytest.mark.asyncio
     async def test_synthesize_title_respects_digest_timeout(self):
         """Digest title synthesis uses digest.timeout to bound LLM latency."""
-        provider = MagicMock()
-        provider.generate_text = AsyncMock(return_value="unused")
         session_manager = MagicMock()
         session = MagicMock()
         session.title = None
@@ -1181,8 +1191,6 @@ class TestBuildTurnAndDigest:
 
         with pytest.raises(TimeoutError):
             await _synthesize_title(
-                provider=provider,
-                model=None,
                 updated_digest="### Turn 1\nSomething happened",
                 session_id="session-123",
                 session_manager=session_manager,
@@ -1231,13 +1239,11 @@ class TestBuildTurnAndDigestIdempotency:
     @pytest.fixture
     def mock_llm_service(self):
         service = MagicMock()
-        provider = MagicMock()
-        provider.generate_text = AsyncMock(
+        service.call_feature = AsyncMock(
             side_effect=[
                 _turn_record_json("User asked to fix a bug. Agent found the root cause."),
             ]
         )
-        service.get_default_provider.return_value = provider
         return service
 
     @pytest.mark.asyncio
@@ -1254,6 +1260,7 @@ class TestBuildTurnAndDigestIdempotency:
             session_id="session-123",
             prompt_text="Fix the bug",
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
 
         assert result is not None
@@ -1289,12 +1296,11 @@ class TestBuildTurnAndDigestIdempotency:
             session_id="session-123",
             prompt_text=prompt,
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
 
         assert result is None
-        # LLM should NOT have been called
-        provider = mock_llm_service.get_default_provider.return_value
-        provider.generate_text.assert_not_called()
+        mock_llm_service.call_feature.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_synthesizes_missing_title_from_existing_digest_when_duplicate(
@@ -1312,8 +1318,7 @@ class TestBuildTurnAndDigestIdempotency:
         session.digest_markdown = "### Turn 1\nExisting digest"
         session.last_digest_input_hash = expected_hash
 
-        provider = mock_llm_service.get_default_provider.return_value
-        provider.generate_text = AsyncMock(return_value="Recovered Title")
+        mock_llm_service.call_feature = AsyncMock(return_value="Recovered Title")
 
         result = await build_turn_and_digest(
             memory_manager=mock_memory_manager,
@@ -1321,6 +1326,7 @@ class TestBuildTurnAndDigestIdempotency:
             session_id="session-123",
             prompt_text=prompt,
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
 
         assert result == {
@@ -1337,8 +1343,8 @@ class TestBuildTurnAndDigestIdempotency:
         mock_session_manager.update_last_turn_markdown.assert_not_called()
         mock_session_manager.update_digest_markdown.assert_not_called()
         mock_session_manager.update_last_digest_input_hash.assert_not_called()
-        assert provider.generate_text.await_count == 1
-        assert provider.generate_text.await_args.kwargs["caller"] == "memory.title_synthesis"
+        assert mock_llm_service.call_feature.await_count == 1
+        assert mock_llm_service.call_feature.await_args.kwargs["caller"] == "memory.title_synthesis"
 
     @pytest.mark.asyncio
     async def test_skips_title_synthesis_when_title_present_and_duplicate(
@@ -1364,11 +1370,11 @@ class TestBuildTurnAndDigestIdempotency:
             session_id="session-123",
             prompt_text=prompt,
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
 
         assert result is None
-        provider = mock_llm_service.get_default_provider.return_value
-        provider.generate_text.assert_not_called()
+        mock_llm_service.call_feature.assert_not_called()
         mock_session_manager.update_title.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1395,11 +1401,11 @@ class TestBuildTurnAndDigestIdempotency:
             session_id="session-123",
             prompt_text=prompt,
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
 
         assert result is None
-        provider = mock_llm_service.get_default_provider.return_value
-        provider.generate_text.assert_not_called()
+        mock_llm_service.call_feature.assert_not_called()
         mock_session_manager.update_title.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1423,6 +1429,7 @@ class TestBuildTurnAndDigestIdempotency:
             session_id="session-123",
             prompt_text="Now add tests for the fix",
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
 
         assert result is not None
@@ -1714,8 +1721,7 @@ class TestBuildTurnAndDigestCatchUp:
     @pytest.fixture
     def mock_llm_service(self):
         service = MagicMock()
-        provider = MagicMock()
-        provider.generate_text = AsyncMock(
+        service.call_feature = AsyncMock(
             side_effect=[
                 _turn_record_json(
                     "User asked two questions. Agent answered both.",
@@ -1723,7 +1729,6 @@ class TestBuildTurnAndDigestCatchUp:
                 ),
             ]
         )
-        service.get_default_provider.return_value = provider
         return service
 
     def _write_claude_transcript(self, path, exchanges):
@@ -1791,15 +1796,15 @@ class TestBuildTurnAndDigestCatchUp:
             session_manager=sm,
             session_id="session-456",
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
 
         assert result is not None
         assert result["turn_num"] == 2
 
         # Verify the LLM was called with multi-exchange content
-        provider = mock_llm_service.get_default_provider.return_value
-        turn_prompt_call = provider.generate_text.call_args_list[0]
-        prompt_text = turn_prompt_call[0][0]
+        turn_prompt_call = mock_llm_service.call_feature.call_args_list[0]
+        prompt_text = turn_prompt_call.args[1]
         assert "Exchange 1" in prompt_text
         assert "Exchange 2" in prompt_text
         assert "Second question" in prompt_text
@@ -1850,9 +1855,8 @@ class TestBuildTurnAndDigestCatchUp:
             session_manager=sm,
             session_id="session-456",
             llm_service=mock_llm_service,
+            config=_digest_config(),
         )
 
         assert result is None
-        # LLM should NOT have been called
-        provider = mock_llm_service.get_default_provider.return_value
-        provider.generate_text.assert_not_called()
+        mock_llm_service.call_feature.assert_not_called()

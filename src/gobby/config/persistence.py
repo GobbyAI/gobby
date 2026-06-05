@@ -298,11 +298,11 @@ class MemoryConfig(BaseModel):
     )
     kg: MemoryKnowledgeGraphConfig = Field(
         default_factory=MemoryKnowledgeGraphConfig,
-        description="LLM provider/model configuration for knowledge graph extraction",
+        description="LLM feature routing configuration for knowledge graph extraction",
     )
     stale_audit: MemoryStaleAuditConfig = Field(
         default_factory=MemoryStaleAuditConfig,
-        description="LLM provider/model configuration for stale memory audit classification",
+        description="LLM feature routing configuration for stale memory audit classification",
     )
     code_link_min_score: float = Field(
         default=0.82,

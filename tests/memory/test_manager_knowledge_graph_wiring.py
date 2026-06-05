@@ -14,11 +14,9 @@ from tests._timing import wait_for_async_condition
 pytestmark = pytest.mark.unit
 
 
-def _mock_llm_service(provider: AsyncMock | None = None) -> MagicMock:
+def _mock_llm_service() -> MagicMock:
     llm_service = MagicMock()
-    llm_service.get_provider_for_feature = MagicMock(
-        return_value=(provider or AsyncMock(), "haiku", None)
-    )
+    llm_service.call_json_feature = AsyncMock(return_value={"entities": [], "relations": []})
     return llm_service
 
 
@@ -83,10 +81,9 @@ class TestKnowledgeGraphServiceInitialization:
 
         assert manager._kg_service is not None
 
-    def test_kg_service_uses_configured_provider_and_model(self) -> None:
-        """KnowledgeGraphService wiring should honor memory.kg provider/model."""
-        provider = AsyncMock()
-        llm_service = _mock_llm_service(provider)
+    def test_kg_service_uses_feature_routing(self) -> None:
+        """KnowledgeGraphService wiring should honor memory.kg feature routing."""
+        llm_service = _mock_llm_service()
 
         with patch("gobby.memory.manager.KnowledgeGraphService") as mock_kg_service:
             manager = _make_manager(
@@ -96,10 +93,7 @@ class TestKnowledgeGraphServiceInitialization:
                 embed_fn=AsyncMock(return_value=[0.1]),
             )
 
-        llm_service.get_provider_for_feature.assert_called_once_with(manager.config.kg)
         call_kwargs = mock_kg_service.call_args.kwargs
-        assert call_kwargs["llm_provider"] is provider
-        assert call_kwargs["model"] == "haiku"
         assert call_kwargs["llm_service"] is llm_service
         assert call_kwargs["feature_config"] is manager.config.kg
 

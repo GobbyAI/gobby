@@ -283,61 +283,6 @@ class LocalLLMProvider(LLMProvider):
         except json.JSONDecodeError as e:
             raise ValueError(f"Failed to parse local LLM response as JSON: {e}") from e
 
-    async def generate_summary(
-        self,
-        context: dict[str, Any],
-        prompt_template: str | None = None,
-    ) -> str:
-        if not self._client:
-            return "Session summary unavailable (local LLM client not initialised)"
-
-        formatted_context = {
-            "transcript_summary": context.get("transcript_summary", ""),
-            "last_messages": json.dumps(context.get("last_messages", []), indent=2),
-            "git_status": context.get("git_status", ""),
-            "file_changes": context.get("file_changes", ""),
-            **{
-                k: v
-                for k, v in context.items()
-                if k not in ["transcript_summary", "last_messages", "git_status", "file_changes"]
-            },
-        }
-
-        if not prompt_template:
-            raise ValueError(
-                "prompt_template is required for generate_summary. "
-                "Configure 'session_summary.prompt' via gobby-config MCP tools"
-            )
-
-        try:
-            from jinja2 import Environment
-
-            env = Environment(autoescape=False)  # nosec B701 # generating text prompts
-            template = env.from_string(prompt_template)
-            prompt = template.render(**formatted_context)
-        except ImportError:
-            logger.warning("Jinja2 not available, using str.format fallback")
-            prompt = prompt_template.format(**formatted_context)
-
-        try:
-            resolved = self._resolve_model(None)
-            response = await self._client.chat.completions.create(
-                model=resolved,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a session summary generator. "
-                        "Create comprehensive, actionable summaries.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=8000,
-            )
-            return response.choices[0].message.content or ""
-        except Exception as e:
-            logger.error("Failed to generate summary with local LLM: %s", e)
-            return f"Session summary generation failed: {e}"
-
     async def describe_image(
         self,
         image_path: str,

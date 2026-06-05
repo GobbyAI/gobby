@@ -1,8 +1,8 @@
 """Tests for ClaudeLLMProvider edge cases and error handling.
 
 Focuses on auth_mode selection, _is_transient_error classification,
-_retry_async logic, _format_summary_context, _prepare_image_data,
-generate_json, stream_with_mcp_tools, and describe_image.
+_retry_async logic, _prepare_image_data, generate_json,
+stream_with_mcp_tools, and describe_image.
 """
 
 import logging
@@ -296,47 +296,6 @@ class TestExecuteSdkQuery:
         )
 
 
-# ─── _format_summary_context tests ──────────────────────────────────────
-
-
-class TestFormatSummaryContext:
-    """Tests for _format_summary_context."""
-
-    def test_format_with_jinja2(self, claude_config: DaemonConfig) -> None:
-        """Renders context with Jinja2 template syntax."""
-        with patch("gobby.llm.claude_cli.shutil.which", return_value=None):
-            from gobby.llm.claude import ClaudeLLMProvider
-
-            provider = ClaudeLLMProvider(claude_config)
-            context = {
-                "transcript_summary": "User asked about Python",
-                "last_messages": [{"role": "user", "content": "hi"}],
-                "git_status": "clean",
-                "file_changes": "none",
-            }
-            result = provider._format_summary_context(context, "Summary: {{ transcript_summary }}")
-            assert "User asked about Python" in result
-
-    def test_format_raises_on_none_template(self, claude_config: DaemonConfig) -> None:
-        """Raises ValueError when prompt_template is None."""
-        with patch("gobby.llm.claude_cli.shutil.which", return_value=None):
-            from gobby.llm.claude import ClaudeLLMProvider
-
-            provider = ClaudeLLMProvider(claude_config)
-            with pytest.raises(ValueError, match="prompt_template is required"):
-                provider._format_summary_context({}, None)
-
-    def test_format_extra_context_keys(self, claude_config: DaemonConfig) -> None:
-        """Extra context keys are passed through."""
-        with patch("gobby.llm.claude_cli.shutil.which", return_value=None):
-            from gobby.llm.claude import ClaudeLLMProvider
-
-            provider = ClaudeLLMProvider(claude_config)
-            context = {"custom_key": "custom_value"}
-            result = provider._format_summary_context(context, "Custom: {{ custom_key }}")
-            assert "custom_value" in result
-
-
 # ─── _prepare_image_data tests ──────────────────────────────────────────
 
 
@@ -619,24 +578,3 @@ class TestGenerateTextNoBackend:
 
             with pytest.raises(RuntimeError, match="unavailable"):
                 await provider.generate_text("Hello")
-
-
-# ─── generate_summary routing ────────────────────────────────────────────
-
-
-class TestGenerateSummaryRouting:
-    """Tests for generate_summary routing logic."""
-
-    @pytest.mark.asyncio
-    async def test_no_cli_returns_unavailable(self, claude_config: DaemonConfig) -> None:
-        """Returns unavailable message when CLI is not available."""
-        with patch("gobby.llm.claude_cli.shutil.which", return_value=None):
-            from gobby.llm.claude import ClaudeLLMProvider
-
-            provider = ClaudeLLMProvider(claude_config)
-
-            result = await provider.generate_summary(
-                context={},
-                prompt_template="test",
-            )
-            assert "unavailable" in result.lower()

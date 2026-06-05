@@ -16,12 +16,14 @@ class SessionSummaryDispatcher:
         *,
         session_manager: Any,
         llm_service: Any,
+        session_summary_config: Any | None,
         database: Any,
         loop: asyncio.AbstractEventLoop | None,
         logger: logging.Logger,
     ) -> None:
         self.session_manager = session_manager
         self.llm_service = llm_service
+        self.session_summary_config = session_summary_config
         self.database = database
         self.loop = loop
         self.logger = logger
@@ -42,6 +44,7 @@ class SessionSummaryDispatcher:
                     session_id=session_id,
                     session_manager=self.session_manager,
                     llm_service=self.llm_service,
+                    session_summary_config=self.session_summary_config,
                     db=self.database,
                     set_handoff_ready=set_handoff_ready,
                 )

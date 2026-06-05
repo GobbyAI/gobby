@@ -11,23 +11,21 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from gobby.config.features import MergeResolutionConfig
+
 pytestmark = pytest.mark.unit
 
 
-class _StaticProvider:
-    def __init__(self, response: str):
-        self.response = response
-
-    async def generate_text(self, *_args, **_kwargs) -> str:
-        return self.response
+def _merge_config() -> MergeResolutionConfig:
+    return MergeResolutionConfig(candidates=["claude/sonnet"])
 
 
 class _StaticLLMService:
     def __init__(self, response: str):
-        self.provider = _StaticProvider(response)
+        self.response = response
 
-    def get_default_provider(self) -> _StaticProvider:
-        return self.provider
+    async def call_feature(self, *_args, **_kwargs) -> str:
+        return self.response
 
 
 # =============================================================================
@@ -193,7 +191,10 @@ class TestTier2ConflictOnlyAI:
             "before\n<<<<<<< HEAD\nours()\n=======\ntheirs()\n>>>>>>> main\nafter\n",
             encoding="utf-8",
         )
-        resolver = MergeResolver(llm_service=_StaticLLMService("```python\nresolved()\n```"))
+        resolver = MergeResolver(
+            llm_service=_StaticLLMService("```python\nresolved()\n```"),
+            config=_merge_config(),
+        )
 
         result = await resolver._resolve_conflicts_only(
             [
@@ -223,7 +224,7 @@ class TestTier2ConflictOnlyAI:
             encoding="utf-8",
         )
         response = "```python\nresolved1()\n---HUNK SEPARATOR---\nresolved2()\n```"
-        resolver = MergeResolver(llm_service=_StaticLLMService(response))
+        resolver = MergeResolver(llm_service=_StaticLLMService(response), config=_merge_config())
 
         result = await resolver._resolve_conflicts_only(
             [
@@ -254,7 +255,7 @@ class TestTier2ConflictOnlyAI:
             encoding="utf-8",
         )
         response = "Here are the resolved hunks:\n```python\nresolved()\n```\n\nRationale: ok"
-        resolver = MergeResolver(llm_service=_StaticLLMService(response))
+        resolver = MergeResolver(llm_service=_StaticLLMService(response), config=_merge_config())
 
         result = await resolver._resolve_conflicts_only(
             [
@@ -349,7 +350,10 @@ class TestTier3FullFileAI:
             "<<<<<<< HEAD\nours()\n=======\ntheirs()\n>>>>>>> main\n",
             encoding="utf-8",
         )
-        resolver = MergeResolver(llm_service=_StaticLLMService("```python\nresolved()\n```"))
+        resolver = MergeResolver(
+            llm_service=_StaticLLMService("```python\nresolved()\n```"),
+            config=_merge_config(),
+        )
 
         result = await resolver._resolve_full_file(
             [{"file": "test.py", "worktree_path": str(tmp_path)}]
@@ -369,7 +373,7 @@ class TestTier3FullFileAI:
             encoding="utf-8",
         )
         response = "Here is the resolved file:\n```python\nresolved()\n```\n\nRationale: ok"
-        resolver = MergeResolver(llm_service=_StaticLLMService(response))
+        resolver = MergeResolver(llm_service=_StaticLLMService(response), config=_merge_config())
 
         result = await resolver._resolve_full_file(
             [{"file": "test.py", "worktree_path": str(tmp_path)}]

@@ -27,8 +27,6 @@ def create_llm_service(config: DaemonConfig) -> LLMService:
 
     Example:
         service = create_llm_service(config)
-        provider, model, prompt = service.get_provider_for_feature(
-            config.session_summary
-        )
+        summary = await service.call_feature(config.session_summary, "Summarize this session.")
     """
     return LLMService(config)

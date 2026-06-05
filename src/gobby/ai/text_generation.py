@@ -12,12 +12,8 @@ import shutil
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
-from typing import Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
-from gobby.adapters.acp_client import ACPClient, StreamEvent
-from gobby.adapters.gemini_acp_client import GeminiACPClient
-from gobby.adapters.grok_acp_client import GrokACPClient
-from gobby.adapters.qwen_acp_client import QwenACPClient
 from gobby.ai.registry import (
     AICapability,
     AICapabilityRegistry,
@@ -26,7 +22,9 @@ from gobby.ai.registry import (
 )
 from gobby.config.app import DaemonConfig
 from gobby.config.feature_base import default_candidates_for_profile
-from gobby.llm.base import LLMProvider, LLMTextResult
+
+if TYPE_CHECKING:
+    from gobby.llm.base import LLMTextResult
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +61,71 @@ class TextGenerateJSONAdapter(Protocol):
 TextGenerateAdapterFactory = Callable[[], TextGenerateAdapter]
 
 
+class LLMProviderLike(Protocol):
+    """Subset of existing LLM providers used by text generation."""
+
+    async def generate_text_result(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        *,
+        caller: str | None = None,
+    ) -> LLMTextResult:
+        """Generate text and include provider usage when available."""
+
+    async def generate_json(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        *,
+        caller: str | None = None,
+    ) -> dict[str, Any]:
+        """Generate and parse JSON."""
+
+
+class ACPStreamEventLike(Protocol):
+    """Subset of normalized ACP stream events used by text generation."""
+
+    @property
+    def event_type(self) -> str:
+        """Return the normalized event type."""
+
+    @property
+    def data(self) -> Mapping[str, Any]:
+        """Return the normalized event payload."""
+
+
+class ACPClientLike(Protocol):
+    """Subset of ACP clients used by text generation."""
+
+    async def start(
+        self,
+        session_id: str | None = None,
+        model: str | None = None,
+        *,
+        auto_session: bool = True,
+        cwd: str | None = None,
+        reasoning_effort: str | None = None,
+    ) -> None:
+        """Start the ACP client."""
+
+    def send(
+        self,
+        message: str,
+        *,
+        session_id: str | None = None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+    ) -> AsyncIterator[ACPStreamEventLike]:
+        """Send a prompt and stream normalized events."""
+
+    async def stop(self) -> None:
+        """Stop the ACP client."""
+
+
 class TextGenerationService:
     """Select and execute daemon text_generate capability bindings."""
 
@@ -96,9 +159,7 @@ class TextGenerationService:
                 binding = self._select_binding(candidate)
                 adapter = self._adapter_for_provider(binding.provider)
                 result = await adapter.generate(candidate)
-                text_result = (
-                    result if isinstance(result, LLMTextResult) else LLMTextResult(text=result)
-                )
+                text_result = _coerce_text_result(result)
                 text_result = replace(
                     text_result,
                     provider=binding.provider,
@@ -146,7 +207,7 @@ class TextGenerationService:
                     parse_outcome = "provider_structured"
                 else:
                     text = await adapter.generate(_json_request(candidate))
-                    raw = text.text if isinstance(text, LLMTextResult) else text
+                    raw = _coerce_text_result(text).text
                     result = _parse_json_text(raw)
                     parse_outcome = "parsed_text"
                 self._log_generation_event(
@@ -246,7 +307,7 @@ class TextGenerationService:
 class LLMProviderTextGenerateAdapter:
     """Adapter for existing LLMProvider implementations."""
 
-    def __init__(self, provider: LLMProvider) -> None:
+    def __init__(self, provider: LLMProviderLike) -> None:
         self._provider = provider
 
     async def generate(self, request: TextGenerationRequest) -> LLMTextResult:
@@ -267,7 +328,7 @@ class LLMProviderTextGenerateAdapter:
         )
 
 
-ACPClientFactory = Callable[[], ACPClient]
+ACPClientFactory = Callable[[], ACPClientLike]
 
 
 class ACPTextGenerateAdapter:
@@ -430,9 +491,9 @@ def _daemon_text_generation_adapter_factories(
     factories: dict[str, TextGenerateAdapterFactory] = {
         "claude": lambda: _claude_text_generate_adapter(config),
         "codex": CodexAppServerTextGenerateAdapter,
-        "gemini": lambda: ACPTextGenerateAdapter(GeminiACPClient),
-        "grok": lambda: ACPTextGenerateAdapter(GrokACPClient),
-        "qwen": lambda: ACPTextGenerateAdapter(QwenACPClient),
+        "gemini": lambda: ACPTextGenerateAdapter(_gemini_acp_client),
+        "grok": lambda: ACPTextGenerateAdapter(_grok_acp_client),
+        "qwen": lambda: ACPTextGenerateAdapter(_qwen_acp_client),
         "droid": DroidCLITextGenerateAdapter,
     }
     if config.ai.generation.local.enabled:
@@ -456,6 +517,37 @@ def _codex_app_server_client() -> CodexAppServerClientLike:
     from gobby.adapters.codex_impl.client import CodexAppServerClient
 
     return CodexAppServerClient()
+
+
+def _gemini_acp_client() -> ACPClientLike:
+    from gobby.adapters.gemini_acp_client import GeminiACPClient
+
+    return GeminiACPClient()
+
+
+def _grok_acp_client() -> ACPClientLike:
+    from gobby.adapters.grok_acp_client import GrokACPClient
+
+    return GrokACPClient()
+
+
+def _qwen_acp_client() -> ACPClientLike:
+    from gobby.adapters.qwen_acp_client import QwenACPClient
+
+    return QwenACPClient()
+
+
+def _llm_text_result_type() -> type[LLMTextResult]:
+    from gobby.llm.base import LLMTextResult
+
+    return LLMTextResult
+
+
+def _coerce_text_result(result: str | LLMTextResult) -> LLMTextResult:
+    text_result_type = _llm_text_result_type()
+    if isinstance(result, text_result_type):
+        return result
+    return text_result_type(text=cast(str, result))
 
 
 def _parse_candidate(candidate: str) -> tuple[str, str]:
@@ -500,7 +592,7 @@ def _compose_prompt(request: TextGenerationRequest) -> str:
     return f"{request.system_prompt}\n\n{request.prompt}"
 
 
-async def _collect_acp_text(events: AsyncIterator[StreamEvent]) -> str:
+async def _collect_acp_text(events: AsyncIterator[ACPStreamEventLike]) -> str:
     chunks: list[str] = []
     result_chunks: list[str] = []
     async for event in events:
@@ -515,7 +607,7 @@ async def _collect_acp_text(events: AsyncIterator[StreamEvent]) -> str:
     return "".join(chunks or result_chunks).strip()
 
 
-def _stream_event_text(event: StreamEvent) -> str:
+def _stream_event_text(event: ACPStreamEventLike) -> str:
     for key in ("content", "output", "text", "message"):
         value = event.data.get(key)
         if isinstance(value, str):

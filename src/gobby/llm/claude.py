@@ -154,58 +154,6 @@ class ClaudeLLMProvider(LLMProvider):
         self._claude_cli_path = cli_path
         return cli_path
 
-    def _format_summary_context(self, context: dict[str, Any], prompt_template: str | None) -> str:
-        """
-        Format context and validate prompt template for summary generation.
-
-        Transforms list/dict values to strings for template substitution
-        and validates that a prompt template is provided. Uses Jinja2 for
-        rendering templates with {{ variable }} syntax.
-
-        Args:
-            context: Raw context dict with transcript_summary, last_messages, etc.
-            prompt_template: Template string with Jinja2 placeholders for context values.
-
-        Returns:
-            Formatted prompt string ready for LLM consumption.
-
-        Raises:
-            ValueError: If prompt_template is None.
-        """
-        # Transform list/dict values to strings for template substitution
-        formatted_context = {
-            "transcript_summary": context.get("transcript_summary", ""),
-            "last_messages": json.dumps(context.get("last_messages", []), indent=2),
-            "git_status": context.get("git_status", ""),
-            "file_changes": context.get("file_changes", ""),
-            **{
-                k: v
-                for k, v in context.items()
-                if k not in ["transcript_summary", "last_messages", "git_status", "file_changes"]
-            },
-        }
-
-        # Validate prompt_template is provided
-        if not prompt_template:
-            raise ValueError(
-                "prompt_template is required for generate_summary. "
-                "Configure 'session_summary.prompt' via gobby-config MCP tools"
-            )
-
-        # Render with Jinja2 (templates use {{ variable }} syntax)
-        try:
-            from jinja2 import Environment
-
-            env = Environment(autoescape=False)  # nosec B701 # generating text prompts
-            template = env.from_string(prompt_template)
-            rendered: str = template.render(**formatted_context)
-            return rendered
-        except ImportError:
-            # Fallback to simple str.format if Jinja2 unavailable
-            # Convert {{ }} to {} for str.format compatibility
-            self.logger.warning("Jinja2 not available, using str.format fallback")
-            return prompt_template.format(**formatted_context)
-
     @staticmethod
     def _is_transient_error(e: Exception) -> bool:
         """Classify whether an error is transient (worth retrying).
@@ -439,62 +387,6 @@ class ClaudeLLMProvider(LLMProvider):
                 f"{operation} failed: {e}"
                 + (f"\nCLI stderr:\n{stderr_text}" if stderr_text else "")
             ) from e
-
-    async def generate_summary(
-        self, context: dict[str, Any], prompt_template: str | None = None
-    ) -> str:
-        """
-        Generate session summary using Claude.
-
-        Uses Claude Agent SDK via CLI.
-        """
-        cli_path = await self._verify_cli_path()
-        if cli_path:
-            return await self._generate_summary_sdk(context, prompt_template)
-        return "Session summary unavailable (Claude CLI not found)"
-
-    async def _generate_summary_sdk(
-        self, context: dict[str, Any], prompt_template: str | None = None
-    ) -> str:
-        """Generate session summary using Claude Agent SDK (subscription mode)."""
-        cli_path = await self._verify_cli_path()
-        if not cli_path:
-            return "Session summary unavailable (Claude CLI not found)"
-
-        prompt = self._format_summary_context(context, prompt_template)
-
-        # Configure Claude Agent SDK
-        options = ClaudeAgentOptions(
-            system_prompt="You are a session summary generator. Create comprehensive, actionable summaries.",
-            max_turns=1,
-            model=self.config.session_summary.model,
-            tools=[],  # Passes --tools "" to CLI, disabling all built-in tools
-            allowed_tools=[],  # Intent: no tools. Note: SDK ignores due to falsy [] check
-            mcp_servers={},
-            permission_mode="default",
-            cli_path=cli_path,
-        )
-
-        # Run async query
-        async def _run_query() -> str:
-            summary_text = ""
-            async for message in query(prompt=prompt, options=options):
-                if isinstance(message, AssistantMessage):
-                    for block in message.content:
-                        if isinstance(block, TextBlock):
-                            summary_text += block.text
-            return summary_text
-
-        try:
-            summary_text = await self._execute_sdk_query("generate_summary", _run_query, options)
-            if not summary_text:
-                sid = context.get("session_id", "unknown")
-                self.logger.warning(
-                    f"Claude SDK query returned empty response for summary generation (session {sid})",
-                )
-            return str(summary_text)
-        except RuntimeError as e:
-            return f"Session summary generation failed: {e}"
 
     async def generate_text(
         self,

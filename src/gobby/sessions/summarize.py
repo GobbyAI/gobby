@@ -42,7 +42,15 @@ class SessionManagerProtocol(Protocol):
 
 
 class LLMServiceProtocol(Protocol):
-    def get_default_provider(self) -> Any: ...
+    async def call_feature(
+        self,
+        feature_config: Any,
+        prompt: str,
+        system_prompt: str | None = None,
+        max_tokens: int | None = None,
+        *,
+        caller: str | None = None,
+    ) -> str: ...
 
 
 async def _run_db(
@@ -92,6 +100,7 @@ async def generate_session_summaries(
     session_id: str,
     session_manager: SessionManagerProtocol,
     llm_service: LLMServiceProtocol | None = None,
+    session_summary_config: Any | None = None,
     db: HubDatabase | None = None,
     write_file: bool = False,
     output_path: str = ".gobby/session_summaries",
@@ -110,6 +119,7 @@ async def generate_session_summaries(
         session_id: Platform session ID (UUID).
         session_manager: SessionManager instance.
         llm_service: LLM service for generating summaries.
+        session_summary_config: Feature config for summary generation.
         db: Database for prompt template loading.
         write_file: Write summary files to disk.
         output_path: Directory for summary files.
@@ -169,6 +179,7 @@ async def generate_session_summaries(
         turns=turns,
         handoff_ctx=handoff_ctx,
         llm_service=llm_service,
+        session_summary_config=session_summary_config,
         db=db,
         session_manager=session_manager,
         run_db=db_runner,
@@ -403,23 +414,12 @@ async def _enrich_git_context(handoff_ctx: Any, cwd: Path) -> None:
         logger.debug(f"Failed to get git log for {cwd}: {e}")
 
 
-def _resolve_provider(llm_service: LLMServiceProtocol | None) -> Any:
-    """Resolve LLM provider from service or fallback to ClaudeLLMProvider."""
-    provider = llm_service.get_default_provider() if llm_service else None
-    if not provider:
-        from gobby.config.app import load_config
-        from gobby.llm.claude import ClaudeLLMProvider
-
-        config = load_config()
-        provider = ClaudeLLMProvider(config)
-    return provider
-
-
 async def _generate_full_summary(
     session: Any,
     turns: list[dict[str, Any]],
     handoff_ctx: Any,
     llm_service: LLMServiceProtocol | None,
+    session_summary_config: Any | None,
     db: HubDatabase | None,
     session_manager: SessionManagerProtocol,
     run_db: Callable[..., Awaitable[Any]] | None = None,
@@ -430,10 +430,11 @@ async def _generate_full_summary(
         Tuple of (full_markdown, error_message). One will be None.
     """
     try:
-        provider = _resolve_provider(llm_service)
+        if llm_service is None or session_summary_config is None:
+            return None, "Session summary LLM feature config not available"
 
         # Load prompt template
-        prompt_template = None
+        prompt_template = getattr(session_summary_config, "prompt", None)
         try:
             from gobby.prompts.loader import PromptLoader
 
@@ -529,7 +530,17 @@ async def _generate_full_summary(
             "session_source": source,
         }
 
-        full_markdown = await provider.generate_summary(context, prompt_template=prompt_template)
+        from gobby.llm.prompt_rendering import render_summary_prompt
+
+        prompt = render_summary_prompt(prompt_template, context)
+        full_markdown = await llm_service.call_feature(
+            session_summary_config,
+            prompt,
+            system_prompt=(
+                "You are a session summary generator. Create comprehensive, actionable summaries."
+            ),
+            caller="sessions.summary",
+        )
         if not is_summary_markdown_valid(full_markdown):
             if full_markdown and full_markdown.strip():
                 return None, "Generated session summary was invalid"

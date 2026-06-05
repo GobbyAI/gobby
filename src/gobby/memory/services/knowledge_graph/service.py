@@ -27,7 +27,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from gobby.config.persistence import MemoryKnowledgeGraphConfig
-    from gobby.llm.base import LLMProvider
     from gobby.llm.service import LLMService
     from gobby.memory.falkor_client import FalkorClient
     from gobby.memory.vectorstore import VectorStore
@@ -41,7 +40,7 @@ class KnowledgeGraphService:
 
     Args:
         falkor_client: FalkorDB client for graph operations
-        llm_provider: LLM provider for entity/relationship extraction
+        llm_service: LLM service for feature-routed entity/relationship extraction
         embed_fn: Async function to generate embeddings for entity names
         prompt_loader: PromptLoader for rendering extraction prompts
     """
@@ -49,32 +48,26 @@ class KnowledgeGraphService:
     def __init__(
         self,
         falkor_client: FalkorClient,
-        llm_provider: LLMProvider,
         embed_fn: Callable[..., Any] | None,
         prompt_loader: PromptLoader,
+        llm_service: LLMService,
+        feature_config: MemoryKnowledgeGraphConfig,
         vector_store: VectorStore | None = None,
         code_link_min_score: float = 0.82,
         code_symbol_collection_prefix: str = "code_symbols_",
         embedding_dim: int = 768,
-        model: str | None = None,
-        llm_service: LLMService | None = None,
-        feature_config: MemoryKnowledgeGraphConfig | None = None,
     ) -> None:
         self._falkor = falkor_client
-        self._llm = llm_provider
         self._embed_fn = embed_fn
         self._prompt_loader = prompt_loader
         self._vector_store = vector_store
         self._code_link_min_score = code_link_min_score
         self._code_symbol_collection_prefix = code_symbol_collection_prefix
         self._embedding_dim = embedding_dim
-        self._model = model
 
         self._writer = KnowledgeGraphWriter(falkor_client)
         self._extractor = KnowledgeGraphExtractor(
-            llm_provider,
             prompt_loader,
-            model=model,
             llm_service=llm_service,
             feature_config=feature_config,
         )

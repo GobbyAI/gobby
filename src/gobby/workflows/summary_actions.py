@@ -571,6 +571,7 @@ async def generate_summary(
     session_id: str,
     llm_service: Any,
     transcript_processor: Any,
+    session_summary_config: Any | None = None,
     template: str | None = None,
     previous_summary: str | None = None,
     mode: Literal["clear", "compact"] = "clear",
@@ -584,6 +585,7 @@ async def generate_summary(
         session_id: Current session ID
         llm_service: LLM service instance
         transcript_processor: Transcript processor instance
+        session_summary_config: Feature config for summary generation
         template: Optional prompt template
         previous_summary: Previous summary_markdown for cumulative compression (compact mode)
         mode: "clear" or "compact" - passed to LLM context to control summarization density
@@ -599,8 +601,8 @@ async def generate_summary(
     if mode not in valid_modes:
         raise ValueError(f"Invalid mode '{mode}'. Must be one of: {', '.join(sorted(valid_modes))}")
 
-    if not llm_service or not transcript_processor:
-        logger.warning("generate_summary: Missing LLM service or transcript processor")
+    if not llm_service or not transcript_processor or session_summary_config is None:
+        logger.warning("generate_summary: Missing LLM service, transcript processor, or config")
         return {"error": "Missing services"}
 
     current_session = session_manager.get(session_id)
@@ -613,7 +615,7 @@ async def generate_summary(
         return {"error": "No transcript path"}
 
     if not template:
-        template = (
+        template = getattr(session_summary_config, "prompt", None) or (
             "Summarize this session, focusing on what was accomplished, "
             "key decisions, and what is left to do.\n\n"
             "Transcript:\n{transcript_summary}"
@@ -691,10 +693,16 @@ async def generate_summary(
             "previous_summary": previous_summary or "",
             "mode": mode,
         }
-        provider = llm_service.get_default_provider()
-        summary_content = await provider.generate_summary(
-            context=llm_context,
-            prompt_template=template,
+        from gobby.llm.prompt_rendering import render_summary_prompt
+
+        prompt = render_summary_prompt(template, llm_context)
+        summary_content = await llm_service.call_feature(
+            session_summary_config,
+            prompt,
+            system_prompt=(
+                "You are a session summary generator. Create comprehensive, actionable summaries."
+            ),
+            caller="workflows.generate_summary",
         )
     except Exception as e:
         logger.error(f"LLM generation failed: {e}")

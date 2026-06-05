@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
+from gobby.config.features import SkillDescriptionConfig
 from gobby.skills.hubs.base import HubSkillInfo
 from gobby.skills.hubs.github_collection import GitHubCollectionProvider
 
@@ -641,15 +642,14 @@ class TestGitHubCollectionProviderSynthesizeDescription:
         from unittest.mock import AsyncMock, MagicMock
 
         mock_llm_service = MagicMock()
-        mock_provider = AsyncMock()
-        mock_provider.generate_text = AsyncMock(return_value="Generates commit messages")
-        mock_llm_service.get_default_provider.return_value = mock_provider
+        mock_llm_service.call_feature = AsyncMock(return_value="Generates commit messages")
 
         provider = GitHubCollectionProvider(
             hub_name="my-collection",
             base_url="",
             repo="user/skills",
             llm_service=mock_llm_service,
+            config=SkillDescriptionConfig(candidates=["claude/haiku"]),
         )
 
         result = await provider._synthesize_description(
@@ -658,7 +658,7 @@ class TestGitHubCollectionProviderSynthesizeDescription:
         )
 
         assert result == "Generates commit messages"
-        mock_provider.generate_text.assert_called_once()
+        mock_llm_service.call_feature.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_synthesize_description_no_llm_service(self) -> None:
@@ -683,16 +683,15 @@ class TestGitHubCollectionProviderSynthesizeDescription:
         from unittest.mock import AsyncMock, MagicMock
 
         mock_llm_service = MagicMock()
-        mock_provider = AsyncMock()
         # LLM returns description with quotes and whitespace
-        mock_provider.generate_text = AsyncMock(return_value='  "Generates commit messages"  ')
-        mock_llm_service.get_default_provider.return_value = mock_provider
+        mock_llm_service.call_feature = AsyncMock(return_value='  "Generates commit messages"  ')
 
         provider = GitHubCollectionProvider(
             hub_name="my-collection",
             base_url="",
             repo="user/skills",
             llm_service=mock_llm_service,
+            config=SkillDescriptionConfig(candidates=["claude/haiku"]),
         )
 
         result = await provider._synthesize_description("commit-message", "content")
@@ -705,16 +704,15 @@ class TestGitHubCollectionProviderSynthesizeDescription:
         from unittest.mock import AsyncMock, MagicMock
 
         mock_llm_service = MagicMock()
-        mock_provider = AsyncMock()
         # LLM returns very long description
-        mock_provider.generate_text = AsyncMock(return_value="A" * 200)
-        mock_llm_service.get_default_provider.return_value = mock_provider
+        mock_llm_service.call_feature = AsyncMock(return_value="A" * 200)
 
         provider = GitHubCollectionProvider(
             hub_name="my-collection",
             base_url="",
             repo="user/skills",
             llm_service=mock_llm_service,
+            config=SkillDescriptionConfig(candidates=["claude/haiku"]),
         )
 
         result = await provider._synthesize_description("skill", "content")
@@ -727,15 +725,14 @@ class TestGitHubCollectionProviderSynthesizeDescription:
         from unittest.mock import AsyncMock, MagicMock
 
         mock_llm_service = MagicMock()
-        mock_provider = AsyncMock()
-        mock_provider.generate_text = AsyncMock(side_effect=Exception("LLM API error"))
-        mock_llm_service.get_default_provider.return_value = mock_provider
+        mock_llm_service.call_feature = AsyncMock(side_effect=Exception("LLM API error"))
 
         provider = GitHubCollectionProvider(
             hub_name="my-collection",
             base_url="",
             repo="user/skills",
             llm_service=mock_llm_service,
+            config=SkillDescriptionConfig(candidates=["claude/haiku"]),
         )
 
         result = await provider._synthesize_description("skill", "content")
@@ -752,15 +749,14 @@ class TestGitHubCollectionProviderGetSkillDetailsWithSynthesis:
         from unittest.mock import AsyncMock, MagicMock
 
         mock_llm_service = MagicMock()
-        mock_provider = AsyncMock()
-        mock_provider.generate_text = AsyncMock(return_value="Helpful commit messages")
-        mock_llm_service.get_default_provider.return_value = mock_provider
+        mock_llm_service.call_feature = AsyncMock(return_value="Helpful commit messages")
 
         provider = GitHubCollectionProvider(
             hub_name="my-collection",
             base_url="",
             repo="user/skills",
             llm_service=mock_llm_service,
+            config=SkillDescriptionConfig(candidates=["claude/haiku"]),
         )
 
         mock_skills = [
@@ -811,15 +807,14 @@ class TestGitHubCollectionProviderGetSkillDetailsWithSynthesis:
         from unittest.mock import AsyncMock, MagicMock
 
         mock_llm_service = MagicMock()
-        mock_provider = AsyncMock()
-        mock_provider.generate_text = AsyncMock(return_value="Fresh description")
-        mock_llm_service.get_default_provider.return_value = mock_provider
+        mock_llm_service.call_feature = AsyncMock(return_value="Fresh description")
 
         provider = GitHubCollectionProvider(
             hub_name="my-collection",
             base_url="",
             repo="user/skills",
             llm_service=mock_llm_service,
+            config=SkillDescriptionConfig(candidates=["claude/haiku"]),
         )
 
         # Pre-populate cache with stale entry (2 hours old)

@@ -436,14 +436,20 @@ def create_handoff(
     # Generate full summary via shared function
     full_markdown = None
     try:
+        from gobby.config.app import load_config
+        from gobby.llm.factory import create_llm_service
         from gobby.sessions.summarize import generate_session_summaries
 
+        summary_config = load_config()
+        llm_service = create_llm_service(summary_config)
         _summary_db = open_runtime_hub_database(apply_migrations=False)
 
         async def _gen_summary() -> dict[str, Any]:
             return await generate_session_summaries(
                 session_id=session.id,
                 session_manager=manager,
+                llm_service=llm_service,
+                session_summary_config=summary_config.session_summary,
                 db=_summary_db,
                 set_handoff_ready=False,
             )

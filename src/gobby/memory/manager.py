@@ -129,18 +129,15 @@ class MemoryManager:
             try:
                 from gobby.prompts.loader import PromptLoader
 
-                provider, model, _ = llm_service.get_provider_for_feature(config.kg)
                 prompt_loader = PromptLoader(db=self.db)
                 self._kg_service = KnowledgeGraphService(
                     falkor_client=self._falkor_client,
-                    llm_provider=provider,
                     embed_fn=embed_fn,
                     prompt_loader=prompt_loader,
                     vector_store=vector_store,
                     code_link_min_score=config.code_link_min_score,
                     code_symbol_collection_prefix=collection_prefix,
                     embedding_dim=embedding_dim,
-                    model=model,
                     llm_service=llm_service,
                     feature_config=config.kg,
                 )

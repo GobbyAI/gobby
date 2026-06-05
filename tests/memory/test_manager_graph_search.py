@@ -50,6 +50,12 @@ def _make_manager(
     return MemoryManager(**kwargs)
 
 
+def _mock_llm_service() -> MagicMock:
+    llm_service = MagicMock()
+    llm_service.call_json_feature = AsyncMock(return_value={"entities": [], "relations": []})
+    return llm_service
+
+
 def _mock_memory(
     memory_id: str,
     content: str,
@@ -139,8 +145,7 @@ class TestSearchGraphForMemories:
 
     async def test_returns_direct_memory_ids(self) -> None:
         """_search_graph_for_memories returns memory IDs from entity vector search."""
-        llm_service = MagicMock()
-        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
+        llm_service = _mock_llm_service()
 
         manager = _make_manager(
             falkordb_host="127.0.0.1",
@@ -186,8 +191,7 @@ class TestSearchGraphForMemories:
 
     async def test_caps_expansion_entity_seeds_but_keeps_direct_ids(self) -> None:
         """_search_graph_for_memories caps expansion seeds without dropping direct hits."""
-        llm_service = MagicMock()
-        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
+        llm_service = _mock_llm_service()
 
         manager = _make_manager(
             falkordb_host="127.0.0.1",
@@ -226,8 +230,7 @@ class TestSearchGraphForMemories:
         error: Exception,
     ) -> None:
         """_search_graph_for_memories keeps direct IDs when traversal fails."""
-        llm_service = MagicMock()
-        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
+        llm_service = _mock_llm_service()
 
         manager = _make_manager(
             falkordb_host="127.0.0.1",
@@ -265,8 +268,7 @@ class TestSearchGraphForMemories:
 
     async def test_deduplicates_traversed_ids(self) -> None:
         """_search_graph_for_memories deduplicates IDs from traversal."""
-        llm_service = MagicMock()
-        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
+        llm_service = _mock_llm_service()
 
         manager = _make_manager(
             falkordb_host="127.0.0.1",
@@ -301,8 +303,7 @@ class TestSearchGraphForMemories:
 
     async def test_returns_empty_when_no_entities(self) -> None:
         """_search_graph_for_memories returns empty when no entity matches."""
-        llm_service = MagicMock()
-        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
+        llm_service = _mock_llm_service()
 
         manager = _make_manager(
             falkordb_host="127.0.0.1",
@@ -328,8 +329,7 @@ class TestSearchMemoriesGraphIntegration:
 
     async def test_parallel_search_with_rrf_merge(self) -> None:
         """search_memories runs Qdrant and graph search in parallel, merges via RRF."""
-        llm_service = MagicMock()
-        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
+        llm_service = _mock_llm_service()
 
         vs = AsyncMock()
         embed_fn = AsyncMock(return_value=[0.1, 0.2])
@@ -374,8 +374,7 @@ class TestSearchMemoriesGraphIntegration:
 
     async def test_graceful_degradation_graph_failure(self) -> None:
         """search_memories falls back to Qdrant-only when graph search fails."""
-        llm_service = MagicMock()
-        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
+        llm_service = _mock_llm_service()
 
         vs = AsyncMock()
         embed_fn = AsyncMock(return_value=[0.1])
@@ -407,8 +406,7 @@ class TestSearchMemoriesGraphIntegration:
 
     async def test_qdrant_only_when_graph_search_disabled(self) -> None:
         """search_memories skips graph search when falkordb_graph_search is False."""
-        llm_service = MagicMock()
-        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
+        llm_service = _mock_llm_service()
 
         vs = AsyncMock()
         embed_fn = AsyncMock(return_value=[0.1])
@@ -462,8 +460,7 @@ class TestSearchMemoriesGraphIntegration:
 
     async def test_user_source_boost_applied(self) -> None:
         """search_memories applies user source boost in graph-augmented mode."""
-        llm_service = MagicMock()
-        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
+        llm_service = _mock_llm_service()
 
         vs = AsyncMock()
         embed_fn = AsyncMock(return_value=[0.1])
@@ -502,8 +499,7 @@ class TestGraphSearchProjectIdScoping:
 
     async def test_search_graph_for_memories_passes_project_id(self) -> None:
         """_search_graph_for_memories forwards project_id to KG service methods."""
-        llm_service = MagicMock()
-        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
+        llm_service = _mock_llm_service()
 
         manager = _make_manager(
             falkordb_host="127.0.0.1",
@@ -543,8 +539,7 @@ class TestGraphSearchProjectIdScoping:
 
     async def test_defense_in_depth_skips_cross_project_memories(self) -> None:
         """search_memories skips memories whose project_id doesn't match."""
-        llm_service = MagicMock()
-        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
+        llm_service = _mock_llm_service()
 
         vs = AsyncMock()
         embed_fn = AsyncMock(return_value=[0.1])
@@ -593,8 +588,7 @@ class TestGraphSearchProjectIdScoping:
 
     async def test_defense_in_depth_allows_null_project_memories(self) -> None:
         """search_memories does NOT skip memories with null project_id (global memories)."""
-        llm_service = MagicMock()
-        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
+        llm_service = _mock_llm_service()
 
         vs = AsyncMock()
         embed_fn = AsyncMock(return_value=[0.1])
@@ -631,8 +625,7 @@ class TestCreateMemoryPassesMemoryId:
 
     async def test_fire_background_graph_receives_memory_id(self) -> None:
         """_fire_background_graph is called with memory_id from create_memory."""
-        llm_service = MagicMock()
-        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
+        llm_service = _mock_llm_service()
 
         manager = _make_manager(
             falkordb_host="127.0.0.1",
@@ -678,8 +671,7 @@ class TestTemporalDecayIntegration:
     @pytest.mark.asyncio
     async def test_graph_enabled_path_keeps_qdrant_similarity(self) -> None:
         """Graph-enabled search should preserve the real Qdrant score for semantic hits."""
-        llm_service = MagicMock()
-        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
+        llm_service = _mock_llm_service()
 
         vs = AsyncMock()
         embed_fn = AsyncMock(return_value=[0.1])
@@ -712,8 +704,7 @@ class TestTemporalDecayIntegration:
     @pytest.mark.asyncio
     async def test_older_memory_ranks_lower_graph_path(self) -> None:
         """In graph-augmented search, an older memory should rank below a recent one."""
-        llm_service = MagicMock()
-        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
+        llm_service = _mock_llm_service()
 
         vs = AsyncMock()
         embed_fn = AsyncMock(return_value=[0.1])

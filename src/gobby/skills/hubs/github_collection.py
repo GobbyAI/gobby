@@ -79,7 +79,7 @@ class GitHubCollectionProvider(HubProvider):
             path: Subdirectory path within repo where skills are located
             auth_token: Optional GitHub token for private repos
             llm_service: Optional LLM service for synthesizing descriptions
-            config: Optional SkillDescriptionConfig for provider/model selection
+            config: Optional SkillDescriptionConfig for feature routing
         """
         super().__init__(hub_name=hub_name, base_url=base_url, auth_token=auth_token)
         self._repo = repo or ""
@@ -304,7 +304,7 @@ class GitHubCollectionProvider(HubProvider):
         Returns:
             Synthesized description string (empty if LLM unavailable)
         """
-        if not self._llm_service:
+        if not self._llm_service or not self._config:
             return ""
 
         # Truncate content to fit in prompt
@@ -320,18 +320,9 @@ SKILL.md content:
 Output ONLY the description text, no quotes, no explanation, no preamble."""
 
         try:
-            if self._config:
-                try:
-                    provider, model, _ = self._llm_service.get_provider_for_feature(self._config)
-                except (ValueError, Exception):
-                    provider = self._llm_service.get_default_provider()
-                    model = None
-            else:
-                provider = self._llm_service.get_default_provider()
-                model = None
-            description = await provider.generate_text(
+            description = await self._llm_service.call_feature(
+                self._config,
                 prompt,
-                model=model,
                 caller="skills.github_collection.description",
             )
             # Clean up LLM output

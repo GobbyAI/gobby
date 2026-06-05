@@ -15,11 +15,9 @@ from gobby.runner_init import services
 pytestmark = pytest.mark.unit
 
 
-def _mock_llm_service(provider: AsyncMock | None = None) -> MagicMock:
+def _mock_llm_service() -> MagicMock:
     llm_service = MagicMock()
-    llm_service.get_provider_for_feature = MagicMock(
-        return_value=(provider or AsyncMock(), "haiku", None)
-    )
+    llm_service.call_json_feature = AsyncMock(return_value={"entities": [], "relations": []})
     return llm_service
 
 
@@ -41,8 +39,7 @@ def test_memory_manager_constructor_uses_falkordb_kwargs() -> None:
 def test_memory_manager_constructs_knowledge_graph_service_with_falkor_client() -> None:
     """Configured graph search wires FalkorClient into KnowledgeGraphService."""
     falkor_client = AsyncMock()
-    llm_provider = AsyncMock()
-    llm_service = _mock_llm_service(llm_provider)
+    llm_service = _mock_llm_service()
     vector_store = AsyncMock()
     embed_fn = AsyncMock(return_value=[0.1, 0.2])
 
@@ -77,7 +74,8 @@ def test_memory_manager_constructs_knowledge_graph_service_with_falkor_client() 
     call_kwargs = kg_service_cls.call_args.kwargs
     assert call_kwargs["falkor_client"] is falkor_client
     assert "neo4j_client" not in call_kwargs
-    assert call_kwargs["llm_provider"] is llm_provider
+    assert call_kwargs["llm_service"] is llm_service
+    assert call_kwargs["feature_config"] is manager.config.kg
     assert manager.falkor_client is falkor_client
 
 

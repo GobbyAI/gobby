@@ -71,23 +71,6 @@ def test_get_provider_claude_caches_instance(llm_config: DaemonConfig) -> None:
     assert service.initialized_providers == ["claude"]
 
 
-def test_get_provider_for_feature_uses_provider_scoped_candidate(
-    llm_config: DaemonConfig,
-) -> None:
-    service = LLMService(llm_config)
-    config = DigestConfig(candidates=["codex/gpt-5.3-codex-spark", "claude/haiku"])
-
-    with patch("gobby.llm.claude.ClaudeLLMProvider") as mock_provider_class:
-        mock_provider = MagicMock()
-        mock_provider_class.return_value = mock_provider
-
-        provider, model, prompt = service.get_provider_for_feature(config)
-
-    assert provider is mock_provider
-    assert model == "haiku"
-    assert prompt is None
-
-
 @pytest.mark.asyncio
 async def test_call_feature_delegates_to_text_generation(llm_config: DaemonConfig) -> None:
     service = LLMService(llm_config)

@@ -91,8 +91,6 @@ def mock_llm_service():
     )
     service.get_provider.return_value = provider
     service.get_default_provider.return_value = provider
-    # get_provider_for_feature returns tuple (provider, model, prompt)
-    service.get_provider_for_feature.return_value = (provider, "test-model", "test prompt")
     # Mock generate directly on the service instance since RecommendationService calls it
     service.generate = AsyncMock(
         return_value='{"recommendations": [{"server": "s1", "tool": "t1", "reason": "r1"}]}'

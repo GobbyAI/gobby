@@ -16,11 +16,6 @@ class ConcreteProvider(LLMProvider):
     def provider_name(self) -> str:
         return "test_provider"
 
-    async def generate_summary(
-        self, context: dict[str, Any], prompt_template: str | None = None
-    ) -> str:
-        return "test summary"
-
     async def generate_text(
         self,
         prompt: str,
@@ -57,11 +52,6 @@ class IncompleteProviderMissingDescribeImage(LLMProvider):
     def provider_name(self) -> str:
         return "incomplete_provider"
 
-    async def generate_summary(
-        self, context: dict[str, Any], prompt_template: str | None = None
-    ) -> str:
-        return "summary"
-
     async def generate_text(
         self,
         prompt: str,
@@ -96,13 +86,6 @@ class TestLLMProvider:
         """Test that provider_name is implemented correctly."""
         provider = ConcreteProvider()
         assert provider.provider_name == "test_provider"
-
-    @pytest.mark.asyncio
-    async def test_generate_summary(self):
-        """Test generate_summary method."""
-        provider = ConcreteProvider()
-        result = await provider.generate_summary({})
-        assert result == "test summary"
 
     @pytest.mark.asyncio
     async def test_generate_text(self):

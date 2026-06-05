@@ -154,6 +154,38 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
     assert "auth_mode" not in codex.metadata
 
 
+def test_daemon_registry_accepts_claude_alias_candidates_with_full_model_config() -> None:
+    registry = build_daemon_ai_capability_registry(
+        DaemonConfig(
+            llm_providers=LLMProvidersConfig(
+                claude=LLMProviderConfig(
+                    models="claude-haiku-4-5,claude-sonnet-4-5",
+                    default_model="claude-sonnet-4-5",
+                ),
+            ),
+        ),
+        provider_installed=lambda _entry: True,
+    )
+
+    haiku = registry.select(AICapability.TEXT_GENERATE, provider="claude", model="haiku")
+    sonnet = registry.select(AICapability.TEXT_GENERATE, provider="claude", model="sonnet")
+    full_model = registry.select(
+        AICapability.TEXT_GENERATE,
+        provider="claude",
+        model="claude-haiku-4-5",
+    )
+
+    assert haiku.provider == "claude"
+    assert sonnet.provider == "claude"
+    assert full_model.provider == "claude"
+    assert haiku.models == (
+        "claude-haiku-4-5",
+        "claude-sonnet-4-5",
+        "haiku",
+        "sonnet",
+    )
+
+
 def test_daemon_registry_reports_only_proven_vision_extract_bindings_available() -> None:
     registry = build_daemon_ai_capability_registry(
         DaemonConfig(

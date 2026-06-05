@@ -564,6 +564,7 @@ class HookManager:
         dispatcher = SessionSummaryDispatcher(
             session_manager=self._session_manager,
             llm_service=self._llm_service,
+            session_summary_config=getattr(self._config, "session_summary", None),
             database=self._database,
             loop=self._loop,
             logger=self.logger,

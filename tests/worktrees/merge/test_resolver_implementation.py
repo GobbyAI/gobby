@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.config.features import MergeResolutionConfig
 from gobby.worktrees.merge.resolver import MergeResolver, auto_resolve_trivial_conflicts
 
 pytestmark = pytest.mark.unit
@@ -20,6 +21,7 @@ def resolver(mock_llm_service):
     """MergeResolver instance with mocked LLM service."""
     res = MergeResolver()
     res.llm_service = mock_llm_service
+    res.config = MergeResolutionConfig(candidates=["claude/sonnet"])
     return res
 
 
@@ -97,9 +99,7 @@ async def test_resolve_conflicts_only_success(resolver, mock_llm_service, tmp_pa
         }
     ]
 
-    mock_provider = MagicMock()
-    mock_provider.generate_text = AsyncMock(return_value="RESOLVED")
-    mock_llm_service.get_default_provider.return_value = mock_provider
+    mock_llm_service.call_feature = AsyncMock(return_value="RESOLVED")
 
     result = await resolver._resolve_conflicts_only(conflicts)
 
@@ -117,9 +117,7 @@ async def test_resolve_conflicts_only_failure(resolver, mock_llm_service):
     conflicts = [{"file": "file.txt", "hunks": [{"ours": "A", "theirs": "B"}]}]
 
     # Mock LLM failure or empty response
-    mock_provider = MagicMock()
-    mock_provider.generate_text = AsyncMock(return_value=None)
-    mock_llm_service.get_default_provider.return_value = mock_provider
+    mock_llm_service.call_feature = AsyncMock(return_value=None)
 
     result = await resolver._resolve_conflicts_only(conflicts)
     assert result["success"] is False
@@ -132,9 +130,7 @@ async def test_resolve_full_file(resolver, mock_llm_service):
 
     # Mock reading full file
     with patch.object(Path, "read_text", return_value="FULL FILE CONTENT"):
-        mock_provider = MagicMock()
-        mock_provider.generate_text = AsyncMock(return_value="FIXED CONTENT")
-        mock_llm_service.get_default_provider.return_value = mock_provider
+        mock_llm_service.call_feature = AsyncMock(return_value="FIXED CONTENT")
 
         result = await resolver._resolve_full_file(conflicts)
 

@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.config.sessions import SessionSummaryConfig
 from gobby.sessions.analyzer import HandoffContext
 from gobby.workflows.summary_actions import (
     _format_structured_context,
@@ -42,9 +43,14 @@ def mock_llm_service():
     service = MagicMock()
     provider = MagicMock()
     provider.generate_text = AsyncMock(return_value="Generated Title")
-    provider.generate_summary = AsyncMock(return_value="Generated Summary Content")
     service.get_default_provider.return_value = provider
+    service.call_feature = AsyncMock(return_value="Generated Summary Content")
     return service
+
+
+@pytest.fixture
+def summary_config() -> SessionSummaryConfig:
+    return SessionSummaryConfig(candidates=["claude/haiku"])
 
 
 @pytest.fixture
@@ -916,6 +922,7 @@ class TestGenerateSummary:
         mock_session_manager,
         mock_llm_service,
         mock_transcript_processor,
+        summary_config,
         tmp_path,
     ) -> None:
         """Test successful summary generation."""
@@ -942,6 +949,7 @@ class TestGenerateSummary:
                 session_id="test-session",
                 llm_service=mock_llm_service,
                 transcript_processor=mock_transcript_processor,
+                session_summary_config=summary_config,
             )
 
         assert result is not None
@@ -955,6 +963,7 @@ class TestGenerateSummary:
         mock_session_manager,
         mock_llm_service,
         mock_transcript_processor,
+        summary_config,
     ) -> None:
         """Test that invalid mode raises ValueError."""
         with pytest.raises(ValueError) as exc_info:
@@ -963,6 +972,7 @@ class TestGenerateSummary:
                 session_id="test-session",
                 llm_service=mock_llm_service,
                 transcript_processor=mock_transcript_processor,
+                session_summary_config=summary_config,
                 mode="invalid_mode",
             )
 
@@ -976,6 +986,7 @@ class TestGenerateSummary:
         mock_session_manager,
         mock_llm_service,
         mock_transcript_processor,
+        summary_config,
         tmp_path,
     ) -> None:
         """Test summary generation in clear mode."""
@@ -1002,14 +1013,14 @@ class TestGenerateSummary:
                 session_id="test-session",
                 llm_service=mock_llm_service,
                 transcript_processor=mock_transcript_processor,
+                session_summary_config=summary_config,
+                template="Mode: {mode}\nTranscript:\n{transcript_summary}",
                 mode="clear",
             )
 
         assert result["summary_generated"] is True
-        # Verify mode was passed in LLM context
-        provider = mock_llm_service.get_default_provider()
-        call_kwargs = provider.generate_summary.call_args.kwargs
-        assert call_kwargs["context"]["mode"] == "clear"
+        prompt = mock_llm_service.call_feature.await_args.args[1]
+        assert "Mode: clear" in prompt
 
     @pytest.mark.asyncio
     async def test_generate_summary_compact_mode(
@@ -1017,6 +1028,7 @@ class TestGenerateSummary:
         mock_session_manager,
         mock_llm_service,
         mock_transcript_processor,
+        summary_config,
         tmp_path,
     ) -> None:
         """Test summary generation in compact mode."""
@@ -1043,13 +1055,14 @@ class TestGenerateSummary:
                 session_id="test-session",
                 llm_service=mock_llm_service,
                 transcript_processor=mock_transcript_processor,
+                session_summary_config=summary_config,
+                template="Mode: {mode}\nTranscript:\n{transcript_summary}",
                 mode="compact",
             )
 
         assert result["summary_generated"] is True
-        provider = mock_llm_service.get_default_provider()
-        call_kwargs = provider.generate_summary.call_args.kwargs
-        assert call_kwargs["context"]["mode"] == "compact"
+        prompt = mock_llm_service.call_feature.await_args.args[1]
+        assert "Mode: compact" in prompt
 
     @pytest.mark.asyncio
     async def test_generate_summary_with_previous_summary(
@@ -1057,6 +1070,7 @@ class TestGenerateSummary:
         mock_session_manager,
         mock_llm_service,
         mock_transcript_processor,
+        summary_config,
         tmp_path,
     ) -> None:
         """Test summary generation with previous summary for cumulative compression."""
@@ -1083,20 +1097,22 @@ class TestGenerateSummary:
                 session_id="test-session",
                 llm_service=mock_llm_service,
                 transcript_processor=mock_transcript_processor,
+                session_summary_config=summary_config,
+                template="Previous:\n{previous_summary}\nMode: {mode}",
                 previous_summary=previous,
                 mode="compact",
             )
 
         assert result["summary_generated"] is True
-        provider = mock_llm_service.get_default_provider()
-        call_kwargs = provider.generate_summary.call_args.kwargs
-        assert call_kwargs["context"]["previous_summary"] == previous
+        prompt = mock_llm_service.call_feature.await_args.args[1]
+        assert previous in prompt
 
     @pytest.mark.asyncio
     async def test_generate_summary_missing_services(
         self,
         mock_session_manager,
         mock_transcript_processor,
+        summary_config,
     ) -> None:
         """Test summary generation with missing LLM service."""
         result = await generate_summary(
@@ -1104,6 +1120,7 @@ class TestGenerateSummary:
             session_id="test-session",
             llm_service=None,
             transcript_processor=mock_transcript_processor,
+            session_summary_config=summary_config,
         )
 
         assert result == {"error": "Missing services"}
@@ -1113,6 +1130,7 @@ class TestGenerateSummary:
         self,
         mock_session_manager,
         mock_llm_service,
+        summary_config,
     ) -> None:
         """Test summary generation with missing transcript processor."""
         result = await generate_summary(
@@ -1120,6 +1138,7 @@ class TestGenerateSummary:
             session_id="test-session",
             llm_service=mock_llm_service,
             transcript_processor=None,
+            session_summary_config=summary_config,
         )
 
         assert result == {"error": "Missing services"}
@@ -1130,6 +1149,7 @@ class TestGenerateSummary:
         mock_session_manager,
         mock_llm_service,
         mock_transcript_processor,
+        summary_config,
     ) -> None:
         """Test summary generation when session is not found."""
         mock_session_manager.get.return_value = None
@@ -1139,6 +1159,7 @@ class TestGenerateSummary:
             session_id="nonexistent",
             llm_service=mock_llm_service,
             transcript_processor=mock_transcript_processor,
+            session_summary_config=summary_config,
         )
 
         assert result == {"error": "Session not found"}
@@ -1149,6 +1170,7 @@ class TestGenerateSummary:
         mock_session_manager,
         mock_llm_service,
         mock_transcript_processor,
+        summary_config,
     ) -> None:
         """Test summary generation when session has no transcript path."""
         session = MagicMock()
@@ -1160,6 +1182,7 @@ class TestGenerateSummary:
             session_id="test-session",
             llm_service=mock_llm_service,
             transcript_processor=mock_transcript_processor,
+            session_summary_config=summary_config,
         )
 
         assert result == {"error": "No transcript path"}
@@ -1170,6 +1193,7 @@ class TestGenerateSummary:
         mock_session_manager,
         mock_llm_service,
         mock_transcript_processor,
+        summary_config,
         tmp_path,
     ) -> None:
         """Test summary generation when transcript file doesn't exist."""
@@ -1182,6 +1206,7 @@ class TestGenerateSummary:
             session_id="test-session",
             llm_service=mock_llm_service,
             transcript_processor=mock_transcript_processor,
+            session_summary_config=summary_config,
         )
 
         assert result == {"error": "Transcript not found"}
@@ -1192,6 +1217,7 @@ class TestGenerateSummary:
         mock_session_manager,
         mock_llm_service,
         mock_transcript_processor,
+        summary_config,
         tmp_path,
     ) -> None:
         """Test summary generation when transcript processing fails."""
@@ -1208,6 +1234,7 @@ class TestGenerateSummary:
             session_id="test-session",
             llm_service=mock_llm_service,
             transcript_processor=mock_transcript_processor,
+            session_summary_config=summary_config,
         )
 
         assert "error" in result
@@ -1218,6 +1245,7 @@ class TestGenerateSummary:
         mock_session_manager,
         mock_llm_service,
         mock_transcript_processor,
+        summary_config,
         tmp_path,
     ) -> None:
         """Test summary generation when LLM call fails."""
@@ -1232,8 +1260,7 @@ class TestGenerateSummary:
         mock_transcript_processor.extract_turns_since_clear.return_value = []
         mock_transcript_processor.extract_last_messages.return_value = []
 
-        provider = mock_llm_service.get_default_provider()
-        provider.generate_summary.side_effect = Exception("LLM API Error")
+        mock_llm_service.call_feature.side_effect = Exception("LLM API Error")
 
         with (
             patch("gobby.workflows.summary_actions.get_git_status", return_value="clean"),
@@ -1245,6 +1272,7 @@ class TestGenerateSummary:
                 session_id="test-session",
                 llm_service=mock_llm_service,
                 transcript_processor=mock_transcript_processor,
+                session_summary_config=summary_config,
             )
 
         assert "error" in result
@@ -1256,6 +1284,7 @@ class TestGenerateSummary:
         mock_session_manager,
         mock_llm_service,
         mock_transcript_processor,
+        summary_config,
         tmp_path,
     ) -> None:
         """Test summary generation with custom template."""
@@ -1282,13 +1311,14 @@ class TestGenerateSummary:
                 session_id="test-session",
                 llm_service=mock_llm_service,
                 transcript_processor=mock_transcript_processor,
+                session_summary_config=summary_config,
                 template=custom_template,
             )
 
         assert result["summary_generated"] is True
-        provider = mock_llm_service.get_default_provider()
-        call_kwargs = provider.generate_summary.call_args.kwargs
-        assert call_kwargs["prompt_template"] == custom_template
+        assert mock_llm_service.call_feature.await_args.args[0] is summary_config
+        prompt = mock_llm_service.call_feature.await_args.args[1]
+        assert prompt.startswith("Custom summary template:")
 
     @pytest.mark.asyncio
     async def test_generate_summary_includes_git_context(
@@ -1296,6 +1326,7 @@ class TestGenerateSummary:
         mock_session_manager,
         mock_llm_service,
         mock_transcript_processor,
+        summary_config,
         tmp_path,
     ) -> None:
         """Test that summary generation includes git status and file changes."""
@@ -1323,13 +1354,14 @@ class TestGenerateSummary:
                 session_id="test-session",
                 llm_service=mock_llm_service,
                 transcript_processor=mock_transcript_processor,
+                session_summary_config=summary_config,
+                template="Git:\n{git_status}\nFiles:\n{file_changes}",
             )
 
         assert result["summary_generated"] is True
-        provider = mock_llm_service.get_default_provider()
-        call_kwargs = provider.generate_summary.call_args.kwargs
-        assert call_kwargs["context"]["git_status"] == "M file.py"
-        assert "file.py" in call_kwargs["context"]["file_changes"]
+        prompt = mock_llm_service.call_feature.await_args.args[1]
+        assert "Git:\nM file.py" in prompt
+        assert "file.py" in prompt
 
     @pytest.mark.asyncio
     async def test_generate_summary_includes_last_messages(
@@ -1337,6 +1369,7 @@ class TestGenerateSummary:
         mock_session_manager,
         mock_llm_service,
         mock_transcript_processor,
+        summary_config,
         tmp_path,
     ) -> None:
         """Test that summary generation includes last messages in context."""
@@ -1365,12 +1398,13 @@ class TestGenerateSummary:
                 session_id="test-session",
                 llm_service=mock_llm_service,
                 transcript_processor=mock_transcript_processor,
+                session_summary_config=summary_config,
+                template="Messages:\n{last_messages}",
             )
 
         assert result["summary_generated"] is True
-        provider = mock_llm_service.get_default_provider()
-        call_kwargs = provider.generate_summary.call_args.kwargs
-        assert "Final question" in call_kwargs["context"]["last_messages"]
+        prompt = mock_llm_service.call_feature.await_args.args[1]
+        assert "Final question" in prompt
 
 
 # =============================================================================
@@ -1508,6 +1542,7 @@ class TestWriteSummaryFile:
         mock_session_manager,
         mock_llm_service,
         mock_transcript_processor,
+        summary_config,
         tmp_path,
     ) -> None:
         """Test generate_summary with write_file=True produces a file."""
@@ -1535,6 +1570,7 @@ class TestWriteSummaryFile:
                 session_id="test-session",
                 llm_service=mock_llm_service,
                 transcript_processor=mock_transcript_processor,
+                session_summary_config=summary_config,
                 write_file=True,
                 output_path=output_dir,
             )

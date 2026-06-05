@@ -437,8 +437,8 @@ async def _resolve_undigested_pairs(
 
 
 async def _build_turn_record(
-    provider: Any,
-    model: str | None,
+    llm_service: Any,
+    digest_config: Any,
     undigested_pairs: list[tuple[str, str]],
     db: Any | None = None,
 ) -> _TurnRecord:
@@ -482,9 +482,9 @@ async def _build_turn_record(
                 "`turn_markdown` and `title_candidate`."
             )
 
-        response_text = await provider.generate_text(
+        response_text = await llm_service.call_feature(
+            digest_config,
             prompt,
-            model=model,
             caller="memory.turn_record",
         )
         try:
@@ -565,8 +565,6 @@ def _raise_turn_record_contract_error(
 
 
 async def _synthesize_title(
-    provider: Any,
-    model: str | None,
     updated_digest: str,
     session_id: str,
     session_manager: Any,
@@ -577,9 +575,8 @@ async def _synthesize_title(
 ) -> str | None:
     """Synthesize session title from digest via LLM and update tmux window.
 
-    When *llm_service* and *digest_config* are supplied, uses
-    ``call_feature`` for tier-based fallback.  Otherwise falls back to
-    the legacy ``provider.generate_text`` path.
+    Uses the digest feature config so candidate fallback stays centralized
+    in ``LLMService``.
     """
     if not _should_update_digest_title(session):
         return None
@@ -595,30 +592,17 @@ async def _synthesize_title(
     except Exception:
         title_prompt = _build_title_synthesis_prompt(updated_digest)
 
-    # Prefer call_feature for tier-based fallback when available.
     llm_timeout = getattr(digest_config, "timeout", 30) if digest_config is not None else 30
-    if (
-        llm_service is not None
-        and digest_config is not None
-        and hasattr(llm_service, "call_feature")
-    ):
-        title = await asyncio.wait_for(
-            llm_service.call_feature(
-                digest_config,
-                title_prompt,
-                caller="memory.title_synthesis",
-            ),
-            llm_timeout,
-        )
-    else:
-        title = await asyncio.wait_for(
-            provider.generate_text(
-                title_prompt,
-                model=model,
-                caller="memory.title_synthesis",
-            ),
-            llm_timeout,
-        )
+    if llm_service is None or digest_config is None:
+        raise RuntimeError("memory digest feature config not available")
+    title = await asyncio.wait_for(
+        llm_service.call_feature(
+            digest_config,
+            title_prompt,
+            caller="memory.title_synthesis",
+        ),
+        llm_timeout,
+    )
 
     title_str = normalize_title_candidate(title)
     if title_str:
@@ -655,7 +639,7 @@ async def build_turn_and_digest(
         prompt_text: Optional user prompt (usually None for stop events, read from transcript)
         llm_service: LLM service for generation
         db: Database for prompt template loading
-        config: DaemonConfig for digest provider/model selection
+        config: DaemonConfig carrying the digest feature configuration
 
     Returns:
         Dict with turn_num and pipeline results, or None if skipped
@@ -700,22 +684,12 @@ async def build_turn_and_digest(
         if resolved is None and (not needs_title_recovery or not existing_digest):
             return None
 
-        # 3. Resolve LLM provider/model
-        if digest_config:
-            try:
-                provider, model, _ = llm_service.get_provider_for_feature(digest_config)
-            except Exception:
-                provider = llm_service.get_default_provider()
-                model = None
-        else:
-            provider = llm_service.get_default_provider()
-            model = None
+        if digest_config is None:
+            return {"error": "memory digest feature config not available"}
 
         if resolved is None:
             try:
                 title = await _synthesize_title(
-                    provider,
-                    model,
                     existing_digest,
                     session_id,
                     session_manager,
@@ -742,7 +716,7 @@ async def build_turn_and_digest(
         undigested_pairs, input_hash = resolved
 
         # 4. Build turn record via LLM
-        turn_record = await _build_turn_record(provider, model, undigested_pairs, db)
+        turn_record = await _build_turn_record(llm_service, digest_config, undigested_pairs, db)
         last_turn = turn_record.turn_markdown
 
         # 5. Prepare digest/title state after validating the LLM JSON contract.

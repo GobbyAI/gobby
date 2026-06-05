@@ -18,6 +18,7 @@ def register_handoff_tools(
     session_manager: SessionManager | None,
     llm_service: Any | None = None,
     transcript_processor: Any | None = None,
+    session_summary_config: Any | None = None,
     inter_session_message_manager: InterSessionMessageManager | None = None,
 ) -> None:
     """
@@ -28,6 +29,7 @@ def register_handoff_tools(
         session_manager: SessionManager instance for session operations
         llm_service: LLM service for generating full summaries (optional)
         transcript_processor: Transcript processor for parsing transcripts (optional)
+        session_summary_config: Feature config for session summary generation (optional)
         inter_session_message_manager: For sending P2P messages between sessions (optional)
     """
     from gobby.utils.session_context import resolve_session_ref
@@ -152,6 +154,7 @@ def register_handoff_tools(
             session_id=session.id,
             session_manager=session_manager,
             llm_service=llm_service,
+            session_summary_config=session_summary_config,
             db=getattr(session_manager, "db", None),
             write_file=write_file,
             output_path=output_path,

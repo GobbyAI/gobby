@@ -349,6 +349,7 @@ async def _refresh_compact_handoff_context(
     session_manager: SessionManager,
     db: HubDatabase,
     llm_service: Any | None,
+    session_summary_config: Any | None,
 ) -> dict[str, Any]:
     """Refresh summary_markdown before compact_self can trigger same-session resume."""
     if not _has_summary_refresh_source(session):
@@ -363,6 +364,7 @@ async def _refresh_compact_handoff_context(
                 session_id=session_id,
                 session_manager=session_manager,
                 llm_service=llm_service,
+                session_summary_config=session_summary_config,
                 db=db,
                 set_handoff_ready=True,
             ),
@@ -488,6 +490,7 @@ def register_terminal_tools(
     session_manager: SessionManager,
     db: HubDatabase,
     llm_service: Any | None = None,
+    session_summary_config: Any | None = None,
     web_chat_session_registry: WebChatSessionRegistry | None = None,
 ) -> None:
     """Register send_keys and capture_output tools."""
@@ -605,6 +608,7 @@ def register_terminal_tools(
             session_manager,
             db,
             llm_service,
+            session_summary_config,
         )
         if not refresh_result.get("success"):
             return {

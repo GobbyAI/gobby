@@ -316,11 +316,6 @@ class FakeLLMProvider(LLMProvider):
     def provider_name(self) -> str:
         return "fake"
 
-    async def generate_summary(
-        self, context: dict[str, Any], prompt_template: str | None = None
-    ) -> str:
-        return "summary"
-
     async def generate_text(
         self,
         prompt: str,

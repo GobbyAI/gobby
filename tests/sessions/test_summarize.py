@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.config.sessions import SessionSummaryConfig
 from gobby.sessions.summarize import (
     TRANSCRIPT_FALLBACK_MAX_CHARS,
     TRANSCRIPT_FALLBACK_MAX_TURNS,
@@ -59,6 +60,16 @@ def _write_transcript(tmp_path: Path) -> str:
     ]
     transcript.write_text("\n".join(json.dumps(record) for record in lines))
     return str(transcript)
+
+
+def _summary_config(prompt: str = "Summary:\n{transcript_summary}") -> SessionSummaryConfig:
+    return SessionSummaryConfig(prompt=prompt, candidates=["claude/haiku"])
+
+
+def _mock_llm(summary: str) -> MagicMock:
+    service = MagicMock()
+    service.call_feature = AsyncMock(return_value=summary)
+    return service
 
 
 class TestGenerateSessionSummaries:
@@ -228,11 +239,7 @@ class TestGenerateSessionSummaries:
         sm = MagicMock()
         sm.get.return_value = _make_session(transcript_path=transcript_path)
 
-        mock_provider = AsyncMock()
-        mock_provider.generate_summary.return_value = "# Full Summary\nDetails here."
-
-        mock_llm = MagicMock()
-        mock_llm.get_default_provider.return_value = mock_provider
+        mock_llm = _mock_llm("# Full Summary\nDetails here.")
 
         with (
             patch("gobby.sessions.summarize._enrich_git_context"),
@@ -246,6 +253,7 @@ class TestGenerateSessionSummaries:
                 session_id="sess-1",
                 session_manager=sm,
                 llm_service=mock_llm,
+                session_summary_config=_summary_config(),
             )
 
         assert result["success"] is True
@@ -288,11 +296,9 @@ class TestGenerateSessionSummaries:
         handoff_ctx.git_status = ""
         session_manager = MagicMock()
         session_manager.db = None
-        provider = AsyncMock()
-        provider.generate_summary.return_value = "# Droid Summary"
+        llm_service = _mock_llm("# Droid Summary")
 
         with (
-            patch("gobby.sessions.summarize._resolve_provider", return_value=provider),
             patch("gobby.prompts.loader.PromptLoader") as MockPromptLoader,
             patch("gobby.sessions.transcripts.droid.DroidTranscriptParser") as MockParser,
             patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
@@ -303,7 +309,7 @@ class TestGenerateSessionSummaries:
             ),
             patch("gobby.workflows.summary_actions.format_turns_for_llm", return_value="turns"),
         ):
-            MockPromptLoader.return_value.load.return_value.content = "prompt"
+            MockPromptLoader.return_value.load.return_value.content = "Droid:\n{transcript_summary}"
             MockParser.return_value.extract_turns_since_clear.return_value = [{"type": "message"}]
             MockParser.return_value.extract_last_messages.return_value = [
                 {"role": "user", "content": "hi"}
@@ -313,7 +319,8 @@ class TestGenerateSessionSummaries:
                 session=session,
                 turns=[{"type": "message"}],
                 handoff_ctx=handoff_ctx,
-                llm_service=None,
+                llm_service=llm_service,
+                session_summary_config=_summary_config("Droid:\n{transcript_summary}"),
                 db=None,
                 session_manager=session_manager,
             )
@@ -336,11 +343,9 @@ class TestGenerateSessionSummaries:
         handoff_ctx.git_status = "clean"
         session_manager = MagicMock()
         session_manager.db = None
-        provider = AsyncMock()
-        provider.generate_summary.return_value = "# Digest Summary"
+        llm_service = _mock_llm("# Digest Summary")
 
         with (
-            patch("gobby.sessions.summarize._resolve_provider", return_value=provider),
             patch("gobby.prompts.loader.PromptLoader") as MockPromptLoader,
             patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
             patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
@@ -350,13 +355,18 @@ class TestGenerateSessionSummaries:
             ),
             patch("gobby.workflows.summary_actions.format_turns_for_llm") as mock_format,
         ):
-            MockPromptLoader.return_value.load.return_value.content = "prompt"
+            MockPromptLoader.return_value.load.return_value.content = (
+                "Transcript:\n{transcript_summary}\nLast:\n{last_messages}"
+            )
 
             full_markdown, full_error = await _generate_full_summary(
                 session=session,
                 turns=[{"message": {"role": "user", "content": "raw transcript"}}],
                 handoff_ctx=handoff_ctx,
-                llm_service=None,
+                llm_service=llm_service,
+                session_summary_config=_summary_config(
+                    "Transcript:\n{transcript_summary}\nLast:\n{last_messages}"
+                ),
                 db=None,
                 session_manager=session_manager,
             )
@@ -364,9 +374,9 @@ class TestGenerateSessionSummaries:
         assert full_markdown == "# Digest Summary"
         assert full_error is None
         mock_format.assert_not_called()
-        context = provider.generate_summary.await_args.args[0]
-        assert context["transcript_summary"] == "### Turn 1\nDigest is the bounded source."
-        assert context["last_messages"] == "### Turn 1\nDigest is the bounded source."
+        prompt = llm_service.call_feature.await_args.args[1]
+        assert "Transcript:\n### Turn 1\nDigest is the bounded source." in prompt
+        assert "Last:\n### Turn 1\nDigest is the bounded source." in prompt
 
     @pytest.mark.asyncio
     async def test_digest_primary_context_includes_latest_turn_when_digest_lags(self) -> None:
@@ -380,11 +390,9 @@ class TestGenerateSessionSummaries:
         handoff_ctx.git_status = "clean"
         session_manager = MagicMock()
         session_manager.db = None
-        provider = AsyncMock()
-        provider.generate_summary.return_value = "# Digest Summary"
+        llm_service = _mock_llm("# Digest Summary")
 
         with (
-            patch("gobby.sessions.summarize._resolve_provider", return_value=provider),
             patch("gobby.prompts.loader.PromptLoader") as MockPromptLoader,
             patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
             patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
@@ -394,13 +402,18 @@ class TestGenerateSessionSummaries:
             ),
             patch("gobby.workflows.summary_actions.format_turns_for_llm") as mock_format,
         ):
-            MockPromptLoader.return_value.load.return_value.content = "prompt"
+            MockPromptLoader.return_value.load.return_value.content = (
+                "Transcript:\n{transcript_summary}\nLast:\n{last_messages}"
+            )
 
             full_markdown, full_error = await _generate_full_summary(
                 session=session,
                 turns=[{"message": {"role": "user", "content": "raw transcript"}}],
                 handoff_ctx=handoff_ctx,
-                llm_service=None,
+                llm_service=llm_service,
+                session_summary_config=_summary_config(
+                    "Transcript:\n{transcript_summary}\nLast:\n{last_messages}"
+                ),
                 db=None,
                 session_manager=session_manager,
             )
@@ -408,15 +421,10 @@ class TestGenerateSessionSummaries:
         assert full_markdown == "# Digest Summary"
         assert full_error is None
         mock_format.assert_not_called()
-        context = provider.generate_summary.await_args.args[0]
-        assert "Old coordinator state." in context["transcript_summary"]
-        assert (
-            "Current build state: #12746 is development:in_progress."
-            in context["transcript_summary"]
-        )
-        assert context["last_messages"].endswith(
-            "Current build state: #12746 is development:in_progress."
-        )
+        prompt = llm_service.call_feature.await_args.args[1]
+        assert "Old coordinator state." in prompt
+        assert "Current build state: #12746 is development:in_progress." in prompt
+        assert prompt.rstrip().endswith("Current build state: #12746 is development:in_progress.")
 
     @pytest.mark.asyncio
     async def test_digest_primary_context_includes_current_assistant_content(self) -> None:
@@ -431,11 +439,9 @@ class TestGenerateSessionSummaries:
         handoff_ctx.git_status = "clean"
         session_manager = MagicMock()
         session_manager.db = None
-        provider = AsyncMock()
-        provider.generate_summary.return_value = "# Digest Summary"
+        llm_service = _mock_llm("# Digest Summary")
 
         with (
-            patch("gobby.sessions.summarize._resolve_provider", return_value=provider),
             patch("gobby.prompts.loader.PromptLoader") as MockPromptLoader,
             patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
             patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
@@ -445,13 +451,18 @@ class TestGenerateSessionSummaries:
             ),
             patch("gobby.workflows.summary_actions.format_turns_for_llm") as mock_format,
         ):
-            MockPromptLoader.return_value.load.return_value.content = "prompt"
+            MockPromptLoader.return_value.load.return_value.content = (
+                "Transcript:\n{transcript_summary}\nLast:\n{last_messages}"
+            )
 
             full_markdown, full_error = await _generate_full_summary(
                 session=session,
                 turns=[{"message": {"role": "user", "content": "raw transcript"}}],
                 handoff_ctx=handoff_ctx,
-                llm_service=None,
+                llm_service=llm_service,
+                session_summary_config=_summary_config(
+                    "Transcript:\n{transcript_summary}\nLast:\n{last_messages}"
+                ),
                 db=None,
                 session_manager=session_manager,
             )
@@ -459,15 +470,10 @@ class TestGenerateSessionSummaries:
         assert full_markdown == "# Digest Summary"
         assert full_error is None
         mock_format.assert_not_called()
-        context = provider.generate_summary.await_args.args[0]
-        assert "Old coordinator state." in context["transcript_summary"]
-        assert (
-            "Current handoff: #14997 open and #12746 still running."
-            in context["transcript_summary"]
-        )
-        assert context["last_messages"].endswith(
-            "Current handoff: #14997 open and #12746 still running."
-        )
+        prompt = llm_service.call_feature.await_args.args[1]
+        assert "Old coordinator state." in prompt
+        assert "Current handoff: #14997 open and #12746 still running." in prompt
+        assert prompt.rstrip().endswith("Current handoff: #14997 open and #12746 still running.")
 
     @pytest.mark.asyncio
     async def test_full_summary_enrichment_uses_run_db(self) -> None:
@@ -480,8 +486,7 @@ class TestGenerateSessionSummaries:
         handoff_ctx.git_status = ""
         session_manager = MagicMock()
         session_manager.db = MagicMock()
-        provider = AsyncMock()
-        provider.generate_summary.return_value = "# Enriched Summary"
+        llm_service = _mock_llm("# Enriched Summary")
         run_db_calls = []
 
         async def run_db(func, *args, **kwargs):
@@ -489,7 +494,6 @@ class TestGenerateSessionSummaries:
             return func(*args, **kwargs)
 
         with (
-            patch("gobby.sessions.summarize._resolve_provider", return_value=provider),
             patch("gobby.prompts.loader.PromptLoader") as MockPromptLoader,
             patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
             patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
@@ -505,13 +509,18 @@ class TestGenerateSessionSummaries:
                 return_value="memory context",
             ) as memories,
         ):
-            MockPromptLoader.return_value.load.return_value.content = "prompt"
+            MockPromptLoader.return_value.load.return_value.content = (
+                "Tasks:\n{claimed_tasks}\nMemories:\n{session_memories}"
+            )
 
             full_markdown, full_error = await _generate_full_summary(
                 session=session,
                 turns=[],
                 handoff_ctx=handoff_ctx,
-                llm_service=None,
+                llm_service=llm_service,
+                session_summary_config=_summary_config(
+                    "Tasks:\n{claimed_tasks}\nMemories:\n{session_memories}"
+                ),
                 db=session_manager.db,
                 session_manager=session_manager,
                 run_db=run_db,
@@ -521,9 +530,9 @@ class TestGenerateSessionSummaries:
         assert full_error is None
         assert claimed in run_db_calls
         assert memories in run_db_calls
-        context = provider.generate_summary.await_args.args[0]
-        assert context["claimed_tasks"] == "task context"
-        assert context["session_memories"] == "memory context"
+        prompt = llm_service.call_feature.await_args.args[1]
+        assert "Tasks:\ntask context" in prompt
+        assert "Memories:\nmemory context" in prompt
 
     @pytest.mark.asyncio
     async def test_missing_digest_uses_bounded_transcript_fallback(self) -> None:
@@ -532,13 +541,11 @@ class TestGenerateSessionSummaries:
         handoff_ctx.git_status = ""
         session_manager = MagicMock()
         session_manager.db = None
-        provider = AsyncMock()
-        provider.generate_summary.return_value = "# Transcript Summary"
+        llm_service = _mock_llm("# Transcript Summary")
         turns = [{"idx": i} for i in range(TRANSCRIPT_FALLBACK_MAX_TURNS + 20)]
         formatted = "fallback\n" + ("x" * (TRANSCRIPT_FALLBACK_MAX_CHARS + 100))
 
         with (
-            patch("gobby.sessions.summarize._resolve_provider", return_value=provider),
             patch("gobby.prompts.loader.PromptLoader") as MockPromptLoader,
             patch("gobby.sessions.transcripts.claude.ClaudeTranscriptParser") as MockParser,
             patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
@@ -552,7 +559,9 @@ class TestGenerateSessionSummaries:
                 return_value=formatted,
             ) as mock_format,
         ):
-            MockPromptLoader.return_value.load.return_value.content = "prompt"
+            MockPromptLoader.return_value.load.return_value.content = (
+                "Transcript:\n{transcript_summary}"
+            )
             MockParser.return_value.extract_turns_since_clear.return_value = turns
             MockParser.return_value.extract_last_messages.return_value = []
 
@@ -560,7 +569,8 @@ class TestGenerateSessionSummaries:
                 session=session,
                 turns=turns,
                 handoff_ctx=handoff_ctx,
-                llm_service=None,
+                llm_service=llm_service,
+                session_summary_config=_summary_config("Transcript:\n{transcript_summary}"),
                 db=None,
                 session_manager=session_manager,
             )
@@ -569,9 +579,10 @@ class TestGenerateSessionSummaries:
         assert full_error is None
         formatted_turns = mock_format.call_args.args[0]
         assert len(formatted_turns) == TRANSCRIPT_FALLBACK_MAX_TURNS
-        context = provider.generate_summary.await_args.args[0]
-        assert len(context["transcript_summary"]) <= TRANSCRIPT_FALLBACK_MAX_CHARS + 4
-        assert context["transcript_summary"].endswith("...")
+        prompt = llm_service.call_feature.await_args.args[1]
+        transcript_summary = prompt.removeprefix("Transcript:\n")
+        assert len(transcript_summary) <= TRANSCRIPT_FALLBACK_MAX_CHARS + 4
+        assert transcript_summary.endswith("...")
 
     @pytest.mark.asyncio
     async def test_invalid_provider_summary_returns_generic_error(self) -> None:
@@ -584,11 +595,9 @@ class TestGenerateSessionSummaries:
         handoff_ctx.git_status = ""
         session_manager = MagicMock()
         session_manager.db = None
-        provider = AsyncMock()
-        provider.generate_summary.return_value = "Session summary generation failed: provider down"
+        llm_service = _mock_llm("Session summary generation failed: provider down")
 
         with (
-            patch("gobby.sessions.summarize._resolve_provider", return_value=provider),
             patch("gobby.prompts.loader.PromptLoader") as MockPromptLoader,
             patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
             patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
@@ -597,13 +606,16 @@ class TestGenerateSessionSummaries:
                 return_value="structured",
             ),
         ):
-            MockPromptLoader.return_value.load.return_value.content = "prompt"
+            MockPromptLoader.return_value.load.return_value.content = (
+                "Summary:\n{transcript_summary}"
+            )
 
             full_markdown, full_error = await _generate_full_summary(
                 session=session,
                 turns=[],
                 handoff_ctx=handoff_ctx,
-                llm_service=None,
+                llm_service=llm_service,
+                session_summary_config=_summary_config(),
                 db=None,
                 session_manager=session_manager,
             )

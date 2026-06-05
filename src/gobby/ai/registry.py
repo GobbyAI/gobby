@@ -33,6 +33,7 @@ class AICapability(StrEnum):
 
 
 CANONICAL_AI_CAPABILITIES: tuple[AICapability, ...] = tuple(AICapability)
+_CLAUDE_ALIAS_MODELS = ("haiku", "sonnet", "opus")
 
 
 class AIAdapterStyle(StrEnum):
@@ -657,7 +658,20 @@ def _models_for_generation_binding(
     binding_config = _generation_binding_config(config, provider)
     if binding_config is None:
         return ()
-    return tuple(binding_config.get_models_list())
+    models = tuple(binding_config.get_models_list())
+    if provider != "claude":
+        return models
+    aliases = tuple(
+        alias
+        for alias in _CLAUDE_ALIAS_MODELS
+        if any(_claude_model_matches_alias(model, alias) for model in models)
+    )
+    return tuple(dict.fromkeys((*models, *aliases)))
+
+
+def _claude_model_matches_alias(model: str, alias: str) -> bool:
+    normalized_parts = model.lower().replace("_", "-").split("-")
+    return alias in normalized_parts
 
 
 def _generation_binding_config(config: DaemonConfig | None, provider: str) -> Any | None:

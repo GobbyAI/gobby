@@ -92,6 +92,7 @@ class SessionLifecycleManager:
         config: SessionLifecycleConfig,
         memory_manager: Any | None = None,
         llm_service: Any | None = None,
+        session_summary_config: Any | None = None,
         memory_sync_manager: Any | None = None,
         kg_queue_config: Any | None = None,
     ):
@@ -101,6 +102,7 @@ class SessionLifecycleManager:
         self.token_event_store = TokenEventStore(db)
         self.memory_manager = memory_manager
         self.llm_service = llm_service
+        self.session_summary_config = session_summary_config
         self.memory_sync_manager = memory_sync_manager
         self._kg_queue_config = kg_queue_config
 
@@ -482,6 +484,7 @@ class SessionLifecycleManager:
                 session_id=session_id,
                 session_manager=self.session_manager,
                 llm_service=self.llm_service,
+                session_summary_config=self.session_summary_config,
                 db=self.db,
                 set_handoff_ready=False,  # already expired, don't change status
             )

@@ -89,6 +89,8 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
             db_cfg = runner.config.databases
             emb_cfg = runner.config.embeddings
             embedding_api_key = _resolve_embedding_api_key(runner, emb_cfg)
+            if runner.llm_service:
+                _validate_memory_embedding_config(emb_cfg, api_key=embedding_api_key)
             runner.vector_store = VectorStore(
                 url=db_cfg.qdrant.url,
                 api_key=db_cfg.qdrant.api_key,
@@ -98,7 +100,6 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
             if runner.llm_service:
                 from functools import partial
 
-                _validate_memory_embedding_config(emb_cfg, api_key=embedding_api_key)
                 _mem_embed_kwargs: dict[str, Any] = {
                     "model": emb_cfg.model,
                     "api_key": embedding_api_key,

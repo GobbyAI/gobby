@@ -275,7 +275,7 @@ class MergeResolver:
             conflict_size_threshold: Lines of conflict above which to escalate to full-file
             max_parallel_files: Maximum files to resolve in parallel
             llm_service: Optional LLM service for AI conflict resolution
-            config: Optional MergeResolutionConfig for provider/model selection
+            config: Optional MergeResolutionConfig for feature routing
         """
         self.conflict_size_threshold = conflict_size_threshold
         self.max_parallel_files = max_parallel_files
@@ -577,6 +577,13 @@ class MergeResolver:
                 "resolutions": [],
                 "failure_reason": "llm_service_unavailable",
             }
+        if self._config is None:
+            logger.warning("No merge resolution feature config available")
+            return {
+                "success": False,
+                "resolutions": [],
+                "failure_reason": "merge_resolution_config_unavailable",
+            }
 
         resolutions = []
         for conflict in conflicts:
@@ -610,20 +617,9 @@ class MergeResolver:
             prompt += f"Return the resolved code chunks separated only by {_HUNK_SEPARATOR}."
 
             try:
-                if self._config:
-                    try:
-                        provider, model, _ = self._llm_service.get_provider_for_feature(
-                            self._config
-                        )
-                    except (ValueError, Exception):
-                        provider = self._llm_service.get_default_provider()
-                        model = None
-                else:
-                    provider = self._llm_service.get_default_provider()
-                    model = None
-                response = await provider.generate_text(
+                response = await self._llm_service.call_feature(
+                    self._config,
                     prompt,
-                    model=model,
                     caller="worktrees.merge.resolve_hunks",
                 )
 
@@ -731,6 +727,13 @@ class MergeResolver:
                 "resolutions": [],
                 "failure_reason": "llm_service_unavailable",
             }
+        if self._config is None:
+            logger.warning("No merge resolution feature config available")
+            return {
+                "success": False,
+                "resolutions": [],
+                "failure_reason": "merge_resolution_config_unavailable",
+            }
 
         resolutions = []
         for conflict in conflicts:
@@ -752,20 +755,9 @@ class MergeResolver:
                 )
                 prompt += content_with_markers
 
-                if self._config:
-                    try:
-                        provider, model, _ = self._llm_service.get_provider_for_feature(
-                            self._config
-                        )
-                    except (ValueError, Exception):
-                        provider = self._llm_service.get_default_provider()
-                        model = None
-                else:
-                    provider = self._llm_service.get_default_provider()
-                    model = None
-                response = await provider.generate_text(
+                response = await self._llm_service.call_feature(
+                    self._config,
                     prompt,
-                    model=model,
                     caller="worktrees.merge.resolve_full_file",
                 )
 

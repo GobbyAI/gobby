@@ -1,4 +1,4 @@
-"""Tests for ClaudeLLMProvider methods: generate_summary, synthesize_title."""
+"""Tests for ClaudeLLMProvider provider primitives."""
 
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
@@ -10,7 +10,6 @@ import pytest
 
 from gobby.config.app import DaemonConfig
 from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
-from gobby.config.sessions import SessionSummaryConfig
 from gobby.llm.claude import ClaudeLLMProvider, _normalize_claude_usage
 
 pytestmark = pytest.mark.unit
@@ -57,8 +56,7 @@ def claude_config() -> DaemonConfig:
     return DaemonConfig(
         llm_providers=LLMProvidersConfig(
             claude=LLMProviderConfig(models="claude-3-5-sonnet"),
-        ),
-        session_summary=SessionSummaryConfig(enabled=True),
+        )
     )
 
 
@@ -66,11 +64,17 @@ def claude_config() -> DaemonConfig:
 def mock_claude_sdk(
     mock_query_func: Callable[[str, object], AsyncIterator[object]],
 ) -> Iterator[None]:
+    async def query_wrapper(*args: object, **kwargs: object) -> AsyncIterator[object]:
+        prompt = kwargs.get("prompt", args[0] if args else "")
+        options = kwargs.get("options", args[1] if len(args) > 1 else None)
+        async for message in mock_query_func(str(prompt), options):
+            yield message
+
     with (
         patch("gobby.llm.claude_cli.shutil.which", return_value="/mock/claude"),
         patch("os.path.exists", return_value=True),
         patch("os.access", return_value=True),
-        patch("gobby.llm.claude.query", mock_query_func),
+        patch("gobby.llm.claude.query", query_wrapper),
         patch("gobby.llm.claude.AssistantMessage", MockAssistantMessage),
         patch("gobby.llm.claude.ResultMessage", MockResultMessage),
         patch("gobby.llm.claude.TextBlock", MockTextBlock),
@@ -81,29 +85,6 @@ def mock_claude_sdk(
 
 
 # --- Tests ---
-
-
-@pytest.mark.asyncio
-async def test_generate_summary_success(claude_config: DaemonConfig) -> None:
-    async def mock_query(_prompt: str, _options: object) -> AsyncIterator[object]:
-        yield MockAssistantMessage([MockTextBlock("Summary of session.")])
-        yield MockResultMessage(result="Summary of session.")
-
-    with mock_claude_sdk(mock_query):
-        provider = ClaudeLLMProvider(claude_config)
-        context = {"transcript_summary": "prev", "last_messages": []}
-        summary = await provider.generate_summary(
-            context, prompt_template="Sum: {transcript_summary}"
-        )
-        assert summary == "Summary of session."
-
-
-@pytest.mark.asyncio
-async def test_generate_summary_no_cli(claude_config: DaemonConfig) -> None:
-    with patch("gobby.llm.claude_cli.shutil.which", return_value=None):
-        provider = ClaudeLLMProvider(claude_config)
-        summary = await provider.generate_summary({}, prompt_template="test")
-        assert "unavailable" in summary.lower()
 
 
 @pytest.mark.asyncio

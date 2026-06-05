@@ -29,8 +29,7 @@ class LLMProvider(ABC):
     """
     Abstract base class for LLM providers.
 
-    Defines the interface for generating summaries and synthesizing titles
-    across different providers (Claude, Gemini, Codex).
+    Defines the interface for provider primitives used outside feature routing.
 
     Properties:
         provider_name: Unique identifier for this provider (e.g., "claude", "gemini", "codex")
@@ -60,22 +59,6 @@ class LLMProvider(ABC):
             Authentication mode: "subscription", "api_key", or "adc"
         """
         return "subscription"
-
-    @abstractmethod
-    async def generate_summary(
-        self, context: dict[str, Any], prompt_template: str | None = None
-    ) -> str:
-        """
-        Generate session summary.
-
-        Args:
-            context: Dictionary containing transcript turns, git status, etc.
-            prompt_template: Optional override for the prompt.
-
-        Returns:
-            Generated summary string.
-        """
-        pass
 
     @abstractmethod
     async def generate_text(

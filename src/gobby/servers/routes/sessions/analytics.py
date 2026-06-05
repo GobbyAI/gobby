@@ -91,6 +91,9 @@ def register_analytics_routes(
                 session_manager=server.session_manager,
                 session_id=session_id,
                 llm_service=server.llm_service,
+                session_summary_config=(
+                    server.config.session_summary if server.config is not None else None
+                ),
                 transcript_processor=transcript_processor,
             )
 
