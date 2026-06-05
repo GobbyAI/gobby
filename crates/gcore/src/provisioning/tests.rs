@@ -32,8 +32,8 @@ impl EnvGuard {
             "GOBBY_EMBEDDING_QUERY_PREFIX",
             "GOBBY_EMBEDDING_TIMEOUT_SECONDS",
         ] {
-            // SAFETY: TEST_ENV_LOCK serializes all test environment mutation
-            // here, and the loop only touches the fixed key list above.
+            // SAFETY: TEST_ENV_LOCK must guard every test environment mutation
+            // in this crate. This loop only removes the fixed key list above.
             unsafe { std::env::remove_var(key) };
         }
     }
@@ -124,6 +124,23 @@ fn gcore_yaml_writes_nested_keys() {
 }
 
 #[test]
+fn gcore_yaml_write_rejects_scalar_to_nested_mapping_collision() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join(GCORE_CONFIG_FILENAME);
+    let mut config = StandaloneConfig::empty();
+    config.set("ai", "scalar");
+    config.set("ai.embeddings.provider", "ollama");
+
+    let err = config.write_at(&path).expect_err("collision rejected");
+
+    assert!(
+        err.to_string()
+            .contains("cannot be nested under scalar YAML key"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn gcore_yaml_rejects_excessive_nesting() {
     let mut yaml = String::new();
     for depth in 0..=65 {
@@ -139,6 +156,25 @@ fn gcore_yaml_rejects_excessive_nesting() {
         error
             .to_string()
             .contains("gcore.yaml nesting exceeds maximum depth of 64")
+    );
+}
+
+#[test]
+fn gcore_yaml_rejects_sequence_scalar_values() {
+    let err = StandaloneConfig::from_yaml_str(
+        r#"
+ai:
+  embeddings:
+    provider:
+      - ollama
+"#,
+    )
+    .expect_err("sequence scalar rejected");
+
+    assert!(
+        err.to_string()
+            .contains("gcore.yaml scalar config fields cannot be sequences"),
+        "unexpected error: {err}"
     );
 }
 

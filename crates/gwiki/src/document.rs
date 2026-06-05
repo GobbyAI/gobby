@@ -2,6 +2,7 @@ use crate::ingest::single_line;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DocumentFailureMode {
+    UnsupportedSource,
     OfficeParseError,
     HtmlParseError,
     HtmlNoContent,
@@ -16,6 +17,7 @@ pub enum DocumentFailureMode {
 impl DocumentFailureMode {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::UnsupportedSource => "unsupported_source",
             Self::OfficeParseError => "office_parse_error",
             Self::HtmlParseError => "html_parse_error",
             Self::HtmlNoContent => "html_no_content",

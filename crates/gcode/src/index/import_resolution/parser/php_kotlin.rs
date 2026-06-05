@@ -8,10 +8,9 @@ pub(crate) fn php_local_symbol_exists(
     import_context: &ImportResolutionContext,
     symbol: &str,
 ) -> bool {
-    import_context.php_local_symbols.contains(symbol)
-        || import_context
-            .php_local_symbols
-            .contains(&symbol.to_ascii_lowercase())
+    import_context
+        .php_local_symbols
+        .contains(&symbol.to_ascii_lowercase())
 }
 
 pub(crate) fn parse_php_import_statement(

@@ -155,13 +155,20 @@ fn is_block_element(name: &str) -> bool {
             | "aside"
             | "blockquote"
             | "br"
+            | "caption"
+            | "col"
+            | "colgroup"
             | "dd"
+            | "details"
+            | "dialog"
             | "div"
             | "dl"
             | "dt"
+            | "fieldset"
             | "figcaption"
             | "figure"
             | "footer"
+            | "form"
             | "h1"
             | "h2"
             | "h3"
@@ -169,24 +176,30 @@ fn is_block_element(name: &str) -> bool {
             | "h5"
             | "h6"
             | "header"
+            | "hgroup"
             | "hr"
             | "li"
             | "main"
+            | "menu"
             | "nav"
             | "ol"
             | "p"
             | "pre"
             | "section"
+            | "summary"
             | "table"
+            | "tbody"
             | "td"
+            | "tfoot"
             | "th"
+            | "thead"
             | "tr"
             | "ul"
     )
 }
 
 fn normalize_markdown_text(text: &str) -> String {
-    decode_xml_entities(text)
+    normalize_unicode_whitespace(&decode_xml_entities(text))
         .lines()
         .map(single_line)
         .filter(|line| !line.is_empty())
@@ -197,4 +210,34 @@ fn normalize_markdown_text(text: &str) -> String {
             lines
         })
         .join("\n\n")
+}
+
+fn normalize_unicode_whitespace(text: &str) -> String {
+    text.chars()
+        .map(|ch| match ch {
+            '\n' | '\r' | '\u{2028}' | '\u{2029}' => '\n',
+            ch if ch.is_whitespace() => ' ',
+            ch => ch,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_markdown_text_normalizes_unicode_whitespace_before_lines() {
+        assert_eq!(
+            normalize_markdown_text("alpha\u{00a0}beta\u{2028}gamma"),
+            "alpha beta\n\ngamma"
+        );
+    }
+
+    #[test]
+    fn html5_sectioning_tags_are_block_elements() {
+        assert!(is_block_element("details"));
+        assert!(is_block_element("summary"));
+        assert!(is_block_element("thead"));
+    }
 }

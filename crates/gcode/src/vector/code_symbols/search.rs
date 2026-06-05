@@ -54,9 +54,9 @@ pub fn search_code_symbols(
     }
 }
 
-/// Semantic search is an optional ranking signal. Returning an empty result on
-/// transport/config errors lets hybrid search degrade to lexical/graph sources
-/// instead of failing the whole user query.
+/// Semantic search is a full-stack ranking signal. Returning an empty result on
+/// transport/config errors lets degraded hybrid-search callers keep lexical and
+/// graph sources instead of failing the whole user query.
 pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String, f64)> {
     let request = CodeSymbolVectorSearchRequest {
         project_id: ctx.project_id.clone(),

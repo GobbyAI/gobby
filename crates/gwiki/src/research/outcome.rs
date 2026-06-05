@@ -1,6 +1,16 @@
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
+use std::fs;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 
-use super::*;
+use serde_json::Value;
+
+use super::notes::{frontmatter_block, materializing_marker_is_stale, yaml_field_eq};
+use super::{AuditFinding, AuditSeverity, RESEARCH_NOTE_NAMESPACE, ResearchOptions};
+use crate::research_loop::ResearchObservation;
+use crate::scope::{self, ScopeKind};
+use crate::session::{ResearchScope, ResearchSession, research_prompt};
+use crate::{CommandOutcome, ScopeSelection, WikiError};
 
 pub(crate) fn observation_from_outcome(
     action: &str,
@@ -93,8 +103,9 @@ pub(crate) fn scope_selection_from_research_scope(scope: &ResearchScope) -> Scop
     }
 }
 
-/// Rough budget heuristic used only when provider usage metadata is unavailable.
-/// Estimate conservatively as ceil(words * 1.3) without floating-point drift.
+/// Soft budget heuristic used only when provider usage metadata is unavailable.
+/// Expect a margin of error; this keeps control-loop budgets conservative
+/// without claiming tokenizer-level precision.
 pub(crate) fn estimate_tokens(text: &str) -> usize {
     let words = text.split_whitespace().count();
     if words == 0 {
@@ -163,7 +174,7 @@ pub(crate) fn deterministic_audit_findings(
         .accepted_notes
         .iter()
         .map(|note| note.path.clone())
-        .collect::<std::collections::BTreeSet<_>>();
+        .collect::<BTreeSet<_>>();
     let mut findings = Vec::new();
     for path in note_paths {
         let contents = fs::read_to_string(&path).map_err(|error| WikiError::Io {

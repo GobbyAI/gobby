@@ -52,6 +52,10 @@ fn release_workflows_have_one_default_and_one_no_default_check() {
             include_str!("../../../.github/workflows/release-gsqz.yml"),
             "gobby-squeeze",
         ),
+        (
+            include_str!("../../../.github/workflows/release-ghook.yml"),
+            "gobby-hooks",
+        ),
     ];
 
     for (workflow, package) in cases {
@@ -297,6 +301,10 @@ fn release_workflows_generate_and_upload_archive_checksums() {
         assert!(
             checksum_body.contains(r#"sha256sum "$asset" > "$asset.sha256""#),
             "release-{tool}.yml should write per-asset checksum files"
+        );
+        assert!(
+            checksum_body.contains("shell: bash"),
+            "release-{tool}.yml should run checksum generation with bash"
         );
 
         if matches!(tool, "gwiki" | "gsqz") {

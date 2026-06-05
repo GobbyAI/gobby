@@ -126,7 +126,7 @@ pub(crate) fn parse_js_import_statement(
         return;
     };
     let clause = clause.trim();
-    if clause.is_empty() || (clause.starts_with("type ") && !clause.contains(',')) {
+    if clause.is_empty() || clause.starts_with("type ") {
         return;
     }
 
@@ -175,7 +175,10 @@ pub(crate) fn parse_js_import_statement(
             continue;
         }
 
-        let alias = part.strip_prefix("type ").unwrap_or(part).trim();
+        if part.starts_with("type ") {
+            continue;
+        }
+        let alias = part.trim();
         if alias.is_empty() {
             continue;
         }

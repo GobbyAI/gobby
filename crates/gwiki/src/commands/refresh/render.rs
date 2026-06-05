@@ -8,6 +8,8 @@ pub(crate) fn render_refresh(render: RefreshRender) -> CommandOutcome {
         render.unchanged.len(),
         render.failed.len(),
     );
+    // Only an explicit single-source refresh should fail the command when every
+    // attempted source failed; scheduled/bulk refreshes report failures in JSON.
     let exit_code = if render.explicit
         && !render.dry_run
         && !render.failed.is_empty()

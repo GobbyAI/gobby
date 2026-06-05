@@ -28,6 +28,13 @@ pub struct IngestResult {
     pub asset_path: Option<PathBuf>,
 }
 
+pub(crate) fn lowercase_extension(path: impl AsRef<Path>) -> Option<String> {
+    path.as_ref()
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase)
+}
+
 pub(crate) fn write_raw_markdown(
     vault_root: &Path,
     record: &SourceRecord,

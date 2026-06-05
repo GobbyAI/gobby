@@ -5,6 +5,9 @@ use crate::support::time;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
+// Short polling keeps lock handoff responsive while avoiding a busy spin when
+// another process is appending to the raw index.
+const RAW_INDEX_LOCK_RETRY_SLEEP: Duration = Duration::from_millis(25);
 
 pub(crate) fn append_raw_index_locked(
     vault_root: &Path,
@@ -74,7 +77,7 @@ pub(crate) fn lock_raw_index(lock: &fs::File, lock_path: &Path) -> Result<(), Wi
                         ),
                     });
                 }
-                thread::sleep(Duration::from_millis(25).min(timeout - elapsed));
+                thread::sleep(RAW_INDEX_LOCK_RETRY_SLEEP.min(timeout - elapsed));
             }
             Err(error) => {
                 return Err(WikiError::Io {

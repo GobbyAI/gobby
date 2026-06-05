@@ -258,6 +258,8 @@ fn lock_file(lock: &fs::File, lock_path: &Path, action: &'static str) -> Result<
     let started = Instant::now();
 
     loop {
+        // fs4 names the exclusive lock attempt `try_lock`; shared locking is
+        // exposed separately as `try_lock_shared`.
         match fs4::FileExt::try_lock(lock) {
             Ok(()) => return Ok(()),
             Err(fs4::TryLockError::WouldBlock) => {

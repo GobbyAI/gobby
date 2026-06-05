@@ -224,8 +224,8 @@ pub fn resolve_recorded_hub_database_url(
                     identity_status: RecordedHubIdentityStatus::SingleReachable,
                 })),
                 (true, true) => {
-                    let existing_redacted = redact_database_url_for_error(&existing);
-                    let daemon_redacted = redact_database_url_for_error(&daemon);
+                    let existing_redacted = redacted_postgres_dsn_placeholder();
+                    let daemon_redacted = redacted_postgres_dsn_placeholder();
                     let existing_identity = identity_probe(&existing).with_context(|| {
                         format!("failed to probe PostgreSQL hub identity for {existing_redacted}")
                     })?;
@@ -278,7 +278,7 @@ pub fn resolve_recorded_hub_database_url(
     }
 }
 
-fn redact_database_url_for_error(_database_url: &str) -> String {
+fn redacted_postgres_dsn_placeholder() -> String {
     "<redacted-postgres-dsn>".to_string()
 }
 
@@ -456,7 +456,7 @@ fn explicit_database_url_reachable(
 
 #[cfg(not(feature = "postgres"))]
 fn explicit_database_url_reachable(
-    database_url: &str,
+    _database_url: &str,
     _database_reachable: &mut impl FnMut(&str) -> bool,
 ) -> bool {
     // Without the postgres feature, gcore cannot open a connection to probe an
@@ -464,7 +464,7 @@ fn explicit_database_url_reachable(
     // later if it actually needs PostgreSQL access.
     log::warn!(
         "postgres feature is disabled; preserving configured PostgreSQL hub {} without a reachability probe",
-        redact_database_url_for_error(database_url)
+        redacted_postgres_dsn_placeholder()
     );
     true
 }

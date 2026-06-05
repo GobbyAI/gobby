@@ -35,8 +35,8 @@ impl EnvGuard {
             "GOBBY_TEST_PRESENT",
             "GOBBY_TEST_MISSING",
         ] {
-            // SAFETY: TEST_ENV_LOCK serializes all test environment mutation
-            // here, and the loop only touches the fixed key list above.
+            // SAFETY: TEST_ENV_LOCK must guard every test environment mutation
+            // in this crate. This loop only removes the fixed key list above.
             unsafe { std::env::remove_var(key) };
         }
     }
@@ -468,9 +468,9 @@ fn legacy_keys_not_honored() {
 }
 
 fn leak_for_test(value: String) -> &'static str {
-    // Test-only helper for fixed-size config fixture keys. The source trait
-    // stores borrowed keys for the duration of the process, so leaking these
-    // tiny strings avoids global mutable state without affecting production.
+    // Test-only helper for a bounded set of fixture keys. Do not use with
+    // dynamic or unbounded input; the leak intentionally lasts for the test
+    // process because ConfigSource stores borrowed keys.
     Box::leak(value.into_boxed_str())
 }
 

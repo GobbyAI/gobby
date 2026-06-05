@@ -8,7 +8,7 @@ use std::time::Duration;
 use gobby_core::indexing::{content_hash, file_content_hash};
 
 use super::*;
-use crate::sources::{SourceKind, SourceManifest};
+use crate::sources::{CompileStatus, IngestionMethod, SourceKind, SourceManifest};
 use crate::store::{MemoryWikiStore, WikiDocumentKind};
 use crate::transcribe::{
     TranscriptionClient, TranscriptionEndpoint, TranscriptionOutput, TranscriptionRequest,

@@ -48,7 +48,7 @@ fn has_identifier_boundaries(line: &str, span: &GrepSpan) -> bool {
         .char_indices()
         .find(|(_, ch)| is_identifier_char(*ch))
     else {
-        return false;
+        return has_adjacent_identifier_boundaries(line, span.start, span.end);
     };
     let token_start = span.start + start_offset;
     let mut token_end = token_start + first.len_utf8();
@@ -61,18 +61,20 @@ fn has_identifier_boundaries(line: &str, span: &GrepSpan) -> bool {
         token_end = remaining_start + offset + ch.len_utf8();
     }
 
-    let before_attached = line[..token_start]
+    has_adjacent_identifier_boundaries(line, token_start, token_end)
+}
+
+fn has_adjacent_identifier_boundaries(line: &str, start: usize, end: usize) -> bool {
+    let before_attached = line[..start]
         .chars()
         .next_back()
         .is_some_and(is_identifier_char);
-    let after_attached = line[token_end..]
-        .chars()
-        .next()
-        .is_some_and(is_identifier_char);
+    let after_attached = line[end..].chars().next().is_some_and(is_identifier_char);
 
     !before_attached && !after_attached
 }
 
+// `gcode grep -w` uses ASCII identifier boundaries to match indexed source tokens.
 fn is_identifier_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || ch == '_'
 }
@@ -120,6 +122,16 @@ mod tests {
         assert_eq!(
             matched_texts(&matcher, "føøbar barβ _bar bar_ føø bar; β bar"),
             vec!["bar", "bar", "bar", "bar"]
+        );
+    }
+
+    #[test]
+    fn word_matching_accepts_non_identifier_literals_with_clean_adjacent_boundaries() {
+        let matcher = GrepMatcher::new("::", true, false, true).expect("matcher");
+
+        assert_eq!(
+            matched_texts(&matcher, "value::field :: value ::field value :: field"),
+            vec!["::", "::"]
         );
     }
 

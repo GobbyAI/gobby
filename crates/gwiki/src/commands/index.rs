@@ -255,7 +255,12 @@ fn sync_falkor_graph(
         log::warn!("{command}: FalkorDB config not found; skipping gwiki graph sync");
         return Ok(());
     };
-    crate::falkor_graph::sync_scope_from_postgres(conn, search_scope, &falkor)
+    if let Err(error) = crate::falkor_graph::sync_scope_from_postgres(conn, search_scope, &falkor) {
+        log::warn!(
+            "{command}: FalkorDB graph sync failed; continuing with PostgreSQL index: {error}"
+        );
+    }
+    Ok(())
 }
 
 fn indexed_counts_for_postgres(

@@ -51,13 +51,22 @@ jobs:
           echo "Tag '$tag' aligns with crates/ghook/Cargo.toml version '$cargo_version'."
 
       - name: Clippy
-        run: cargo clippy -p gobby-hooks --all-targets -- -D warnings
+        run: cargo clippy -p gobby-hooks -- -D warnings
+
+      - name: Clippy without default features
+        run: cargo clippy -p gobby-hooks --no-default-features -- -D warnings
 
       - name: Run tests
         run: cargo nextest run --profile ci -p gobby-hooks
 
       - name: Run doctests
         run: cargo test --doc -p gobby-hooks
+
+      - name: Run tests without default features
+        run: cargo nextest run --profile ci -p gobby-hooks --no-default-features
+
+      - name: Run doctests without default features
+        run: cargo test --doc -p gobby-hooks --no-default-features
 
   build:
     needs: test
@@ -174,6 +183,7 @@ jobs:
       - name: Generate SHA-256 checksums
         # Installers fetch <asset>.sha256 and verify the archive before
         # chmod/PATH placement (fail-closed on missing/mismatched checksum).
+        shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob

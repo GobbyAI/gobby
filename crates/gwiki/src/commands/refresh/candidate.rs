@@ -222,33 +222,14 @@ fn refresh_changed_url_source(
 
     let result = ingest::url::ingest_snapshot_without_index(vault_root, snapshot)?;
 
-    let mut removed_paths = Vec::new();
-    for path in previous_paths {
-        if path == result.raw_path
-            || result
-                .asset_path
-                .as_ref()
-                .is_some_and(|asset| *asset == path)
-        {
-            continue;
-        }
-        if remove_relative_file(vault_root, &path)? {
-            removed_paths.push(path);
-        }
-    }
-
-    SourceManifest::update(vault_root, |manifest| {
-        let before = manifest.entries.len();
-        manifest.entries.retain(|entry| entry.id != previous.id);
-        Ok(manifest.entries.len() != before)
-    })?;
-
-    Ok(ChangedRefresh {
-        result,
+    finalize_changed_refresh(
+        vault_root,
+        previous,
         previous_raw_path,
-        removed_paths,
-        degradations: Vec::new(),
-    })
+        previous_paths,
+        result,
+        Vec::new(),
+    )
 }
 
 fn refresh_changed_local_source(
@@ -269,6 +250,24 @@ fn refresh_changed_local_source(
     )?;
     let result = local_result.result;
 
+    finalize_changed_refresh(
+        vault_root,
+        previous,
+        previous_raw_path,
+        previous_paths,
+        result,
+        local_result.degradations,
+    )
+}
+
+fn finalize_changed_refresh(
+    vault_root: &Path,
+    previous: &SourceRecord,
+    previous_raw_path: PathBuf,
+    previous_paths: Vec<PathBuf>,
+    result: ingest::IngestResult,
+    degradations: Vec<String>,
+) -> Result<ChangedRefresh, WikiError> {
     let mut removed_paths = Vec::new();
     for path in previous_paths {
         if path == result.raw_path
@@ -294,6 +293,6 @@ fn refresh_changed_local_source(
         result,
         previous_raw_path,
         removed_paths,
-        degradations: local_result.degradations,
+        degradations,
     })
 }

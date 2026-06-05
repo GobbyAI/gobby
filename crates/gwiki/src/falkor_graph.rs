@@ -175,6 +175,8 @@ fn query_limited(
     if let Ok(limit) = usize::try_from(limit)
         && rows.len() > limit
     {
+        // Query fetches one sentinel row to detect truncation; drop it before
+        // callers build graph facts so the result never exceeds the contract.
         rows.truncate(limit);
     }
     Ok(LimitedQuery {

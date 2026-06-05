@@ -159,7 +159,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_optional_services_are_none() {
+    fn missing_diagnostic_service_config_is_none() {
         let _env = EnvGuard::new();
         let mut source = EnvOnlySource;
         let root = std::path::PathBuf::from("/tmp/gobby-project");

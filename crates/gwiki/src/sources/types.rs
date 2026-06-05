@@ -96,14 +96,15 @@ pub struct SourceDraft {
 }
 
 impl SourceDraft {
-    pub fn url(
+    pub fn new(
         location: impl Into<String>,
+        kind: SourceKind,
         fetched_at: impl Into<String>,
         content: impl Into<Vec<u8>>,
     ) -> Self {
         Self {
             location: location.into(),
-            kind: SourceKind::Url,
+            kind,
             fetched_at: fetched_at.into(),
             content: content.into(),
             title: None,
@@ -112,6 +113,14 @@ impl SourceDraft {
             ingestion_method: IngestionMethod::Manual,
             compile_status: CompileStatus::Pending,
         }
+    }
+
+    pub fn url(
+        location: impl Into<String>,
+        fetched_at: impl Into<String>,
+        content: impl Into<Vec<u8>>,
+    ) -> Self {
+        Self::new(location, SourceKind::Url, fetched_at, content)
     }
 
     pub fn with_title(mut self, title: impl Into<String>) -> Self {
@@ -126,6 +135,16 @@ impl SourceDraft {
 
     pub fn with_license(mut self, license: impl Into<String>) -> Self {
         self.license = Some(license.into());
+        self
+    }
+
+    pub fn with_ingestion_method(mut self, method: IngestionMethod) -> Self {
+        self.ingestion_method = method;
+        self
+    }
+
+    pub fn with_compile_status(mut self, status: CompileStatus) -> Self {
+        self.compile_status = status;
         self
     }
 }

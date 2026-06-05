@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -157,8 +158,9 @@ fn prefixed_value<'a>(line: &'a str, prefixes: &[&str]) -> Option<&'a str> {
 }
 
 pub(crate) fn extend_unique(target: &mut Vec<String>, values: Vec<String>) {
+    let mut seen: HashSet<String> = target.iter().cloned().collect();
     for value in values {
-        if !target.contains(&value) {
+        if seen.insert(value.clone()) {
             target.push(value);
         }
     }

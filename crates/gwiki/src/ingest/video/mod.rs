@@ -14,9 +14,7 @@ use crate::ingest::{
     IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
     write_asset, write_asset_from_path, write_asset_with_suffix, write_raw_markdown,
 };
-use crate::sources::{
-    CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest, SourceRecord,
-};
+use crate::sources::{SourceDraft, SourceKind, SourceManifest, SourceRecord};
 use crate::store::WikiIndexStore;
 use crate::transcribe::{TranscriptSegment, TranscriptionDegradation, TranscriptionOutput};
 use crate::video::{

@@ -150,6 +150,12 @@ fn scalar_to_string(value: &serde_yaml::Value) -> anyhow::Result<Option<String>>
         serde_yaml::Value::String(value) => Some(value.clone()),
         serde_yaml::Value::Bool(value) => Some(value.to_string()),
         serde_yaml::Value::Number(value) => Some(value.to_string()),
+        serde_yaml::Value::Sequence(_) => {
+            anyhow::bail!("gcore.yaml scalar config fields cannot be sequences")
+        }
+        serde_yaml::Value::Mapping(_) => {
+            anyhow::bail!("gcore.yaml scalar config fields cannot be mappings")
+        }
         other => Some(serde_yaml::to_string(other)?.trim().to_string()),
     })
 }

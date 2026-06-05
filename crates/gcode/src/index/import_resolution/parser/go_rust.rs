@@ -126,7 +126,6 @@ fn register_rust_group_imports(
             continue;
         }
         if item.contains('*') {
-            // Glob imports are intentionally not expanded because exported names are unknown here.
             continue;
         }
         let Some(path) = rust_join_use_path(prefix, item) else {

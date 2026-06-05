@@ -23,8 +23,8 @@ use crate::ingest::video::{
     ingest_video_file_with_production_processing_without_index,
 };
 use crate::ingest::{
-    IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
-    text_from_utf8_lossy, write_asset, write_raw_markdown,
+    IngestResult, index_after_ingest, lowercase_extension, markdown_metadata, markdown_title,
+    path_to_string, text_from_utf8_lossy, write_asset, write_raw_markdown,
 };
 use crate::sources::{
     CompileStatus, IngestionMethod, SourceDraft, SourceDraftRef, SourceKind, SourceManifest,
@@ -379,17 +379,13 @@ pub fn ingest_stdin(
 ) -> Result<IngestResult, WikiError> {
     let title = markdown_title(&snapshot.label);
     let location = format!("stdin:{}", snapshot.label);
-    let draft = SourceDraft {
-        location: location.clone(),
-        kind: SourceKind::Stdin,
-        fetched_at: snapshot.fetched_at.clone(),
-        content: snapshot.bytes.clone(),
-        title: Some(title.clone()),
-        citation: None,
-        license: None,
-        ingestion_method: IngestionMethod::Manual,
-        compile_status: CompileStatus::Pending,
-    };
+    let draft = SourceDraft::new(
+        location.clone(),
+        SourceKind::Stdin,
+        snapshot.fetched_at.clone(),
+        snapshot.bytes.clone(),
+    )
+    .with_title(title.clone());
     let record = SourceManifest::register(vault_root, draft)?;
     let markdown = render_file_markdown(
         &title,
@@ -411,12 +407,7 @@ pub fn ingest_stdin(
 }
 
 fn detect_source_kind(path: &Path) -> SourceKind {
-    match path
-        .extension()
-        .and_then(|value| value.to_str())
-        .map(str::to_ascii_lowercase)
-        .as_deref()
-    {
+    match lowercase_extension(path).as_deref() {
         Some("pdf") => SourceKind::Pdf,
         Some("docx" | "xlsx" | "xls" | "ods" | "pptx") => SourceKind::Office,
         Some("html" | "htm") => SourceKind::Html,

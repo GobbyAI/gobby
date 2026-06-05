@@ -1,4 +1,9 @@
 use super::*;
+use crate::research::notes::{
+    accepted_note_draft_id, frontmatter_block, render_accepted_note_body, write_accepted_note,
+    yaml_field_eq,
+};
+use crate::scope;
 
 fn default_options(question: &str, scope: ResearchScope) -> ResearchOptions {
     ResearchOptions {

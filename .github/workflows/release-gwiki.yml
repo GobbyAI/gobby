@@ -148,11 +148,13 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             cross: false
+            pdfium_version: "7690"
             pdfium_archive: pdfium-win-x64.tgz
             pdfium_sha: 06ef95ac4f9b8897731224639ddf0f185693cb48bc9ee650f1e92f71e0d2a94e
           - target: aarch64-pc-windows-msvc
             os: windows-latest
             cross: true
+            pdfium_version: "7690"
             pdfium_archive: pdfium-win-arm64.tgz
             pdfium_sha: e01a0df46347d40c591a11f2060a371004ef5c423cf890c6cb431594ccbd2b9b
 
@@ -196,11 +198,12 @@ jobs:
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
+          PDFIUM_VERSION: ${{ matrix.pdfium_version }}
           PDFIUM_ARCHIVE: ${{ matrix.pdfium_archive }}
           PDFIUM_SHA: ${{ matrix.pdfium_sha }}
         run: |
           set -euo pipefail
-          version="7690"
+          version="$PDFIUM_VERSION"
           case "$TARGET" in
             x86_64-pc-windows-msvc | aarch64-pc-windows-msvc)
               ;;
@@ -209,7 +212,7 @@ jobs:
               exit 1
               ;;
           esac
-          if [ -z "$PDFIUM_ARCHIVE" ] || [ -z "$PDFIUM_SHA" ]; then
+          if [ -z "$PDFIUM_VERSION" ] || [ -z "$PDFIUM_ARCHIVE" ] || [ -z "$PDFIUM_SHA" ]; then
             echo "::error::Provision pdfium: missing archive metadata for '$TARGET'." >&2
             exit 1
           fi
@@ -339,6 +342,7 @@ jobs:
       - name: Generate SHA-256 checksums
         # Installers fetch <asset>.sha256 and verify the archive before
         # chmod/PATH placement (fail-closed on missing/mismatched checksum).
+        shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob

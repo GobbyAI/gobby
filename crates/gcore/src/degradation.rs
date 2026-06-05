@@ -1,8 +1,9 @@
 //! Shared degradation vocabulary boundary.
 //!
 //! Degradation types describe partial availability without forcing every
-//! command to treat optional service absence as fatal. Detailed contracts live
-//! here so lightweight consumers can share the same vocabulary.
+//! command to treat configured-service outages or explicitly degraded paths as
+//! fatal. Detailed contracts live here so lightweight consumers can share the
+//! same vocabulary.
 
 use serde::{Deserialize, Serialize};
 
@@ -180,7 +181,7 @@ fn is_sensitive_keyword_dsn_key(key: &str) -> bool {
 /// Degradation states for partial results.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DegradationKind {
-    /// An optional service was unavailable during this operation.
+    /// A configured service was unavailable during this operation.
     ServiceUnavailable {
         /// Optional service name.
         service: String,
@@ -220,7 +221,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn optional_service_degradation_is_not_fatal() {
+    fn service_unavailable_degradation_is_not_fatal() {
         let unconfigured = ServiceState::NotConfigured;
         let unreachable = ServiceState::Unreachable {
             message: "connection refused".to_string(),

@@ -1,5 +1,6 @@
 use std::fmt;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use gobby_core::setup::SetupError;
 
@@ -47,6 +48,12 @@ pub enum WikiError {
         resource: &'static str,
         id: String,
     },
+    Timeout {
+        action: &'static str,
+        path: Option<PathBuf>,
+        duration: Duration,
+        detail: String,
+    },
     Index {
         source: indexer::IndexError,
     },
@@ -71,6 +78,7 @@ impl WikiError {
             Self::Daemon { .. } => "daemon_error",
             Self::InvalidInput { .. } => "invalid_input",
             Self::NotFound { .. } => "not_found",
+            Self::Timeout { .. } => "timeout",
             Self::Index { .. } => "index_error",
             Self::Search { .. } => "search_error",
             Self::Setup { .. } => "setup_error",
@@ -123,6 +131,25 @@ impl fmt::Display for WikiError {
             }
             Self::NotFound { resource, id } => {
                 write!(f, "{resource} `{id}` was not found ({})", self.code())
+            }
+            Self::Timeout {
+                action,
+                path,
+                duration,
+                detail,
+            } => {
+                let source = format!("timed out after {}ms: {detail}", duration.as_millis());
+                match path {
+                    Some(path) => {
+                        write!(
+                            f,
+                            "{action} {} failed: {source} ({})",
+                            path.display(),
+                            self.code()
+                        )
+                    }
+                    None => write!(f, "{action} failed: {source} ({})", self.code()),
+                }
             }
             Self::Index { source } => write!(f, "index: {source} ({})", self.code()),
             Self::Search { source } => write!(f, "query: {source} ({})", self.code()),
@@ -210,6 +237,41 @@ mod tests {
 
         assert_eq!(index.code(), "index_error");
         assert_eq!(search.code(), "search_error");
+    }
+
+    #[test]
+    fn timeout_errors_are_typed() {
+        let error = WikiError::Timeout {
+            action: "wait for fixture",
+            path: Some(PathBuf::from("note.md")),
+            duration: Duration::from_millis(250),
+            detail: "still materializing".to_string(),
+        };
+
+        assert_eq!(error.code(), "timeout");
+        assert!(error.to_string().contains("timed out after 250ms"));
+        assert!(error.source().is_none());
+    }
+
+    #[test]
+    fn ffmpeg_unavailable_detection_matches_config_and_io_errors() {
+        let config = WikiError::Config {
+            detail: "ffmpeg executable not found on PATH".to_string(),
+        };
+        let io = WikiError::Io {
+            action: "run ffmpeg",
+            path: None,
+            source: std::io::Error::from(std::io::ErrorKind::NotFound),
+        };
+        let other_io = WikiError::Io {
+            action: "read ffmpeg output",
+            path: None,
+            source: std::io::Error::from(std::io::ErrorKind::NotFound),
+        };
+
+        assert!(config.is_ffmpeg_unavailable());
+        assert!(io.is_ffmpeg_unavailable());
+        assert!(!other_io.is_ffmpeg_unavailable());
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use super::*;
+use crate::session::AcceptedResearchNote;
 
 #[derive(Serialize)]
 pub(crate) struct AcceptedNoteFrontmatter<'a> {
@@ -256,12 +257,11 @@ pub(crate) fn wait_for_materializing_research_note(
             }
             ResearchNoteFileState::MaterializingMatching { .. } => {
                 if started.elapsed() >= RESEARCH_NOTE_MATERIALIZE_TIMEOUT {
-                    return Err(WikiError::InvalidInput {
-                        field: "accepted_note",
-                        message: format!(
-                            "accepted research note `{title}` is still materializing at {}",
-                            path.display()
-                        ),
+                    return Err(WikiError::Timeout {
+                        action: "wait for accepted research note materialization",
+                        path: Some(path.to_path_buf()),
+                        duration: RESEARCH_NOTE_MATERIALIZE_TIMEOUT,
+                        detail: format!("accepted research note `{title}` is still materializing"),
                     });
                 }
                 notify_materializing_wait_observed();

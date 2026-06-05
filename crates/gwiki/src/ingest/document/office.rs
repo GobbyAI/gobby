@@ -19,6 +19,7 @@ const MAX_COLUMNS_PER_SHEET: usize = 16;
 pub(crate) const MAX_SLIDES: usize = 200;
 /// Maximum uncompressed XML bytes read from a ZIP entry.
 pub(crate) const MAX_ENTRY_BYTES: u64 = 2 * 1024 * 1024;
+const ZIP_ENTRY_READ_CHUNK_BYTES: usize = 8 * 1024;
 
 pub(crate) fn extract_office_document(
     file_name: &str,
@@ -170,7 +171,6 @@ fn read_zip_entry_from_archive(
     archive: &mut ZipArchive<Cursor<&[u8]>>,
     name: &str,
 ) -> Result<String, WikiError> {
-    let mut xml = String::new();
     let mut entry = archive
         .by_name(name)
         .map_err(|error| document_error(format!("read {name}: {error}")))?;
@@ -180,17 +180,25 @@ fn read_zip_entry_from_archive(
             entry.size()
         )));
     }
-    entry
-        .by_ref()
-        .take(MAX_ENTRY_BYTES + 1)
-        .read_to_string(&mut xml)
-        .map_err(|error| document_error(format!("read {name}: {error}")))?;
-    if xml.len() as u64 > MAX_ENTRY_BYTES {
-        return Err(document_error(format!(
-            "{name} exceeds maximum supported XML entry size of {MAX_ENTRY_BYTES} bytes"
-        )));
+    let mut bytes = Vec::new();
+    let mut total = 0_u64;
+    let mut buffer = [0_u8; ZIP_ENTRY_READ_CHUNK_BYTES];
+    loop {
+        let read = entry
+            .read(&mut buffer)
+            .map_err(|error| document_error(format!("read {name}: {error}")))?;
+        if read == 0 {
+            break;
+        }
+        total = total.saturating_add(read as u64);
+        if total > MAX_ENTRY_BYTES {
+            return Err(document_error(format!(
+                "{name} exceeds maximum supported XML entry size of {MAX_ENTRY_BYTES} bytes"
+            )));
+        }
+        bytes.extend_from_slice(&buffer[..read]);
     }
-    Ok(xml)
+    String::from_utf8(bytes).map_err(|error| document_error(format!("decode {name}: {error}")))
 }
 
 fn zip_archive(bytes: &[u8]) -> Result<ZipArchive<Cursor<&[u8]>>, WikiError> {

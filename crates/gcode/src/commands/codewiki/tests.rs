@@ -1,4 +1,6 @@
-use super::io::{source_files_from_frontmatter, unquote_yaml_string, write_doc};
+use super::io::{
+    source_files_from_frontmatter, source_hashes_for_doc, unquote_yaml_string, write_doc,
+};
 use super::*;
 
 #[test]
@@ -550,6 +552,26 @@ source_files:
     assert!(files.contains("src/one:thing.rs"));
     assert!(files.contains("src/two.rs"));
     assert_eq!(files.len(), 2);
+}
+
+#[test]
+fn source_hashes_reject_frontmatter_paths_outside_project_root() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let project_root = tempdir.path().join("project");
+    std::fs::create_dir_all(&project_root).expect("project root");
+    std::fs::write(tempdir.path().join("outside.rs"), "fn outside() {}").expect("outside file");
+    let content = r#"---
+source_files:
+  - file: ../outside.rs
+---
+"#;
+
+    let err = source_hashes_for_doc(&project_root, content).expect_err("outside source rejected");
+
+    assert!(
+        err.to_string().contains("resolves outside project root"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]

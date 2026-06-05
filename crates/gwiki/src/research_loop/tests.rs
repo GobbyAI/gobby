@@ -32,6 +32,17 @@ impl ResearchModel for FakeModel {
     }
 }
 
+struct BudgetModel;
+
+impl ResearchModel for BudgetModel {
+    fn next_action(
+        &mut self,
+        _request: ModelRequest<'_>,
+    ) -> Result<ModelDecision, ResearchModelError> {
+        Err(ResearchModelError::BudgetExceeded)
+    }
+}
+
 struct FakeSearch;
 
 impl WikiSearch for FakeSearch {
@@ -95,6 +106,84 @@ impl ResearchNoteWriter for FakeWriter {
     }
 }
 
+fn test_deps<'a>(
+    model: &'a mut dyn ResearchModel,
+    ask: &'a mut dyn WikiAsk,
+    search: &'a mut dyn WikiSearch,
+    read: &'a mut dyn WikiRead,
+    ingest: &'a mut dyn SourceIngestor,
+    note_writer: &'a mut dyn ResearchNoteWriter,
+) -> ResearchLoopDeps<'a> {
+    ResearchLoopDepsBuilder::default()
+        .model(model)
+        .ask(ask)
+        .search(search)
+        .read(read)
+        .ingest(ingest)
+        .note_writer(note_writer)
+        .build()
+        .expect("all research loop dependencies are set")
+}
+
+#[test]
+fn research_loop_deps_builder_reports_missing_required_fields() {
+    let missing_model = match ResearchLoopDepsBuilder::default().build() {
+        Err(field) => field,
+        Ok(_) => panic!("builder should require model"),
+    };
+    assert_eq!(missing_model, "model");
+
+    let mut model = FakeModel::default();
+    let mut ask = FakeAsk;
+    let mut search = FakeSearch;
+    let mut read = FakeRead;
+    let mut ingest = FakeIngest;
+    let missing_writer = match ResearchLoopDepsBuilder::default()
+        .model(&mut model)
+        .ask(&mut ask)
+        .search(&mut search)
+        .read(&mut read)
+        .ingest(&mut ingest)
+        .build()
+    {
+        Err(field) => field,
+        Ok(_) => panic!("builder should require note_writer"),
+    };
+    assert_eq!(missing_writer, "note_writer");
+}
+
+#[test]
+fn model_budget_error_stops_as_budget_exhausted() {
+    let mut model = BudgetModel;
+    let mut ask = FakeAsk;
+    let mut search = FakeSearch;
+    let mut read = FakeRead;
+    let mut ingest = FakeIngest;
+    let mut writer = FakeWriter::default();
+    let mut loop_ = ResearchLoop::new(
+        Path::new("/tmp/wiki"),
+        config(),
+        test_deps(
+            &mut model,
+            &mut ask,
+            &mut search,
+            &mut read,
+            &mut ingest,
+            &mut writer,
+        ),
+    );
+
+    let result = loop_
+        .run(ResearchLoopInput {
+            question: "What is exhausted?",
+            source_constraints: &[],
+            initial_notes: &[],
+        })
+        .expect("loop runs");
+
+    assert_eq!(result.stop_reason, ResearchStopReason::BudgetExhausted);
+}
+
 fn config() -> ResearchLoopConfig {
     ResearchLoopConfig {
         max_steps: 12,
@@ -143,14 +232,14 @@ fn model_planned_note_is_written_after_source_is_observed() {
     let mut loop_ = ResearchLoop::new(
         root.path(),
         config(),
-        ResearchLoopDeps {
-            model: &mut model,
-            ask: &mut ask,
-            search: &mut search,
-            read: &mut read,
-            ingest: &mut ingest,
-            note_writer: &mut writer,
-        },
+        test_deps(
+            &mut model,
+            &mut ask,
+            &mut search,
+            &mut read,
+            &mut ingest,
+            &mut writer,
+        ),
     );
     let result = loop_
         .run(ResearchLoopInput {
@@ -199,14 +288,14 @@ fn write_conflict_stops_the_run_without_recording_the_note() {
     let mut loop_ = ResearchLoop::new(
         root.path(),
         config(),
-        ResearchLoopDeps {
-            model: &mut model,
-            ask: &mut ask,
-            search: &mut search,
-            read: &mut read,
-            ingest: &mut ingest,
-            note_writer: &mut writer,
-        },
+        test_deps(
+            &mut model,
+            &mut ask,
+            &mut search,
+            &mut read,
+            &mut ingest,
+            &mut writer,
+        ),
     );
     let result = loop_
         .run(ResearchLoopInput {
@@ -241,14 +330,14 @@ fn accepted_note_without_observed_source_is_blocked() {
     let mut loop_ = ResearchLoop::new(
         Path::new("/tmp/wiki"),
         config(),
-        ResearchLoopDeps {
-            model: &mut model,
-            ask: &mut ask,
-            search: &mut search,
-            read: &mut read,
-            ingest: &mut ingest,
-            note_writer: &mut writer,
-        },
+        test_deps(
+            &mut model,
+            &mut ask,
+            &mut search,
+            &mut read,
+            &mut ingest,
+            &mut writer,
+        ),
     );
     let result = loop_
         .run(ResearchLoopInput {

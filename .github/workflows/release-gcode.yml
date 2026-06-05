@@ -180,6 +180,7 @@ jobs:
       - name: Generate SHA-256 checksums
         # Installers fetch <asset>.sha256 and verify the archive before
         # chmod/PATH placement (fail-closed on missing/mismatched checksum).
+        shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob

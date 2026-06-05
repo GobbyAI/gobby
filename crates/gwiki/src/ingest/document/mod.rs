@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 
 use crate::document::DocumentDegradation;
 use crate::ingest::{
-    IngestResult, index_after_ingest, markdown_title, write_asset, write_raw_markdown,
+    IngestResult, index_after_ingest, lowercase_extension, markdown_title, write_asset,
+    write_raw_markdown,
 };
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraftRef, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
@@ -179,16 +180,16 @@ impl DocumentExtractor for LocalDocumentExtractor {
         match request.kind {
             SourceKind::Html => extract_html_document(request.bytes),
             SourceKind::Office => extract_office_document(request.file_name, request.bytes),
-            _ => Err(document_error("unsupported document kind")),
+            _ => Err(document_error(format!(
+                "unsupported document kind: {:?}",
+                request.kind
+            ))),
         }
     }
 }
 
 fn extension(file_name: &str) -> Option<String> {
-    Path::new(file_name)
-        .extension()
-        .and_then(|value| value.to_str())
-        .map(str::to_ascii_lowercase)
+    lowercase_extension(file_name)
 }
 
 fn decode_xml_entities(text: &str) -> String {

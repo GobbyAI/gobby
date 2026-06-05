@@ -7,7 +7,7 @@ use crate::document::{DocumentDegradation, DocumentFailureMode, DocumentUnitCoun
 use crate::ingest::{
     IngestResult, index_after_ingest, markdown_title, write_asset, write_raw_markdown,
 };
-use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
+use crate::sources::{SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
 use crate::vision::{VisionEndpoint, disabled_degradation};
 
@@ -152,17 +152,14 @@ fn ingest_pages_with_vision_inner(
     let title = markdown_title(&snapshot.file_name);
     let previous_manifest = SourceManifest::read(vault_root)?;
     let content_hash = gobby_core::indexing::content_hash(&snapshot.bytes);
-    let draft = SourceDraft {
-        location: snapshot.location.clone(),
-        kind: SourceKind::Pdf,
-        fetched_at: snapshot.fetched_at.to_rfc3339(),
-        content: Vec::new(),
-        title: Some(title.clone()),
-        citation: Some(snapshot.location.clone()),
-        license: None,
-        ingestion_method: IngestionMethod::Manual,
-        compile_status: CompileStatus::Pending,
-    };
+    let draft = SourceDraft::new(
+        snapshot.location.clone(),
+        SourceKind::Pdf,
+        snapshot.fetched_at.to_rfc3339(),
+        Vec::new(),
+    )
+    .with_title(title.clone())
+    .with_citation(snapshot.location.clone());
     let record = SourceManifest::register_with_content_hash(vault_root, draft, content_hash)?;
     let asset_path = match write_asset(vault_root, &record, &snapshot.file_name, &snapshot.bytes) {
         Ok(asset_path) => asset_path,

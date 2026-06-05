@@ -191,15 +191,15 @@ fn write_gwiki_gcore_config(
     }
 
     apply_embedding_options(options, &mut config)?;
-    diagnose_optional_service_config(&mut config);
+    diagnose_required_service_config(&mut config);
     config.write_at(&path)?;
     Ok(path)
 }
 
-fn diagnose_optional_service_config(config: &mut StandaloneConfig) {
+fn diagnose_required_service_config(config: &mut StandaloneConfig) {
     if resolve_falkordb_config(config).is_none() {
         log::warn!(
-            "standalone gwiki setup has no FalkorDB config; graph features will be disabled until configured"
+            "standalone gwiki setup has no FalkorDB config; graph functionality is unavailable until configured"
         );
     }
     let qdrant = resolve_qdrant_config(config);
@@ -209,7 +209,7 @@ fn diagnose_optional_service_config(config: &mut StandaloneConfig) {
         .is_none_or(|url| url.trim().is_empty())
     {
         log::warn!(
-            "standalone gwiki setup has no Qdrant URL; semantic features will be disabled until configured"
+            "standalone gwiki setup has no Qdrant URL; semantic functionality is unavailable until configured"
         );
     }
 }
@@ -406,7 +406,7 @@ mod tests {
     }
 
     #[test]
-    fn standalone_config_allows_missing_optional_services() {
+    fn standalone_config_can_record_postgres_before_required_services() {
         let home = tempfile::tempdir().expect("temp home");
         let path = gcore_config_path(home.path());
         let service_options = DockerServiceOptions::new(home.path().to_path_buf());
@@ -418,7 +418,7 @@ mod tests {
             "postgresql://localhost/gwiki",
             None,
         )
-        .expect("write gwiki config without optional services");
+        .expect("write gwiki config before graph/vector services");
 
         let config = StandaloneConfig::read_at(&path)
             .expect("read config")

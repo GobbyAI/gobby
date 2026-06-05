@@ -222,7 +222,8 @@ pub(crate) fn document_degradation_for_error(
     let mode = match request.kind {
         SourceKind::Html => DocumentFailureMode::HtmlParseError,
         SourceKind::Office => DocumentFailureMode::OfficeParseError,
-        _ => DocumentFailureMode::OfficeParseError,
+        SourceKind::Pdf => DocumentFailureMode::PdfTextLayerError,
+        _ => DocumentFailureMode::UnsupportedSource,
     };
     DocumentDegradation::new(
         mode,
@@ -234,11 +235,46 @@ pub(crate) fn document_degradation_for_error(
 fn document_unit_count_for_failure(file_name: &str, kind: &SourceKind) -> DocumentUnitCount {
     match kind {
         SourceKind::Html => DocumentUnitCount::pages(1),
+        SourceKind::Pdf => DocumentUnitCount::pages(0),
         SourceKind::Office => match extension(file_name).as_deref() {
             Some("pptx") => DocumentUnitCount::slides(0),
             Some("xlsx" | "xls" | "ods") => DocumentUnitCount::sheets(0),
             _ => DocumentUnitCount::pages(0),
         },
         _ => DocumentUnitCount::pages(0),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn document_degradation_maps_pdf_failure_to_pdf_mode() {
+        let kind = SourceKind::Pdf;
+        let request = DocumentRequest {
+            file_name: "report.pdf",
+            kind: &kind,
+            bytes: &[],
+        };
+
+        let degradation = document_degradation_for_error(&request, "missing text".to_string());
+
+        assert_eq!(degradation.reason(), "pdf_text_layer_error");
+        assert_eq!(degradation.unit_count.key(), "pages");
+    }
+
+    #[test]
+    fn document_degradation_uses_unsupported_source_for_non_documents() {
+        let kind = SourceKind::Text;
+        let request = DocumentRequest {
+            file_name: "notes.txt",
+            kind: &kind,
+            bytes: &[],
+        };
+
+        let degradation = document_degradation_for_error(&request, "not a document".to_string());
+
+        assert_eq!(degradation.reason(), "unsupported_source");
     }
 }

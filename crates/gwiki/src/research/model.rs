@@ -1,4 +1,19 @@
-use super::*;
+use std::path::Path;
+
+use gobby_core::ai::{daemon, effective_route, text};
+use gobby_core::ai_context::{AiConfigSource, AiContext, AiContextOptions};
+use gobby_core::config::{AiCapability, AiRouting};
+
+use super::AcceptedNoteDraft;
+use super::notes::write_accepted_note;
+use super::outcome::{dedup_strings, estimate_tokens, observation_from_outcome};
+use crate::commands::{ask, index, read, search};
+use crate::research_loop::{
+    ModelDecision, ModelRequest, NoteWriteOutcome, ResearchModel, ResearchModelError,
+    ResearchNoteWriter, ResearchObservation, SourceIngestor, WikiAsk, WikiRead, WikiSearch,
+    model_system_prompt, parse_model_action, render_model_prompt,
+};
+use crate::{IngestFileOptions, ReadTarget, ScopeSelection, WikiError};
 
 pub(crate) struct GcoreResearchModel {
     pub(crate) requested_route: AiRouting,
@@ -31,6 +46,9 @@ impl ResearchModel for GcoreResearchModel {
         let route = effective_route(&context, AiCapability::TextGenerate);
         let prompt = render_model_prompt(&request);
         let max_tokens = request.max_tokens.saturating_sub(request.tokens_used);
+        if max_tokens == 0 {
+            return Err(ResearchModelError::BudgetExceeded);
+        }
         let result = match route {
             AiRouting::Direct => text::generate_text_with_max_tokens(
                 &context,
@@ -48,7 +66,10 @@ impl ResearchModel for GcoreResearchModel {
                 return self
                     .ai_unavailable(format!("text generation route '{route:?}' is unavailable"));
             }
-            _ => unreachable!("effective route resolution returned unresolved route {route:?}"),
+            _ => {
+                return self
+                    .ai_unavailable(format!("text generation route '{route:?}' is unavailable"));
+            }
         };
 
         let result = match result {
@@ -154,10 +175,11 @@ impl SourceIngestor for CommandIngestor {
         )?;
         let mut observation = observation_from_outcome("ingest_file", &outcome);
         let path_string = path.display().to_string();
-        if !observation
-            .sources
-            .iter()
-            .any(|source| source == &path_string)
+        if outcome.exit_code == 0
+            && !observation
+                .sources
+                .iter()
+                .any(|source| source == &path_string)
         {
             observation.sources.push(path_string);
         }

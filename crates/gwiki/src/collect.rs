@@ -10,7 +10,7 @@ use crate::ingest::{
     asset_path as source_asset_path, index_after_ingest, markdown_metadata, markdown_title,
     text_from_utf8_lossy, write_asset, write_raw_markdown,
 };
-use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
+use crate::sources::{SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
 use crate::support::env::max_inbox_item_bytes_from_env;
 
@@ -217,17 +217,9 @@ fn accept_item(
         InboxKind::Url(url) => {
             let record = SourceManifest::register(
                 vault_root,
-                SourceDraft {
-                    location: url.clone(),
-                    kind: SourceKind::Url,
-                    fetched_at: fetched_at.to_string(),
-                    content: url.as_bytes().to_vec(),
-                    title: Some(url.clone()),
-                    citation: Some(url.clone()),
-                    license: None,
-                    ingestion_method: IngestionMethod::Manual,
-                    compile_status: CompileStatus::Pending,
-                },
+                SourceDraft::url(url.clone(), fetched_at.to_string(), url.as_bytes().to_vec())
+                    .with_title(url.clone())
+                    .with_citation(url.clone()),
             )?;
             let markdown = render_url_markdown(&url, fetched_at, &record.content_hash);
             let raw_path = match write_raw_markdown(vault_root, &record, &markdown) {
@@ -253,17 +245,14 @@ fn accept_item(
             let title = markdown_title(file_name);
             let record = SourceManifest::register(
                 vault_root,
-                SourceDraft {
-                    location: relative.clone(),
-                    kind: kind.clone(),
-                    fetched_at: fetched_at.to_string(),
-                    content: bytes.clone(),
-                    title: Some(title.clone()),
-                    citation: Some(relative.clone()),
-                    license: None,
-                    ingestion_method: IngestionMethod::Manual,
-                    compile_status: CompileStatus::Pending,
-                },
+                SourceDraft::new(
+                    relative.clone(),
+                    kind.clone(),
+                    fetched_at.to_string(),
+                    bytes.clone(),
+                )
+                .with_title(title.clone())
+                .with_citation(relative.clone()),
             )?;
             let predicted_asset_path =
                 should_store_asset(&kind).then(|| source_asset_path(&record, file_name));

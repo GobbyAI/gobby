@@ -97,6 +97,16 @@ impl<'a> ResearchLoop<'a> {
                     });
                     return Ok(state.finish(ResearchStopReason::AiUnavailable));
                 }
+                Err(ResearchModelError::BudgetExceeded) => {
+                    state
+                        .warnings
+                        .push("research_token_budget_exhausted".to_string());
+                    state.events.push(ResearchLoopEvent {
+                        kind: "research_budget_exhausted".to_string(),
+                        message: "remaining token budget is zero".to_string(),
+                    });
+                    return Ok(state.finish(ResearchStopReason::BudgetExhausted));
+                }
                 Err(ResearchModelError::InvalidResponse(message)) => {
                     state
                         .warnings
@@ -120,7 +130,7 @@ impl<'a> ResearchLoop<'a> {
             if last_fingerprint.as_deref() == Some(fingerprint.as_str()) {
                 duplicate_count += 1;
             } else {
-                duplicate_count = 1;
+                duplicate_count = 0;
                 last_fingerprint = Some(fingerprint);
             }
             if duplicate_count >= 3 {

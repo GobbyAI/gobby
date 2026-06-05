@@ -4,24 +4,17 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
-use gobby_core::ai::{daemon, effective_route, text};
-use gobby_core::ai_context::{AiConfigSource, AiContext, AiContextOptions};
-use gobby_core::config::{AiCapability, AiRouting};
+use gobby_core::config::AiRouting;
 use serde::Serialize;
-use serde_json::Value;
 
-use crate::commands::{ask, index, read, search};
+use crate::WikiError;
 use crate::compile::index_lock_timeout;
 use crate::events::{EventMonitor, SessionEvent};
 use crate::research_loop::{
-    ModelDecision, ModelRequest, NoteWriteOutcome, ResearchLoop, ResearchLoopConfig,
-    ResearchLoopDeps, ResearchLoopEvent, ResearchLoopInput, ResearchLoopResult, ResearchModel,
-    ResearchModelError, ResearchNoteWriter, ResearchObservation, SourceIngestor, WikiAsk, WikiRead,
-    WikiSearch, model_system_prompt, parse_model_action, render_model_prompt,
+    ResearchLoop, ResearchLoopConfig, ResearchLoopDeps, ResearchLoopEvent, ResearchLoopInput,
+    ResearchLoopResult,
 };
-use crate::scope::{self, ScopeKind};
-use crate::session::{AcceptedResearchNote, ResearchScope, ResearchSession, research_prompt};
-use crate::{CommandOutcome, IngestFileOptions, ReadTarget, ScopeSelection, WikiError};
+use crate::session::{ResearchScope, ResearchSession};
 
 const MAX_RESEARCH_NOTE_SUFFIX_ATTEMPTS: usize = 1000;
 /// Enforced research-loop budgets, echoed in JSON output so callers see every
@@ -356,7 +349,6 @@ mod outcome;
 mod storage;
 
 pub(crate) use model::*;
-pub(crate) use notes::*;
 pub use outcome::*;
 pub(crate) use storage::*;
 

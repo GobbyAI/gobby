@@ -102,12 +102,21 @@ where
     let vector = match embedder.embed_query(embedding, &embedding_query) {
         Ok(vector) if !vector.is_empty() => vector,
         Ok(_) => {
-            return Err(required_service_error(
+            return Ok(degraded(
                 "embeddings",
-                "embedding endpoint returned an empty vector",
+                gobby_core::degradation::ServiceState::Unreachable {
+                    message: "embedding endpoint returned an empty vector".to_string(),
+                },
             ));
         }
-        Err(error) => return Err(required_service_error("embeddings", &error.to_string())),
+        Err(error) => {
+            return Ok(degraded(
+                "embeddings",
+                gobby_core::degradation::ServiceState::Unreachable {
+                    message: error.to_string(),
+                },
+            ));
+        }
     };
 
     let collection = collection_for_scope(&request.scope);
@@ -119,7 +128,14 @@ where
     };
     let hits = match vector_backend.search(qdrant, &collection, qdrant_request) {
         Ok(hits) => hits,
-        Err(error) => return Err(required_service_error("qdrant", &error.to_string())),
+        Err(error) => {
+            return Ok(degraded(
+                "qdrant",
+                gobby_core::degradation::ServiceState::Unreachable {
+                    message: error.to_string(),
+                },
+            ));
+        }
     };
 
     let hits = hits
@@ -438,6 +454,16 @@ fn payload_usize(payload: &Map<String, Value>, key: &str) -> Option<usize> {
         .and_then(|value| usize::try_from(value).ok())
 }
 
+fn degraded(service: &str, state: gobby_core::degradation::ServiceState) -> SemanticSearchOutcome {
+    SemanticSearchOutcome {
+        hits: Vec::new(),
+        degradation: Some(DegradationKind::ServiceUnavailable {
+            service: service.to_string(),
+            state,
+        }),
+    }
+}
+
 #[cfg(test)]
 pub struct UnavailableSemanticBackend;
 
@@ -451,17 +477,6 @@ impl SemanticSearchBackend for UnavailableSemanticBackend {
             "qdrant",
             gobby_core::degradation::ServiceState::NotConfigured,
         ))
-    }
-}
-
-#[cfg(test)]
-fn degraded(service: &str, state: gobby_core::degradation::ServiceState) -> SemanticSearchOutcome {
-    SemanticSearchOutcome {
-        hits: Vec::new(),
-        degradation: Some(DegradationKind::ServiceUnavailable {
-            service: service.to_string(),
-            state,
-        }),
     }
 }
 
@@ -526,10 +541,40 @@ impl VectorSearchBackend for RecordingVectorBackend {
 }
 
 #[cfg(test)]
+struct FailingEmbedder;
+
+#[cfg(test)]
+impl QueryEmbedder for FailingEmbedder {
+    fn embed_query(
+        &mut self,
+        _embedding: &SemanticEmbedding,
+        _query: &str,
+    ) -> Result<Vec<f32>, SearchError> {
+        Err(SearchError::Backend("embedding timeout".to_string()))
+    }
+}
+
+#[cfg(test)]
+struct FailingVectorBackend;
+
+#[cfg(test)]
+impl VectorSearchBackend for FailingVectorBackend {
+    fn search(
+        &mut self,
+        _config: &QdrantConfig,
+        _collection: &str,
+        _request: SearchRequest,
+    ) -> Result<Vec<SearchHit>, SearchError> {
+        Err(SearchError::Backend("qdrant timeout".to_string()))
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::search::{SearchScope, SearchSource};
     use gobby_core::config::{EmbeddingConfig, QdrantConfig};
+    use gobby_core::degradation::{DegradationKind, ServiceState};
     use serde_json::json;
 
     #[test]
@@ -633,6 +678,84 @@ mod tests {
         )
         .expect_err("missing Qdrant config must fail");
         assert!(missing_qdrant.to_string().contains("requires qdrant"));
+    }
+
+    #[test]
+    fn semantic_search_degrades_configured_embedding_failure() {
+        let embedding = EmbeddingConfig {
+            api_base: "http://embeddings.local/v1".to_string(),
+            model: "embed-model".to_string(),
+            api_key: None,
+            query_prefix: None,
+            timeout_seconds: 10,
+        };
+        let qdrant = QdrantConfig {
+            url: Some("http://qdrant.local".to_string()),
+            api_key: None,
+        };
+        let mut embedder = FailingEmbedder;
+        let mut vector = RecordingVectorBackend::new(Vec::new());
+
+        let outcome = search_semantic(
+            SemanticSearchRequest {
+                query: "ownership".to_string(),
+                scope: SearchScope::project("project-1"),
+                limit: 5,
+            },
+            Some(&SemanticEmbedding::Direct(embedding)),
+            Some(&qdrant),
+            &mut embedder,
+            &mut vector,
+        )
+        .expect("configured embedding failure degrades");
+
+        assert!(outcome.hits.is_empty());
+        assert!(matches!(
+            outcome.degradation,
+            Some(DegradationKind::ServiceUnavailable {
+                service,
+                state: ServiceState::Unreachable { message }
+            }) if service == "embeddings" && message.contains("embedding timeout")
+        ));
+    }
+
+    #[test]
+    fn semantic_search_degrades_configured_qdrant_failure() {
+        let embedding = EmbeddingConfig {
+            api_base: "http://embeddings.local/v1".to_string(),
+            model: "embed-model".to_string(),
+            api_key: None,
+            query_prefix: None,
+            timeout_seconds: 10,
+        };
+        let qdrant = QdrantConfig {
+            url: Some("http://qdrant.local".to_string()),
+            api_key: None,
+        };
+        let mut embedder = FixedEmbedder::new(vec![0.1, 0.2, 0.3]);
+        let mut vector = FailingVectorBackend;
+
+        let outcome = search_semantic(
+            SemanticSearchRequest {
+                query: "ownership".to_string(),
+                scope: SearchScope::project("project-1"),
+                limit: 5,
+            },
+            Some(&SemanticEmbedding::Direct(embedding)),
+            Some(&qdrant),
+            &mut embedder,
+            &mut vector,
+        )
+        .expect("configured qdrant failure degrades");
+
+        assert!(outcome.hits.is_empty());
+        assert!(matches!(
+            outcome.degradation,
+            Some(DegradationKind::ServiceUnavailable {
+                service,
+                state: ServiceState::Unreachable { message }
+            }) if service == "qdrant" && message.contains("qdrant timeout")
+        ));
     }
 
     #[cfg(feature = "ai")]

@@ -9,8 +9,8 @@ pub(crate) fn fetch_codewiki_graph_edges(
     let symbol_components = symbols
         .iter()
         .filter(|symbol| is_core_file(&symbol.file_path))
-        .map(|symbol| (symbol.id.clone(), symbol.id.clone()))
-        .collect::<HashMap<_, _>>();
+        .map(|symbol| symbol.id.clone())
+        .collect::<HashSet<_>>();
     if symbol_components.is_empty() {
         return Ok(CodewikiGraph::available(Vec::new()));
     }
@@ -46,7 +46,7 @@ pub(crate) fn fetch_codewiki_graph_edges(
         }
     }
 
-    let symbol_ids = symbol_components.keys().cloned().collect::<Vec<_>>();
+    let symbol_ids = symbol_components.iter().cloned().collect::<Vec<_>>();
     let core_files = files
         .iter()
         .filter(|file| is_core_file(file))
@@ -68,15 +68,15 @@ pub(crate) fn fetch_codewiki_graph_edges(
         let Some(target) = row.get("target").and_then(|value| value.as_str()) else {
             continue;
         };
-        let Some(source_component_id) = symbol_components.get(source).cloned() else {
+        if !symbol_components.contains(source) {
             continue;
         };
-        let Some(target_component_id) = symbol_components.get(target).cloned() else {
+        if !symbol_components.contains(target) {
             continue;
         };
         edges.push(CodewikiGraphEdge::call(
-            source_component_id,
-            target_component_id,
+            source.to_string(),
+            target.to_string(),
         ));
     }
 

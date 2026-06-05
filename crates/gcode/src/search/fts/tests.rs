@@ -309,18 +309,11 @@ struct OverlayFixtureIds {
 
 impl OverlayFixtureIds {
     fn new(database_url: String) -> Self {
-        let suffix = format!(
-            "{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system time after epoch")
-                .as_nanos()
-        );
+        let suffix = unique_test_id("gcode-overlay-test");
         Self {
             database_url,
-            parent_project_id: format!("gcode-overlay-test-parent-{suffix}"),
-            overlay_project_id: format!("gcode-overlay-test-overlay-{suffix}"),
+            parent_project_id: format!("{suffix}-parent"),
+            overlay_project_id: format!("{suffix}-overlay"),
         }
     }
 }

@@ -47,6 +47,7 @@ pub(crate) struct ModelDecision {
 #[derive(Debug)]
 pub(crate) enum ResearchModelError {
     AiUnavailable(String),
+    BudgetExceeded,
     InvalidResponse(String),
     Wiki(WikiError),
 }
@@ -194,4 +195,59 @@ pub(crate) struct ResearchLoopDeps<'a> {
     pub read: &'a mut dyn WikiRead,
     pub ingest: &'a mut dyn SourceIngestor,
     pub note_writer: &'a mut dyn ResearchNoteWriter,
+}
+
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct ResearchLoopDepsBuilder<'a> {
+    model: Option<&'a mut dyn ResearchModel>,
+    ask: Option<&'a mut dyn WikiAsk>,
+    search: Option<&'a mut dyn WikiSearch>,
+    read: Option<&'a mut dyn WikiRead>,
+    ingest: Option<&'a mut dyn SourceIngestor>,
+    note_writer: Option<&'a mut dyn ResearchNoteWriter>,
+}
+
+#[cfg(test)]
+impl<'a> ResearchLoopDepsBuilder<'a> {
+    pub(crate) fn model(mut self, model: &'a mut dyn ResearchModel) -> Self {
+        self.model = Some(model);
+        self
+    }
+
+    pub(crate) fn ask(mut self, ask: &'a mut dyn WikiAsk) -> Self {
+        self.ask = Some(ask);
+        self
+    }
+
+    pub(crate) fn search(mut self, search: &'a mut dyn WikiSearch) -> Self {
+        self.search = Some(search);
+        self
+    }
+
+    pub(crate) fn read(mut self, read: &'a mut dyn WikiRead) -> Self {
+        self.read = Some(read);
+        self
+    }
+
+    pub(crate) fn ingest(mut self, ingest: &'a mut dyn SourceIngestor) -> Self {
+        self.ingest = Some(ingest);
+        self
+    }
+
+    pub(crate) fn note_writer(mut self, note_writer: &'a mut dyn ResearchNoteWriter) -> Self {
+        self.note_writer = Some(note_writer);
+        self
+    }
+
+    pub(crate) fn build(self) -> Result<ResearchLoopDeps<'a>, &'static str> {
+        Ok(ResearchLoopDeps {
+            model: self.model.ok_or("model")?,
+            ask: self.ask.ok_or("ask")?,
+            search: self.search.ok_or("search")?,
+            read: self.read.ok_or("read")?,
+            ingest: self.ingest.ok_or("ingest")?,
+            note_writer: self.note_writer.ok_or("note_writer")?,
+        })
+    }
 }

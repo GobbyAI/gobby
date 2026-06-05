@@ -232,13 +232,11 @@ pub(super) fn is_external_csharp_path(
 
 pub(super) fn is_external_php_symbol(path: &str, import_context: &ImportResolutionContext) -> bool {
     let path_lower = path.to_ascii_lowercase();
-    !import_context.php_local_symbols.contains(path)
-        && !import_context.php_local_symbols.contains(&path_lower)
+    !import_context.php_local_symbols.contains(&path_lower)
         && path.rsplit('\\').next().is_none_or(|name| {
-            !import_context.php_local_symbols.contains(name)
-                && !import_context
-                    .php_local_symbols
-                    .contains(&name.to_ascii_lowercase())
+            !import_context
+                .php_local_symbols
+                .contains(&name.to_ascii_lowercase())
         })
 }
 

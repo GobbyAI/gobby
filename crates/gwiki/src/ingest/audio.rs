@@ -9,7 +9,7 @@ use crate::ingest::{
     IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
     write_asset, write_raw_markdown,
 };
-use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
+use crate::sources::{SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
 use crate::transcribe::{
     TranscriptionDegradation, TranscriptionEndpoint, TranscriptionMarkdownInput,
@@ -147,17 +147,14 @@ pub(crate) fn ingest_audio_with_transcription_without_index(
 ) -> Result<AudioIngestResult, WikiError> {
     let title = markdown_title(&snapshot.file_name);
     let content_hash = gobby_core::indexing::content_hash(&snapshot.bytes);
-    let draft = SourceDraft {
-        location: snapshot.location.clone(),
-        kind: SourceKind::Audio,
-        fetched_at: snapshot.fetched_at.clone(),
-        content: Vec::new(),
-        title: Some(title),
-        citation: Some(snapshot.location.clone()),
-        license: None,
-        ingestion_method: IngestionMethod::Manual,
-        compile_status: CompileStatus::Pending,
-    };
+    let draft = SourceDraft::new(
+        snapshot.location.clone(),
+        SourceKind::Audio,
+        snapshot.fetched_at.clone(),
+        Vec::new(),
+    )
+    .with_title(title)
+    .with_citation(snapshot.location.clone());
     let record = SourceManifest::register_with_content_hash(vault_root, draft, content_hash)?;
     let asset_path = write_asset(vault_root, &record, &snapshot.file_name, &snapshot.bytes)?;
     let raw_markdown = render_raw_audio_markdown(&snapshot, &record.content_hash, &asset_path);
@@ -595,6 +592,8 @@ mod tests {
         )
         .expect("ingest audio with production transcript");
 
+        // `join` detects server-thread panics; the inner `expect` verifies the
+        // server actually captured the HTTP request.
         let request = request
             .join()
             .expect("transcription test server thread joins");
@@ -631,6 +630,8 @@ mod tests {
         )
         .expect("ingest translated audio");
 
+        // `join` detects server-thread panics; the inner `expect` verifies the
+        // server actually captured the HTTP request.
         let request = request
             .join()
             .expect("translation test server thread joins");

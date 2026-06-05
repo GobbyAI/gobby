@@ -2,7 +2,7 @@
 use gobby_core::ai::effective_route;
 use gobby_core::ai_context::{AiConfigSource, AiContext};
 use gobby_core::config::{
-    AiCapability, AiRouting, resolve_embedding_config, resolve_falkordb_config,
+    AiCapability, AiRouting, QdrantConfig, resolve_embedding_config, resolve_falkordb_config,
     resolve_qdrant_config,
 };
 
@@ -106,15 +106,18 @@ fn run_search_attached(
     };
     let embedding = embedding.ok_or_else(|| required_search_config("embedding endpoint"))?;
     let qdrant = qdrant
-        .filter(|config| {
-            config
-                .url
-                .as_deref()
-                .is_some_and(|url| !url.trim().is_empty())
-        })
+        .filter(qdrant_config_has_url)
         .ok_or_else(|| required_search_config("Qdrant"))?;
     let falkor = falkor.ok_or_else(|| required_search_config("FalkorDB"))?;
-    let mut graph_backend = wiki_search::graph_boost::FalkorGraphBoostBackend::new(&falkor)?;
+    let mut graph_backend: Box<dyn wiki_search::graph_boost::GraphBoostBackend> =
+        match wiki_search::graph_boost::FalkorGraphBoostBackend::new(&falkor) {
+            Ok(backend) => Box::new(backend),
+            Err(error) => Box::new(
+                wiki_search::graph_boost::UnavailableGraphBoostBackend::unreachable(
+                    error.to_string(),
+                ),
+            ),
+        };
     let mut bm25_backend = wiki_search::bm25::PostgresBm25Backend::new(&mut conn);
     let mut semantic_backend = wiki_search::semantic::GobbySemanticBackend::new(
         Some(embedding),
@@ -142,6 +145,13 @@ fn required_search_config(service: &'static str) -> WikiError {
             "gwiki search requires {service}; run `gwiki setup --standalone` or attach to Gobby's full datastore stack"
         ),
     }
+}
+
+fn qdrant_config_has_url(config: &QdrantConfig) -> bool {
+    config
+        .url
+        .as_deref()
+        .is_some_and(|url| !url.trim().is_empty())
 }
 
 fn resolve_semantic_embedding(
@@ -314,4 +324,25 @@ fn render_text(query: &str, scope: &ScopeIdentity, results: &[SearchResultOutput
         text.push('\n');
     }
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn qdrant_config_requires_non_blank_url() {
+        assert!(!qdrant_config_has_url(&QdrantConfig {
+            url: None,
+            api_key: None,
+        }));
+        assert!(!qdrant_config_has_url(&QdrantConfig {
+            url: Some("  ".to_string()),
+            api_key: None,
+        }));
+        assert!(qdrant_config_has_url(&QdrantConfig {
+            url: Some("http://qdrant.local".to_string()),
+            api_key: None,
+        }));
+    }
 }

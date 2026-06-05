@@ -174,6 +174,8 @@ fn public_cli_smoke_uses_gwiki_modules() {
     let research_payload = common::json_stdout(&research);
     assert_eq!(research_payload["command"], "research");
     assert_eq!(research_payload["audit"], true);
+    // `--ai off` exercises the deterministic audit path, so the loop should
+    // stop because model-backed research is intentionally unavailable.
     assert_eq!(research_payload["stop_reason"], "ai_unavailable");
     assert_eq!(research_payload["scope"]["kind"], "topic");
     assert_eq!(research_payload["scope"]["id"], "rust");

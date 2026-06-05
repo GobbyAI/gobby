@@ -634,6 +634,7 @@ fn exit_code_for_error(error: &WikiError) -> ExitCode {
         | WikiError::Yaml { .. }
         | WikiError::Registry { .. }
         | WikiError::Daemon { .. }
+        | WikiError::Timeout { .. }
         | WikiError::Setup { .. } => ExitCode::from(1),
     }
 }

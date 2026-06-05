@@ -74,6 +74,11 @@ pub struct TokenUsage {
 }
 
 impl TokenUsage {
+    /// Return a strict total token count.
+    ///
+    /// Uses the provider-reported total when present. Otherwise, falls back to
+    /// input + output only when both counts are present; partial usage metadata
+    /// is treated as unknown instead of estimating.
     pub fn token_count(&self) -> Option<usize> {
         self.total_tokens.or_else(|| {
             self.input_tokens
@@ -305,6 +310,34 @@ mod tests {
         let rendered = format!("{error:?}");
         assert!(!rendered.contains("reqwest::"));
         assert!(!rendered.contains("ureq::"));
+    }
+
+    #[test]
+    fn token_usage_prefers_provider_total_over_component_sum() {
+        let usage = TokenUsage {
+            input_tokens: Some(40),
+            output_tokens: Some(2),
+            total_tokens: Some(45),
+        };
+
+        assert_eq!(usage.token_count(), Some(45));
+    }
+
+    #[test]
+    fn token_usage_sums_only_complete_component_counts() {
+        let complete = TokenUsage {
+            input_tokens: Some(40),
+            output_tokens: Some(2),
+            total_tokens: None,
+        };
+        let partial = TokenUsage {
+            input_tokens: Some(40),
+            output_tokens: None,
+            total_tokens: None,
+        };
+
+        assert_eq!(complete.token_count(), Some(42));
+        assert_eq!(partial.token_count(), None);
     }
 
     #[test]

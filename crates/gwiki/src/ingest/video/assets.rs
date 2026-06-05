@@ -30,17 +30,14 @@ pub(crate) fn ingest_video_with_asset_without_index(
     write_asset_fn: impl FnOnce(&SourceRecord) -> Result<PathBuf, WikiError>,
 ) -> Result<VideoIngestResult, WikiError> {
     let title = markdown_title(snapshot.file_name);
-    let draft = SourceDraft {
-        location: snapshot.location.to_string(),
-        kind: SourceKind::Video,
-        fetched_at: snapshot.fetched_at.to_string(),
-        content: Vec::new(),
-        title: Some(title),
-        citation: Some(snapshot.location.to_string()),
-        license: None,
-        ingestion_method: IngestionMethod::Manual,
-        compile_status: CompileStatus::Pending,
-    };
+    let draft = SourceDraft::new(
+        snapshot.location.to_string(),
+        SourceKind::Video,
+        snapshot.fetched_at.to_string(),
+        Vec::new(),
+    )
+    .with_title(title)
+    .with_citation(snapshot.location.to_string());
     let record = SourceManifest::register_with_content_hash(vault_root, draft, content_hash)?;
     let asset_path = write_asset_fn(&record)?;
     let media_metadata = video_media_metadata(vault_root, &asset_path, snapshot.duration_seconds)?;
@@ -144,11 +141,12 @@ pub(crate) fn persist_video_frame_assets(
     let mut persisted_paths = Vec::with_capacity(frame_image_paths.len());
     let mut descriptions = frame_descriptions.to_vec();
     let mut source_temp_paths = Vec::new();
+    let temp_dir = std::env::temp_dir();
     for (index, path) in frame_image_paths.iter().enumerate() {
         let cleanup_source_temp = samples
             .get(index)
             .is_some_and(|sample| sample.source_asset.as_path() == path.as_path())
-            && path.starts_with(std::env::temp_dir());
+            && path.starts_with(&temp_dir);
         let bytes = match std::fs::read(path) {
             Ok(bytes) => bytes,
             Err(source) => {
@@ -228,11 +226,12 @@ pub(crate) fn cleanup_sampled_temp_frame_sources(
     samples: &[VideoFrameSample],
     frame_image_paths: &[PathBuf],
 ) {
+    let temp_dir = std::env::temp_dir();
     for (index, path) in frame_image_paths.iter().enumerate() {
         let should_cleanup = samples
             .get(index)
             .is_some_and(|sample| sample.source_asset.as_path() == path.as_path())
-            && path.starts_with(std::env::temp_dir());
+            && path.starts_with(&temp_dir);
         if should_cleanup {
             // Best-effort cleanup after the primary persistence failure has
             // already been selected for reporting.

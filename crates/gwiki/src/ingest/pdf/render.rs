@@ -67,8 +67,8 @@ pub(crate) fn render_pdf_pages(
                     .render_annotations(true),
             )
             .map_err(pdfium_error)?;
-        let width = bitmap.width() as u32;
-        let height = bitmap.height() as u32;
+        let width = bitmap_dimension_to_u32("width", bitmap.width())?;
+        let height = bitmap_dimension_to_u32("height", bitmap.height())?;
         let encoded = encode_png_rgba(width, height, &bitmap.as_rgba_bytes())?;
         let Some(next_total_rendered_bytes) =
             next_rendered_byte_total(total_rendered_bytes, encoded.len())
@@ -133,6 +133,17 @@ fn points_to_pixels(points: f32, dpi: u16) -> i32 {
 }
 
 #[cfg(feature = "documents")]
+fn bitmap_dimension_to_u32(name: &str, value: i32) -> Result<u32, WikiError> {
+    if value <= 0 {
+        return Err(pdfium_error(format!(
+            "bitmap {name} must be positive, got {value}"
+        )));
+    }
+    u32::try_from(value)
+        .map_err(|_| pdfium_error(format!("bitmap {name} exceeds u32 range: {value}")))
+}
+
+#[cfg(feature = "documents")]
 fn encode_png_rgba(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, WikiError> {
     let mut encoded = Cursor::new(Vec::new());
     let mut encoder = png::Encoder::new(&mut encoded, width, height);
@@ -176,6 +187,17 @@ mod tests {
         assert_eq!(
             next_rendered_byte_total(MAX_RENDERED_PDF_TOTAL_BYTES, 1),
             None
+        );
+    }
+
+    #[cfg(feature = "documents")]
+    #[test]
+    fn bitmap_dimensions_reject_non_positive_values_before_cast() {
+        let err = bitmap_dimension_to_u32("width", -1).expect_err("negative rejected");
+
+        assert!(
+            err.to_string().contains("bitmap width must be positive"),
+            "unexpected error: {err}"
         );
     }
 }

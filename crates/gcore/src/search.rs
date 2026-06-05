@@ -16,6 +16,12 @@ pub const BM25_SCORE_FUNCTION: &str = "pdb.score";
 pub const BM25_SCORE_REGPROCEDURE: &str = "pdb.score(anyelement)";
 
 /// Render a BM25 score expression for a table row identifier.
+///
+/// # Safety
+///
+/// `row_id` is interpolated into SQL. Callers must pass a trusted row
+/// identifier such as a static table alias or schema-qualified column, never
+/// user-controlled text.
 pub fn bm25_score_expr(row_id: &str) -> String {
     format!("{BM25_SCORE_FUNCTION}({row_id})")
 }

@@ -1,12 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
 use tempfile::TempDir;
 
 use super::context::{
-    load_dart_external_packages, load_elixir_dependency_names, load_js_external_packages,
-    load_rust_external_crates, load_rust_self_crate_name,
+    build_php_local_symbol_index, load_dart_external_packages, load_elixir_dependency_names,
+    load_js_external_packages, load_rust_external_crates, load_rust_self_crate_name,
 };
 use super::helpers::{extract_quoted_string, go_default_package_alias, split_top_level};
 use super::predicates::{
@@ -297,6 +297,34 @@ fn rust_glob_imports_do_not_register_individual_bare_bindings() {
     )
     .expect("parse Rust glob import");
 
+    assert!(extracted.bindings.bare.is_empty());
+    assert!(extracted.bindings.member.is_empty());
+}
+
+#[test]
+fn js_type_only_import_with_default_and_named_clause_registers_no_bindings() {
+    let import_context = ImportResolutionContext {
+        js_external_packages: HashSet::from(["react".to_string()]),
+        ..Default::default()
+    };
+    let mut extracted = ExtractedImports::default();
+
+    parse_import_statement(
+        "javascript",
+        r#"import type React, { type ComponentProps, Node } from "react";"#,
+        "src/app.tsx",
+        &import_context,
+        &mut extracted,
+    )
+    .expect("parse JS type import");
+
+    assert_eq!(
+        extracted
+            .imports
+            .first()
+            .map(|import| import.module_name.as_str()),
+        Some("react")
+    );
     assert!(extracted.bindings.bare.is_empty());
     assert!(extracted.bindings.member.is_empty());
 }
@@ -887,7 +915,7 @@ fn php_local_fully_qualified_class_stays_unresolved() {
     let mut import_context = ImportResolutionContext::default();
     import_context
         .php_local_symbols
-        .insert(r"App\Services\Mailer".to_string());
+        .insert(r"app\services\mailer".to_string());
 
     let target = resolve_external_callee(
         &import_context,
@@ -907,7 +935,7 @@ fn php_local_fully_qualified_function_stays_unresolved() {
     let mut import_context = ImportResolutionContext::default();
     import_context
         .php_local_symbols
-        .insert(r"App\Helpers\render".to_string());
+        .insert(r"app\helpers\render".to_string());
 
     let target = resolve_external_callee(
         &import_context,
@@ -920,4 +948,22 @@ fn php_local_fully_qualified_function_stays_unresolved() {
     );
 
     assert!(target.is_none());
+}
+
+#[test]
+fn php_local_symbol_index_normalizes_declared_names_to_lowercase() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let path = tempdir.path().join("Mailer.php");
+    fs::write(
+        &path,
+        "<?php\nnamespace App\\Services;\nclass Mailer {}\nfunction Render() {}\n",
+    )
+    .expect("write php file");
+
+    let symbols = build_php_local_symbol_index(&[path]);
+
+    assert!(symbols.contains(r"app\services\mailer"));
+    assert!(symbols.contains(r"app\services\render"));
+    assert!(!symbols.contains(r"App\Services\Mailer"));
+    assert!(!symbols.contains(r"App\Services\Render"));
 }

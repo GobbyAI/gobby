@@ -64,6 +64,39 @@ impl GraphBoostBackend for NoopGraphBoostBackend {
     }
 }
 
+pub struct UnavailableGraphBoostBackend {
+    degradation: DegradationKind,
+}
+
+impl UnavailableGraphBoostBackend {
+    pub fn unreachable(message: String) -> Self {
+        Self {
+            degradation: graph_degradation(message),
+        }
+    }
+}
+
+impl GraphBoostBackend for UnavailableGraphBoostBackend {
+    fn search_graph_boost(
+        &mut self,
+        _request: GraphBoostRequest,
+    ) -> Result<GraphBoostOutcome, SearchError> {
+        Ok(GraphBoostOutcome {
+            hits: Vec::new(),
+            degradation: Some(self.degradation.clone()),
+        })
+    }
+}
+
+impl<T: GraphBoostBackend + ?Sized> GraphBoostBackend for Box<T> {
+    fn search_graph_boost(
+        &mut self,
+        request: GraphBoostRequest,
+    ) -> Result<GraphBoostOutcome, SearchError> {
+        (**self).search_graph_boost(request)
+    }
+}
+
 pub struct MemoryGraphBoostBackend {
     graph: MemoryWikiGraph,
 }
@@ -123,12 +156,20 @@ impl GraphBoostBackend for FalkorGraphBoostBackend {
             });
         }
 
-        let data = crate::falkor_graph::load_graph_boost_data(
+        let data = match crate::falkor_graph::load_graph_boost_data(
             &mut self.client,
             &request.scope,
             self.config.document_query_limit,
             self.config.link_query_limit,
-        )?;
+        ) {
+            Ok(data) => data,
+            Err(error) => {
+                return Ok(GraphBoostOutcome {
+                    hits: Vec::new(),
+                    degradation: Some(graph_degradation(error.to_string())),
+                });
+            }
+        };
         let ranked_paths = rank_link_neighborhood(
             &data.documents,
             &data.links,
@@ -435,6 +476,29 @@ mod tests {
             hits[0].provenance.document_path,
             PathBuf::from("wiki/topics/linked.md")
         );
+    }
+
+    #[test]
+    fn unavailable_graph_backend_reports_service_degradation() {
+        let mut backend =
+            UnavailableGraphBoostBackend::unreachable("connection refused".to_string());
+
+        let outcome = backend
+            .search_graph_boost(GraphBoostRequest {
+                scope: SearchScope::project("project-1"),
+                seed_paths: vec![PathBuf::from("docs/a.md")],
+                limit: 10,
+            })
+            .expect("unavailable backend degrades");
+
+        assert!(outcome.hits.is_empty());
+        assert!(matches!(
+            outcome.degradation,
+            Some(DegradationKind::ServiceUnavailable {
+                service,
+                state: ServiceState::Unreachable { message }
+            }) if service == GRAPH_SERVICE && message.contains("connection refused")
+        ));
     }
 
     fn document(path: &str, title: Option<&str>) -> GraphBoostDocument {
