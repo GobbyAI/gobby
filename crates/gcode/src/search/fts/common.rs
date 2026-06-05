@@ -14,6 +14,12 @@ pub use gobby_core::search::sanitize_pg_search_query;
 
 pub(super) type PgParam = Box<dyn ToSql + Sync>;
 
+pub(super) const BM25_SCORE_FUNCTION: &str = "pdb.score";
+
+pub(super) fn bm25_score_expr(row_id: &str) -> String {
+    format!("{BM25_SCORE_FUNCTION}({row_id})")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedGraphSymbol {
     pub id: String,
@@ -37,7 +43,7 @@ pub(super) enum SymbolOrder {
 impl SymbolOrder {
     fn sql(&self) -> String {
         match self {
-            Self::Bm25Score => "pg_search.score(cs.id) DESC, cs.id ASC".to_string(),
+            Self::Bm25Score => format!("{} DESC, cs.id ASC", bm25_score_expr("cs.id")),
             Self::Name => "cs.name ASC, cs.file_path ASC, cs.line_start ASC".to_string(),
             Self::ExactCaseFirst(query_param) => format!(
                 "CASE WHEN cs.name = {q} OR cs.qualified_name = {q} THEN 0 ELSE 1 END,
@@ -328,4 +334,25 @@ pub(super) fn query_symbols_by_conditions(
         symbols.truncate(limit);
     }
     symbols
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bm25_score_expression_uses_pdb_score() {
+        let sql = bm25_score_expr("cs.id");
+
+        assert_eq!(sql, "pdb.score(cs.id)");
+        assert!(!sql.contains("pg_search.score"));
+    }
+
+    #[test]
+    fn symbol_bm25_order_uses_pdb_score() {
+        let sql = SymbolOrder::Bm25Score.sql();
+
+        assert_eq!(sql, "pdb.score(cs.id) DESC, cs.id ASC");
+        assert!(!sql.contains("pg_search.score"));
+    }
 }

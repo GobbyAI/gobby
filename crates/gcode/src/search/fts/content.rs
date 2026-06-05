@@ -6,8 +6,18 @@ use crate::models::ContentSearchHit;
 use crate::visibility::TOMBSTONE_LANGUAGE;
 
 use super::common::{
-    PgParam, escape_like, param_refs, push_param, push_path_filter, sanitize_pg_search_query,
+    PgParam, bm25_score_expr, escape_like, param_refs, push_param, push_path_filter,
+    sanitize_pg_search_query,
 };
+
+fn content_bm25_order_by_sql(tiebreakers: &[&str]) -> String {
+    let mut order_by = format!("{} DESC", bm25_score_expr("c.id"));
+    for tiebreaker in tiebreakers {
+        order_by.push_str(", ");
+        order_by.push_str(tiebreaker);
+    }
+    order_by
+}
 
 /// Full-text search across file content chunks.
 pub fn search_content(
@@ -36,6 +46,7 @@ pub fn search_content(
     }
     push_path_filter(&mut conditions, &mut params, "c", paths);
     let limit_placeholder = push_param(&mut params, limit as i64);
+    let order_by = content_bm25_order_by_sql(&["c.id ASC"]);
     let refs = param_refs(&params);
     let sql = format!(
         "SELECT c.file_path,
@@ -47,7 +58,7 @@ pub fn search_content(
          JOIN code_indexed_files cf
            ON cf.project_id = c.project_id AND cf.file_path = c.file_path
          WHERE {}
-         ORDER BY pg_search.score(c.id) DESC, c.id ASC
+         ORDER BY {order_by}
          LIMIT {limit_placeholder}",
         conditions.join(" AND ")
     );
@@ -90,6 +101,7 @@ pub fn search_content_visible(
     }
     push_path_filter(&mut conditions, &mut params, "c", paths);
     let limit_placeholder = push_param(&mut params, limit as i64);
+    let order_by = content_bm25_order_by_sql(&["c.project_id ASC", "c.id ASC"]);
     let refs = param_refs(&params);
     let sql = format!(
         "WITH visible_files AS ({visible_files_sql})
@@ -102,7 +114,7 @@ pub fn search_content_visible(
          JOIN visible_files vf
            ON vf.project_id = c.project_id AND vf.file_path = c.file_path
          WHERE {}
-         ORDER BY pg_search.score(c.id) DESC, c.project_id ASC, c.id ASC
+         ORDER BY {order_by}
          LIMIT {limit_placeholder}",
         conditions.join(" AND ")
     );
@@ -320,4 +332,30 @@ fn lowercase_with_original_char_map(content: &str) -> (String, Vec<usize>) {
         }
     }
     (lower, lower_byte_to_original_char)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_uses_pdb_score(sql: &str) {
+        assert!(sql.contains("pdb.score(c.id)"));
+        assert!(!sql.contains("pg_search.score"));
+    }
+
+    #[test]
+    fn content_bm25_order_by_uses_pdb_score() {
+        let sql = content_bm25_order_by_sql(&["c.id ASC"]);
+
+        assert_eq!(sql, "pdb.score(c.id) DESC, c.id ASC");
+        assert_uses_pdb_score(&sql);
+    }
+
+    #[test]
+    fn visible_content_bm25_order_by_uses_pdb_score() {
+        let sql = content_bm25_order_by_sql(&["c.project_id ASC", "c.id ASC"]);
+
+        assert_eq!(sql, "pdb.score(c.id) DESC, c.project_id ASC, c.id ASC");
+        assert_uses_pdb_score(&sql);
+    }
 }

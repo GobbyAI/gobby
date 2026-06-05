@@ -14,6 +14,8 @@ const REQUIRED_TABLES: &[&str] = &[
 
 const REQUIRED_BM25_INDEXES: &[&str] = &["code_symbols_search_bm25", "code_content_search_bm25"];
 
+const REQUIRED_BM25_SCORE_FUNCTION: &str = "pdb.score(anyelement)";
+
 const MIGRATION_HINT: &str = "Configure the Gobby PostgreSQL hub with the required code-index schema, `pg_search` extension, and BM25 indexes. For standalone databases, run `gcode setup --standalone --database-url <dsn>`.";
 
 /// Validate that the Gobby-owned PostgreSQL hub schema exists.
@@ -23,6 +25,12 @@ const MIGRATION_HINT: &str = "Configure the Gobby PostgreSQL hub with the requir
 pub fn validate_runtime_schema(client: &mut Client) -> anyhow::Result<()> {
     if !extension_exists(client, "pg_search")? {
         bail!("PostgreSQL hub is missing required extension `pg_search`. {MIGRATION_HINT}");
+    }
+
+    if !procedure_exists(client, REQUIRED_BM25_SCORE_FUNCTION)? {
+        bail!(
+            "PostgreSQL hub is missing required BM25 score function `{REQUIRED_BM25_SCORE_FUNCTION}`. {MIGRATION_HINT}"
+        );
     }
 
     let missing_tables = missing_relations(client, REQUIRED_TABLES)?;
@@ -53,6 +61,14 @@ fn extension_exists(client: &mut Client, extension: &str) -> anyhow::Result<bool
         .with_context(|| format!("failed to check PostgreSQL extension `{extension}`"))?
         .try_get(0)
         .context("failed to decode PostgreSQL extension check")
+}
+
+fn procedure_exists(client: &mut Client, procedure: &str) -> anyhow::Result<bool> {
+    client
+        .query_one("SELECT to_regprocedure($1) IS NOT NULL", &[&procedure])
+        .with_context(|| format!("failed to check PostgreSQL procedure `{procedure}`"))?
+        .try_get(0)
+        .context("failed to decode PostgreSQL procedure check")
 }
 
 fn missing_relations(client: &mut Client, relations: &[&str]) -> anyhow::Result<Vec<String>> {
@@ -86,6 +102,7 @@ mod tests {
         assert!(REQUIRED_TABLES.contains(&"code_content_chunks"));
         assert!(REQUIRED_BM25_INDEXES.contains(&"code_symbols_search_bm25"));
         assert!(REQUIRED_BM25_INDEXES.contains(&"code_content_search_bm25"));
+        assert_eq!(REQUIRED_BM25_SCORE_FUNCTION, "pdb.score(anyelement)");
     }
 
     mod serial_db {
