@@ -7,9 +7,12 @@
     "type_check": "uv run mypy src/ --no-incremental --strict",
     "lint": "uv run ruff check src/",
     "format": "uv run ruff format --check src/",
+    "security": "uv run bandit -c pyproject.toml -r src/",
+    "build": "uv build",
     "custom": {
-      "frontend_tests": "cd web && npm test",
+      "frontend_build": "cd web && npm run build",
       "frontend_lint": "cd web && npm run lint",
+      "frontend_tests": "cd web && npm test",
       "ts_check": "cd web && npm run type-check"
     }
   },
