@@ -15,7 +15,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, field_validator
 
-from gobby.config.feature_base import FeatureDefaultConfig
+from gobby.config.feature_base import FeatureDefaultConfig, FeatureProfile
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ __all__ = [
     "DatabasesConfig",
     "EmbeddingsConfig",
     "MemoryKnowledgeGraphConfig",
-    "MemoryStaleAuditConfig",
+    "MemoryDreamConfig",
     "MemoryConfig",
     "MemoryBackupConfig",
     "FalkorConfig",
@@ -241,21 +241,73 @@ class MemoryKnowledgeGraphConfig(FeatureDefaultConfig):
     """LLM configuration for memory knowledge-graph extraction."""
 
 
-class MemoryStaleAuditConfig(FeatureDefaultConfig):
-    """LLM configuration for stale memory audit classification."""
+class MemoryDreamConfig(FeatureDefaultConfig):
+    """Configuration for scheduled memory dream maintenance."""
 
     enabled: bool = Field(
         default=True,
-        description="Enable LLM-backed stale memory classification",
+        description="Enable scheduled memory dream maintenance",
+    )
+    schedule_cron: str = Field(
+        default="0 3 * * *",
+        description="Cron expression for the system memory dream job",
     )
     prompt_path: str = Field(
-        default="memory/stale_audit",
-        description="Prompt template path for stale memory classification",
+        default="memory/dream",
+        description="Prompt template path for memory dream planning",
     )
     max_tokens: int = Field(
-        default=4096,
-        description="Maximum tokens for stale memory classifier responses",
+        default=8192,
+        description="Maximum tokens for memory dream planner responses",
     )
+    scan_limit: int = Field(
+        default=500,
+        description="Maximum stale candidates to include in one dream run",
+    )
+    max_scan_rows: int = Field(
+        default=5000,
+        description="Maximum memory rows to scan while finding stale candidates",
+    )
+    stale_age_days: int = Field(
+        default=30,
+        description="Minimum age in days before a memory is reviewed by dream",
+    )
+    min_action_confidence: float = Field(
+        default=0.72,
+        description="Minimum confidence required for mutating dream actions",
+    )
+    min_delete_confidence: float = Field(
+        default=0.85,
+        description="Minimum confidence required for delete actions",
+    )
+    include_global_memories: bool = Field(
+        default=True,
+        description="Include global memories when a project-scoped dream runs",
+    )
+    reconcile_after_apply: bool = Field(
+        default=True,
+        description="Reconcile secondary memory stores after applying mutations",
+    )
+    profile: FeatureProfile = Field(
+        default=FeatureProfile.MID,
+        description="Provider-agnostic capability profile for memory dream planning",
+    )
+
+    @field_validator("scan_limit", "max_scan_rows", "stale_age_days", "max_tokens")
+    @classmethod
+    def validate_positive_int(cls, v: int) -> int:
+        """Validate positive integer settings."""
+        if v < 1:
+            raise ValueError("value must be at least 1")
+        return v
+
+    @field_validator("min_action_confidence", "min_delete_confidence")
+    @classmethod
+    def validate_confidence(cls, v: float) -> float:
+        """Validate confidence thresholds."""
+        if not (0.0 <= v <= 1.0):
+            raise ValueError("confidence must be between 0.0 and 1.0")
+        return v
 
 
 class MemoryConfig(BaseModel):
@@ -300,9 +352,9 @@ class MemoryConfig(BaseModel):
         default_factory=MemoryKnowledgeGraphConfig,
         description="LLM feature routing configuration for knowledge graph extraction",
     )
-    stale_audit: MemoryStaleAuditConfig = Field(
-        default_factory=MemoryStaleAuditConfig,
-        description="LLM feature routing configuration for stale memory audit classification",
+    dream: MemoryDreamConfig = Field(
+        default_factory=MemoryDreamConfig,
+        description="Memory dream maintenance configuration",
     )
     code_link_min_score: float = Field(
         default=0.82,

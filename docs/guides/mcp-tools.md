@@ -522,8 +522,9 @@ and the optional FalkorDB knowledge graph.
 | :--- | :--- |
 | `sync_import` | Import memories from a sync file. |
 | `sync_export` | Export memories to a sync file. |
-| `audit_memories` | Audit for stale, duplicate, code-derivable, and orphaned entries. |
-| `cleanup_memories` | Remove entries flagged by `audit_memories`. |
+| `memory_dream` | Review stale memories, apply a validated plan, and snapshot mutations. |
+| `memory_dream_status` | Return status and summary for a dream run. |
+| `memory_dream_revert` | Revert a dream run from its snapshots. |
 
 ### Example: Memory Operations
 

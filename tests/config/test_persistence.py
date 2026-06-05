@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from gobby.config.feature_base import DEFAULT_PROFILE_CANDIDATES, FeatureProfile
+
 pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -52,10 +54,12 @@ class TestMemoryConfigDefaults:
         assert config.backend == "local"
         assert config.access_debounce_seconds == 60
         assert config.crossref_threshold == 0.3
-        assert config.kg.provider == "claude"
-        assert config.kg.model == "haiku"
-        assert config.stale_audit.prompt_path == "memory/stale_audit"
-        assert config.stale_audit.model == "haiku"
+        assert config.kg.profile == FeatureProfile.LOW
+        assert config.kg.candidates == list(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.LOW])
+        assert config.dream.prompt_path == "memory/dream"
+        assert config.dream.schedule_cron == "0 3 * * *"
+        assert config.dream.scan_limit == 500
+        assert config.dream.min_action_confidence == 0.72
 
 
 class TestMemoryConfigCustom:

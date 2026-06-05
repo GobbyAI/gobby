@@ -21,7 +21,7 @@ _FEATURE_CANDIDATE_PROFILES: dict[str, FeatureProfile] = {
     "digest.candidates": FeatureProfile.LOW,
     "memory_recall.candidates": FeatureProfile.LOW,
     "memory.kg.candidates": FeatureProfile.LOW,
-    "memory.stale_audit.candidates": FeatureProfile.LOW,
+    "memory.dream.candidates": FeatureProfile.MID,
     "tool_summarizer.candidates": FeatureProfile.LOW,
     "recommend_tools.candidates": FeatureProfile.MID,
     "import_mcp_server.candidates": FeatureProfile.LOW,

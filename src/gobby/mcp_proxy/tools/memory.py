@@ -860,111 +860,14 @@ def create_memory_registry(
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    # ─── Cleanup tools for nightly memory hygiene (#10572) ───
+    from gobby.mcp_proxy.tools.memory_dream import register_memory_dream_tools
 
-    @registry.tool(
-        name="audit_memories",
-        description="Audit memories for stale, duplicate, code-derivable, and orphaned entries. Returns a report without deleting anything.",
+    register_memory_dream_tools(
+        registry,
+        memory_manager=memory_manager,
+        llm_service=llm_service,
+        config=config,
+        get_project_id=get_current_project_id,
     )
-    async def audit_memories(
-        max_stale_age_days: int = 30,
-        max_stale_access_count: int = 1,
-        stale_confidence_threshold: float = 0.85,
-        limit_per_category: int = 500,
-        use_stale_classifier: bool = True,
-        categories: list[str] | None = None,
-    ) -> dict[str, Any]:
-        """
-        Audit memories and report what would be cleaned up.
-
-        Equivalent to cleanup_memories with dry_run=True.
-
-        Args:
-            max_stale_age_days: Memories inactive longer than this are stale candidates.
-            max_stale_access_count: Maximum access_count still considered low-access.
-            stale_confidence_threshold: Minimum classifier confidence for stale deletion.
-            limit_per_category: Maximum candidates to scan per category.
-            use_stale_classifier: Whether stale candidates require LLM classification.
-            categories: Which categories to audit (default: all).
-                Valid: "stale", "duplicates", "code_derivable", "orphaned"
-        """
-        from gobby.memory.services.maintenance import execute_cleanup
-
-        try:
-            stale_audit_config = (
-                config.memory.stale_audit if config is not None and config.memory else None
-            )
-            report = await execute_cleanup(
-                memory_manager=memory_manager,
-                dry_run=True,
-                categories=categories,
-                max_stale_age_days=max_stale_age_days,
-                max_stale_access_count=max_stale_access_count,
-                stale_confidence_threshold=stale_confidence_threshold,
-                limit_per_category=limit_per_category,
-                project_id=get_current_project_id(),
-                llm_service=llm_service,
-                stale_audit_config=stale_audit_config,
-                use_stale_classifier=use_stale_classifier,
-            )
-            if "error" in report:
-                return {"success": False, "error": report["error"]}
-            return {"success": True, **report}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    @registry.tool(
-        name="cleanup_memories",
-        description="Find and remove stale, duplicate, code-derivable, and orphaned memories. Supports dry_run mode and category filtering.",
-    )
-    async def cleanup_memories(
-        dry_run: bool = False,
-        max_stale_age_days: int = 30,
-        max_stale_access_count: int = 1,
-        stale_confidence_threshold: float = 0.85,
-        similarity_threshold: float = 0.95,
-        limit_per_category: int = 500,
-        use_stale_classifier: bool = True,
-        categories: list[str] | None = None,
-    ) -> dict[str, Any]:
-        """
-        Run memory cleanup: find and optionally delete problematic memories.
-
-        Args:
-            dry_run: If true, report what would be cleaned without deleting (default: false)
-            max_stale_age_days: Memories inactive longer than this are stale candidates.
-            max_stale_access_count: Maximum access_count still considered low-access.
-            stale_confidence_threshold: Minimum classifier confidence for stale deletion.
-            similarity_threshold: Vector similarity threshold for duplicate detection (default: 0.95)
-            limit_per_category: Maximum candidates to scan per category.
-            use_stale_classifier: Whether stale candidates require LLM classification.
-            categories: Which categories to clean (default: all).
-                Valid: "stale", "duplicates", "code_derivable", "orphaned"
-        """
-        from gobby.memory.services.maintenance import execute_cleanup
-
-        try:
-            stale_audit_config = (
-                config.memory.stale_audit if config is not None and config.memory else None
-            )
-            report = await execute_cleanup(
-                memory_manager=memory_manager,
-                dry_run=dry_run,
-                categories=categories,
-                max_stale_age_days=max_stale_age_days,
-                max_stale_access_count=max_stale_access_count,
-                stale_confidence_threshold=stale_confidence_threshold,
-                similarity_threshold=similarity_threshold,
-                limit_per_category=limit_per_category,
-                project_id=get_current_project_id(),
-                llm_service=llm_service,
-                stale_audit_config=stale_audit_config,
-                use_stale_classifier=use_stale_classifier,
-            )
-            if "error" in report:
-                return {"success": False, "error": report["error"]}
-            return {"success": True, **report}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
 
     return registry

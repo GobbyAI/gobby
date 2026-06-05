@@ -193,8 +193,9 @@ for the authoritative signature before calling a tool.
 | `reindex_embeddings` | Regenerate embedding vectors for stored memories. |
 | `sync_import` | Import `.gobby/memories.jsonl` into the hub database. |
 | `sync_export` | Export project memories from the hub database to `.gobby/memories.jsonl`. |
-| `audit_memories` | Report stale, duplicate, code-derivable, and orphaned memory candidates. |
-| `cleanup_memories` | Delete or dry-run cleanup of problematic memories. |
+| `memory_dream` | Review stale memories, apply a validated plan, and snapshot mutations. |
+| `memory_dream_status` | Return status and summary for a memory dream run. |
+| `memory_dream_revert` | Revert a memory dream run from its snapshots. |
 | `bootstrap_session_title` | System lifecycle tool for heuristic session titles. |
 | `build_turn_and_digest` | System lifecycle tool for turn records and session digest updates. |
 
@@ -217,19 +218,10 @@ call_tool(server_name="gobby-memory", tool_name="update_memory", arguments={
 ```
 
 ```python
-call_tool(server_name="gobby-memory", tool_name="audit_memories", arguments={
-    "categories": ["stale", "duplicates"]
-})
-```
-
-`audit_memories` does not take `dry_run`; it is always report-only. Use
-`cleanup_memories` with `dry_run=true` when you want cleanup diagnostics through
-the cleanup tool.
-
-```python
-call_tool(server_name="gobby-memory", tool_name="cleanup_memories", arguments={
+call_tool(server_name="gobby-memory", tool_name="memory_dream", arguments={
     "dry_run": True,
-    "categories": ["stale", "duplicates", "code_derivable", "orphaned"]
+    "wait": True,
+    "memory_type": "fact"
 })
 ```
 
@@ -243,6 +235,9 @@ The daemon exposes memory routes under `/api/memories`.
 | `POST /api/memories` | Create a memory from `content`, `memory_type`, `project_id`, `source_type`, `source_session_id`, and `tags`. |
 | `GET /api/memories/search` | Search memories with required query parameter `q`, plus `project_id` and `limit`. |
 | `GET /api/memories/stats` | Return memory counts, optionally scoped by `project_id`. |
+| `POST /memory/dream` | Start a memory dream run. Pass `wait=true` to run synchronously. |
+| `GET /memory/dream/{run_id}` | Return dream run status and summary. |
+| `POST /memory/dream/{run_id}/revert` | Revert a dream run from snapshots. |
 | `GET /api/memories/{memory_id}` | Read one memory, optionally scoped by `project_id`. |
 | `PUT /api/memories/{memory_id}` | Update memory `content` and/or `tags`. |
 | `DELETE /api/memories/{memory_id}` | Delete one memory. |
@@ -323,11 +318,18 @@ memory:
   kg:
     enabled: true
     model: haiku
-  stale_audit:
+  dream:
     enabled: true
-    model: haiku
-    prompt_path: memory/stale_audit
-    max_tokens: 4096
+    schedule_cron: "0 3 * * *"
+    prompt_path: memory/dream
+    max_tokens: 8192
+    scan_limit: 500
+    max_scan_rows: 5000
+    stale_age_days: 30
+    min_action_confidence: 0.72
+    min_delete_confidence: 0.85
+    include_global_memories: true
+    reconcile_after_apply: true
 
 embeddings:
   model: nomic-embed-text
@@ -429,8 +431,8 @@ Use `gobby memory backup` or MCP `sync_export` to write the file. Use
 
 - Search before creating a memory to avoid duplicates.
 - Delete stale memories when you discover them.
-- Use `audit_memories` for a report-only hygiene pass.
-- Use `cleanup_memories` with `dry_run=true` before deletion.
+- Use `gobby memory dream --dry-run --wait` or MCP `memory_dream` with `dry_run=true`
+  for a report-only hygiene pass.
 - Rebuild cross-references after large imports or cleanup.
 - Reindex embeddings after changing embedding providers or models.
 - Rebuild or clear the knowledge graph when entity extraction changes.

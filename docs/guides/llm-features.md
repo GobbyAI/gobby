@@ -19,7 +19,7 @@ their external form; for task features that is `gobby-tasks`, matching the MCP s
 | `digest` | `digest` | `feature_low` | `LLMService.call_feature(config.digest, ...)` | `memory.turn_record`, `memory.title_synthesis`: rolling digest and title synthesis |
 | `memory_recall` | `memory_recall` | `feature_low` | `FeatureDefaultConfig` used by daemon recall runner | Daemon-owned memory recall selection |
 | `memory.kg` | `memory.kg` | `feature_low` | Knowledge graph extractor `_generate_json(...)` | `memory.kg.extract_entities`, `memory.kg.extract_relationships`, `memory.kg.select_outdated_relations` |
-| `memory.stale_audit` | `memory.stale_audit` | `feature_low` | `LLMService.call_feature(config.memory.stale_audit, ...)` | `memory.stale_audit`: stale memory classification |
+| `memory.dream` | `memory.dream` | `feature_mid` | `LLMService.call_json_feature(config.memory.dream, ...)` | `memory.dream`: validated memory maintenance planning |
 | `tool_summarizer` | `tool_summarizer` | `feature_low` | `LLMService.call_feature(config.tool_summarizer, ...)` | `tools.tool_summary`, `tools.server_description`: MCP tool/server summaries |
 | `recommend_tools` | `recommend_tools` | `feature_mid` | `LLMService.call_feature(config.recommend_tools, ...)` | `mcp_proxy.recommendation.hybrid_rerank`, `mcp_proxy.recommendation.llm`: tool recommendations |
 | `import_mcp_server` | `import_mcp_server` | `feature_low` | `LLMService.call_feature(config.import_mcp_server, ...)` | MCP server import synthesis |

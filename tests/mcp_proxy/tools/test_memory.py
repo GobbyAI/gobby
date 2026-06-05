@@ -687,20 +687,21 @@ class TestSearchKnowledgeGraph:
         assert "KG down" in result["error"]
 
 
-# ─── cleanup / audit ────────────────────────────────────────────────────
+# ─── memory dream ────────────────────────────────────────────────────────
 
 
-class TestMemoryCleanupTools:
-    """Tests for audit_memories and cleanup_memories MCP wrappers."""
+class TestMemoryDreamTools:
+    """Tests for memory dream MCP wrappers."""
 
     @pytest.mark.asyncio
-    async def test_audit_passes_stale_classifier_inputs(
+    async def test_memory_dream_runs_service(
         self,
         mock_memory_manager: MagicMock,
         mock_llm_service: MagicMock,
     ) -> None:
-        stale_audit_config = SimpleNamespace(prompt_path="memory/stale_audit")
-        config = SimpleNamespace(memory=SimpleNamespace(stale_audit=stale_audit_config))
+        config = SimpleNamespace(memory=SimpleNamespace(dream=SimpleNamespace()))
+        service = MagicMock()
+        service.run = AsyncMock(return_value={"success": True, "run_id": "dream-1"})
         registry = create_memory_registry(
             mock_memory_manager,
             llm_service=mock_llm_service,
@@ -708,41 +709,35 @@ class TestMemoryCleanupTools:
         )
 
         with patch(
-            "gobby.memory.services.maintenance.execute_cleanup",
-            new_callable=AsyncMock,
-            return_value={"dry_run": True, "total_found": 0, "total_deleted": 0},
-        ) as execute_cleanup:
+            "gobby.mcp_proxy.tools.memory_dream.MemoryDreamService",
+            return_value=service,
+        ):
             result = await registry.call(
-                "audit_memories",
+                "memory_dream",
                 {
-                    "max_stale_age_days": 60,
-                    "max_stale_access_count": 2,
-                    "stale_confidence_threshold": 0.9,
-                    "limit_per_category": 25,
-                    "use_stale_classifier": False,
-                    "categories": ["stale"],
+                    "dry_run": True,
+                    "wait": True,
+                    "skip_consolidation": True,
+                    "memory_type": "fact",
                 },
             )
 
         assert result["success"] is True
-        kwargs = execute_cleanup.await_args.kwargs
-        assert kwargs["dry_run"] is True
-        assert kwargs["max_stale_age_days"] == 60
-        assert kwargs["max_stale_access_count"] == 2
-        assert kwargs["stale_confidence_threshold"] == 0.9
-        assert kwargs["limit_per_category"] == 25
-        assert kwargs["use_stale_classifier"] is False
-        assert kwargs["llm_service"] is mock_llm_service
-        assert kwargs["stale_audit_config"] is stale_audit_config
+        options = service.run.await_args.args[0]
+        assert options.dry_run is True
+        assert options.skip_consolidation is True
+        assert options.memory_type == "fact"
 
     @pytest.mark.asyncio
-    async def test_cleanup_passes_stale_classifier_inputs(
+    async def test_memory_dream_status_and_revert(
         self,
         mock_memory_manager: MagicMock,
         mock_llm_service: MagicMock,
     ) -> None:
-        stale_audit_config = SimpleNamespace(prompt_path="memory/stale_audit")
-        config = SimpleNamespace(memory=SimpleNamespace(stale_audit=stale_audit_config))
+        config = SimpleNamespace(memory=SimpleNamespace(dream=SimpleNamespace()))
+        service = MagicMock()
+        service.status.return_value = {"success": True, "run": {"id": "dream-1"}}
+        service.revert = AsyncMock(return_value={"success": True, "run_id": "dream-1"})
         registry = create_memory_registry(
             mock_memory_manager,
             llm_service=mock_llm_service,
@@ -750,31 +745,13 @@ class TestMemoryCleanupTools:
         )
 
         with patch(
-            "gobby.memory.services.maintenance.execute_cleanup",
-            new_callable=AsyncMock,
-            return_value={"dry_run": False, "total_found": 0, "total_deleted": 0},
-        ) as execute_cleanup:
-            result = await registry.call(
-                "cleanup_memories",
-                {
-                    "dry_run": False,
-                    "max_stale_age_days": 45,
-                    "max_stale_access_count": 3,
-                    "stale_confidence_threshold": 0.88,
-                    "similarity_threshold": 0.97,
-                    "limit_per_category": 30,
-                    "use_stale_classifier": True,
-                    "categories": ["stale", "duplicates"],
-                },
-            )
+            "gobby.mcp_proxy.tools.memory_dream.MemoryDreamService",
+            return_value=service,
+        ):
+            status = await registry.call("memory_dream_status", {"run_id": "dream-1"})
+            revert = await registry.call("memory_dream_revert", {"run_id": "dream-1"})
 
-        assert result["success"] is True
-        kwargs = execute_cleanup.await_args.kwargs
-        assert kwargs["dry_run"] is False
-        assert kwargs["max_stale_age_days"] == 45
-        assert kwargs["max_stale_access_count"] == 3
-        assert kwargs["stale_confidence_threshold"] == 0.88
-        assert kwargs["similarity_threshold"] == 0.97
-        assert kwargs["limit_per_category"] == 30
-        assert kwargs["use_stale_classifier"] is True
-        assert kwargs["categories"] == ["stale", "duplicates"]
+        assert status["success"] is True
+        assert revert["success"] is True
+        service.status.assert_called_once_with("dream-1")
+        service.revert.assert_awaited_once_with("dream-1")

@@ -1,0 +1,112 @@
+"""Stale candidate discovery for memory dream."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Any
+
+from gobby.memory.dream.models import DreamCandidate
+
+
+def discover_stale_candidates(
+    memory_manager: Any,
+    dream_config: Any,
+    *,
+    project_id: str | None = None,
+    memory_type: str | None = None,
+    now: datetime | None = None,
+) -> list[DreamCandidate]:
+    """Find old memories by age and scope.
+
+    Access statistics are preserved as classifier context, but they do not
+    decide eligibility.
+    """
+    now = now or datetime.now(UTC)
+    candidates: list[DreamCandidate] = []
+    offset = 0
+    scanned = 0
+    page_size = min(500, int(getattr(dream_config, "max_scan_rows", 5000)))
+    max_scan_rows = int(getattr(dream_config, "max_scan_rows", 5000))
+    scan_limit = int(getattr(dream_config, "scan_limit", 500))
+    stale_age_days = int(getattr(dream_config, "stale_age_days", 30))
+    include_global = bool(getattr(dream_config, "include_global_memories", True))
+
+    while scanned < max_scan_rows and len(candidates) < scan_limit:
+        page_limit = min(page_size, max_scan_rows - scanned)
+        page = memory_manager.list_memories(limit=page_limit, offset=offset)
+        if not page:
+            break
+
+        scanned += len(page)
+        offset += len(page)
+        for memory in page:
+            if memory_type and getattr(memory, "memory_type", None) != memory_type:
+                continue
+            if not _in_scope(getattr(memory, "project_id", None), project_id, include_global):
+                continue
+
+            age_days = _age_days(memory, now)
+            if age_days is None or age_days < stale_age_days:
+                continue
+
+            reasons = [f"updated_at older than {stale_age_days} days"]
+            if getattr(memory, "project_id", None) is None:
+                reasons.append("global memory")
+            candidates.append(
+                DreamCandidate(
+                    id=str(memory.id),
+                    content=str(memory.content),
+                    memory_type=str(memory.memory_type),
+                    project_id=getattr(memory, "project_id", None),
+                    source_type=getattr(memory, "source_type", None),
+                    source_session_id=getattr(memory, "source_session_id", None),
+                    tags=list(getattr(memory, "tags", None) or []),
+                    age_days=age_days,
+                    access_count=_int_attr(memory, "access_count"),
+                    created_at=str(getattr(memory, "created_at", "")),
+                    updated_at=str(getattr(memory, "updated_at", "")),
+                    last_accessed_at=getattr(memory, "last_accessed_at", None),
+                    reasons=reasons,
+                )
+            )
+            if len(candidates) >= scan_limit:
+                break
+
+        if len(page) < page_limit:
+            break
+
+    return sorted(candidates, key=lambda item: (-item.age_days, item.id))
+
+
+def _in_scope(memory_project_id: str | None, project_id: str | None, include_global: bool) -> bool:
+    if project_id is None:
+        return True
+    if memory_project_id == project_id:
+        return True
+    return include_global and memory_project_id is None
+
+
+def _age_days(memory: Any, now: datetime) -> float | None:
+    updated = _parse_datetime(getattr(memory, "updated_at", None))
+    created = _parse_datetime(getattr(memory, "created_at", None))
+    timestamp = updated or created
+    if timestamp is None:
+        return None
+    return max(0.0, (now - timestamp).total_seconds() / 86400)
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _int_attr(obj: Any, attr: str) -> int:
+    value = getattr(obj, attr, 0)
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0

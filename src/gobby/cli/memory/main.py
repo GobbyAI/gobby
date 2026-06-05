@@ -3,6 +3,7 @@ from __future__ import annotations
 import click
 
 from .crud import create, delete, list_memories, memory_stats, recall, show_memory, update_memory
+from .dream import memory_dream
 from .export import backup_memories, export_memories, restore_memories
 from .graph import clear_graph, graph_counts, invalidate, rebuild_graph
 from .indices import rebuild_crossrefs, reconcile, reindex_embeddings
@@ -22,6 +23,7 @@ memory.add_command(list_memories)
 memory.add_command(show_memory)
 memory.add_command(update_memory)
 memory.add_command(memory_stats)
+memory.add_command(memory_dream)
 memory.add_command(export_memories)
 memory.add_command(dedupe_memories)
 memory.add_command(fix_null_project)

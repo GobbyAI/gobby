@@ -172,7 +172,7 @@ async def test_execute_pipeline_recreates_missing_system_session(
 ) -> None:
     """Pipeline cron runs repair the root system session before creating cron sessions."""
     pipeline = MagicMock()
-    pipeline.name = "nightly-memory-cleanup"
+    pipeline.name = "cron-test-pipeline"
 
     pipeline_executor = MagicMock()
     pipeline_executor.loader = MagicMock()
@@ -192,7 +192,7 @@ async def test_execute_pipeline_recreates_missing_system_session(
     job = _make_job(
         cron_storage,
         "pipeline",
-        {"pipeline_name": "nightly-memory-cleanup"},
+        {"pipeline_name": "cron-test-pipeline"},
     )
     run = cron_storage.create_run(job.id)
 

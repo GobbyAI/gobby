@@ -92,7 +92,7 @@ class TestFeatureConfigInheritance:
 
     def test_low_feature_configs(self) -> None:
         from gobby.config.features import ImportMCPServerConfig, ToolSummarizerConfig
-        from gobby.config.persistence import MemoryKnowledgeGraphConfig, MemoryStaleAuditConfig
+        from gobby.config.persistence import MemoryKnowledgeGraphConfig
         from gobby.config.sessions import DigestConfig, MemoryRecallConfig, SessionSummaryConfig
 
         for config_cls in (
@@ -100,7 +100,6 @@ class TestFeatureConfigInheritance:
             ImportMCPServerConfig,
             MemoryKnowledgeGraphConfig,
             MemoryRecallConfig,
-            MemoryStaleAuditConfig,
             SessionSummaryConfig,
             ToolSummarizerConfig,
         ):
@@ -110,9 +109,15 @@ class TestFeatureConfigInheritance:
 
     def test_mid_feature_configs(self) -> None:
         from gobby.config.features import MergeResolutionConfig, RecommendToolsConfig
+        from gobby.config.persistence import MemoryDreamConfig
         from gobby.config.tasks import TaskValidationConfig
 
-        for config_cls in (MergeResolutionConfig, RecommendToolsConfig, TaskValidationConfig):
+        for config_cls in (
+            MemoryDreamConfig,
+            MergeResolutionConfig,
+            RecommendToolsConfig,
+            TaskValidationConfig,
+        ):
             cfg = config_cls()
             assert cfg.profile == FeatureProfile.MID
             assert cfg.candidates == list(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.MID])
