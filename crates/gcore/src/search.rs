@@ -9,6 +9,17 @@ use std::collections::HashMap;
 /// RRF constant — matches Python RRF_K in code_index/searcher.py.
 const RRF_K: f64 = 60.0;
 
+/// BM25 score function installed by pg_search/PostgresML.
+pub const BM25_SCORE_FUNCTION: &str = "pdb.score";
+
+/// Regprocedure signature required by runtime schema validation.
+pub const BM25_SCORE_REGPROCEDURE: &str = "pdb.score(anyelement)";
+
+/// Render a BM25 score expression for a table row identifier.
+pub fn bm25_score_expr(row_id: &str) -> String {
+    format!("{BM25_SCORE_FUNCTION}({row_id})")
+}
+
 /// A search result from any source, with opaque identity and metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
@@ -192,6 +203,16 @@ mod tests {
     }
 
     #[test]
+    fn bm25_score_expression_uses_pdb_score() {
+        assert_eq!(bm25_score_expr("row.id"), "pdb.score(row.id)");
+    }
+
+    #[test]
+    fn bm25_score_regprocedure_matches_runtime_schema_contract() {
+        assert_eq!(BM25_SCORE_REGPROCEDURE, "pdb.score(anyelement)");
+    }
+
+    #[test]
     fn search_core_has_no_domain_queries() {
         let source = include_str!("search.rs");
         for forbidden in forbidden_domain_fragments() {
@@ -213,6 +234,11 @@ mod tests {
             ["gra", "ph"],
             ["Fal", "kor"],
             ["Gra", "ph"],
+            ["code", "_symbols"],
+            ["code", "_content_chunks"],
+            ["gwiki", "_documents"],
+            ["gwiki", "_chunks"],
+            ["JOIN", " "],
         ]
         .into_iter()
         .map(|parts| parts.concat())

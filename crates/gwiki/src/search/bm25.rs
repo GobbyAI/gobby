@@ -2,7 +2,7 @@ use std::path::PathBuf;
 #[cfg(test)]
 use std::sync::Arc;
 
-use gobby_core::search::sanitize_pg_search_query;
+use gobby_core::search::{bm25_score_expr, sanitize_pg_search_query};
 
 use crate::search::{
     ChunkProvenance, SearchError, SearchHitKind, SearchProvenance, SearchScope, SearchSource,
@@ -71,6 +71,8 @@ pub fn build_bm25_sql(query: &str, scope: &SearchScope, limit: usize) -> Option<
 
     let chunk_searchable_path_predicate = searchable_path_predicate("c.path");
     let document_searchable_path_predicate = searchable_path_predicate("d.path");
+    let chunk_score_expr = bm25_score_expr("c.id");
+    let document_score_expr = bm25_score_expr("d.id");
     let sql = format!(
         r#"
 WITH hits AS (
@@ -93,7 +95,7 @@ WITH hits AS (
         c.content AS snippet,
         c.source_kind,
         c.content_hash,
-        pdb.score(c.id) AS score
+        {chunk_score_expr} AS score
     FROM gwiki_chunks c
     JOIN gwiki_documents d
         ON d.id = c.document_id
@@ -120,7 +122,7 @@ WITH hits AS (
         d.body AS snippet,
         d.source_kind,
         d.content_hash,
-        pdb.score(d.id) AS score
+        {document_score_expr} AS score
     FROM gwiki_documents d
     WHERE d.scope_kind = $2
       AND d.scope_id = $3
@@ -395,6 +397,17 @@ mod tests {
             unknown_document_columns.is_empty() && unknown_chunk_columns.is_empty(),
             "BM25 SQL references columns absent from setup schema: documents={unknown_document_columns:?}, chunks={unknown_chunk_columns:?}"
         );
+    }
+
+    #[test]
+    fn bm25_sql_uses_shared_pdb_score_expressions() {
+        let sql = build_bm25_sql("ownership", &SearchScope::project("project-1"), 10)
+            .expect("query is searchable")
+            .sql;
+
+        assert!(sql.contains("pdb.score(c.id) AS score"));
+        assert!(sql.contains("pdb.score(d.id) AS score"));
+        assert!(!sql.contains("pg_search.score"));
     }
 
     fn memory_hit(id: &str, scope: SearchScope) -> crate::search::WikiSearchResult {

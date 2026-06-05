@@ -10,15 +10,10 @@ use crate::visibility;
 
 // Keep BM25 query sanitation centralized in gobby-core so gcode and gwiki
 // escape pg_search's DSL identically.
+pub(super) use gobby_core::search::bm25_score_expr;
 pub use gobby_core::search::sanitize_pg_search_query;
 
 pub(super) type PgParam = Box<dyn ToSql + Sync>;
-
-pub(super) const BM25_SCORE_FUNCTION: &str = "pdb.score";
-
-pub(super) fn bm25_score_expr(row_id: &str) -> String {
-    format!("{BM25_SCORE_FUNCTION}({row_id})")
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedGraphSymbol {

@@ -1,4 +1,5 @@
 use anyhow::{Context as _, bail};
+use gobby_core::search::BM25_SCORE_REGPROCEDURE;
 use postgres::Client;
 
 use crate::setup::DEFAULT_SCHEMA;
@@ -14,8 +15,6 @@ const REQUIRED_TABLES: &[&str] = &[
 
 const REQUIRED_BM25_INDEXES: &[&str] = &["code_symbols_search_bm25", "code_content_search_bm25"];
 
-const REQUIRED_BM25_SCORE_FUNCTION: &str = "pdb.score(anyelement)";
-
 const MIGRATION_HINT: &str = "Configure the Gobby PostgreSQL hub with the required code-index schema, `pg_search` extension, and BM25 indexes. For standalone databases, run `gcode setup --standalone --database-url <dsn>`.";
 
 /// Validate that the Gobby-owned PostgreSQL hub schema exists.
@@ -27,9 +26,9 @@ pub fn validate_runtime_schema(client: &mut Client) -> anyhow::Result<()> {
         bail!("PostgreSQL hub is missing required extension `pg_search`. {MIGRATION_HINT}");
     }
 
-    if !procedure_exists(client, REQUIRED_BM25_SCORE_FUNCTION)? {
+    if !procedure_exists(client, BM25_SCORE_REGPROCEDURE)? {
         bail!(
-            "PostgreSQL hub is missing required BM25 score function `{REQUIRED_BM25_SCORE_FUNCTION}`. {MIGRATION_HINT}"
+            "PostgreSQL hub is missing required BM25 score function `{BM25_SCORE_REGPROCEDURE}`. {MIGRATION_HINT}"
         );
     }
 
@@ -102,7 +101,7 @@ mod tests {
         assert!(REQUIRED_TABLES.contains(&"code_content_chunks"));
         assert!(REQUIRED_BM25_INDEXES.contains(&"code_symbols_search_bm25"));
         assert!(REQUIRED_BM25_INDEXES.contains(&"code_content_search_bm25"));
-        assert_eq!(REQUIRED_BM25_SCORE_FUNCTION, "pdb.score(anyelement)");
+        assert_eq!(BM25_SCORE_REGPROCEDURE, "pdb.score(anyelement)");
     }
 
     mod serial_db {
