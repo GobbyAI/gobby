@@ -614,13 +614,13 @@ fn frontmatter_serializes_scalars_with_serde_yaml() {
 
     assert_eq!(
         mapping
-            .get(&serde_yaml::Value::String("title".to_string()))
+            .get(serde_yaml::Value::String("title".to_string()))
             .and_then(serde_yaml::Value::as_str),
         Some("line\nquote\"tab\tbackslash\\nul\0bell\u{0007}")
     );
     assert_eq!(
         mapping
-            .get(&serde_yaml::Value::String("type".to_string()))
+            .get(serde_yaml::Value::String("type".to_string()))
             .and_then(serde_yaml::Value::as_str),
         Some("code_file")
     );
