@@ -426,6 +426,72 @@ async def test_send_message_waits_for_user_permission_approval() -> None:
 
 
 @pytest.mark.asyncio
+async def test_plan_mode_cancels_unapproved_tool_and_broadcasts_plan() -> None:
+    # #15664: in plan mode a tool that would otherwise need interactive approval
+    # (here a read-only research Bash that is neither write-blocked nor
+    # auto-allowed) must be cancelled deterministically, never awaited. Awaiting
+    # it stalls the stream loop so the end-of-stream pending-plan broadcast never
+    # fires and the plan card never surfaces in the web UI. With the fix the turn
+    # completes and the plan broadcasts, matching Codex/ACP.
+    plan_text = "Plan: add multiply helper"
+    process = _FakeProcess(
+        [_session_init_line()]
+        + [
+            _turn_response_lines(plan_text)[0],
+            _permission_request_line(
+                request_id="permission-1",
+                tool_id="tool-1",
+                tool_name="Execute",
+                tool_input={"command": "grep -rn multiply src"},
+            ),
+            *_turn_response_lines(plan_text)[1:],
+        ]
+    )
+    backend = DroidWebChatBackend()
+    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session.project_path = "/tmp/project"
+    session.chat_mode = "plan"
+
+    # If plan mode ever falls through to interactive approval, this callback
+    # records it (and the assertion below fails) instead of hanging the test.
+    approval_calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def approve_tool(tool_name: str, arguments: dict[str, Any]) -> None:
+        approval_calls.append((tool_name, arguments))
+        session.provide_approval("approve")
+
+    session._tool_approval_callback = approve_tool
+
+    broadcasts: list[str | None] = []
+
+    async def on_plan_ready(content: str | None, input_data: dict[str, Any]) -> None:
+        broadcasts.append(content)
+
+    session._on_plan_ready = on_plan_ready
+
+    with (
+        patch(
+            "gobby.servers.websocket.chat.backends.droid.shutil.which", return_value="/bin/droid"
+        ),
+        patch(
+            "gobby.servers.websocket.chat.backends.droid.asyncio.create_subprocess_exec",
+            return_value=process,
+        ),
+    ):
+        await backend.attach_session(session, model="gpt-5.4")
+        events = [event async for event in session.send_message("make a plan")]
+
+    writes = [json.loads(write.decode("utf-8")) for write in process.stdin.writes]
+    permission_response = writes[2]
+    # Cancelled deterministically — never blocked on interactive approval.
+    assert permission_response["result"] == {"selectedOption": "cancel"}
+    assert approval_calls == []
+    # Stream completed, so the end-of-stream pending-plan broadcast fired once.
+    assert broadcasts == [plan_text]
+    assert isinstance(events[-1], DoneEvent)
+
+
+@pytest.mark.asyncio
 async def test_send_message_supports_multiple_turns_on_same_process() -> None:
     process = _FakeProcess(
         [_session_init_line()] + _turn_response_lines("First") + _turn_response_lines("Second")

@@ -686,6 +686,17 @@ class DroidWebChatBackend:
         ):
             return DROID_PERMISSION_PROCEED_ONCE
 
+        if session.chat_mode == "plan":
+            # Read-only planning mode (#15664): destructive tools were cancelled
+            # in the per-tool loop above and auto-allowed reads already
+            # proceeded. Anything still here needs interactive approval, which
+            # cannot be granted during the headless plan turn — awaiting it
+            # stalls the stream loop so the end-of-stream pending-plan broadcast
+            # (_maybe_broadcast_pending_plan) never runs and the plan card never
+            # surfaces. Cancel deterministically instead of blocking so the turn
+            # completes and the plan is broadcast, matching Codex/ACP behavior.
+            return DROID_PERMISSION_CANCEL
+
         approval_tool_name, approval_input = self._approval_prompt_payload(tool_payloads)
         approval = await session._wait_for_tool_approval(approval_tool_name, approval_input)
         if isinstance(approval, dict) and approval.get("decision") == "accept":
