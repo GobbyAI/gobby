@@ -65,12 +65,20 @@ def head_with_breadcrumb(text: str, *, budget: int, breadcrumb: str) -> str:
     if head_budget <= 0:
         return (breadcrumb or text)[:budget]
 
+    # Keep the breadcrumb from consuming so much budget that the retained head
+    # collapses into a tiny fragment.
     min_clean_cut = head_budget // 2
+    # Prefer a paragraph boundary; this is the cleanest place to cut pasted
+    # handoff/summary prose.
     cut = text.rfind("\n\n", 0, head_budget)
     if cut == -1:
+        # Fall back to a single newline only when it still leaves a meaningful
+        # head. ``-1`` means no newline was found inside the budget.
         newline = text.rfind("\n", 0, head_budget)
         cut = newline if newline > min_clean_cut else head_budget
     elif cut < min_clean_cut:
+        # A paragraph break too close to the start would waste most of the
+        # budget, so try the last line break before hard cutting.
         newline = text.rfind("\n", 0, head_budget)
         cut = newline if newline > min_clean_cut else head_budget
     head = text[:cut].rstrip()

@@ -267,6 +267,18 @@ def install_gwiki(module: Any, force: bool = False) -> dict[str, Any]:
     else:
         return {"installed": False, "skipped": False, "reason": "all installation methods failed"}
 
+    if not gwiki_path.is_file():
+        module.logger.warning(
+            "gwiki: %s installer reported success but %s was not created",
+            method,
+            gwiki_path,
+        )
+        return {
+            "installed": False,
+            "skipped": False,
+            "reason": f"{method} installer did not create {gwiki_path}",
+        }
+
     gwiki_path.chmod(0o755)
 
     resolved_version = probe_gwiki_version(module, gwiki_path) or target_version or "unknown"

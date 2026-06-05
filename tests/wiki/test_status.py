@@ -151,7 +151,7 @@ async def test_status_reads_live_watcher_and_handles_absent_watcher() -> None:
 async def test_status_logs_watcher_health_failures(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    with caplog.at_level(logging.WARNING, logger="gobby.wiki.status"):
+    with caplog.at_level(logging.DEBUG, logger="gobby.wiki.status"):
         status = await collect_wiki_status(
             gateway=RecordingGateway(),
             runner=SimpleNamespace(_wiki_watcher=FailingWatcher()),

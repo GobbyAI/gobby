@@ -87,7 +87,7 @@ def test_codewiki_refresh_schedules_trigger(client: TestClient, mock_server: Mag
 
     response = client.post(
         "/api/code-index/codewiki/refresh",
-        params={"root_path": "/repo", "project_id": "proj-1", "ai": "daemon"},
+        json={"root_path": "/repo", "project_id": "proj-1", "ai": "daemon"},
     )
 
     assert response.status_code == 202
@@ -105,7 +105,7 @@ def test_codewiki_refresh_reports_disabled(client: TestClient, mock_server: Magi
     trigger.request_refresh.return_value = False
     mock_server.services.codewiki_trigger = trigger
 
-    response = client.post("/api/code-index/codewiki/refresh", params={"root_path": "/repo"})
+    response = client.post("/api/code-index/codewiki/refresh", json={"root_path": "/repo"})
 
     assert response.status_code == 202
     assert response.json()["accepted"] is False
@@ -113,7 +113,7 @@ def test_codewiki_refresh_reports_disabled(client: TestClient, mock_server: Magi
 
 
 def test_codewiki_refresh_requires_trigger(client: TestClient) -> None:
-    response = client.post("/api/code-index/codewiki/refresh", params={"root_path": "/repo"})
+    response = client.post("/api/code-index/codewiki/refresh", json={"root_path": "/repo"})
 
     assert response.status_code == 503
 
@@ -125,7 +125,7 @@ def test_codewiki_refresh_validates_ai(client: TestClient, mock_server: MagicMoc
 
     response = client.post(
         "/api/code-index/codewiki/refresh",
-        params={"root_path": "/repo", "ai": "bad"},
+        json={"root_path": "/repo", "ai": "bad"},
     )
 
     assert response.status_code == 400
@@ -140,7 +140,7 @@ def test_codewiki_refresh_maps_expected_path_errors_to_bad_request(
     trigger.request_refresh.side_effect = FileNotFoundError("missing repo")
     mock_server.services.codewiki_trigger = trigger
 
-    response = client.post("/api/code-index/codewiki/refresh", params={"root_path": "/repo"})
+    response = client.post("/api/code-index/codewiki/refresh", json={"root_path": "/repo"})
 
     assert response.status_code == 400
     assert "missing repo" in response.json()["detail"]
@@ -158,7 +158,7 @@ def test_codewiki_refresh_maps_unexpected_os_errors_to_500(
     with caplog.at_level(logging.ERROR, logger="gobby.servers.routes.code_index"):
         response = client.post(
             "/api/code-index/codewiki/refresh",
-            params={"root_path": "/repo", "project_id": "proj-1", "ai": "daemon"},
+            json={"root_path": "/repo", "project_id": "proj-1", "ai": "daemon"},
             headers={"x-request-id": "req-1"},
         )
 

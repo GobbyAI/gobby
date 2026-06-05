@@ -49,7 +49,7 @@ def register_changes_routes(router: APIRouter, server: HTTPServer) -> None:
             files = await compute_session_changes(workspace)
         except asyncio.CancelledError:
             raise
-        except (OSError, RuntimeError, ValueError) as e:
+        except (OSError, RuntimeError) as e:
             logger.debug(
                 "Failed to compute changes for session %s: %s",
                 session_id,
@@ -75,10 +75,11 @@ def register_changes_routes(router: APIRouter, server: HTTPServer) -> None:
             diff = await compute_session_file_diff(workspace, path)
         except asyncio.CancelledError:
             raise
-        except (OSError, RuntimeError, ValueError) as e:
-            logger.exception(
+        except RuntimeError:
+            logger.debug(
                 "Failed to compute session file diff",
                 extra={"session_id": session_id, "path": path},
+                exc_info=True,
             )
-            raise HTTPException(500, "Failed to compute session file diff") from e
+            diff = ""
         return {"diff": diff, "path": path}

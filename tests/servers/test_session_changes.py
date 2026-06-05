@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -33,7 +34,7 @@ def _git(repo: Path, *args: str) -> None:
             "GIT_CONFIG_GLOBAL": "/dev/null",
             "GIT_CONFIG_SYSTEM": "/dev/null",
             "HOME": str(repo),
-            "PATH": __import__("os").environ.get("PATH", ""),
+            "PATH": os.environ.get("PATH", ""),
         },
     )
 

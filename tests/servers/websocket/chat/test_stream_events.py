@@ -7,6 +7,7 @@ the UI showing an "unknown" tool.
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from typing import Any
 
@@ -72,6 +73,7 @@ def _make_handler(
     )
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_tool_result_before_tool_call_resolves_real_name() -> None:
     """A result that beats its call is buffered, then reconciled with the real name."""
@@ -111,6 +113,7 @@ async def test_tool_result_before_tool_call_resolves_real_name() -> None:
     assert tool_call["status"] == "completed"
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_tool_call_then_result_in_order_unchanged() -> None:
     """In-order delivery still completes immediately and never buffers."""
@@ -140,6 +143,7 @@ async def test_tool_call_then_result_in_order_unchanged() -> None:
     assert tool_call["status"] == "completed"
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_failed_result_before_call_resolves_error_status() -> None:
     """Out-of-order failures reconcile to the error status with the real name."""
@@ -167,8 +171,11 @@ async def test_failed_result_before_call_resolves_error_status() -> None:
     assert tool_call["error"] == "boom"
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_orphan_result_flushed_as_provisional_on_done() -> None:
+async def test_orphan_result_flushed_as_provisional_on_done(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """A result whose call never arrives is surfaced provisionally at stream end."""
     transport = _FakeTransport()
     blocks = AssistantContentBlocks()
@@ -180,7 +187,8 @@ async def test_orphan_result_flushed_as_provisional_on_done() -> None:
     )
     assert blocks.blocks == []
 
-    await handler._handle_done(DoneEvent(tool_calls_count=0), SimpleNamespace())
+    with caplog.at_level(logging.INFO, logger="gobby.servers.websocket.chat._stream_events"):
+        await handler._handle_done(DoneEvent(tool_calls_count=0), SimpleNamespace())
 
     # Provisional tool call created, completed, and the buffer cleared before persist.
     assert handler.state.orphan_tool_results == {}
@@ -188,8 +196,19 @@ async def test_orphan_result_flushed_as_provisional_on_done() -> None:
     tool_call = blocks.blocks[0]["tool_calls"][0]
     assert tool_call["tool_name"] == "unknown"
     assert tool_call["status"] == "completed"
+    record = next(
+        item
+        for item in caplog.records
+        if item.message == "Flushing orphan ToolResultEvent as unknown tool call"
+    )
+    assert record.call_id == "orphan-1"
+    assert record.tool_name == "unknown"
+    assert record.server_name == "unknown"
+    assert record.result_type == "dict"
+    assert record.result_length == 1
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_orphan_result_retained_when_terminal_send_fails() -> None:
     """A failed terminal send must not discard the buffered tool result."""

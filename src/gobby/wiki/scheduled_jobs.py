@@ -147,7 +147,7 @@ def create_wiki_audit_handler(
     return audit_handler
 
 
-def register_wiki_cron_jobs(
+async def register_wiki_cron_jobs(
     *,
     cron_storage: CronJobStorage,
     cron_executor: CronRegistrationProtocol,
@@ -162,7 +162,7 @@ def register_wiki_cron_jobs(
     reconcile_stale_wiki_cron_scopes(cron_storage=cron_storage, project_id=project_id)
     registered = 0
     for scope in _configured_scopes(scopes, project_id):
-        gateway = _create_gateway(scope, db, gateway_factory)
+        gateway = await _create_gateway(scope, db, gateway_factory)
         coordinator = WikiUpdateCoordinator(gateway)
 
         for command, purpose, interval, handler, ensure_system_job in (
@@ -247,14 +247,14 @@ def wiki_job_name(command: str, scope: str) -> str:
     return f"gobby:wiki-{command}:{scope}"
 
 
-def _create_gateway(
+async def _create_gateway(
     scope: str,
     db: HubDatabase | None,
     gateway_factory: GatewayFactory | None,
 ) -> WikiGatewayProtocol:
     if gateway_factory is None and db is None:
         raise ValueError("_create_gateway requires db when gateway_factory is not provided")
-    resolved = resolve_scope_identity(
+    resolved = await resolve_scope_identity(
         db,
         scope,
         require_project_root=gateway_factory is None,

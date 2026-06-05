@@ -69,6 +69,23 @@ describe("handleArtifactTransportEvent", () => {
     );
   });
 
+  it("ignores artifact events with non-string event names", () => {
+    const { ctx, calls } = makeContext();
+    const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+    const data = { event: true, artifact_type: "code", content: "x" };
+    handleArtifactTransportEvent(data, ctx);
+    expect(calls).toEqual([]);
+    expect(debug).toHaveBeenCalledWith(
+      "Ignoring artifact transport event",
+      expect.objectContaining({
+        data,
+        event: true,
+        handlerRef: ctx.onArtifactEventRef,
+        reason: "unsupported_event",
+      }),
+    );
+  });
+
   it("ignores show_file events missing required fields", () => {
     const { ctx, calls } = makeContext();
     const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);

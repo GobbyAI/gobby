@@ -381,6 +381,28 @@ async def test_wiki_research_mcp_routes_d5_options_to_gateway() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_wiki_research_mcp_rejects_bool_positive_int_values() -> None:
+    registry = create_wiki_registry(
+        db=None,
+        gateway_cls=RecordingResearchGateway,
+        update_coordinator_cls=RecordingResearchCoordinator,
+    )
+
+    result = await registry.call(
+        "wiki_research",
+        {"topic": "freshness", "query": "Fill citation gaps", "max_steps": True},
+    )
+
+    assert result == {
+        "success": False,
+        "ok": False,
+        "error": "max_steps must be an integer",
+    }
+    assert RecordingResearchGateway.instances == []
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_wiki_research_mcp_requires_query_unless_audit() -> None:
     registry = create_wiki_registry(
         db=None,

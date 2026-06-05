@@ -29,7 +29,7 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
         project: str | None = Query(None),
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
-        gateway = _gateway(server, project, topic)
+        gateway = await _gateway(server, project, topic)
         return await collect_wiki_status(gateway=gateway, runner=_runner(server))
 
     @router.post("/index")
@@ -126,7 +126,7 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
         project: str | None = Query(None),
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
-        gateway = _gateway(server, project, topic)
+        gateway = await _gateway(server, project, topic)
         staged_path = await _stage_upload(file)
         try:
             result = await _map_gateway_errors(lambda: gateway.ingest_file(staged_path))
@@ -146,7 +146,7 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
         if not urls and not paths:
             raise HTTPException(status_code=400, detail="Provide path, paths, or urls")
 
-        gateway = _gateway(server, project, topic)
+        gateway = await _gateway(server, project, topic)
         if urls and paths:
             result = await _ingest_mixed(gateway, urls, paths)
         elif urls:
@@ -235,7 +235,7 @@ async def _read(
     topic: str | None,
     call: GatewayCall,
 ) -> dict[str, Any]:
-    gateway = _gateway(server, project, topic)
+    gateway = await _gateway(server, project, topic)
     return await _map_gateway_errors(lambda: call(gateway))
 
 
@@ -245,7 +245,7 @@ async def _write_call(
     topic: str | None,
     call: GatewayCall,
 ) -> dict[str, Any]:
-    gateway = _gateway(server, project, topic)
+    gateway = await _gateway(server, project, topic)
     result = await _map_gateway_errors(lambda: call(gateway))
     return await _write(gateway, result)
 
@@ -255,11 +255,11 @@ async def _write(gateway: GwikiGateway, result: dict[str, Any]) -> dict[str, Any
     return await _map_gateway_errors(lambda: coordinator.handle_write_result(result))
 
 
-def _gateway(server: HTTPServer, project: str | None, topic: str | None) -> GwikiGateway:
+async def _gateway(server: HTTPServer, project: str | None, topic: str | None) -> GwikiGateway:
     # Keep server in the helper signature for route factory compatibility.
     services = getattr(server, "services", None)
     try:
-        resolved = resolve_wiki_scope(
+        resolved = await resolve_wiki_scope(
             getattr(services, "database", None),
             project=project,
             topic=topic,

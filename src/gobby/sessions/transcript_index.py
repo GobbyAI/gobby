@@ -586,9 +586,12 @@ def _encode_adjustment_value(value: Any) -> Any:
         json.dumps(value)
     except TypeError:
         logger.debug(
-            "Skipping non-serializable transcript index adjustment value %r of type %s",
-            value,
-            type(value).__name__,
+            "Skipping non-serializable transcript index adjustment value",
+            extra={
+                "value_type": type(value).__name__,
+                "value_length": len(value) if hasattr(value, "__len__") else None,
+                "value_redacted": True,
+            },
         )
         return None
     return value
@@ -606,6 +609,7 @@ def _decode_adjustment_value(value: Any) -> Any:
 
 
 def _index_to_payload(path: str, index: TranscriptIndex) -> dict[str, Any]:
+    _require_gzip_logical_size(index.seek_mode, index.logical_size)
     return {
         "schema_version": INDEX_SCHEMA_VERSION,
         "source_path": os.path.abspath(path),

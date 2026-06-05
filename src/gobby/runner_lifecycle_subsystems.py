@@ -271,9 +271,39 @@ async def _start_agent_lifecycle_monitor(
 
 async def _start_cron_scheduler(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
     if runner.cron_scheduler:
+        await _register_wiki_cron_handlers(runner, tracker)
         await runner.cron_scheduler.start()
         if tracker:
             tracker.complete("Cron scheduler")
+
+
+async def _register_wiki_cron_handlers(
+    runner: GobbyRunner,
+    tracker: StartupTracker | None,
+) -> None:
+    if not runner.project_id or runner.cron_storage is None:
+        return
+    executor = getattr(runner.cron_scheduler, "executor", None)
+    if executor is None:
+        return
+    try:
+        from gobby.wiki.scheduled_jobs import (
+            configured_wiki_cron_scopes,
+            register_wiki_cron_jobs,
+        )
+
+        registered = await register_wiki_cron_jobs(
+            cron_storage=runner.cron_storage,
+            cron_executor=executor,
+            project_id=runner.project_id,
+            db=runner.database,
+            scopes=configured_wiki_cron_scopes(runner.config, runner.project_id),
+        )
+        logger.debug("Wiki cron handlers registered: %s", registered)
+    except Exception as e:
+        logger.error("Failed to register wiki cron handlers: %s", e)
+        if tracker:
+            tracker.error("Wiki cron handlers", str(e))
 
 
 async def _start_system_automation_loop(

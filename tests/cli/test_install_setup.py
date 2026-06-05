@@ -802,6 +802,23 @@ class TestGwikiHelpers:
         binstall.assert_called_once_with(bin_dir, GWIKI_PIN)
         cargo_install.assert_called_once_with(bin_dir, GWIKI_PIN)
 
+    def test_install_gwiki_reports_success_without_binary(self, tmp_path):
+        with (
+            patch("gobby.cli.install_setup.sys.platform", "darwin"),
+            patch("gobby.cli.install_setup.platform.machine", return_value="arm64"),
+            patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
+            patch("gobby.cli.install_setup._get_installed_gwiki_version", return_value=None),
+            patch("gobby.cli.install_setup._install_gwiki_from_submodule", return_value=False),
+            patch("gobby.cli.install_setup._install_gwiki_from_github", return_value=True),
+            patch("gobby.cli.install_setup._ensure_gobby_bin_on_path") as ensure_path,
+        ):
+            res = _install_gwiki()
+
+        assert res["installed"] is False
+        assert res["skipped"] is False
+        assert "did not create" in res["reason"]
+        ensure_path.assert_not_called()
+
     @patch("gobby.cli.install_setup.urlopen")
     def test_get_latest_gwiki_version(self, mock_url):
         fake_resp = MagicMock()

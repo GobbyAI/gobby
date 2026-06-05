@@ -9,7 +9,7 @@ export function handleArtifactTransportEvent(
   data: Record<string, unknown>,
   ctx: UseChatTransportParams,
 ): void {
-  if (data.event !== "show_file") {
+  if (typeof data.event !== "string" || data.event !== "show_file") {
     console.debug("Ignoring artifact transport event", {
       data,
       event: data.event,

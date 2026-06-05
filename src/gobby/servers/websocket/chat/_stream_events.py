@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sized
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
@@ -243,6 +244,20 @@ class ChatStreamEventHandler:
         if not self.state.orphan_tool_results:
             return
         for call_id, result in list(self.state.orphan_tool_results.items()):
+            logger.info(
+                "Flushing orphan ToolResultEvent as unknown tool call",
+                extra={
+                    "call_id": call_id,
+                    "tool_name": "unknown",
+                    "server_name": "unknown",
+                    "success": result.success,
+                    "result_type": type(result.result).__name__
+                    if result.result is not None
+                    else None,
+                    "result_length": _safe_len(result.result),
+                    "has_error": result.error is not None,
+                },
+            )
             self.assistant_blocks.append_tool_call(
                 tool_call_id=call_id,
                 tool_name="unknown",
@@ -323,3 +338,12 @@ class ChatStreamEventHandler:
         await self.transport.safe_send(done_msg)
         await self.persistence.persist_done_metadata(session, event)
         return True
+
+
+def _safe_len(value: Any) -> int | None:
+    if not isinstance(value, Sized):
+        return None
+    try:
+        return len(value)
+    except (TypeError, ValueError, RuntimeError):
+        return None

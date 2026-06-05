@@ -176,7 +176,11 @@ def _resolve_isolated_workspace(task_manager: Any, session_id: str) -> SessionWo
 
 
 async def compute_session_changes(workspace: SessionWorkspace) -> list[ChangedFile]:
-    """Compute the changed-file list for a workspace relative to its base ref."""
+    """Compute the changed-file list for a workspace relative to its base ref.
+
+    Runtime and OS failures from the underlying git helper propagate to callers
+    so HTTP routes can classify them at the boundary.
+    """
     cwd = workspace.working_dir
     base = workspace.base_ref
     files: dict[str, str] = {}

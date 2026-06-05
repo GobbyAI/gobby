@@ -147,7 +147,7 @@ def _ensure_gzip_block_index_sync(
         mtime_ns=st.st_mtime_ns if mtime_ns is None else mtime_ns,
         size=st.st_size if size is None else size,
     )
-    if index is not None:
+    if index is not None and index.block_size == block_size:
         return index
 
     tmp = _tmp_path(Path(path))

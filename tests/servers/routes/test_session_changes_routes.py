@@ -14,7 +14,7 @@ from gobby.servers.session_changes import SessionWorkspace
 pytestmark = pytest.mark.unit
 
 
-def test_session_change_diff_500_uses_generic_detail(
+def test_session_change_diff_runtime_error_returns_empty_diff(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -46,5 +46,5 @@ def test_session_change_diff_500_uses_generic_detail(
         params={"path": "src/app.py"},
     )
 
-    assert response.status_code == 500
-    assert response.json()["detail"] == "Failed to compute session file diff"
+    assert response.status_code == 200
+    assert response.json() == {"diff": "", "path": "src/app.py"}

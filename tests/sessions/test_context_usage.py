@@ -90,6 +90,23 @@ def test_effective_context_window_uses_reported_db_session_value() -> None:
     assert effective_context_window_for_session(session, db=FakeDb()) == 200_000
 
 
+def test_effective_context_window_prefers_reported_db_value_over_model_fallback() -> None:
+    class FakeDb:
+        def fetchall(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
+            return []
+
+        def fetchone(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            return {"context_window": 175_000, "context_usage_confidence": "reported"}
+
+    session = SimpleNamespace(
+        id="session-1",
+        source="codex",
+        model="gpt-5.4",
+    )
+
+    assert effective_context_window_for_session(session, db=FakeDb()) == 175_000
+
+
 def test_effective_context_window_ignores_non_reported_db_session_value() -> None:
     class FakeDb:
         def fetchall(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:

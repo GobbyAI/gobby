@@ -113,6 +113,21 @@ async def test_ensure_gzip_block_index_reblocks_legacy_single_member_archive(
     assert load_gzip_block_index(str(archive)) == index
 
 
+async def test_ensure_gzip_block_index_rebuilds_block_size_mismatch(
+    tmp_path: Path,
+) -> None:
+    source, payload = _write_source(tmp_path, count=24, width=48)
+    archive = tmp_path / "resized.jsonl.gz"
+    first = write_blocked_gzip_archive(str(source), str(archive), block_size=160)
+
+    rebuilt = await ensure_gzip_block_index(str(archive), block_size=320)
+
+    assert first.block_size == 160
+    assert rebuilt.block_size == 320
+    assert gzip.decompress(archive.read_bytes()) == payload
+    assert load_gzip_block_index(str(archive)) == rebuilt
+
+
 def test_write_blocked_gzip_from_lines_cleans_temp_on_os_error(tmp_path: Path) -> None:
     archive = tmp_path / "broken.jsonl.gz"
 

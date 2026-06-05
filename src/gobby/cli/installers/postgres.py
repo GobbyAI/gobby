@@ -476,7 +476,7 @@ def _read_bootstrap_database_url(gobby_home: Path) -> str | None:
 
 
 def _active_install_mode(*, gobby_home: Path | None = None) -> InstallMode:
-    return _bootstrap.active_install_mode(gobby_home=gobby_home)
+    return _bootstrap.active_install_mode(_gobby_home=gobby_home)
 
 
 def _dsn_host(dsn: str) -> str | None:

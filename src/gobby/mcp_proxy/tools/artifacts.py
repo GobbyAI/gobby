@@ -28,6 +28,12 @@ _artifact_broadcaster: ArtifactBroadcaster | None = None
 
 MAX_TEXT_FILE_SIZE = 1 * 1024 * 1024  # 1MB
 MAX_IMAGE_FILE_SIZE = 5 * 1024 * 1024  # 5MB
+_PROJECT_ROOT_KEYS = ("project_path", "parent_project_path")
+_EXPLICIT_ROOT_KEYS = (
+    "artifact_allowed_roots",
+    "artifact_roots",
+    "allowed_artifact_roots",
+)
 
 # Extension → (artifact_type, language)
 EXTENSION_MAP: dict[str, tuple[str, str | None]] = {
@@ -116,24 +122,37 @@ def create_artifacts_registry() -> InternalToolRegistry:
         if not source.is_absolute():
             return {"success": False, "error": f"file_path must be absolute: {file_path}"}
         project_ctx = get_project_context()
-        project_path = project_ctx.get("project_path") if project_ctx else None
+        if project_ctx is None:
+            return {"success": False, "error": "project context is required"}
+        project_path = project_ctx.get("project_path")
         if not isinstance(project_path, str) or not project_path:
             return {"success": False, "error": "project context is required"}
-        project_root = Path(project_path).resolve(strict=False)
-        resolved_source = source.resolve(strict=False)
-        if resolved_source != project_root and project_root not in resolved_source.parents:
-            return {"success": False, "error": f"file_path must be under project: {file_path}"}
-        if not source.is_file():
+        try:
+            resolved_source = source.resolve(strict=True)
+        except FileNotFoundError:
+            return {"success": False, "error": f"File not found: {file_path}"}
+        except OSError as exc:
+            logger.debug(
+                "Failed to resolve artifact source path",
+                extra={"file_path": file_path, "error": str(exc)},
+                exc_info=True,
+            )
             return {"success": False, "error": f"File not found: {file_path}"}
 
-        ext_clean = source.suffix.lower().lstrip(".")
+        allowed_roots = _artifact_allowed_roots(project_ctx)
+        if not any(_is_relative_to(resolved_source, root) for root in allowed_roots):
+            return {"success": False, "error": f"file_path must be under project: {file_path}"}
+        if not resolved_source.is_file():
+            return {"success": False, "error": f"File not found: {file_path}"}
+
+        ext_clean = resolved_source.suffix.lower().lstrip(".")
         artifact_type, language = EXTENSION_MAP.get(
             f".{ext_clean}" if ext_clean else "",
             ("code", ext_clean or "text"),
         )
 
         # Check file size
-        file_size = source.stat().st_size
+        file_size = resolved_source.stat().st_size
         if artifact_type == "image":
             if file_size > MAX_IMAGE_FILE_SIZE:
                 return {
@@ -148,16 +167,16 @@ def create_artifacts_registry() -> InternalToolRegistry:
 
         # Read content (use to_thread to avoid blocking the event loop)
         if artifact_type == "image":
-            raw = await asyncio.to_thread(source.read_bytes)
-            mime_type = mimetypes.guess_type(str(source))[0] or "application/octet-stream"
+            raw = await asyncio.to_thread(resolved_source.read_bytes)
+            mime_type = mimetypes.guess_type(str(resolved_source))[0] or "application/octet-stream"
             content = f"data:{mime_type};base64,{base64.b64encode(raw).decode('ascii')}"
         else:
             try:
-                content = await asyncio.to_thread(source.read_text, encoding="utf-8")
+                content = await asyncio.to_thread(resolved_source.read_text, encoding="utf-8")
             except UnicodeDecodeError:
                 return {"success": False, "error": f"File is not valid UTF-8: {file_path}"}
 
-        actual_title = title or source.name
+        actual_title = title or resolved_source.name
 
         bc = _artifact_broadcaster
         if bc:
@@ -178,3 +197,30 @@ def create_artifacts_registry() -> InternalToolRegistry:
         }
 
     return registry
+
+
+def _artifact_allowed_roots(project_ctx: dict[str, Any]) -> list[Path]:
+    roots: list[Path] = []
+    for key in _PROJECT_ROOT_KEYS:
+        _append_context_root(roots, project_ctx.get(key))
+    for key in _EXPLICIT_ROOT_KEYS:
+        value = project_ctx.get(key)
+        if isinstance(value, str):
+            _append_context_root(roots, value)
+        elif isinstance(value, list):
+            for item in value:
+                _append_context_root(roots, item)
+    return list(dict.fromkeys(roots))
+
+
+def _append_context_root(roots: list[Path], value: object) -> None:
+    if not isinstance(value, str) or not value.strip():
+        return
+    try:
+        roots.append(Path(value).expanduser().resolve(strict=True))
+    except OSError:
+        logger.debug("Skipping unavailable artifact root", extra={"root": value}, exc_info=True)
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    return path == root or root in path.parents

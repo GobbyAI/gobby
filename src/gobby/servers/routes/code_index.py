@@ -32,6 +32,15 @@ class InvalidateIndexRequest(BaseModel):
     project_id: str
 
 
+class CodewikiRefreshRequest(BaseModel):
+    """Request body for POST /api/code-index/codewiki/refresh."""
+
+    root_path: str
+    project_id: str | None = None
+    out_dir: str | None = None
+    ai: str = "auto"
+
+
 def _require_project_id(project_id: str | None) -> str:
     if not project_id:
         raise HTTPException(status_code=400, detail="project_id is required")
@@ -365,13 +374,10 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
     @router.post("/codewiki/refresh", status_code=202)
     async def refresh_codewiki(
         request: Request,
-        root_path: str = Query(..., description="Project root path"),
-        project_id: str | None = Query(None, description="Project ID"),
-        out_dir: str | None = Query(None, description="Optional codewiki output directory"),
-        ai: str = Query("auto", description="AI route: auto, daemon, direct, or off"),
+        body: CodewikiRefreshRequest,
     ) -> dict[str, Any]:
         """Schedule a debounced codewiki refresh after post-commit indexing."""
-        root_value = root_path.strip()
+        root_value = body.root_path.strip()
         if not root_value:
             raise HTTPException(status_code=400, detail="root_path is required")
 
@@ -384,9 +390,9 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
             accepted = bool(
                 request_refresh(
                     root_path=root_value,
-                    project_id=project_id,
-                    out_dir=out_dir,
-                    ai=ai,
+                    project_id=body.project_id,
+                    out_dir=body.out_dir,
+                    ai=body.ai,
                 )
             )
         except ValueError as exc:
@@ -404,8 +410,8 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
                     "request_id": getattr(request.state, "request_id", None)
                     or request.headers.get("x-request-id"),
                     "root_path": root_value,
-                    "project_id": project_id,
-                    "ai": ai,
+                    "project_id": body.project_id,
+                    "ai": body.ai,
                     "error": str(exc),
                 },
             )
@@ -419,8 +425,8 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
                     "request_id": getattr(request.state, "request_id", None)
                     or request.headers.get("x-request-id"),
                     "root_path": root_value,
-                    "project_id": project_id,
-                    "ai": ai,
+                    "project_id": body.project_id,
+                    "ai": body.ai,
                     "error": str(exc),
                 },
             )
@@ -429,7 +435,7 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         return {
             "accepted": accepted,
             "root_path": root_value,
-            "project_id": project_id,
+            "project_id": body.project_id,
             "reason": None if accepted else "wiki.codewiki_on_commit disabled",
         }
 

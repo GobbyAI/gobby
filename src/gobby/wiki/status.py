@@ -52,6 +52,15 @@ async def _gateway_probe(
             "stderr": "",
             "error": {"type": exc.__class__.__name__, "message": str(exc)},
         }
+    except (OSError, RuntimeError, ValueError, TypeError) as exc:
+        logger.debug("Wiki health probe failed", exc_info=True)
+        return {
+            "ok": False,
+            "status": "failed",
+            "payload": None,
+            "stderr": "",
+            "error": {"type": exc.__class__.__name__, "message": str(exc)},
+        }
 
 
 def _gateway_maintenance(envelope: dict[str, Any]) -> dict[str, Any]:

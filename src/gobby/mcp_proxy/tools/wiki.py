@@ -49,11 +49,11 @@ def create_wiki_registry(
         ),
     )
 
-    def gateway(
+    async def gateway(
         project: str | None = None,
         topic: str | None = None,
     ) -> tuple[GwikiGateway, ResolvedWikiScope]:
-        resolved = resolve_wiki_scope(
+        resolved = await resolve_wiki_scope(
             db,
             project=project,
             topic=topic,
@@ -70,7 +70,7 @@ def create_wiki_registry(
     async def read_call(
         project: str | None, topic: str | None, call: GatewayCall
     ) -> dict[str, Any]:
-        gwiki, scope = gateway(project, topic)
+        gwiki, scope = await gateway(project, topic)
         result = await _map_gateway_errors(lambda: call(gwiki))
         return _structured_result(result, scope=scope)
 
@@ -79,7 +79,7 @@ def create_wiki_registry(
         topic: str | None,
         call: GatewayCall,
     ) -> dict[str, Any]:
-        gwiki, scope = gateway(project, topic)
+        gwiki, scope = await gateway(project, topic)
         result = await _map_gateway_errors(lambda: call(gwiki))
         handled = await update_coordinator_cls(gwiki).handle_write_result(result)
         return _structured_result(handled, scope=scope)
@@ -364,7 +364,11 @@ def _normalize_ai(value: str | None) -> str:
 
 
 def _validate_positive_int(name: str, value: int | None) -> None:
-    if value is not None and value <= 0:
+    if value is None:
+        return
+    if type(value) is not int:
+        raise ValueError(f"{name} must be an integer")
+    if value <= 0:
         raise ValueError(f"{name} must be greater than 0")
 
 

@@ -217,17 +217,21 @@ async def test_scheduled_jobs_use_gateway() -> None:
     assert gateway.calls[-1][1]["ai"] == "daemon"
 
 
-def test_wiki_cron_handlers_registered(cron_storage: CronJobStorage, project_id: str) -> None:
+@pytest.mark.asyncio
+async def test_wiki_cron_handlers_registered(
+    cron_storage: CronJobStorage,
+    project_id: str,
+) -> None:
     executor = RecordingExecutor(handlers={})
 
-    created = register_wiki_cron_jobs(
+    created = await register_wiki_cron_jobs(
         cron_storage=cron_storage,
         cron_executor=executor,
         project_id=project_id,
         scopes=["project:alpha"],
         gateway_factory=lambda _scope: RecordingGateway(),
     )
-    repeated = register_wiki_cron_jobs(
+    repeated = await register_wiki_cron_jobs(
         cron_storage=cron_storage,
         cron_executor=executor,
         project_id=project_id,
@@ -256,14 +260,15 @@ def test_wiki_cron_handlers_registered(cron_storage: CronJobStorage, project_id:
     assert cron_storage.get_job_by_name("gobby:wiki-research:project:alpha") is None
 
 
-def test_wiki_cron_registration_requires_db_without_gateway_factory(
+@pytest.mark.asyncio
+async def test_wiki_cron_registration_requires_db_without_gateway_factory(
     cron_storage: CronJobStorage,
     project_id: str,
 ) -> None:
     executor = RecordingExecutor(handlers={})
 
     with pytest.raises(ValueError, match="requires db"):
-        register_wiki_cron_jobs(
+        await register_wiki_cron_jobs(
             cron_storage=cron_storage,
             cron_executor=executor,
             project_id=project_id,
@@ -271,12 +276,14 @@ def test_wiki_cron_registration_requires_db_without_gateway_factory(
         )
 
 
-def test_create_gateway_requires_db_without_gateway_factory() -> None:
+@pytest.mark.asyncio
+async def test_create_gateway_requires_db_without_gateway_factory() -> None:
     with pytest.raises(ValueError, match="requires db"):
-        _create_gateway("project:alpha", db=None, gateway_factory=None)
+        await _create_gateway("project:alpha", db=None, gateway_factory=None)
 
 
-def test_queryless_system_research_jobs_are_retired(
+@pytest.mark.asyncio
+async def test_queryless_system_research_jobs_are_retired(
     cron_storage: CronJobStorage,
     project_id: str,
 ) -> None:
@@ -294,7 +301,7 @@ def test_queryless_system_research_jobs_are_retired(
     assert existing.next_run_at is not None
 
     for _ in range(2):
-        register_wiki_cron_jobs(
+        await register_wiki_cron_jobs(
             cron_storage=cron_storage,
             cron_executor=RecordingExecutor(handlers={}),
             project_id=project_id,
@@ -331,7 +338,7 @@ async def test_query_backed_research_jobs_are_preserved_and_routed(
     gateway = RecordingGateway()
     executor = RecordingExecutor(handlers={})
 
-    register_wiki_cron_jobs(
+    await register_wiki_cron_jobs(
         cron_storage=cron_storage,
         cron_executor=executor,
         project_id=project_id,
@@ -351,7 +358,8 @@ async def test_query_backed_research_jobs_are_preserved_and_routed(
     assert output["command"] == "research"
 
 
-def test_default_wiki_cron_scope_resolves_project_root(
+@pytest.mark.asyncio
+async def test_default_wiki_cron_scope_resolves_project_root(
     cron_storage: CronJobStorage,
     project_id: str,
     temp_db: Any,
@@ -359,7 +367,7 @@ def test_default_wiki_cron_scope_resolves_project_root(
     executor = RecordingExecutor(handlers={})
     resolved_scopes = []
 
-    register_wiki_cron_jobs(
+    await register_wiki_cron_jobs(
         cron_storage=cron_storage,
         cron_executor=executor,
         project_id=project_id,
@@ -377,7 +385,8 @@ def test_default_wiki_cron_scope_resolves_project_root(
     ]
 
 
-def test_wiki_cron_registration_reconciles_bare_uuid_rows(
+@pytest.mark.asyncio
+async def test_wiki_cron_registration_reconciles_bare_uuid_rows(
     cron_storage: CronJobStorage,
     project_id: str,
 ) -> None:
@@ -415,7 +424,7 @@ def test_wiki_cron_registration_reconciles_bare_uuid_rows(
         is_system=True,
     )
 
-    register_wiki_cron_jobs(
+    await register_wiki_cron_jobs(
         cron_storage=cron_storage,
         cron_executor=RecordingExecutor(handlers={}),
         project_id=project_id,

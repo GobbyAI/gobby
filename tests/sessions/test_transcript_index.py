@@ -9,6 +9,7 @@ builds once and invalidates on append.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections.abc import Callable
 from pathlib import Path
@@ -21,6 +22,7 @@ from gobby.sessions.transcript_index import (
     INDEX_CACHE_MAX_ENTRIES,
     TranscriptIndexAppender,
     build_index_from_file,
+    build_index_from_raw_lines,
     clear_index_cache,
     detect_source_bounded,
     get_or_build_index,
@@ -29,7 +31,7 @@ from gobby.sessions.transcript_index import (
 )
 from gobby.sessions.transcript_io import _count_nonempty_lines
 from gobby.sessions.transcript_renderer import RenderedMessage, render_transcript
-from gobby.sessions.transcripts.base import ParsedMessage
+from gobby.sessions.transcripts.base import ParsedMessage, RawLine
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
@@ -330,6 +332,60 @@ def test_droid_sidecar_usage_is_post_pass_adjustment(tmp_path: Path) -> None:
     assert loaded_adjustment.field == "usage"
     assert loaded_adjustment.value.input_tokens == 5
     assert loaded_adjustment.value.output_tokens == 7
+
+
+def test_gzip_block_sidecar_requires_logical_size_before_persist(tmp_path: Path) -> None:
+    raw_lines = [
+        RawLine(byte_offset=0, raw_line_no=index, text=line)
+        for index, line in enumerate(_codex_lines())
+    ]
+    index = build_index_from_raw_lines(
+        raw_lines,
+        "codex",
+        SESSION,
+        seek_mode="gzip-block",
+        mtime_ns=1,
+        size=2,
+        transcript_path=str(tmp_path / "transcript.jsonl.gz"),
+        logical_size=100,
+    )
+    index.logical_size = None
+
+    with pytest.raises(ValueError, match="logical_size is required"):
+        persist_index_sidecar(str(tmp_path / "transcript.jsonl.gz"), index)
+
+
+def test_nonserializable_adjustment_log_redacts_value(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    transcript = tmp_path / "codex.jsonl"
+    lines = _codex_lines()
+    transcript.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    st = os.stat(transcript)
+    index = build_index_from_file(
+        str(transcript), "codex", SESSION, mtime_ns=st.st_mtime_ns, size=st.st_size
+    )
+    index.post_pass_adjustments = [
+        transcript_index.RenderedAdjustment(
+            group_index=0,
+            field="metadata",
+            value={"secret": object()},
+        )
+    ]
+
+    with caplog.at_level(logging.DEBUG, logger="gobby.sessions.transcript_index"):
+        persist_index_sidecar(str(transcript), index)
+
+    assert "secret" not in caplog.text
+    record = next(
+        item
+        for item in caplog.records
+        if item.message == "Skipping non-serializable transcript index adjustment value"
+    )
+    assert record.value_type == "dict"
+    assert record.value_length == 1
+    assert record.value_redacted is True
 
 
 def test_detect_source_bounded_prefers_path(tmp_path: Path) -> None:

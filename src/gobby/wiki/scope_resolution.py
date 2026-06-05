@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -63,7 +64,7 @@ def normalize_scope_identity(scope: str, *, default_project_id: str | None = Non
     return project_scope(value)
 
 
-def resolve_wiki_scope(
+async def resolve_wiki_scope(
     db: HubDatabase | None,
     *,
     project: str | None = None,
@@ -84,10 +85,10 @@ def resolve_wiki_scope(
     if project_ref is None:
         return ResolvedWikiScope(identity=None)
 
-    return resolve_scope_identity(db, project_ref, require_project_root=True)
+    return await resolve_scope_identity(db, project_ref, require_project_root=True)
 
 
-def resolve_scope_identity(
+async def resolve_scope_identity(
     db: HubDatabase | None,
     scope: str,
     *,
@@ -101,7 +102,7 @@ def resolve_scope_identity(
         )
 
     project_id = identity.removeprefix(PROJECT_SCOPE_PREFIX)
-    project_root = resolve_project_root(db, project_id) if db is not None else None
+    project_root = await resolve_project_root(db, project_id) if db is not None else None
     if require_project_root and project_root is None:
         raise WikiScopeResolutionError("project-scoped wiki calls require a database")
     return ResolvedWikiScope(
@@ -111,10 +112,14 @@ def resolve_scope_identity(
     )
 
 
-def resolve_project_root(db: HubDatabase | None, project_id: str) -> Path:
+async def resolve_project_root(db: HubDatabase | None, project_id: str) -> Path:
     if db is None:
         raise WikiScopeResolutionError("project-scoped wiki calls require a database")
 
+    return await asyncio.to_thread(_resolve_project_root_sync, db, project_id)
+
+
+def _resolve_project_root_sync(db: HubDatabase, project_id: str) -> Path:
     project = LocalProjectManager(db).get(project_id)
     if project is None:
         raise WikiScopeResolutionError(f"Unknown project id: {project_id}")
