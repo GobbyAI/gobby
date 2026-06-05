@@ -413,6 +413,8 @@ async def _stage_upload(file: UploadFile) -> Path:
                 staged.write(chunk)
             return staged_path
     except Exception:
+        # Broad by design: any upload read/write/staging failure must clean up
+        # the temporary file before the route maps the original exception.
         if staged_path is not None:
             staged_path.unlink(missing_ok=True)
         raise

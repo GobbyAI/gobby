@@ -366,7 +366,7 @@ class CronJobStorage:
         self._normalize_update_fields(job, fields)
         resulting_enabled = fields.get("enabled", job.enabled)
         resulting_next_run_at = fields.get("next_run_at", job.next_run_at)
-        if resulting_enabled is True and resulting_next_run_at is None:
+        if resulting_enabled and resulting_next_run_at is None:
             raise ValueError("enabled=True requires next_run_at")
         fields["updated_at"] = _utc_now_iso()
 
@@ -442,7 +442,7 @@ class CronJobStorage:
             return job
         resulting_enabled = update_fields.get("enabled", job.enabled)
         resulting_next_run_at = update_fields.get("next_run_at", job.next_run_at)
-        if resulting_enabled is True and resulting_next_run_at is None:
+        if resulting_enabled and resulting_next_run_at is None:
             raise ValueError(
                 "enabled=True requires next_run_at when repairing system cron identity"
             )

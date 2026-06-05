@@ -158,6 +158,7 @@ class ChatSessionPermissionsMixin:
                         "file first, then call ExitPlanMode."
                     )
                 )
+            self._reset_plan_broadcast_if_revised(plan_content)
 
             # Broadcast plan_pending_approval atomically with the gate. If the
             # PostToolUse file-write hook already broadcast this plan cycle,
@@ -449,6 +450,11 @@ class ChatSessionPermissionsMixin:
                 self._on_mode_persist(mode)
             except Exception as e:
                 logger.warning(f"Failed to persist chat_mode={mode}: {e}")
+
+    def _reset_plan_broadcast_if_revised(self, content: str | None) -> None:
+        """Allow a changed plan body to broadcast again in the current plan cycle."""
+        if content and content != self._pending_plan_content:
+            self._plan_broadcast_sent = False
 
     def approve_plan(self) -> None:
         """Mark the current plan as approved, unlocking write tools."""

@@ -117,7 +117,7 @@ def is_safe_relative_path(working_dir: str, path: str) -> bool:
         target = (base / path).resolve()
     except (OSError, ValueError):
         return False
-    return target == base or base in target.parents
+    return base in target.parents
 
 
 def resolve_session_workspace(

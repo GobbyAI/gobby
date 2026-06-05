@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import re
@@ -63,6 +62,15 @@ class ReviewLearningMemoryManager(PromotionMemoryManager, Protocol):
         project_id: str,
         limit: int,
         tags_all: list[str] | None,
+    ) -> list[Any]: ...
+
+    async def alist_memories(
+        self,
+        *,
+        project_id: str | None = None,
+        memory_type: str | None = None,
+        limit: int | None = None,
+        tags_all: list[str] | None = None,
     ) -> list[Any]: ...
 
 
@@ -337,8 +345,7 @@ class ReviewLearningService:
         seen: set[str] = set()
 
         for tag, touched_path in tagged_paths.items():
-            tagged_memories = await asyncio.to_thread(
-                self.memory_manager.list_memories,
+            tagged_memories = await self.memory_manager.alist_memories(
                 project_id=project_id,
                 memory_type="pattern",
                 limit=limit,
@@ -351,8 +358,7 @@ class ReviewLearningService:
                 seen.add(memory_id)
                 candidates.append((memory, touched_path))
 
-        legacy_memories = await asyncio.to_thread(
-            self.memory_manager.list_memories,
+        legacy_memories = await self.memory_manager.alist_memories(
             project_id=project_id,
             memory_type="pattern",
             limit=max(_LEGACY_SCAN_LIMIT, limit),

@@ -115,6 +115,34 @@ async def test_tool_result_before_tool_call_resolves_real_name() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_orphan_result_retained_when_reconciled_send_fails() -> None:
+    """A failed reconciled terminal send must keep call and result state retryable."""
+    transport = _FakeTransport(fail_on_status="completed")
+    blocks = AssistantContentBlocks()
+    handler = _make_handler(transport, blocks)
+    result_event = ToolResultEvent(tool_call_id="call-fail", success=True, result={"ok": True})
+
+    await handler._handle_tool_result(result_event)
+    applied = await handler._handle_tool_call(
+        ToolCallEvent(
+            tool_call_id="call-fail",
+            tool_name="Bash",
+            server_name="builtin",
+            arguments={"command": "pwd"},
+        )
+    )
+
+    assert applied is False
+    assert handler.state.orphan_tool_results == {"call-fail": result_event}
+    assert handler.state.pending_tool_calls["call-fail"]["tool_name"] == "Bash"
+    assert [msg["status"] for msg in transport.sent if msg["type"] == "tool_status"] == [
+        "calling",
+        "completed",
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_tool_call_then_result_in_order_unchanged() -> None:
     """In-order delivery still completes immediately and never buffers."""
     transport = _FakeTransport()

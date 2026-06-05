@@ -112,6 +112,7 @@ class TestCanUseTool:
         ExitPlanMode does not broadcast a duplicate."""
         session.set_chat_mode("plan")
         session._plan_broadcast_sent = True  # prior file-write broadcast
+        session._pending_plan_content = "input plan"
         on_plan_ready = AsyncMock()
         session._on_plan_ready = on_plan_ready
         session._on_mode_changed = AsyncMock()
@@ -133,6 +134,33 @@ class TestCanUseTool:
         assert isinstance(result, PermissionResultAllow)
         assert session.chat_mode == "bypass"
         assert session._plan_approved is True
+
+    @pytest.mark.asyncio
+    async def test_exit_plan_mode_rebroadcasts_revised_plan(self, session: ChatSession) -> None:
+        """Changed plan content resets de-dupe and broadcasts the revised plan."""
+        session.set_chat_mode("plan")
+        session._plan_broadcast_sent = True
+        session._pending_plan_content = "old plan"
+        on_plan_ready = AsyncMock()
+        session._on_plan_ready = on_plan_ready
+        session._on_mode_changed = AsyncMock()
+        with patch.object(session, "_read_plan_file", return_value=None):
+            task = asyncio.create_task(
+                session._can_use_tool(
+                    "ExitPlanMode", {"plan": "revised plan"}, ToolPermissionContext()
+                )
+            )
+            await wait_for_async_condition(
+                lambda: session.has_pending_plan, description="pending plan"
+            )
+            session._pending_post_plan_mode = "bypass"
+            session.provide_plan_decision("approve")
+            result = await task
+
+        on_plan_ready.assert_awaited_once()
+        assert on_plan_ready.await_args.args[0] == "revised plan"
+        assert isinstance(result, PermissionResultAllow)
+        assert session.chat_mode == "bypass"
 
     @pytest.mark.asyncio
     async def test_exit_plan_mode_already_approved(self, session: ChatSession) -> None:
@@ -576,4 +604,7 @@ class TestStartPlanPermissionMode:
         ):
             await session.start()
 
-        assert captured["options"].permission_mode == "default"
+        options = captured["options"]
+        assert options.permission_mode == "default"
+        assert options.can_use_tool == session._can_use_tool
+        assert session._connected is True

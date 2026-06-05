@@ -33,12 +33,21 @@ def format_memory_metadata_suffix(
     score: int | float | None = None,
     via: str | None = None,
 ) -> str:
-    """Format prompt-visible metadata for rendered project memories."""
+    """Format prompt-visible metadata for rendered project memories.
+
+    Args:
+        memory_id: Memory identifier to include when present.
+        score: Optional relevance score; numeric values are rendered to 4 decimals.
+        via: Optional source path for how the memory was selected.
+
+    Returns:
+        Parenthesized metadata suffix, or an empty string when no fields are present.
+    """
     fields = []
     if memory_id:
         fields.append(f"memory_id: {memory_id}")
     if score is not None:
-        if isinstance(score, int | float) and not isinstance(score, bool):
+        if isinstance(score, (int, float)) and not isinstance(score, bool):
             fields.append(f"score: {score:.4f}")
         else:
             fields.append(f"score: {score}")

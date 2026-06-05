@@ -297,7 +297,8 @@ def install_ghook(module: Any, force: bool = False) -> dict[str, Any]:
 
     requested_version = module._get_ghook_version_override()
     target_version = requested_version or pinned_version
-    if requested_version is None and compare_versions(installed_version, pinned_version) == 1:
+    comparison = compare_versions(installed_version, pinned_version)
+    if requested_version is None and comparison == 1:
         target_version = installed_version
     method_override = module._get_ghook_method_override()
 

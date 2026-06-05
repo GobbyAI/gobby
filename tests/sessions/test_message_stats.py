@@ -94,3 +94,19 @@ def test_tool_name_counts_regardless_of_role() -> None:
 
     assert stats["tool_call_count"] == 2
     assert stats["turn_count"] == 0
+
+
+def test_accepts_sequence_of_message_protocol() -> None:
+    stats = compute_message_stats(
+        (
+            _msg("assistant", "text", "tuple message"),
+            _msg("user", "tool_result", "", tool_name="Bash"),
+        )
+    )
+
+    assert stats == {
+        "message_count": 2,
+        "turn_count": 1,
+        "tool_call_count": 1,
+        "last_assistant_content": "tuple message",
+    }

@@ -9,7 +9,8 @@ computes the full transcript at once.
 
 from __future__ import annotations
 
-from typing import Any, TypedDict
+from collections.abc import Sequence
+from typing import Protocol, TypedDict
 
 _LAST_ASSISTANT_CONTENT_LIMIT = 500
 
@@ -23,7 +24,14 @@ class MessageStats(TypedDict):
     last_assistant_content: str | None
 
 
-def compute_message_stats(messages: list[Any]) -> MessageStats:
+class MessageProtocol(Protocol):
+    role: str | None
+    content_type: str | None
+    content: object
+    tool_name: str | None
+
+
+def compute_message_stats(messages: Sequence[MessageProtocol]) -> MessageStats:
     """Compute session stats from parsed transcript messages.
 
     The predicate, shared by the live and batch stat writers:
@@ -43,15 +51,12 @@ def compute_message_stats(messages: list[Any]) -> MessageStats:
 
     for msg in messages:
         message_count += 1
-        if (
-            getattr(msg, "role", None) == "assistant"
-            and getattr(msg, "content_type", None) == "text"
-        ):
+        if msg.role == "assistant" and msg.content_type == "text":
             turn_count += 1
-            content = getattr(msg, "content", None)
+            content = msg.content
             if isinstance(content, str) and content.strip():
                 last_assistant_content = content.strip()[-_LAST_ASSISTANT_CONTENT_LIMIT:]
-        if getattr(msg, "tool_name", None):
+        if msg.tool_name:
             tool_call_count += 1
 
     return MessageStats(

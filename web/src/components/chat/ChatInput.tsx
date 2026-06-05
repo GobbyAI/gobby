@@ -301,9 +301,9 @@ export function ChatInput({
     // view.
     if (supportsFieldSizing()) return
     const frame = requestAnimationFrame(() => {
-      textarea.style.height = 'auto'
       const next = Math.min(textarea.scrollHeight, MAX_TEXTAREA_HEIGHT)
       if (next !== lastTextareaHeightRef.current) {
+        textarea.style.height = 'auto'
         lastTextareaHeightRef.current = next
         textarea.style.height = `${next}px`
         // Keep the cursor visible when content exceeds the max height.

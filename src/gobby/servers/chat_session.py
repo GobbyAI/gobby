@@ -476,6 +476,7 @@ class ChatSession(ChatSessionPermissionsMixin):
                     file_path = tool_input.get("file_path", "")
                     if _PLAN_FILE_PATTERN.match(file_path):
                         plan_content = self._read_plan_file()
+                        self._reset_plan_broadcast_if_revised(plan_content)
                         if plan_content and self._on_plan_ready and not self._plan_broadcast_sent:
                             self._remember_plan_artifact(
                                 file_path=file_path,

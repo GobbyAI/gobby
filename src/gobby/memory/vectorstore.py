@@ -731,6 +731,9 @@ class VectorStore:
         batch_size: int,
     ) -> None:
         offset = None
+        # Precomputing stale IDs keeps Qdrant scroll pagination stable while
+        # deleting. If collections grow too large, prefer a batched/streaming
+        # deletion strategy that avoids holding every stale ID in memory.
         stale_ids: list[str] = []
         while True:
             try:

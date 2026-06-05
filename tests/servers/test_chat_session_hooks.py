@@ -151,6 +151,37 @@ class TestChatSessionHooks:
             assert mock_cb.await_args is not None
 
     @pytest.mark.asyncio
+    async def test_post_tool_plan_file_rebroadcasts_revised_plan(
+        self, session: ChatSession
+    ) -> None:
+        """Plan file writes broadcast again when content changes in the same plan cycle."""
+        mock_cb = AsyncMock(return_value={})
+        session._on_post_tool = mock_cb
+        plan_cb = AsyncMock()
+        session._on_plan_ready = plan_cb
+        session._plan_broadcast_sent = True
+        session._pending_plan_content = "old plan"
+
+        hooks = session._build_sdk_hooks()
+        hook_fn = hooks["PostToolUse"][0].hooks[0]
+
+        with patch.object(session, "_read_plan_file", return_value="new plan"):
+            await hook_fn(
+                {
+                    "tool_name": "Write",
+                    "tool_input": {"file_path": ".gobby/plans/plan.md"},
+                    "tool_response": "done",
+                },
+                "use_2",
+                HookContext(signal=None),
+            )
+
+        plan_cb.assert_awaited_once()
+        assert plan_cb.await_args.args[0] == "new plan"
+        assert session._pending_plan_content == "new plan"
+        assert session._plan_broadcast_sent is True
+
+    @pytest.mark.asyncio
     async def test_build_stop_hook(self, session: ChatSession) -> None:
         mock_cb = AsyncMock(return_value={})
         session._on_stop = mock_cb

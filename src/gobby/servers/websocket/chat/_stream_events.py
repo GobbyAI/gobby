@@ -191,10 +191,10 @@ class ChatStreamEventHandler:
         # transitions calling -> completed in order with the real name.
         orphan = self.state.orphan_tool_results.get(event.tool_call_id)
         if orphan is not None and sent:
-            self.state.pending_tool_calls.pop(event.tool_call_id, None)
             applied = await self._apply_tool_result(orphan)
             if applied:
                 self.state.orphan_tool_results.pop(event.tool_call_id, None)
+                self.state.pending_tool_calls.pop(event.tool_call_id, None)
             return applied
         return sent
 

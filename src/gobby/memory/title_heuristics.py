@@ -204,11 +204,9 @@ async def heuristic_title_from_transcript(
     sessions whose per-turn title paths never landed. Returns ``None`` when the
     transcript is missing, empty, or yields no usable opening prompt.
 
-    Only the opening ``max_lines`` of the transcript are scanned: a session's
-    first user prompt is always near the start, so this bounds work on long
-    transcripts without changing the result. (The previous implementation read
-    the *last* window via ``extract_turns_since_clear`` and surfaced only
-    assistant turns, so it never found the opener on real transcripts.)
+    The scan runs from the first line forward and stops after ``max_lines``:
+    a session's first user prompt is always near the start, so this bounds work
+    on long transcripts without changing the result.
     """
     if not transcript_path or not Path(transcript_path).exists():
         return None

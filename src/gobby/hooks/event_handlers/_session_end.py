@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
+from gobby.hooks.hook_types import SessionEndReason
 
 
 class SessionEndMixin(EventHandlersBase):
@@ -142,8 +143,12 @@ class SessionEndMixin(EventHandlersBase):
         # AFTER_AGENT/STOP as paused.
         if session_id and self._session_manager:
             try:
-                end_reason = event.data.get("reason")
-                end_status = "handoff_ready" if end_reason in ("clear", "compact") else "expired"
+                try:
+                    end_reason = SessionEndReason(event.data.get("reason"))
+                except (TypeError, ValueError):
+                    end_reason = SessionEndReason.OTHER
+                handoff_reasons = {SessionEndReason.CLEAR, SessionEndReason.COMPACT}
+                end_status = "handoff_ready" if end_reason in handoff_reasons else "expired"
                 self._session_manager.update_status(session_id, end_status)
             except Exception as e:
                 self.logger.warning(f"Failed to update session status on end: {e}")

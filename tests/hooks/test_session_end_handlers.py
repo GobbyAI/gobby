@@ -8,6 +8,7 @@ import pytest
 
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType
+from gobby.hooks.hook_types import SessionEndReason
 
 from ._event_handler_helpers import make_event
 
@@ -292,6 +293,29 @@ class TestSessionEndHandling:
             HookEventType.SESSION_END,
             session_id="ext-123",
             data={"reason": "other"},
+            metadata={"_platform_session_id": "sess-123"},
+        )
+
+        response = handlers.handle_session_end(event)
+
+        assert response.decision == "allow"
+        mock_dependencies["session_storage"].update_status.assert_called_once_with(
+            "sess-123", "expired"
+        )
+
+    def test_session_end_resume_reason_expires_session(self, mock_dependencies: dict) -> None:
+        """Runtime resume is not a handoff-ready exit."""
+        mock_session = MagicMock()
+        mock_session.created_at = "2024-01-01T00:00:00Z"
+        mock_session.agent_run_id = None
+        mock_session.status = "handoff_ready"
+        mock_dependencies["session_storage"].get.return_value = mock_session
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_END,
+            session_id="ext-123",
+            data={"reason": SessionEndReason.RESUME},
             metadata={"_platform_session_id": "sess-123"},
         )
 

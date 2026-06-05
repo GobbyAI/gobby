@@ -125,6 +125,7 @@ async def test_compute_session_file_diff_rejects_path_traversal(tmp_path: Path) 
 def test_is_safe_relative_path(tmp_path: Path) -> None:
     base = str(tmp_path)
     assert is_safe_relative_path(base, "src/file.ts") is True
+    assert is_safe_relative_path(base, ".") is False
     assert is_safe_relative_path(base, "") is False
     assert is_safe_relative_path(base, "/etc/passwd") is False
     assert is_safe_relative_path(base, "../../etc/passwd") is False
