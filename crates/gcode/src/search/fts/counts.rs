@@ -3,8 +3,8 @@ use postgres::Client;
 use crate::config::Context;
 
 use super::common::{
-    PgParam, SymbolFilters, escape_like, param_refs, push_param, push_path_filter,
-    push_symbol_filters, push_visible_project_file_filter, query_count, sanitize_pg_search_query,
+    PgParam, SymbolFilters, param_refs, push_param, push_path_filter, push_symbol_filters,
+    push_visible_project_file_filter, query_count, sanitize_pg_search_query,
 };
 
 pub fn count_text(
@@ -19,10 +19,9 @@ pub fn count_text(
     }
 
     let bm25_query = sanitize_pg_search_query(query);
-    // Intentional fallback: when BM25 sanitization empties the query, use
-    // count_symbols_by_name_like, which may count LIKE matches BM25 filtered out.
     if bm25_query.is_empty() {
-        return count_symbols_by_name_like(conn, query, project_id, language, paths);
+        log::warn!("BM25 symbol count skipped because query contains no pg_search terms");
+        return 0;
     }
 
     let mut params = Vec::new();
@@ -35,7 +34,7 @@ pub fn count_text(
         ),
         format!("cs.project_id = {project_placeholder}"),
     ];
-    let path_filter_fallback = push_symbol_filters(
+    let path_filter_requires_post_filter = push_symbol_filters(
         &mut conditions,
         &mut params,
         "cs",
@@ -45,7 +44,7 @@ pub fn count_text(
             paths,
         },
     );
-    if path_filter_fallback {
+    if path_filter_requires_post_filter {
         return count_symbol_file_path_rows(conn, conditions, params, paths).unwrap_or(0);
     }
     let refs = param_refs(&params);
@@ -60,63 +59,13 @@ pub fn count_text(
     match conn.query_one(&sql, &refs) {
         Ok(row) => row.try_get::<_, i64>("count").unwrap_or(0) as usize,
         Err(error) => {
-            log::warn!("BM25 symbol count failed; falling back to LIKE count: {error}");
-            count_symbols_by_name_like(conn, query, project_id, language, paths)
+            log::error!("BM25 symbol count failed; pg_search is required: {error}");
+            0
         }
     }
 }
 
-fn count_symbols_by_name_like(
-    conn: &mut Client,
-    query: &str,
-    project_id: &str,
-    language: Option<&str>,
-    paths: &[String],
-) -> usize {
-    let escaped_query = escape_like(query);
-    let pattern = format!("%{escaped_query}%");
-    let mut params = Vec::new();
-    let project_placeholder = push_param(&mut params, project_id.to_string());
-    let name_placeholder = push_param(&mut params, pattern.clone());
-    let qualified_placeholder = push_param(&mut params, pattern.clone());
-    let signature_placeholder = push_param(&mut params, pattern.clone());
-    let docstring_placeholder = push_param(&mut params, pattern.clone());
-    let summary_placeholder = push_param(&mut params, pattern);
-    let mut conditions = vec![
-        format!("cs.project_id = {project_placeholder}"),
-        format!(
-            "(cs.name LIKE {name_placeholder} ESCAPE '\\' OR cs.qualified_name LIKE {qualified_placeholder} ESCAPE '\\' OR cs.signature LIKE {signature_placeholder} ESCAPE '\\' OR cs.docstring LIKE {docstring_placeholder} ESCAPE '\\' OR cs.summary LIKE {summary_placeholder} ESCAPE '\\')"
-        ),
-    ];
-    let path_filter_fallback = push_symbol_filters(
-        &mut conditions,
-        &mut params,
-        "cs",
-        SymbolFilters {
-            kind: None,
-            language,
-            paths,
-        },
-    );
-    if path_filter_fallback {
-        return count_symbol_file_path_rows(conn, conditions, params, paths).unwrap_or(0);
-    }
-    let refs = param_refs(&params);
-    let sql = format!(
-        "SELECT COUNT(*)::BIGINT AS count
-         FROM code_symbols cs
-         JOIN code_indexed_files cf
-           ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path
-         WHERE {}",
-        conditions.join(" AND ")
-    );
-    conn.query_one(&sql, &refs)
-        .ok()
-        .and_then(|row| row.try_get::<_, i64>("count").ok())
-        .unwrap_or(0) as usize
-}
-
-/// Count matching content chunks using pg_search BM25, with LIKE fallback.
+/// Count matching content chunks using pg_search BM25.
 pub fn count_content(
     conn: &mut Client,
     query: &str,
@@ -130,7 +79,8 @@ pub fn count_content(
 
     let bm25_query = sanitize_pg_search_query(query);
     if bm25_query.is_empty() {
-        return count_content_like(conn, query, project_id, language, paths);
+        log::warn!("BM25 content count skipped because query contains no pg_search terms");
+        return 0;
     }
     let mut params = Vec::new();
     let query_placeholder = push_param(&mut params, bm25_query);
@@ -156,46 +106,10 @@ pub fn count_content(
     match conn.query_one(&sql, &refs) {
         Ok(row) => row.try_get::<_, i64>("count").unwrap_or(0) as usize,
         Err(error) => {
-            log::warn!("BM25 content count failed; falling back to LIKE count: {error}");
-            count_content_like(conn, query, project_id, language, paths)
+            log::error!("BM25 content count failed; pg_search is required: {error}");
+            0
         }
     }
-}
-
-fn count_content_like(
-    conn: &mut Client,
-    query: &str,
-    project_id: &str,
-    language: Option<&str>,
-    paths: &[String],
-) -> usize {
-    let escaped_query = escape_like(query);
-    let like_query = format!("%{escaped_query}%");
-    let mut params = Vec::new();
-    let project_placeholder = push_param(&mut params, project_id.to_string());
-    let like_placeholder = push_param(&mut params, like_query);
-    let mut conditions = vec![
-        format!("c.project_id = {project_placeholder}"),
-        format!("c.content LIKE {like_placeholder} ESCAPE '\\'"),
-    ];
-    if let Some(lang) = language {
-        let placeholder = push_param(&mut params, lang.to_string());
-        conditions.push(format!("c.language = {placeholder}"));
-    }
-    push_path_filter(&mut conditions, &mut params, "c", paths);
-    let refs = param_refs(&params);
-    let sql = format!(
-        "SELECT COUNT(*)::BIGINT AS count
-         FROM code_content_chunks c
-         JOIN code_indexed_files cf
-           ON cf.project_id = c.project_id AND cf.file_path = c.file_path
-         WHERE {}",
-        conditions.join(" AND ")
-    );
-    conn.query_one(&sql, &refs)
-        .ok()
-        .and_then(|row| row.try_get::<_, i64>("count").ok())
-        .unwrap_or(0) as usize
 }
 
 fn count_visible_symbols_by_conditions(
@@ -206,7 +120,7 @@ fn count_visible_symbols_by_conditions(
     language: Option<&str>,
     paths: &[String],
 ) -> Result<usize, postgres::Error> {
-    let path_filter_fallback = push_symbol_filters(
+    let path_filter_requires_post_filter = push_symbol_filters(
         &mut conditions,
         &mut params,
         "cs",
@@ -217,7 +131,7 @@ fn count_visible_symbols_by_conditions(
         },
     );
     push_visible_project_file_filter(&mut conditions, &mut params, "cs", "cf", ctx);
-    if path_filter_fallback {
+    if path_filter_requires_post_filter {
         return count_symbol_file_path_rows(conn, conditions, params, paths);
     }
     let sql = format!(
@@ -344,27 +258,6 @@ fn count_symbols_fts_visible(
     count_visible_symbols_by_conditions(conn, ctx, conditions, params, language, paths)
 }
 
-fn count_symbols_by_name_like_visible(
-    conn: &mut Client,
-    query: &str,
-    ctx: &Context,
-    language: Option<&str>,
-    paths: &[String],
-) -> usize {
-    let escaped_query = escape_like(query);
-    let pattern = format!("%{escaped_query}%");
-    let mut params = Vec::new();
-    let name_placeholder = push_param(&mut params, pattern.clone());
-    let qualified_placeholder = push_param(&mut params, pattern.clone());
-    let signature_placeholder = push_param(&mut params, pattern.clone());
-    let docstring_placeholder = push_param(&mut params, pattern.clone());
-    let summary_placeholder = push_param(&mut params, pattern);
-    let conditions = vec![format!(
-        "(cs.name LIKE {name_placeholder} ESCAPE '\\' OR cs.qualified_name LIKE {qualified_placeholder} ESCAPE '\\' OR cs.signature LIKE {signature_placeholder} ESCAPE '\\' OR cs.docstring LIKE {docstring_placeholder} ESCAPE '\\' OR cs.summary LIKE {summary_placeholder} ESCAPE '\\')"
-    )];
-    count_visible_symbols_by_conditions(conn, ctx, conditions, params, language, paths).unwrap_or(0)
-}
-
 fn push_content_filters(
     conditions: &mut Vec<String>,
     params: &mut Vec<PgParam>,
@@ -413,21 +306,6 @@ fn count_content_bm25_visible(
     count_visible_content_by_conditions(conn, ctx, conditions, params, language, paths)
 }
 
-fn count_content_like_visible(
-    conn: &mut Client,
-    query: &str,
-    ctx: &Context,
-    language: Option<&str>,
-    paths: &[String],
-) -> usize {
-    let escaped_query = escape_like(query);
-    let like_query = format!("%{escaped_query}%");
-    let mut params = Vec::new();
-    let like_placeholder = push_param(&mut params, like_query);
-    let conditions = vec![format!("c.content LIKE {like_placeholder} ESCAPE '\\'")];
-    count_visible_content_by_conditions(conn, ctx, conditions, params, language, paths).unwrap_or(0)
-}
-
 pub fn count_text_visible(
     conn: &mut Client,
     query: &str,
@@ -441,14 +319,15 @@ pub fn count_text_visible(
 
     let bm25_query = sanitize_pg_search_query(query);
     if bm25_query.is_empty() {
-        return count_symbols_by_name_like_visible(conn, query, ctx, language, paths);
+        log::warn!("visible BM25 symbol count skipped because query contains no pg_search terms");
+        return 0;
     }
 
     match count_symbols_fts_visible(conn, &bm25_query, ctx, language, paths) {
         Ok(count) => count,
         Err(error) => {
-            log::warn!("visible BM25 symbol count failed; falling back to LIKE count: {error}");
-            count_symbols_by_name_like_visible(conn, query, ctx, language, paths)
+            log::error!("visible BM25 symbol count failed; pg_search is required: {error}");
+            0
         }
     }
 }
@@ -466,14 +345,15 @@ pub fn count_content_visible(
 
     let bm25_query = sanitize_pg_search_query(query);
     if bm25_query.is_empty() {
-        return count_content_like_visible(conn, query, ctx, language, paths);
+        log::warn!("visible BM25 content count skipped because query contains no pg_search terms");
+        return 0;
     }
 
     match count_content_bm25_visible(conn, &bm25_query, ctx, language, paths) {
         Ok(count) => count,
         Err(error) => {
-            log::warn!("visible BM25 content count failed; falling back to LIKE count: {error}");
-            count_content_like_visible(conn, query, ctx, language, paths)
+            log::error!("visible BM25 content count failed; pg_search is required: {error}");
+            0
         }
     }
 }

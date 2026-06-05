@@ -75,11 +75,6 @@ const SERVICE_ENV_KEYS: &[&str] = &[
     "GOBBY_FALKORDB_PASSWORD",
     "GOBBY_QDRANT_URL",
     "GOBBY_QDRANT_API_KEY",
-    "GOBBY_EMBEDDING_URL",
-    "GOBBY_EMBEDDING_MODEL",
-    "GOBBY_EMBEDDING_API_KEY",
-    "GOBBY_EMBEDDING_TIMEOUT_SECONDS",
-    "GOBBY_EMBEDDING_VECTOR_DIM",
 ];
 
 fn with_service_env<R>(
@@ -238,28 +233,11 @@ fn adapter_resolves_config_store_secrets() {
 #[serial_test::serial]
 fn vector_dim_setting_reads_ai_config_no_env() {
     with_service_env(&[], || {
-        let legacy_keys = embedding_keys::legacy_keys();
         let values = std::collections::HashMap::from([(embedding_keys::AI_DIM, "2048")]);
 
         let settings = resolve_code_vector_settings_from_values(config_value_for(&values))
             .expect("config-store vector settings");
         assert_eq!(settings.vector_dim, Some(2048));
-
-        temp_env::with_var("GOBBY_EMBEDDING_VECTOR_DIM", Some("3072"), || {
-            let settings = resolve_code_vector_settings_from_values(config_value_for(&values))
-                .expect("env must not override vector settings");
-            assert_eq!(settings.vector_dim, Some(2048));
-        });
-
-        let legacy_vector_dim_key = legacy_keys
-            .iter()
-            .find(|key| key.as_str() == "embeddings.vector_dim")
-            .expect("legacy embeddings.vector_dim key should be present");
-        let legacy_values =
-            std::collections::HashMap::from([(legacy_vector_dim_key.as_str(), "1536")]);
-        let settings = resolve_code_vector_settings_from_values(config_value_for(&legacy_values))
-            .expect("legacy vector dim ignored");
-        assert_eq!(settings.vector_dim, None);
 
         let null_values = std::collections::HashMap::from([(embedding_keys::AI_DIM, "null")]);
         let settings = resolve_code_vector_settings_from_values(config_value_for(&null_values))

@@ -6,8 +6,8 @@ use crate::models::ContentSearchHit;
 use crate::visibility::TOMBSTONE_LANGUAGE;
 
 use super::common::{
-    PgParam, bm25_score_expr, escape_like, param_refs, push_param, push_path_filter,
-    sanitize_pg_search_query, trusted_row_id,
+    PgParam, bm25_score_expr, param_refs, push_param, push_path_filter, sanitize_pg_search_query,
+    trusted_row_id,
 };
 
 fn content_bm25_order_by_sql(tiebreakers: &[&str]) -> String {
@@ -34,6 +34,13 @@ pub fn search_content(
     }
 
     let bm25_query = sanitize_pg_search_query(query);
+    if bm25_query.is_empty() {
+        eprintln!(
+            "gcode: content BM25 search skipped because query contains no pg_search terms; use `gcode grep` for exact text"
+        );
+        return Vec::new();
+    }
+
     let mut params = Vec::new();
     let query_placeholder = push_param(&mut params, bm25_query);
     let project_placeholder = push_param(&mut params, project_id.to_string());
@@ -64,19 +71,13 @@ pub fn search_content(
         conditions.join(" AND ")
     );
 
-    let hits = match conn.query(&sql, &refs) {
+    match conn.query(&sql, &refs) {
         Ok(rows) => content_hits_from_rows(&rows, query),
         Err(error) => {
-            eprintln!("gcode: content BM25 search failed; falling back to ILIKE: {error}");
+            eprintln!("gcode: content BM25 search failed; pg_search is required: {error}");
             Vec::new()
         }
-    };
-
-    if !hits.is_empty() {
-        return hits;
     }
-
-    search_content_like(conn, query, project_id, language, paths, limit)
 }
 
 pub fn search_content_visible(
@@ -92,6 +93,13 @@ pub fn search_content_visible(
     }
 
     let bm25_query = sanitize_pg_search_query(query);
+    if bm25_query.is_empty() {
+        eprintln!(
+            "gcode: visible content BM25 search skipped because query contains no pg_search terms; use `gcode grep` for exact text"
+        );
+        return Vec::new();
+    }
+
     let mut params = Vec::new();
     let visible_files_sql = visible_files_sql(ctx, &mut params);
     let query_placeholder = push_param(&mut params, bm25_query);
@@ -120,110 +128,10 @@ pub fn search_content_visible(
         conditions.join(" AND ")
     );
 
-    let hits = match conn.query(&sql, &refs) {
-        Ok(rows) => content_hits_from_rows(&rows, query),
-        Err(error) => {
-            eprintln!("gcode: visible content BM25 search failed; falling back to ILIKE: {error}");
-            Vec::new()
-        }
-    };
-
-    if !hits.is_empty() {
-        return hits;
-    }
-
-    search_content_visible_like(conn, query, ctx, language, paths, limit)
-}
-
-fn search_content_like(
-    conn: &mut Client,
-    query: &str,
-    project_id: &str,
-    language: Option<&str>,
-    paths: &[String],
-    limit: usize,
-) -> Vec<ContentSearchHit> {
-    let escaped_query = escape_like(query);
-    let like_query = format!("%{escaped_query}%");
-    let mut params = Vec::new();
-    let project_placeholder = push_param(&mut params, project_id.to_string());
-    let like_placeholder = push_param(&mut params, like_query);
-    let mut conditions = vec![
-        format!("c.project_id = {project_placeholder}"),
-        format!("c.content ILIKE {like_placeholder} ESCAPE '\\'"),
-    ];
-    if let Some(lang) = language {
-        let placeholder = push_param(&mut params, lang.to_string());
-        conditions.push(format!("c.language = {placeholder}"));
-    }
-    push_path_filter(&mut conditions, &mut params, "c", paths);
-    let limit_placeholder = push_param(&mut params, limit as i64);
-    let refs = param_refs(&params);
-    let sql = format!(
-        "SELECT c.file_path,
-                c.line_start::BIGINT AS line_start,
-                c.line_end::BIGINT AS line_end,
-                c.language,
-                c.content
-         FROM code_content_chunks c
-         JOIN code_indexed_files cf
-           ON cf.project_id = c.project_id AND cf.file_path = c.file_path
-         WHERE {}
-         ORDER BY c.file_path ASC, c.line_start ASC
-         LIMIT {limit_placeholder}",
-        conditions.join(" AND ")
-    );
-
     match conn.query(&sql, &refs) {
         Ok(rows) => content_hits_from_rows(&rows, query),
         Err(error) => {
-            eprintln!("gcode: content ILIKE search failed: {error}");
-            Vec::new()
-        }
-    }
-}
-
-fn search_content_visible_like(
-    conn: &mut Client,
-    query: &str,
-    ctx: &Context,
-    language: Option<&str>,
-    paths: &[String],
-    limit: usize,
-) -> Vec<ContentSearchHit> {
-    let escaped_query = escape_like(query);
-    let like_query = format!("%{escaped_query}%");
-    let mut params = Vec::new();
-    let visible_files_sql = visible_files_sql(ctx, &mut params);
-    let like_placeholder = push_param(&mut params, like_query);
-    let mut conditions = vec![format!("c.content ILIKE {like_placeholder} ESCAPE '\\'")];
-    if let Some(lang) = language {
-        let placeholder = push_param(&mut params, lang.to_string());
-        conditions.push(format!("c.language = {placeholder}"));
-    }
-    push_path_filter(&mut conditions, &mut params, "c", paths);
-    let limit_placeholder = push_param(&mut params, limit as i64);
-    let refs = param_refs(&params);
-    let sql = format!(
-        "WITH visible_files AS ({visible_files_sql})
-         SELECT c.file_path,
-                c.line_start::BIGINT AS line_start,
-                c.line_end::BIGINT AS line_end,
-                c.language,
-                c.content
-         FROM code_content_chunks c
-         JOIN visible_files vf
-           ON vf.project_id = c.project_id AND vf.file_path = c.file_path
-         WHERE {}
-         ORDER BY c.file_path ASC, c.line_start ASC
-         LIMIT {limit_placeholder}",
-        conditions.join(" AND ")
-    );
-
-    match conn.query(&sql, &refs) {
-        Ok(rows) => content_hits_from_rows(&rows, query),
-        Err(error) => {
-            eprintln!("gcode: visible content ILIKE search failed: {error}");
+            eprintln!("gcode: visible content BM25 search failed; pg_search is required: {error}");
             Vec::new()
         }
     }

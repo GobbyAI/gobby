@@ -9,7 +9,6 @@ use serde::Deserialize;
 const GCODE_DATABASE_URL_ENV: &str = "GCODE_DATABASE_URL";
 const GOBBY_POSTGRES_DSN_ENV: &str = "GOBBY_POSTGRES_DSN";
 const GCODE_BROKER_TIMEOUT_MS_ENV: &str = "GCODE_BROKER_TIMEOUT_MS";
-const GCODE_CONFIG_FILENAME: &str = "gcode.yaml";
 const LOCAL_CLI_TOKEN_FILENAME: &str = "local_cli_token";
 const DEFAULT_BROKER_TIMEOUT: Duration = Duration::from_millis(7000);
 
@@ -133,12 +132,6 @@ fn resolve_database_url_from_sources_with_identity_and_reachability(
         return Ok(database_url);
     }
 
-    if let Some(database_url) =
-        resolve_database_url_from_config_file(&home.join(GCODE_CONFIG_FILENAME))?
-    {
-        return Ok(database_url);
-    }
-
     bail!(
         "missing Gobby PostgreSQL configuration. Run `gcode setup --standalone`, set {GCODE_DATABASE_URL_ENV}, or configure the Gobby daemon bootstrap."
     )
@@ -192,35 +185,6 @@ fn resolve_database_url_from_env(
     None
 }
 
-fn resolve_database_url_from_config_file(path: &Path) -> anyhow::Result<Option<String>> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    let contents = std::fs::read_to_string(path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
-    parse_gcode_config_database_url(&contents)
-        .with_context(|| format!("failed to parse {}", path.display()))
-}
-
-fn parse_gcode_config_database_url(contents: &str) -> anyhow::Result<Option<String>> {
-    let yaml: serde_yaml::Value = serde_yaml::from_str(contents)?;
-    let Some(map) = yaml.as_mapping() else {
-        if yaml.is_null() {
-            return Ok(None);
-        }
-        bail!("gcode.yaml must be a mapping");
-    };
-
-    let key = serde_yaml::Value::String("database_url".to_string());
-    match map.get(&key) {
-        Some(value) => match value.as_str() {
-            Some(text) => Ok(non_empty_trimmed(Some(text.to_string()))),
-            None => bail!("gcode.yaml field `database_url` must be a string"),
-        },
-        None => Ok(None),
-    }
-}
-
 fn parse_bootstrap_database(contents: &str) -> anyhow::Result<BootstrapDatabase> {
     let yaml: serde_yaml::Value =
         serde_yaml::from_str(contents).context("failed to parse bootstrap.yaml")?;
@@ -238,13 +202,6 @@ fn parse_bootstrap_database(contents: &str) -> anyhow::Result<BootstrapDatabase>
             None => Ok(None),
         }
     };
-
-    let database_url_ref = get_string("database_url_ref")?;
-    if database_url_ref.is_some() {
-        bail!(
-            "database_url_ref is no longer supported in bootstrap.yaml; store the local PostgreSQL DSN in database_url"
-        );
-    }
 
     Ok(BootstrapDatabase {
         hub_backend: get_string("hub_backend")?
@@ -495,18 +452,13 @@ mod tests {
     }
 
     #[test]
-    fn database_url_sources_fall_back_to_gcore_before_legacy_gcode_config() {
+    fn database_url_sources_use_gcore_after_daemon_and_bootstrap() {
         let home = tempfile::tempdir().expect("temp home");
         std::fs::write(
             home.path().join(GCORE_CONFIG_FILENAME),
             "databases.postgres.dsn: postgresql://gcore/db\n",
         )
         .expect("write gcore config");
-        std::fs::write(
-            home.path().join(GCODE_CONFIG_FILENAME),
-            "database_url: postgresql://legacy/db\n",
-        )
-        .expect("write legacy config");
 
         let resolved = resolve_database_url_from_sources(
             home.path(),
@@ -548,40 +500,6 @@ mod tests {
     }
 
     #[test]
-    fn gcode_config_accepts_database_url() {
-        let home = tempfile::tempdir().expect("temp home");
-        let path = home.path().join(GCODE_CONFIG_FILENAME);
-        std::fs::write(&path, "database_url: postgresql://config/db\n").expect("write config");
-
-        let resolved = resolve_database_url_from_config_file(&path)
-            .expect("config parses")
-            .expect("database_url present");
-
-        assert_eq!(resolved, "postgresql://config/db");
-    }
-
-    #[test]
-    fn gcode_config_missing_file_is_not_an_override() {
-        let home = tempfile::tempdir().expect("temp home");
-        let path = home.path().join(GCODE_CONFIG_FILENAME);
-
-        let resolved = resolve_database_url_from_config_file(&path).expect("missing config ok");
-
-        assert_eq!(resolved, None);
-    }
-
-    #[test]
-    fn gcode_config_empty_file_is_not_an_override() {
-        let home = tempfile::tempdir().expect("temp home");
-        let path = home.path().join(GCODE_CONFIG_FILENAME);
-        std::fs::write(&path, "").expect("write config");
-
-        let resolved = resolve_database_url_from_config_file(&path).expect("empty config ok");
-
-        assert_eq!(resolved, None);
-    }
-
-    #[test]
     fn postgres_bootstrap_accepts_inline_url() {
         let resolved = resolve_database_url_from_bootstrap(&bootstrap(
             "postgres",
@@ -593,41 +511,13 @@ mod tests {
     }
 
     #[test]
-    fn postgres_bootstrap_rejects_database_url_ref() {
-        let err = parse_bootstrap_database(
-            "hub_backend: postgres\n\
-             database_url_ref: deprecated\n",
-        )
-        .expect_err("database_url_ref must fail");
-
-        let message = err.to_string();
-        assert!(message.contains("database_url_ref is no longer supported"));
-        assert!(message.contains("database_url"));
-    }
-
-    #[test]
-    fn postgres_bootstrap_rejects_database_url_ref_even_with_inline_url() {
-        let err = parse_bootstrap_database(
-            "hub_backend: postgres\n\
-             database_url: postgresql://inline/db\n\
-             database_url_ref: deprecated\n",
-        )
-        .expect_err("database_url_ref must fail");
-
-        assert!(
-            err.to_string()
-                .contains("database_url_ref is no longer supported")
-        );
-    }
-
-    #[test]
     fn non_postgres_bootstrap_fails_clearly() {
-        let err = resolve_database_url_from_bootstrap(&bootstrap("legacy-local", None))
+        let err = resolve_database_url_from_bootstrap(&bootstrap("local-file", None))
             .expect_err("non-postgres backend must fail");
 
         let message = err.to_string();
         assert!(message.contains("hub_backend: postgres"));
-        assert!(message.contains("legacy-local"));
+        assert!(message.contains("local-file"));
     }
 
     #[test]

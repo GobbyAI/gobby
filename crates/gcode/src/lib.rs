@@ -2,7 +2,6 @@ pub mod commands;
 pub mod config;
 pub mod contract;
 pub mod db;
-pub mod falkor;
 pub mod freshness;
 pub mod git;
 pub mod graph;
@@ -76,28 +75,6 @@ mod tests {
     }
 
     #[test]
-    fn falkor_facade_is_available() {
-        let _ = std::any::type_name::<crate::falkor::FalkorClient>();
-
-        let ctx = crate::config::Context {
-            database_url: "postgresql://localhost/nonexistent".to_string(),
-            project_root: std::path::PathBuf::from("/nonexistent"),
-            project_id: "project-1".to_string(),
-            quiet: true,
-            falkordb: None,
-            qdrant: None,
-            embedding: None,
-            code_vectors: crate::config::CodeVectorSettings::default(),
-            daemon_url: None,
-            index_scope: crate::config::ProjectIndexScope::Single,
-        };
-
-        let value = crate::falkor::with_falkor(&ctx, 7usize, |_| Ok(9usize))
-            .expect("missing FalkorDB config degrades to default");
-        assert_eq!(value, 7);
-    }
-
-    #[test]
     fn foundation_consumer_migration() {
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let cargo = std::fs::read_to_string(manifest_dir.join("Cargo.toml"))
@@ -144,25 +121,21 @@ mod tests {
         assert!(graph.contains("gobby_core::falkor::with_graph"));
         assert!(!graph.contains("falkor::with_falkor"));
 
-        let falkor =
-            std::fs::read_to_string(manifest_dir.join("src/falkor.rs")).expect("read falkor.rs");
-        assert!(falkor.contains("gobby_core::falkor::GraphClient"));
-        for token in [
-            ["Falkor", "Client", "Builder"].concat(),
-            ["Falkor", "Connection", "Info"].concat(),
-            ["Sync", "Graph"].concat(),
-            ["Falkor", "Value"].concat(),
-            ["Lazy", "Result", "Set"].concat(),
-            ["Query", "Result"].concat(),
-        ] {
-            assert!(!falkor.contains(&token), "{token} leaked into falkor.rs");
-        }
+        assert!(
+            !manifest_dir.join("src/falkor.rs").exists(),
+            "graph callers should use graph::code_graph or gobby_core::falkor directly"
+        );
+        assert!(
+            !manifest_dir.join("src/search/semantic.rs").exists(),
+            "semantic search callers should use vector::code_symbols directly"
+        );
 
-        let semantic = std::fs::read_to_string(manifest_dir.join("src/search/semantic.rs"))
-            .expect("read search/semantic.rs");
-        assert!(semantic.contains("gobby_core::qdrant::with_qdrant"));
-        assert!(semantic.contains("gobby_core::qdrant::collection_name"));
-        assert!(semantic.contains("gobby_core::qdrant::search"));
+        let code_symbols_qdrant =
+            std::fs::read_to_string(manifest_dir.join("src/vector/code_symbols/qdrant.rs"))
+                .expect("read vector/code_symbols/qdrant.rs");
+        assert!(code_symbols_qdrant.contains("gobby_core::qdrant::with_qdrant"));
+        assert!(code_symbols_qdrant.contains("gobby_core::qdrant::collection_name"));
+        assert!(code_symbols_qdrant.contains("gobby_core::qdrant::search"));
     }
 
     #[test]

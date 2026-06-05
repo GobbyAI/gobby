@@ -94,8 +94,8 @@ fn path_like_prefixes_escape_and_require_all_patterns() {
 
     let mixed = vec!["src/**".to_string(), "*.rs".to_string()];
     assert!(path_like_prefixes(&mixed).is_none());
-    assert!(path_filter_falls_back(&mixed));
-    assert!(!path_filter_falls_back(&paths));
+    assert!(path_filter_requires_post_filter(&mixed));
+    assert!(!path_filter_requires_post_filter(&paths));
 }
 
 #[test]

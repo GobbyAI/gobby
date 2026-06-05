@@ -173,7 +173,7 @@ fn loads_js_bundled_dependency_arrays() {
     "react": "18"
   },
   "bundledDependencies": ["left-pad"],
-  "bundleDependencies": ["legacy-pkg"]
+  "bundleDependencies": ["bundled-pkg"]
 }
 "#,
     )
@@ -183,7 +183,7 @@ fn loads_js_bundled_dependency_arrays() {
 
     assert!(packages.contains("react"));
     assert!(packages.contains("left-pad"));
-    assert!(packages.contains("legacy-pkg"));
+    assert!(packages.contains("bundled-pkg"));
 }
 
 #[test]

@@ -248,11 +248,6 @@ pub fn strip_service_env(command: &mut Command) -> &mut Command {
         "GOBBY_FALKORDB_PASSWORD",
         "GOBBY_QDRANT_URL",
         "GOBBY_QDRANT_API_KEY",
-        "GOBBY_EMBEDDING_URL",
-        "GOBBY_EMBEDDING_MODEL",
-        "GOBBY_EMBEDDING_API_KEY",
-        "GOBBY_EMBEDDING_QUERY_PREFIX",
-        "GOBBY_EMBEDDING_TIMEOUT_SECONDS",
         "GOBBY_HOME",
     ] {
         command.env_remove(key);

@@ -26,11 +26,6 @@ impl EnvGuard {
             "GOBBY_POSTGRES_DSN",
             "GOBBY_QDRANT_URL",
             "GOBBY_QDRANT_API_KEY",
-            "GOBBY_EMBEDDING_URL",
-            "GOBBY_EMBEDDING_MODEL",
-            "GOBBY_EMBEDDING_API_KEY",
-            "GOBBY_EMBEDDING_QUERY_PREFIX",
-            "GOBBY_EMBEDDING_TIMEOUT_SECONDS",
         ] {
             // SAFETY: TEST_ENV_LOCK must guard every test environment mutation
             // in this crate. This loop only removes the fixed key list above.
@@ -296,9 +291,6 @@ fn writes_ai_embeddings_standalone_api_key() {
         config.get(embedding_keys::AI_API_KEY),
         Some("local-api-key")
     );
-    for key in embedding_keys::legacy_keys() {
-        assert_eq!(config.get(&key), None, "legacy key was written: {key}");
-    }
 }
 
 #[test]

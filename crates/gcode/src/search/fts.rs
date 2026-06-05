@@ -14,7 +14,7 @@ mod tests;
 
 pub use common::{
     FILTERED_FETCH_CAP, ResolvedGraphSymbol, compile_patterns, expand_paths,
-    path_filter_falls_back, sanitize_pg_search_query,
+    path_filter_requires_post_filter, sanitize_pg_search_query,
 };
 pub use content::{search_content, search_content_visible};
 pub use counts::{count_content, count_content_visible, count_text, count_text_visible};

@@ -76,7 +76,7 @@ fn summaries_are_optional_enrichment() {
 }
 
 #[test]
-fn collection_name_compatibility() {
+fn collection_name_is_stable() {
     assert_eq!(
         collection_name(CODE_SYMBOL_COLLECTION_PREFIX, "project-1"),
         "code_symbols_project-1"

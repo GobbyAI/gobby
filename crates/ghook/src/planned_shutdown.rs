@@ -16,7 +16,6 @@ const DEFAULT_ALLOW_SECONDS: f64 = 120.0;
 const HEALTH_TIMEOUT: Duration = Duration::from_millis(350);
 const HEALTH_ENDPOINT: &str = "/api/admin/health";
 const ACTIVE_MARKER: &str = "shutdown_intent_active.json";
-const LEGACY_MARKER: &str = "shutdown_source.json";
 const ALLOWED_SOURCES: [&str; 4] = ["cli_", "http_", "service_", "mcp_"];
 
 pub fn should_skip_dispatch(hook_type: &str) -> bool {
@@ -93,10 +92,8 @@ fn fresh_shutdown_marker(home: &Path) -> bool {
 }
 
 fn fresh_shutdown_marker_at(home: &Path, now: f64, allow_seconds: f64) -> bool {
-    [ACTIVE_MARKER, LEGACY_MARKER]
-        .into_iter()
-        .filter_map(|name| read_marker(&home.join(name)))
-        .any(|marker| marker_is_allowed_and_fresh(&marker, now, allow_seconds))
+    read_marker(&home.join(ACTIVE_MARKER))
+        .is_some_and(|marker| marker_is_allowed_and_fresh(&marker, now, allow_seconds))
 }
 
 fn marker_is_allowed_and_fresh(marker: &Value, now: f64, allow_seconds: f64) -> bool {
@@ -256,24 +253,6 @@ mod tests {
                 "{source} should be allowed"
             );
         }
-    }
-
-    #[test]
-    fn marker_checks_active_then_legacy_marker() {
-        let dir = tempdir().unwrap();
-        let now = 1_000.0;
-        write_marker(
-            dir.path(),
-            ACTIVE_MARKER,
-            json!({"source": "unknown", "timestamp": now - 10.0}),
-        );
-        write_marker(
-            dir.path(),
-            LEGACY_MARKER,
-            json!({"source": "cli_stop", "timestamp": now - 10.0}),
-        );
-
-        assert!(fresh_shutdown_marker_at(dir.path(), now, 120.0));
     }
 
     #[test]

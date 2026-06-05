@@ -546,7 +546,7 @@ mod tests {
     fn test_errors_warnings_grouping() {
         let lines = vec![
             "error: something broke\n".into(),
-            "warning: deprecated\n".into(),
+            "warning: noisy condition\n".into(),
             "info: all good\n".into(),
             "error: another thing\n".into(),
         ];
@@ -738,14 +738,14 @@ mod tests {
         let lines = vec![
             "test_foo.py::test_one PASSED\n".into(),
             "======== warnings summary ========\n".into(),
-            "tests/test_foo.py:10: DeprecationWarning: deprecated thing\n".into(),
+            "tests/test_foo.py:10: UserWarning: noisy thing\n".into(),
             "  some detail line\n".into(),
             "-- Docs: https://docs.pytest.org/en/stable/warnings.html\n".into(),
             "======== 1 passed, 1 warning ========\n".into(),
         ];
         let result = group_pytest_failures(lines);
         assert!(result.iter().any(|l| l.contains("warnings summary")));
-        assert!(result.iter().any(|l| l.contains("DeprecationWarning")));
+        assert!(result.iter().any(|l| l.contains("UserWarning")));
         assert!(result.iter().any(|l| l.contains("1 passed, 1 warning")));
     }
 
@@ -922,7 +922,7 @@ mod tests {
 
     #[test]
     fn test_errors_warnings_only_warnings() {
-        let lines = vec!["warning: deprecated\n".into(), "info line\n".into()];
+        let lines = vec!["warning: noisy condition\n".into(), "info line\n".into()];
         let result = group_errors_warnings(lines);
         assert!(result.iter().any(|l| l.contains("Warnings (1)")));
         assert!(!result.iter().any(|l| l.contains("Errors")));

@@ -536,8 +536,8 @@ mod tests {
     }
 
     #[test]
-    fn graph_result_metadata_is_optional_for_json_compatibility() {
-        let old_json = serde_json::json!({
+    fn graph_result_metadata_remains_optional_in_json_contract() {
+        let json = serde_json::json!({
             "id": "sym-1",
             "name": "foo",
             "file_path": "src/main.rs",
@@ -545,7 +545,7 @@ mod tests {
         });
 
         let parsed: GraphResult =
-            serde_json::from_value(old_json).expect("old graph result JSON still parses");
+            serde_json::from_value(json).expect("graph result JSON parses without metadata");
         assert!(parsed.metadata.is_none());
 
         let serialized = serde_json::to_value(&parsed).expect("graph result serializes");

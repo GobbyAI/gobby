@@ -228,9 +228,6 @@ fn apply_embedding_options(
     if !has_embedding_options {
         return Ok(());
     }
-    for key in embedding_keys::legacy_keys() {
-        config.remove(&key);
-    }
     if let Some(provider) = options.embedding_provider.as_deref() {
         config.set(embedding_keys::AI_PROVIDER, provider);
     }

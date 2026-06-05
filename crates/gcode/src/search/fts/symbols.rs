@@ -370,7 +370,7 @@ fn query_visible_symbols_by_conditions(
     VisibleSearchOutcome::ok(symbols)
 }
 
-/// Full-text search for symbols: BM25 with LIKE fallback.
+/// Full-text search for symbols using pg_search BM25.
 pub fn search_text(
     conn: &mut Client,
     query: &str,
@@ -379,11 +379,10 @@ pub fn search_text(
     paths: &[String],
     limit: usize,
 ) -> Vec<SearchResult> {
-    let mut results = search_symbols_fts(conn, query, project_id, None, language, paths, limit);
-    if results.is_empty() {
-        results = search_symbols_by_name(conn, query, project_id, None, language, paths, limit);
-    }
-    results.into_iter().map(|s| s.to_brief()).collect()
+    search_symbols_fts(conn, query, project_id, None, language, paths, limit)
+        .into_iter()
+        .map(|s| s.to_brief())
+        .collect()
 }
 
 pub fn search_text_visible(
@@ -394,10 +393,7 @@ pub fn search_text_visible(
     paths: &[String],
     limit: usize,
 ) -> VisibleSearchOutcome<SearchResult> {
-    let mut results = search_symbols_fts_visible(conn, query, ctx, None, language, paths, limit);
-    if results.results.is_empty() {
-        results = search_symbols_by_name_visible(conn, query, ctx, None, language, paths, limit);
-    }
+    let results = search_symbols_fts_visible(conn, query, ctx, None, language, paths, limit);
     VisibleSearchOutcome {
         results: results.results.into_iter().map(|s| s.to_brief()).collect(),
         degraded: results.degraded,

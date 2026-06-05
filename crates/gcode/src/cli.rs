@@ -1,4 +1,4 @@
-use clap::{ArgAction, ArgGroup, Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use gobby_code::output;
 use gobby_core::config::AiRouting;
 
@@ -268,51 +268,6 @@ pub(crate) enum Command {
         /// Maximum matching lines to include, up to 10000
         #[arg(short = 'm', long, value_parser = grep_max_count)]
         max_count: Option<usize>,
-        /// Show line numbers (always shown, deprecated flag for compatibility)
-        #[arg(short = 'n', long)]
-        line_number: bool,
-        /// Unsupported: use -m/--max-count for indexed grep caps
-        #[arg(long = "limit", hide = true, action = ArgAction::SetTrue)]
-        unsupported_limit: bool,
-        /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 'l', long = "files-with-matches", hide = true, action = ArgAction::SetTrue)]
-        unsupported_files_with_matches: bool,
-        /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 'L', long = "files-without-match", hide = true, action = ArgAction::SetTrue)]
-        unsupported_files_without_match: bool,
-        /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 'c', long = "count", hide = true, action = ArgAction::SetTrue)]
-        unsupported_count: bool,
-        /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 'o', long = "only-matching", hide = true, action = ArgAction::SetTrue)]
-        unsupported_only_matching: bool,
-        /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 'v', long = "invert-match", hide = true, action = ArgAction::SetTrue)]
-        unsupported_invert_match: bool,
-        /// Unsupported long alias; short -w is reserved for --word
-        #[arg(long = "word-regexp", hide = true, action = ArgAction::SetTrue)]
-        unsupported_word_regexp: bool,
-        /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 'e', long = "regexp", hide = true)]
-        unsupported_regexp: Option<String>,
-        /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 'r', long = "recursive", hide = true, action = ArgAction::SetTrue)]
-        unsupported_recursive: bool,
-        /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 't', long = "type", hide = true)]
-        unsupported_type: Option<String>,
-        /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 'T', long = "type-not", hide = true)]
-        unsupported_type_not: Option<String>,
-        /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 'P', long = "pcre2", hide = true, action = ArgAction::SetTrue)]
-        unsupported_pcre2: bool,
-        /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 'U', long = "multiline", hide = true, action = ArgAction::SetTrue)]
-        unsupported_multiline: bool,
-        /// Unsupported: use --format json for structured indexed grep output
-        #[arg(long = "json", hide = true, action = ArgAction::SetTrue)]
-        unsupported_json: bool,
     },
 
     // ── Symbol Retrieval (works in all modes) ────────────────────────
@@ -520,60 +475,6 @@ pub(crate) fn effective_format(
         Command::Grep { .. } => output::Format::Text,
         _ => output::Format::Json,
     })
-}
-
-pub(crate) fn reject_unsupported_grep_flags(command: &Command) -> anyhow::Result<()> {
-    let Command::Grep {
-        unsupported_limit,
-        unsupported_files_with_matches,
-        unsupported_files_without_match,
-        unsupported_count,
-        unsupported_only_matching,
-        unsupported_invert_match,
-        unsupported_word_regexp,
-        unsupported_regexp,
-        unsupported_recursive,
-        unsupported_type,
-        unsupported_type_not,
-        unsupported_pcre2,
-        unsupported_multiline,
-        unsupported_json,
-        ..
-    } = command
-    else {
-        return Ok(());
-    };
-
-    let flag = first_set_flag(&[
-        ("--limit", *unsupported_limit),
-        ("--files-with-matches", *unsupported_files_with_matches),
-        ("--files-without-match", *unsupported_files_without_match),
-        ("--count", *unsupported_count),
-        ("--only-matching", *unsupported_only_matching),
-        ("--invert-match", *unsupported_invert_match),
-        ("--word-regexp", *unsupported_word_regexp),
-        ("--regexp", unsupported_regexp.is_some()),
-        ("--recursive", *unsupported_recursive),
-        ("--type", unsupported_type.is_some()),
-        ("--type-not", unsupported_type_not.is_some()),
-        ("--pcre2", *unsupported_pcre2),
-        ("--multiline", *unsupported_multiline),
-        ("--json", *unsupported_json),
-    ]);
-
-    if let Some(flag) = flag {
-        anyhow::bail!(
-            "gcode grep is indexed search; unsupported grep/rg flag `{flag}`. Use -m/--max-count for match caps or raw `rg` for filesystem grep."
-        );
-    }
-
-    Ok(())
-}
-
-fn first_set_flag(flags: &[(&'static str, bool)]) -> Option<&'static str> {
-    flags
-        .iter()
-        .find_map(|(flag, is_set)| is_set.then_some(*flag))
 }
 
 #[cfg(test)]

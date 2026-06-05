@@ -1,4 +1,5 @@
 use super::*;
+use gobby_core::falkor::{GraphClient, Row};
 
 pub(crate) fn fetch_codewiki_graph_edges(
     ctx: &Context,
@@ -19,7 +20,8 @@ pub(crate) fn fetch_codewiki_graph_edges(
         return Ok(CodewikiGraph::unavailable());
     };
 
-    let mut client = match falkor::FalkorClient::from_config(config) {
+    let connection_config = config.connection_config();
+    let mut client = match GraphClient::from_config(&connection_config, &config.graph_name) {
         Ok(client) => client,
         Err(e) => {
             if !ctx.quiet {
@@ -31,10 +33,10 @@ pub(crate) fn fetch_codewiki_graph_edges(
 
     fn query_or_unavailable(
         ctx: &Context,
-        client: &mut falkor::FalkorClient,
+        client: &mut GraphClient,
         query: &str,
         params: HashMap<String, String>,
-    ) -> Option<Vec<falkor::Row>> {
+    ) -> Option<Vec<Row>> {
         match client.query(query, Some(params)) {
             Ok(rows) => Some(rows),
             Err(e) => {
@@ -126,7 +128,7 @@ pub(crate) fn codewiki_call_edges_query(
     symbol_ids: &[String],
     edge_limit: usize,
 ) -> (String, HashMap<String, String>) {
-    let id_list = falkor::id_list_literal(symbol_ids);
+    let id_list = typed_query::id_list_literal(symbol_ids);
     (
         format!(
             "MATCH (source:CodeSymbol {{project: $project}})-[:CALLS]->(target:CodeSymbol {{project: $project}}) \
@@ -137,7 +139,7 @@ pub(crate) fn codewiki_call_edges_query(
         ),
         HashMap::from([(
             "project".to_string(),
-            falkor::cypher_string_literal(project_id),
+            typed_query::cypher_string_literal(project_id),
         )]),
     )
 }
@@ -153,11 +155,11 @@ pub(crate) fn codewiki_import_edges_query(
              WHERE source.path IN [{}] \
              RETURN source.path AS source, target.name AS target \
              LIMIT {edge_limit}",
-            falkor::id_list_literal(files)
+            typed_query::id_list_literal(files)
         ),
         HashMap::from([(
             "project".to_string(),
-            falkor::cypher_string_literal(project_id),
+            typed_query::cypher_string_literal(project_id),
         )]),
     )
 }

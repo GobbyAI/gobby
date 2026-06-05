@@ -55,7 +55,7 @@ codebase → tree-sitter AST + safe text chunks → PostgreSQL hub → search / 
 
 1. **Index** — Walk files, parse ASTs with tree-sitter, and chunk safe repo text
 2. **Store** — PostgreSQL hub tables for symbols/content, FalkorDB for call/import graphs, Qdrant for semantic vectors
-3. **Search** — Hybrid ranking: pg_search BM25 + optional semantic + optional graph sources → exact-tiered RRF results with raw `rrf_score` metadata
+3. **Search** — Hybrid ranking: pg_search BM25 + required semantic/graph sources that can degrade → exact-tiered RRF results with raw `rrf_score` metadata
 4. **Retrieve** — Byte-offset reads for exact symbol source, no file-level bloat
 
 ## Installation
@@ -100,13 +100,12 @@ setups can use `GOBBY_FALKORDB_HOST`, `GOBBY_FALKORDB_PORT`, and
 
 Runtime indexing/search requires a migrated Gobby PostgreSQL hub. gcode
 asks the local daemon broker for the hub DSN first. If the daemon is
-unavailable, it falls back to explicit fallback sources:
-`GCODE_DATABASE_URL`, `GOBBY_POSTGRES_DSN`, `~/.gobby/gcode.yaml`
-`database_url`, then bootstrap `database_url`. Bootstrap fallback requires
-`hub_backend: postgres`; bootstrap `database_url_ref` is rejected.
+unavailable, resolution checks `GCODE_DATABASE_URL`, `GOBBY_POSTGRES_DSN`,
+`~/.gobby/gcore.yaml` `databases.postgres.dsn`, then bootstrap
+`database_url`. Bootstrap config requires `hub_backend: postgres`.
 
 Standalone setup is tested against PostgreSQL 18 with `pg_search` BM25 indexes.
-The compatibility preflight reads PostgreSQL catalogs such as `pg_class` and
+The schema preflight reads PostgreSQL catalogs such as `pg_class` and
 `pg_namespace` to validate only gcode-owned code-index tables and indexes.
 
 ### With Gobby
@@ -195,12 +194,10 @@ for every supported project-local AI CLI target:
 | Droid | `.factory/skills/gcode/SKILL.md` |
 | Grok | `.grok/skills/gcode/SKILL.md` |
 | Qwen | `.qwen/skills/gcode/SKILL.md` |
-| Gemini CLI (deprecated) | `.gemini/skills/gcode/SKILL.md` |
 | Antigravity CLI | `.agents/skills/gcode/SKILL.md` |
 
-Gemini CLI remains installed for compatibility with older setups, but it is
-deprecated. Gobby-managed projects skip these project-local writes because
-Gobby owns CLI wiring.
+Gobby-managed projects skip these project-local writes because Gobby owns CLI
+wiring.
 
 ## Daemon-Independent Runtime
 
@@ -227,8 +224,8 @@ Gobby adds graph queries, graph lifecycle orchestration, semantic search, and in
 
 **PostgreSQL DSNs can stay out of plaintext files.** Isolated gcode runtimes
 ask the daemon broker first. Operators who need daemonless access can opt into
-`GCODE_DATABASE_URL`, `GOBBY_POSTGRES_DSN`, `~/.gobby/gcode.yaml`, or inline
-bootstrap `database_url`. Bootstrap `database_url_ref` is rejected.
+`GCODE_DATABASE_URL`, `GOBBY_POSTGRES_DSN`, `~/.gobby/gcore.yaml`, or inline
+bootstrap `database_url`.
 
 **Indexing happens automatically.** The Gobby daemon watches for file changes and re-indexes in the background. Without the daemon, run `gcode index` manually.
 

@@ -1,6 +1,6 @@
 //! Project identity resolution for gcode standalone mode.
 //!
-//! Resolution order: .gobby/project.json (gobby) > .gobby/gcode.json (standalone) > generate on-the-fly.
+//! Resolution order: .gobby/project.json (gobby) > .gobby/gcode.json (gcode-owned identity) > generate on-the-fly.
 //! gcode never writes to project.json — that's gobby's file.
 
 use std::path::{Path, PathBuf};
@@ -41,11 +41,6 @@ pub fn code_index_id_for_root(root: &Path) -> String {
         canonical.to_string_lossy().as_bytes(),
     )
     .to_string()
-}
-
-/// Backward-compatible name for standalone gcode identity generation.
-pub fn generate_project_id(project_root: &Path) -> String {
-    code_index_id_for_root(project_root)
 }
 
 /// Read the isolated-root marker from `.gobby/project.json`, if present.
@@ -98,7 +93,7 @@ pub fn ensure_gcode_json(project_root: &Path) -> anyhow::Result<(String, bool)> 
     std::fs::create_dir_all(&gobby_dir)
         .with_context(|| format!("failed to create {}", gobby_dir.display()))?;
 
-    let project_id = generate_project_id(project_root);
+    let project_id = code_index_id_for_root(project_root);
     let project_name = project_root
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -147,21 +142,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_generate_project_id_deterministic() {
+    fn test_code_index_id_for_root_deterministic() {
         let dir = tempfile::tempdir().unwrap();
-        let id1 = generate_project_id(dir.path());
-        let id2 = generate_project_id(dir.path());
+        let id1 = code_index_id_for_root(dir.path());
+        let id2 = code_index_id_for_root(dir.path());
         assert_eq!(id1, id2);
         // Should be valid UUID
         assert!(uuid::Uuid::parse_str(&id1).is_ok());
     }
 
     #[test]
-    fn test_generate_project_id_different_paths() {
+    fn test_code_index_id_for_root_different_paths() {
         let dir1 = tempfile::tempdir().unwrap();
         let dir2 = tempfile::tempdir().unwrap();
-        let id1 = generate_project_id(dir1.path());
-        let id2 = generate_project_id(dir2.path());
+        let id1 = code_index_id_for_root(dir1.path());
+        let id2 = code_index_id_for_root(dir2.path());
         assert_ne!(id1, id2);
     }
 
@@ -202,7 +197,7 @@ mod tests {
         assert_eq!(contents["id"].as_str().unwrap(), id);
 
         // ID should match deterministic generation
-        assert_eq!(id, generate_project_id(dir.path()));
+        assert_eq!(id, code_index_id_for_root(dir.path()));
     }
 
     #[test]

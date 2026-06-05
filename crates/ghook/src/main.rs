@@ -1,19 +1,18 @@
 //! ghook — sandbox-tolerant hook dispatcher.
 //!
 //! Three modes:
-//!   `ghook --gobby-owned --cli=<c> --type=<t> [--critical] [--detach]`
+//!   `ghook --gobby-owned --cli=<c> --type=<t> [--detach]`
 //!   `ghook --diagnose    --cli=<c> --type=<t>`
 //!   `ghook --version`
 //!
 //! Mode 1 enqueues an envelope to `~/.gobby/hooks/inbox/` and attempts a
 //! POST to the daemon. The enqueue-first transport is an internal detail;
-//! stdout, stderr, and exit codes are intended to match the legacy Python
-//! `hook_dispatcher.py` contract.
+//! stdout, stderr, and exit codes follow the current per-CLI hook protocol.
 //!
 //! Mode 2 prints a JSON diagnostic, no network, no envelope write.
 //!
 //! Mode 3 prints the ghook version and writes
-//! `~/.gobby/bin/.ghook-compatibility` with `{schema_version, ghook_version}`.
+//! `~/.gobby/bin/.ghook-runtime.json` with `{schema_version, ghook_version}`.
 
 use anyhow::Result;
 use clap::Parser;
@@ -57,7 +56,7 @@ struct Args {
     #[arg(long)]
     diagnose: bool,
 
-    /// Print version and write ~/.gobby/bin/.ghook-compatibility stamp.
+    /// Print version and write ~/.gobby/bin/.ghook-runtime.json stamp.
     #[arg(long)]
     version: bool,
 
@@ -69,10 +68,6 @@ struct Args {
     #[arg(long = "type")]
     hook_type: Option<String>,
 
-    /// Compatibility flag accepted for installer parity with legacy hook commands.
-    #[arg(long)]
-    critical: bool,
-
     /// Detach from the parent's session/process group before the POST.
     #[arg(long)]
     detach: bool,
@@ -82,12 +77,12 @@ fn main() -> ExitCode {
     let args = Args::parse();
 
     if args.version {
-        return match write_compatibility_stamp() {
+        return match write_runtime_stamp() {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 // Still print the version; stamp-write failure is non-fatal.
                 println!("ghook {}", diagnose::GHOOK_VERSION);
-                eprintln!("note: could not write compatibility stamp: {e}");
+                eprintln!("note: could not write runtime stamp: {e}");
                 ExitCode::SUCCESS
             }
         };
@@ -356,7 +351,7 @@ fn action_from_success_response(
     // second stderr+exit(2) channel on top makes Claude render every
     // PreToolUse deny twice. Mirror the daemon contract: only the
     // top-level continue:false + stopReason shape (HARD_STOP) becomes
-    // exit 2. Codex/Gemini/Qwen keep the legacy is_blocked path below.
+    // exit 2. Codex/Gemini/Qwen keep the is_blocked path below.
     if canonical_source == "claude" {
         let map = result.as_object();
         let continue_false =
@@ -559,11 +554,11 @@ fn json_value_is_meaningful(value: &Value) -> bool {
     }
 }
 
-fn write_compatibility_stamp() -> Result<()> {
+fn write_runtime_stamp() -> Result<()> {
     let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("no home directory"))?;
     let bin_dir = home.join(".gobby").join("bin");
     std::fs::create_dir_all(&bin_dir)?;
-    let stamp_path = bin_dir.join(".ghook-compatibility");
+    let stamp_path = bin_dir.join(".ghook-runtime.json");
     let stamp = serde_json::json!({
         "schema_version": envelope::SCHEMA_VERSION,
         "ghook_version": diagnose::GHOOK_VERSION,

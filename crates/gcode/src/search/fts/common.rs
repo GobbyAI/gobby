@@ -195,7 +195,7 @@ pub(super) fn path_like_prefixes(paths: &[String]) -> Option<Vec<String>> {
     Some(prefixes)
 }
 
-pub fn path_filter_falls_back(paths: &[String]) -> bool {
+pub fn path_filter_requires_post_filter(paths: &[String]) -> bool {
     !paths.is_empty() && path_like_prefixes(paths).is_none()
 }
 
@@ -298,8 +298,9 @@ pub(super) fn query_symbols_by_conditions(
     limit: usize,
     order: SymbolOrder,
 ) -> Vec<Symbol> {
-    let path_filter_fallback = push_symbol_filters(&mut conditions, &mut params, "cs", filters);
-    let query_limit = if path_filter_fallback {
+    let path_filter_requires_post_filter =
+        push_symbol_filters(&mut conditions, &mut params, "cs", filters);
+    let query_limit = if path_filter_requires_post_filter {
         limit.max(FILTERED_FETCH_CAP)
     } else {
         limit
@@ -332,7 +333,7 @@ pub(super) fn query_symbols_by_conditions(
             return Vec::new();
         }
     };
-    if path_filter_fallback {
+    if path_filter_requires_post_filter {
         symbols = symbols_matching_paths(symbols, filters.paths);
         symbols.truncate(limit);
     }

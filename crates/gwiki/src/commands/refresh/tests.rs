@@ -30,7 +30,7 @@ fn seed_url(root: &Path, location: &str, fetched_at: &str, body: &[u8]) -> Sourc
     .expect("register source")
 }
 
-fn seed_legacy_file(root: &Path) -> SourceRecord {
+fn seed_file_without_replay(root: &Path) -> SourceRecord {
     SourceManifest::register(
         root,
         SourceDraft {
@@ -299,7 +299,7 @@ fn changed_local_file_replays_and_removes_old_raw_assets() {
 #[test]
 fn explicit_unsupported_and_missing_sources_fail_structurally() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let file = seed_legacy_file(temp.path());
+    let file = seed_file_without_replay(temp.path());
 
     let outcome = execute_resolved_with_fetcher(
         test_scope(temp.path()),

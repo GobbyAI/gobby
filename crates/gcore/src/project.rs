@@ -25,8 +25,7 @@ pub fn find_project_root(start: &Path) -> Option<PathBuf> {
 }
 
 /// Read the project id from `.gobby/project.json`, falling back to
-/// `.gobby/gcode.json` for standalone code-index roots. Accepts either `id` or
-/// `project_id` as the key.
+/// `.gobby/gcode.json` for standalone code-index roots.
 pub fn read_project_id(project_root: &Path) -> anyhow::Result<String> {
     let project_json = project_root.join(".gobby").join("project.json");
     if project_json.exists() {
@@ -58,10 +57,9 @@ fn read_project_id_from(path: &Path) -> anyhow::Result<String> {
     let json: serde_json::Value = serde_json::from_str(&contents)
         .with_context(|| format!("failed to parse {}", path.display()))?;
     json.get("id")
-        .or_else(|| json.get("project_id"))
         .and_then(|v| v.as_str())
         .map(String::from)
-        .with_context(|| format!("'id' or 'project_id' field not found in {}", path.display()))
+        .with_context(|| format!("'id' field not found in {}", path.display()))
 }
 
 #[cfg(test)]
@@ -116,7 +114,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_project_id_error_mentions_all_accepted_keys() {
+    fn missing_project_id_error_mentions_id_key() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let gobby_dir = tmp.path().join(".gobby");
         fs::create_dir(&gobby_dir).expect("create .gobby");
@@ -125,7 +123,7 @@ mod tests {
 
         let error = read_project_id(tmp.path()).expect_err("project id is missing");
 
-        assert!(error.to_string().contains("'id' or 'project_id'"));
+        assert!(error.to_string().contains("'id' field not found"));
     }
 
     #[test]
@@ -156,7 +154,7 @@ mod tests {
             .expect("write malformed project json");
         fs::write(
             gobby_dir.join("gcode.json"),
-            r#"{"project_id":"standalone-fallback"}"#,
+            r#"{"id":"standalone-fallback"}"#,
         )
         .expect("write gcode json");
 

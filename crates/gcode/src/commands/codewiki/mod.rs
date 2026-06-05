@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::commands::scope;
 use crate::config::{self, Context};
 use crate::db;
-use crate::falkor;
+use crate::graph::typed_query;
 use crate::index::hasher;
 use crate::models::Symbol;
 use crate::output::{self, Format};

@@ -112,9 +112,6 @@ mod tests {
                 "GOBBY_FALKORDB_PASSWORD",
                 "GOBBY_QDRANT_URL",
                 "GOBBY_QDRANT_API_KEY",
-                "GOBBY_EMBEDDING_URL",
-                "GOBBY_EMBEDDING_MODEL",
-                "GOBBY_EMBEDDING_API_KEY",
             ] {
                 // SAFETY: TEST_ENV_LOCK serializes all test environment mutation
                 // here, and the loop only touches the fixed key list above.
@@ -181,8 +178,6 @@ mod tests {
         env.set("GOBBY_FALKORDB_HOST", "env-falkor.local");
         env.set("GOBBY_FALKORDB_PORT", "17000");
         env.set("GOBBY_QDRANT_URL", "http://env-qdrant:6333");
-        env.set("GOBBY_EMBEDDING_URL", "http://env-embedding:11434");
-        env.set("GOBBY_EMBEDDING_MODEL", "env-model");
 
         let mut source = EnvOnlySource;
         let root = std::path::PathBuf::from("/tmp/gobby-project");
@@ -211,9 +206,7 @@ mod tests {
 
     #[test]
     fn build_with_config_source_embedding() {
-        let env = EnvGuard::new();
-        env.set("GOBBY_EMBEDDING_URL", "http://env-embedding:11434");
-        env.set("GOBBY_EMBEDDING_MODEL", "env-model");
+        let _env = EnvGuard::new();
 
         let mut source = TestConfigSource::with_values([
             (embedding_keys::AI_API_BASE, "http://config-embedding:11434"),

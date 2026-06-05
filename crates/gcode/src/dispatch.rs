@@ -203,7 +203,6 @@ pub(crate) fn run_with_exit_code() -> std::process::ExitCode {
 fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let format = cli::effective_format(cli.format, &cli.command);
-    cli::reject_unsupported_grep_flags(&cli.command)?;
 
     // Commands that must run before Context::resolve() (work on uninitialized projects)
     if dispatch_early_command(&cli, format, commands::setup::run)? {
@@ -421,21 +420,6 @@ fn run() -> anyhow::Result<()> {
             context,
             glob,
             max_count,
-            line_number: _,
-            unsupported_limit: _,
-            unsupported_files_with_matches: _,
-            unsupported_files_without_match: _,
-            unsupported_count: _,
-            unsupported_only_matching: _,
-            unsupported_invert_match: _,
-            unsupported_word_regexp: _,
-            unsupported_regexp: _,
-            unsupported_recursive: _,
-            unsupported_type: _,
-            unsupported_type_not: _,
-            unsupported_pcre2: _,
-            unsupported_multiline: _,
-            unsupported_json: _,
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::grep::run(

@@ -28,12 +28,6 @@ impl EnvGuard {
             "GOBBY_FALKORDB_PASSWORD",
             "GOBBY_QDRANT_URL",
             "GOBBY_QDRANT_API_KEY",
-            "GOBBY_EMBEDDING_URL",
-            "GOBBY_EMBEDDING_MODEL",
-            "GOBBY_EMBEDDING_API_KEY",
-            "GOBBY_EMBEDDING_QUERY_PREFIX",
-            "GOBBY_EMBEDDING_TIMEOUT_SECONDS",
-            "GOBBY_AI_TEXT_GENERATE_API_BASE",
             "GOBBY_TEST_PRESENT",
             "GOBBY_TEST_MISSING",
         ] {
@@ -273,11 +267,6 @@ fn ai_routing_per_capability_precedence() {
 #[test]
 fn ai_config_resolves_store_then_yaml_no_env() {
     let env = EnvGuard::new();
-    env.set("GOBBY_EMBEDDING_URL", "http://env-embedding:11434/v1");
-    env.set(
-        "GOBBY_AI_TEXT_GENERATE_API_BASE",
-        "http://env-text:11434/v1",
-    );
     env.set("GOBBY_TEST_PRESENT", "interpolated-text-model");
 
     let mut source = LayeredTestSource::with_layers(
@@ -425,14 +414,8 @@ fn audio_translate_inherits_transcribe_binding() {
 }
 
 #[test]
-fn env_does_not_override_ai_embedding_keys() {
-    let env = EnvGuard::new();
-    env.set("GOBBY_EMBEDDING_URL", "http://env-embedding:11434");
-    env.set("GOBBY_EMBEDDING_MODEL", "env-model");
-    env.set("GOBBY_EMBEDDING_API_KEY", "env-key");
-    env.set("GOBBY_EMBEDDING_QUERY_PREFIX", "env-prefix:");
-    env.set("GOBBY_EMBEDDING_TIMEOUT_SECONDS", "7");
-
+fn embedding_config_uses_ai_namespace() {
+    let _env = EnvGuard::new();
     let mut source = TestSource::with_values([
         (embedding_keys::AI_API_BASE, "http://new-embedding:11434"),
         (embedding_keys::AI_MODEL, "new-model"),
@@ -450,30 +433,6 @@ fn env_does_not_override_ai_embedding_keys() {
     assert_eq!(config.api_key.as_deref(), Some("resolved-AI_KEY"));
     assert_eq!(config.query_prefix.as_deref(), Some("new-query:"));
     assert_eq!(config.timeout_seconds, 12);
-}
-
-#[test]
-fn legacy_keys_not_honored() {
-    let _env = EnvGuard::new();
-    let legacy_keys = embedding_keys::legacy_keys();
-    let mut source = TestSource::with_values([
-        (
-            leak_for_test(legacy_keys[1].clone()),
-            "http://legacy-embedding:11434",
-        ),
-        (leak_for_test(legacy_keys[2].clone()), "legacy-model"),
-        (leak_for_test(legacy_keys[3].clone()), "$secret:LEGACY_KEY"),
-        (leak_for_test(legacy_keys[5].clone()), "legacy-query:"),
-    ]);
-
-    assert!(resolve_embedding_config_resolution(&mut source).is_none());
-}
-
-fn leak_for_test(value: String) -> &'static str {
-    // Test-only helper for a bounded set of fixture keys. Do not use with
-    // dynamic or unbounded input; the leak intentionally lasts for the test
-    // process because ConfigSource stores borrowed keys.
-    Box::leak(value.into_boxed_str())
 }
 
 #[test]
@@ -681,26 +640,6 @@ fn ci_guard_rejects_stray_literal() {
     assert!(offenders[0].ends_with("bad.rs"));
 }
 
-#[test]
-fn ci_guard_rejects_legacy_namespace() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let src = dir.path().join("src");
-    std::fs::create_dir_all(&src).expect("create src");
-    std::fs::write(
-        src.join("bad.rs"),
-        format!(
-            r#"const BAD: &str = "{}";"#,
-            embedding_keys::legacy_keys()[1]
-        ),
-    )
-    .expect("write bad source");
-
-    let offenders = embedding_key_literal_offenders(dir.path());
-
-    assert_eq!(offenders.len(), 1);
-    assert!(offenders[0].ends_with("bad.rs"));
-}
-
 fn workspace_root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -766,7 +705,7 @@ fn should_skip_embedding_key_scan_dir(path: &std::path::Path) -> bool {
 }
 
 fn guarded_embedding_keys() -> Vec<String> {
-    let mut keys = vec![
+    vec![
         embedding_keys::AI_PROVIDER,
         embedding_keys::AI_API_BASE,
         embedding_keys::AI_MODEL,
@@ -777,9 +716,7 @@ fn guarded_embedding_keys() -> Vec<String> {
     ]
     .into_iter()
     .map(str::to_string)
-    .collect::<Vec<_>>();
-    keys.extend(embedding_keys::legacy_keys());
-    keys
+    .collect::<Vec<_>>()
 }
 
 fn embedding_key_literal_allowed_path(path: &std::path::Path) -> bool {

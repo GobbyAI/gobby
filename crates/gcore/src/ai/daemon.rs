@@ -4,9 +4,7 @@ use serde_json::{Map, Value};
 use std::io::Cursor;
 
 use crate::ai_context::AiContext;
-use crate::ai_types::{
-    AiError, TextResult, TranscriptionResult, TranscriptionSegment, VisionResult,
-};
+use crate::ai_types::{AiError, TextResult, TranscriptionResult, VisionResult};
 use crate::config::AiCapability;
 
 const LOCAL_CLI_TOKEN_FILENAME: &str = "local_cli_token";
@@ -350,35 +348,7 @@ fn non_empty(value: Option<&str>) -> Option<&str> {
 }
 
 fn parse_daemon_transcription(value: Value) -> Result<TranscriptionResult, AiError> {
-    if let Some(text) = legacy_text_only(&value) {
-        return Ok(TranscriptionResult {
-            text: text.clone(),
-            segments: vec![TranscriptionSegment {
-                start_ms: 0,
-                end_ms: 0,
-                text,
-            }],
-            source_language: None,
-            language: None,
-            model: None,
-            task: None,
-            target_language: None,
-            translated: false,
-        });
-    }
-
     TranscriptionResult::from_wire_json(value)
-}
-
-fn legacy_text_only(value: &Value) -> Option<String> {
-    let object = value.as_object()?;
-    if object.contains_key("segments") {
-        return None;
-    }
-    object
-        .get("text")
-        .and_then(Value::as_str)
-        .map(str::to_string)
 }
 
 fn parse_daemon_embeddings(
@@ -450,35 +420,6 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use std::sync::MutexGuard;
-
-    #[test]
-    fn legacy_text_maps_to_single_segment() {
-        let response = r#"{"text":"legacy transcript"}"#;
-        let (port, request) = spawn_server(response);
-        let home = temp_home();
-        let _env = EnvGuard::set_home(home.path());
-        write_daemon_files(home.path(), port, "voice-token");
-        let cfg = test_context(None);
-
-        let result = transcribe_via_daemon(
-            &cfg,
-            b"audio".to_vec(),
-            "clip.wav",
-            "audio/wav",
-            DaemonTranscriptionOptions::default(),
-        )
-        .unwrap();
-        let _request = request.join().unwrap().unwrap();
-
-        assert_eq!(result.text, "legacy transcript");
-        assert_eq!(result.segments.len(), 1);
-        assert_eq!(result.segments[0].start_ms, 0);
-        assert_eq!(result.segments[0].end_ms, 0);
-        assert_eq!(result.segments[0].text, "legacy transcript");
-        assert!(result.source_language.is_none());
-        assert!(result.model.is_none());
-        assert!(result.task.is_none());
-    }
 
     #[test]
     fn forwards_provider_model_and_optional_project_id() {

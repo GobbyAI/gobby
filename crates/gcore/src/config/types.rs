@@ -220,25 +220,6 @@ pub mod embedding_keys {
     pub const AI_QUERY_PREFIX: &str = "ai.embeddings.query_prefix";
     pub const AI_DIM: &str = "ai.embeddings.dim";
     pub const AI_TIMEOUT_SECONDS: &str = "ai.embeddings.timeout_seconds";
-
-    const LEGACY_NAMESPACE: &str = "embeddings";
-    const LEGACY_KEY_SUFFIXES: &[&str] = &[
-        "provider",
-        "api_base",
-        "model",
-        "api_key",
-        "api_key_env",
-        "query_prefix",
-        "timeout_seconds",
-        "vector_dim",
-    ];
-
-    pub fn legacy_keys() -> Vec<String> {
-        LEGACY_KEY_SUFFIXES
-            .iter()
-            .map(|suffix| format!("{LEGACY_NAMESPACE}.{suffix}"))
-            .collect()
-    }
 }
 
 /// Canonical home for AI capability config keys.

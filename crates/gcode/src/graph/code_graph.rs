@@ -26,18 +26,13 @@ pub use write::{
 };
 
 pub(crate) use lifecycle::extract_summary_text;
-pub(crate) use read::{
-    blast_radius_query, count_callers_query, count_usages_query, find_callees_batch_query,
-    find_callers_batch_query, find_callers_query, find_usages_query, get_imports_query,
-};
+#[cfg(test)]
+pub(crate) use read::get_imports_query;
 
 #[cfg(test)]
 pub(crate) use lifecycle::{
     build_lifecycle_url, compact_detail, format_http_error, parse_success_payload,
 };
-#[cfg(test)]
-pub(crate) use read::row_to_graph_result;
-
 #[cfg(test)]
 use payload::{row_string_owned, row_to_projection_metadata, row_usize};
 #[cfg(test)]

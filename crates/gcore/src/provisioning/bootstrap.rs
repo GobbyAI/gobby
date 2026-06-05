@@ -52,7 +52,6 @@ pub fn write_standalone_bootstrap(
     config.set("databases.falkordb.password", &options.falkordb_password);
     config.set("databases.qdrant.url", options.qdrant_url());
     if let Some(embedding) = embedding {
-        remove_legacy_embedding_keys(&mut config);
         config.set(embedding_keys::AI_PROVIDER, &embedding.provider);
         config.set(embedding_keys::AI_API_BASE, &embedding.api_base);
         config.set(embedding_keys::AI_MODEL, &embedding.model);
@@ -69,26 +68,6 @@ pub fn write_standalone_bootstrap(
     }
     config.write_at(path)?;
     Ok(config)
-}
-
-fn remove_legacy_embedding_keys(config: &mut StandaloneConfig) {
-    let legacy_keys = embedding_keys::legacy_keys();
-    let removed = legacy_keys
-        .iter()
-        .filter(|key| config.get(key).is_some())
-        .cloned()
-        .collect::<Vec<_>>();
-    if !removed.is_empty() {
-        log::warn!(
-            "removing legacy embedding config keys [{}]; embedding config now lives under \
-             ai.embeddings.* and unsupported legacy values are dropped. See \
-             hub-install-contract.md and ai-daemon-contract.md for migration guidance.",
-            removed.join(", ")
-        );
-    }
-    for key in legacy_keys {
-        config.remove(&key);
-    }
 }
 
 pub(crate) fn flatten_yaml_value(

@@ -1,4 +1,4 @@
-//! Gobby daemon capability probe for optional gwiki integrations.
+//! Gobby daemon capability probe for required gwiki service sources.
 
 use std::time::Duration;
 
@@ -38,7 +38,7 @@ pub struct EndpointShape {
 pub struct CapabilityAvailability {
     pub capability: DaemonCapability,
     pub available: bool,
-    pub optional: bool,
+    pub required: bool,
     pub endpoint: EndpointShape,
     pub degradation: Option<DaemonDegradation>,
 }
@@ -68,7 +68,7 @@ pub struct DaemonCapabilityReport {
 #[derive(Debug, Clone, Copy)]
 struct EndpointContract {
     capability: DaemonCapability,
-    optional: bool,
+    required: bool,
     method: &'static str,
     path: &'static str,
     probe_method: &'static str,
@@ -102,7 +102,7 @@ impl DaemonProbeTransport for UreqProbeTransport {
 
 const EMBEDDINGS: EndpointContract = EndpointContract {
     capability: DaemonCapability::Embeddings,
-    optional: true,
+    required: true,
     method: "POST",
     path: "/api/memories/embeddings/reindex",
     probe_method: "OPTIONS",
@@ -113,7 +113,7 @@ const EMBEDDINGS: EndpointContract = EndpointContract {
 
 const SYNTHESIS: EndpointContract = EndpointContract {
     capability: DaemonCapability::Synthesis,
-    optional: true,
+    required: true,
     method: "GET",
     path: "/api/providers/models",
     probe_method: "GET",
@@ -124,7 +124,7 @@ const SYNTHESIS: EndpointContract = EndpointContract {
 
 const VISION: EndpointContract = EndpointContract {
     capability: DaemonCapability::Vision,
-    optional: true,
+    required: true,
     method: "GET",
     path: "/api/llm/vision/status",
     probe_method: "GET",
@@ -135,7 +135,7 @@ const VISION: EndpointContract = EndpointContract {
 
 const TRANSCRIPTION: EndpointContract = EndpointContract {
     capability: DaemonCapability::Transcription,
-    optional: true,
+    required: true,
     method: "GET",
     path: "/api/voice/status",
     probe_method: "GET",
@@ -146,7 +146,7 @@ const TRANSCRIPTION: EndpointContract = EndpointContract {
 
 const AGENT_DISPATCH: EndpointContract = EndpointContract {
     capability: DaemonCapability::AgentDispatch,
-    optional: true,
+    required: true,
     method: "POST",
     path: "/api/agents/spawn",
     probe_method: "OPTIONS",
@@ -157,7 +157,7 @@ const AGENT_DISPATCH: EndpointContract = EndpointContract {
 
 const SESSION_EVENTS: EndpointContract = EndpointContract {
     capability: DaemonCapability::SessionEvents,
-    optional: true,
+    required: true,
     method: "GET",
     path: "/api/sessions",
     probe_method: "GET",
@@ -267,7 +267,7 @@ fn availability_for_observation(
     CapabilityAvailability {
         capability: contract.capability,
         available: degradation.is_none(),
-        optional: contract.optional,
+        required: contract.required,
         endpoint: EndpointShape {
             method: contract.method,
             path: contract.path,
@@ -282,7 +282,7 @@ fn unreachable_availability(contract: EndpointContract, message: &str) -> Capabi
     CapabilityAvailability {
         capability: contract.capability,
         available: false,
-        optional: contract.optional,
+        required: contract.required,
         endpoint: EndpointShape {
             method: contract.method,
             path: contract.path,
@@ -379,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_optional_endpoint_degrades() {
+    fn missing_required_endpoint_degrades() {
         let transport = FakeTransport::new([
             (
                 ("GET", "/api/llm/vision/status"),

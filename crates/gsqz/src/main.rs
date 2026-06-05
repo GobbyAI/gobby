@@ -39,7 +39,7 @@ struct Cli {
     #[arg(long, value_name = "PATH")]
     config: Option<std::path::PathBuf>,
 
-    /// Command to run, or subcommand (input/output)
+    /// Subcommand and arguments: input | output
     #[arg(
         trailing_var_arg = true,
         required_unless_present_any = ["dump_config", "init"]
@@ -116,7 +116,7 @@ fn main() {
         return;
     }
 
-    // Dispatch to input/output subcommand or default output mode
+    // Dispatch to explicit input/output subcommands.
     match cli.command.first().map(|s| s.as_str()) {
         Some("input") => {
             run_input_mode(&cli.command[1..], &config, cli.stats);
@@ -126,10 +126,15 @@ fn main() {
             let cmd = cli.command[1..].join(" ");
             run_output_mode(&cmd, &config, cli.stats);
         }
-        _ => {
-            // Default: treat all args as the command (backward compat)
-            let cmd = cli.command.join(" ");
-            run_output_mode(&cmd, &config, cli.stats);
+        Some(command) => {
+            eprintln!(
+                "gsqz: unknown subcommand `{command}`. Use `gsqz output ...` or `gsqz input`."
+            );
+            std::process::exit(2);
+        }
+        None => {
+            eprintln!("gsqz: expected subcommand `output` or `input`.");
+            std::process::exit(2);
         }
     }
 }
