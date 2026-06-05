@@ -9,6 +9,7 @@ __all__ = [
     "FeatureDefaultConfig",
     "FeatureProfile",
     "default_candidates_for_profile",
+    "normalize_feature_candidate",
 ]
 
 
@@ -40,9 +41,24 @@ DEFAULT_PROFILE_CANDIDATES: dict[FeatureProfile, tuple[str, ...]] = {
 }
 
 
+_CLAUDE_FAMILY_ALIASES = ("haiku", "sonnet", "opus")
+
+
 def default_candidates_for_profile(profile: FeatureProfile | str) -> tuple[str, ...]:
     """Return default provider/model candidates for a feature profile."""
     return DEFAULT_PROFILE_CANDIDATES[FeatureProfile(profile)]
+
+
+def normalize_feature_candidate(candidate: str) -> str:
+    """Canonicalize provider-scoped feature candidate labels."""
+    provider, separator, model = candidate.partition("/")
+    if not separator or provider != "claude":
+        return candidate
+    model_label = model.lower()
+    for alias in _CLAUDE_FAMILY_ALIASES:
+        if alias in model_label:
+            return f"{provider}/{alias}"
+    return candidate
 
 
 class FeatureDefaultConfig(BaseModel):
@@ -71,4 +87,5 @@ class FeatureDefaultConfig(BaseModel):
         if invalid:
             joined = ", ".join(repr(candidate) for candidate in invalid)
             raise ValueError(f"feature candidates must use provider/model format: {joined}")
+        self.candidates = [normalize_feature_candidate(candidate) for candidate in self.candidates]
         return self

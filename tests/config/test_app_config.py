@@ -690,6 +690,27 @@ class TestLoadConfig:
         assert config.memory.kg.profile == FeatureProfile.LOW
         assert config.memory.kg.candidates[0] == "codex/gpt-5.3-codex-spark"
 
+    def test_load_config_normalizes_persisted_claude_feature_candidates(
+        self, temp_dir: Path
+    ) -> None:
+        """Persisted Claude model-family candidates load as runtime aliases."""
+
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {
+                    "session_summary.candidates": [
+                        "claude/claude-haiku-4-5",
+                        "claude/claude-sonnet-4-5-20251001",
+                    ]
+                }
+
+        config = load_config(
+            config_file=str(temp_dir / "bootstrap.yaml"),
+            config_store=DummyConfigStore(),
+        )
+
+        assert config.session_summary.candidates == ["claude/haiku", "claude/sonnet"]
+
     def test_ai_embeddings_normalized_at_load(self, temp_dir: Path) -> None:
         """Canonical DB embedding keys populate the runtime embeddings model."""
 

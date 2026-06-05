@@ -45,6 +45,20 @@ class TestFeatureDefaultConfig:
         )
         assert cfg.candidates == ["qwen/qwen3-coder", "claude/opus"]
 
+    @pytest.mark.parametrize(
+        ("candidate", "expected"),
+        [
+            ("claude/claude-haiku-4-5", "claude/haiku"),
+            ("claude/claude-haiku-4-5-20251001", "claude/haiku"),
+            ("claude/claude-sonnet-4-5", "claude/sonnet"),
+            ("claude/claude-opus-4-1", "claude/opus"),
+            ("codex/claude-haiku-4-5", "codex/claude-haiku-4-5"),
+        ],
+    )
+    def test_normalizes_claude_family_candidate_labels(self, candidate: str, expected: str) -> None:
+        cfg = FeatureDefaultConfig(candidates=[candidate])
+        assert cfg.candidates == [expected]
+
     @pytest.mark.parametrize("old_key", ["provider", "model", "tier"])
     def test_rejects_removed_feature_keys(self, old_key: str) -> None:
         with pytest.raises(ValidationError):

@@ -455,9 +455,7 @@ class ChatSessionMixin:
                     "plan_content": content,
                     "allowed_prompts": session._pending_plan_allowed_prompts,
                     "source": plan_source,
-                    "options": (
-                        serialize_plan_accept_options(plan_source) if plan_source else []
-                    ),
+                    "options": (serialize_plan_accept_options(plan_source) if plan_source else []),
                 }
             )
             for ws, meta in list(self.clients.items()):

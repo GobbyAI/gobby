@@ -200,9 +200,7 @@ async def handle_plan_approval_response(
 
     source = getattr(session, "provider", None)
     option = (
-        get_plan_accept_option(source, option_id)
-        if option_id and isinstance(source, str)
-        else None
+        get_plan_accept_option(source, option_id) if option_id and isinstance(source, str) else None
     )
 
     # A keep_planning option (e.g. Claude's Ultraplan, ACP/Codex keep-planning)

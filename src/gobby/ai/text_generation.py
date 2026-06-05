@@ -21,7 +21,7 @@ from gobby.ai.registry import (
     build_daemon_ai_capability_registry,
 )
 from gobby.config.app import DaemonConfig
-from gobby.config.feature_base import default_candidates_for_profile
+from gobby.config.feature_base import default_candidates_for_profile, normalize_feature_candidate
 
 if TYPE_CHECKING:
     from gobby.llm.base import LLMTextResult
@@ -246,7 +246,9 @@ class TextGenerationService:
             return (request,)
         return tuple(
             replace(request, provider=provider, model=model)
-            for provider, model in (_parse_candidate(candidate) for candidate in candidates)
+            for provider, model in (
+                _parse_candidate(normalize_feature_candidate(candidate)) for candidate in candidates
+            )
         )
 
     def _select_binding(self, request: TextGenerationRequest) -> CapabilityBinding:

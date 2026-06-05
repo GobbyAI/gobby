@@ -170,6 +170,35 @@ async def test_text_generation_service_falls_back_across_profile_candidates() ->
 
 
 @pytest.mark.asyncio
+async def test_text_generation_service_normalizes_claude_family_candidate() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                available=True,
+                models=("haiku",),
+            ),
+        ]
+    )
+    claude = RecordingAdapter("claude")
+    service = TextGenerationService(registry, {"claude": claude})
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="summarize",
+            candidates=("claude/claude-haiku-4-5",),
+        )
+    )
+
+    assert result.text == "claude:summarize"
+    assert result.provider == "claude"
+    assert result.model == "haiku"
+    assert claude.requests[0].model == "haiku"
+
+
+@pytest.mark.asyncio
 async def test_text_generation_service_uses_native_json_adapter() -> None:
     registry = AICapabilityRegistry(
         [
