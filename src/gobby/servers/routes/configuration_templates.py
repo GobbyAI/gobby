@@ -109,7 +109,7 @@ def register_template_routes(router: APIRouter, context: ConfigurationRouteConte
     async def get_config_template() -> JSONResponse:
         """Return full Pydantic defaults merged with current DB overrides as YAML."""
         try:
-            defaults = DaemonConfig().model_dump(mode="json", exclude_none=True)
+            defaults = DaemonConfig().model_dump(mode="json", exclude_none=True, by_alias=True)
             config_store = context.get_config_store()
             flat_overrides = storage_embedding_config_entries_to_runtime(config_store.get_all())
             db_overrides = unflatten_config(mask_secret_values(flat_overrides))

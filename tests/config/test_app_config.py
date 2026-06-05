@@ -711,6 +711,58 @@ class TestLoadConfig:
 
         assert config.session_summary.candidates == ["claude/haiku", "claude/sonnet"]
 
+    def test_load_config_rejects_defaults_seeded_claude_only_feature_candidates(
+        self, temp_dir: Path
+    ) -> None:
+        """Old defaults-source Claude-only candidate rows fail loudly."""
+
+        class DummyDB:
+            def fetchall(self, _query: str, _params: tuple[object, ...]) -> list[dict[str, object]]:
+                return [
+                    {
+                        "key": "session_summary.candidates",
+                        "value": json.dumps(["claude/haiku"]),
+                    },
+                    {
+                        "key": "gobby-tasks.validation.candidates",
+                        "value": json.dumps(["claude/sonnet"]),
+                    },
+                ]
+
+        class DummyConfigStore:
+            db = DummyDB()
+
+            def get_all(self) -> dict[str, object]:
+                return {"session_summary.candidates": ["claude/haiku"]}
+
+        with pytest.raises(ValueError, match="Stale defaults-seeded Claude-only"):
+            load_config(
+                config_file=str(temp_dir / "bootstrap.yaml"),
+                config_store=DummyConfigStore(),
+            )
+
+    def test_load_config_preserves_user_claude_only_feature_candidates(
+        self, temp_dir: Path
+    ) -> None:
+        """User-source Claude-only candidate rows remain explicit overrides."""
+
+        class DummyDB:
+            def fetchall(self, _query: str, _params: tuple[object, ...]) -> list[dict[str, object]]:
+                return []
+
+        class DummyConfigStore:
+            db = DummyDB()
+
+            def get_all(self) -> dict[str, object]:
+                return {"session_summary.candidates": ["claude/haiku"]}
+
+        config = load_config(
+            config_file=str(temp_dir / "bootstrap.yaml"),
+            config_store=DummyConfigStore(),
+        )
+
+        assert config.session_summary.candidates == ["claude/haiku"]
+
     def test_ai_embeddings_normalized_at_load(self, temp_dir: Path) -> None:
         """Canonical DB embedding keys populate the runtime embeddings model."""
 

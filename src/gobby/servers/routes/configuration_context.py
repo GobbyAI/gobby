@@ -64,7 +64,7 @@ class ConfigurationRouteContext:
         model_dump = getattr(config, "model_dump", None)
         if not callable(model_dump):
             raise HTTPException(status_code=503, detail="Config model not available")
-        return cast(dict[str, Any], model_dump(mode="json", exclude_none=True))
+        return cast(dict[str, Any], model_dump(mode="json", exclude_none=True, by_alias=True))
 
     def set_runtime_config(
         self,

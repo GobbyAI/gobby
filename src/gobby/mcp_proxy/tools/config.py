@@ -118,7 +118,7 @@ def create_config_registry(
 
     def _flat_config() -> dict[str, Any]:
         """Flatten current in-memory config to dotted keys."""
-        return flatten_config(_current_config().model_dump(mode="json"))
+        return flatten_config(_current_config().model_dump(mode="json", by_alias=True))
 
     @registry.tool(
         name="get_config",
@@ -214,7 +214,7 @@ def create_config_registry(
             update_nested = unflatten_config({runtime_key: validation_value})
 
             # Deep-merge into current config dict
-            current_dict = before_config.model_dump(mode="json")
+            current_dict = before_config.model_dump(mode="json", by_alias=True)
             deep_merge(current_dict, update_nested)
 
             # Validate by constructing a new DaemonConfig
@@ -222,7 +222,7 @@ def create_config_registry(
 
             if effective_is_secret:
                 actual_nested = unflatten_config({runtime_key: value})
-                actual_dict = before_config.model_dump(mode="json")
+                actual_dict = before_config.model_dump(mode="json", by_alias=True)
                 deep_merge(actual_dict, actual_nested)
                 new_config = DaemonConfigCls(**actual_dict)
 
@@ -321,13 +321,13 @@ def create_config_registry(
                 storage_key = runtime_embedding_config_key_to_storage_key(key)
                 validation_updates[key] = f"$secret:{config_key_to_secret_name(storage_key)}"
             update_nested = unflatten_config(validation_updates)
-            current_dict = before_config.model_dump(mode="json")
+            current_dict = before_config.model_dump(mode="json", by_alias=True)
             deep_merge(current_dict, update_nested)
 
             # Validate by constructing a new DaemonConfig
             DaemonConfigCls(**current_dict)
 
-            actual_dict = before_config.model_dump(mode="json")
+            actual_dict = before_config.model_dump(mode="json", by_alias=True)
             deep_merge(actual_dict, unflatten_config(flat_updates))
             new_config = DaemonConfigCls(**actual_dict)
 
@@ -398,7 +398,7 @@ def create_config_registry(
                 storage_embedding_config_key_to_runtime_key(k)
                 for k in override_keys - {storage_key}
             }
-            defaults_flat = flatten_config(DaemonConfigCls().model_dump(mode="json"))
+            defaults_flat = flatten_config(DaemonConfigCls().model_dump(mode="json", by_alias=True))
             parent_prefix = runtime_key.rsplit(".", 1)[0] + "." if "." in runtime_key else ""
             if (
                 parent_prefix
@@ -479,7 +479,7 @@ def create_config_registry(
 
         try:
             # Get all defaults from a fresh DaemonConfig
-            defaults_flat = flatten_config(DaemonConfigCls().model_dump(mode="json"))
+            defaults_flat = flatten_config(DaemonConfigCls().model_dump(mode="json", by_alias=True))
             runtime_section = external_embedding_config_key_to_runtime_key(section)
 
             # Filter to the requested section

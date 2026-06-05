@@ -88,6 +88,12 @@ class TestGetConfig:
         assert result["success"] is True
         assert result["key"] == "telemetry.log_level"
 
+    def test_get_config_uses_gobby_tasks_alias(self, config_registry) -> None:
+        tool = config_registry.get_tool("get_config")
+
+        assert tool(key="gobby-tasks.enabled")["success"] is True
+        assert tool(key="gobby_tasks.enabled")["success"] is False
+
     def test_get_config_missing_key(self, config_registry) -> None:
         """Test get_config returns error for missing key."""
         tool = config_registry.get_tool("get_config")
@@ -450,6 +456,18 @@ class TestEnsureDefaults:
         assert all(key.startswith("ai.embeddings.") for key in result["keys_inserted"])
         assert config_store.get(AI_EMBEDDING_MODEL_KEY) == "nomic-embed-text"
 
+    def test_ensure_defaults_uses_gobby_tasks_alias(
+        self, config_registry, config_store: ConfigStore
+    ) -> None:
+        tool = config_registry.get_tool("ensure_defaults")
+        result = tool(section="gobby-tasks")
+
+        assert result["success"] is True
+        assert "gobby-tasks.validation.candidates" in result["keys_inserted"]
+        assert "gobby_tasks.validation.candidates" not in result["keys_inserted"]
+        assert config_store.get("gobby-tasks.validation.candidates")[0].startswith("codex/")
+        assert config_store.get("gobby_tasks.validation.candidates") is None
+
 
 # ===========================================================================
 # Helper function tests
@@ -683,30 +701,30 @@ class TestSetConfigBatch:
         assert result["success"] is False
         assert "error" in result
 
-    def test_batch_set_digest_provider(
+    def test_batch_set_digest_profile(
         self, config_registry, config_state: dict[str, DaemonConfig]
     ) -> None:
-        """Test setting digest.provider to 'local'."""
+        """Test setting digest.profile."""
         tool = config_registry.get_tool("set_config_batch")
         result = tool(
             entries=[
-                {"key": "digest.provider", "value": "local"},
+                {"key": "digest.profile", "value": "feature_mid"},
             ]
         )
 
         assert result["success"] is True
-        assert config_state["config"].digest.provider == "local"
+        assert config_state["config"].digest.profile == "feature_mid"
 
     def test_batch_set_local_config_and_digest_settings(
         self, config_registry, config_state: dict[str, DaemonConfig]
     ) -> None:
-        """Test setting local endpoint and digest routing together."""
+        """Test setting local endpoint and digest scalar settings together."""
         tool = config_registry.get_tool("set_config_batch")
         result = tool(
             entries=[
                 {"key": "local.url", "value": "http://localhost:1234/v1"},
                 {"key": "local.model", "value": "qwen2.5-coder-7b"},
-                {"key": "digest.provider", "value": "local"},
+                {"key": "digest.profile", "value": "feature_mid"},
                 {"key": "digest.timeout", "value": 45},
             ]
         )
@@ -715,7 +733,7 @@ class TestSetConfigBatch:
         assert result["count"] == 4
         assert config_state["config"].local is not None
         assert config_state["config"].local.model == "qwen2.5-coder-7b"
-        assert config_state["config"].digest.provider == "local"
+        assert config_state["config"].digest.profile == "feature_mid"
         assert config_state["config"].digest.timeout == 45
 
     def test_batch_set_removed_session_title_provider_fails(self, config_registry) -> None:

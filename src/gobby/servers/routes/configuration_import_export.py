@@ -401,7 +401,7 @@ def register_import_export_routes(
 
                 DaemonConfig(**request.config)
                 defaults_flat = flatten_config(
-                    DaemonConfig().model_dump(mode="json", exclude_none=True)
+                    DaemonConfig().model_dump(mode="json", exclude_none=True, by_alias=True)
                 )
                 diff = {
                     k: v for k, v in flat.items() if k not in defaults_flat or defaults_flat[k] != v

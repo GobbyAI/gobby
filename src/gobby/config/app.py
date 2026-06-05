@@ -31,6 +31,7 @@ from gobby.config.embedding_keys import (
     storage_embedding_config_entries_to_runtime,
 )
 from gobby.config.extensions import HookExtensionsConfig
+from gobby.config.feature_candidate_defaults import reject_stale_default_feature_candidate_rows
 from gobby.config.features import (
     ChatConfig,
     ImportMCPServerConfig,
@@ -861,6 +862,7 @@ def load_config(
 
         # Layer 3: DB values (runtime overrides via config_store)
         flat_db = config_store.get_all()
+        reject_stale_default_feature_candidate_rows(config_store)
         flat_db = _drop_legacy_neo4j_config_store_keys(flat_db, config_store)
         flat_db = _drop_legacy_embedding_config_store_keys(flat_db, config_store)
         flat_db = _migrate_default_ui_mode_config_store_row(flat_db, config_store)
@@ -951,7 +953,7 @@ def export_config_to_yaml(config: DaemonConfig, config_file: str | None = None) 
 
     # Convert config to dict, excluding None values to keep file clean
     # mode="json" ensures Path objects are converted to strings for YAML serialization
-    config_dict = config.model_dump(mode="json", exclude_none=True)
+    config_dict = config.model_dump(mode="json", exclude_none=True, by_alias=True)
 
     # Write to YAML file
     with open(config_path, "w") as f:
