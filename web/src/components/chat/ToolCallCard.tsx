@@ -98,6 +98,20 @@ function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
     )
   }
 
+  // Plan pattern (ExitPlanMode / ExitSpecMode and other plan-mode tools): the
+  // `plan` arg is markdown. Render it formatted instead of an escaped JSON blob
+  // that leaks literal \n\n and \" to the reader.
+  if (typeof args.plan === 'string') {
+    const title =
+      typeof args.title === 'string' && args.title.trim() ? args.title : 'Plan'
+    return (
+      <div>
+        <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>{title}</div>
+        <MarkdownBody id="tool-plan" content={args.plan} />
+      </div>
+    )
+  }
+
   // Fallback: syntax-highlighted JSON
   return (
     <div>
