@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] — gcode
+
+First stable release of `gcode`. The CLI surface, JSON envelopes, and PostgreSQL
+hub contract are now considered stable under Semantic Versioning.
+
+### Added
+
+#### gcode
+
+- **`gcode symbol-at` lookup** — resolve the symbol enclosing a given
+  `FILE:LINE[:COL]` position, so editors and agents can map a cursor location
+  straight to its owning symbol id.
+- **`gcode grep -w/--word`** — ASCII identifier whole-word matching over the
+  indexed content corpus while still preserving Rust regex patterns such as
+  `\bidentifier\b` and clear invalid-regex errors.
+- **UUID graph lookup** — `gcode callers` and `gcode usages` now treat valid
+  UUID input as an exact symbol id for the active project before falling back to
+  name resolution.
+
 ### Changed
 
 #### gcode
@@ -16,19 +35,149 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** `gcode grep -w` now maps to `--word` for indexed ASCII
   identifier matching. The hidden `--word-regexp` compatibility flag remains
   unsupported and no longer owns the `-w` short flag.
-- Added `gcode grep -w/--word` for ASCII identifier whole-word matching while
-  preserving Rust regex patterns such as `\bidentifier\b` and clear invalid
-  regex errors.
-- `gcode callers` and `gcode usages` now treat valid UUID input as an exact
-  symbol ID for the active project before falling back to name resolution.
-- Refreshed the gcode CLI contract, README, and bundled `code-index` skill docs
-  so agents prefer `gcode grep -w <identifier>` for identifier text search and
-  `gcode usages/callers <symbol-id>` for reference mapping.
+- **BM25 score primitives** — symbol and content search share a single set of
+  BM25 score primitives, removing duplicated ranking math across the search
+  paths.
+- **Refreshed agent contract** — the gcode CLI contract, README, and bundled
+  `code-index` skill docs now steer agents toward `gcode grep -w <identifier>`
+  for identifier text search and `gcode usages/callers <symbol-id>` for
+  reference mapping.
+- **Large-module decomposition** — codewiki generation, import-resolution
+  parsing, and the PostgreSQL `db` layer were split into focused sub-modules
+  (each under ~1,000 lines) with expanded snapshot and property test coverage.
+
+### Fixed
+
+#### gcode
+
+- **ParadeDB BM25 scoring** — indexed BM25 search now uses the ParadeDB
+  (`pdb`) relevance score instead of an approximate local score, improving
+  ranking fidelity.
+- **Skip unused service resolution** — gcode no longer resolves graph/vector
+  services for commands that do not need them, avoiding spurious connectivity
+  work and warnings.
+- **Review hardening** — applied review and cleanup findings across the crate.
+
+#### CI/CD
+
+- **Nextest test foundation** — workspace test runs migrated to `cargo
+  nextest`, with release-workflow tests aligned to the same runner.
+- **Workflow supply-chain guardrails** — added a guardrail test that fails when
+  GitHub Action references are not pinned, and pinned release-workflow asset
+  checksums.
+
+## [0.4.0] — gobby-core
+
+### Changed
+
+#### gobby-core
+
+- **Shared BM25 score primitives** — the BM25 scoring primitives consumed by
+  gcode and gwiki now live in the foundation crate so every consumer ranks
+  content the same way.
+- **Module decomposition** — `config` and `provisioning` were split into
+  focused sub-modules (each under ~1,000 lines) to keep the shared foundation
+  maintainable as it grows.
+
+### Fixed
+
+#### gobby-core
+
+- **Datastore adapter hardening** — PostgreSQL, FalkorDB, and Qdrant helpers
+  gained additional review-driven robustness and clearer degradation behavior.
+- **Review hardening** — applied review and cleanup findings across the crate.
+
+## [0.3.0] — gwiki
+
+### Added
 
 #### gwiki
 
-- Clarified the research and compile contract docs for budget/write-conflict
-  fields, compile `TOPIC`/`--outline`/`--kind` inputs, and daemon JSON parsing.
+- **Full research budget reporting** — `gwiki research --format json` now echoes
+  all five budget limits (max steps, max tokens, wall-time, and the remaining
+  controls) so callers can display and enforce the complete budget envelope.
+
+### Changed
+
+#### gwiki
+
+- **Datastore contract enforcement** — `gwiki` now enforces its datastore
+  contract up front, failing clearly when the configured hub/search stores do
+  not satisfy the required schema rather than degrading silently mid-run.
+- **Compile contract alignment** — compile JSON keys and the research/compile
+  contract docs were aligned for budget/write-conflict fields, `TOPIC` /
+  `--outline` / `--kind` inputs, and daemon JSON parsing; added a dedicated
+  `gwiki` user guide.
+- **Large-module decomposition** — the research loop, PDF/document/video
+  ingest, sources, compile, refresh, and research command modules were split
+  into focused sub-modules (each under ~1,000 lines), and the CLI test fixtures
+  were modernized.
+
+### Fixed
+
+#### gwiki
+
+- **Genuine write-conflict stop** — the research loop now stops on a genuine
+  vault write conflict instead of looping, reporting it as an explicit stop
+  reason.
+- **Default-feature build** — restored the `gwiki` build under default features
+  after the feature-gated ingest split.
+- **Review hardening** — applied review and cleanup findings across the crate.
+
+#### CI/CD
+
+- **Windows release builds** — re-enabled Windows targets for the `gwiki`
+  release matrix with deterministic pdfium provisioning.
+- **Idempotent publish** — the `gwiki` release publish step now checks
+  crates.io before publishing, so re-running a release is a safe no-op.
+- **Per-asset checksums** — helper releases now publish per-asset SHA-256
+  checksums, and release tags are pushed individually to avoid GitHub's
+  >3-tags-per-push event suppression.
+
+## [0.4.6] — gobby-hooks
+
+### Added
+
+#### gobby-hooks
+
+- **aarch64 Windows binaries** — the `ghook` release matrix now builds
+  `aarch64-pc-windows-msvc` artifacts alongside the existing targets.
+
+### Changed
+
+#### gobby-hooks
+
+- **Shared foundation floor** — `gobby-hooks` now requires `gobby-core 0.4.0`.
+
+### Fixed
+
+#### gobby-hooks
+
+- **Review hardening** — removed legacy compatibility surfaces and applied
+  review and cleanup findings across the crate.
+
+## [0.4.6] — gobby-squeeze
+
+### Fixed
+
+#### gobby-squeeze
+
+- **Review hardening** — removed legacy compatibility surfaces and applied
+  review and cleanup findings across the crate.
+
+## [0.1.4] — gobby-local
+
+### Changed
+
+#### gobby-local
+
+- **Shared foundation floor** — `gobby-local` now requires `gobby-core 0.4.0`.
+
+### Fixed
+
+#### gobby-local
+
+- **Review hardening** — applied review and cleanup findings across the crate.
 
 ## [0.2.0] — gwiki
 
