@@ -38,6 +38,7 @@ class PromotionMemoryManager(Protocol):
         project_id: str,
         memory_type: str,
         limit: int,
+        offset: int = 0,
         tags_all: list[str],
     ) -> list[Any]: ...
 

@@ -22,10 +22,7 @@ def get_session_manager() -> SessionManager:
 
 
 def _normalize_project_path(path: str) -> str:
-    try:
-        return str(Path(path).expanduser().resolve())
-    except OSError:
-        return str(Path(path).expanduser())
+    return str(Path(path).expanduser().resolve(strict=False))
 
 
 def _resolve_project_ref_or_path(project_ref: str, manager: SessionManager) -> str:

@@ -6,9 +6,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.hooks.dispatchers.mcp import PROJECT_MEMORY_CONTEXT_BUDGET
+from gobby.hooks.dispatchers.mcp import (
+    PROJECT_MEMORY_CLOSE_TAG,
+    PROJECT_MEMORY_CONTEXT_BUDGET,
+    PROJECT_MEMORY_OPEN_TAG,
+    _format_project_memories,
+)
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
+from gobby.memory.context import format_memory_metadata_suffix
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 pytestmark = pytest.mark.unit
@@ -546,6 +552,107 @@ class TestFormatDiscoveryResult:
             "- Use task-linked commits. (memory_id: mm-abc123, score: 0.9263, via: keyword)"
         ) in result
         assert result.count("memory_id: mm-abc123") == 1
+
+    def test_format_project_memories_truncates_single_oversized_memory(self) -> None:
+        """Truncates one oversized memory while preserving metadata and tags."""
+        suffix = format_memory_metadata_suffix("mem-big", score=0.99, via="semantic")
+        truncated_line = f"- {'A' * 20}...{suffix}"
+        expected = "\n".join([PROJECT_MEMORY_OPEN_TAG, truncated_line, PROJECT_MEMORY_CLOSE_TAG])
+
+        result = _format_project_memories(
+            [
+                {
+                    "content": "A" * 200,
+                    "id": "mem-big",
+                    "similarity": 0.99,
+                    "search_via": "semantic",
+                }
+            ],
+            budget=len(expected),
+        )
+
+        assert result == expected
+
+    def test_format_project_memories_includes_all_memories_within_budget(self) -> None:
+        """Includes every valid memory when the rendered output fits."""
+        first_suffix = format_memory_metadata_suffix("mem-1", score=0.91, via="semantic")
+        second_suffix = format_memory_metadata_suffix("mem-2", score=0.82, via="keyword")
+        expected = "\n".join(
+            [
+                PROJECT_MEMORY_OPEN_TAG,
+                f"- Use task-linked commits.{first_suffix}",
+                f"- Prefer focused validation.{second_suffix}",
+                PROJECT_MEMORY_CLOSE_TAG,
+            ]
+        )
+
+        result = _format_project_memories(
+            [
+                {
+                    "content": "Use task-linked commits.",
+                    "id": "mem-1",
+                    "similarity": 0.91,
+                    "search_via": "semantic",
+                },
+                {
+                    "content": "Prefer focused validation.",
+                    "id": "mem-2",
+                    "similarity": 0.82,
+                    "search_via": "keyword",
+                },
+            ],
+            budget=len(expected),
+        )
+
+        assert result == expected
+
+    def test_format_project_memories_truncates_middle_memory_and_counts_omitted(
+        self,
+    ) -> None:
+        """Truncates the first non-fitting memory and reports lower-ranked omissions."""
+        first_suffix = format_memory_metadata_suffix("mem-1", score=0.91, via="semantic")
+        second_suffix = format_memory_metadata_suffix("mem-2", score=0.82, via="keyword")
+        expected = "\n".join(
+            [
+                PROJECT_MEMORY_OPEN_TAG,
+                f"- First memory fits.{first_suffix}",
+                f"- {'B' * 12}...{second_suffix}",
+                "- ... 2 lower-ranked memories omitted due to context budget.",
+                PROJECT_MEMORY_CLOSE_TAG,
+            ]
+        )
+
+        result = _format_project_memories(
+            [
+                {
+                    "content": "First memory fits.",
+                    "id": "mem-1",
+                    "similarity": 0.91,
+                    "search_via": "semantic",
+                },
+                {
+                    "content": "B" * 200,
+                    "id": "mem-2",
+                    "similarity": 0.82,
+                    "search_via": "keyword",
+                },
+                {
+                    "content": "Dropped third memory.",
+                    "id": "mem-3",
+                    "similarity": 0.7,
+                    "search_via": "semantic",
+                },
+                {
+                    "content": "Dropped fourth memory.",
+                    "id": "mem-4",
+                    "similarity": 0.6,
+                    "search_via": "keyword",
+                },
+            ],
+            budget=len(expected),
+        )
+
+        assert result == expected
 
     def test_format_search_memories_omits_review_lesson_memories(self) -> None:
         """Keeps raw review lessons out of generic project-memory injection."""

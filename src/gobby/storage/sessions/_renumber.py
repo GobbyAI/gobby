@@ -75,6 +75,11 @@ class _RenumberMixin:
             min_seq_num = min(old_seq_nums, default=0)
             temp_offset = abs(min_seq_num) + len(mapping) + 1
 
+            # Move rows through a disjoint negative range before writing final refs.
+            # PostgreSQL checks per-project seq_num uniqueness immediately, so
+            # mapping + old_seq_nums/min_seq_num/temp_offset reserve negative
+            # values for the first executemany; the second executemany applies
+            # final positive seq_nums.
             conn.executemany(
                 "UPDATE sessions SET seq_num = %s WHERE id = %s",
                 [(-(temp_offset + item["new_seq_num"]), item["session_id"]) for item in mapping],
