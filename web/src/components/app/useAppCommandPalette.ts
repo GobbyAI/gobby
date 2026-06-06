@@ -29,10 +29,7 @@ interface UseAppCommandPaletteArgs {
   startNewChat: () => void;
   clearHistory: () => void;
   sendMessage: SendMessage;
-  settings: Pick<
-    Settings,
-    "model" | "chatMode" | "postPlanChatMode" | "ttsEnabled"
-  >;
+  settings: Pick<Settings, "model" | "chatMode" | "ttsEnabled">;
   effectiveProjectId: string | null;
   currentMainReasoning: string | null;
   updateChatMode: (mode: ChatMode) => void;
@@ -141,8 +138,10 @@ export function useAppCommandPalette({
       }
       if (item.action === "exit_plan_mode") {
         if (settings.chatMode === "plan") {
-          updateChatMode(settings.postPlanChatMode);
-          sendMode(settings.postPlanChatMode);
+          // Exiting plan mode from the palette lands in Act (normal); YOLO is a
+          // deliberate per-approval choice on the plan card, not a default here.
+          updateChatMode("normal");
+          sendMode("normal");
         }
         return;
       }
@@ -164,7 +163,6 @@ export function useAppCommandPalette({
       setResumeModalOpen,
       setSettingsOpen,
       settings.chatMode,
-      settings.postPlanChatMode,
       showPlanRef,
       updateChatMode,
     ],

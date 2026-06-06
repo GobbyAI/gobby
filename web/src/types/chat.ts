@@ -11,18 +11,24 @@ export interface ChatModeInfo {
 }
 
 /**
- * One selectable plan-acceptance choice surfaced by a managed CLI. Sourced
- * from the backend per-CLI registry (gobby.adapters.plan_options) and emitted
- * in the plan_pending_approval payload; the frontend renders whatever it is
- * given and echoes the id back as option_id. Mirrors the ChatModeInfo
+ * One selectable plan-acceptance choice. Sourced from the backend registry
+ * (gobby.adapters.plan_options) and emitted in the plan_pending_approval
+ * payload; the frontend renders whatever it is given and echoes the id back as
+ * option_id. The uniform set is Approve (YOLO) and Approve (Act); Reject is a
+ * separate request-changes action, not an option. Mirrors the ChatModeInfo
  * static-metadata pattern.
  */
 export interface ApprovalOption {
   id: string;
   label: string;
   description?: string;
-  /** "approve" exits plan mode; "keep_planning" re-enters planning. */
-  decision?: "approve" | "keep_planning";
+  /** "approve" exits plan mode into the option's execution mode. */
+  decision?: "approve";
+  /**
+   * Button-hierarchy hint: "primary" is the dominant solid CTA (YOLO),
+   * "accent" is the quieter tinted action (Act). Absent -> tinted accent.
+   */
+  emphasis?: "primary" | "accent";
 }
 
 export const CHAT_MODES: ChatModeInfo[] = [

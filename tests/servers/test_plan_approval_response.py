@@ -1,10 +1,13 @@
 """Tests for plan_approval_response WebSocket handler.
 
-Verified for task #10454: Backend must emit mode_changed for request_changes (non-ExitPlanMode path).
+The accept options are uniform: ``approve_yolo`` (-> bypass) and ``approve_act``
+(-> normal). Reject is ``request_changes`` with an optional comment. A missing
+or unknown ``option_id`` falls back to the generic-approve default (normal mode,
+auto-continue) so older clients stay compatible.
 """
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -66,7 +69,7 @@ async def test_handle_plan_approval_request_changes_legacy_sends_mode_changed():
 
 @pytest.mark.asyncio
 async def test_handle_plan_approval_approve_legacy_sends_mode_changed():
-    """Verify approve exits plan mode into the configured post-plan mode."""
+    """Approve with no option_id exits plan mode into the generic default (normal)."""
 
     class MockHost(SessionControlMixin):
         def __init__(self):
@@ -80,6 +83,7 @@ async def test_handle_plan_approval_approve_legacy_sends_mode_changed():
     host = MockHost()
 
     session = MagicMock()
+    session.provider = "claude"
     session.has_pending_plan = False
     session.sync_sdk_permission_mode = AsyncMock()
 
@@ -94,20 +98,16 @@ async def test_handle_plan_approval_approve_legacy_sends_mode_changed():
         "decision": "approve",
     }
 
-    with patch(
-        "gobby.servers.websocket.handlers.plan_approval._resolve_post_plan_mode",
-        return_value="bypass",
-    ):
-        await SessionControlMixin._handle_plan_approval_response(host, websocket, data)
+    await SessionControlMixin._handle_plan_approval_response(host, websocket, data)
 
     session.approve_plan.assert_called_once()
-    session.set_chat_mode.assert_called_once_with("bypass")
+    session.set_chat_mode.assert_called_once_with("normal")
     session.sync_sdk_permission_mode.assert_awaited_once()
 
     websocket.send.assert_called_once()
     sent_data = json.loads(websocket.send.call_args[0][0])
     assert sent_data["type"] == "mode_changed"
-    assert sent_data["mode"] == "bypass"
+    assert sent_data["mode"] == "normal"
     assert sent_data["reason"] == "plan_approved"
 
 
@@ -128,6 +128,7 @@ async def test_handle_plan_approval_approve_pending_plan_unblocks_into_post_plan
     host = MockHost()
 
     session = MagicMock()
+    session.provider = "claude"
     session.has_pending_plan = True
     session.sync_sdk_permission_mode = AsyncMock()
 
@@ -142,11 +143,7 @@ async def test_handle_plan_approval_approve_pending_plan_unblocks_into_post_plan
         "decision": "approve",
     }
 
-    with patch(
-        "gobby.servers.websocket.handlers.plan_approval._resolve_post_plan_mode",
-        return_value="normal",
-    ):
-        await SessionControlMixin._handle_plan_approval_response(host, websocket, data)
+    await SessionControlMixin._handle_plan_approval_response(host, websocket, data)
 
     session.set_chat_mode.assert_called_once_with("normal")
     assert session.set_chat_mode.call_count == 1
@@ -185,6 +182,7 @@ async def test_handle_plan_approval_approve_managed_auto_continues_execution():
     host._handle_chat_message = AsyncMock()
 
     session = MagicMock()
+    session.provider = "droid"
     session.has_pending_plan = True
     session.plan_auto_switch = False
     session.sync_sdk_permission_mode = AsyncMock()
@@ -198,11 +196,7 @@ async def test_handle_plan_approval_approve_managed_auto_continues_execution():
         "decision": "approve",
     }
 
-    with patch(
-        "gobby.servers.websocket.handlers.plan_approval._resolve_post_plan_mode",
-        return_value="normal",
-    ):
-        await SessionControlMixin._handle_plan_approval_response(host, websocket, data)
+    await SessionControlMixin._handle_plan_approval_response(host, websocket, data)
 
     session.set_chat_mode.assert_called_once_with("normal")
     session.provide_plan_decision.assert_called_once_with("approve")
@@ -233,6 +227,7 @@ async def test_handle_plan_approval_approve_native_does_not_auto_continue():
     host._handle_chat_message = AsyncMock()
 
     session = MagicMock()
+    session.provider = "claude"
     session.has_pending_plan = True
     session.plan_auto_switch = True
     session.sync_sdk_permission_mode = AsyncMock()
@@ -246,11 +241,7 @@ async def test_handle_plan_approval_approve_native_does_not_auto_continue():
         "decision": "approve",
     }
 
-    with patch(
-        "gobby.servers.websocket.handlers.plan_approval._resolve_post_plan_mode",
-        return_value="normal",
-    ):
-        await SessionControlMixin._handle_plan_approval_response(host, websocket, data)
+    await SessionControlMixin._handle_plan_approval_response(host, websocket, data)
 
     # Native unblocks ExitPlanMode in-flight and switches mode, but does NOT
     # inject a second turn (that would double-execute the approved plan).
@@ -287,8 +278,8 @@ def _make_session(*, provider: str, has_pending_plan: bool, plan_auto_switch: bo
 
 
 @pytest.mark.asyncio
-async def test_option_claude_bypass_drives_bypass_mode_no_auto_continue() -> None:
-    """Claude approve_bypass option -> bypass mode; native does not auto-continue."""
+async def test_option_yolo_native_drives_bypass_no_auto_continue() -> None:
+    """approve_yolo -> bypass mode; native Claude does not auto-continue."""
     host = _make_host()
     session = _make_session(provider="claude", has_pending_plan=True, plan_auto_switch=True)
     host._chat_sessions["c"] = session
@@ -297,18 +288,18 @@ async def test_option_claude_bypass_drives_bypass_mode_no_auto_continue() -> Non
     await SessionControlMixin._handle_plan_approval_response(
         host,
         websocket,
-        {"conversation_id": "c", "decision": "approve", "option_id": "approve_bypass"},
+        {"conversation_id": "c", "decision": "approve", "option_id": "approve_yolo"},
     )
 
-    # The registry option drives the post-plan mode, not the configured default.
+    # The registry option drives the post-plan mode.
     session.set_chat_mode.assert_called_once_with("bypass")
     session.provide_plan_decision.assert_called_once_with("approve")
     host._handle_chat_message.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_option_managed_yolo_drives_bypass_and_auto_continues() -> None:
-    """ACP approve_yolo option -> bypass mode + auto-continue on a managed CLI."""
+async def test_option_yolo_managed_drives_bypass_and_auto_continues() -> None:
+    """approve_yolo -> bypass mode + auto-continue on a managed CLI."""
     host = _make_host()
     session = _make_session(provider="gemini", has_pending_plan=True, plan_auto_switch=False)
     host._chat_sessions["c"] = session
@@ -328,8 +319,8 @@ async def test_option_managed_yolo_drives_bypass_and_auto_continues() -> None:
 
 
 @pytest.mark.asyncio
-async def test_option_managed_auto_edit_drives_accept_edits_mode() -> None:
-    """ACP approve_auto_edit option -> accept_edits mode on a managed CLI."""
+async def test_option_act_managed_drives_normal_mode_and_auto_continues() -> None:
+    """approve_act -> normal mode + auto-continue on a managed CLI."""
     host = _make_host()
     session = _make_session(provider="qwen", has_pending_plan=True, plan_auto_switch=False)
     host._chat_sessions["c"] = session
@@ -337,16 +328,16 @@ async def test_option_managed_auto_edit_drives_accept_edits_mode() -> None:
     await SessionControlMixin._handle_plan_approval_response(
         host,
         AsyncMock(),
-        {"conversation_id": "c", "decision": "approve", "option_id": "approve_auto_edit"},
+        {"conversation_id": "c", "decision": "approve", "option_id": "approve_act"},
     )
 
-    session.set_chat_mode.assert_called_once_with("accept_edits")
+    session.set_chat_mode.assert_called_once_with("normal")
     host._handle_chat_message.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_option_ultraplan_keeps_plan_pending_native() -> None:
-    """Claude ultraplan option keeps the plan unapproved and re-plans deeper."""
+async def test_reject_with_empty_comment_denies_pending_plan() -> None:
+    """Reject (request_changes) with no comment denies ExitPlanMode; no feedback set."""
     host = _make_host()
     session = _make_session(provider="claude", has_pending_plan=True, plan_auto_switch=True)
     host._chat_sessions["c"] = session
@@ -354,20 +345,18 @@ async def test_option_ultraplan_keeps_plan_pending_native() -> None:
     await SessionControlMixin._handle_plan_approval_response(
         host,
         AsyncMock(),
-        {"conversation_id": "c", "decision": "approve", "option_id": "ultraplan"},
+        {"conversation_id": "c", "decision": "request_changes"},
     )
 
-    # No mode switch, no approval — the plan stays in planning.
-    session.set_chat_mode.assert_not_called()
+    # The comment is optional, so no feedback is recorded when empty.
+    session.set_plan_feedback.assert_not_called()
     session.provide_plan_decision.assert_called_once_with("request_changes")
-    feedback_arg = session.set_plan_feedback.call_args[0][0]
-    assert "Ultraplan" in feedback_arg
-    host._handle_chat_message.assert_not_awaited()
+    session.set_chat_mode.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_option_keep_planning_managed_injects_directive_turn() -> None:
-    """ACP keep_planning option on a managed CLI re-plans via an injected turn."""
+async def test_reject_with_empty_comment_managed_returns_to_plan() -> None:
+    """Reject with no comment on a managed CLI returns the UI to plan mode."""
     host = _make_host()
     session = _make_session(provider="droid", has_pending_plan=False, plan_auto_switch=False)
     host._chat_sessions["c"] = session
@@ -376,59 +365,28 @@ async def test_option_keep_planning_managed_injects_directive_turn() -> None:
     await SessionControlMixin._handle_plan_approval_response(
         host,
         websocket,
-        {"conversation_id": "c", "decision": "approve", "option_id": "keep_planning"},
+        {"conversation_id": "c", "decision": "request_changes"},
     )
 
-    session.set_chat_mode.assert_not_called()
-    # mode_changed(plan) keeps the UI in planning, then a directive turn is posted.
+    session.set_plan_feedback.assert_not_called()
     sent = json.loads(websocket.send.call_args[0][0])
     assert sent["type"] == "mode_changed"
     assert sent["mode"] == "plan"
-    host._handle_chat_message.assert_awaited_once()
-    _, cont = host._handle_chat_message.await_args[0]
-    assert cont["content"].strip()
 
 
 @pytest.mark.asyncio
-async def test_option_codex_clear_context_resets_and_reseeds_plan() -> None:
-    """Codex approve_clear_context clears the thread and re-seeds the plan."""
+async def test_unknown_option_id_falls_back_to_generic_approve() -> None:
+    """An unresolved option_id preserves the legacy generic-approve default."""
     host = _make_host()
-    session = _make_session(provider="codex", has_pending_plan=True, plan_auto_switch=False)
-    session.clear_context = AsyncMock(return_value=True)
-    session._last_plan_content = "BUILD THE WIDGET"
+    session = _make_session(provider="claude", has_pending_plan=True, plan_auto_switch=True)
     host._chat_sessions["c"] = session
 
     await SessionControlMixin._handle_plan_approval_response(
         host,
         AsyncMock(),
-        {"conversation_id": "c", "decision": "approve", "option_id": "approve_clear_context"},
+        {"conversation_id": "c", "decision": "approve", "option_id": "no_such_option"},
     )
 
-    session.set_chat_mode.assert_called_once_with("normal")
-    session.clear_context.assert_awaited_once()
-    host._handle_chat_message.assert_awaited_once()
-    _, cont = host._handle_chat_message.await_args[0]
-    # The cleared context is re-seeded with the approved plan body.
-    assert "BUILD THE WIDGET" in cont["content"]
-
-
-@pytest.mark.asyncio
-async def test_unknown_option_id_falls_back_to_generic_approve() -> None:
-    """An unresolved option_id preserves legacy generic-approve behavior."""
-    host = _make_host()
-    session = _make_session(provider="claude", has_pending_plan=True, plan_auto_switch=True)
-    host._chat_sessions["c"] = session
-
-    with patch(
-        "gobby.servers.websocket.handlers.plan_approval._resolve_post_plan_mode",
-        return_value="normal",
-    ):
-        await SessionControlMixin._handle_plan_approval_response(
-            host,
-            AsyncMock(),
-            {"conversation_id": "c", "decision": "approve", "option_id": "no_such_option"},
-        )
-
-    # Falls back to the configured post-plan default, not an option mode.
+    # Falls back to the generic post-plan default (normal), not an option mode.
     session.set_chat_mode.assert_called_once_with("normal")
     session.provide_plan_decision.assert_called_once_with("approve")

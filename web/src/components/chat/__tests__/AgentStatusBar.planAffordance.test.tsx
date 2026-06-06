@@ -23,7 +23,7 @@ describe('AgentStatusBar pending-plan affordance', () => {
     expect(screen.getAllByTestId('agent-status-bar')).toHaveLength(1)
 
     expect(screen.getByTestId('plan-strip-approve')).toBeInTheDocument()
-    expect(screen.getByTestId('plan-strip-request-changes')).toBeInTheDocument()
+    expect(screen.getByTestId('plan-strip-reject')).toBeInTheDocument()
     expect(screen.getByTestId('plan-strip-view')).toBeInTheDocument()
   })
 

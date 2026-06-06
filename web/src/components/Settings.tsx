@@ -11,7 +11,6 @@ interface SettingsProps {
   onFontSizeChange: (size: number) => void
   onThemeChange: (theme: Theme) => void
   onDefaultChatModeChange: (mode: ChatMode) => void
-  onPostPlanChatModeChange: (mode: 'normal' | 'bypass') => void
   onReset: () => void
 }
 
@@ -22,13 +21,11 @@ export function Settings({
   onFontSizeChange,
   onThemeChange,
   onDefaultChatModeChange,
-  onPostPlanChatModeChange,
   onReset,
 }: SettingsProps) {
   const headingId = useId()
   const themeLabelId = useId()
   const defaultModeLabelId = useId()
-  const postPlanModeLabelId = useId()
 
   if (!isOpen) return null
 
@@ -101,24 +98,6 @@ export function Settings({
                   className={`theme-option${settings.defaultChatMode === m.id ? ' active' : ''}`}
                   onClick={() => onDefaultChatModeChange(m.id)}
                   aria-pressed={settings.defaultChatMode === m.id}
-                  title={m.description}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="setting-item" role="group" aria-labelledby={postPlanModeLabelId}>
-            <span id={postPlanModeLabelId}>After Approved Plan</span>
-            <div className="theme-selector">
-              {CHAT_MODES.filter((m) => m.id === 'normal' || m.id === 'bypass').map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  className={`theme-option${settings.postPlanChatMode === m.id ? ' active' : ''}`}
-                  onClick={() => onPostPlanChatModeChange(m.id as 'normal' | 'bypass')}
-                  aria-pressed={settings.postPlanChatMode === m.id}
                   title={m.description}
                 >
                   {m.label}

@@ -151,7 +151,7 @@ describe("useChat plan actions", () => {
     expect(result.current.planPendingApproval).toBe(false);
   });
 
-  it("captures per-CLI options and sends option_id when an option is selected", async () => {
+  it("captures accept options and sends option_id when an option is selected", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());
 
@@ -159,8 +159,8 @@ describe("useChat plan actions", () => {
     act(() => ws.simulateOpen());
 
     const options: ApprovalOption[] = [
-      { id: "approve_bypass", label: "Approve, bypass permissions", decision: "approve" },
-      { id: "ultraplan", label: "Refine with Ultraplan", decision: "keep_planning" },
+      { id: "approve_yolo", label: "Approve (YOLO)", decision: "approve", emphasis: "primary" },
+      { id: "approve_act", label: "Approve (Act)", decision: "approve", emphasis: "accent" },
     ];
     act(() => {
       ws.simulateMessage({
@@ -180,43 +180,9 @@ describe("useChat plan actions", () => {
     const responses = planApprovalResponses(ws);
     expect(responses).toHaveLength(1);
     expect(responses[0].decision).toBe("approve");
-    expect(responses[0].option_id).toBe("approve_bypass");
+    expect(responses[0].option_id).toBe("approve_yolo");
     // An approve option leaves clearing to the backend mode_changed event.
     expect(result.current.planPendingApproval).toBe(true);
-  });
-
-  it("a keep_planning option eagerly clears the approval UI", async () => {
-    await loadModule();
-    const { result } = renderHook(() => useChat());
-
-    const ws = mockWs.instances[0];
-    act(() => ws.simulateOpen());
-
-    const ultraplan = {
-      id: "ultraplan",
-      label: "Refine with Ultraplan",
-      decision: "keep_planning" as const,
-    };
-    act(() => {
-      ws.simulateMessage({
-        type: "plan_pending_approval",
-        conversation_id: result.current.conversationId,
-        plan_content: "# My Plan\n\nStep 1...",
-        source: "claude",
-        options: [ultraplan],
-      });
-    });
-    expect(result.current.planPendingApproval).toBe(true);
-
-    act(() => {
-      result.current.approvePlan(ultraplan);
-    });
-
-    const responses = planApprovalResponses(ws);
-    expect(responses).toHaveLength(1);
-    expect(responses[0].option_id).toBe("ultraplan");
-    // keep_planning re-enters planning, so the approval UI hides immediately.
-    expect(result.current.planPendingApproval).toBe(false);
   });
 
   it("plan_pending_approval sets pending state and fires onPlanReady", async () => {

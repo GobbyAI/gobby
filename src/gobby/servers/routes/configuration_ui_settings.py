@@ -20,7 +20,6 @@ UI_SETTINGS_KEYS = (
     "model",
     "theme",
     "defaultChatMode",
-    "postPlanChatMode",
     "selectedProjectId",
     "selectedProvider",
 )

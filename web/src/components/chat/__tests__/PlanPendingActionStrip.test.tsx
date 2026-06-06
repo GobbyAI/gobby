@@ -33,7 +33,7 @@ describe('PlanPendingActionStrip', () => {
 
   it('fires onRequestChanges with feedback', () => {
     const { props } = renderStrip()
-    fireEvent.click(screen.getByTestId('plan-strip-request-changes'))
+    fireEvent.click(screen.getByTestId('plan-strip-reject'))
     fireEvent.change(screen.getByTestId('plan-strip-feedback'), {
       target: { value: 'Tweak the rollout step' },
     })

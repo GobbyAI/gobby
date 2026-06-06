@@ -221,13 +221,15 @@ class TestCreateChatSessionInner:
             assert "plan_pending_approval" in call_args_plan
             assert session._pending_plan_content == "plan data"
             assert session._pending_plan_allowed_prompts == ["y"]
-            # The payload carries the CLI source and its per-CLI option set
-            # so the frontend renders Claude's real ExitPlanMode choices (#15637).
+            # The payload carries the CLI source and the uniform YOLO/Act accept
+            # option set so the frontend renders the fixed approval buttons.
             plan_payload = json.loads(call_args_plan)
             assert plan_payload["source"] == "claude"
             option_ids = {opt["id"] for opt in plan_payload["options"]}
-            assert "approve_bypass" in option_ids
-            assert "ultraplan" in option_ids
+            assert option_ids == {"approve_yolo", "approve_act"}
+            emphasis_by_id = {opt["id"]: opt["emphasis"] for opt in plan_payload["options"]}
+            assert emphasis_by_id["approve_yolo"] == "primary"
+            assert emphasis_by_id["approve_act"] == "accent"
 
     @pytest.mark.asyncio
     async def test_create_chat_session_auto_resume(self, mixin: DummyMixin):

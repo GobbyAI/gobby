@@ -86,9 +86,9 @@ describe('PlansTab', () => {
     expect(status).toHaveAttribute('data-status', 'pending')
     expect(screen.getByText('Awaiting your approval')).toBeInTheDocument()
     expect(screen.getByTestId('markdown')).toHaveTextContent('Step 1 details')
-    // Desktop: approve / request-changes live on the agent status bar, not here.
+    // Desktop: approve / reject live on the agent status bar, not here.
     expect(screen.queryByTestId('plan-review-approve')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('plan-review-request-changes')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('plan-review-reject')).not.toBeInTheDocument()
 
     // BAN 1: no left/right side-stripe accent on the card.
     expect(status.className).not.toContain('border-l')
@@ -98,11 +98,11 @@ describe('PlansTab', () => {
     expect(status.className).toContain('--color-warning-foreground')
   })
 
-  it('renders approve / request-changes in the panel on mobile', () => {
+  it('renders approve / reject in the panel on mobile', () => {
     setViewport(true)
     renderPlansTab(makePlan(['# Plan\n\nStep 1 details']))
     expect(screen.getByTestId('plan-review-approve')).toBeInTheDocument()
-    expect(screen.getByTestId('plan-review-request-changes')).toBeInTheDocument()
+    expect(screen.getByTestId('plan-review-reject')).toBeInTheDocument()
   })
 
   it('fires onApprovePlan when approve is clicked (mobile)', () => {
@@ -116,7 +116,7 @@ describe('PlansTab', () => {
     setViewport(true)
     const { props } = renderPlansTab(makePlan(['plan body']))
 
-    fireEvent.click(screen.getByTestId('plan-review-request-changes'))
+    fireEvent.click(screen.getByTestId('plan-review-reject'))
     fireEvent.change(screen.getByTestId('plan-review-feedback'), {
       target: { value: 'Tighten step 2' },
     })

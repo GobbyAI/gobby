@@ -8,7 +8,6 @@ const baseSettings = {
   chatMode: 'plan' as const,
   theme: 'dark' as const,
   defaultChatMode: 'plan' as const,
-  postPlanChatMode: 'normal' as const,
   sttEnabled: false,
   ttsEnabled: false,
   voiceInputMode: 'ptt' as const,
@@ -28,7 +27,6 @@ describe('Settings voice section', () => {
         onFontSizeChange={vi.fn()}
         onThemeChange={vi.fn()}
         onDefaultChatModeChange={vi.fn()}
-        onPostPlanChatModeChange={vi.fn()}
         onReset={vi.fn()}
       />,
     )
@@ -46,7 +44,6 @@ describe('Settings voice section', () => {
         onFontSizeChange={vi.fn()}
         onThemeChange={vi.fn()}
         onDefaultChatModeChange={vi.fn()}
-        onPostPlanChatModeChange={vi.fn()}
         onReset={vi.fn()}
       />,
     )
@@ -56,7 +53,8 @@ describe('Settings voice section', () => {
     expect(screen.getByRole('button', { name: 'Dark', pressed: true })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Light', pressed: false })).toBeInTheDocument()
     expect(screen.getByRole('group', { name: 'Default Mode' })).toBeInTheDocument()
-    expect(screen.getByRole('group', { name: 'After Approved Plan' })).toBeInTheDocument()
+    // The post-plan preference was removed; mode is chosen at approval time.
+    expect(screen.queryByRole('group', { name: 'After Approved Plan' })).toBeNull()
   })
 
   it('does not render voice controls from Settings', () => {
@@ -68,7 +66,6 @@ describe('Settings voice section', () => {
         onFontSizeChange={vi.fn()}
         onThemeChange={vi.fn()}
         onDefaultChatModeChange={vi.fn()}
-        onPostPlanChatModeChange={vi.fn()}
         onReset={vi.fn()}
       />,
     )
@@ -89,7 +86,6 @@ describe('Settings voice section', () => {
         onFontSizeChange={vi.fn()}
         onThemeChange={vi.fn()}
         onDefaultChatModeChange={vi.fn()}
-        onPostPlanChatModeChange={vi.fn()}
         onReset={vi.fn()}
       />,
     )

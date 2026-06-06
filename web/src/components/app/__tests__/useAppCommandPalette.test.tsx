@@ -12,7 +12,6 @@ function makeHookArgs(addSystemMessage = vi.fn()) {
     settings: {
       model: 'claude-sonnet',
       chatMode: 'normal' as const,
-      postPlanChatMode: 'normal' as const,
       ttsEnabled: false,
     },
     effectiveProjectId: 'project-1',

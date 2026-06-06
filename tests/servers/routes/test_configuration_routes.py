@@ -439,8 +439,8 @@ class TestSaveTemplate:
 # ---------------------------------------------------------------------------
 
 
-class TestUISettingsPostPlanMode:
-    def test_ui_settings_round_trip_includes_post_plan_mode(
+class TestUISettingsRoundTrip:
+    def test_ui_settings_round_trip_persists_known_keys(
         self, client: TestClient, temp_db: Any
     ) -> None:
         response = client.put(
@@ -448,7 +448,6 @@ class TestUISettingsPostPlanMode:
             json={
                 "fontSize": 18,
                 "defaultChatMode": "plan",
-                "postPlanChatMode": "bypass",
             },
         )
         assert response.status_code == 200
@@ -458,10 +457,22 @@ class TestUISettingsPostPlanMode:
         assert get_response.status_code == 200
         assert get_response.json()["fontSize"] == 18
         assert get_response.json()["defaultChatMode"] == "plan"
-        assert get_response.json()["postPlanChatMode"] == "bypass"
 
         store = ConfigStore(temp_db)
-        assert store.get("ui_settings.postPlanChatMode") == "bypass"
+        assert store.get("ui_settings.defaultChatMode") == "plan"
+
+    def test_ui_settings_rejects_retired_post_plan_mode_key(self, client: TestClient) -> None:
+        """The post-plan-mode preference was removed; mode is chosen at approval."""
+        response = client.put(
+            "/api/config/ui-settings",
+            json={"postPlanChatMode": "bypass"},
+        )
+        # Unknown field is ignored, leaving an all-null payload the validator rejects.
+        assert response.status_code == 422
+
+        get_response = client.get("/api/config/ui-settings")
+        assert get_response.status_code == 200
+        assert "postPlanChatMode" not in get_response.json()
 
 
 class TestGlobalToolApprovalRules:

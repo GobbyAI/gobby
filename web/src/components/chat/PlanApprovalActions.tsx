@@ -7,17 +7,17 @@ interface PlanApprovalActionsProps {
   onApprove: (option?: ApprovalOption) => void
   onRequestChanges: (feedback: string) => void
   /**
-   * Per-CLI plan-accept options from the backend registry. When present, one
-   * button is rendered per option; when empty/absent the surface degrades to a
-   * single generic Approve so older payloads still work.
+   * Plan-accept options from the backend registry. When present, one button is
+   * rendered per option (Approve (YOLO) / Approve (Act)); when empty/absent the
+   * surface degrades to a single generic Approve so older payloads still work.
    */
   options?: ApprovalOption[]
   approveLabel?: string
-  requestChangesLabel?: string
+  rejectLabel?: string
   className?: string
   /**
    * When set, the interactive controls expose `data-testid` hooks
-   * (`<prefix>-approve` or `<prefix>-option-<id>`, `<prefix>-request-changes`,
+   * (`<prefix>-approve` or `<prefix>-option-<id>`, `<prefix>-reject`,
    * `<prefix>-feedback`, `<prefix>-send`) so each surface can target its own
    * affordances.
    */
@@ -25,26 +25,27 @@ interface PlanApprovalActionsProps {
 }
 
 /**
- * The shared approve / request-changes interaction for a pending plan.
+ * The shared approve / reject interaction for a pending plan.
  *
- * Owns only the buttons + feedback editor — no surface chrome — so each
- * approval surface can wrap it in its own container while sending the same WS
- * actions. With a per-CLI option set it renders one button per option (each
- * CLI's real ExitPlanMode choices); without one it falls back to a single
- * Approve. Approval executes on every CLI (managed CLIs auto-continue via the
- * backend), so there is no manual-continue hint.
+ * Owns only the buttons + comment editor — no surface chrome — so each approval
+ * surface can wrap it in its own container while sending the same WS actions.
+ * With the backend option set it renders one button per option; without one it
+ * falls back to a single Approve. Approval executes on every CLI (managed CLIs
+ * auto-continue via the backend), so there is no manual-continue hint.
  *
- * Per .impeccable.md, state is read by icon + position + fill, never hue
- * alone: approve options are the brand-accent primary with a check; a
- * keep-planning option and Request Changes are neutral outlines with their own
- * icons (never the destructive palette — request-changes is not destructive).
+ * Per .impeccable.md, state is read by icon + position + fill, never hue alone.
+ * The hierarchy mirrors the bottom Plan|Act|YOLO control: Approve (YOLO) is the
+ * one dominant solid-accent primary, Approve (Act) is the quieter tinted accent,
+ * and Reject is the quiet-destructive action (magenta text) that opens an
+ * optional comment. YOLO is the comfortable default because the rules engine and
+ * the sandbox are the guardrails.
  */
 export function PlanApprovalActions({
   onApprove,
   onRequestChanges,
   options,
-  approveLabel = 'Approve & Execute',
-  requestChangesLabel = 'Request Changes',
+  approveLabel = 'Approve',
+  rejectLabel = 'Reject',
   className,
   testIdPrefix,
 }: PlanApprovalActionsProps) {
@@ -53,10 +54,9 @@ export function PlanApprovalActions({
 
   const tid = (suffix: string) => (testIdPrefix ? `${testIdPrefix}-${suffix}` : undefined)
 
-  const submitFeedback = () => {
-    const trimmed = feedback.trim()
-    if (!trimmed) return
-    onRequestChanges(trimmed)
+  // The comment is optional: an empty submit still rejects the plan.
+  const submitReject = () => {
+    onRequestChanges(feedback.trim())
     setFeedback('')
     setShowFeedback(false)
   }
@@ -66,13 +66,13 @@ export function PlanApprovalActions({
       <div className={cn('flex flex-col gap-2', className)}>
         <textarea
           className="min-h-[60px] w-full resize-none rounded-lg bg-muted px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent"
-          placeholder="Describe what you'd like changed..."
+          placeholder="Add a comment (optional)…"
           value={feedback}
           onChange={(e) => setFeedback(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
-              submitFeedback()
+              submitReject()
             }
           }}
           data-testid={tid('feedback')}
@@ -82,12 +82,13 @@ export function PlanApprovalActions({
         <div className="flex gap-2">
           <Button
             size="sm"
-            variant="accent"
-            onClick={submitFeedback}
-            disabled={!feedback.trim()}
+            variant="destructive"
+            className="gap-1.5"
+            onClick={submitReject}
             data-testid={tid('send')}
           >
-            Send Feedback
+            <RejectIcon />
+            {rejectLabel}
           </Button>
           <Button
             size="sm"
@@ -110,27 +111,24 @@ export function PlanApprovalActions({
     <div className={cn('flex flex-col gap-2', className)}>
       <div className="flex flex-wrap gap-2">
         {hasOptions ? (
-          options.map((option) => {
-            const keepPlanning = option.decision === 'keep_planning'
-            return (
-              <Button
-                key={option.id}
-                size="sm"
-                variant={keepPlanning ? 'outline' : 'accent'}
-                className="gap-1.5"
-                onClick={() => onApprove(option)}
-                title={option.description}
-                data-testid={tid(`option-${option.id}`)}
-              >
-                {keepPlanning ? <RefineIcon /> : <CheckIcon />}
-                {option.label}
-              </Button>
-            )
-          })
+          options.map((option) => (
+            <Button
+              key={option.id}
+              size="sm"
+              variant={option.emphasis === 'primary' ? 'primary' : 'accent'}
+              className="gap-1.5"
+              onClick={() => onApprove(option)}
+              title={option.description}
+              data-testid={tid(`option-${option.id}`)}
+            >
+              <CheckIcon />
+              {option.label}
+            </Button>
+          ))
         ) : (
           <Button
             size="sm"
-            variant="accent"
+            variant="primary"
             className="gap-1.5"
             onClick={() => onApprove()}
             data-testid={tid('approve')}
@@ -141,13 +139,13 @@ export function PlanApprovalActions({
         )}
         <Button
           size="sm"
-          variant="outline"
+          variant="destructive"
           className="gap-1.5"
           onClick={() => setShowFeedback(true)}
-          data-testid={tid('request-changes')}
+          data-testid={tid('reject')}
         >
-          <EditIcon />
-          {requestChangesLabel}
+          <RejectIcon />
+          {rejectLabel}
         </Button>
       </div>
     </div>
@@ -173,8 +171,9 @@ function CheckIcon() {
   )
 }
 
-function RefineIcon() {
-  // Sparkle: signals "re-plan deeper" without implying approval.
+function RejectIcon() {
+  // Circle-slash: a clear "reject" affordance that reads in grayscale, so the
+  // action never leans on the magenta hue alone.
   return (
     <svg
       width="14"
@@ -188,28 +187,8 @@ function RefineIcon() {
       aria-hidden="true"
       className="shrink-0"
     >
-      <path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2 2M16 16l2 2M18 6l-2 2M8 16l-2 2" />
-    </svg>
-  )
-}
-
-function EditIcon() {
-  // Pencil: "request changes" is an edit affordance, not a destructive action.
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      className="shrink-0"
-    >
-      <path d="M12 20h9" />
-      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+      <circle cx="12" cy="12" r="9" />
+      <path d="m5.6 5.6 12.8 12.8" />
     </svg>
   )
 }

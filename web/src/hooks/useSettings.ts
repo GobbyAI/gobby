@@ -10,7 +10,6 @@ export interface Settings {
   chatMode: ChatMode // Active chat mode
   theme: Theme // UI theme
   defaultChatMode: ChatMode // Default mode for new conversations
-  postPlanChatMode: Extract<ChatMode, 'normal' | 'bypass'> // Mode to use after exiting approved plan mode
   sttEnabled: boolean
   ttsEnabled: boolean
   voiceInputMode: VoiceInputMode
@@ -29,7 +28,6 @@ const DEFAULT_SETTINGS: Settings = {
   chatMode: 'plan',
   theme: 'dark',
   defaultChatMode: 'plan',
-  postPlanChatMode: 'normal',
   sttEnabled: false,
   ttsEnabled: false,
   voiceInputMode: 'ptt',
@@ -47,7 +45,6 @@ type PersistableKey =
   | 'model'
   | 'theme'
   | 'defaultChatMode'
-  | 'postPlanChatMode'
   | 'sttEnabled'
   | 'ttsEnabled'
   | 'voiceInputMode'
@@ -56,7 +53,6 @@ const PERSISTABLE_KEYS: PersistableKey[] = [
   'model',
   'theme',
   'defaultChatMode',
-  'postPlanChatMode',
   'sttEnabled',
   'ttsEnabled',
   'voiceInputMode',
@@ -86,10 +82,6 @@ function normalizePersistedSettings(settings: Partial<Settings>): Partial<Settin
   if (settings.chatMode) normalized.chatMode = normalizeChatMode(settings.chatMode)
   if (settings.defaultChatMode) {
     normalized.defaultChatMode = normalizeChatMode(settings.defaultChatMode)
-  }
-  if (settings.postPlanChatMode) {
-    const postPlanMode = normalizeChatMode(settings.postPlanChatMode)
-    normalized.postPlanChatMode = postPlanMode === 'bypass' ? 'bypass' : 'normal'
   }
   return normalized
 }
@@ -224,10 +216,6 @@ export function useSettings() {
     setSettings((prev) => ({ ...prev, defaultChatMode }))
   }, [])
 
-  const updatePostPlanChatMode = useCallback((postPlanChatMode: 'normal' | 'bypass') => {
-    setSettings((prev) => ({ ...prev, postPlanChatMode }))
-  }, [])
-
   const updateFontSize = useCallback((size: number) => {
     setSettings((prev) => ({ ...prev, fontSize: size }))
   }, [])
@@ -267,7 +255,6 @@ export function useSettings() {
     updateChatMode,
     updateTheme,
     updateDefaultChatMode,
-    updatePostPlanChatMode,
     updateSttEnabled,
     updateTtsEnabled,
     updateVoiceInputMode,

@@ -144,7 +144,6 @@ export default function App() {
     updateChatMode,
     updateTheme,
     updateDefaultChatMode,
-    updatePostPlanChatMode,
     updateSttEnabled,
     updateTtsEnabled,
     updateVoiceInputMode,
@@ -942,7 +941,6 @@ export default function App() {
         onFontSizeChange={updateFontSize}
         onThemeChange={updateTheme}
         onDefaultChatModeChange={updateDefaultChatMode}
-        onPostPlanChatModeChange={updatePostPlanChatMode}
         onReset={resetSettings}
       />
 

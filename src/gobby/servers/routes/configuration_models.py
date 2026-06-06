@@ -42,7 +42,6 @@ class SaveUISettingsRequest(BaseModel):
         "model",
         "theme",
         "defaultChatMode",
-        "postPlanChatMode",
         "selectedProjectId",
         "selectedProvider",
     )
@@ -51,7 +50,6 @@ class SaveUISettingsRequest(BaseModel):
     model: str | None = None
     theme: str | None = None
     defaultChatMode: str | None = None
-    postPlanChatMode: str | None = None
     selectedProjectId: str | None = None
     selectedProvider: str | None = None
 

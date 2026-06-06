@@ -884,24 +884,14 @@ const respondToApproval = useCallback(
   [],
 );
 
-// Approve the current plan, optionally selecting a per-CLI option. The
-// backend resolves option_id against its registry and the mode_changed event
-// is authoritative. A keep_planning option re-enters planning rather than
-// approving.
+// Approve the current plan, selecting an accept option (Approve (YOLO) or
+// Approve (Act)). The option_id carries the post-plan execution mode; the
+// backend resolves it against its registry and the mode_changed event is
+// authoritative for clearing the approval UI.
 const approvePlan = useCallback((option?: ApprovalOption) => {
   if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
   if (!conversationIdRef.current) return;
   if (!planContentRef.current) return;
-  // A keep_planning option (e.g. Ultraplan) does not approve the plan, but it
-  // MUST still send the plan_approval_response below: the backend keep-planning
-  // primitive (plan_approval.py) only re-enters planning when the option_id
-  // arrives. Sending nothing makes "Refine with Ultraplan" a silent no-op.
-  // Eagerly hide the approval UI here so the next plan re-arms it, then fall
-  // through to send.
-  if (option?.decision === "keep_planning") {
-    setPlanPendingApproval(false);
-    planContentRef.current = null;
-  }
   wsRef.current.send(
     JSON.stringify({
       type: "plan_approval_response",

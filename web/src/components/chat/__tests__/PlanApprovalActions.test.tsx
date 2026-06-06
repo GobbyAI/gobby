@@ -3,45 +3,58 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import type { ApprovalOption } from '../../../types/chat'
 import { PlanApprovalActions } from '../PlanApprovalActions'
 
-const CLAUDE_OPTIONS: ApprovalOption[] = [
-  { id: 'approve_manual', label: 'Approve, manually approve edits', decision: 'approve' },
-  { id: 'approve_bypass', label: 'Approve, bypass permissions', decision: 'approve' },
-  { id: 'ultraplan', label: 'Refine with Ultraplan', decision: 'keep_planning' },
+// The uniform accept set: Approve (YOLO) dominant primary, Approve (Act) tinted.
+const YOLO_ACT_OPTIONS: ApprovalOption[] = [
+  { id: 'approve_yolo', label: 'Approve (YOLO)', decision: 'approve', emphasis: 'primary' },
+  { id: 'approve_act', label: 'Approve (Act)', decision: 'approve', emphasis: 'accent' },
 ]
 
 describe('PlanApprovalActions', () => {
-  it('renders approve / request-changes for every CLI', () => {
+  it('renders a fallback approve + reject when no options are supplied', () => {
     render(
       <PlanApprovalActions onApprove={vi.fn()} onRequestChanges={vi.fn()} testIdPrefix="x" />,
     )
     expect(screen.getByTestId('x-approve')).toBeInTheDocument()
-    expect(screen.getByTestId('x-request-changes')).toBeInTheDocument()
+    expect(screen.getByTestId('x-reject')).toBeInTheDocument()
   })
 
-  it('falls back to a single Approve when no options are supplied', () => {
+  it('falls back to a single Approve when options is empty', () => {
     render(
       <PlanApprovalActions onApprove={vi.fn()} onRequestChanges={vi.fn()} options={[]} testIdPrefix="x" />,
     )
     expect(screen.getByTestId('x-approve')).toBeInTheDocument()
-    expect(screen.queryByTestId('x-option-approve_manual')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('x-option-approve_yolo')).not.toBeInTheDocument()
   })
 
-  it("renders one button per CLI option (Claude's ExitPlanMode choices)", () => {
+  it('renders one button per accept option (YOLO / Act) plus Reject', () => {
     render(
       <PlanApprovalActions
         onApprove={vi.fn()}
         onRequestChanges={vi.fn()}
-        options={CLAUDE_OPTIONS}
+        options={YOLO_ACT_OPTIONS}
         testIdPrefix="x"
       />,
     )
     // The generic single-Approve is replaced by per-option buttons.
     expect(screen.queryByTestId('x-approve')).not.toBeInTheDocument()
-    expect(screen.getByTestId('x-option-approve_manual')).toBeInTheDocument()
-    expect(screen.getByTestId('x-option-approve_bypass')).toBeInTheDocument()
-    expect(screen.getByTestId('x-option-ultraplan')).toBeInTheDocument()
-    // Request Changes stays available alongside the option set.
-    expect(screen.getByTestId('x-request-changes')).toBeInTheDocument()
+    expect(screen.getByTestId('x-option-approve_yolo')).toBeInTheDocument()
+    expect(screen.getByTestId('x-option-approve_act')).toBeInTheDocument()
+    // Reject stays available alongside the option set.
+    expect(screen.getByTestId('x-reject')).toBeInTheDocument()
+  })
+
+  it('maps emphasis to button hierarchy: YOLO solid primary, Act tinted accent', () => {
+    render(
+      <PlanApprovalActions
+        onApprove={vi.fn()}
+        onRequestChanges={vi.fn()}
+        options={YOLO_ACT_OPTIONS}
+        testIdPrefix="x"
+      />,
+    )
+    // primary = solid accent slab; accent = tinted accent (token-driven classes).
+    expect(screen.getByTestId('x-option-approve_yolo').className).toContain('bg-accent')
+    expect(screen.getByTestId('x-option-approve_act').className).toContain('var(--accent-tint)')
   })
 
   it('selecting an option calls onApprove with that option', () => {
@@ -50,44 +63,46 @@ describe('PlanApprovalActions', () => {
       <PlanApprovalActions
         onApprove={onApprove}
         onRequestChanges={vi.fn()}
-        options={CLAUDE_OPTIONS}
+        options={YOLO_ACT_OPTIONS}
         testIdPrefix="x"
       />,
     )
-    fireEvent.click(screen.getByTestId('x-option-approve_bypass'))
-    expect(onApprove).toHaveBeenCalledWith(CLAUDE_OPTIONS[1])
+    fireEvent.click(screen.getByTestId('x-option-approve_yolo'))
+    expect(onApprove).toHaveBeenCalledWith(YOLO_ACT_OPTIONS[0])
   })
 
-  it('a keep_planning option is rendered and selectable', () => {
-    const onApprove = vi.fn()
-    render(
-      <PlanApprovalActions
-        onApprove={onApprove}
-        onRequestChanges={vi.fn()}
-        options={CLAUDE_OPTIONS}
-        testIdPrefix="x"
-      />,
-    )
-    fireEvent.click(screen.getByTestId('x-option-ultraplan'))
-    expect(onApprove).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'ultraplan', decision: 'keep_planning' }),
-    )
-  })
-
-  it('request-changes path is unchanged with options present', () => {
+  it('reject opens the comment box and submits with the entered comment', () => {
     const onRequestChanges = vi.fn()
     render(
       <PlanApprovalActions
         onApprove={vi.fn()}
         onRequestChanges={onRequestChanges}
-        options={CLAUDE_OPTIONS}
+        options={YOLO_ACT_OPTIONS}
         testIdPrefix="x"
       />,
     )
-    fireEvent.click(screen.getByTestId('x-request-changes'))
+    fireEvent.click(screen.getByTestId('x-reject'))
     fireEvent.change(screen.getByTestId('x-feedback'), { target: { value: 'tweak step 2' } })
     fireEvent.click(screen.getByTestId('x-send'))
     expect(onRequestChanges).toHaveBeenCalledWith('tweak step 2')
+  })
+
+  it('reject comment is optional: an empty submit still rejects', () => {
+    const onRequestChanges = vi.fn()
+    render(
+      <PlanApprovalActions
+        onApprove={vi.fn()}
+        onRequestChanges={onRequestChanges}
+        options={YOLO_ACT_OPTIONS}
+        testIdPrefix="x"
+      />,
+    )
+    fireEvent.click(screen.getByTestId('x-reject'))
+    // No comment typed — the submit button is enabled and rejects with "".
+    const send = screen.getByTestId('x-send')
+    expect(send).not.toBeDisabled()
+    fireEvent.click(send)
+    expect(onRequestChanges).toHaveBeenCalledWith('')
   })
 
   it('never shows a manual-switch note (approval now executes on every CLI)', () => {

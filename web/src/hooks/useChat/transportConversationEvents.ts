@@ -17,11 +17,13 @@ function isApprovalOption(value: unknown): value is ApprovalOption {
   if (!value || typeof value !== "object") return false;
   const option = value as Record<string, unknown>;
   const decision = option.decision;
+  const emphasis = option.emphasis;
   return (
     typeof option.id === "string" &&
     typeof option.label === "string" &&
     (option.description === undefined || typeof option.description === "string") &&
-    (decision === undefined || decision === "approve" || decision === "keep_planning")
+    (decision === undefined || decision === "approve") &&
+    (emphasis === undefined || emphasis === "primary" || emphasis === "accent")
   );
 }
 

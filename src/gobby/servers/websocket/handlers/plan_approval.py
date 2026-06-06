@@ -13,39 +13,11 @@ from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 
 from gobby.adapters.plan_options import get_plan_accept_option
 from gobby.servers.websocket.db import run_db
-from gobby.storage.config_store import ConfigStore
 
 if TYPE_CHECKING:
     from gobby.servers.websocket.session_control import SessionControlMixin
 
 logger = logging.getLogger(__name__)
-
-# Directives seeded for keep_planning options that arrive without typed
-# feedback, so the next planning turn has concrete guidance.
-_ULTRAPLAN_DIRECTIVE = (
-    "Refine the plan with deeper analysis (Ultraplan): widen the investigation, "
-    "stress-test assumptions and edge cases, and present a more thorough revised plan."
-)
-_KEEP_PLANNING_DIRECTIVE = "Keep planning: continue refining the plan before any implementation."
-
-
-def _normalize_post_plan_mode(value: str | None) -> str:
-    if value in {"bypass", "auto"}:
-        return "bypass"
-    return "normal"
-
-
-def _resolve_post_plan_mode(mixin: SessionControlMixin) -> str:
-    session_manager = getattr(mixin, "session_manager", None)
-    db = getattr(session_manager, "db", None) if session_manager else None
-    if db is None:
-        return "normal"
-    try:
-        configured = ConfigStore(db).get("ui_settings.postPlanChatMode")
-    except Exception:
-        logger.debug("Failed to load postPlanChatMode from config store", exc_info=True)
-        configured = None
-    return _normalize_post_plan_mode(configured if isinstance(configured, str) else None)
 
 
 async def _send_mode_changed(
@@ -85,8 +57,8 @@ async def _inject_turn(
 
     Managed CLIs (Codex, Droid, Gemini, Grok, Qwen) present a plan as a
     completed assistant turn -- there is no in-flight ExitPlanMode tool to
-    unblock -- so both auto-continue-after-approval and managed keep-planning
-    re-plans drive the agent by posting a new user turn.
+    unblock -- so auto-continue-after-approval drives the agent by posting a new
+    user turn.
     """
     handler = getattr(mixin, "_handle_chat_message", None)
     if handler is None:
@@ -141,8 +113,6 @@ async def _auto_continue_after_approval(
     mixin: SessionControlMixin,
     websocket: Any,
     conversation_id: str,
-    *,
-    plan_seed: str | None = None,
 ) -> bool:
     """Start a continuation turn so an approved plan actually executes.
 
@@ -150,41 +120,9 @@ async def _auto_continue_after_approval(
     flipped off plan). Native Claude auto-switches via the SDK and unblocks
     ExitPlanMode in-flight, so it is excluded by the caller and never reaches
     here.
-
-    When ``plan_seed`` is supplied (Codex "approve + clear context"), the
-    conversation was reset, so the approved plan is re-seeded into the
-    continuation turn -- otherwise the fresh context would have lost it.
     """
-    if plan_seed:
-        content = (
-            "The plan below is approved. Proceed with the implementation.\n\n"
-            f"<approved-plan>\n{plan_seed}\n</approved-plan>"
-        )
-    else:
-        content = "The plan is approved. Proceed with the implementation."
+    content = "The plan is approved. Proceed with the implementation."
     return await _inject_turn(mixin, websocket, conversation_id, content)
-
-
-async def _maybe_clear_context(session: Any, conversation_id: str) -> bool:
-    """Reset the session's conversation context when an option requests it.
-
-    Only Codex carries a clear-context option, and its web-chat session
-    implements ``clear_context`` as a real thread rotation (archive + fresh
-    thread). For any session without the capability this logs and no-ops rather
-    than silently swallowing the request.
-    """
-    clear = getattr(session, "clear_context", None)
-    if clear is None or not callable(clear):
-        logger.warning(
-            "Plan option requested context clear but session %s has no clear_context",
-            conversation_id[:8],
-        )
-        return False
-    try:
-        return bool(await clear())
-    except Exception:
-        logger.exception("Failed to clear context on plan approval for %s", conversation_id[:8])
-        return False
 
 
 async def handle_plan_approval_response(
@@ -193,23 +131,24 @@ async def handle_plan_approval_response(
     """Handle plan_approval_response message from the web UI.
 
     Processes the user's decision on a proposed plan:
-    - "approve": Exit planning into the configured post-plan execution mode
-    - "request_changes": Store feedback for the next prompt injection
+    - "approve": Exit planning into the chosen execution mode (YOLO -> bypass,
+      Act -> normal), carried by the resolved accept option.
+    - "request_changes": Reject with an optional comment; stay in plan mode and
+      store any feedback for the next prompt injection.
 
     Message format:
     {
         "type": "plan_approval_response",
         "conversation_id": "stable-id",
         "decision": "approve" | "request_changes",
-        "option_id": "optional per-CLI plan-accept option id",
+        "option_id": "approve_yolo" | "approve_act" (approve only),
         "feedback": "optional feedback text"
     }
 
-    When ``option_id`` resolves against the per-CLI registry, the option's
-    action primitives (post-plan mode, auto-continue, clear-context, keep-
-    planning) drive the response instead of the generic post-plan default. A
-    missing or unknown ``option_id`` preserves the legacy generic-approve /
-    request-changes behavior, so older clients stay compatible.
+    When ``option_id`` resolves against the registry, the option's post-plan
+    chat mode and auto-continue flag drive the response. A missing or unknown
+    ``option_id`` falls back to the generic-approve default (``normal`` mode,
+    auto-continue), so older clients stay compatible.
     """
     conversation_id_raw: str | None = data.get("conversation_id")
     decision = data.get("decision", "")
@@ -232,51 +171,11 @@ async def handle_plan_approval_response(
         get_plan_accept_option(source, option_id) if option_id and isinstance(source, str) else None
     )
 
-    # A keep_planning option (e.g. Claude's Ultraplan, ACP/Codex keep-planning)
-    # holds the plan unapproved and re-enters planning with a directive.
-    if option is not None and option.decision == "keep_planning":
-        directive = _ULTRAPLAN_DIRECTIVE if option.escalate else _KEEP_PLANNING_DIRECTIVE
-        _clear_pending_plan_prompt(session)
-        if session.has_pending_plan:
-            # Native Claude ExitPlanMode is blocking — deny it and inject the
-            # directive as feedback so the resumed turn re-plans deeper.
-            session.set_plan_feedback(directive)
-            session.provide_plan_decision("request_changes")
-            logger.info(
-                "Plan keep-planning (%s) for conversation %s",
-                option.id,
-                conversation_id[:8],
-            )
-        else:
-            # Managed CLIs have no in-flight plan tool; stay in plan mode and
-            # post the directive as a new turn to drive a deeper re-plan.
-            await _send_mode_changed(
-                websocket,
-                conversation_id=conversation_id,
-                mode="plan",
-                reason="plan_changes_requested",
-            )
-            if not await _inject_turn(mixin, websocket, conversation_id, directive):
-                logger.warning(
-                    "Plan keep-planning injection failed for conversation %s",
-                    conversation_id[:8],
-                )
-            logger.info(
-                "Plan keep-planning (%s, managed re-plan) for conversation %s",
-                option.id,
-                conversation_id[:8],
-            )
-        return
-
     approving = decision == "approve" or (option is not None and option.decision == "approve")
 
     if approving:
-        post_plan_mode = option.post_plan_chat_mode if option else _resolve_post_plan_mode(mixin)
+        post_plan_mode = option.post_plan_chat_mode if option else "normal"
         should_auto_continue = option.auto_continue if option else True
-        wants_clear = bool(option and option.clear_context)
-        # Capture the approved plan before set_chat_mode/clear wipe pending
-        # state, so a cleared context can be re-seeded with it.
-        plan_seed = getattr(session, "_last_plan_content", None) if wants_clear else None
         if session.has_pending_plan:
             session._pending_post_plan_mode = post_plan_mode
             session.set_chat_mode(post_plan_mode)
@@ -289,15 +188,11 @@ async def handle_plan_approval_response(
                 conversation_id[:8],
                 post_plan_mode,
             )
-            if wants_clear:
-                await _maybe_clear_context(session, conversation_id)
             # Managed CLIs have no in-flight ExitPlanMode to unblock; the plan
             # was a completed assistant turn. Native Claude (plan_auto_switch)
             # continues the paused turn itself, so only auto-continue managed.
             if not getattr(session, "plan_auto_switch", False) and should_auto_continue:
-                if not await _auto_continue_after_approval(
-                    mixin, websocket, conversation_id, plan_seed=plan_seed
-                ):
+                if not await _auto_continue_after_approval(mixin, websocket, conversation_id):
                     logger.warning(
                         "Plan approval continuation injection failed for conversation %s",
                         conversation_id[:8],
@@ -381,7 +276,13 @@ async def handle_recovered_plan_approval(
         return
 
     if decision == "approve":
-        post_plan_mode = _resolve_post_plan_mode(mixin)
+        # The SDK session is gone, so resolve the post-plan mode from the
+        # chosen accept option (YOLO -> bypass, Act -> normal); fall back to
+        # "normal" for older clients that omit option_id.
+        recovered_option = get_plan_accept_option(
+            getattr(db_session, "source", "") or "", data.get("option_id")
+        )
+        post_plan_mode = recovered_option.post_plan_chat_mode if recovered_option else "normal"
         try:
             await run_db(mixin, session_manager.update_chat_mode, db_session.id, post_plan_mode)
         except Exception:
