@@ -243,7 +243,7 @@ jobs:
           echo "Downloading $url"
           curl -fsSL --retry 3 -o "$dest/$archive" "$url"
           echo "${sha}  ${dest}/${archive}" | sha256sum -c -
-          tar -xzf "$dest/$archive" -C "$dest" bin/pdfium.dll
+          tar --force-local -xzf "$dest/$archive" -C "$dest" bin/pdfium.dll
           lib="$(cygpath -w "$dest/bin/pdfium.dll")"
           echo "PDFIUM_BUNDLE_LIB=${lib}" >> "$GITHUB_ENV"
           echo "Provisioned pdfium for $TARGET at ${lib}"
@@ -296,7 +296,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # Required for crates.io trusted publishing via rust-lang/crates-io-auth-action.
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -334,15 +333,10 @@ jobs:
             exit 1
           fi
 
-      - name: Authenticate to crates.io
-        id: cargo-registry-auth
-        if: steps.published.outputs.skip != 'true'
-        uses: rust-lang/crates-io-auth-action@bbd81622f20ce9e2dd9622e3218b975523e45bbe
-
       - name: Publish gobby-wiki to crates.io
         if: steps.published.outputs.skip != 'true'
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.cargo-registry-auth.outputs.token }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish -p gobby-wiki --locked
 
   release:
