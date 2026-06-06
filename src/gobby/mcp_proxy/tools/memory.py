@@ -21,6 +21,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.memory_dream import register_memory_dream_tools
 from gobby.memory.digest import (
     bootstrap_session_title as _bootstrap_session_title,
 )
@@ -754,8 +755,6 @@ def create_memory_registry(
             return {"success": True, **result}
         except Exception as e:
             return {"success": False, "error": str(e)}
-
-    from gobby.mcp_proxy.tools.memory_dream import register_memory_dream_tools
 
     register_memory_dream_tools(
         registry,

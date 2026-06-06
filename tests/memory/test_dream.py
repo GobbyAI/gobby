@@ -16,7 +16,12 @@ from gobby.memory.dream.storage import MemoryDreamStore
 pytestmark = pytest.mark.unit
 
 
-def _memory(memory_id: str, *, days_old: int = 90, access_count: int = 0) -> Any:
+def _memory(
+    memory_id: str,
+    *,
+    days_old: int = 90,
+    access_count: int = 0,
+) -> SimpleNamespace:
     when = (datetime.now(UTC) - timedelta(days=days_old)).isoformat()
     return SimpleNamespace(
         id=memory_id,
@@ -143,6 +148,13 @@ async def test_apply_and_revert_delete_refresh_merge_and_supersede() -> None:
     assert db.memories["refresh-me"]["content"] == "new"
     assert "merge-drop" not in db.memories
     created_id = next(mid for mid in db.memories if mid.startswith("created-"))
+    assert {row["action"] for row in db.snapshots} >= {
+        "delete",
+        "refresh",
+        "merge",
+        "supersede",
+    }
+    assert "supersede_create" not in {row["action"] for row in db.snapshots}
 
     result = await revert_dream_run(store=store, run_id=run_id)
 
@@ -202,9 +214,19 @@ class _FakeDreamDB:
                 "reverted_at": None,
             }
         elif normalized.startswith("UPDATE memory_dream_snapshots"):
+            if not params:
+                return _Cursor()
             snapshot = self._snapshot(int(params[1]))
             snapshot["after_data"] = params[0]
             snapshot["applied"] = True
+        elif normalized.startswith("UPDATE memory_dream_runs"):
+            if not params:
+                return _Cursor()
+            run = self.runs[str(params[-1])]
+            assignments = normalized.split(" SET ", maxsplit=1)[1].split(" WHERE ", maxsplit=1)[0]
+            for index, assignment in enumerate(assignments.split(", ")):
+                column = assignment.split(" = ", maxsplit=1)[0].strip()
+                run[column] = params[index]
         elif normalized.startswith("INSERT INTO memory_dream_snapshots"):
             self.snapshots.append(
                 {
@@ -267,6 +289,15 @@ class _FakeDreamDB:
 
     def _snapshot(self, snapshot_id: int) -> dict[str, Any]:
         return next(row for row in self.snapshots if row["id"] == snapshot_id)
+
+
+def test_update_run_rejects_unknown_fields() -> None:
+    db = _FakeDreamDB()
+    store = MemoryDreamStore(db)
+    run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
+
+    with pytest.raises(ValueError, match="unknown_column"):
+        store.update_run(run_id, unknown_column="bad")
 
 
 class _FakeMemoryManager:

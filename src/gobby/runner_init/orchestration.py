@@ -289,20 +289,23 @@ def init_orchestration(runner: GobbyRunner) -> None:
         except Exception as e:
             logger.error(f"Failed to register GitHub issue triage cron handlers: {e}")
 
-        try:
-            from gobby.memory.dream.cron import register_memory_dream_cron
+        if hasattr(runner.config, "memory") and hasattr(runner.config.memory, "dream"):
+            try:
+                from gobby.memory.dream.cron import register_memory_dream_cron
 
-            registered = register_memory_dream_cron(
-                cron_storage=runner.cron_storage,
-                cron_executor=cron_executor,
-                memory_manager=runner.memory_manager,
-                dream_config=runner.config.memory.dream,
-                llm_service=runner.llm_service,
-                project_id=runner.project_id,
-            )
-            logger.debug("Memory dream cron handlers registered: %s", registered)
-        except Exception as e:
-            logger.error(f"Failed to register memory dream cron handler: {e}")
+                registered = register_memory_dream_cron(
+                    cron_storage=runner.cron_storage,
+                    cron_executor=cron_executor,
+                    memory_manager=runner.memory_manager,
+                    dream_config=runner.config.memory.dream,
+                    llm_service=runner.llm_service,
+                    project_id=runner.project_id,
+                )
+                logger.debug("Memory dream cron handlers registered: %s", registered)
+            except Exception as e:
+                logger.error(f"Failed to register memory dream cron handler: {e}")
+        else:
+            logger.debug("Skipping memory dream cron registration; memory.dream config missing")
 
         runner.cron_scheduler = CronScheduler(
             storage=runner.cron_storage,

@@ -23,6 +23,23 @@ _MEMORY_COLUMNS = (
     "created_at",
     "updated_at",
 )
+_RUN_JSON_COLUMNS = frozenset({"options", "plan", "summary"})
+_RUN_UPDATE_COLUMNS = frozenset(
+    {
+        "project_id",
+        "status",
+        "dry_run",
+        "options",
+        "plan",
+        "summary",
+        "error",
+        "started_at",
+        "completed_at",
+        "reverted_at",
+        "created_at",
+        "updated_at",
+    }
+)
 
 
 class MemoryDreamStore:
@@ -39,7 +56,9 @@ class MemoryDreamStore:
             CREATE TABLE IF NOT EXISTS memory_dream_runs (
                 id TEXT PRIMARY KEY,
                 project_id TEXT,
-                status TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'started'
+                    CONSTRAINT memory_dream_runs_status_check
+                    CHECK (status IN ('started', 'running', 'completed', 'failed', 'reverted')),
                 dry_run BOOLEAN NOT NULL DEFAULT FALSE,
                 options JSONB NOT NULL DEFAULT '{}'::jsonb,
                 plan JSONB,
@@ -60,7 +79,9 @@ class MemoryDreamStore:
                 run_id TEXT NOT NULL REFERENCES memory_dream_runs(id)
                     ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
                 memory_id TEXT NOT NULL,
-                action TEXT NOT NULL,
+                action TEXT NOT NULL
+                    CONSTRAINT memory_dream_snapshots_action_check
+                    CHECK (action IN ('keep', 'delete', 'refresh', 'merge', 'supersede', 'review')),
                 before_data JSONB,
                 after_data JSONB,
                 applied BOOLEAN NOT NULL DEFAULT FALSE,
@@ -72,6 +93,66 @@ class MemoryDreamStore:
             """
             CREATE INDEX IF NOT EXISTS idx_memory_dream_snapshots_run
             ON memory_dream_snapshots(run_id, id)
+            """
+        )
+        self.db.execute(
+            """
+            UPDATE memory_dream_snapshots
+               SET action = CASE
+                   WHEN action = 'supersede_create' THEN 'supersede'
+                   ELSE 'review'
+               END
+             WHERE action NOT IN ('keep', 'delete', 'refresh', 'merge', 'supersede', 'review')
+            """
+        )
+        self.db.execute(
+            """
+            UPDATE memory_dream_runs
+               SET status = 'failed',
+                   completed_at = COALESCE(completed_at, NOW()),
+                   updated_at = NOW()
+             WHERE status NOT IN ('started', 'running', 'completed', 'failed', 'reverted')
+            """
+        )
+        self.db.execute("ALTER TABLE memory_dream_runs ALTER COLUMN status SET DEFAULT 'started'")
+        self.db.execute(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                      FROM pg_constraint
+                     WHERE conname = 'memory_dream_runs_status_check'
+                       AND conrelid = 'memory_dream_runs'::regclass
+                ) THEN
+                    ALTER TABLE memory_dream_runs
+                        ADD CONSTRAINT memory_dream_runs_status_check
+                        CHECK (
+                            status IN ('started', 'running', 'completed', 'failed', 'reverted')
+                        );
+                END IF;
+            END $$;
+            """
+        )
+        self.db.execute(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                      FROM pg_constraint
+                     WHERE conname = 'memory_dream_snapshots_action_check'
+                       AND conrelid = 'memory_dream_snapshots'::regclass
+                ) THEN
+                    ALTER TABLE memory_dream_snapshots
+                        ADD CONSTRAINT memory_dream_snapshots_action_check
+                        CHECK (
+                            action IN (
+                                'keep', 'delete', 'refresh', 'merge', 'supersede', 'review'
+                            )
+                        );
+                END IF;
+            END $$;
             """
         )
 
@@ -98,9 +179,14 @@ class MemoryDreamStore:
     def update_run(self, run_id: str, **fields: Any) -> dict[str, Any] | None:
         if not fields:
             return self.get_run(run_id)
+        unknown_fields = sorted(set(fields) - _RUN_UPDATE_COLUMNS)
+        if unknown_fields:
+            raise ValueError(
+                "Unsupported memory_dream_runs update field(s): " + ", ".join(unknown_fields)
+            )
         fields["updated_at"] = _now()
         encoded = {
-            key: _json(value) if key in {"options", "plan", "summary"} else value
+            key: _json(value) if key in _RUN_JSON_COLUMNS else value
             for key, value in fields.items()
         }
         set_clause = ", ".join(f"{key} = %s" for key in encoded)

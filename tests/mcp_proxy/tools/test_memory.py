@@ -9,11 +9,14 @@ Focuses on:
 - search_knowledge_graph edge cases
 """
 
+import asyncio
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.tools import memory_dream as memory_dream_tools
 from gobby.mcp_proxy.tools.memory import create_memory_registry
 
 pytestmark = pytest.mark.unit
@@ -613,6 +616,39 @@ class TestMemoryDreamTools:
         assert options.dry_run is True
         assert options.skip_consolidation is True
         assert options.memory_type == "fact"
+
+    @pytest.mark.asyncio
+    async def test_memory_dream_background_logs_failed_result(
+        self,
+        mock_memory_manager: MagicMock,
+        mock_llm_service: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        config = SimpleNamespace(memory=SimpleNamespace(dream=SimpleNamespace()))
+        service = MagicMock()
+        service.start.return_value = {"success": True, "run_id": "dream-1"}
+        service.execute_run = AsyncMock(return_value={"success": False, "error": "boom"})
+        registry = create_memory_registry(
+            mock_memory_manager,
+            llm_service=mock_llm_service,
+            config=config,
+        )
+        caplog.set_level(logging.WARNING, logger="gobby.mcp_proxy.tools.memory_dream")
+
+        with patch(
+            "gobby.mcp_proxy.tools.memory_dream.MemoryDreamService",
+            return_value=service,
+        ):
+            result = await registry.call("memory_dream", {"wait": False})
+            background_tasks = tuple(memory_dream_tools._BACKGROUND_DREAM_TASKS)
+            await asyncio.gather(*background_tasks)
+
+        assert result == {"success": True, "run_id": "dream-1", "status": "started"}
+        assert len(background_tasks) == 1
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("Background memory dream failed" in message for message in messages)
+        assert any("dream-1" in message for message in messages)
+        assert any("memory-dream:dream-1" in message for message in messages)
 
     @pytest.mark.asyncio
     async def test_memory_dream_status_and_revert(

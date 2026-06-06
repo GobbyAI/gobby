@@ -3,13 +3,42 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.memory.dream.service import DreamRunOptions, MemoryDreamService
 
-_BACKGROUND_DREAM_TASKS: set[asyncio.Task[Any]] = set()
+logger = logging.getLogger(__name__)
+
+_BACKGROUND_DREAM_TASKS: set[asyncio.Task[dict[str, Any]]] = set()
+
+
+def _handle_background_task(task: asyncio.Task[dict[str, Any]], run_id: str) -> None:
+    _BACKGROUND_DREAM_TASKS.discard(task)
+    try:
+        exc = task.exception()
+    except asyncio.CancelledError:
+        logger.debug("Background memory dream task cancelled for run_id=%s", run_id)
+        return
+    if exc is not None:
+        logger.warning(
+            "Background memory dream task failed for run_id=%s task_name=%s",
+            run_id,
+            task.get_name(),
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+        return
+
+    result = task.result()
+    if not result.get("success"):
+        logger.warning(
+            "Background memory dream failed for run_id=%s task_name=%s: %s",
+            run_id,
+            task.get_name(),
+            result.get("error"),
+        )
 
 
 def register_memory_dream_tools(
@@ -58,7 +87,7 @@ def register_memory_dream_tools(
             name=f"memory-dream:{run_id}",
         )
         _BACKGROUND_DREAM_TASKS.add(task)
-        task.add_done_callback(_BACKGROUND_DREAM_TASKS.discard)
+        task.add_done_callback(lambda completed: _handle_background_task(completed, run_id))
         return {"success": True, "run_id": run_id, "status": "started"}
 
     @registry.tool(

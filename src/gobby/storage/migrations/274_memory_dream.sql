@@ -1,7 +1,9 @@
 CREATE TABLE IF NOT EXISTS memory_dream_runs (
     id TEXT PRIMARY KEY,
     project_id TEXT,
-    status TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'started'
+        CONSTRAINT memory_dream_runs_status_check
+        CHECK (status IN ('started', 'running', 'completed', 'failed', 'reverted')),
     dry_run BOOLEAN NOT NULL DEFAULT FALSE,
     options JSONB NOT NULL DEFAULT '{}'::jsonb,
     plan JSONB,
@@ -19,7 +21,9 @@ CREATE TABLE IF NOT EXISTS memory_dream_snapshots (
     run_id TEXT NOT NULL REFERENCES memory_dream_runs(id)
         ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     memory_id TEXT NOT NULL,
-    action TEXT NOT NULL,
+    action TEXT NOT NULL
+        CONSTRAINT memory_dream_snapshots_action_check
+        CHECK (action IN ('keep', 'delete', 'refresh', 'merge', 'supersede', 'review')),
     before_data JSONB,
     after_data JSONB,
     applied BOOLEAN NOT NULL DEFAULT FALSE,

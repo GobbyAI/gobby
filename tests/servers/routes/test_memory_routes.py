@@ -61,7 +61,7 @@ def client(mock_server):
 
 
 @pytest.fixture
-def dream_client(mock_server):
+def dream_client(mock_server) -> TestClient:
     """Create TestClient with memory dream router."""
     app = FastAPI()
     app.include_router(create_memory_dream_router(mock_server))

@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import importlib
+import time
 from types import ModuleType
 from typing import Any
 
 import click
 import httpx
+
+_START_REQUEST_TIMEOUT_SECONDS = 15.0
+_WAIT_POLL_INTERVAL_SECONDS = 2.0
+_TERMINAL_STATUSES = frozenset({"completed", "failed", "reverted"})
 
 
 def _facade() -> ModuleType:
@@ -21,6 +26,13 @@ def _facade() -> ModuleType:
     help="Skip consolidation planning and leave candidates for review",
 )
 @click.option("--memory-type", "memory_type", help="Limit the scan to a memory type")
+@click.option(
+    "--timeout",
+    type=click.FloatRange(min=0.0),
+    default=900.0,
+    show_default=True,
+    help="Maximum seconds to wait for completion with --wait",
+)
 @click.pass_context
 def memory_dream(
     ctx: click.Context,
@@ -28,6 +40,7 @@ def memory_dream(
     wait: bool,
     skip_consolidation: bool,
     memory_type: str | None,
+    timeout: float,
 ) -> None:
     """Review and improve stale memories."""
     if ctx.invoked_subcommand is not None:
@@ -39,16 +52,32 @@ def memory_dream(
         "skip_consolidation": skip_consolidation,
         "memory_type": memory_type,
     }
-    data = _request(ctx, "/memory/dream", method="POST", json_data=payload, timeout=900.0)
-    run_id = data.get("run_id") or (data.get("run") or {}).get("id")
+    data = _request(
+        ctx,
+        "/memory/dream",
+        method="POST",
+        json_data={**payload, "wait": False},
+        timeout=_START_REQUEST_TIMEOUT_SECONDS,
+    )
     if not data.get("success"):
         raise click.ClickException(str(data.get("error", "memory dream failed")))
-    if run_id:
-        click.echo(f"Dream run: {run_id}")
-    status = data.get("status") or (data.get("run") or {}).get("status")
+    run_id = _run_id(data)
+    if not run_id:
+        raise click.ClickException("memory dream did not return a run_id")
+
+    click.echo(f"Dream run: {run_id}")
+    status = _status(data)
     if status:
         click.echo(f"Status: {status}")
-    _print_summary((data.get("run") or {}).get("summary"))
+    if not wait:
+        click.echo(f"Check status: gobby memory dream status {run_id}")
+        return
+
+    completed = _wait_for_completion(ctx, run_id, timeout=timeout, last_status=status)
+    run = completed.get("run") or {}
+    _print_summary(run.get("summary"))
+    if run.get("status") == "failed":
+        raise click.ClickException(str(run.get("error") or "memory dream failed"))
 
 
 @memory_dream.command("status")
@@ -102,6 +131,47 @@ def _request(
         return dict(response.json())
     except (httpx.HTTPError, ConnectionError, OSError, ValueError) as exc:
         raise click.ClickException(f"Could not reach daemon: {exc}") from exc
+
+
+def _run_id(data: dict[str, Any]) -> str | None:
+    run = data.get("run") or {}
+    value = data.get("run_id") or run.get("id")
+    return str(value) if value else None
+
+
+def _status(data: dict[str, Any]) -> str | None:
+    run = data.get("run") or {}
+    value = data.get("status") or run.get("status")
+    return str(value) if value else None
+
+
+def _wait_for_completion(
+    ctx: click.Context,
+    run_id: str,
+    *,
+    timeout: float,
+    last_status: str | None,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    while True:
+        data = _request(
+            ctx,
+            f"/memory/dream/{run_id}",
+            method="GET",
+            timeout=_START_REQUEST_TIMEOUT_SECONDS,
+        )
+        status = _status(data)
+        if status and status != last_status:
+            click.echo(f"Status: {status}")
+            last_status = status
+        if status in _TERMINAL_STATUSES:
+            return data
+        if time.monotonic() >= deadline:
+            raise click.ClickException(
+                f"Timed out after {timeout:g}s waiting for dream run {run_id}"
+            )
+        sleep_for = min(_WAIT_POLL_INTERVAL_SECONDS, max(0.0, deadline - time.monotonic()))
+        time.sleep(sleep_for)
 
 
 def _print_summary(summary: Any) -> None:

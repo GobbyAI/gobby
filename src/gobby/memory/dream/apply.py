@@ -141,7 +141,8 @@ async def _refresh(
     run_id: str,
     action: DreamAction,
 ) -> int:
-    assert action.memory_id is not None
+    if action.memory_id is None:
+        raise ValueError("refresh action requires memory_id")
     before = store.get_memory_row(action.memory_id)
     if before is None:
         return 0
@@ -199,7 +200,8 @@ async def _supersede(
     action: DreamAction,
     candidate_map: dict[str, DreamCandidate],
 ) -> int:
-    assert action.memory_id is not None
+    if action.memory_id is None:
+        raise ValueError("supersede action requires memory_id")
     mutations = 0
     target_exists = action.target_id and store.get_memory_row(action.target_id) is not None
     if action.content and not target_exists:
@@ -215,7 +217,7 @@ async def _supersede(
         store.record_applied_snapshot(
             run_id=run_id,
             memory_id=created.id,
-            action="supersede_create",
+            action="supersede",
             before_data=None,
             after_data=after,
         )
