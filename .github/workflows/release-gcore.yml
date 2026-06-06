@@ -13,28 +13,50 @@ jobs:
     name: Test before release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
+          toolchain: stable
           components: clippy
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@f5b277aa8941a90c16bc1cd6ab9363e0502b7d31
+        with:
+          tool: nextest
 
       - name: Clippy
         run: cargo clippy -p gobby-core --all-targets -- -D warnings
 
       - name: Run tests
-        run: cargo test -p gobby-core
+        run: cargo nextest run --profile ci --workspace
+
+      - name: Run tests without default features
+        run: cargo nextest run --profile ci --workspace --no-default-features
+
+      - name: Run doctests
+        run: cargo test --doc --workspace
+
+      - name: Run doctests without default features
+        run: cargo test --doc --workspace --no-default-features
 
   publish:
+    name: Publish
     needs: test
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
 
       - name: Publish gobby-core to crates.io
         run: cargo publish -p gobby-core

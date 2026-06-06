@@ -52,6 +52,67 @@ pub struct CodeVectorSettings {
     pub vector_dim: Option<usize>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServiceConfigSelection {
+    pub falkordb: bool,
+    pub qdrant: bool,
+    pub embedding: bool,
+    pub code_vectors: bool,
+}
+
+impl ServiceConfigSelection {
+    pub const fn all() -> Self {
+        Self {
+            falkordb: true,
+            qdrant: true,
+            embedding: true,
+            code_vectors: true,
+        }
+    }
+
+    pub const fn database_only() -> Self {
+        Self {
+            falkordb: false,
+            qdrant: false,
+            embedding: false,
+            code_vectors: false,
+        }
+    }
+
+    pub const fn falkordb_only() -> Self {
+        Self {
+            falkordb: true,
+            qdrant: false,
+            embedding: false,
+            code_vectors: false,
+        }
+    }
+
+    pub const fn vectors() -> Self {
+        Self {
+            falkordb: false,
+            qdrant: true,
+            embedding: true,
+            code_vectors: true,
+        }
+    }
+
+    pub const fn hybrid_search() -> Self {
+        Self {
+            falkordb: true,
+            qdrant: true,
+            embedding: true,
+            code_vectors: false,
+        }
+    }
+}
+
+impl Default for ServiceConfigSelection {
+    fn default() -> Self {
+        Self::all()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CodeVectorConfigError {
     InvalidVectorDim { source: &'static str, value: String },
@@ -148,6 +209,14 @@ pub struct ProjectIdentity {
 impl Context {
     /// Resolve context from CLI args and filesystem state.
     pub fn resolve(project_override: Option<&str>, quiet: bool) -> anyhow::Result<Self> {
+        Self::resolve_with_services(project_override, quiet, ServiceConfigSelection::all())
+    }
+
+    pub fn resolve_with_services(
+        project_override: Option<&str>,
+        quiet: bool,
+        services: ServiceConfigSelection,
+    ) -> anyhow::Result<Self> {
         let database_url = db::resolve_database_url()?;
         let project_root = match project_override {
             Some(p) => {
@@ -171,10 +240,26 @@ impl Context {
         let standalone_config = read_standalone_config_optional();
         let mut conn = db::connect_readonly(&database_url)?;
         validate_parent_code_index(&mut conn, &index_scope)?;
-        let falkordb = resolve_falkordb_config(&mut conn, standalone_config.clone(), quiet)?;
-        let qdrant = resolve_qdrant_config(&mut conn, standalone_config.clone(), quiet)?;
-        let embedding = resolve_embedding_config(&mut conn, standalone_config.clone(), quiet);
-        let code_vectors = resolve_code_vector_settings(&mut conn, standalone_config)?;
+        let falkordb = if services.falkordb {
+            resolve_falkordb_config(&mut conn, standalone_config.clone(), quiet)?
+        } else {
+            None
+        };
+        let qdrant = if services.qdrant {
+            resolve_qdrant_config(&mut conn, standalone_config.clone(), quiet)?
+        } else {
+            None
+        };
+        let embedding = if services.embedding {
+            resolve_embedding_config(&mut conn, standalone_config.clone(), quiet)
+        } else {
+            None
+        };
+        let code_vectors = if services.code_vectors {
+            resolve_code_vector_settings(&mut conn, standalone_config)?
+        } else {
+            CodeVectorSettings::default()
+        };
 
         let daemon_url = resolve_daemon_url();
 

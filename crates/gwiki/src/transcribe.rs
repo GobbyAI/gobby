@@ -542,9 +542,9 @@ mod tests {
         assert!(markdown.contains("transcription_source_language: es"));
         assert!(markdown.contains("transcription_task: translate"));
         assert!(markdown.contains("transcription_target_language: en"));
-        assert!(markdown.contains("translated: true"));
-        assert!(markdown.contains("translation_degraded: true"));
-        assert!(markdown.contains("transcription_partial: true"));
+        assert!(markdown.contains("translated: \"true\""));
+        assert!(markdown.contains("translation_degraded: \"true\""));
+        assert!(markdown.contains("transcription_partial: \"true\""));
         assert!(markdown.contains("transcription_missing_ranges: 3500-7000"));
         assert!(markdown.contains("[00:00:01] Translated field recording sentence."));
     }

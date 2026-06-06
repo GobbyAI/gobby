@@ -1,6 +1,6 @@
 [package]
 name = "gobby-wiki"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -26,7 +26,7 @@ name = "gwiki"
 path = "src/main.rs"
 
 [dependencies]
-gobby-core = { path = "../gcore", version = "0.3.0", features = ["postgres", "falkor", "qdrant", "indexing", "search"] }
+gobby-core = { path = "../gcore", version = "0.4.0", features = ["postgres", "falkor", "qdrant", "indexing", "search", "ai"] }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
@@ -50,10 +50,14 @@ log = "0.4"
 percent-encoding = "2"
 url = "2"
 tempfile = "3"
-calamine = { version = "0.30", optional = true }
+calamine = { version = "0.35", optional = true }
 pdf-extract = { version = "0.10", optional = true }
 pdfium-auto = { version = "0.3", default-features = false, features = ["bundled"], optional = true }
 pdfium-render = { version = "0.8.37", default-features = false, features = ["pdfium_latest", "thread_safe"], optional = true }
 png = { version = "0.17", optional = true }
 quick-xml = { version = "0.38", optional = true }
 zip = { version = "4", default-features = false, features = ["deflate"], optional = true }
+
+[dev-dependencies]
+gobby-core = { path = "../gcore", version = "0.4.0", features = ["postgres", "falkor", "qdrant", "indexing", "search", "ai"] }
+serial_test = "3"

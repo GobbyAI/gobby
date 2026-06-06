@@ -10,7 +10,7 @@ use crate::WikiError;
 use crate::ingest::{
     IngestResult, markdown_metadata, markdown_title, single_line, write_raw_then_index,
 };
-use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
+use crate::sources::{SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,17 +31,14 @@ pub fn ingest_capture(
     let html = decode_wayback_html(&snapshot)?;
     let document = Html::parse_document(&html);
     let title = wayback_title(&snapshot, &document);
-    let draft = SourceDraft {
-        location: snapshot.capture_url.clone(),
-        kind: SourceKind::Wayback,
-        fetched_at: snapshot.fetched_at.clone(),
-        content: std::mem::take(&mut snapshot.body),
-        title: Some(title.clone()),
-        citation: Some(snapshot.capture_url.clone()),
-        license: None,
-        ingestion_method: IngestionMethod::Manual,
-        compile_status: CompileStatus::Pending,
-    };
+    let draft = SourceDraft::new(
+        snapshot.capture_url.clone(),
+        SourceKind::Wayback,
+        snapshot.fetched_at.clone(),
+        std::mem::take(&mut snapshot.body),
+    )
+    .with_title(title.clone())
+    .with_citation(snapshot.capture_url.clone());
     let record = SourceManifest::register(vault_root, draft)?;
     let markdown = render_wayback_markdown(&snapshot, &document, &title, &record.content_hash);
     write_raw_then_index(vault_root, store, record, &markdown, None)
@@ -358,12 +355,12 @@ mod tests {
             .expect("raw markdown written");
         assert!(raw.contains("# research"));
         assert!(raw.contains("source_kind: wayback"));
-        assert!(raw.contains("original_url: https://example.com/research"));
+        assert!(raw.contains("original_url: \"https://example.com/research\""));
         assert!(raw.contains(
-            "capture_url: https://web.archive.org/web/20260529123456/https://example.com/research"
+            "capture_url: \"https://web.archive.org/web/20260529123456/https://example.com/research\""
         ));
-        assert!(raw.contains("capture_timestamp: 20260529123456"));
-        assert!(raw.contains("fetched_at: 2026-05-29T18:10:00Z"));
+        assert!(raw.contains("capture_timestamp: \"20260529123456\""));
+        assert!(raw.contains("fetched_at: \"2026-05-29T18:10:00Z\""));
         assert!(raw.contains("Archived & decoded page body."));
         assert!(!raw.contains("ignore()"));
         assert!(!raw.contains("display:none"));

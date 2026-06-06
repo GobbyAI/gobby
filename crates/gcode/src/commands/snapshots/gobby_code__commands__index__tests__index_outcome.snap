@@ -1,0 +1,25 @@
+---
+source: crates/gcode/src/commands/index.rs
+expression: redacted
+---
+{
+  "calls_indexed": 73,
+  "chunks_indexed": 921,
+  "durations": {
+    "discovery_ms": "[duration-ms]",
+    "indexing_ms": "[duration-ms]",
+    "stats_ms": "[duration-ms]",
+    "total_ms": "[duration-ms]"
+  },
+  "imports_indexed": 41,
+  "indexed_file_paths": [
+    "src/main.rs",
+    "src/lib.rs"
+  ],
+  "indexed_files": 12,
+  "project_id": "project-1",
+  "scanned_files": 14,
+  "skipped_files": 0,
+  "symbols_indexed": 348,
+  "unresolved_targets_indexed": 5
+}

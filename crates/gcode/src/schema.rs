@@ -1,4 +1,5 @@
 use anyhow::{Context as _, bail};
+use gobby_core::search::BM25_SCORE_REGPROCEDURE;
 use postgres::Client;
 
 use crate::setup::DEFAULT_SCHEMA;
@@ -23,6 +24,12 @@ const MIGRATION_HINT: &str = "Configure the Gobby PostgreSQL hub with the requir
 pub fn validate_runtime_schema(client: &mut Client) -> anyhow::Result<()> {
     if !extension_exists(client, "pg_search")? {
         bail!("PostgreSQL hub is missing required extension `pg_search`. {MIGRATION_HINT}");
+    }
+
+    if !procedure_exists(client, BM25_SCORE_REGPROCEDURE)? {
+        bail!(
+            "PostgreSQL hub is missing required BM25 score function `{BM25_SCORE_REGPROCEDURE}`. {MIGRATION_HINT}"
+        );
     }
 
     let missing_tables = missing_relations(client, REQUIRED_TABLES)?;
@@ -53,6 +60,14 @@ fn extension_exists(client: &mut Client, extension: &str) -> anyhow::Result<bool
         .with_context(|| format!("failed to check PostgreSQL extension `{extension}`"))?
         .try_get(0)
         .context("failed to decode PostgreSQL extension check")
+}
+
+fn procedure_exists(client: &mut Client, procedure: &str) -> anyhow::Result<bool> {
+    client
+        .query_one("SELECT to_regprocedure($1) IS NOT NULL", &[&procedure])
+        .with_context(|| format!("failed to check PostgreSQL procedure `{procedure}`"))?
+        .try_get(0)
+        .context("failed to decode PostgreSQL procedure check")
 }
 
 fn missing_relations(client: &mut Client, relations: &[&str]) -> anyhow::Result<Vec<String>> {
@@ -86,17 +101,23 @@ mod tests {
         assert!(REQUIRED_TABLES.contains(&"code_content_chunks"));
         assert!(REQUIRED_BM25_INDEXES.contains(&"code_symbols_search_bm25"));
         assert!(REQUIRED_BM25_INDEXES.contains(&"code_content_search_bm25"));
+        assert_eq!(BM25_SCORE_REGPROCEDURE, "pdb.score(anyelement)");
     }
 
-    #[test]
-    fn validates_runtime_schema_when_postgres_test_dsn_is_set() {
-        let Ok(database_url) = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL") else {
-            return;
-        };
+    mod serial_db {
+        use super::*;
 
-        let mut client = gobby_core::postgres::connect_readwrite(&database_url)
-            .expect("connect test PostgreSQL hub");
-        assert!(validate_runtime_schema(&mut client).is_ok());
+        #[test]
+        #[serial_test::serial(serial_db)]
+        fn validates_runtime_schema_when_postgres_test_dsn_is_set() {
+            let Ok(database_url) = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL") else {
+                return;
+            };
+
+            let mut client = gobby_core::postgres::connect_readwrite(&database_url)
+                .expect("connect test PostgreSQL hub");
+            assert!(validate_runtime_schema(&mut client).is_ok());
+        }
     }
 
     #[test]

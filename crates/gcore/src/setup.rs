@@ -19,10 +19,10 @@ pub enum StoreKind {
 
 /// Context supplied to validation callbacks.
 ///
-/// Contains optional mutable connections to each datastore. Consumers use
-/// whichever connection their validator needs; `None` means the service is not
-/// configured. PostgreSQL is feature-gated because `postgres::Client::query`
-/// requires `&mut self`.
+/// Contains nullable mutable connections to each datastore. Consumers use
+/// whichever connection their validator needs; `None` represents diagnostic or
+/// explicitly degraded paths where a handle was not supplied. PostgreSQL is
+/// feature-gated because `postgres::Client::query` requires `&mut self`.
 pub struct ValidationContext<'a> {
     /// PostgreSQL connection supplied by the caller when the `postgres` feature is enabled.
     #[cfg(feature = "postgres")]

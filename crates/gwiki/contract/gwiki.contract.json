@@ -480,6 +480,12 @@
         "stop_reason",
         "steps_used",
         "tokens_used",
+        "max_steps",
+        "max_tokens",
+        "max_sources",
+        "max_wall_time_seconds",
+        "max_note_bytes",
+        "write_conflict",
         "sources_added",
         "accepted_notes",
         "findings",
@@ -494,44 +500,46 @@
       "name": "compile",
       "summary": "Compile accepted research notes into wiki articles.",
       "daemon_consumed": true,
-      "positionals": [],
-      "flags": [
+      "positionals": [
         {
-          "name": "--topic",
-          "takes_value": true,
-          "value_name": "TOPIC",
-          "allowed_values": [],
+          "name": "TOPIC",
           "required": false,
           "repeatable": false
-        },
+        }
+      ],
+      "flags": [
         {
           "name": "--outline",
           "takes_value": true,
-          "value_name": "PATH",
+          "value_name": "HEADING",
           "allowed_values": [],
+          "required": false,
+          "repeatable": true
+        },
+        {
+          "name": "--kind",
+          "takes_value": true,
+          "value_name": "source|concept|topic",
+          "allowed_values": [
+            "source",
+            "concept",
+            "topic"
+          ],
           "required": false,
           "repeatable": false
         },
         {
           "name": "--target",
           "takes_value": true,
-          "value_name": "PATH",
+          "value_name": "PAGE",
           "allowed_values": [],
           "required": false,
           "repeatable": false
         },
         {
-          "name": "--kind",
-          "takes_value": true,
-          "value_name": "article|stub",
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        },
-        {
-          "name": "--output",
-          "takes_value": true,
-          "value_name": "PATH",
+          "name": "--write-intent",
+          "takes_value": false,
+          "value_name": null,
           "allowed_values": [],
           "required": false,
           "repeatable": false
@@ -540,11 +548,16 @@
       "json_output_keys": [
         "command",
         "scope",
-        "topic",
-        "target_page",
-        "written_path",
-        "changed_paths",
-        "status"
+        "status",
+        "target_kind",
+        "outline",
+        "daemon_synthesis_available",
+        "article_path",
+        "source_paths",
+        "index_path",
+        "handoff_id",
+        "page_writes",
+        "prompt"
       ]
     },
     {

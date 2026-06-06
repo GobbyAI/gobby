@@ -2,7 +2,8 @@
 use gobby_core::ai::effective_route;
 use gobby_core::ai_context::{AiConfigSource, AiContext};
 use gobby_core::config::{
-    AiCapability, AiRouting, resolve_embedding_config, resolve_qdrant_config,
+    AiCapability, AiRouting, QdrantConfig, resolve_embedding_config, resolve_falkordb_config,
+    resolve_qdrant_config,
 };
 
 use crate::output::{SearchOutput, SearchResultOutput};
@@ -88,15 +89,30 @@ fn run_search_attached(
         resolve_semantic_embedding(&ai_context, &mut source)
     };
     let qdrant = {
-        let mut source = search_support::PostgresConfigSource { conn: &mut conn };
+        let primary = search_support::PostgresConfigSource { conn: &mut conn };
+        let mut source = AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home)
+            .map_err(|error| WikiError::Config {
+                detail: format!("failed to resolve Qdrant config for gwiki search: {error}"),
+            })?;
         resolve_qdrant_config(&mut source)
     };
-    let mut graph_backend =
-        wiki_search::graph_boost::PostgresGraphBoostBackend::new(&mut conn, search_scope.clone());
+    let falkor = {
+        let primary = search_support::PostgresConfigSource { conn: &mut conn };
+        let mut source = AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home)
+            .map_err(|error| WikiError::Config {
+                detail: format!("failed to resolve FalkorDB config for gwiki search: {error}"),
+            })?;
+        resolve_falkordb_config(&mut source)
+    };
+    let embedding = embedding.ok_or_else(|| required_search_config("embedding endpoint"))?;
+    let qdrant = qdrant
+        .filter(qdrant_config_has_url)
+        .ok_or_else(|| required_search_config("Qdrant"))?;
+    let mut graph_backend = graph_backend_from_falkor_config(falkor);
     let mut bm25_backend = wiki_search::bm25::PostgresBm25Backend::new(&mut conn);
     let mut semantic_backend = wiki_search::semantic::GobbySemanticBackend::new(
-        embedding,
-        qdrant,
+        Some(embedding),
+        Some(qdrant),
         wiki_search::semantic::OpenAiEmbeddingBackend::new(),
         wiki_search::semantic::GobbyQdrantBackend,
     );
@@ -112,6 +128,41 @@ fn run_search_attached(
             include_semantic,
         },
     )
+}
+
+fn graph_backend_from_falkor_config(
+    falkor: Option<gobby_core::config::FalkorConfig>,
+) -> Box<dyn wiki_search::graph_boost::GraphBoostBackend> {
+    let Some(falkor) = falkor else {
+        return Box::new(
+            wiki_search::graph_boost::UnavailableGraphBoostBackend::unreachable(
+                "FalkorDB required infrastructure is not configured; graph search is degraded"
+                    .to_string(),
+            ),
+        );
+    };
+
+    match wiki_search::graph_boost::FalkorGraphBoostBackend::new(&falkor) {
+        Ok(backend) => Box::new(backend),
+        Err(error) => Box::new(
+            wiki_search::graph_boost::UnavailableGraphBoostBackend::unreachable(error.to_string()),
+        ),
+    }
+}
+
+fn required_search_config(service: &'static str) -> WikiError {
+    WikiError::Config {
+        detail: format!(
+            "gwiki search requires {service}; run `gwiki setup --standalone` or attach to Gobby's full datastore stack"
+        ),
+    }
+}
+
+fn qdrant_config_has_url(config: &QdrantConfig) -> bool {
+    config
+        .url
+        .as_deref()
+        .is_some_and(|url| !url.trim().is_empty())
 }
 
 fn resolve_semantic_embedding(
@@ -284,4 +335,45 @@ fn render_text(query: &str, scope: &ScopeIdentity, results: &[SearchResultOutput
         text.push('\n');
     }
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn qdrant_config_requires_non_blank_url() {
+        assert!(!qdrant_config_has_url(&QdrantConfig {
+            url: None,
+            api_key: None,
+        }));
+        assert!(!qdrant_config_has_url(&QdrantConfig {
+            url: Some("  ".to_string()),
+            api_key: None,
+        }));
+        assert!(qdrant_config_has_url(&QdrantConfig {
+            url: Some("http://qdrant.local".to_string()),
+            api_key: None,
+        }));
+    }
+
+    #[test]
+    fn missing_falkor_config_degrades_graph_search() {
+        let mut backend = graph_backend_from_falkor_config(None);
+        let outcome = backend
+            .search_graph_boost(wiki_search::graph_boost::GraphBoostRequest {
+                scope: wiki_search::SearchScope::project("project-1"),
+                seed_paths: Vec::new(),
+                limit: 10,
+            })
+            .expect("unavailable backend returns degradation");
+
+        assert!(outcome.hits.is_empty());
+        let degradation = outcome.degradation.expect("graph degradation");
+        assert_eq!(degradation_label(&degradation), "gwiki_graph_unreachable");
+        assert!(
+            format!("{degradation:?}")
+                .contains("FalkorDB required infrastructure is not configured")
+        );
+    }
 }

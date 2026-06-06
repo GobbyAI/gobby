@@ -235,7 +235,7 @@ pub(super) fn suggested_questions(
     }
     if !degradation_details.is_empty() {
         questions.push(
-            "Which degraded optional inputs should be restored for the next report?".to_string(),
+            "Which degraded report inputs should be restored for the next report?".to_string(),
         );
     }
 

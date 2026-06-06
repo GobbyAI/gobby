@@ -5,6 +5,8 @@ mod api;
 mod error;
 mod runner;
 pub(crate) mod support;
+#[cfg(test)]
+pub(crate) mod test_http;
 
 // TODO(#357): Narrow these broad library-build allowances as gwiki CLI-only
 // modules are split from reusable public APIs.
@@ -27,6 +29,8 @@ pub mod document;
 #[allow(dead_code)]
 pub(crate) mod events;
 pub mod exports;
+#[allow(dead_code)]
+pub(crate) mod falkor_graph;
 #[allow(dead_code)]
 pub(crate) mod frontmatter;
 #[allow(dead_code)]
@@ -67,8 +71,6 @@ pub mod sources;
 #[allow(dead_code)]
 pub(crate) mod store;
 pub mod synthesis;
-#[cfg(all(test, feature = "ai"))]
-mod test_http;
 #[allow(dead_code)]
 pub(crate) mod transcribe;
 #[allow(dead_code)]

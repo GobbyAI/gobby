@@ -1,17 +1,20 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use anyhow::Context as _;
 use postgres::Client;
 use postgres::types::ToSql;
-use regex::Regex;
 use serde::Serialize;
+
+mod grep_matcher;
 
 use crate::commands::scope;
 use crate::config::{Context, ProjectIndexScope};
 use crate::db;
 use crate::output::{self, Format};
 use crate::search::fts;
+use crate::utils::i64_to_usize;
 use crate::visibility;
+
+use grep_matcher::GrepMatcher;
 
 const GREP_SQL_SAFETY_LIMIT: i64 = 100_000;
 
@@ -21,6 +24,7 @@ pub struct GrepOptions<'a> {
     pub globs: &'a [String],
     pub fixed_strings: bool,
     pub ignore_case: bool,
+    pub word: bool,
     pub context: Option<usize>,
     pub before_context: Option<usize>,
     pub after_context: Option<usize>,
@@ -69,6 +73,7 @@ struct GrepResponse {
     pattern: String,
     fixed_strings: bool,
     ignore_case: bool,
+    word: bool,
     paths: Vec<String>,
     globs: Vec<String>,
     max_count: Option<usize>,
@@ -99,6 +104,7 @@ pub fn run(ctx: &Context, options: GrepOptions<'_>) -> anyhow::Result<()> {
             pattern: options.pattern.to_string(),
             fixed_strings: options.fixed_strings,
             ignore_case: options.ignore_case,
+            word: options.word,
             paths: options.paths.to_vec(),
             globs: options.globs.to_vec(),
             max_count: options.max_count,
@@ -283,7 +289,12 @@ fn grep_chunks_with_filters(
     options: &GrepOptions<'_>,
     filters: &GrepFilters,
 ) -> anyhow::Result<GrepResult> {
-    let matcher = GrepMatcher::new(options.pattern, options.fixed_strings, options.ignore_case)?;
+    let matcher = GrepMatcher::new(
+        options.pattern,
+        options.fixed_strings,
+        options.ignore_case,
+        options.word,
+    )?;
     let before_context = options.before_context.or(options.context).unwrap_or(0);
     let after_context = options.after_context.or(options.context).unwrap_or(0);
 
@@ -393,39 +404,6 @@ fn collect_context_lines(
     }
 
     context_lines
-}
-
-struct GrepMatcher {
-    regex: Regex,
-}
-
-impl GrepMatcher {
-    fn new(pattern: &str, fixed_strings: bool, ignore_case: bool) -> anyhow::Result<Self> {
-        if pattern.is_empty() {
-            anyhow::bail!("gcode grep pattern must not be empty");
-        }
-        let pattern = if fixed_strings {
-            regex::escape(pattern)
-        } else {
-            pattern.to_string()
-        };
-        let regex = regex::RegexBuilder::new(&pattern)
-            .case_insensitive(ignore_case)
-            .build()
-            .with_context(|| "invalid gcode grep pattern")?;
-        Ok(Self { regex })
-    }
-
-    fn find_spans(&self, line: &str) -> Vec<GrepSpan> {
-        self.regex
-            .find_iter(line)
-            .filter(|m| m.start() != m.end())
-            .map(|m| GrepSpan {
-                start: m.start(),
-                end: m.end(),
-            })
-            .collect()
-    }
 }
 
 struct GrepFilters {
@@ -618,12 +596,6 @@ fn push_grouped_grep_line<'a>(
     lines.push(format!("{line}{marker}{}", text.trim_start()));
 }
 
-fn i64_to_usize(value: i64, column: &str) -> anyhow::Result<usize> {
-    value
-        .try_into()
-        .with_context(|| format!("column `{column}` contains negative or too-large value {value}"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -643,6 +615,7 @@ mod tests {
             globs: &[],
             fixed_strings: false,
             ignore_case: false,
+            word: false,
             context: None,
             before_context: None,
             after_context: None,

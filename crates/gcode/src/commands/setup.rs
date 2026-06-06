@@ -264,7 +264,6 @@ fn write_gcore_config(
     }
 
     if let Some(embedding) = embedding {
-        remove_legacy_embedding_keys(&mut config);
         config.set(embedding_keys::AI_PROVIDER, &embedding.provider);
         config.set(embedding_keys::AI_API_BASE, &embedding.api_base);
         config.set(embedding_keys::AI_MODEL, &embedding.model);
@@ -286,7 +285,6 @@ fn write_gcore_config(
 }
 
 fn remove_embedding_keys(config: &mut StandaloneConfig) {
-    remove_legacy_embedding_keys(config);
     for key in [
         embedding_keys::AI_PROVIDER,
         embedding_keys::AI_API_BASE,
@@ -296,12 +294,6 @@ fn remove_embedding_keys(config: &mut StandaloneConfig) {
         embedding_keys::AI_API_KEY,
     ] {
         config.remove(key);
-    }
-}
-
-fn remove_legacy_embedding_keys(config: &mut StandaloneConfig) {
-    for key in embedding_keys::legacy_keys() {
-        config.remove(&key);
     }
 }
 
@@ -409,13 +401,6 @@ mod tests {
     #[test]
     fn write_gcore_config_writes_ai_embeddings_and_redacts_api_key() {
         let home = tempfile::tempdir().expect("temp home");
-        let path = gcore_config_path(home.path());
-        let legacy_keys = embedding_keys::legacy_keys();
-        let mut existing = StandaloneConfig::empty();
-        existing.set(legacy_keys[1].clone(), "http://legacy.local/v1");
-        existing
-            .write_at(&path)
-            .expect("write existing standalone config");
 
         let request = StandaloneSetupRequest::new(
             true,
@@ -456,9 +441,6 @@ mod tests {
             config.get(embedding_keys::AI_API_KEY),
             Some("local-api-key")
         );
-        for key in legacy_keys {
-            assert_eq!(config.get(&key), None, "legacy key survived: {key}");
-        }
 
         let status = StandaloneEmbeddingStatus {
             provider: embedding.provider,
@@ -485,7 +467,6 @@ mod tests {
     fn write_gcore_config_clears_embedding_keys_when_disabled() {
         let home = tempfile::tempdir().expect("temp home");
         let path = gcore_config_path(home.path());
-        let legacy_keys = embedding_keys::legacy_keys();
         let mut existing = StandaloneConfig::empty();
         existing.set(embedding_keys::AI_PROVIDER, "lm-studio");
         existing.set(embedding_keys::AI_API_BASE, "http://localhost:1234/v1");
@@ -493,7 +474,6 @@ mod tests {
         existing.set(embedding_keys::AI_DIM, "1024");
         existing.set(embedding_keys::AI_QUERY_PREFIX, "query: ");
         existing.set(embedding_keys::AI_API_KEY, "local-api-key");
-        existing.set(legacy_keys[0].clone(), "legacy-provider");
         existing
             .write_at(&path)
             .expect("write existing standalone config");
@@ -528,54 +508,55 @@ mod tests {
         ] {
             assert_eq!(config.get(key), None, "embedding key survived: {key}");
         }
-        for key in legacy_keys {
-            assert_eq!(config.get(&key), None, "legacy key survived: {key}");
-        }
         assert_eq!(
             config.get("databases.postgres.dsn"),
             Some("postgresql://localhost/gobby")
         );
     }
 
-    #[test]
-    #[serial_test::serial]
-    fn standalone_command_installs_public_code_index_subset() {
-        let Ok(database_url) = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL") else {
-            return;
-        };
-        let home = tempfile::tempdir().expect("temp home");
-        unsafe { std::env::set_var("GOBBY_HOME", home.path()) };
-        let request = StandaloneSetupRequest::new(true, Some(database_url.clone()), None);
+    mod serial_db {
+        use super::*;
 
-        run(request, Format::Json, true).expect("standalone setup runs");
+        #[test]
+        #[serial_test::serial(serial_db)]
+        fn standalone_command_installs_public_code_index_subset() {
+            let Ok(database_url) = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL") else {
+                return;
+            };
+            let home = tempfile::tempdir().expect("temp home");
+            unsafe { std::env::set_var("GOBBY_HOME", home.path()) };
+            let request = StandaloneSetupRequest::new(true, Some(database_url.clone()), None);
 
-        let mut client =
-            gobby_core::postgres::connect_readwrite(&database_url).expect("connect test db");
-        let exists: bool = client
-            .query_one("SELECT to_regclass('public.code_symbols') IS NOT NULL", &[])
-            .expect("check code_symbols")
-            .get(0);
-        assert!(exists);
+            run(request, Format::Json, true).expect("standalone setup runs");
 
-        let forbidden_exists: bool = client
-            .query_one("SELECT to_regclass('public.config_store') IS NOT NULL", &[])
-            .expect("check config_store")
-            .get(0);
-        assert!(!forbidden_exists);
-        assert!(home.path().join("gcore.yaml").exists());
+            let mut client =
+                gobby_core::postgres::connect_readwrite(&database_url).expect("connect test db");
+            let exists: bool = client
+                .query_one("SELECT to_regclass('public.code_symbols') IS NOT NULL", &[])
+                .expect("check code_symbols")
+                .get(0);
+            assert!(exists);
 
-        client
-            .batch_execute(
-                "DROP INDEX IF EXISTS public.code_symbols_search_bm25;
-                 DROP INDEX IF EXISTS public.code_content_search_bm25;
-                 DROP TABLE IF EXISTS public.code_calls;
-                 DROP TABLE IF EXISTS public.code_imports;
-                 DROP TABLE IF EXISTS public.code_content_chunks;
-                 DROP TABLE IF EXISTS public.code_symbols;
-                 DROP TABLE IF EXISTS public.code_indexed_files;
-                 DROP TABLE IF EXISTS public.code_indexed_projects;",
-            )
-            .expect("drop code-index test objects");
-        unsafe { std::env::remove_var("GOBBY_HOME") };
+            let forbidden_exists: bool = client
+                .query_one("SELECT to_regclass('public.config_store') IS NOT NULL", &[])
+                .expect("check config_store")
+                .get(0);
+            assert!(!forbidden_exists);
+            assert!(home.path().join("gcore.yaml").exists());
+
+            client
+                .batch_execute(
+                    "DROP INDEX IF EXISTS public.code_symbols_search_bm25;
+                     DROP INDEX IF EXISTS public.code_content_search_bm25;
+                     DROP TABLE IF EXISTS public.code_calls;
+                     DROP TABLE IF EXISTS public.code_imports;
+                     DROP TABLE IF EXISTS public.code_content_chunks;
+                     DROP TABLE IF EXISTS public.code_symbols;
+                     DROP TABLE IF EXISTS public.code_indexed_files;
+                     DROP TABLE IF EXISTS public.code_indexed_projects;",
+                )
+                .expect("drop code-index test objects");
+            unsafe { std::env::remove_var("GOBBY_HOME") };
+        }
     }
 }

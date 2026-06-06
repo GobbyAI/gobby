@@ -26,36 +26,11 @@ pub enum IdentifierKind {
     MapKey,
 }
 
-/// String rendering context retained for compatibility with older
-/// `TypedQueryError::ControlCharacter` consumers.
-#[deprecated(
-    since = "0.9.10",
-    note = "string values are escaped now; this context is retained only for API compatibility"
-)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ValueContext {
-    String,
-}
-
-#[allow(deprecated)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypedQueryError {
     InvalidIdentifier {
         kind: IdentifierKind,
         identifier: String,
-    },
-    /// Legacy error variant retained for API compatibility.
-    ///
-    /// String control characters are escaped by `render_cypher_value`, so new
-    /// code should not construct or match this variant for current rendering.
-    #[deprecated(
-        since = "0.9.10",
-        note = "string control characters are escaped instead of rejected"
-    )]
-    ControlCharacter {
-        #[allow(deprecated)]
-        context: ValueContext,
-        codepoint: u32,
     },
     NonFiniteFloat {
         value: String,
@@ -211,26 +186,12 @@ impl fmt::Display for IdentifierKind {
     }
 }
 
-#[allow(deprecated)]
-impl fmt::Display for ValueContext {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::String => f.write_str("string"),
-        }
-    }
-}
-
-#[allow(deprecated)]
 impl fmt::Display for TypedQueryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidIdentifier { kind, identifier } => write!(
                 f,
                 "invalid {kind} `{identifier}`; expected ^[A-Za-z_][A-Za-z0-9_]*$"
-            ),
-            Self::ControlCharacter { context, codepoint } => write!(
-                f,
-                "control character U+{codepoint:04X} is not allowed in {context} value"
             ),
             Self::NonFiniteFloat { value } => {
                 write!(f, "non-finite float `{value}` is not allowed")

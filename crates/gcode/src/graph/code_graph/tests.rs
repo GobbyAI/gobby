@@ -217,6 +217,25 @@ fn graph_write_uses_synced_file_path_for_import_and_call_sources() {
 }
 
 #[test]
+fn graph_write_skips_unparsed_import_sentinel_modules() {
+    let imports = vec![
+        ImportRelation {
+            file_path: "src/lib.rs".to_string(),
+            module_name: "UNPARSED:import maybe".to_string(),
+        },
+        ImportRelation {
+            file_path: "src/lib.rs".to_string(),
+            module_name: "crate::dep".to_string(),
+        },
+    ];
+
+    let import_items = import_graph_items("src/lib.rs", &imports);
+
+    assert_eq!(import_items.len(), 1);
+    assert_eq!(import_items[0].target_module, "crate::dep");
+}
+
+#[test]
 fn imports_query_returns_stable_id() {
     let (query, _) = get_imports_query("project-1", "src/lib.rs");
 

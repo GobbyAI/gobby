@@ -13,12 +13,20 @@ jobs:
     name: Test before release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
+          toolchain: stable
           components: clippy
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@f5b277aa8941a90c16bc1cd6ab9363e0502b7d31
+        with:
+          tool: nextest
 
       - name: Verify tag matches Cargo.toml version
         # Guards against the tag/crate/release drift that broke installer
@@ -43,10 +51,22 @@ jobs:
           echo "Tag '$tag' aligns with crates/ghook/Cargo.toml version '$cargo_version'."
 
       - name: Clippy
-        run: cargo clippy -p gobby-hooks --all-targets -- -D warnings
+        run: cargo clippy -p gobby-hooks -- -D warnings
+
+      - name: Clippy without default features
+        run: cargo clippy -p gobby-hooks --no-default-features -- -D warnings
 
       - name: Run tests
-        run: cargo test -p gobby-hooks
+        run: cargo nextest run --profile ci -p gobby-hooks
+
+      - name: Run doctests
+        run: cargo test --doc -p gobby-hooks
+
+      - name: Run tests without default features
+        run: cargo nextest run --profile ci -p gobby-hooks --no-default-features
+
+      - name: Run doctests without default features
+        run: cargo test --doc -p gobby-hooks --no-default-features
 
   build:
     needs: test
@@ -69,16 +89,22 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             cross: false
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            cross: true
 
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.target }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
 
       - name: Install cross-compilation tools (Linux ARM)
@@ -87,6 +113,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - name: Configure MSVC for Windows ARM64
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        with:
+          arch: x64_arm64
 
       - name: Build ghook
         run: cargo build --release --target ${{ matrix.target }} -p gobby-hooks
@@ -124,10 +156,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
 
       - name: Publish gobby-hooks to crates.io
         run: cargo publish -p gobby-hooks
@@ -140,14 +176,26 @@ jobs:
 
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           merge-multiple: true
 
+      - name: Generate SHA-256 checksums
+        # Installers fetch <asset>.sha256 and verify the archive before
+        # chmod/PATH placement (fail-closed on missing/mismatched checksum).
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for asset in ghook-*.tar.gz ghook-*.zip; do
+            sha256sum "$asset" > "$asset.sha256"
+          done
+
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           files: |
             ghook-*.tar.gz
             ghook-*.zip
+            ghook-*.sha256
           generate_release_notes: true

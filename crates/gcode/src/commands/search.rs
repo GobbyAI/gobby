@@ -6,7 +6,8 @@ use crate::config::Context;
 use crate::db;
 use crate::models::{PagedResponse, SearchResult, Symbol};
 use crate::output::{self, Format};
-use crate::search::{fts, graph_boost, rrf, semantic};
+use crate::search::{fts, graph_boost, rrf};
+use crate::vector::code_symbols;
 use crate::visibility;
 
 pub struct SearchOptions<'a> {
@@ -44,7 +45,7 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
     let exact_results = exact_outcome.results;
     let exact_ids: Vec<String> = exact_results.iter().map(|s| s.id.clone()).collect();
 
-    // Source 1: BM25 (with LIKE fallback)
+    // Source 1: BM25 via required pg_search indexes.
     let mut fts_outcome = fts::search_symbols_fts_visible(
         &mut conn,
         query,
@@ -72,7 +73,7 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
     let fts_ids: Vec<String> = fts_results.iter().map(|s| s.id.clone()).collect();
 
     // Source 2: Semantic search (Qdrant + embeddings)
-    let semantic_results = semantic::semantic_search(ctx, query, fetch_limit);
+    let semantic_results = code_symbols::semantic_search(ctx, query, fetch_limit);
     let semantic_ids: Vec<String> = semantic_results.iter().map(|(id, _)| id.clone()).collect();
 
     // Source 3: Graph boost (FalkorDB callers + usages of the resolved query symbol)
@@ -163,7 +164,8 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
 
     print_empty_diagnostic(ctx, results.is_empty(), options.offset, total);
     let literal_hint = literal_query_hint(query);
-    let path_hint = fts::path_filter_falls_back(&expanded_paths).then(path_filter_fallback_hint);
+    let path_hint =
+        fts::path_filter_requires_post_filter(&expanded_paths).then(path_filter_post_filter_hint);
     let visibility_hint = visible_search_degraded.then(visible_search_degraded_hint);
     let hint = combine_hints(combine_hints(literal_hint, path_hint), visibility_hint);
 
@@ -251,7 +253,7 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
 
     print_empty_diagnostic(ctx, results.is_empty(), options.offset, total);
     let hint = combine_hints(
-        fts::path_filter_falls_back(&expanded_paths).then(path_filter_fallback_hint),
+        fts::path_filter_requires_post_filter(&expanded_paths).then(path_filter_post_filter_hint),
         visible_search_degraded.then(visible_search_degraded_hint),
     );
 
@@ -368,7 +370,7 @@ fn search_symbol_with_graph(
 
     print_empty_diagnostic(ctx, results.is_empty(), options.offset, total);
     let hint = combine_hints(
-        fts::path_filter_falls_back(expanded_paths).then(path_filter_fallback_hint),
+        fts::path_filter_requires_post_filter(expanded_paths).then(path_filter_post_filter_hint),
         visible_search_degraded.then(visible_search_degraded_hint),
     );
 
@@ -432,7 +434,8 @@ pub fn search_text(
     let all_results = all_results.results;
     let cap_hint = (has_path_filters && all_results.len() >= fts::FILTERED_FETCH_CAP)
         .then(filtered_fetch_cap_hint);
-    let path_hint = fts::path_filter_falls_back(&expanded_paths).then(path_filter_fallback_hint);
+    let path_hint =
+        fts::path_filter_requires_post_filter(&expanded_paths).then(path_filter_post_filter_hint);
     let hint = combine_hints(
         combine_hints(cap_hint, path_hint),
         visible_search_degraded.then(visible_search_degraded_hint),
@@ -535,7 +538,8 @@ pub fn search_content(
     );
     let cap_hint = (has_path_filters && all_results.len() >= fts::FILTERED_FETCH_CAP)
         .then(filtered_fetch_cap_hint);
-    let path_hint = fts::path_filter_falls_back(&expanded_paths).then(path_filter_fallback_hint);
+    let path_hint =
+        fts::path_filter_requires_post_filter(&expanded_paths).then(path_filter_post_filter_hint);
     let hint = combine_hints(cap_hint, path_hint);
     let all_results: Vec<_> = all_results
         .into_iter()
@@ -649,7 +653,7 @@ fn filtered_fetch_cap_hint() -> String {
     )
 }
 
-fn path_filter_fallback_hint() -> String {
+fn path_filter_post_filter_hint() -> String {
     "Some path filters cannot be pushed into SQL; results were post-filtered after a broader fetch."
         .to_string()
 }
@@ -844,10 +848,10 @@ mod tests {
     }
 
     #[test]
-    fn combines_fetch_cap_and_path_fallback_hints() {
+    fn combines_fetch_cap_and_path_post_filter_hints() {
         let hint = combine_hints(
             Some(filtered_fetch_cap_hint()),
-            Some(path_filter_fallback_hint()),
+            Some(path_filter_post_filter_hint()),
         )
         .expect("hint");
 

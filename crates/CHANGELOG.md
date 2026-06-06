@@ -9,44 +9,312 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] — gcode
+
+First stable release of `gcode`. The CLI surface, JSON envelopes, and PostgreSQL
+hub contract are now considered stable under Semantic Versioning.
+
+### Added
+
+#### gcode
+
+- **`gcode symbol-at` lookup** — resolve the symbol enclosing a given
+  `FILE:LINE[:COL]` position, so editors and agents can map a cursor location
+  straight to its owning symbol id.
+- **`gcode grep -w/--word`** — ASCII identifier whole-word matching over the
+  indexed content corpus while still preserving Rust regex patterns such as
+  `\bidentifier\b` and clear invalid-regex errors.
+- **UUID graph lookup** — `gcode callers` and `gcode usages` now treat valid
+  UUID input as an exact symbol id for the active project before falling back to
+  name resolution.
+
+### Changed
+
+#### gcode
+
+- **Breaking:** `gcode grep -w` now maps to `--word` for indexed ASCII
+  identifier matching. The hidden `--word-regexp` compatibility flag remains
+  unsupported and no longer owns the `-w` short flag.
+- **BM25 score primitives** — symbol and content search share a single set of
+  BM25 score primitives, removing duplicated ranking math across the search
+  paths.
+- **Refreshed agent contract** — the gcode CLI contract, README, and bundled
+  `code-index` skill docs now steer agents toward `gcode grep -w <identifier>`
+  for identifier text search and `gcode usages/callers <symbol-id>` for
+  reference mapping.
+- **Large-module decomposition** — codewiki generation, import-resolution
+  parsing, and the PostgreSQL `db` layer were split into focused sub-modules
+  (each under ~1,000 lines) with expanded snapshot and property test coverage.
+
+### Fixed
+
+#### gcode
+
+- **ParadeDB BM25 scoring** — indexed BM25 search now uses the ParadeDB
+  (`pdb`) relevance score instead of an approximate local score, improving
+  ranking fidelity.
+- **Skip unused service resolution** — gcode no longer resolves graph/vector
+  services for commands that do not need them, avoiding spurious connectivity
+  work and warnings.
+- **Review hardening** — applied review and cleanup findings across the crate.
+
+#### CI/CD
+
+- **Nextest test foundation** — workspace test runs migrated to `cargo
+  nextest`, with release-workflow tests aligned to the same runner.
+- **Workflow supply-chain guardrails** — added a guardrail test that fails when
+  GitHub Action references are not pinned, and pinned release-workflow asset
+  checksums.
+
+## [0.4.0] — gobby-core
+
+### Changed
+
+#### gobby-core
+
+- **Shared BM25 score primitives** — the BM25 scoring primitives consumed by
+  gcode and gwiki now live in the foundation crate so every consumer ranks
+  content the same way.
+- **Module decomposition** — `config` and `provisioning` were split into
+  focused sub-modules (each under ~1,000 lines) to keep the shared foundation
+  maintainable as it grows.
+
+### Fixed
+
+#### gobby-core
+
+- **Datastore adapter hardening** — PostgreSQL, FalkorDB, and Qdrant helpers
+  gained additional review-driven robustness and clearer degradation behavior.
+- **Review hardening** — applied review and cleanup findings across the crate.
+
+## [0.3.0] — gwiki
+
+### Added
+
+#### gwiki
+
+- **Full research budget reporting** — `gwiki research --format json` now echoes
+  all five budget limits (max steps, max tokens, wall-time, and the remaining
+  controls) so callers can display and enforce the complete budget envelope.
+
+### Changed
+
+#### gwiki
+
+- **Datastore contract enforcement** — `gwiki` now enforces its datastore
+  contract up front, failing clearly when the configured hub/search stores do
+  not satisfy the required schema rather than degrading silently mid-run.
+- **Compile contract alignment** — compile JSON keys and the research/compile
+  contract docs were aligned for budget/write-conflict fields, `TOPIC` /
+  `--outline` / `--kind` inputs, and daemon JSON parsing; added a dedicated
+  `gwiki` user guide.
+- **Large-module decomposition** — the research loop, PDF/document/video
+  ingest, sources, compile, refresh, and research command modules were split
+  into focused sub-modules (each under ~1,000 lines), and the CLI test fixtures
+  were modernized.
+
+### Fixed
+
+#### gwiki
+
+- **Genuine write-conflict stop** — the research loop now stops on a genuine
+  vault write conflict instead of looping, reporting it as an explicit stop
+  reason.
+- **Default-feature build** — restored the `gwiki` build under default features
+  after the feature-gated ingest split.
+- **Review hardening** — applied review and cleanup findings across the crate.
+
+#### CI/CD
+
+- **Windows release builds** — re-enabled Windows targets for the `gwiki`
+  release matrix with deterministic pdfium provisioning.
+- **Idempotent publish** — the `gwiki` release publish step now checks
+  crates.io before publishing, so re-running a release is a safe no-op.
+- **Per-asset checksums** — helper releases now publish per-asset SHA-256
+  checksums, and release tags are pushed individually to avoid GitHub's
+  >3-tags-per-push event suppression.
+
+## [0.4.6] — gobby-hooks
+
+### Added
+
+#### gobby-hooks
+
+- **aarch64 Windows binaries** — the `ghook` release matrix now builds
+  `aarch64-pc-windows-msvc` artifacts alongside the existing targets.
+
+### Changed
+
+#### gobby-hooks
+
+- **Shared foundation floor** — `gobby-hooks` now requires `gobby-core 0.4.0`.
+
+### Fixed
+
+#### gobby-hooks
+
+- **Review hardening** — removed legacy compatibility surfaces and applied
+  review and cleanup findings across the crate.
+
+## [0.4.6] — gobby-squeeze
+
+### Fixed
+
+#### gobby-squeeze
+
+- **Review hardening** — removed legacy compatibility surfaces and applied
+  review and cleanup findings across the crate.
+
+## [0.1.4] — gobby-local
+
+### Changed
+
+#### gobby-local
+
+- **Shared foundation floor** — `gobby-local` now requires `gobby-core 0.4.0`.
+
+### Fixed
+
+#### gobby-local
+
+- **Review hardening** — applied review and cleanup findings across the crate.
+
+## [0.2.0] — gwiki
+
+### Added
+
+#### gwiki
+
+- **Initial release** — first public release of `gwiki`, the Gobby
+  research/knowledge-vault CLI. It ingests multimodal sources into a Markdown
+  vault, then indexes, searches, and compiles them into wiki articles and
+  reports.
+- **Multimodal ingest** — `gwiki ingest-file` routes a source by type and
+  derives Markdown into the vault: text documents, PDFs, URLs, MediaWiki pages,
+  git repositories, and Wayback captures for text-bearing sources; audio
+  transcription/translation, image vision description, and video frame +
+  transcript extraction for media. Per-run AI overrides
+  (`--transcription-routing`, `--vision-routing`, `--text-routing`, `--no-ai`)
+  control or bypass media AI for a single ingest.
+- **Markdown vault model** — sources land in a Markdown vault with frontmatter,
+  source provenance, and citation/credibility tracking, so every derived
+  document records where it came from and how trustworthy the source is.
+- **Hybrid search** — `gwiki search` and `gwiki ask` merge BM25 (ParadeDB
+  `pg_search`), semantic (Qdrant), and graph (FalkorDB) signals via Reciprocal
+  Rank Fusion, the same hybrid stack used by gcode.
+- **Reason-act research loop** — `gwiki research` runs an iterative reason-act
+  loop with budget controls (max steps, max tokens, and a wall-time budget),
+  reporting explicit stop reasons (budget exhausted, no progress, duplicate
+  frontier, source blocked, AI unavailable, or finished) and emitting accepted
+  note drafts and recorded gaps.
+- **Command set** — `init`, `setup`, `collect`, `index`, `compile`, `export`,
+  `search`, `read`, `ask`, `research`, `refresh`, `audit`, `lint`, `sources`,
+  `backlinks`, `status`, `health`, and `remove-source` cover vault setup,
+  ingestion, indexing/refresh, search/read/ask, research and compilation,
+  export, and vault health/audit/lint.
+- **Graceful degradation** — multimodal endpoints (transcription, vision) and
+  the AI transport degrade independently, falling back to skeleton/derived
+  output with explicit degradation markers when a capability is routed off or
+  unavailable; search degrades like gcode (BM25 standalone, with semantic and
+  graph optional).
+
 ## [0.9.9] — gcode
 
 ### Added
 
 #### gcode
 
+- **Codewiki generator** — new `gcode codewiki [--out DIR] [--scope PATH...]`
+  command generates per-module Markdown documentation from the indexed code
+  graph, optionally limited to indexed files under one or more paths.
+- **Graph-clustered codewiki modules** — codewiki groups documented files into
+  modules derived from the FalkorDB code graph so generated docs follow the
+  project's real structure instead of flat directory listings.
+- **Bounded mermaid graph diagrams** — generated codewiki pages embed mermaid
+  dependency diagrams that are capped in size so large modules render readable,
+  truncated graphs instead of unbounded blobs.
+- **Codewiki citation provenance** — generated docs carry citations back to the
+  indexed symbols and files they were derived from, so every section is
+  traceable to its source.
+- **Incremental codewiki regeneration** — re-running `gcode codewiki` only
+  regenerates docs for modules whose underlying code changed, leaving unchanged
+  pages in place.
+- **LLM-backed outlines** — `gcode outline --summarize FILE` produces a
+  natural-language outline of a file via text generation when AI routing is
+  configured, alongside the existing structural symbol tree.
 - **Embeddings doctor** — new diagnostics surface for the `ai.embeddings.*`
   configuration namespace, including API base, model, query prefix, timeout,
   and legacy-key migration checks.
 - **Isolated worktree overlay indexing** — linked worktrees and isolated roots
   now get filesystem-derived code-index identity and overlay-aware visibility
   counts instead of inheriting parent project state.
+- **Text-content indexing for Markdown** — Markdown files are now indexed as
+  searchable repo text content (reachable through content search) rather than
+  being dropped, even though they are not parsed for AST symbols.
+- **Hidden repo metadata indexing** — gcode now indexes an allowlisted set of
+  hidden repository metadata as text content (e.g. `.gobby/plans/**/*.md` and
+  `.github/workflows/**`), extendable per project via a `hidden_allowlist` in
+  `.gobby/gcode.json`.
+- **Text-only file-type reporting** — `gcode index` now reports the file types
+  it indexed as text-only (with file counts and examples) so it is clear which
+  inputs were content-indexed rather than parsed for symbols.
 
 ### Changed
 
 #### gcode
 
+- **Search ergonomics** — `gcode search` now detects literal-looking queries
+  (quoted strings, call-site syntax, dotted config keys, path separators) and
+  hints toward `gcode grep`/`gcode search-content`, with refreshed help text and
+  examples steering exact-literal lookups to the right command.
+- **CLI contract surface** — gcode now ships a published CLI contract
+  describing its command surface for tooling and daemon integration.
+- **Codewiki AI routing contract** — `gcode codewiki --ai <auto|daemon|direct|off>`
+  lets you override AI routing for generated summaries per invocation, matching
+  the shared routing vocabulary.
+- **Daemon-first embeddings** — code-symbol embeddings for indexing and semantic
+  search now route through the Gobby daemon when available and fall back to a
+  direct embedding API, instead of always calling the embedding endpoint
+  directly.
+- **Shared hub provisioning** — standalone `gcode setup` now provisions the
+  PostgreSQL hub through shared `gobby-core` provisioning logic that is also used
+  by `gwiki setup`.
 - **Embeddings namespace contract** — embedding configuration now resolves from
   `ai.embeddings.*` keys only; legacy `embeddings.*` keys are reported by
   diagnostics instead of silently winning configuration resolution.
+- **Indexing policy** — Markdown and `.mjs` files are no longer parsed as
+  source-language symbol inputs; safe repo text remains available through
+  content search where supported.
 - **Large-module decomposition** — CLI dispatch, config resolution, setup,
   parser call extraction, import resolution, indexing, graph reads/reports,
   FTS, and vector code-symbol lifecycle were split into focused modules with
   expanded tests.
-- **Indexing policy** — Markdown and `.mjs` files are no longer parsed as
-  source-language symbol inputs; safe repo text remains available through
-  content search where supported.
 
 ### Fixed
 
 #### gcode
 
+- **Single hub resolution enforced** — gcode now resolves exactly one
+  PostgreSQL hub for a given run, preventing conflicting hub sources from being
+  mixed during indexing and search.
+- **Serialized freshness indexing** — read-time freshness re-indexing is now
+  serialized per project so concurrent agent sessions no longer race the index
+  refresh against each other.
+- **Lock-free read-time freshness pre-gate** — project-scoped reads now use a
+  lock-free, hash-free pre-gate that checks file mtimes against the last index
+  time and only takes the refresh lock when something actually changed,
+  eliminating spurious "index refresh already running" messages under
+  concurrent sessions.
+- **Skip generated JS bundles** — indexing now skips generated/minified
+  JavaScript bundles so search and graph results are not polluted by build
+  artifacts.
 - **Search and graph hardening** — graph payloads, graph read rows, projection
   sync reporting, semantic search limits, indexed grep output, and Qdrant
   vector lifecycle paths were tightened across review follow-up fixes.
 - **Setup preflights** — standalone setup and embedding provisioning now
   report namespace and datastore compatibility problems more explicitly before
   mutating gcode-owned projection state.
+- **Review hardening** — applied review and cleanup findings across the crate.
 
 ## [0.3.0] — gobby-core
 
@@ -54,6 +322,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### gobby-core
 
+- **Shared AI context and capability routing** — `gobby-core` now owns AI
+  config types, `AiContext` resolution, and a per-capability routing decision
+  (daemon / direct / off) so every Gobby CLI resolves AI behavior the same way.
+- **Daemon and direct AI clients** — added daemon-backed AI clients plus direct
+  transcription, vision, and text-generation clients, giving consumers a shared
+  transport for transcribe/vision/text capabilities behind the `ai` feature.
+- **Shared AI capability probe** — a shared probe reports which AI capabilities
+  are reachable (via daemon or direct) so consumers can degrade predictably when
+  a capability is routed off or unavailable.
+- **Shared local-backend discovery** — local-LLM backend descriptors and
+  discovery now live in `gobby-core::local_backend`, shared across the CLIs
+  instead of being reimplemented per binary.
+- **Shared hub provisioning** — added provisioning helpers that let `gcode
+  setup` and `gwiki setup` provision the PostgreSQL hub through one shared code
+  path.
 - **Embedding config contract** — shared `ai.embeddings.*` key constants,
   namespace-aware resolution, `query_prefix`, and `timeout_seconds` now live in
   `gobby-core` for consumers that need consistent embedding service behavior.
@@ -64,6 +347,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### gobby-core
 
+- **Daemon-first embedding routing** — embedding requests now prefer the Gobby
+  daemon when available and fall back to a direct embedding API, with shared
+  routing applied consistently across consumers.
+- **Explicit AI routing modes** — AI routing now requires an explicit mode
+  (auto / daemon / direct / off) rather than relying on implicit defaults, so
+  capability behavior is unambiguous across CLIs.
 - **Legacy embedding keys retired** — `resolve_embedding_config` no longer
   honors `embeddings.*` keys; callers get the new namespace or no embedding
   config.
@@ -76,6 +365,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Datastore adapter hardening** — PostgreSQL, FalkorDB, and Qdrant helpers
   gained stricter diagnostics and degradation behavior for release consumers.
+- **Review hardening** — applied review and cleanup findings across the crate.
 
 ## [0.4.5] — gobby-hooks
 
@@ -93,6 +383,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   logged at debug level during planned Stop handling instead of disappearing.
 - **Test isolation** — tmux environment tests now use scoped environment
   mutation through `temp-env`.
+- **Review hardening** — applied review and cleanup findings across the crate.
 
 ## [0.4.5] — gobby-squeeze
 
@@ -110,9 +401,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### gobby-local
 
+- **Shared local-backend discovery** — backend descriptors and discovery now
+  come from `gobby-core::local_backend` instead of a gloc-local copy, keeping
+  backend detection consistent across the Gobby CLIs.
 - **YAML dependency refresh** — the manifest now uses the maintained
   `yaml_serde 0.10.4` package while keeping the public `serde_yaml` dependency
   name and config-file format unchanged.
+
+### Fixed
+
+#### gobby-local
+
+- **Publishable to crates.io** — the `gobby-core` dependency now carries an
+  explicit `version = "0.3.0"` alongside its workspace path, so `cargo publish`
+  no longer fails on a path dependency that has no version requirement.
 
 ## [0.9.8] — gcode
 

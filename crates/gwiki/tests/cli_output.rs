@@ -1,33 +1,14 @@
 mod common;
 
 fn gwiki(args: &[&str]) -> std::process::Output {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let home = tmp.path().join("home");
-    std::fs::create_dir_all(&home).expect("create isolated home");
-    common::gwiki_command()
-        .args(args)
-        .env("GOBBY_WIKI_HUB", tmp.path().join("hub"))
-        .env("HOME", &home)
-        .env_remove("GWIKI_DATABASE_URL")
-        .env_remove("GWIKI_POSTGRES_TEST_DATABASE_URL")
-        .env_remove("GOBBY_POSTGRES_DSN")
-        .env_remove("GCODE_DATABASE_URL")
-        .env_remove("GCODE_POSTGRES_TEST_DATABASE_URL")
-        .current_dir(tmp.path())
-        .output()
-        .expect("gwiki binary runs")
+    common::GwikiFixture::new().output(args)
 }
 
 #[test]
 fn text_output_uses_renderer() {
     let output = gwiki(&["--format", "text", "search", "--topic", "rust", "ownership"]);
 
-    assert!(
-        output.status.success(),
-        "search failed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    common::assert_success(&output, "search");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Search results for \"ownership\""));
@@ -40,12 +21,7 @@ fn text_output_uses_renderer() {
 fn status_goes_to_stderr() {
     let output = gwiki(&["--format", "json", "status", "--topic", "rust"]);
 
-    assert!(
-        output.status.success(),
-        "status failed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    common::assert_success(&output, "status");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);

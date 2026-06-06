@@ -77,9 +77,16 @@ void run() {
         requests: Vec::new(),
         error: None,
     };
-    let parsed = parse_file_with_semantic(&path, "proj", root, &[], &context, Some(&mut resolver))
-        .expect("parse result")
-        .expect("parse file");
+    let parsed = parse_file_with_semantic(
+        &path,
+        "proj",
+        root,
+        &[] as &[&str],
+        &context,
+        Some(&mut resolver),
+    )
+    .expect("parse result")
+    .expect("parse file");
 
     let call = parsed.calls.first().expect("printf call");
     assert_eq!(call.callee_target_kind.as_str(), "external");
@@ -116,9 +123,16 @@ void run() {
         requests: Vec::new(),
         error: None,
     };
-    let parsed = parse_file_with_semantic(&path, "proj", root, &[], &context, Some(&mut resolver))
-        .expect("parse result")
-        .expect("parse file");
+    let parsed = parse_file_with_semantic(
+        &path,
+        "proj",
+        root,
+        &[] as &[&str],
+        &context,
+        Some(&mut resolver),
+    )
+    .expect("parse result")
+    .expect("parse file");
 
     let call = parsed
         .calls
@@ -159,9 +173,16 @@ fn semantic_resolver_receives_utf16_columns_for_ast_calls() {
         error: None,
     };
 
-    parse_file_with_semantic(&path, "proj", root, &[], &context, Some(&mut resolver))
-        .expect("parse result")
-        .expect("parse file");
+    parse_file_with_semantic(
+        &path,
+        "proj",
+        root,
+        &[] as &[&str],
+        &context,
+        Some(&mut resolver),
+    )
+    .expect("parse result")
+    .expect("parse file");
 
     let request = resolver
         .requests
@@ -194,9 +215,16 @@ fn semantic_resolver_receives_utf16_columns_for_textual_dart_calls() {
         error: None,
     };
 
-    parse_file_with_semantic(&path, "proj", root, &[], &context, Some(&mut resolver))
-        .expect("parse result")
-        .expect("parse file");
+    parse_file_with_semantic(
+        &path,
+        "proj",
+        root,
+        &[] as &[&str],
+        &context,
+        Some(&mut resolver),
+    )
+    .expect("parse result")
+    .expect("parse file");
 
     let request = resolver
         .requests
@@ -229,9 +257,16 @@ fn semantic_resolver_receives_dart_byte_offsets_across_crlf_lines() {
         error: None,
     };
 
-    parse_file_with_semantic(&path, "proj", root, &[], &context, Some(&mut resolver))
-        .expect("parse result")
-        .expect("parse file");
+    parse_file_with_semantic(
+        &path,
+        "proj",
+        root,
+        &[] as &[&str],
+        &context,
+        Some(&mut resolver),
+    )
+    .expect("parse result")
+    .expect("parse file");
 
     let request = resolver
         .requests
@@ -267,11 +302,17 @@ void run() {
         error: Some("semantic resolver failed"),
     };
 
-    let err =
-        match parse_file_with_semantic(&path, "proj", root, &[], &context, Some(&mut resolver)) {
-            Err(err) => err,
-            Ok(_) => panic!("expected semantic resolver error"),
-        };
+    let err = match parse_file_with_semantic(
+        &path,
+        "proj",
+        root,
+        &[] as &[&str],
+        &context,
+        Some(&mut resolver),
+    ) {
+        Err(err) => err,
+        Ok(_) => panic!("expected semantic resolver error"),
+    };
 
     assert_eq!(err.to_string(), "semantic resolver failed");
 }

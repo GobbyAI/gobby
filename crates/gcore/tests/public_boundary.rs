@@ -27,7 +27,8 @@ fn cargo_features_define_public_boundary() {
         r#"qdrant = ["dep:reqwest", "dep:urlencoding"]"#,
         r#"indexing = ["dep:ignore", "dep:sha2"]"#,
         "search = []",
-        r#"ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:httpdate", "dep:rand", "dep:ureq", "reqwest/multipart"]"#,
+        r#"local-backend = ["dep:ureq"]"#,
+        r#"ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:httpdate", "dep:rand", "local-backend", "reqwest/multipart"]"#,
         r#"full = ["postgres", "falkor", "qdrant", "indexing", "search", "ai"]"#,
         r#"serde = { version = "1", features = ["derive"] }"#,
         r#"thiserror = "2""#,
@@ -52,10 +53,11 @@ fn cargo_features_define_public_boundary() {
         );
     }
 
-    let gloc_gcore_dependency = r#"gobby-core = { path = "../gcore", default-features = false }"#;
+    let gloc_gcore_dependency = r#"gobby-core = { path = "../gcore", version = "0.4.0", default-features = false, features = ["local-backend"] }"#;
     assert!(
         gloc_manifest.contains(gloc_gcore_dependency),
-        "gloc must not enable the heavier gobby-core/ai feature"
+        "gloc must keep default-features = false and opt only into gobby-core/local-backend; \
+         the explicit version is required for crates.io publishing"
     );
 }
 
@@ -75,6 +77,8 @@ fn lib_rs_exposes_lightweight_and_feature_gated_modules() {
         "pub mod degradation;",
         "pub mod local_backend;",
         "pub mod setup;",
+        r#"#[cfg(test)]"#,
+        "pub(crate) mod test_http;",
         r#"#[cfg(feature = "ai")]"#,
         "pub mod ai;",
         r#"#[cfg(feature = "postgres")]"#,
@@ -107,6 +111,7 @@ fn development_guide_documents_foundation_boundary() {
         "`qdrant`",
         "`indexing`",
         "`search`",
+        "`local-backend`",
         "`full`",
         "Feature-gated modules",
         "Adding a New Helper",

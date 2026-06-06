@@ -17,7 +17,7 @@ pub(super) fn index_file(
     file_path: &Path,
     project_id: &str,
     root_path: &Path,
-    exclude_patterns: &[String],
+    exclude_patterns: &[impl AsRef<str>],
     import_context: &parser::ImportResolutionContext,
     semantic_resolver: Option<&mut (dyn SemanticCallResolver + '_)>,
 ) -> anyhow::Result<Option<FileIndexCounts>> {
@@ -117,7 +117,7 @@ pub(super) enum ExplicitFileRoute {
 pub(super) fn explicit_file_route(
     root_path: &Path,
     path: &Path,
-    exclude_patterns: &[String],
+    exclude_patterns: &[impl AsRef<str>],
 ) -> ExplicitFileRoute {
     match walker::classify_file(root_path, path, exclude_patterns) {
         Some(walker::FileClassification::Ast) => ExplicitFileRoute::Ast,
@@ -132,7 +132,7 @@ pub(super) fn index_content_only(
     path: &Path,
     project_id: &str,
     root_path: &Path,
-    exclude_patterns: &[String],
+    exclude_patterns: &[impl AsRef<str>],
 ) -> anyhow::Result<Option<FileIndexCounts>> {
     if !walker::is_content_indexable(root_path, path, exclude_patterns) {
         return Ok(None);

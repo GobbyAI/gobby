@@ -2,6 +2,12 @@ use super::*;
 use crate::cli::{Cli, effective_format};
 use clap::Parser;
 
+fn services_for(args: &[&str]) -> config::ServiceConfigSelection {
+    let cli = Cli::try_parse_from(std::iter::once("gcode").chain(args.iter().copied()))
+        .expect("command parses");
+    service_config_selection(&cli.command)
+}
+
 #[test]
 fn setup_early_dispatch_uses_parsed_request_without_context() {
     let project = tempfile::tempdir().expect("temp project");
@@ -43,4 +49,41 @@ fn setup_early_dispatch_uses_parsed_request_without_context() {
 
     assert!(dispatched);
     assert!(called);
+}
+
+#[test]
+fn lookup_commands_skip_service_config_resolution() {
+    for args in [
+        &["grep", "-F", "needle"][..],
+        &["tree"][..],
+        &["symbol-at", "src/lib.rs:10"][..],
+        &["search-content", "needle"][..],
+        &["search-text", "needle"][..],
+        &["search-symbol", "needle"][..],
+    ] {
+        assert_eq!(
+            services_for(args),
+            config::ServiceConfigSelection::database_only()
+        );
+    }
+}
+
+#[test]
+fn graph_and_ai_commands_request_only_needed_services() {
+    assert_eq!(
+        services_for(&["search", "concept"]),
+        config::ServiceConfigSelection::hybrid_search()
+    );
+    assert_eq!(
+        services_for(&["search-symbol", "needle", "--with-graph"]),
+        config::ServiceConfigSelection::falkordb_only()
+    );
+    assert_eq!(
+        services_for(&["callers", "needle"]),
+        config::ServiceConfigSelection::falkordb_only()
+    );
+    assert_eq!(
+        services_for(&["embeddings", "doctor"]),
+        config::ServiceConfigSelection::vectors()
+    );
 }

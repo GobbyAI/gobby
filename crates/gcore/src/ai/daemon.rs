@@ -4,9 +4,7 @@ use serde_json::{Map, Value};
 use std::io::Cursor;
 
 use crate::ai_context::AiContext;
-use crate::ai_types::{
-    AiError, TextResult, TranscriptionResult, TranscriptionSegment, VisionResult,
-};
+use crate::ai_types::{AiError, TextResult, TranscriptionResult, VisionResult};
 use crate::config::AiCapability;
 
 const LOCAL_CLI_TOKEN_FILENAME: &str = "local_cli_token";
@@ -141,6 +139,15 @@ pub fn generate_via_daemon(
     prompt: &str,
     system: Option<&str>,
 ) -> Result<TextResult, AiError> {
+    generate_via_daemon_with_max_tokens(cfg, prompt, system, None)
+}
+
+pub fn generate_via_daemon_with_max_tokens(
+    cfg: &AiContext,
+    prompt: &str,
+    system: Option<&str>,
+    max_tokens: Option<usize>,
+) -> Result<TextResult, AiError> {
     let capability = AiCapability::TextGenerate;
     let binding = cfg.binding(capability);
     let client = daemon_client()?;
@@ -152,6 +159,7 @@ pub fn generate_via_daemon(
         binding.provider.as_deref(),
         binding.model.as_deref(),
         cfg.project_id.as_deref(),
+        max_tokens,
     );
     let _permit = cfg.limiter.acquire();
 
@@ -296,6 +304,7 @@ fn text_request_body(
     provider: Option<&str>,
     model: Option<&str>,
     project_id: Option<&str>,
+    max_tokens: Option<usize>,
 ) -> Value {
     let mut body = Map::new();
     body.insert("prompt".to_string(), Value::String(prompt.to_string()));
@@ -303,6 +312,9 @@ fn text_request_body(
     insert_optional(&mut body, "provider", provider);
     insert_optional(&mut body, "model", model);
     insert_optional(&mut body, "project_id", project_id);
+    if let Some(max_tokens) = max_tokens.filter(|value| *value > 0) {
+        body.insert("max_tokens".to_string(), Value::from(max_tokens));
+    }
     Value::Object(body)
 }
 
@@ -336,35 +348,7 @@ fn non_empty(value: Option<&str>) -> Option<&str> {
 }
 
 fn parse_daemon_transcription(value: Value) -> Result<TranscriptionResult, AiError> {
-    if let Some(text) = legacy_text_only(&value) {
-        return Ok(TranscriptionResult {
-            text: text.clone(),
-            segments: vec![TranscriptionSegment {
-                start_ms: 0,
-                end_ms: 0,
-                text,
-            }],
-            source_language: None,
-            language: None,
-            model: None,
-            task: None,
-            target_language: None,
-            translated: false,
-        });
-    }
-
     TranscriptionResult::from_wire_json(value)
-}
-
-fn legacy_text_only(value: &Value) -> Option<String> {
-    let object = value.as_object()?;
-    if object.contains_key("segments") {
-        return None;
-    }
-    object
-        .get("text")
-        .and_then(Value::as_str)
-        .map(str::to_string)
 }
 
 fn parse_daemon_embeddings(
@@ -438,43 +422,18 @@ mod tests {
     use std::sync::MutexGuard;
 
     #[test]
-    fn legacy_text_maps_to_single_segment() {
-        let response = r#"{"text":"legacy transcript"}"#;
-        let (port, request) = spawn_server(response);
-        let home = temp_home();
-        let _env = EnvGuard::set_home(home.path());
-        write_daemon_files(home.path(), port, "voice-token");
-        let cfg = test_context(None);
-
-        let result = transcribe_via_daemon(
-            &cfg,
-            b"audio".to_vec(),
-            "clip.wav",
-            "audio/wav",
-            DaemonTranscriptionOptions::default(),
-        )
-        .unwrap();
-        let _request = request.join().unwrap().unwrap();
-
-        assert_eq!(result.text, "legacy transcript");
-        assert_eq!(result.segments.len(), 1);
-        assert_eq!(result.segments[0].start_ms, 0);
-        assert_eq!(result.segments[0].end_ms, 0);
-        assert_eq!(result.segments[0].text, "legacy transcript");
-        assert!(result.source_language.is_none());
-        assert!(result.model.is_none());
-        assert!(result.task.is_none());
-    }
-
-    #[test]
     fn forwards_provider_model_and_optional_project_id() {
-        let (port, request) = spawn_server(r#"{"text":"ok","model":"daemon-model"}"#);
+        let (port, request) = spawn_server(
+            r#"{"text":"ok","model":"daemon-model","usage":{"input_tokens":3,"output_tokens":4,"total_tokens":7}}"#,
+        );
         let home = temp_home();
         let _env = EnvGuard::set_home(home.path());
         write_daemon_files(home.path(), port, "text-token");
         let cfg = test_context(Some("project-123"));
 
-        let result = generate_via_daemon(&cfg, "Write a title", Some("Be brief")).unwrap();
+        let result =
+            generate_via_daemon_with_max_tokens(&cfg, "Write a title", Some("Be brief"), Some(64))
+                .unwrap();
         let request = request.join().unwrap().unwrap();
         let body = request_body_json(&request);
 
@@ -484,7 +443,12 @@ mod tests {
         assert_eq!(body["project_id"], "project-123");
         assert_eq!(body["prompt"], "Write a title");
         assert_eq!(body["system"], "Be brief");
+        assert_eq!(body["max_tokens"], 64);
         assert_eq!(result.text, "ok");
+        assert_eq!(
+            result.usage.as_ref().and_then(|usage| usage.token_count()),
+            Some(7)
+        );
 
         let (port, request) = spawn_server(r#"{"text":"ok"}"#);
         write_daemon_files(home.path(), port, "text-token");

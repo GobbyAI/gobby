@@ -60,10 +60,11 @@ pub fn is_binary(path: &Path) -> bool {
 /// Other exclude patterns match any component of the relative path.
 /// Root-generated directory names are literal component names; wildcard
 /// patterns such as `build*` do not get root-only special handling.
-pub fn should_exclude_path(root: &Path, path: &Path, patterns: &[String]) -> bool {
+pub fn should_exclude_path(root: &Path, path: &Path, patterns: &[impl AsRef<str>]) -> bool {
     let rel = path.strip_prefix(root).unwrap_or(path);
 
     for pattern in patterns {
+        let pattern = pattern.as_ref();
         if is_root_generated_dir(pattern) {
             if rel
                 .components()

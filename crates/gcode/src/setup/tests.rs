@@ -328,81 +328,85 @@ fn quote_identifier_accepts_raw_limit_even_when_escaping_expands() {
     assert_eq!(quoted, format!("\"{}\"\"\"", "a".repeat(62)));
 }
 
-#[test]
-#[serial_test::serial]
-fn overwrite_recreates_incompatible_code_index_and_preserves_sentinel_table() {
-    let Ok(database_url) = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL") else {
-        // This is an opt-in destructive integration test. Local/unit test runs
-        // skip it when no throwaway PostgreSQL database is configured.
-        eprintln!(
-            "skipping PostgreSQL overwrite test: GCODE_POSTGRES_TEST_DATABASE_URL is not set"
-        );
-        return;
-    };
-    if let Err(reason) = destructive_postgres_test_allowed(&database_url) {
-        // Refuse to panic against a non-test database; skipping is safer than
-        // requiring every developer machine to provide PostgreSQL.
-        eprintln!("skipping PostgreSQL overwrite test: {reason}");
-        return;
+mod serial_db {
+    use super::*;
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    fn overwrite_recreates_incompatible_code_index_and_preserves_sentinel_table() {
+        let Ok(database_url) = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL") else {
+            // This is an opt-in destructive integration test. Local/unit test runs
+            // skip it when no throwaway PostgreSQL database is configured.
+            eprintln!(
+                "skipping PostgreSQL overwrite test: GCODE_POSTGRES_TEST_DATABASE_URL is not set"
+            );
+            return;
+        };
+        if let Err(reason) = destructive_postgres_test_allowed(&database_url) {
+            // Refuse to panic against a non-test database; skipping is safer than
+            // requiring every developer machine to provide PostgreSQL.
+            eprintln!("skipping PostgreSQL overwrite test: {reason}");
+            return;
+        }
+        let database_url = database_url_with_connect_timeout(&database_url);
+        let mut client = gobby_core::postgres::connect_readwrite(&database_url)
+            .expect("connect test PostgreSQL hub");
+        cleanup_code_index_relations(&mut client);
+        client
+            .batch_execute(
+                "CREATE TABLE public.code_symbols (id TEXT PRIMARY KEY);
+                     CREATE TABLE IF NOT EXISTS public.gobby_owned_sentinel (
+                         key TEXT PRIMARY KEY,
+                         value TEXT NOT NULL
+                     );
+                     INSERT INTO public.gobby_owned_sentinel (key, value)
+                     VALUES ('gcode-overwrite-sentinel', 'keep-me')
+                     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;",
+            )
+            .expect("seed incompatible code index and sentinel");
+
+        let request = StandaloneSetupRequest::new(true, Some(database_url.clone()), None);
+        let err = run_standalone_setup(&request, &mut client)
+            .expect_err("incompatible setup fails without overwrite");
+        assert!(err.to_string().contains("--overwrite-code-index"));
+
+        let mut overwrite = StandaloneSetupRequest::new(true, Some(database_url), None);
+        overwrite.overwrite_code_index = true;
+        run_standalone_setup(&overwrite, &mut client).expect("overwrite setup succeeds");
+
+        let has_project_id: bool = client
+            .query_one(
+                "SELECT EXISTS(
+                        SELECT 1
+                        FROM pg_attribute
+                        WHERE attrelid = 'public.code_symbols'::regclass
+                          AND attname = 'project_id'
+                          AND attnum > 0
+                          AND NOT attisdropped
+                    )",
+                &[],
+            )
+            .expect("check recreated code_symbols")
+            .get(0);
+        assert!(has_project_id);
+
+        let sentinel: String = client
+            .query_one(
+                "SELECT value FROM public.gobby_owned_sentinel WHERE key = 'gcode-overwrite-sentinel'",
+                &[],
+            )
+            .expect("read sentinel")
+            .get(0);
+        assert_eq!(sentinel, "keep-me");
+
+        cleanup_code_index_relations(&mut client);
+        client
+            .batch_execute(
+                "DELETE FROM public.gobby_owned_sentinel WHERE key = 'gcode-overwrite-sentinel';
+                     DROP TABLE IF EXISTS public.gobby_owned_sentinel;",
+            )
+            .expect("cleanup sentinel");
     }
-    let database_url = database_url_with_connect_timeout(&database_url);
-    let mut client = gobby_core::postgres::connect_readwrite(&database_url)
-        .expect("connect test PostgreSQL hub");
-    cleanup_code_index_relations(&mut client);
-    client
-        .batch_execute(
-            "CREATE TABLE public.code_symbols (id TEXT PRIMARY KEY);
-                 CREATE TABLE IF NOT EXISTS public.gobby_owned_sentinel (
-                     key TEXT PRIMARY KEY,
-                     value TEXT NOT NULL
-                 );
-                 INSERT INTO public.gobby_owned_sentinel (key, value)
-                 VALUES ('gcode-overwrite-sentinel', 'keep-me')
-                 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;",
-        )
-        .expect("seed incompatible code index and sentinel");
-
-    let request = StandaloneSetupRequest::new(true, Some(database_url.clone()), None);
-    let err = run_standalone_setup(&request, &mut client)
-        .expect_err("incompatible setup fails without overwrite");
-    assert!(err.to_string().contains("--overwrite-code-index"));
-
-    let mut overwrite = StandaloneSetupRequest::new(true, Some(database_url), None);
-    overwrite.overwrite_code_index = true;
-    run_standalone_setup(&overwrite, &mut client).expect("overwrite setup succeeds");
-
-    let has_project_id: bool = client
-        .query_one(
-            "SELECT EXISTS(
-                    SELECT 1
-                    FROM pg_attribute
-                    WHERE attrelid = 'public.code_symbols'::regclass
-                      AND attname = 'project_id'
-                      AND attnum > 0
-                      AND NOT attisdropped
-                )",
-            &[],
-        )
-        .expect("check recreated code_symbols")
-        .get(0);
-    assert!(has_project_id);
-
-    let sentinel: String = client
-        .query_one(
-            "SELECT value FROM public.gobby_owned_sentinel WHERE key = 'gcode-overwrite-sentinel'",
-            &[],
-        )
-        .expect("read sentinel")
-        .get(0);
-    assert_eq!(sentinel, "keep-me");
-
-    cleanup_code_index_relations(&mut client);
-    client
-        .batch_execute(
-            "DELETE FROM public.gobby_owned_sentinel WHERE key = 'gcode-overwrite-sentinel';
-                 DROP TABLE IF EXISTS public.gobby_owned_sentinel;",
-        )
-        .expect("cleanup sentinel");
 }
 
 fn destructive_postgres_test_allowed(database_url: &str) -> Result<(), String> {

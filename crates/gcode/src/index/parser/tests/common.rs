@@ -30,7 +30,7 @@ pub(super) fn parse_source(
     fs::write(&path, source).expect("write test source");
     let candidates = discover_supported_files(root);
     let context = build_import_resolution_context(root, &candidates);
-    parse_file_with_semantic(&path, "proj", root, &[], &context, None)
+    parse_file_with_semantic(&path, "proj", root, &[] as &[&str], &context, None)
         .expect("parse result")
         .expect("parse file")
 }
@@ -88,7 +88,7 @@ pub(super) fn parse_swift(source: &str, extra_files: &[(&str, &str)]) -> ParseRe
 }
 
 pub(super) fn discover_supported_files(root: &Path) -> Vec<PathBuf> {
-    let (candidates, _) = walker::discover_files(root, &[]);
+    let (candidates, _) = walker::discover_files(root, &[] as &[&str]);
     candidates
         .into_iter()
         .filter(|path| languages::detect_language(&path.to_string_lossy()).is_some())

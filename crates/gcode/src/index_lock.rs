@@ -241,77 +241,81 @@ mod tests {
         assert_ne!(project_lock_key("proj-a"), project_lock_key("proj-b"));
     }
 
-    #[test]
-    #[serial_test::serial]
-    fn brief_try_returns_busy_while_same_project_lock_is_held() {
-        let Some(database_url) = connect_postgres_test_db() else {
-            return;
-        };
-        let ctx = context_for(database_url.clone(), "gcode-lock-brief-try");
-        let _holder = hold_project_lock(&database_url, &ctx.project_id);
+    mod serial_db {
+        use super::*;
 
-        let result = with_project_lock::<()>(
-            &ctx,
-            IndexLockPolicy::BriefTry {
-                total_wait: Duration::from_millis(50),
-                poll: Duration::from_millis(10),
-            },
-            || anyhow::bail!("closure must not run while lock is busy"),
-        )
-        .expect("try project lock");
+        #[test]
+        #[serial_test::serial(serial_db)]
+        fn brief_try_returns_busy_while_same_project_lock_is_held() {
+            let Some(database_url) = connect_postgres_test_db() else {
+                return;
+            };
+            let ctx = context_for(database_url.clone(), "gcode-lock-brief-try");
+            let _holder = hold_project_lock(&database_url, &ctx.project_id);
 
-        assert_eq!(result, IndexLockResult::Busy);
-    }
+            let result = with_project_lock::<()>(
+                &ctx,
+                IndexLockPolicy::BriefTry {
+                    total_wait: Duration::from_millis(50),
+                    poll: Duration::from_millis(10),
+                },
+                || anyhow::bail!("closure must not run while lock is busy"),
+            )
+            .expect("try project lock");
 
-    #[test]
-    #[serial_test::serial]
-    fn wait_blocks_until_same_project_lock_is_released() {
-        let Some(database_url) = connect_postgres_test_db() else {
-            return;
-        };
-        let project_id = "gcode-lock-wait";
-        let ctx = context_for(database_url.clone(), project_id);
-        let holder = hold_project_lock(&database_url, project_id);
+            assert_eq!(result, IndexLockResult::Busy);
+        }
 
-        let (done_tx, done_rx) = std::sync::mpsc::channel();
-        let handle = std::thread::spawn(move || {
-            let result =
-                with_project_lock(&ctx, IndexLockPolicy::Wait, || Ok::<_, anyhow::Error>(()));
-            done_tx.send(()).expect("send wait lock completion");
-            result
-        });
-        assert!(
-            done_rx.recv_timeout(Duration::from_millis(100)).is_err(),
-            "wait policy did not block"
-        );
+        #[test]
+        #[serial_test::serial(serial_db)]
+        fn wait_blocks_until_same_project_lock_is_released() {
+            let Some(database_url) = connect_postgres_test_db() else {
+                return;
+            };
+            let project_id = "gcode-lock-wait";
+            let ctx = context_for(database_url.clone(), project_id);
+            let holder = hold_project_lock(&database_url, project_id);
 
-        drop(holder);
-        let result = handle
-            .join()
-            .expect("wait lock thread joins")
-            .expect("wait lock succeeds");
-        assert_eq!(result, IndexLockResult::Acquired(()));
-    }
+            let (done_tx, done_rx) = std::sync::mpsc::channel();
+            let handle = std::thread::spawn(move || {
+                let result =
+                    with_project_lock(&ctx, IndexLockPolicy::Wait, || Ok::<_, anyhow::Error>(()));
+                done_tx.send(()).expect("send wait lock completion");
+                result
+            });
+            assert!(
+                done_rx.recv_timeout(Duration::from_millis(100)).is_err(),
+                "wait policy did not block"
+            );
 
-    #[test]
-    #[serial_test::serial]
-    fn different_project_ids_do_not_block_each_other() {
-        let Some(database_url) = connect_postgres_test_db() else {
-            return;
-        };
-        let _holder = hold_project_lock(&database_url, "gcode-lock-held-project");
-        let ctx = context_for(database_url, "gcode-lock-free-project");
+            drop(holder);
+            let result = handle
+                .join()
+                .expect("wait lock thread joins")
+                .expect("wait lock succeeds");
+            assert_eq!(result, IndexLockResult::Acquired(()));
+        }
 
-        let result = with_project_lock(
-            &ctx,
-            IndexLockPolicy::BriefTry {
-                total_wait: Duration::from_millis(10),
-                poll: Duration::from_millis(1),
-            },
-            || Ok::<_, anyhow::Error>(7),
-        )
-        .expect("try different project lock");
+        #[test]
+        #[serial_test::serial(serial_db)]
+        fn different_project_ids_do_not_block_each_other() {
+            let Some(database_url) = connect_postgres_test_db() else {
+                return;
+            };
+            let _holder = hold_project_lock(&database_url, "gcode-lock-held-project");
+            let ctx = context_for(database_url, "gcode-lock-free-project");
 
-        assert_eq!(result, IndexLockResult::Acquired(7));
+            let result = with_project_lock(
+                &ctx,
+                IndexLockPolicy::BriefTry {
+                    total_wait: Duration::from_millis(10),
+                    poll: Duration::from_millis(1),
+                },
+                || Ok::<_, anyhow::Error>(7),
+            )
+            .expect("try different project lock");
+
+            assert_eq!(result, IndexLockResult::Acquired(7));
+        }
     }
 }

@@ -1,8 +1,7 @@
 //! Embedded gcode skill for AI CLI agents.
 //!
 //! Bundles the SKILL.md content and installs it to every supported
-//! project-level AI CLI skill target. Gemini CLI remains installed for
-//! compatibility, but it is deprecated.
+//! project-level AI CLI skill target.
 
 use std::path::Path;
 
@@ -51,11 +50,6 @@ const SKILL_TARGETS: &[SkillTarget] = &[
     SkillTarget {
         display_name: "Qwen",
         kind: InstallKind::SkillDir { cli_dir: ".qwen" },
-    },
-    // Gemini CLI is deprecated; keep writing the skill for older setups.
-    SkillTarget {
-        display_name: "Gemini CLI (deprecated)",
-        kind: InstallKind::SkillDir { cli_dir: ".gemini" },
     },
     SkillTarget {
         display_name: "Antigravity CLI",
@@ -134,7 +128,7 @@ mod tests {
     }
 
     #[test]
-    fn supported_targets_are_stable_and_include_deprecated_gemini() {
+    fn supported_targets_are_stable() {
         let names: Vec<_> = supported_targets()
             .iter()
             .map(|target| target.display_name)
@@ -148,7 +142,6 @@ mod tests {
                 "Droid",
                 "Grok",
                 "Qwen",
-                "Gemini CLI (deprecated)",
                 "Antigravity CLI",
             ]
         );
@@ -195,23 +188,6 @@ mod tests {
     }
 
     #[test]
-    fn gemini_is_deprecated_but_still_installed() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let target = supported_targets()
-            .iter()
-            .find(|target| target.display_name == "Gemini CLI (deprecated)")
-            .expect("gemini target");
-
-        let reported_path = install_skill(tmp.path(), target).expect("install gemini skill");
-
-        assert_eq!(reported_path, ".gemini/skills/gcode/SKILL.md");
-        assert_eq!(
-            std::fs::read_to_string(tmp.path().join(&reported_path)).expect("read gemini skill"),
-            SKILL_CONTENT
-        );
-    }
-
-    #[test]
     fn installing_skills_does_not_delete_existing_cli_files() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let sentinels = [
@@ -219,7 +195,6 @@ mod tests {
             ".factory/settings.json",
             ".grok/notes.md",
             ".qwen/state.json",
-            ".gemini/settings.json",
             ".agents/memory.md",
             ".claude-plugin/existing.json",
             "skills/custom/SKILL.md",

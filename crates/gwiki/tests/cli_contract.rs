@@ -29,3 +29,30 @@ fn contract_command_emits_pinned_json() {
     let actual: Value = serde_json::from_slice(&output.stdout).expect("contract stdout json");
     assert_eq!(actual, pinned_contract());
 }
+
+#[test]
+fn compile_contract_tracks_compile_json_payload_keys() {
+    let contract = gobby_wiki::contract::contract();
+    let compile = contract
+        .commands
+        .iter()
+        .find(|command| command.name == "compile")
+        .expect("compile command contract");
+
+    let expected_keys = vec![
+        "command",
+        "scope",
+        "status",
+        "target_kind",
+        "outline",
+        "daemon_synthesis_available",
+        "article_path",
+        "source_paths",
+        "index_path",
+        "handoff_id",
+        "page_writes",
+        "prompt",
+    ];
+
+    assert_eq!(compile.json_output_keys, expected_keys);
+}

@@ -627,7 +627,7 @@ ai:
 ai:
   text_generate:
     routing: direct
-    api_base: ${GOBBY_AI_CONTEXT_TEST_MISSING:-http://expanded-text}
+    api_base: ${GOBBY_CONTEXT_TEST_MISSING:-http://expanded-text}
 "#,
         );
         let primary = TestSource::with_values([]);

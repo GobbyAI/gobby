@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use gobby_core::config::embedding_keys;
+use gobby_core::config::{embedding_keys, resolve_falkordb_config, resolve_qdrant_config};
 use gobby_core::provisioning::{
     DockerProvisioningReport, DockerServiceOptions, EnsureHubOptions, StandaloneConfig,
     compose_file_path, ensure_hub, gcore_config_path,
@@ -191,8 +191,27 @@ fn write_gwiki_gcore_config(
     }
 
     apply_embedding_options(options, &mut config)?;
+    diagnose_required_service_config(&mut config);
     config.write_at(&path)?;
     Ok(path)
+}
+
+fn diagnose_required_service_config(config: &mut StandaloneConfig) {
+    if resolve_falkordb_config(config).is_none() {
+        log::warn!(
+            "standalone gwiki setup has no FalkorDB config; graph functionality is unavailable until configured"
+        );
+    }
+    let qdrant = resolve_qdrant_config(config);
+    if qdrant
+        .as_ref()
+        .and_then(|config| config.url.as_deref())
+        .is_none_or(|url| url.trim().is_empty())
+    {
+        log::warn!(
+            "standalone gwiki setup has no Qdrant URL; semantic functionality is unavailable until configured"
+        );
+    }
 }
 
 fn apply_embedding_options(
@@ -208,9 +227,6 @@ fn apply_embedding_options(
         || options.embedding_api_key.is_some();
     if !has_embedding_options {
         return Ok(());
-    }
-    for key in embedding_keys::legacy_keys() {
-        config.remove(&key);
     }
     if let Some(provider) = options.embedding_provider.as_deref() {
         config.set(embedding_keys::AI_PROVIDER, provider);
@@ -322,6 +338,7 @@ mod tests {
             .expect("write existing standalone config");
 
         let options = SetupOptions {
+            falkordb_host: Some("127.0.0.1".to_string()),
             qdrant_url: Some("http://localhost:7333".to_string()),
             ..SetupOptions::default()
         };
@@ -360,6 +377,8 @@ mod tests {
         let path = gcore_config_path(home.path());
         let mut existing = StandaloneConfig::empty();
         existing.set("databases.postgres.dsn", "postgresql://localhost/gcode");
+        existing.set("databases.falkordb.host", "127.0.0.1");
+        existing.set("databases.qdrant.url", "http://localhost:6333");
         existing.set("code.index.schema", "public");
         existing.write_at(&path).expect("write existing config");
 
@@ -381,6 +400,32 @@ mod tests {
             Some("postgresql://localhost/gcode")
         );
         assert_eq!(config.get("code.index.schema"), Some("public"));
+    }
+
+    #[test]
+    fn standalone_config_can_record_postgres_before_required_services() {
+        let home = tempfile::tempdir().expect("temp home");
+        let path = gcore_config_path(home.path());
+        let service_options = DockerServiceOptions::new(home.path().to_path_buf());
+
+        write_gwiki_gcore_config(
+            home.path(),
+            &SetupOptions::default(),
+            &service_options,
+            "postgresql://localhost/gwiki",
+            None,
+        )
+        .expect("write gwiki config before graph/vector services");
+
+        let config = StandaloneConfig::read_at(&path)
+            .expect("read config")
+            .expect("config present");
+        assert_eq!(
+            config.get("databases.postgres.dsn"),
+            Some("postgresql://localhost/gwiki")
+        );
+        assert_eq!(config.get("databases.falkordb.host"), None);
+        assert_eq!(config.get("databases.qdrant.url"), None);
     }
 
     #[test]

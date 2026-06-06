@@ -87,6 +87,37 @@ pub fn contract() -> CliContract {
                 json_output_keys: search_keys(),
             },
             CommandContract {
+                name: "grep",
+                summary: "Indexed exact pattern search over code content chunks.",
+                daemon_consumed: true,
+                positionals: vec![
+                    PositionalContract::required("PATTERN"),
+                    PositionalContract {
+                        name: "PATH",
+                        required: false,
+                        repeatable: true,
+                    },
+                ],
+                flags: grep_flags(),
+                json_output_keys: grep_keys(),
+            },
+            CommandContract {
+                name: "callers",
+                summary: "Find callers of a symbol UUID or name.",
+                daemon_consumed: true,
+                positionals: vec![PositionalContract::required("SYMBOL")],
+                flags: graph_read_flags(),
+                json_output_keys: graph_read_keys(),
+            },
+            CommandContract {
+                name: "usages",
+                summary: "Find incoming call usages of a symbol UUID or name.",
+                daemon_consumed: true,
+                positionals: vec![PositionalContract::required("SYMBOL")],
+                flags: graph_read_flags(),
+                json_output_keys: graph_read_keys(),
+            },
+            CommandContract {
                 name: "codewiki",
                 summary: "Generate vault-ready hierarchical code documentation.",
                 daemon_consumed: true,
@@ -109,6 +140,86 @@ pub fn contract() -> CliContract {
                     "symbols",
                     "ai_enabled",
                 ],
+            },
+            CommandContract {
+                name: "graph sync-file",
+                summary: "Sync one indexed file into the code-index graph projection.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![
+                    FlagContract::value("--file", "FILE"),
+                    FlagContract::switch("--allow-missing-indexed-file"),
+                    format_flag(),
+                ],
+                json_output_keys: vec![
+                    "status",
+                    "project_id",
+                    "file",
+                    "relationships_written",
+                    "skipped",
+                    "summary",
+                ],
+            },
+            CommandContract {
+                name: "graph overview",
+                summary: "Show an overview graph for the current project.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![FlagContract::value("--limit", "N"), format_flag()],
+                json_output_keys: graph_payload_keys(),
+            },
+            CommandContract {
+                name: "graph file",
+                summary: "Show graph nodes and links for one indexed file.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![FlagContract::value("--file", "FILE"), format_flag()],
+                json_output_keys: graph_payload_keys(),
+            },
+            CommandContract {
+                name: "graph neighbors",
+                summary: "Show graph neighbors for one symbol ID.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![
+                    FlagContract::value("--symbol-id", "SYMBOL_ID"),
+                    FlagContract::value("--limit", "N"),
+                    format_flag(),
+                ],
+                json_output_keys: graph_payload_keys(),
+            },
+            CommandContract {
+                name: "graph blast-radius",
+                summary: "Show transitive graph impact for a symbol ID or file path.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![
+                    FlagContract::value("--symbol-id", "SYMBOL_ID"),
+                    FlagContract::value("--file", "FILE"),
+                    FlagContract::value("--depth", "N"),
+                    FlagContract::value("--limit", "N"),
+                    format_flag(),
+                ],
+                json_output_keys: graph_payload_keys(),
+            },
+            CommandContract {
+                name: "graph clear",
+                summary: "Clear the current project's code-index graph projection.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![
+                    FlagContract::value("--project-id", "PROJECT_ID"),
+                    format_flag(),
+                ],
+                json_output_keys: graph_lifecycle_keys(),
+            },
+            CommandContract {
+                name: "graph rebuild",
+                summary: "Rebuild the current project's code-index graph projection from PostgreSQL facts.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![format_flag()],
+                json_output_keys: graph_lifecycle_keys(),
             },
         ],
         error_codes: vec![
@@ -139,6 +250,28 @@ fn search_flags() -> Vec<FlagContract> {
     ]
 }
 
+fn grep_flags() -> Vec<FlagContract> {
+    vec![
+        FlagContract::switch("--fixed-strings"),
+        FlagContract::switch("--ignore-case"),
+        FlagContract::switch("--word"),
+        FlagContract::value("--before-context", "N"),
+        FlagContract::value("--after-context", "N"),
+        FlagContract::value("--context", "N"),
+        FlagContract::repeatable_value("--glob", "GLOB"),
+        FlagContract::value("--max-count", "N"),
+        format_flag(),
+    ]
+}
+
+fn graph_read_flags() -> Vec<FlagContract> {
+    vec![
+        FlagContract::value("--limit", "N"),
+        FlagContract::value("--offset", "N"),
+        format_flag(),
+    ]
+}
+
 fn search_keys() -> Vec<&'static str> {
     vec![
         "project_id",
@@ -159,6 +292,49 @@ fn search_keys() -> Vec<&'static str> {
     ]
 }
 
+fn grep_keys() -> Vec<&'static str> {
+    vec![
+        "project_id",
+        "pattern",
+        "fixed_strings",
+        "ignore_case",
+        "word",
+        "paths",
+        "globs",
+        "max_count",
+        "matched_lines",
+        "truncated",
+        "scanned_chunks",
+        "matches",
+        "path",
+        "line",
+        "text",
+        "spans",
+        "start",
+        "end",
+        "before",
+        "after",
+    ]
+}
+
+fn graph_read_keys() -> Vec<&'static str> {
+    vec![
+        "project_id",
+        "total",
+        "offset",
+        "limit",
+        "results",
+        "id",
+        "name",
+        "file_path",
+        "line",
+        "relation",
+        "distance",
+        "metadata",
+        "hint",
+    ]
+}
+
 fn contract_keys() -> Vec<&'static str> {
     vec![
         "tool",
@@ -168,5 +344,23 @@ fn contract_keys() -> Vec<&'static str> {
         "scope",
         "commands",
         "error_codes",
+    ]
+}
+
+fn graph_payload_keys() -> Vec<&'static str> {
+    vec!["nodes", "links", "summary"]
+}
+
+fn graph_lifecycle_keys() -> Vec<&'static str> {
+    vec![
+        "status",
+        "action",
+        "project_id",
+        "synced_files",
+        "synced_symbols",
+        "synced_relationships",
+        "deleted_nodes",
+        "deleted_relationships",
+        "summary",
     ]
 }

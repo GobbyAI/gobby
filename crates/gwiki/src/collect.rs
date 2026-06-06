@@ -10,7 +10,7 @@ use crate::ingest::{
     asset_path as source_asset_path, index_after_ingest, markdown_metadata, markdown_title,
     text_from_utf8_lossy, write_asset, write_raw_markdown,
 };
-use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
+use crate::sources::{SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
 use crate::support::env::max_inbox_item_bytes_from_env;
 
@@ -217,17 +217,9 @@ fn accept_item(
         InboxKind::Url(url) => {
             let record = SourceManifest::register(
                 vault_root,
-                SourceDraft {
-                    location: url.clone(),
-                    kind: SourceKind::Url,
-                    fetched_at: fetched_at.to_string(),
-                    content: url.as_bytes().to_vec(),
-                    title: Some(url.clone()),
-                    citation: Some(url.clone()),
-                    license: None,
-                    ingestion_method: IngestionMethod::Manual,
-                    compile_status: CompileStatus::Pending,
-                },
+                SourceDraft::url(url.clone(), fetched_at.to_string(), url.as_bytes().to_vec())
+                    .with_title(url.clone())
+                    .with_citation(url.clone()),
             )?;
             let markdown = render_url_markdown(&url, fetched_at, &record.content_hash);
             let raw_path = match write_raw_markdown(vault_root, &record, &markdown) {
@@ -253,17 +245,14 @@ fn accept_item(
             let title = markdown_title(file_name);
             let record = SourceManifest::register(
                 vault_root,
-                SourceDraft {
-                    location: relative.clone(),
-                    kind: kind.clone(),
-                    fetched_at: fetched_at.to_string(),
-                    content: bytes.clone(),
-                    title: Some(title.clone()),
-                    citation: Some(relative.clone()),
-                    license: None,
-                    ingestion_method: IngestionMethod::Manual,
-                    compile_status: CompileStatus::Pending,
-                },
+                SourceDraft::new(
+                    relative.clone(),
+                    kind.clone(),
+                    fetched_at.to_string(),
+                    bytes.clone(),
+                )
+                .with_title(title.clone())
+                .with_citation(relative.clone()),
             )?;
             let predicted_asset_path =
                 should_store_asset(&kind).then(|| source_asset_path(&record, file_name));
@@ -311,19 +300,21 @@ fn accept_item(
     };
 
     if let Err(error) = fs::remove_file(&path) {
-        let _ = fs::remove_file(vault_root.join(&raw_path));
+        let mut cleanup_errors = Vec::new();
+        cleanup_collect_file(vault_root, &raw_path, &mut cleanup_errors);
         if let Some(asset_path) = &asset_path {
-            let _ = fs::remove_file(vault_root.join(asset_path));
+            cleanup_collect_file(vault_root, asset_path, &mut cleanup_errors);
         }
         let original_error = io_error("remove accepted inbox item", &path, error);
         if let Err(rollback_error) = previous_manifest.write(vault_root) {
             return Err(WikiError::Config {
                 detail: format!(
-                    "failed to roll back source manifest after inbox removal failed: {rollback_error}; original error: {original_error}"
+                    "failed to roll back source manifest after inbox removal failed: {rollback_error}; original error: {original_error}{}",
+                    collect_cleanup_detail(&cleanup_errors)
                 ),
             });
         }
-        return Err(original_error);
+        return collect_error_with_cleanup(original_error, cleanup_errors);
     }
     report.accepted.push(CollectAction {
         inbox_path: relative,
@@ -342,20 +333,68 @@ fn rollback_registered_collect_source<T>(
     asset_path: Option<&PathBuf>,
     original_error: WikiError,
 ) -> Result<T, WikiError> {
+    let mut cleanup_errors = Vec::new();
     if let Some(raw_path) = raw_path {
-        let _ = fs::remove_file(vault_root.join(raw_path));
+        cleanup_collect_file(vault_root, raw_path, &mut cleanup_errors);
     }
     if let Some(asset_path) = asset_path {
-        let _ = fs::remove_file(vault_root.join(asset_path));
+        cleanup_collect_file(vault_root, asset_path, &mut cleanup_errors);
     }
     if let Err(rollback_error) = previous_manifest.write(vault_root) {
         return Err(WikiError::Config {
             detail: format!(
-                "failed to roll back source manifest after collect write failure: {rollback_error}; original error: {original_error}"
+                "failed to roll back source manifest after collect write failure: {rollback_error}; original error: {original_error}{}",
+                collect_cleanup_detail(&cleanup_errors)
             ),
         });
     }
-    Err(original_error)
+    collect_error_with_cleanup(original_error, cleanup_errors)
+}
+
+fn cleanup_collect_file(vault_root: &Path, relative_path: &Path, cleanup_errors: &mut Vec<String>) {
+    let path = vault_root.join(relative_path);
+    match fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => cleanup_errors.push(format!("{}: {error}", path.display())),
+    }
+}
+
+fn collect_error_with_cleanup<T>(
+    original_error: WikiError,
+    cleanup_errors: Vec<String>,
+) -> Result<T, WikiError> {
+    if cleanup_errors.is_empty() {
+        return Err(original_error);
+    }
+    let cleanup_detail = collect_cleanup_detail(&cleanup_errors);
+    Err(match original_error {
+        WikiError::Config { detail } => WikiError::Config {
+            detail: format!("{detail}{cleanup_detail}"),
+        },
+        WikiError::Io {
+            action,
+            path,
+            source,
+        } => WikiError::Io {
+            action,
+            path,
+            // Preserve ErrorKind for callers; std::io::Error reconstruction drops
+            // source chains until cleanup_failures can carry Vec<String> natively.
+            source: std::io::Error::new(source.kind(), format!("{source}{cleanup_detail}")),
+        },
+        error => WikiError::Config {
+            detail: format!("{error}{cleanup_detail}"),
+        },
+    })
+}
+
+fn collect_cleanup_detail(cleanup_errors: &[String]) -> String {
+    if cleanup_errors.is_empty() {
+        String::new()
+    } else {
+        format!("; cleanup failures: {}", cleanup_errors.join("; "))
+    }
 }
 
 fn skip_item(
@@ -805,5 +844,50 @@ mod tests {
             Some("inbox item exceeds 3 byte limit")
         );
         assert!(temp.path().join("inbox/large.txt").is_file());
+    }
+
+    #[test]
+    fn collect_cleanup_context_preserves_config_error_variant() {
+        let error = collect_error_with_cleanup::<()>(
+            WikiError::Config {
+                detail: "write failed".to_string(),
+            },
+            vec!["remove raw failed".to_string()],
+        )
+        .expect_err("cleanup error must be returned");
+
+        match error {
+            WikiError::Config { detail } => {
+                assert!(detail.contains("write failed"));
+                assert!(detail.contains("cleanup failures: remove raw failed"));
+            }
+            other => panic!("expected config error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn collect_cleanup_context_preserves_io_error_variant() {
+        let error = collect_error_with_cleanup::<()>(
+            WikiError::Io {
+                action: "write raw source",
+                path: None,
+                source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied"),
+            },
+            vec!["remove raw failed".to_string()],
+        )
+        .expect_err("cleanup error must be returned");
+
+        match error {
+            WikiError::Io { source, .. } => {
+                assert_eq!(source.kind(), std::io::ErrorKind::PermissionDenied);
+                assert!(source.to_string().contains("denied"));
+                assert!(
+                    source
+                        .to_string()
+                        .contains("cleanup failures: remove raw failed")
+                );
+            }
+            other => panic!("expected io error, got {other:?}"),
+        }
     }
 }

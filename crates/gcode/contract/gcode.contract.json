@@ -292,6 +292,234 @@
       ]
     },
     {
+      "name": "grep",
+      "summary": "Indexed exact pattern search over code content chunks.",
+      "daemon_consumed": true,
+      "positionals": [
+        {
+          "name": "PATTERN",
+          "required": true,
+          "repeatable": false
+        },
+        {
+          "name": "PATH",
+          "required": false,
+          "repeatable": true
+        }
+      ],
+      "flags": [
+        {
+          "name": "--fixed-strings",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--ignore-case",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--word",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--before-context",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--after-context",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--context",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--glob",
+          "takes_value": true,
+          "value_name": "GLOB",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": true
+        },
+        {
+          "name": "--max-count",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "project_id",
+        "pattern",
+        "fixed_strings",
+        "ignore_case",
+        "word",
+        "paths",
+        "globs",
+        "max_count",
+        "matched_lines",
+        "truncated",
+        "scanned_chunks",
+        "matches",
+        "path",
+        "line",
+        "text",
+        "spans",
+        "start",
+        "end",
+        "before",
+        "after"
+      ]
+    },
+    {
+      "name": "callers",
+      "summary": "Find callers of a symbol UUID or name.",
+      "daemon_consumed": true,
+      "positionals": [
+        {
+          "name": "SYMBOL",
+          "required": true,
+          "repeatable": false
+        }
+      ],
+      "flags": [
+        {
+          "name": "--limit",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--offset",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "project_id",
+        "total",
+        "offset",
+        "limit",
+        "results",
+        "id",
+        "name",
+        "file_path",
+        "line",
+        "relation",
+        "distance",
+        "metadata",
+        "hint"
+      ]
+    },
+    {
+      "name": "usages",
+      "summary": "Find incoming call usages of a symbol UUID or name.",
+      "daemon_consumed": true,
+      "positionals": [
+        {
+          "name": "SYMBOL",
+          "required": true,
+          "repeatable": false
+        }
+      ],
+      "flags": [
+        {
+          "name": "--limit",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--offset",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "project_id",
+        "total",
+        "offset",
+        "limit",
+        "results",
+        "id",
+        "name",
+        "file_path",
+        "line",
+        "relation",
+        "distance",
+        "metadata",
+        "hint"
+      ]
+    },
+    {
       "name": "codewiki",
       "summary": "Generate vault-ready hierarchical code documentation.",
       "daemon_consumed": true,
@@ -339,6 +567,277 @@
         "modules",
         "symbols",
         "ai_enabled"
+      ]
+    },
+    {
+      "name": "graph sync-file",
+      "summary": "Sync one indexed file into the code-index graph projection.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--file",
+          "takes_value": true,
+          "value_name": "FILE",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--allow-missing-indexed-file",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "status",
+        "project_id",
+        "file",
+        "relationships_written",
+        "skipped",
+        "summary"
+      ]
+    },
+    {
+      "name": "graph overview",
+      "summary": "Show an overview graph for the current project.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--limit",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "nodes",
+        "links",
+        "summary"
+      ]
+    },
+    {
+      "name": "graph file",
+      "summary": "Show graph nodes and links for one indexed file.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--file",
+          "takes_value": true,
+          "value_name": "FILE",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "nodes",
+        "links",
+        "summary"
+      ]
+    },
+    {
+      "name": "graph neighbors",
+      "summary": "Show graph neighbors for one symbol ID.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--symbol-id",
+          "takes_value": true,
+          "value_name": "SYMBOL_ID",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--limit",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "nodes",
+        "links",
+        "summary"
+      ]
+    },
+    {
+      "name": "graph blast-radius",
+      "summary": "Show transitive graph impact for a symbol ID or file path.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--symbol-id",
+          "takes_value": true,
+          "value_name": "SYMBOL_ID",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--file",
+          "takes_value": true,
+          "value_name": "FILE",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--depth",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--limit",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "nodes",
+        "links",
+        "summary"
+      ]
+    },
+    {
+      "name": "graph clear",
+      "summary": "Clear the current project's code-index graph projection.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--project-id",
+          "takes_value": true,
+          "value_name": "PROJECT_ID",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "status",
+        "action",
+        "project_id",
+        "synced_files",
+        "synced_symbols",
+        "synced_relationships",
+        "deleted_nodes",
+        "deleted_relationships",
+        "summary"
+      ]
+    },
+    {
+      "name": "graph rebuild",
+      "summary": "Rebuild the current project's code-index graph projection from PostgreSQL facts.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "status",
+        "action",
+        "project_id",
+        "synced_files",
+        "synced_symbols",
+        "synced_relationships",
+        "deleted_nodes",
+        "deleted_relationships",
+        "summary"
       ]
     }
   ],

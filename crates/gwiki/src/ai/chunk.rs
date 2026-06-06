@@ -129,8 +129,9 @@ fn transcribe_chunks(
     _original_request: &TranscriptionRequest<'_>,
     client: &dyn TranscriptionClient,
     mode: ChunkTranscriptionMode<'_>,
-    chunks: Vec<AudioChunk>,
+    mut chunks: Vec<AudioChunk>,
 ) -> Result<ChunkedTranscription, WikiError> {
+    chunks.sort_by_key(|chunk| chunk.start_ms);
     let mut aggregate = empty_output();
     let mut completed_ranges = Vec::new();
     let mut missing_ranges = Vec::new();
@@ -354,7 +355,7 @@ mod tests {
             )),
             Ok(output("en", &[(0, 500, "overlap"), (500, 1_500, "beta")])),
         ]);
-        let chunker = FakeChunker::new(vec![chunk(0, 10_000), chunk(9_000, 19_000)]);
+        let chunker = FakeChunker::new(vec![chunk(9_000, 19_000), chunk(0, 10_000)]);
 
         let stitched = transcribe_audio_request_with_chunker(
             &request,

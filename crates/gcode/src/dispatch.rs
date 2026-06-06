@@ -44,6 +44,51 @@ fn warn_if_busy(ctx: &config::Context, status: freshness::FreshnessStatus) {
     }
 }
 
+fn service_config_selection(command: &Command) -> config::ServiceConfigSelection {
+    use config::ServiceConfigSelection;
+
+    match command {
+        Command::Index { .. } => ServiceConfigSelection::all(),
+        Command::Status => ServiceConfigSelection {
+            falkordb: true,
+            qdrant: true,
+            embedding: false,
+            code_vectors: false,
+        },
+        Command::Graph { .. }
+        | Command::Codewiki { .. }
+        | Command::Callers { .. }
+        | Command::Usages { .. }
+        | Command::Imports { .. }
+        | Command::BlastRadius { .. } => ServiceConfigSelection::falkordb_only(),
+        Command::Vector { .. } | Command::Embeddings { .. } => ServiceConfigSelection::vectors(),
+        Command::Search { .. } => ServiceConfigSelection::hybrid_search(),
+        Command::SearchSymbol { with_graph, .. } => {
+            if *with_graph {
+                ServiceConfigSelection::falkordb_only()
+            } else {
+                ServiceConfigSelection::database_only()
+            }
+        }
+        Command::Contract
+        | Command::Init
+        | Command::Setup { .. }
+        | Command::Projects
+        | Command::Prune { .. }
+        | Command::Invalidate { .. }
+        | Command::SearchText { .. }
+        | Command::SearchContent { .. }
+        | Command::Grep { .. }
+        | Command::Outline { .. }
+        | Command::Symbol { .. }
+        | Command::SymbolAt { .. }
+        | Command::Symbols { .. }
+        | Command::Kinds
+        | Command::Tree
+        | Command::RepoOutline => ServiceConfigSelection::database_only(),
+    }
+}
+
 fn dispatch_early_command<F>(
     cli: &Cli,
     format: output::Format,
@@ -158,14 +203,17 @@ pub(crate) fn run_with_exit_code() -> std::process::ExitCode {
 fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let format = cli::effective_format(cli.format, &cli.command);
-    cli::reject_unsupported_grep_flags(&cli.command)?;
 
     // Commands that must run before Context::resolve() (work on uninitialized projects)
     if dispatch_early_command(&cli, format, commands::setup::run)? {
         return Ok(());
     }
 
-    let ctx = config::Context::resolve(cli.project.as_deref(), cli.quiet)?;
+    let ctx = config::Context::resolve_with_services(
+        cli.project.as_deref(),
+        cli.quiet,
+        service_config_selection(&cli.command),
+    )?;
 
     match cli.command {
         // These commands are handled before Context::resolve(); this arm keeps the
@@ -366,26 +414,12 @@ fn run() -> anyhow::Result<()> {
             paths,
             fixed_strings,
             ignore_case,
+            word,
             before_context,
             after_context,
             context,
             glob,
             max_count,
-            line_number: _,
-            unsupported_limit: _,
-            unsupported_files_with_matches: _,
-            unsupported_files_without_match: _,
-            unsupported_count: _,
-            unsupported_only_matching: _,
-            unsupported_invert_match: _,
-            unsupported_word_regexp: _,
-            unsupported_regexp: _,
-            unsupported_recursive: _,
-            unsupported_type: _,
-            unsupported_type_not: _,
-            unsupported_pcre2: _,
-            unsupported_multiline: _,
-            unsupported_json: _,
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::grep::run(
@@ -396,6 +430,7 @@ fn run() -> anyhow::Result<()> {
                     globs: &glob,
                     fixed_strings,
                     ignore_case,
+                    word,
                     context,
                     before_context,
                     after_context,
@@ -413,6 +448,11 @@ fn run() -> anyhow::Result<()> {
             ensure_symbol_fresh(&ctx, cli.no_freshness, &id)?;
             commands::symbols::symbol(&ctx, &id, format)
         }
+        Command::SymbolAt { location, line } => {
+            let file = commands::symbol_at::requested_file_for_freshness(&ctx, &location, line)?;
+            ensure_file_fresh(&ctx, cli.no_freshness, &file)?;
+            commands::symbol_at::run(&ctx, &location, line, format)
+        }
         Command::Symbols { ids } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::symbols::symbols(&ctx, &ids, format)
@@ -425,9 +465,21 @@ fn run() -> anyhow::Result<()> {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::symbols::tree(&ctx, format)
         }
-        Command::Codewiki { out, scope, ai } => {
+        Command::Codewiki {
+            out,
+            scope,
+            ai,
+            edge_limit,
+        } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
-            commands::codewiki::run(&ctx, out, scope, ai.map(AiRouteArg::into), format)
+            commands::codewiki::run(
+                &ctx,
+                out,
+                scope,
+                ai.map(AiRouteArg::into),
+                edge_limit,
+                format,
+            )
         }
 
         Command::Callers {

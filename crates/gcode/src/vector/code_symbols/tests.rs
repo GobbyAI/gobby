@@ -76,7 +76,7 @@ fn summaries_are_optional_enrichment() {
 }
 
 #[test]
-fn collection_name_compatibility() {
+fn collection_name_is_stable() {
     assert_eq!(
         collection_name(CODE_SYMBOL_COLLECTION_PREFIX, "project-1"),
         "code_symbols_project-1"
@@ -814,7 +814,10 @@ fn accept_with_timeout(listener: &TcpListener, timeout: Duration) -> std::io::Re
     let deadline = Instant::now() + timeout;
     loop {
         match listener.accept() {
-            Ok((stream, _)) => return Ok(stream),
+            Ok((stream, _)) => {
+                stream.set_nonblocking(false)?;
+                return Ok(stream);
+            }
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                 if Instant::now() >= deadline {
                     return Err(std::io::Error::new(

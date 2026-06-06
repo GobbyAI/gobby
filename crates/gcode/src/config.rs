@@ -11,8 +11,8 @@ pub use context::{
     EmbeddingConfig, FALKORDB_GRAPH_NAME, FALKORDB_HOST_CONFIG_KEY, FALKORDB_PASSWORD_CONFIG_KEY,
     FALKORDB_PORT_CONFIG_KEY, FalkorConfig, GOBBY_FALKORDB_HOST_ENV, GOBBY_FALKORDB_PASSWORD_ENV,
     GOBBY_FALKORDB_PORT_ENV, MissingIdentity, ProjectIdentity, ProjectIdentitySource,
-    ProjectIndexScope, QdrantConfig, detect_project_root, detect_project_root_from,
-    resolve_project_identity, warn_project_identity,
+    ProjectIndexScope, QdrantConfig, ServiceConfigSelection, detect_project_root,
+    detect_project_root_from, resolve_project_identity, warn_project_identity,
 };
 
 pub(crate) use context::{resolve_daemon_url, validate_parent_code_index};

@@ -7,6 +7,31 @@ use gobby_core::config::AiRouting;
 use gobby_wiki::{Command, IngestFileOptions, ReadTarget, ScopeSelection, WikiError, output};
 use serde_json::json;
 
+const CLI_SUBCOMMANDS: &[&str] = &[
+    "init",
+    "contract",
+    "setup",
+    "index",
+    "collect",
+    "ingest-file",
+    "ingest-url",
+    "refresh",
+    "sources",
+    "remove-source",
+    "search",
+    "ask",
+    "read",
+    "backlinks",
+    "link-suggest",
+    "research",
+    "compile",
+    "export",
+    "audit",
+    "lint",
+    "health",
+    "status",
+];
+
 #[derive(Debug, Parser)]
 #[command(name = "gwiki", version, about = "Gobby wiki CLI")]
 struct Cli {
@@ -402,30 +427,7 @@ where
 }
 
 fn is_cli_subcommand(value: &str) -> bool {
-    matches!(
-        value,
-        "init"
-            | "contract"
-            | "setup"
-            | "index"
-            | "collect"
-            | "ingest-file"
-            | "ingest-url"
-            | "refresh"
-            | "sources"
-            | "remove-source"
-            | "search"
-            | "read"
-            | "backlinks"
-            | "link-suggest"
-            | "research"
-            | "compile"
-            | "export"
-            | "audit"
-            | "lint"
-            | "health"
-            | "status"
-    )
+    CLI_SUBCOMMANDS.contains(&value)
 }
 
 fn print_error(format: output::Format, error: &WikiError) {
@@ -632,6 +634,7 @@ fn exit_code_for_error(error: &WikiError) -> ExitCode {
         | WikiError::Yaml { .. }
         | WikiError::Registry { .. }
         | WikiError::Daemon { .. }
+        | WikiError::Timeout { .. }
         | WikiError::Setup { .. } => ExitCode::from(1),
     }
 }
@@ -658,10 +661,61 @@ impl From<SetupArgs> for gobby_wiki::SetupOptions {
 
 #[cfg(test)]
 mod tests {
+    use clap::CommandFactory;
     use gobby_core::ai_context::AiContext;
     use gobby_core::config::{AiRouting, EnvOnlySource};
 
     use super::*;
+
+    #[test]
+    fn cli_subcommands_match_clap_variants() {
+        let mut listed = CLI_SUBCOMMANDS
+            .iter()
+            .map(|command| command.to_string())
+            .collect::<Vec<_>>();
+        listed.sort_unstable();
+        let mut actual = Cli::command()
+            .get_subcommands()
+            .map(|command| command.get_name().to_string())
+            .collect::<Vec<_>>();
+        actual.sort_unstable();
+
+        assert_eq!(actual, listed);
+    }
+
+    #[test]
+    fn project_flag_normalization_handles_every_subcommand() {
+        for subcommand in CLI_SUBCOMMANDS {
+            let normalized = normalize_project_flag_args(["gwiki", "--project", subcommand]);
+            assert_eq!(
+                normalized,
+                vec![
+                    OsString::from("gwiki"),
+                    OsString::from("--project"),
+                    OsString::from("."),
+                    OsString::from(subcommand),
+                ],
+                "bare --project should receive cwd before {subcommand}"
+            );
+        }
+    }
+
+    #[test]
+    fn attached_project_flag_preserves_every_subcommand() {
+        for subcommand in CLI_SUBCOMMANDS {
+            let normalized =
+                normalize_project_flag_args(["gwiki", "--project=/tmp/wiki-project", subcommand]);
+            assert_eq!(
+                normalized,
+                vec![
+                    OsString::from("gwiki"),
+                    OsString::from("--project=/tmp/wiki-project"),
+                    OsString::from(subcommand),
+                ],
+                "attached --project value should stay attached before {subcommand}"
+            );
+        }
+    }
 
     #[test]
     fn ingest_file_cli_flags_map_to_command_options() {

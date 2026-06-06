@@ -11,6 +11,7 @@ use crate::visibility;
 // Keep BM25 query sanitation centralized in gobby-core so gcode and gwiki
 // escape pg_search's DSL identically.
 pub use gobby_core::search::sanitize_pg_search_query;
+pub(super) use gobby_core::search::{TrustedRowId, bm25_score_expr};
 
 pub(super) type PgParam = Box<dyn ToSql + Sync>;
 
@@ -37,7 +38,10 @@ pub(super) enum SymbolOrder {
 impl SymbolOrder {
     fn sql(&self) -> String {
         match self {
-            Self::Bm25Score => "pg_search.score(cs.id) DESC, cs.id ASC".to_string(),
+            Self::Bm25Score => {
+                let row_id = trusted_row_id("cs.id");
+                format!("{} DESC, cs.id ASC", bm25_score_expr(&row_id))
+            }
             Self::Name => "cs.name ASC, cs.file_path ASC, cs.line_start ASC".to_string(),
             Self::ExactCaseFirst(query_param) => format!(
                 "CASE WHEN cs.name = {q} OR cs.qualified_name = {q} THEN 0 ELSE 1 END,
@@ -47,6 +51,11 @@ impl SymbolOrder {
             ),
         }
     }
+}
+
+pub(super) fn trusted_row_id(row_id: &str) -> TrustedRowId {
+    // SAFETY: FTS callers pass static SQL row identifiers for local table aliases.
+    unsafe { TrustedRowId::new_unchecked(row_id) }
 }
 
 pub const FILTERED_FETCH_CAP: usize = 10_000;
@@ -186,7 +195,7 @@ pub(super) fn path_like_prefixes(paths: &[String]) -> Option<Vec<String>> {
     Some(prefixes)
 }
 
-pub fn path_filter_falls_back(paths: &[String]) -> bool {
+pub fn path_filter_requires_post_filter(paths: &[String]) -> bool {
     !paths.is_empty() && path_like_prefixes(paths).is_none()
 }
 
@@ -289,8 +298,9 @@ pub(super) fn query_symbols_by_conditions(
     limit: usize,
     order: SymbolOrder,
 ) -> Vec<Symbol> {
-    let path_filter_fallback = push_symbol_filters(&mut conditions, &mut params, "cs", filters);
-    let query_limit = if path_filter_fallback {
+    let path_filter_requires_post_filter =
+        push_symbol_filters(&mut conditions, &mut params, "cs", filters);
+    let query_limit = if path_filter_requires_post_filter {
         limit.max(FILTERED_FETCH_CAP)
     } else {
         limit
@@ -323,9 +333,31 @@ pub(super) fn query_symbols_by_conditions(
             return Vec::new();
         }
     };
-    if path_filter_fallback {
+    if path_filter_requires_post_filter {
         symbols = symbols_matching_paths(symbols, filters.paths);
         symbols.truncate(limit);
     }
     symbols
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bm25_score_expression_uses_pdb_score() {
+        let row_id = trusted_row_id("cs.id");
+        let sql = bm25_score_expr(&row_id);
+
+        assert_eq!(sql, "pdb.score(cs.id)");
+        assert!(!sql.contains("pg_search.score"));
+    }
+
+    #[test]
+    fn symbol_bm25_order_uses_pdb_score() {
+        let sql = SymbolOrder::Bm25Score.sql();
+
+        assert_eq!(sql, "pdb.score(cs.id) DESC, cs.id ASC");
+        assert!(!sql.contains("pg_search.score"));
+    }
 }

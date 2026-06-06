@@ -295,8 +295,8 @@ mod tests {
         assert_eq!(document.kind, WikiDocumentKind::SourceNote);
         assert!(document.body.contains("scope_kind: project"));
         assert!(document.body.contains("scope_id: project-123"));
-        assert!(document.body.contains("image_width: 640"));
-        assert!(document.body.contains("image_height: 480"));
+        assert!(document.body.contains("image_width: \"640\""));
+        assert!(document.body.contains("image_height: \"480\""));
         assert!(store.sources.contains_key(&result.derived_path));
     }
 
@@ -317,7 +317,8 @@ mod tests {
             sample_snapshot(),
         )
         .expect("ingest image with production vision");
-        let request = request.join().expect("vision request");
+        let request = request.join().expect("vision test server thread joins");
+        let request = request.expect("vision request was captured");
 
         assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1"));
         assert!(request.contains("data:image/png;base64,"));
@@ -372,7 +373,7 @@ mod tests {
     }
 
     #[cfg(feature = "ai")]
-    fn spawn_vision_server(response: &'static str) -> (String, std::thread::JoinHandle<String>) {
-        crate::test_http::spawn_json_response(response)
+    fn spawn_vision_server(response: &'static str) -> (String, crate::test_http::RequestHandle) {
+        crate::test_http::spawn_json_response(response).expect("spawn test server")
     }
 }

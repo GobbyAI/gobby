@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
+use gobby_core::config::FalkorConfig;
 use gobby_core::degradation::{DegradationKind, ServiceState};
+use gobby_core::falkor::GraphClient;
 
 use crate::graph::MemoryWikiGraph;
 use crate::search::{
@@ -62,6 +64,39 @@ impl GraphBoostBackend for NoopGraphBoostBackend {
     }
 }
 
+pub struct UnavailableGraphBoostBackend {
+    degradation: DegradationKind,
+}
+
+impl UnavailableGraphBoostBackend {
+    pub fn unreachable(message: String) -> Self {
+        Self {
+            degradation: graph_degradation(message),
+        }
+    }
+}
+
+impl GraphBoostBackend for UnavailableGraphBoostBackend {
+    fn search_graph_boost(
+        &mut self,
+        _request: GraphBoostRequest,
+    ) -> Result<GraphBoostOutcome, SearchError> {
+        Ok(GraphBoostOutcome {
+            hits: Vec::new(),
+            degradation: Some(self.degradation.clone()),
+        })
+    }
+}
+
+impl<T: GraphBoostBackend + ?Sized> GraphBoostBackend for Box<T> {
+    fn search_graph_boost(
+        &mut self,
+        request: GraphBoostRequest,
+    ) -> Result<GraphBoostOutcome, SearchError> {
+        (**self).search_graph_boost(request)
+    }
+}
+
 pub struct MemoryGraphBoostBackend {
     graph: MemoryWikiGraph,
 }
@@ -87,41 +122,29 @@ impl GraphBoostBackend for MemoryGraphBoostBackend {
     }
 }
 
-pub struct PostgresGraphBoostBackend {
-    scope: SearchScope,
-    documents: Vec<GraphBoostDocument>,
-    links: Vec<GraphBoostLink>,
-    degradation: Option<DegradationKind>,
+pub struct FalkorGraphBoostBackend {
+    client: GraphClient,
+    config: GraphBoostConfig,
 }
 
-impl PostgresGraphBoostBackend {
-    pub fn new(conn: &mut postgres::Client, scope: SearchScope) -> Self {
-        Self::new_with_config(conn, scope, GraphBoostConfig::default())
+impl FalkorGraphBoostBackend {
+    pub fn new(config: &FalkorConfig) -> Result<Self, SearchError> {
+        Self::new_with_config(config, GraphBoostConfig::default())
     }
 
     pub fn new_with_config(
-        conn: &mut postgres::Client,
-        scope: SearchScope,
+        falkor: &FalkorConfig,
         config: GraphBoostConfig,
-    ) -> Self {
-        match load_graph_boost_data(conn, &scope, config) {
-            Ok(data) => Self {
-                scope,
-                documents: data.documents,
-                links: data.links,
-                degradation: data.degradation,
-            },
-            Err(error) => Self {
-                scope,
-                documents: Vec::new(),
-                links: Vec::new(),
-                degradation: Some(graph_degradation(error.to_string())),
-            },
-        }
+    ) -> Result<Self, SearchError> {
+        let client = GraphClient::from_config(falkor, crate::falkor_graph::FALKORDB_GRAPH_NAME)
+            .map_err(|error| {
+                SearchError::Backend(format!("connect to FalkorDB wiki graph: {error}"))
+            })?;
+        Ok(Self { client, config })
     }
 }
 
-impl GraphBoostBackend for PostgresGraphBoostBackend {
+impl GraphBoostBackend for FalkorGraphBoostBackend {
     fn search_graph_boost(
         &mut self,
         request: GraphBoostRequest,
@@ -132,145 +155,32 @@ impl GraphBoostBackend for PostgresGraphBoostBackend {
                 degradation: None,
             });
         }
-        if let Some(degradation) = self.degradation.clone()
-            && self.documents.is_empty()
-            && self.links.is_empty()
-        {
-            return Ok(GraphBoostOutcome {
-                hits: Vec::new(),
-                degradation: Some(degradation),
-            });
-        }
-        if request.scope != self.scope {
-            return Ok(GraphBoostOutcome {
-                hits: Vec::new(),
-                degradation: Some(graph_degradation(format!(
-                    "graph boost backend loaded for {}:{}, requested {}:{}",
-                    self.scope.scope_kind(),
-                    self.scope.scope_value(),
-                    request.scope.scope_kind(),
-                    request.scope.scope_value()
-                ))),
-            });
-        }
 
+        let data = match crate::falkor_graph::load_graph_boost_data(
+            &mut self.client,
+            &request.scope,
+            self.config.document_query_limit,
+            self.config.link_query_limit,
+        ) {
+            Ok(data) => data,
+            Err(error) => {
+                return Ok(GraphBoostOutcome {
+                    hits: Vec::new(),
+                    degradation: Some(graph_degradation(error.to_string())),
+                });
+            }
+        };
         let ranked_paths = rank_link_neighborhood(
-            &self.documents,
-            &self.links,
+            &data.documents,
+            &data.links,
             &request.seed_paths,
             request.limit,
         );
         Ok(GraphBoostOutcome {
             hits: graph_boost_hits(request.scope, ranked_paths, request.limit),
-            degradation: self.degradation.clone(),
+            degradation: data.degradation,
         })
     }
-}
-
-struct GraphBoostData {
-    documents: Vec<GraphBoostDocument>,
-    links: Vec<GraphBoostLink>,
-    degradation: Option<DegradationKind>,
-}
-
-fn load_graph_boost_data(
-    conn: &mut postgres::Client,
-    scope: &SearchScope,
-    config: GraphBoostConfig,
-) -> Result<GraphBoostData, SearchError> {
-    let scope_kind = scope.scope_kind().to_string();
-    let scope_id = scope.scope_value().to_string();
-    let document_query_limit = config.document_query_limit.max(0);
-    let link_query_limit = config.link_query_limit.max(0);
-
-    let document_count = count_graph_boost_rows(
-        conn,
-        "gwiki_documents",
-        &scope_kind,
-        &scope_id,
-        "count graph boost documents",
-    )?;
-    if let Some(error) = graph_boost_cap_error("document", document_count, document_query_limit) {
-        return Err(error);
-    }
-    let link_count = count_graph_boost_rows(
-        conn,
-        "gwiki_links",
-        &scope_kind,
-        &scope_id,
-        "count graph boost links",
-    )?;
-    if let Some(error) = graph_boost_cap_error("link", link_count, link_query_limit) {
-        return Err(error);
-    }
-
-    let document_rows = conn
-        .query(
-            "SELECT path, title
-             FROM gwiki_documents
-             WHERE scope_kind = $1 AND scope_id = $2
-             ORDER BY path
-             LIMIT $3",
-            &[&scope_kind, &scope_id, &document_query_limit],
-        )
-        .map_err(|error| SearchError::Backend(format!("load graph boost documents: {error}")))?;
-    let documents = document_rows
-        .into_iter()
-        .map(|row| GraphBoostDocument {
-            path: PathBuf::from(row.get::<_, String>("path")),
-            title: row.get::<_, Option<String>>("title"),
-        })
-        .collect::<Vec<_>>();
-
-    let link_rows = conn
-        .query(
-            "SELECT path, target_path
-             FROM gwiki_links
-             WHERE scope_kind = $1 AND scope_id = $2
-             ORDER BY path, target_path
-             LIMIT $3",
-            &[&scope_kind, &scope_id, &link_query_limit],
-        )
-        .map_err(|error| SearchError::Backend(format!("load graph boost links: {error}")))?;
-    let links = link_rows
-        .into_iter()
-        .map(|row| GraphBoostLink {
-            source_path: PathBuf::from(row.get::<_, String>("path")),
-            target_path: row.get::<_, String>("target_path"),
-        })
-        .collect::<Vec<_>>();
-
-    Ok(GraphBoostData {
-        documents,
-        links,
-        degradation: None,
-    })
-}
-
-fn graph_boost_cap_error(component: &'static str, count: i64, limit: i64) -> Option<SearchError> {
-    if count <= limit {
-        return None;
-    }
-    Some(SearchError::Backend(format!(
-        "graph boost {component} count {count} exceeds limit {limit}; refusing partial graph boost data"
-    )))
-}
-
-fn count_graph_boost_rows(
-    conn: &mut postgres::Client,
-    table: &'static str,
-    scope_kind: &str,
-    scope_id: &str,
-    action: &'static str,
-) -> Result<i64, SearchError> {
-    let sql = format!(
-        "SELECT COUNT(*)::BIGINT AS count
-         FROM {table}
-         WHERE scope_kind = $1 AND scope_id = $2"
-    );
-    conn.query_one(&sql, &[&scope_kind, &scope_id])
-        .and_then(|row| row.try_get("count"))
-        .map_err(|error| SearchError::Backend(format!("{action}: {error}")))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -553,16 +463,6 @@ mod tests {
     }
 
     #[test]
-    fn graph_boost_cap_error_reports_capped_rows() {
-        assert!(graph_boost_cap_error("document", 10, 10).is_none());
-        assert!(matches!(
-            graph_boost_cap_error("document", 11, 10),
-            Some(SearchError::Backend(message)) if message.contains("document count 11")
-        ));
-        assert!(graph_boost_cap_error("link", 11, 10).is_some());
-    }
-
-    #[test]
     fn graph_boost_hits_marks_graph_source() {
         let hits = graph_boost_hits(
             SearchScope::topic("docs"),
@@ -576,6 +476,29 @@ mod tests {
             hits[0].provenance.document_path,
             PathBuf::from("wiki/topics/linked.md")
         );
+    }
+
+    #[test]
+    fn unavailable_graph_backend_reports_service_degradation() {
+        let mut backend =
+            UnavailableGraphBoostBackend::unreachable("connection refused".to_string());
+
+        let outcome = backend
+            .search_graph_boost(GraphBoostRequest {
+                scope: SearchScope::project("project-1"),
+                seed_paths: vec![PathBuf::from("docs/a.md")],
+                limit: 10,
+            })
+            .expect("unavailable backend degrades");
+
+        assert!(outcome.hits.is_empty());
+        assert!(matches!(
+            outcome.degradation,
+            Some(DegradationKind::ServiceUnavailable {
+                service,
+                state: ServiceState::Unreachable { message }
+            }) if service == GRAPH_SERVICE && message.contains("connection refused")
+        ));
     }
 
     fn document(path: &str, title: Option<&str>) -> GraphBoostDocument {

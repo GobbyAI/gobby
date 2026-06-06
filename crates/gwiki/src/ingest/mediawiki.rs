@@ -4,7 +4,7 @@ use crate::WikiError;
 use crate::ingest::{
     IngestResult, markdown_metadata, markdown_title, single_line, write_raw_then_index,
 };
-use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
+use crate::sources::{SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,17 +25,14 @@ pub fn ingest_page(
 ) -> Result<IngestResult, WikiError> {
     let title = markdown_title(&snapshot.title);
     let source_url = single_line(&snapshot.source_url);
-    let draft = SourceDraft {
-        location: source_url.clone(),
-        kind: SourceKind::MediaWiki,
-        fetched_at: snapshot.fetched_at.clone(),
-        content: snapshot.wikitext.as_bytes().to_vec(),
-        title: Some(title.clone()),
-        citation: Some(source_url),
-        license: None,
-        ingestion_method: IngestionMethod::Manual,
-        compile_status: CompileStatus::Pending,
-    };
+    let draft = SourceDraft::new(
+        source_url.clone(),
+        SourceKind::MediaWiki,
+        snapshot.fetched_at.clone(),
+        snapshot.wikitext.as_bytes().to_vec(),
+    )
+    .with_title(title.clone())
+    .with_citation(source_url);
     let record = SourceManifest::register(vault_root, draft)?;
     let markdown = render_mediawiki_markdown(&snapshot, &title, &record.content_hash);
     write_raw_then_index(vault_root, store, record, &markdown, None)
@@ -102,10 +99,10 @@ mod tests {
             .expect("raw markdown written");
         assert!(raw.contains("# Gobby Editor"));
         assert!(raw.contains("source_kind: mediawiki"));
-        assert!(raw.contains("source_url: https://wiki.example.test/wiki/Gobby Editor"));
-        assert!(!raw.contains("source_url: https://wiki.example.test/wiki/Gobby\nEditor"));
-        assert!(raw.contains("revision_id: 123456"));
-        assert!(raw.contains("revision_timestamp: 2026-05-29T12:00:00Z"));
+        assert!(raw.contains("source_url: \"https://wiki.example.test/wiki/Gobby Editor\""));
+        assert!(!raw.contains("source_url: \"https://wiki.example.test/wiki/Gobby\nEditor\""));
+        assert!(raw.contains("revision_id: \"123456\""));
+        assert!(raw.contains("revision_timestamp: \"2026-05-29T12:00:00Z\""));
         assert!(raw.contains("category: Software"));
         assert!(!raw.contains("\n\nCategory: Software\n\n"));
         assert!(raw.contains("'''Gobby''' is a collaborative editor."));

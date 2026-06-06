@@ -1,0 +1,570 @@
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::path::{Component, Path, PathBuf};
+
+use gobby_core::config::FalkorConfig;
+use gobby_core::degradation::DegradationKind;
+use gobby_core::falkor::{GraphClient, Row};
+use postgres::Client;
+use serde_json::Value;
+
+use crate::WikiError;
+use crate::graph::{
+    GraphStatement, WikiGraphDocument, WikiGraphFacts, WikiGraphLink, WikiGraphLinkTarget,
+    WikiGraphSource, graph_write_statements,
+};
+use crate::search::{SearchError, SearchScope};
+use crate::support::text::slugify;
+
+pub const FALKORDB_GRAPH_NAME: &str = "gobby_wiki";
+
+pub(crate) struct GraphBoostData {
+    pub documents: Vec<crate::search::graph_boost::GraphBoostDocument>,
+    pub links: Vec<crate::search::graph_boost::GraphBoostLink>,
+    pub degradation: Option<DegradationKind>,
+}
+
+pub(crate) fn sync_scope_from_postgres(
+    conn: &mut Client,
+    scope: &SearchScope,
+    config: &FalkorConfig,
+) -> Result<(), WikiError> {
+    let facts = load_wiki_graph_facts(conn, scope)?;
+    let mut client = GraphClient::from_config(config, FALKORDB_GRAPH_NAME).map_err(|error| {
+        WikiError::Config {
+            detail: format!("failed to connect to FalkorDB for gwiki graph sync: {error}"),
+        }
+    })?;
+    clear_scope(&mut client, scope).map_err(graph_sync_error)?;
+    for statement in graph_write_statements(&facts) {
+        execute_statement(&mut client, statement).map_err(graph_sync_error)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn load_graph_boost_data(
+    client: &mut GraphClient,
+    scope: &SearchScope,
+    document_limit: i64,
+    link_limit: i64,
+) -> Result<GraphBoostData, SearchError> {
+    let documents = query_documents(client, scope, document_limit)?;
+    let links = query_links(client, scope, link_limit)?;
+    let mut capped = Vec::new();
+    if documents.capped {
+        capped.push(format!("documents>{document_limit}"));
+    }
+    if links.capped {
+        capped.push(format!("links>{link_limit}"));
+    }
+    let degradation = partial_graph_degradation(&capped);
+    if let Some(degradation) = &degradation {
+        log::warn!("loaded partial FalkorDB wiki graph boost data: {degradation:?}");
+    }
+    Ok(GraphBoostData {
+        documents: documents.items,
+        links: links.items,
+        degradation,
+    })
+}
+
+fn clear_scope(client: &mut GraphClient, scope: &SearchScope) -> anyhow::Result<()> {
+    client.query(
+        "MATCH (node)
+         WHERE (node:WikiDoc OR node:WikiSource OR node:WikiTarget)
+           AND node.scope_kind = $scope_kind
+           AND node.scope_id = $scope_id
+         DETACH DELETE node",
+        Some(scope_params(scope)),
+    )?;
+    Ok(())
+}
+
+fn execute_statement(client: &mut GraphClient, statement: GraphStatement) -> anyhow::Result<()> {
+    client.query(&statement.cypher, None)?;
+    Ok(())
+}
+
+fn query_documents(
+    client: &mut GraphClient,
+    scope: &SearchScope,
+    limit: i64,
+) -> Result<LimitedQuery<crate::search::graph_boost::GraphBoostDocument>, SearchError> {
+    let rows = query_limited(
+        client,
+        scope,
+        "MATCH (doc:WikiDoc {scope_kind: $scope_kind, scope_id: $scope_id})
+         RETURN doc.path AS path, doc.title AS title
+         ORDER BY path",
+        "document",
+        limit,
+    )?;
+    let items = rows
+        .items
+        .into_iter()
+        .map(|row| {
+            let path = row_string(&row, "path")?;
+            Ok(crate::search::graph_boost::GraphBoostDocument {
+                path: PathBuf::from(path),
+                title: optional_row_string(&row, "title"),
+            })
+        })
+        .collect::<Result<Vec<_>, SearchError>>()?;
+    Ok(LimitedQuery {
+        items,
+        capped: rows.capped,
+    })
+}
+
+fn query_links(
+    client: &mut GraphClient,
+    scope: &SearchScope,
+    limit: i64,
+) -> Result<LimitedQuery<crate::search::graph_boost::GraphBoostLink>, SearchError> {
+    let rows = query_limited(
+        client,
+        scope,
+        "MATCH (source:WikiDoc {scope_kind: $scope_kind, scope_id: $scope_id})
+             -[:WIKI_LINKS_TO]->
+             (target:WikiDoc {scope_kind: $scope_kind, scope_id: $scope_id})
+         RETURN source.path AS path, target.path AS target_path
+         ORDER BY path, target_path",
+        "link",
+        limit,
+    )?;
+    let items = rows
+        .items
+        .into_iter()
+        .map(|row| {
+            let source_path = row_string(&row, "path")?;
+            let target_path = row_string(&row, "target_path")?;
+            Ok(crate::search::graph_boost::GraphBoostLink {
+                source_path: PathBuf::from(source_path),
+                target_path,
+            })
+        })
+        .collect::<Result<Vec<_>, SearchError>>()?;
+    Ok(LimitedQuery {
+        items,
+        capped: rows.capped,
+    })
+}
+
+struct LimitedQuery<T> {
+    items: Vec<T>,
+    capped: bool,
+}
+
+fn query_limited(
+    client: &mut GraphClient,
+    scope: &SearchScope,
+    base_query: &str,
+    component: &'static str,
+    limit: i64,
+) -> Result<LimitedQuery<Row>, SearchError> {
+    let limit = limit.max(0);
+    let fetch_limit = usize::try_from(limit)
+        .map_err(|_| SearchError::Backend(format!("invalid graph {component} limit {limit}")))?
+        .saturating_add(1);
+    let query = format!("{base_query}\nLIMIT {fetch_limit}");
+    let mut rows = client
+        .query(&query, Some(scope_params(scope)))
+        .map_err(|error| {
+            SearchError::Backend(format!("query FalkorDB wiki {component}s: {error}"))
+        })?;
+    let capped = rows.len() == fetch_limit && fetch_limit > 0;
+    if let Ok(limit) = usize::try_from(limit)
+        && rows.len() > limit
+    {
+        // Query fetches one sentinel row to detect truncation; drop it before
+        // callers build graph facts so the result never exceeds the contract.
+        rows.truncate(limit);
+    }
+    Ok(LimitedQuery {
+        items: rows,
+        capped,
+    })
+}
+
+fn partial_graph_degradation(capped: &[String]) -> Option<DegradationKind> {
+    if capped.is_empty() {
+        return None;
+    }
+    Some(DegradationKind::PartialData {
+        component: "gwiki_graph".to_string(),
+        message: format!(
+            "FalkorDB wiki graph exceeded configured caps ({}); graph boost used capped data",
+            capped.join(", ")
+        ),
+    })
+}
+
+fn load_wiki_graph_facts(
+    conn: &mut Client,
+    scope: &SearchScope,
+) -> Result<WikiGraphFacts, WikiError> {
+    let scope_kind = scope.scope_kind().to_string();
+    let scope_id = scope.scope_value().to_string();
+    let document_rows = conn
+        .query(
+            "SELECT path, title
+             FROM gwiki_documents
+             WHERE scope_kind = $1 AND scope_id = $2
+             ORDER BY path",
+            &[&scope_kind, &scope_id],
+        )
+        .map_err(|error| WikiError::Config {
+            detail: format!("failed to load gwiki documents for FalkorDB sync: {error}"),
+        })?;
+    let documents = document_rows
+        .into_iter()
+        .map(|row| WikiGraphDocument {
+            scope: scope.clone(),
+            path: PathBuf::from(row.get::<_, String>("path")),
+            title: row.get::<_, Option<String>>("title"),
+        })
+        .collect::<Vec<_>>();
+
+    let document_paths = documents
+        .iter()
+        .map(|document| document.path.clone())
+        .collect::<BTreeSet<_>>();
+    let slug_targets = slug_target_map(&documents);
+
+    let link_rows = conn
+        .query(
+            "SELECT path, target_path
+             FROM gwiki_links
+             WHERE scope_kind = $1 AND scope_id = $2
+             ORDER BY path, target_path",
+            &[&scope_kind, &scope_id],
+        )
+        .map_err(|error| WikiError::Config {
+            detail: format!("failed to load gwiki links for FalkorDB sync: {error}"),
+        })?;
+    let links = link_rows
+        .into_iter()
+        .filter_map(|row| {
+            let source_path = PathBuf::from(row.get::<_, String>("path"));
+            let raw_target = row.get::<_, String>("target_path");
+            resolve_graph_target(&raw_target, &source_path, &document_paths, &slug_targets).map(
+                |target| WikiGraphLink {
+                    scope: scope.clone(),
+                    source_path,
+                    raw_target,
+                    target,
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let source_rows = conn
+        .query(
+            "SELECT path, document_path
+             FROM gwiki_sources
+             WHERE scope_kind = $1 AND scope_id = $2
+             ORDER BY path, document_path",
+            &[&scope_kind, &scope_id],
+        )
+        .map_err(|error| WikiError::Config {
+            detail: format!("failed to load gwiki sources for FalkorDB sync: {error}"),
+        })?;
+    let sources = source_rows
+        .into_iter()
+        .map(|row| WikiGraphSource {
+            scope: scope.clone(),
+            source_path: PathBuf::from(row.get::<_, String>("path")),
+            document_path: PathBuf::from(row.get::<_, String>("document_path")),
+        })
+        .collect::<Vec<_>>();
+
+    Ok(WikiGraphFacts {
+        documents,
+        links,
+        sources,
+    })
+}
+
+fn resolve_graph_target(
+    raw_target: &str,
+    source_path: &Path,
+    document_paths: &BTreeSet<PathBuf>,
+    slug_targets: &BTreeMap<String, PathBuf>,
+) -> Option<WikiGraphLinkTarget> {
+    let trimmed = raw_target.trim();
+    if is_external_target(trimmed) {
+        return None;
+    }
+    let normalized = trimmed
+        .split('#')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .replace('\\', "/");
+    if normalized.is_empty() {
+        return None;
+    }
+
+    let lookup = resolve_relative_graph_path(&normalized, source_path);
+    let direct = PathBuf::from(&lookup);
+    if document_paths.contains(&direct) {
+        return Some(WikiGraphLinkTarget::Resolved(direct));
+    }
+
+    let target_slug = slugify(lookup.strip_suffix(".md").unwrap_or(&lookup));
+    if let Some(path) = slug_targets.get(&target_slug) {
+        return Some(WikiGraphLinkTarget::Resolved(path.clone()));
+    }
+
+    Some(WikiGraphLinkTarget::Unresolved(lookup))
+}
+
+fn slug_target_map(documents: &[WikiGraphDocument]) -> BTreeMap<String, PathBuf> {
+    documents
+        .iter()
+        .filter_map(|document| {
+            let title = document.title.as_deref()?;
+            Some((slugify(title), document.path.clone()))
+        })
+        .collect()
+}
+
+fn resolve_relative_graph_path(raw_target: &str, source_path: &Path) -> String {
+    let normalized = raw_target.trim_start_matches('/');
+    if raw_target.starts_with('/') || !is_path_like_target(normalized) {
+        return normalized.to_string();
+    }
+    let raw_path = Path::new(normalized);
+    let candidate = source_path
+        .parent()
+        .map(|parent| parent.join(raw_path))
+        .unwrap_or_else(|| raw_path.to_path_buf());
+    normalize_path(candidate)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn is_path_like_target(target: &str) -> bool {
+    target.contains('/') || target.starts_with('.') || target.ends_with(".md")
+}
+
+fn normalize_path(path: PathBuf) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(value) => normalized.push(value),
+            Component::RootDir | Component::Prefix(_) => {}
+        }
+    }
+    normalized
+}
+
+fn is_external_target(target: &str) -> bool {
+    let lower = target.to_ascii_lowercase();
+    lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("mailto:")
+        || lower.starts_with("//")
+        || target.starts_with(r"\\")
+        || lower.contains("://")
+}
+
+fn scope_params(scope: &SearchScope) -> HashMap<String, String> {
+    HashMap::from([
+        ("scope_kind".to_string(), scope.scope_kind().to_string()),
+        ("scope_id".to_string(), scope.scope_value().to_string()),
+    ])
+}
+
+fn row_string(row: &Row, key: &'static str) -> Result<String, SearchError> {
+    optional_row_string(row, key)
+        .ok_or_else(|| SearchError::Backend(format!("FalkorDB wiki graph row missing `{key}`")))
+}
+
+fn optional_row_string(row: &Row, key: &'static str) -> Option<String> {
+    row.get(key)
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
+#[cfg(test)]
+fn cypher_string_literal(value: &str) -> String {
+    format!("'{}'", escape_string_contents(value))
+}
+
+#[cfg(test)]
+fn escape_string_contents(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str(r"\\"),
+            '\'' => escaped.push_str(r"\'"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str(r"\n"),
+            '\r' => escaped.push_str(r"\r"),
+            '\t' => escaped.push_str(r"\t"),
+            '\u{0008}' => escaped.push_str(r"\b"),
+            '\u{000C}' => escaped.push_str(r"\f"),
+            ch if ch.is_control() => escaped.push_str(&format!(r"\u{:04X}", ch as u32)),
+            ch => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
+fn graph_sync_error(error: anyhow::Error) -> WikiError {
+    WikiError::Config {
+        detail: format!("failed to sync gwiki graph to FalkorDB: {error}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::graph::{
+        self, MENTIONS_TARGET_REL, SUPPORTS_REL, WIKI_DOC_LABEL, WIKI_LINKS_TO_REL,
+        WIKI_SOURCE_LABEL, WIKI_TARGET_LABEL,
+    };
+
+    #[test]
+    fn falkordb_graph_name_is_wiki_owned() {
+        assert_eq!(FALKORDB_GRAPH_NAME, "gobby_wiki");
+        assert_ne!(FALKORDB_GRAPH_NAME, "gobby_code");
+    }
+
+    #[test]
+    fn graph_resolution_keeps_unresolved_targets_and_skips_external() {
+        let scope = SearchScope::topic("rust");
+        let documents = vec![WikiGraphDocument {
+            scope: scope.clone(),
+            path: PathBuf::from("wiki/topics/rust.md"),
+            title: Some("Rust Async".to_string()),
+        }];
+        let document_paths = documents
+            .iter()
+            .map(|document| document.path.clone())
+            .collect::<BTreeSet<_>>();
+        let slug_targets = slug_target_map(&documents);
+        assert_eq!(
+            resolve_graph_target(
+                "Rust Async",
+                Path::new("wiki/topics/source.md"),
+                &document_paths,
+                &slug_targets
+            ),
+            Some(graph::WikiGraphLinkTarget::Resolved(PathBuf::from(
+                "wiki/topics/rust.md"
+            )))
+        );
+        assert_eq!(
+            resolve_graph_target(
+                "Missing Page",
+                Path::new("wiki/topics/source.md"),
+                &document_paths,
+                &slug_targets
+            ),
+            Some(graph::WikiGraphLinkTarget::Unresolved(
+                "Missing Page".to_string()
+            ))
+        );
+        assert!(
+            resolve_graph_target(
+                "https://example.test",
+                Path::new("wiki/topics/source.md"),
+                &document_paths,
+                &slug_targets
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn graph_scope_params_are_raw_driver_values() {
+        let params = scope_params(&SearchScope::topic("rust'async"));
+
+        assert_eq!(params.get("scope_kind").map(String::as_str), Some("topic"));
+        assert_eq!(
+            params.get("scope_id").map(String::as_str),
+            Some("rust'async")
+        );
+    }
+
+    #[test]
+    fn cypher_string_literal_escapes_like_gcode() {
+        assert_eq!(
+            cypher_string_literal("a\"b\\c'd\n\r\t\u{0008}\u{000C}\u{001F}"),
+            "'a\\\"b\\\\c\\'d\\n\\r\\t\\b\\f\\u001F'"
+        );
+    }
+
+    #[test]
+    fn partial_graph_degradation_reports_capped_components() {
+        let degradation =
+            partial_graph_degradation(&["documents>10".to_string(), "links>20".to_string()])
+                .expect("partial data degradation");
+
+        let DegradationKind::PartialData { component, message } = degradation else {
+            panic!("expected partial data degradation");
+        };
+        assert_eq!(component, "gwiki_graph");
+        assert!(message.contains("documents>10"));
+        assert!(message.contains("links>20"));
+    }
+
+    #[test]
+    fn graph_write_uses_wiki_labels_and_relationships() {
+        let facts = WikiGraphFacts {
+            documents: vec![
+                WikiGraphDocument {
+                    scope: SearchScope::topic("rust"),
+                    path: PathBuf::from("wiki/a.md"),
+                    title: Some("A".to_string()),
+                },
+                WikiGraphDocument {
+                    scope: SearchScope::topic("rust"),
+                    path: PathBuf::from("wiki/b.md"),
+                    title: Some("B".to_string()),
+                },
+            ],
+            links: vec![
+                WikiGraphLink {
+                    scope: SearchScope::topic("rust"),
+                    source_path: PathBuf::from("wiki/a.md"),
+                    raw_target: "wiki/b.md".to_string(),
+                    target: WikiGraphLinkTarget::Resolved(PathBuf::from("wiki/b.md")),
+                },
+                WikiGraphLink {
+                    scope: SearchScope::topic("rust"),
+                    source_path: PathBuf::from("wiki/a.md"),
+                    raw_target: "Missing Page".to_string(),
+                    target: WikiGraphLinkTarget::Unresolved("Missing Page".to_string()),
+                },
+            ],
+            sources: vec![WikiGraphSource {
+                scope: SearchScope::topic("rust"),
+                source_path: PathBuf::from("raw/a.md"),
+                document_path: PathBuf::from("wiki/a.md"),
+            }],
+        };
+        let joined = graph_write_statements(&facts)
+            .into_iter()
+            .map(|statement| statement.cypher)
+            .collect::<Vec<_>>()
+            .join("\n");
+        for token in [
+            WIKI_DOC_LABEL,
+            WIKI_SOURCE_LABEL,
+            WIKI_TARGET_LABEL,
+            WIKI_LINKS_TO_REL,
+            MENTIONS_TARGET_REL,
+            SUPPORTS_REL,
+        ] {
+            assert!(joined.contains(token), "{token} missing from {joined}");
+        }
+        assert!(!joined.contains("CodeSymbol"));
+        assert!(!joined.contains("gobby_code"));
+    }
+}

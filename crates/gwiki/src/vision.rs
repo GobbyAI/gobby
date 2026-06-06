@@ -8,6 +8,10 @@ use crate::ingest::{markdown_metadata, markdown_title, path_to_string, single_li
 use crate::sources::SourceRecord;
 use crate::{ScopeIdentity, WikiError};
 
+const MAX_VISION_METADATA_ENTRIES: usize = 32;
+const MAX_VISION_METADATA_KEY_CHARS: usize = 64;
+const VISION_METADATA_KEY_HASH_CHARS: usize = 16;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VisionExtraction {
     pub description: String,
@@ -19,6 +23,13 @@ pub struct VisionExtraction {
 pub struct VisionDegradation {
     pub reason: String,
     pub fallback: String,
+}
+
+pub(crate) fn disabled_degradation() -> VisionDegradation {
+    VisionDegradation {
+        reason: "disabled".to_string(),
+        fallback: "Keep PDF text layer only.".to_string(),
+    }
 }
 
 pub trait VisionClient {
@@ -207,12 +218,31 @@ fn render_image_derived_markdown(
 
 fn dedupe_vision_metadata(metadata: &[(String, String)]) -> Vec<(String, String)> {
     let mut deduped = BTreeMap::new();
-    for (key, value) in metadata {
+    for (key, value) in metadata.iter().take(MAX_VISION_METADATA_ENTRIES) {
         deduped
-            .entry(vision_metadata_key(key))
+            .entry(vision_metadata_key(&bounded_vision_metadata_key(key)))
             .or_insert_with(|| value.clone());
     }
     deduped.into_iter().collect()
+}
+
+fn bounded_vision_metadata_key(key: &str) -> String {
+    let mut chars = key.chars();
+    let mut prefix = String::with_capacity(key.len().min(MAX_VISION_METADATA_KEY_CHARS));
+    for _ in 0..MAX_VISION_METADATA_KEY_CHARS {
+        let Some(ch) = chars.next() else {
+            return key.to_string();
+        };
+        prefix.push(ch);
+    }
+    if chars.next().is_none() {
+        return key.to_string();
+    }
+    let hash = gobby_core::indexing::content_hash(key.as_bytes());
+    format!(
+        "{prefix}-{}",
+        &hash[..hash.len().min(VISION_METADATA_KEY_HASH_CHARS)]
+    )
 }
 
 fn vision_metadata_key(key: &str) -> String {
@@ -438,6 +468,31 @@ mod tests {
         assert!(!markdown.contains("duplicate"));
         assert!(!markdown.contains("vision_Model Name"));
         assert!(markdown.contains("- vision_model_name: fake-vision"));
+    }
+
+    #[test]
+    fn vision_metadata_bounds_entries_and_hashes_long_keys() {
+        let long_key = "x".repeat(MAX_VISION_METADATA_KEY_CHARS + 20);
+        let long_hash = gobby_core::indexing::content_hash(long_key.as_bytes());
+        let expected_key = format!(
+            "vision_{}-{}",
+            "x".repeat(MAX_VISION_METADATA_KEY_CHARS),
+            &long_hash[..VISION_METADATA_KEY_HASH_CHARS]
+        );
+        let mut metadata = vec![(long_key, "kept".to_string())];
+        metadata.extend(
+            (0..MAX_VISION_METADATA_ENTRIES + 8)
+                .map(|index| (format!("extra-{index}"), format!("value-{index}"))),
+        );
+
+        let deduped = dedupe_vision_metadata(&metadata);
+
+        assert_eq!(deduped.len(), MAX_VISION_METADATA_ENTRIES);
+        assert!(
+            deduped
+                .iter()
+                .any(|(key, value)| { key == &expected_key && value == "kept" })
+        );
     }
 
     #[test]

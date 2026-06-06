@@ -9,6 +9,37 @@ use std::collections::HashMap;
 /// RRF constant — matches Python RRF_K in code_index/searcher.py.
 const RRF_K: f64 = 60.0;
 
+/// BM25 score function installed by pg_search/PostgresML.
+pub const BM25_SCORE_FUNCTION: &str = "pdb.score";
+
+/// Regprocedure signature required by runtime schema validation.
+pub const BM25_SCORE_REGPROCEDURE: &str = "pdb.score(anyelement)";
+
+/// SQL row identifier trusted by the caller to be static query text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrustedRowId(String);
+
+impl TrustedRowId {
+    /// Construct a trusted row identifier without validating SQL syntax.
+    ///
+    /// # Safety
+    ///
+    /// `row_id` is interpolated into SQL. Callers must pass static, trusted
+    /// table aliases or schema-qualified columns, never user-controlled text.
+    pub unsafe fn new_unchecked(row_id: &str) -> Self {
+        Self(row_id.to_string())
+    }
+
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Render a BM25 score expression for a table row identifier.
+pub fn bm25_score_expr(row_id: &TrustedRowId) -> String {
+    format!("{}({})", BM25_SCORE_FUNCTION, row_id.as_str())
+}
+
 /// A search result from any source, with opaque identity and metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
@@ -192,6 +223,18 @@ mod tests {
     }
 
     #[test]
+    fn bm25_score_expression_uses_pdb_score() {
+        let row_id = unsafe { TrustedRowId::new_unchecked("row.id") };
+
+        assert_eq!(bm25_score_expr(&row_id), "pdb.score(row.id)");
+    }
+
+    #[test]
+    fn bm25_score_regprocedure_matches_runtime_schema_contract() {
+        assert_eq!(BM25_SCORE_REGPROCEDURE, "pdb.score(anyelement)");
+    }
+
+    #[test]
     fn search_core_has_no_domain_queries() {
         let source = include_str!("search.rs");
         for forbidden in forbidden_domain_fragments() {
@@ -213,6 +256,11 @@ mod tests {
             ["gra", "ph"],
             ["Fal", "kor"],
             ["Gra", "ph"],
+            ["code", "_symbols"],
+            ["code", "_content_chunks"],
+            ["gwiki", "_documents"],
+            ["gwiki", "_chunks"],
+            ["JOIN", " "],
         ]
         .into_iter()
         .map(|parts| parts.concat())

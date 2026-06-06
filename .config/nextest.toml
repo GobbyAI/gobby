@@ -1,0 +1,19 @@
+nextest-version = { required = "0.9.133" }
+
+[profile.default]
+fail-fast = false
+
+[profile.ci]
+inherits = "default"
+fail-fast = false
+
+[test-groups]
+serial-db = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'package(gobby-code) & (test(::serial_db::) | test(serial_db::))'
+test-group = 'serial-db'
+
+[[profile.default.overrides]]
+filter = 'package(gobby-wiki) & (test(::serial_db::) | test(serial_db::))'
+test-group = 'serial-db'

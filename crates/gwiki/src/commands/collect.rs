@@ -14,9 +14,7 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
     vault::initialize(&scope)?;
     let output_scope = resolved_scope_identity(&scope);
     let mut store = store::MemoryWikiStore::default();
-    let timestamp = collect_timestamp().map_err(|error| WikiError::Config {
-        detail: format!("failed to read system clock: {error}"),
-    })?;
+    let timestamp = collect_timestamp()?;
     let report = wiki_collect::collect_inbox_and_index(scope.root(), &mut store, &timestamp)?;
     Ok(render(output_scope, scope.root(), report))
 }

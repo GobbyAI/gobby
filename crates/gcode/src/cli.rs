@@ -1,6 +1,10 @@
-use clap::{ArgAction, ArgGroup, Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use gobby_code::output;
 use gobby_core::config::AiRouting;
+
+const DEFAULT_CODEWIKI_GRAPH_EDGE_LIMIT: usize = 5000;
+const MAX_POSITIVE_USIZE_ARG: usize = 1_000_000_000;
+const MAX_GREP_MAX_COUNT: usize = 10_000;
 
 #[derive(Parser)]
 #[command(
@@ -11,6 +15,7 @@ use gobby_core::config::AiRouting;
   find call sites:   gcode grep \"spawn_ui_server(\" [PATH...] -m 50
   read function:    gcode search-symbol \"spawn_ui_server\" --kind function
                     gcode symbol <id>
+  locate by line:   gcode symbol-at src/auth.ts:42
   find config key:  gcode grep \"config.ui.mode\" -F [PATH...] -m 50"
 )]
 pub(crate) struct Cli {
@@ -155,7 +160,7 @@ pub(crate) enum Command {
     },
 
     // ── Search (works in all modes) ──────────────────────────────────
-    /// Hybrid search: pg_search BM25 + optional semantic (Qdrant) + optional graph boost (FalkorDB)
+    /// Hybrid search: pg_search BM25 + semantic (Qdrant) + graph boost (FalkorDB)
     #[command(
         after_help = "`gcode search` is hybrid/fuzzy concept search. Use `gcode grep \"pattern\" [PATH...] -m 50` for exact literals, call sites, dotted config keys, quoted strings, and paths. Use `gcode search-content \"query\" [PATH...]` for ranked file-content matches."
     )]
@@ -244,6 +249,9 @@ pub(crate) enum Command {
         /// Match case-insensitively
         #[arg(short = 'i', long)]
         ignore_case: bool,
+        /// Match only standalone ASCII identifier words
+        #[arg(short = 'w', long)]
+        word: bool,
         /// Show N context lines before match
         #[arg(short = 'B', long)]
         before_context: Option<usize>,
@@ -257,54 +265,9 @@ pub(crate) enum Command {
         /// (bare globs match basenames; slash globs match paths)
         #[arg(short = 'g', long)]
         glob: Vec<String>,
-        /// Maximum matching lines to include
-        #[arg(short = 'm', long)]
+        /// Maximum matching lines to include, up to 10000
+        #[arg(short = 'm', long, value_parser = grep_max_count)]
         max_count: Option<usize>,
-        /// Show line numbers (always shown, deprecated flag for compatibility)
-        #[arg(short = 'n', long)]
-        line_number: bool,
-        /// Unsupported: use -m/--max-count for indexed grep caps
-        #[arg(long = "limit", hide = true, action = ArgAction::SetTrue)]
-        unsupported_limit: bool,
-        /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 'l', long = "files-with-matches", hide = true, action = ArgAction::SetTrue)]
-        unsupported_files_with_matches: bool,
-        /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 'L', long = "files-without-match", hide = true, action = ArgAction::SetTrue)]
-        unsupported_files_without_match: bool,
-        /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 'c', long = "count", hide = true, action = ArgAction::SetTrue)]
-        unsupported_count: bool,
-        /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 'o', long = "only-matching", hide = true, action = ArgAction::SetTrue)]
-        unsupported_only_matching: bool,
-        /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 'v', long = "invert-match", hide = true, action = ArgAction::SetTrue)]
-        unsupported_invert_match: bool,
-        /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 'w', long = "word-regexp", hide = true, action = ArgAction::SetTrue)]
-        unsupported_word_regexp: bool,
-        /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 'e', long = "regexp", hide = true)]
-        unsupported_regexp: Option<String>,
-        /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 'r', long = "recursive", hide = true, action = ArgAction::SetTrue)]
-        unsupported_recursive: bool,
-        /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 't', long = "type", hide = true)]
-        unsupported_type: Option<String>,
-        /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 'T', long = "type-not", hide = true)]
-        unsupported_type_not: Option<String>,
-        /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 'P', long = "pcre2", hide = true, action = ArgAction::SetTrue)]
-        unsupported_pcre2: bool,
-        /// Unsupported: use raw rg for filesystem grep
-        #[arg(short = 'U', long = "multiline", hide = true, action = ArgAction::SetTrue)]
-        unsupported_multiline: bool,
-        /// Unsupported: use --format json for structured indexed grep output
-        #[arg(long = "json", hide = true, action = ArgAction::SetTrue)]
-        unsupported_json: bool,
     },
 
     // ── Symbol Retrieval (works in all modes) ────────────────────────
@@ -317,6 +280,15 @@ pub(crate) enum Command {
     },
     /// Fetch symbol source code by ID (byte-offset read)
     Symbol { id: String },
+    /// Fetch symbol source code at PATH:LINE or PATH:LINE:COLUMN
+    SymbolAt {
+        /// Location containing line information; conflicts with separate LINE
+        #[arg(value_name = "PATH[:LINE[:COLUMN]]")]
+        location: String,
+        /// 1-based line number; do not pass when LOCATION already includes a line
+        #[arg(value_name = "LINE", value_parser = positive_usize)]
+        line: Option<usize>,
+    },
     /// Batch retrieve symbols by ID
     Symbols { ids: Vec<String> },
     /// List distinct symbol kinds in the index
@@ -334,6 +306,9 @@ pub(crate) enum Command {
         /// Override AI routing for generated summaries
         #[arg(long, value_enum)]
         ai: Option<AiRouteArg>,
+        /// Maximum graph edges to fetch from FalkorDB
+        #[arg(long, default_value_t = DEFAULT_CODEWIKI_GRAPH_EDGE_LIMIT, value_parser = positive_usize)]
+        edge_limit: usize,
     },
 
     // ── Dependency Graph (requires graph backend) ──────────────────────
@@ -471,6 +446,27 @@ fn non_empty_grep_pattern(value: &str) -> Result<String, String> {
     }
 }
 
+fn positive_usize(value: &str) -> Result<usize, String> {
+    bounded_positive_usize(value, MAX_POSITIVE_USIZE_ARG, "value")
+}
+
+fn grep_max_count(value: &str) -> Result<usize, String> {
+    bounded_positive_usize(value, MAX_GREP_MAX_COUNT, "--max-count")
+}
+
+fn bounded_positive_usize(value: &str, max: usize, name: &str) -> Result<usize, String> {
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|_| format!("{name} must be a positive integer"))?;
+    if parsed == 0 {
+        Err(format!("{name} must be a positive integer"))
+    } else if parsed > max {
+        Err(format!("{name} must be no more than {max}"))
+    } else {
+        Ok(parsed)
+    }
+}
+
 pub(crate) fn effective_format(
     explicit_format: Option<output::Format>,
     command: &Command,
@@ -481,59 +477,8 @@ pub(crate) fn effective_format(
     })
 }
 
-pub(crate) fn reject_unsupported_grep_flags(command: &Command) -> anyhow::Result<()> {
-    let Command::Grep {
-        unsupported_limit,
-        unsupported_files_with_matches,
-        unsupported_files_without_match,
-        unsupported_count,
-        unsupported_only_matching,
-        unsupported_invert_match,
-        unsupported_word_regexp,
-        unsupported_regexp,
-        unsupported_recursive,
-        unsupported_type,
-        unsupported_type_not,
-        unsupported_pcre2,
-        unsupported_multiline,
-        unsupported_json,
-        ..
-    } = command
-    else {
-        return Ok(());
-    };
-
-    let flag = first_set_flag(&[
-        ("--limit", *unsupported_limit),
-        ("--files-with-matches", *unsupported_files_with_matches),
-        ("--files-without-match", *unsupported_files_without_match),
-        ("--count", *unsupported_count),
-        ("--only-matching", *unsupported_only_matching),
-        ("--invert-match", *unsupported_invert_match),
-        ("--word-regexp", *unsupported_word_regexp),
-        ("--regexp", unsupported_regexp.is_some()),
-        ("--recursive", *unsupported_recursive),
-        ("--type", unsupported_type.is_some()),
-        ("--type-not", unsupported_type_not.is_some()),
-        ("--pcre2", *unsupported_pcre2),
-        ("--multiline", *unsupported_multiline),
-        ("--json", *unsupported_json),
-    ]);
-
-    if let Some(flag) = flag {
-        anyhow::bail!(
-            "gcode grep is indexed search; unsupported grep/rg flag `{flag}`. Use -m/--max-count for match caps or raw `rg` for filesystem grep."
-        );
-    }
-
-    Ok(())
-}
-
-fn first_set_flag(flags: &[(&'static str, bool)]) -> Option<&'static str> {
-    flags
-        .iter()
-        .find_map(|(flag, is_set)| is_set.then_some(*flag))
-}
-
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod symbol_at_tests;

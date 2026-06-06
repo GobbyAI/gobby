@@ -329,6 +329,7 @@ fn source_reference_patterns(needle: &str) -> Vec<String> {
     ]
 }
 
+#[cfg(test)]
 fn source_reference_is_present(markdown: &str, needle: &str) -> bool {
     let needle = needle.trim();
     if needle.is_empty() {

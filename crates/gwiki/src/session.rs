@@ -7,18 +7,22 @@ use serde::{Deserialize, Serialize};
 use crate::{
     WikiError,
     scope::{ResolvedScope, ScopeKind},
+    support::time,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ResearchScope {
-    Project { root: PathBuf },
+    Project { project_id: String, root: PathBuf },
     Topic { name: String, root: PathBuf },
 }
 
 impl ResearchScope {
-    pub fn project(root: impl Into<PathBuf>) -> Self {
-        Self::Project { root: root.into() }
+    pub fn project_for_id(project_id: impl Into<String>, root: impl Into<PathBuf>) -> Self {
+        Self::Project {
+            project_id: project_id.into(),
+            root: root.into(),
+        }
     }
 
     pub fn topic(name: impl Into<String>, root: impl Into<PathBuf>) -> Self {
@@ -30,7 +34,7 @@ impl ResearchScope {
 
     pub fn root(&self) -> &Path {
         match self {
-            Self::Project { root } | Self::Topic { root, .. } => root,
+            Self::Project { root, .. } | Self::Topic { root, .. } => root,
         }
     }
 }
@@ -39,7 +43,9 @@ impl From<&ResolvedScope> for ResearchScope {
     fn from(scope: &ResolvedScope) -> Self {
         match scope.kind() {
             ScopeKind::Topic { name } => Self::topic(name.clone(), scope.root().to_path_buf()),
-            ScopeKind::Project { .. } => Self::project(scope.root().to_path_buf()),
+            ScopeKind::Project { project_id, .. } => {
+                Self::project_for_id(project_id.clone(), scope.root().to_path_buf())
+            }
         }
     }
 }
@@ -251,14 +257,7 @@ fn new_session_id() -> Result<String, WikiError> {
 }
 
 fn unix_timestamp_ms() -> Result<u64, WikiError> {
-    let duration = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|error| WikiError::Config {
-            detail: format!("system clock is before Unix epoch: {error}"),
-        })?;
-    u64::try_from(duration.as_millis()).map_err(|_| WikiError::Config {
-        detail: "system timestamp exceeds u64 milliseconds".to_string(),
-    })
+    time::unix_timestamp_ms()
 }
 
 pub(crate) fn research_prompt(
@@ -286,7 +285,7 @@ mod tests {
     #[test]
     fn compile_state_is_resumable() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let scope = ResearchScope::project(temp.path());
+        let scope = ResearchScope::project_for_id("project-1", temp.path());
         let mut session = ResearchSession::new(
             "How should compile state resume?",
             scope.clone(),
@@ -328,7 +327,7 @@ mod tests {
         fs::create_dir_all(&other).expect("create other root");
         let session = ResearchSession::new(
             "Which root?",
-            ResearchScope::project(&other),
+            ResearchScope::project_for_id("project-1", &other),
             Vec::new(),
             1,
             None,
@@ -350,7 +349,7 @@ mod tests {
         fs::create_dir_all(expected.join(".gwiki/research")).expect("create checkpoint dir");
         let session = ResearchSession::new(
             "Which root?",
-            ResearchScope::project("."),
+            ResearchScope::project_for_id("project-1", "."),
             Vec::new(),
             1,
             None,

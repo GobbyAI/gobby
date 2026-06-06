@@ -10,7 +10,7 @@ use crate::ingest::{
     IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
     single_line, text_from_utf8_lossy, write_asset, write_raw_markdown,
 };
-use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
+use crate::sources::{SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
 
 const URL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
@@ -84,17 +84,13 @@ pub(crate) fn ingest_snapshot_without_index(
     let source_hash = gobby_core::indexing::content_hash(&snapshot.body);
     let document = Html::parse_document(&html);
     let title = extract_title(&document).unwrap_or_else(|| snapshot.final_url.clone());
-    let draft = SourceDraft {
-        location: snapshot.final_url.clone(),
-        kind: SourceKind::Url,
-        fetched_at: snapshot.fetched_at.clone(),
-        content: std::mem::take(&mut snapshot.body),
-        title: Some(markdown_title(&title)),
-        citation: Some(snapshot.final_url.clone()),
-        license: None,
-        ingestion_method: IngestionMethod::Manual,
-        compile_status: CompileStatus::Pending,
-    };
+    let draft = SourceDraft::url(
+        snapshot.final_url.clone(),
+        snapshot.fetched_at.clone(),
+        std::mem::take(&mut snapshot.body),
+    )
+    .with_title(markdown_title(&title))
+    .with_citation(snapshot.final_url.clone());
     let record = SourceManifest::register(vault_root, draft)?;
     let markdown = render_url_markdown(
         &snapshot,
@@ -120,17 +116,14 @@ fn ingest_non_html_snapshot_without_index(
     let kind = source_kind_for_url_response(snapshot.content_type.as_deref());
     let title = markdown_title(&file_name_for_url_response(&snapshot, &kind));
     let body = std::mem::take(&mut snapshot.body);
-    let draft = SourceDraft {
-        location: snapshot.final_url.clone(),
-        kind: kind.clone(),
-        fetched_at: snapshot.fetched_at.clone(),
-        content: body.clone(),
-        title: Some(title.clone()),
-        citation: Some(snapshot.final_url.clone()),
-        license: None,
-        ingestion_method: IngestionMethod::Manual,
-        compile_status: CompileStatus::Pending,
-    };
+    let draft = SourceDraft::new(
+        snapshot.final_url.clone(),
+        kind.clone(),
+        snapshot.fetched_at.clone(),
+        body.clone(),
+    )
+    .with_title(title.clone())
+    .with_citation(snapshot.final_url.clone());
     let record = SourceManifest::register(vault_root, draft)?;
     let asset_path = write_asset(vault_root, &record, &title, &body)?;
     let markdown = render_non_html_url_markdown(
@@ -740,9 +733,9 @@ mod tests {
         let raw = std::fs::read_to_string(temp.path().join(&result.raw_path))
             .expect("raw markdown written");
         assert!(raw.contains("# Durable Wikis"));
-        assert!(raw.contains("canonical_url: https://example.com/docs/wiki"));
-        assert!(raw.contains("fetched_at: 2026-05-29T16:00:00Z"));
-        assert!(raw.contains("content_type: text/html"));
+        assert!(raw.contains("canonical_url: \"https://example.com/docs/wiki\""));
+        assert!(raw.contains("fetched_at: \"2026-05-29T16:00:00Z\""));
+        assert!(raw.contains("content_type: \"text/html\""));
         assert!(raw.contains(&format!("source_hash: {expected_hash}")));
         assert!(raw.contains("Capture source material."));
 

@@ -4,7 +4,7 @@ use crate::WikiError;
 use crate::ingest::{
     IngestResult, markdown_title, single_line, text_from_utf8_lossy, write_raw_then_index,
 };
-use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
+use crate::sources::{SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
 
 const MAX_CODE_FENCE_LEN: usize = 64;
@@ -37,17 +37,14 @@ pub fn ingest_repository(
 
     let location = format!("git+{}@{}", snapshot.remote_url, snapshot.commit_sha);
     let title = markdown_title(&snapshot.remote_url);
-    let draft = SourceDraft {
+    let draft = SourceDraft::new(
         location,
-        kind: SourceKind::GitRepository,
-        fetched_at: snapshot.fetched_at.clone(),
-        content: snapshot_content_bytes(&snapshot),
-        title: Some(title.clone()),
-        citation: Some(format!("{} @ {}", snapshot.remote_url, snapshot.commit_sha)),
-        license: None,
-        ingestion_method: IngestionMethod::Manual,
-        compile_status: CompileStatus::Pending,
-    };
+        SourceKind::GitRepository,
+        snapshot.fetched_at.clone(),
+        snapshot_content_bytes(&snapshot),
+    )
+    .with_title(title.clone())
+    .with_citation(format!("{} @ {}", snapshot.remote_url, snapshot.commit_sha));
     let record = SourceManifest::register(vault_root, draft)?;
     let markdown = render_git_markdown(&snapshot, &title, &record.content_hash);
     write_raw_then_index(vault_root, store, record, &markdown, None)

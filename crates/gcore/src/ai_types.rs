@@ -55,10 +55,37 @@ impl VisionResult {
 pub struct TextResult {
     pub text: String,
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TokenUsage>,
     /// Provider-specific metadata preserved for diagnostics and callers that
     /// need backend details without depending on a transport-specific schema.
     #[serde(default)]
     pub metadata: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenUsage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_tokens: Option<usize>,
+}
+
+impl TokenUsage {
+    /// Return a strict total token count.
+    ///
+    /// Uses the provider-reported total when present. Otherwise, falls back to
+    /// input + output only when both counts are present; partial usage metadata
+    /// is treated as unknown instead of estimating.
+    pub fn token_count(&self) -> Option<usize> {
+        self.total_tokens.or_else(|| {
+            self.input_tokens
+                .zip(self.output_tokens)
+                .map(|(input, output)| input.saturating_add(output))
+        })
+    }
 }
 
 impl TextResult {
@@ -283,6 +310,34 @@ mod tests {
         let rendered = format!("{error:?}");
         assert!(!rendered.contains("reqwest::"));
         assert!(!rendered.contains("ureq::"));
+    }
+
+    #[test]
+    fn token_usage_prefers_provider_total_over_component_sum() {
+        let usage = TokenUsage {
+            input_tokens: Some(40),
+            output_tokens: Some(2),
+            total_tokens: Some(45),
+        };
+
+        assert_eq!(usage.token_count(), Some(45));
+    }
+
+    #[test]
+    fn token_usage_sums_only_complete_component_counts() {
+        let complete = TokenUsage {
+            input_tokens: Some(40),
+            output_tokens: Some(2),
+            total_tokens: None,
+        };
+        let partial = TokenUsage {
+            input_tokens: Some(40),
+            output_tokens: None,
+            total_tokens: None,
+        };
+
+        assert_eq!(complete.token_count(), Some(42));
+        assert_eq!(partial.token_count(), None);
     }
 
     #[test]

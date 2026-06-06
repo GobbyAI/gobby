@@ -32,7 +32,7 @@ pub(crate) fn parse_file_with_semantic(
     file_path: &Path,
     project_id: &str,
     root_path: &Path,
-    exclude_patterns: &[String],
+    exclude_patterns: &[impl AsRef<str>],
     import_context: &ImportResolutionContext,
     semantic_resolver: Option<&mut (dyn SemanticCallResolver + '_)>,
 ) -> anyhow::Result<Option<ParseResult>> {
@@ -370,7 +370,7 @@ fn extract_imports(
                     rel_path,
                     import_context,
                     &mut extracted,
-                );
+                )?;
             }
         }
     }
