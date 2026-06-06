@@ -82,7 +82,7 @@ export function PlanApprovalActions({
         <div className="flex gap-2">
           <Button
             size="sm"
-            variant="primary"
+            variant="accent"
             onClick={submitFeedback}
             disabled={!feedback.trim()}
             data-testid={tid('send')}
@@ -116,7 +116,7 @@ export function PlanApprovalActions({
               <Button
                 key={option.id}
                 size="sm"
-                variant={keepPlanning ? 'outline' : 'primary'}
+                variant={keepPlanning ? 'outline' : 'accent'}
                 className="gap-1.5"
                 onClick={() => onApprove(option)}
                 title={option.description}
@@ -130,7 +130,7 @@ export function PlanApprovalActions({
         ) : (
           <Button
             size="sm"
-            variant="primary"
+            variant="accent"
             className="gap-1.5"
             onClick={() => onApprove()}
             data-testid={tid('approve')}
