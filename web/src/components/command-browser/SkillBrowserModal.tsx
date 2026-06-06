@@ -177,7 +177,7 @@ export function SkillBrowserModal({ onSendMessage, onClose }: SkillBrowserModalP
               </ScrollArea>
 
               <div className="px-4 py-3 border-t border-border shrink-0 bg-muted/20">
-                <Button variant="primary" onClick={handleRun}>
+                <Button variant="accent" onClick={handleRun}>
                   Run Skill
                 </Button>
               </div>

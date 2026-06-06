@@ -246,7 +246,7 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
 
                     <div className="mt-4 flex gap-2">
                       <Button
-                        variant="primary"
+                        variant="accent"
                         onClick={handleExecute}
                         disabled={executing || schemaLoading}
                       >

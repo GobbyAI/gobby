@@ -444,10 +444,10 @@ function ToolApprovalCard({ call, onRespondToApproval }: { call: ToolCall; onRes
         </div>
       )}
       <div className="flex items-center gap-2 px-3 pb-2">
-        <Button size="sm" variant="primary" onClick={() => handleDecision('approve')}>
+        <Button size="sm" variant="accent" onClick={() => handleDecision('approve')}>
           Approve
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => handleDecision('approve_always')}>
+        <Button size="sm" variant="outline" onClick={() => handleDecision('approve_always')}>
           Always Approve
         </Button>
         <Button size="sm" variant="destructive" onClick={() => handleDecision('reject')}>
@@ -634,7 +634,7 @@ function AskUserQuestionCard({ call, onRespond }: { call: ToolCall; onRespond?: 
         </div>
       ))}
       {!submitted && hasSelection && (
-        <Button size="sm" variant="primary" onClick={handleSubmit} className="mt-2">
+        <Button size="sm" variant="accent" onClick={handleSubmit} className="mt-2">
           Submit
         </Button>
       )}
