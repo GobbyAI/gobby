@@ -43,11 +43,15 @@ fn release_upload_marker(workflow: &str) -> Option<usize> {
 
 #[test]
 fn release_workflows_have_one_default_and_one_no_default_check() {
-    let cases = [
-        (
-            include_str!("../../../.github/workflows/release-gcode.yml"),
-            "gobby-code",
-        ),
+    // Crates with a library target run doctests with and without default
+    // features. The binary-only crates (gobby-hooks, gobby-squeeze,
+    // gobby-local) have no lib target, so `cargo test --doc -p <pkg>` errors
+    // with "no library targets found" and must NOT appear in their workflows.
+    let lib_cases = [(
+        include_str!("../../../.github/workflows/release-gcode.yml"),
+        "gobby-code",
+    )];
+    let bin_cases = [
         (
             include_str!("../../../.github/workflows/release-gsqz.yml"),
             "gobby-squeeze",
@@ -58,7 +62,7 @@ fn release_workflows_have_one_default_and_one_no_default_check() {
         ),
     ];
 
-    for (workflow, package) in cases {
+    for (workflow, package) in lib_cases.iter().chain(bin_cases.iter()).copied() {
         assert_eq!(
             count_run_step(
                 workflow,
@@ -84,17 +88,20 @@ fn release_workflows_have_one_default_and_one_no_default_check() {
             "{package} default test step count"
         );
         assert_eq!(
-            count_run_step(workflow, &format!("cargo test --doc -p {package}")),
-            1,
-            "{package} default doctest step count"
-        );
-        assert_eq!(
             count_run_step(
                 workflow,
                 &format!("cargo nextest run --profile ci -p {package} --no-default-features")
             ),
             1,
             "{package} no-default test step count"
+        );
+    }
+
+    for (workflow, package) in lib_cases {
+        assert_eq!(
+            count_run_step(workflow, &format!("cargo test --doc -p {package}")),
+            1,
+            "{package} default doctest step count"
         );
         assert_eq!(
             count_run_step(
@@ -103,6 +110,22 @@ fn release_workflows_have_one_default_and_one_no_default_check() {
             ),
             1,
             "{package} no-default doctest step count"
+        );
+    }
+
+    for (workflow, package) in bin_cases {
+        assert_eq!(
+            count_run_step(workflow, &format!("cargo test --doc -p {package}")),
+            0,
+            "{package} is binary-only and must not run doctests"
+        );
+        assert_eq!(
+            count_run_step(
+                workflow,
+                &format!("cargo test --doc -p {package} --no-default-features")
+            ),
+            0,
+            "{package} is binary-only and must not run doctests (no default features)"
         );
     }
 }

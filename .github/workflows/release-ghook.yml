@@ -59,14 +59,8 @@ jobs:
       - name: Run tests
         run: cargo nextest run --profile ci -p gobby-hooks
 
-      - name: Run doctests
-        run: cargo test --doc -p gobby-hooks
-
       - name: Run tests without default features
         run: cargo nextest run --profile ci -p gobby-hooks --no-default-features
-
-      - name: Run doctests without default features
-        run: cargo test --doc -p gobby-hooks --no-default-features
 
   build:
     needs: test
