@@ -267,11 +267,14 @@ def test_memory_dream_constraints_migration_and_baseline_define_invariants() -> 
         SRC_ROOT / "storage" / "migrations" / "276_memory_dream_constraints.sql"
     ).read_text(encoding="utf-8")
     baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
+    runtime_storage = (SRC_ROOT / "memory" / "dream" / "storage.py").read_text(encoding="utf-8")
     status_invariant = "status IN ('started', 'running', 'completed', 'failed', 'reverted')"
     action_invariant = "action IN ('keep', 'delete', 'refresh', 'merge', 'supersede', 'review')"
 
     assert "memory_dream_runs_status_check" in migration
     assert "ALTER COLUMN status SET DEFAULT 'started'" in migration
+    assert "UPDATE memory_dream_runs" in migration
+    assert "SET status = 'failed'" in migration
     assert status_invariant in migration
     assert "memory_dream_snapshots_action_check" in migration
     assert "supersede_create' THEN 'supersede" in migration
@@ -280,6 +283,8 @@ def test_memory_dream_constraints_migration_and_baseline_define_invariants() -> 
     assert status_invariant in baseline
     assert "memory_dream_snapshots_action_check" in baseline
     assert action_invariant in baseline
+    assert "UPDATE memory_dream_snapshots\n               SET action = CASE" not in runtime_storage
+    assert "UPDATE memory_dream_runs\n               SET status = 'failed'" not in runtime_storage
 
 
 def test_migration_helpers_are_not_imported_by_runtime_storage_paths() -> None:

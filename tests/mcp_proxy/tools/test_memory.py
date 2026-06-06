@@ -640,7 +640,7 @@ class TestMemoryDreamTools:
             return_value=service,
         ):
             result = await registry.call("memory_dream", {"wait": False})
-            background_tasks = tuple(memory_dream_tools._BACKGROUND_DREAM_TASKS)
+            background_tasks = memory_dream_tools.get_background_tasks()
             await asyncio.gather(*background_tasks)
 
         assert result == {"success": True, "run_id": "dream-1", "status": "started"}

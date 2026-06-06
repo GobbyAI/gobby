@@ -95,25 +95,6 @@ class MemoryDreamStore:
             ON memory_dream_snapshots(run_id, id)
             """
         )
-        self.db.execute(
-            """
-            UPDATE memory_dream_snapshots
-               SET action = CASE
-                   WHEN action = 'supersede_create' THEN 'supersede'
-                   ELSE 'review'
-               END
-             WHERE action NOT IN ('keep', 'delete', 'refresh', 'merge', 'supersede', 'review')
-            """
-        )
-        self.db.execute(
-            """
-            UPDATE memory_dream_runs
-               SET status = 'failed',
-                   completed_at = COALESCE(completed_at, NOW()),
-                   updated_at = NOW()
-             WHERE status NOT IN ('started', 'running', 'completed', 'failed', 'reverted')
-            """
-        )
         self.db.execute("ALTER TABLE memory_dream_runs ALTER COLUMN status SET DEFAULT 'started'")
         self.db.execute(
             """

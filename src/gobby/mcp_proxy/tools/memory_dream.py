@@ -15,6 +15,11 @@ logger = logging.getLogger(__name__)
 _BACKGROUND_DREAM_TASKS: set[asyncio.Task[dict[str, Any]]] = set()
 
 
+def get_background_tasks() -> tuple[asyncio.Task[dict[str, Any]], ...]:
+    """Return background memory dream tasks tracked by this module."""
+    return tuple(_BACKGROUND_DREAM_TASKS)
+
+
 def _handle_background_task(task: asyncio.Task[dict[str, Any]], run_id: str) -> None:
     _BACKGROUND_DREAM_TASKS.discard(task)
     try:

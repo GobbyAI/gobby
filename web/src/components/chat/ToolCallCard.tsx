@@ -62,7 +62,13 @@ interface AskUserQuestionItem {
   multiSelect: boolean
 }
 
-function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
+function ToolArgumentsContent({
+  args,
+  callId,
+}: {
+  args: Record<string, unknown>
+  callId: string
+}) {
   const filePath = args.file_path as string | undefined
 
   // Write pattern: file_path + content
@@ -107,7 +113,7 @@ function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
     return (
       <div>
         <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>{title}</div>
-        <MarkdownBody id="tool-plan" content={args.plan} />
+        <MarkdownBody id={`tool-plan-${callId}`} content={args.plan} />
       </div>
     )
   }
@@ -389,7 +395,7 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
       {expanded && hasDetails && (
         <div className={cn(TOOL_CARD_SPACING.body, 'text-xs')}>
           {call.arguments && Object.keys(call.arguments).length > 0 && !isCompact && (
-            <ToolArgumentsContent args={call.arguments} />
+            <ToolArgumentsContent args={call.arguments} callId={call.id} />
           )}
           {call.status === 'completed' && call.result != null && toolType !== 'edit' && (
             <div className="min-w-0 max-w-full overflow-hidden">
@@ -434,7 +440,7 @@ function ToolApprovalCard({ call, onRespondToApproval }: { call: ToolCall; onRes
         </div>
         {call.arguments && Object.keys(call.arguments).length > 0 && (
           <div className={cn(TOOL_CARD_SPACING.bodyCompact, 'text-xs')}>
-            <ToolArgumentsContent args={call.arguments} />
+            <ToolArgumentsContent args={call.arguments} callId={call.id} />
           </div>
         )}
       </div>
@@ -454,7 +460,7 @@ function ToolApprovalCard({ call, onRespondToApproval }: { call: ToolCall; onRes
       </div>
       {call.arguments && Object.keys(call.arguments).length > 0 && (
         <div className={cn(TOOL_CARD_SPACING.bodyCompact, 'text-xs')}>
-          <ToolArgumentsContent args={call.arguments} />
+          <ToolArgumentsContent args={call.arguments} callId={call.id} />
         </div>
       )}
       <div className="flex items-center gap-2 px-3 pb-2">

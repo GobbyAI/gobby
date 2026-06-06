@@ -154,11 +154,16 @@ def _wait_for_completion(
 ) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise click.ClickException(
+                f"Timed out after {timeout:g}s waiting for dream run {run_id}"
+            )
         data = _request(
             ctx,
             f"/memory/dream/{run_id}",
             method="GET",
-            timeout=_START_REQUEST_TIMEOUT_SECONDS,
+            timeout=min(_START_REQUEST_TIMEOUT_SECONDS, remaining),
         )
         status = _status(data)
         if status and status != last_status:

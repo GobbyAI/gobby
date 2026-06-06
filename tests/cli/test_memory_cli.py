@@ -514,7 +514,9 @@ class TestMemoryDreamCommand:
         assert calls[0].kwargs["json_data"]["wait"] is False
         assert calls[0].kwargs["timeout"] == 15.0
         assert calls[1].kwargs["method"] == "GET"
-        assert calls[1].kwargs["timeout"] == 15.0
+        assert calls[2].kwargs["method"] == "GET"
+        assert 0.0 < calls[1].kwargs["timeout"] <= 5.0
+        assert 0.0 < calls[2].kwargs["timeout"] <= 5.0
 
 
 class TestMemoryBackupCommand:
