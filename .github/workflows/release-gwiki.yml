@@ -237,15 +237,23 @@ jobs:
           fi
           archive="$PDFIUM_ARCHIVE"
           sha="$PDFIUM_SHA"
-          dest="$RUNNER_TEMP/pdfium"
+          runner_temp="$(cygpath -u "$RUNNER_TEMP")"
+          github_env="$(cygpath -u "$GITHUB_ENV")"
+          dest="${runner_temp%/}/pdfium"
+          archive_path="$dest/$archive"
+          dll="$dest/bin/pdfium.dll"
           mkdir -p "$dest"
           url="https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F${version}/${archive}"
           echo "Downloading $url"
-          curl -fsSL --retry 3 -o "$dest/$archive" "$url"
-          echo "${sha}  ${dest}/${archive}" | sha256sum -c -
-          tar --force-local -xzf "$dest/$archive" -C "$dest" bin/pdfium.dll
-          lib="$(cygpath -w "$dest/bin/pdfium.dll")"
-          echo "PDFIUM_BUNDLE_LIB=${lib}" >> "$GITHUB_ENV"
+          curl -fsSL --retry 3 -o "$archive_path" "$url"
+          echo "${sha}  ${archive_path}" | sha256sum -c -
+          tar --force-local -xzf "$archive_path" -C "$dest" bin/pdfium.dll
+          if [ ! -f "$dll" ]; then
+            echo "::error::Provision pdfium: expected DLL was not extracted at '$dll'." >&2
+            exit 1
+          fi
+          lib="$(cygpath -w "$dll")"
+          echo "PDFIUM_BUNDLE_LIB=${lib}" >> "$github_env"
           echo "Provisioned pdfium for $TARGET at ${lib}"
 
       - name: Build gwiki
