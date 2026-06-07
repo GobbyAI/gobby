@@ -53,8 +53,10 @@ pub fn run(vault_root: &Path, scope: ScopeIdentity) -> Result<LintReport, WikiEr
             if ignored_target(&link.target) {
                 continue;
             }
-            let lookup_target = link_lookup_target(page, link);
-            if let Some(target_path) = target_map.get(&lookup_target) {
+            if let Some(target_path) = link_lookup_targets(page, link)
+                .iter()
+                .find_map(|lookup_target| target_map.get(lookup_target))
+            {
                 if target_path != &page.relative_path {
                     *inbound.entry(target_path.clone()).or_default() += 1;
                     outgoing
@@ -313,22 +315,34 @@ fn ignored_target(target: &str) -> bool {
         || trimmed.starts_with("tel:")
 }
 
-fn link_lookup_target(page: &WikiPage, link: &WikiLink) -> String {
-    if link.kind != LinkKind::Markdown
+fn link_lookup_targets(page: &WikiPage, link: &WikiLink) -> Vec<String> {
+    let mut targets = vec![link.normalized_target.clone()];
+    if (link.kind != LinkKind::Markdown && link.kind != LinkKind::Wikilink)
         || link.normalized_target.starts_with("wiki/")
         || link.normalized_target.starts_with("raw/")
         || link.normalized_target.starts_with("meta/")
         || Path::new(&link.normalized_target).is_absolute()
     {
-        return link.normalized_target.clone();
+        return targets;
     }
 
-    let parent = page
-        .relative_path
-        .parent()
-        .map(|path| path.to_string_lossy().replace('\\', "/"))
-        .unwrap_or_default();
-    normalize_path_components(&parent, &link.normalized_target)
+    let parents: Box<dyn Iterator<Item = &Path> + '_> = if link.kind == LinkKind::Markdown {
+        Box::new(page.relative_path.parent().into_iter())
+    } else {
+        Box::new(page.relative_path.ancestors().skip(1))
+    };
+
+    for parent in parents {
+        let parent = parent.to_string_lossy().replace('\\', "/");
+        if parent.is_empty() {
+            continue;
+        }
+        let candidate = normalize_path_components(&parent, &link.normalized_target);
+        if !targets.contains(&candidate) {
+            targets.push(candidate);
+        }
+    }
+    targets
 }
 
 fn normalize_path_components(parent: &str, target: &str) -> String {
@@ -514,6 +528,26 @@ mod tests {
             report.orphan_pages,
             vec![PathBuf::from("wiki/topics/orphan.md")]
         );
+    }
+
+    #[test]
+    fn nested_wikilinks_resolve_relative_to_current_subtree() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write_page(
+            root,
+            "wiki/code/repo.md",
+            "---\ntitle: Repository Overview\n---\n# Repository Overview\n[[modules/crates|crates]]\n",
+        );
+        write_page(
+            root,
+            "wiki/code/modules/crates.md",
+            "---\ntitle: crates\n---\n# crates\n[[../repo|Repository Overview]]\n",
+        );
+
+        let report = run(root, ScopeIdentity::topic("lint")).expect("lint runs");
+
+        assert!(report.broken_links.is_empty(), "{:?}", report.broken_links);
     }
 
     #[test]

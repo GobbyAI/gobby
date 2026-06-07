@@ -8,7 +8,7 @@ use gobby_core::provisioning::{
 use gobby_core::setup::{SetupContext, StandaloneSetup, ValidationContext};
 use serde_json::json;
 
-use crate::support::env::database_url_from_env;
+use crate::support::env::{database_url_for, database_url_from_env};
 use crate::support::scope::{resolve_command_scope, resolved_scope_identity};
 use crate::support::text::postgres_object_kind;
 use crate::{
@@ -40,6 +40,14 @@ pub(crate) fn execute(
         validate_embedding_vector_dim(&options).map_err(standalone_error)?;
     }
 
+    let attached_database_url = if options.standalone {
+        None
+    } else if let Some(database_url) = options.database_url.clone() {
+        Some(database_url)
+    } else {
+        database_url_for("gwiki setup")?
+    };
+
     let (status, created, skipped, failed) = if options.standalone {
         let home = gobby_home().map_err(standalone_error)?;
         let mut service_options = DockerServiceOptions::new(home.clone());
@@ -52,8 +60,7 @@ pub(crate) fn execute(
         }
         let (database_url, service_report) =
             ensure_hub(&ensure_options).map_err(standalone_error)?;
-        let (created, skipped, failed) =
-            run_gwiki_standalone_postgres_setup(&setup, &database_url)?;
+        let (created, skipped, failed) = run_gwiki_postgres_setup(&setup, &database_url)?;
         write_gwiki_gcore_config(
             &home,
             &options,
@@ -64,8 +71,8 @@ pub(crate) fn execute(
         .map_err(standalone_error)?;
         let status = setup_status(&created, &skipped, &failed);
         (status, created, skipped, failed)
-    } else if let Some(database_url) = options.database_url.clone().or_else(database_url_from_env) {
-        let (created, skipped, failed) = validate_gwiki_postgres_setup(&database_url)?;
+    } else if let Some(database_url) = attached_database_url {
+        let (created, skipped, failed) = run_gwiki_postgres_setup(&setup, &database_url)?;
         let status = setup_status(&created, &skipped, &failed);
         (status, created, skipped, failed)
     } else {
@@ -83,7 +90,7 @@ pub(crate) fn execute(
     ))
 }
 
-fn run_gwiki_standalone_postgres_setup(
+fn run_gwiki_postgres_setup(
     setup: &impl StandaloneSetup,
     database_url: &str,
 ) -> Result<PostgresSetupResult, WikiError> {

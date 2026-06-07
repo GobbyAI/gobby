@@ -36,7 +36,7 @@ struct RuntimeStatus {
 }
 
 fn runtime_status() -> Result<RuntimeStatus, WikiError> {
-    let Some(database_url) = crate::support::env::database_url_from_env() else {
+    let Some(database_url) = crate::support::env::database_url_for("gwiki status")? else {
         return Ok(RuntimeStatus {
             status: "shell-ready",
             mode: "memory",

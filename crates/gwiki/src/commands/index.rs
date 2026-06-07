@@ -8,7 +8,7 @@ use serde_json::json;
 use crate::ingest::{self, IngestResult};
 use crate::search::SearchScope;
 use crate::support::counts::{IndexCounts, index_counts, postgres_index_counts};
-use crate::support::env::database_url_from_env;
+use crate::support::env::database_url_for;
 use crate::support::scope::{
     resolve_command_scope, resolved_scope_identity, search_scope_for_resolved,
     store_scope_for_search,
@@ -33,7 +33,7 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
 pub(crate) fn index_resolved_scope(
     scope: &crate::scope::ResolvedScope,
 ) -> Result<IndexCounts, WikiError> {
-    if let Some(database_url) = database_url_from_env() {
+    if let Some(database_url) = database_url_for("gwiki index")? {
         let mut conn = connect_postgres_index(&database_url, "gwiki index")?;
         let search_scope = search_scope_for_resolved(scope);
         {
@@ -68,7 +68,7 @@ pub(crate) fn execute_ingest_file(
     let project_id = ai_project_id(&output_scope);
     let gobby_home = gobby_home()?;
     let fetched_at = collect_timestamp()?;
-    if let Some(database_url) = database_url_from_env() {
+    if let Some(database_url) = database_url_for("gwiki ingest-file")? {
         let mut conn = connect_postgres_index(&database_url, "gwiki ingest-file")?;
         let (ai_context, options) = {
             let primary = PostgresConfigSource { conn: &mut conn };
@@ -131,7 +131,7 @@ pub(crate) fn execute_ingest_url(
     }
     let output_scope = resolved_scope_identity(&scope);
     let fetched_at = collect_timestamp()?;
-    if let Some(database_url) = database_url_from_env() {
+    if let Some(database_url) = database_url_for("gwiki ingest-url")? {
         let mut conn = connect_postgres_index(&database_url, "gwiki ingest-url")?;
         let search_scope = search_scope_for_resolved(&scope);
         let result = {
@@ -173,7 +173,7 @@ pub(crate) fn resolve_ingest_file_ai_context(
 ) -> Result<(AiContext, IngestFileOptions), WikiError> {
     let project_id = ai_project_id(scope);
     let gobby_home = gobby_home()?;
-    if let Some(database_url) = database_url_from_env() {
+    if let Some(database_url) = database_url_for(command)? {
         let mut conn = connect_postgres_index(&database_url, command)?;
         let primary = PostgresConfigSource { conn: &mut conn };
         let mut source = AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home)

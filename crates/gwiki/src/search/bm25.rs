@@ -95,7 +95,7 @@ WITH hits AS (
         c.content AS snippet,
         c.source_kind,
         c.content_hash,
-        {chunk_score_expr} AS score
+        {chunk_score_expr}::DOUBLE PRECISION AS score
     FROM gwiki_chunks c
     JOIN gwiki_documents d
         ON d.id = c.document_id
@@ -122,7 +122,7 @@ WITH hits AS (
         d.body AS snippet,
         d.source_kind,
         d.content_hash,
-        {document_score_expr} AS score
+        {document_score_expr}::DOUBLE PRECISION AS score
     FROM gwiki_documents d
     WHERE d.scope_kind = $2
       AND d.scope_id = $3
@@ -163,11 +163,12 @@ pub fn is_keyword_searchable_path(path: &str) -> bool {
     normalized.starts_with("wiki/sources/")
         || normalized.starts_with("wiki/concepts/")
         || normalized.starts_with("wiki/topics/")
+        || normalized.starts_with("wiki/code/")
 }
 
 fn searchable_path_predicate(column: &str) -> String {
     format!(
-        "{column} = 'raw/INDEX.md' OR {column} LIKE 'wiki/sources/%.md' OR {column} LIKE 'wiki/concepts/%.md' OR {column} LIKE 'wiki/topics/%.md'"
+        "{column} = 'raw/INDEX.md' OR {column} LIKE 'wiki/sources/%.md' OR {column} LIKE 'wiki/concepts/%.md' OR {column} LIKE 'wiki/topics/%.md' OR {column} LIKE 'wiki/code/%.md'"
     )
 }
 
@@ -363,6 +364,7 @@ mod tests {
             "wiki/sources/citation.md",
             "wiki/concepts/ownership.md",
             "wiki/topics/rust.md",
+            "wiki/code/modules/crates.md",
         ] {
             assert!(
                 is_keyword_searchable_path(path),
@@ -410,8 +412,8 @@ mod tests {
             .expect("query is searchable")
             .sql;
 
-        assert!(sql.contains("pdb.score(c.id) AS score"));
-        assert!(sql.contains("pdb.score(d.id) AS score"));
+        assert!(sql.contains("pdb.score(c.id)::DOUBLE PRECISION AS score"));
+        assert!(sql.contains("pdb.score(d.id)::DOUBLE PRECISION AS score"));
         assert!(!sql.contains("pg_search.score"));
     }
 

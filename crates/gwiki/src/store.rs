@@ -321,7 +321,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
              )
              VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8,
-                $9, $10::jsonb, $11::jsonb, $12, NOW(), NOW()
+                $9, $10::text::jsonb, $11::text::jsonb, $12, NOW(), NOW()
              )
              ON CONFLICT (scope_kind, scope_id, path)
              DO UPDATE SET
@@ -431,7 +431,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
                  )
                  VALUES (
                     $1, $2, $3, $4, $5, $6, $7,
-                    $8, $9, $10, $11::jsonb, $12::jsonb,
+                    $8, $9, $10, $11::text::jsonb, $12::text::jsonb,
                     $13, $14, NOW()
                  )",
                 &[
@@ -504,7 +504,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
                     id, scope_kind, scope_id, project_id, topic_name, path,
                     target_path, link_text, link_kind, provenance, created_at
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, NOW())
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text::jsonb, NOW())
              ON CONFLICT (scope_kind, scope_id, path, target_path, link_text, link_kind)
              DO UPDATE SET
                     id = EXCLUDED.id,
@@ -551,7 +551,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
 				id, scope_kind, scope_id, project_id, topic_name, path, document_path, source_kind,
 				content_hash, frontmatter, provenance, captured_at
 			 )
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, NOW())
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text::jsonb, $11::text::jsonb, NOW())
 			 ON CONFLICT (scope_kind, scope_id, document_path)
 			 DO UPDATE SET
 				id = EXCLUDED.id,
@@ -599,7 +599,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
                 id, scope_kind, scope_id, project_id, topic_name, path, source_kind,
                 content_hash, frontmatter, provenance, status, ingested_at
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, NOW())
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text::jsonb, $10::text::jsonb, $11, NOW())
              ON CONFLICT (id)
              DO UPDATE SET
                 project_id = EXCLUDED.project_id,

@@ -28,10 +28,16 @@ where
     S: AsRef<str>,
 {
     let known_targets = normalized_targets(known_targets);
+    let code_ranges = markdown_code_ranges(markdown);
     let mut links = Vec::new();
     let mut offset = 0;
 
     while offset < markdown.len() {
+        if let Some(next_offset) = code_range_end_containing(&code_ranges, offset) {
+            offset = next_offset;
+            continue;
+        }
+
         let rest = &markdown[offset..];
         if rest.starts_with("[[") {
             if let Some((link, next_offset)) = parse_wikilink(markdown, offset, &known_targets) {
@@ -218,6 +224,119 @@ fn is_escaped(markdown: &str, byte_index: usize) -> bool {
     count % 2 == 1
 }
 
+fn markdown_code_ranges(markdown: &str) -> Vec<(usize, usize)> {
+    let fenced = fenced_code_ranges(markdown);
+    let mut ranges = fenced.clone();
+    ranges.extend(inline_code_ranges(markdown, &fenced));
+    ranges.sort_unstable();
+    ranges
+}
+
+fn fenced_code_ranges(markdown: &str) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut offset = 0usize;
+    while offset < markdown.len() {
+        let current_line_end = line_end(markdown, offset);
+        if let Some((marker, marker_len)) = fence_marker(&markdown[offset..current_line_end]) {
+            let start = offset;
+            offset = current_line_end;
+            while offset < markdown.len() {
+                let candidate_end = line_end(markdown, offset);
+                if fence_closes(&markdown[offset..candidate_end], marker, marker_len) {
+                    offset = candidate_end;
+                    break;
+                }
+                offset = candidate_end;
+            }
+            ranges.push((start, offset));
+        } else {
+            offset = current_line_end;
+        }
+    }
+    ranges
+}
+
+fn inline_code_ranges(markdown: &str, excluded_ranges: &[(usize, usize)]) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut offset = 0usize;
+    while offset < markdown.len() {
+        if let Some(next_offset) = code_range_end_containing(excluded_ranges, offset) {
+            offset = next_offset;
+            continue;
+        }
+        if markdown.as_bytes()[offset] == b'`' && !is_escaped(markdown, offset) {
+            let tick_count = repeated_byte_count(markdown, offset, b'`');
+            if let Some(close_start) =
+                matching_backtick_run(markdown, offset + tick_count, tick_count)
+            {
+                let end = close_start + tick_count;
+                ranges.push((offset, end));
+                offset = end;
+                continue;
+            }
+            offset += tick_count;
+        } else {
+            offset += next_char_len(markdown, offset);
+        }
+    }
+    ranges
+}
+
+fn code_range_end_containing(ranges: &[(usize, usize)], offset: usize) -> Option<usize> {
+    ranges
+        .iter()
+        .find_map(|(start, end)| (*start <= offset && offset < *end).then_some(*end))
+}
+
+fn line_end(markdown: &str, offset: usize) -> usize {
+    markdown[offset..]
+        .find('\n')
+        .map_or(markdown.len(), |line_end| offset + line_end + 1)
+}
+
+fn fence_marker(line: &str) -> Option<(u8, usize)> {
+    let bytes = line.as_bytes();
+    let mut offset = 0usize;
+    while matches!(bytes.get(offset), Some(b' ')) && offset < 3 {
+        offset += 1;
+    }
+    let marker = *bytes.get(offset)?;
+    if marker != b'`' && marker != b'~' {
+        return None;
+    }
+    let marker_len = repeated_byte_count(line, offset, marker);
+    (marker_len >= 3).then_some((marker, marker_len))
+}
+
+fn fence_closes(line: &str, marker: u8, marker_len: usize) -> bool {
+    fence_marker(line).is_some_and(|(candidate, candidate_len)| {
+        candidate == marker && candidate_len >= marker_len
+    })
+}
+
+fn repeated_byte_count(markdown: &str, offset: usize, byte: u8) -> usize {
+    markdown.as_bytes()[offset..]
+        .iter()
+        .take_while(|candidate| **candidate == byte)
+        .count()
+}
+
+fn matching_backtick_run(markdown: &str, start: usize, tick_count: usize) -> Option<usize> {
+    let mut offset = start;
+    while offset < markdown.len() {
+        if markdown.as_bytes()[offset] == b'`' {
+            let run_count = repeated_byte_count(markdown, offset, b'`');
+            if !is_escaped(markdown, offset) && run_count == tick_count {
+                return Some(offset);
+            }
+            offset += run_count;
+        } else {
+            offset += next_char_len(markdown, offset);
+        }
+    }
+    None
+}
+
 fn normalized_target_parts(target: &str) -> (String, Option<String>) {
     let target = target.trim();
     let (path, anchor) = target
@@ -374,5 +493,22 @@ mod tests {
         assert_eq!(links.len(), 2);
         assert_eq!(links[0].target, r"Topic \]] still inside");
         assert_eq!(links[1].target, "Done");
+    }
+
+    #[test]
+    fn links_ignore_code_spans_and_fences() {
+        let markdown = concat!(
+            "Use `[[files/{file}|{file}]]` as a template.\n",
+            "```md\n",
+            "[[Missing in fence]]\n",
+            "[missing](inside-fence.md)\n",
+            "```\n",
+            "Then see [[Real]] and [Guide](guide.md).\n",
+        );
+        let links = extract_links(markdown, ["Real", "guide"]);
+
+        assert_eq!(links.len(), 2);
+        assert_eq!(links[0].target, "Real");
+        assert_eq!(links[1].target, "guide.md");
     }
 }

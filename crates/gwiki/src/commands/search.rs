@@ -8,7 +8,7 @@ use gobby_core::config::{
 
 use crate::output::{SearchOutput, SearchResultOutput};
 use crate::search as wiki_search;
-use crate::support::env::database_url_from_env;
+use crate::support::env::database_url_for;
 use crate::support::scope::{
     indexed_store_for_selection, resolve_command_scope, resolved_scope_identity,
     search_scope_for_resolved,
@@ -32,7 +32,7 @@ pub(crate) fn retrieve(
     limit: usize,
     include_semantic: bool,
 ) -> Result<SearchOutput, WikiError> {
-    if let Some(database_url) = database_url_from_env() {
+    if let Some(database_url) = database_url_for("gwiki search")? {
         let scope = resolve_command_scope(&selection)?;
         return run_search_attached(
             &database_url,

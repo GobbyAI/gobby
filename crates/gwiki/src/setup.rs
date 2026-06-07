@@ -89,47 +89,148 @@ impl GwikiStandaloneSetup {
             .to_string(),
         )];
 
-        for gwiki_table in GWIKI_POSTGRES_TABLES {
-            let table_name = gwiki_table.name();
-            objects.push(table(
-                table_name,
-                self.validate_relation_sql(table_name, "table")?,
-            ));
+        for &gwiki_table in GWIKI_POSTGRES_TABLES {
+            objects.push(table(gwiki_table.name(), self.table_sql(gwiki_table)?));
         }
         for &index_name in GWIKI_POSTGRES_INDEXES {
-            objects.push(index(
-                index_name,
-                self.validate_relation_sql(index_name, "index")?,
-            ));
+            objects.push(index(index_name, self.index_sql(index_name)?));
         }
 
         Ok(objects)
     }
 
-    fn validate_relation_sql(&self, relation: &str, label: &str) -> Result<String, SetupError> {
-        let qualified = self.qualified_regclass_literal(relation, label)?;
-        Ok(format!(
-            "DO $$
-             BEGIN
-                 IF to_regclass({qualified}) IS NULL THEN
-                     RAISE EXCEPTION 'required gwiki {label} `{relation}` is missing';
-                 END IF;
-             END
-             $$;"
-        ))
+    fn table_sql(&self, table: GwikiTable) -> Result<String, SetupError> {
+        let relation = self.qualified_relation_name(table.name(), "table")?;
+        Ok(match table {
+            GwikiTable::Documents => format!(
+                r#"CREATE TABLE IF NOT EXISTS {relation} (
+    id TEXT PRIMARY KEY,
+    scope_kind TEXT NOT NULL,
+    scope_id TEXT NOT NULL,
+    project_id TEXT,
+    topic_name TEXT,
+    path TEXT NOT NULL,
+    title TEXT NOT NULL,
+    source_kind TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    frontmatter JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+    provenance JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+    body TEXT NOT NULL,
+    indexed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);"#
+            ),
+            GwikiTable::Chunks => format!(
+                r#"CREATE TABLE IF NOT EXISTS {relation} (
+    id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL,
+    scope_kind TEXT NOT NULL,
+    scope_id TEXT NOT NULL,
+    project_id TEXT,
+    topic_name TEXT,
+    path TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    source_kind TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    frontmatter JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+    provenance JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+    heading_path TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+    content TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);"#
+            ),
+            GwikiTable::Links => format!(
+                r#"CREATE TABLE IF NOT EXISTS {relation} (
+    id TEXT PRIMARY KEY,
+    scope_kind TEXT NOT NULL,
+    scope_id TEXT NOT NULL,
+    project_id TEXT,
+    topic_name TEXT,
+    path TEXT NOT NULL,
+    target_path TEXT NOT NULL,
+    link_text TEXT NOT NULL,
+    link_kind TEXT NOT NULL,
+    provenance JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);"#
+            ),
+            GwikiTable::Sources => format!(
+                r#"CREATE TABLE IF NOT EXISTS {relation} (
+    id TEXT PRIMARY KEY,
+    scope_kind TEXT NOT NULL,
+    scope_id TEXT NOT NULL,
+    project_id TEXT,
+    topic_name TEXT,
+    path TEXT NOT NULL,
+    document_path TEXT NOT NULL,
+    source_kind TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    frontmatter JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+    provenance JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+    captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);"#
+            ),
+            GwikiTable::Ingestions => format!(
+                r#"CREATE TABLE IF NOT EXISTS {relation} (
+    id TEXT PRIMARY KEY,
+    scope_kind TEXT NOT NULL,
+    scope_id TEXT NOT NULL,
+    project_id TEXT,
+    topic_name TEXT,
+    path TEXT NOT NULL,
+    source_kind TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    frontmatter JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+    provenance JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+    status TEXT NOT NULL,
+    ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);"#
+            ),
+        })
     }
 
-    fn qualified_regclass_literal(
-        &self,
-        relation: &str,
-        label: &str,
-    ) -> Result<String, SetupError> {
-        let qualified = format!(
+    fn index_sql(&self, index_name: &str) -> Result<String, SetupError> {
+        let index = quote_identifier(index_name, "index")?;
+        let documents = self.qualified_relation_name(GwikiTable::Documents.name(), "table")?;
+        let chunks = self.qualified_relation_name(GwikiTable::Chunks.name(), "table")?;
+        let links = self.qualified_relation_name(GwikiTable::Links.name(), "table")?;
+        let sources = self.qualified_relation_name(GwikiTable::Sources.name(), "table")?;
+
+        match index_name {
+            "gwiki_documents_scope_path_idx" => Ok(format!(
+                "CREATE UNIQUE INDEX IF NOT EXISTS {index} ON {documents} (scope_kind, scope_id, path);"
+            )),
+            "gwiki_documents_content_hash_idx" => Ok(format!(
+                "CREATE INDEX IF NOT EXISTS {index} ON {documents} (scope_kind, scope_id, content_hash);"
+            )),
+            "gwiki_chunks_scope_path_idx" => Ok(format!(
+                "CREATE INDEX IF NOT EXISTS {index} ON {chunks} (scope_kind, scope_id, path, chunk_index);"
+            )),
+            "gwiki_sources_scope_path_idx" => Ok(format!(
+                "CREATE UNIQUE INDEX IF NOT EXISTS {index} ON {sources} (scope_kind, scope_id, document_path);"
+            )),
+            "gwiki_links_scope_idx" => Ok(format!(
+                "CREATE UNIQUE INDEX IF NOT EXISTS {index} ON {links} (scope_kind, scope_id, path, target_path, link_text, link_kind);"
+            )),
+            "gwiki_documents_search_bm25" => Ok(format!(
+                "CREATE INDEX IF NOT EXISTS {index} ON {documents} USING bm25 (id, path, title, body) WITH (key_field = 'id');"
+            )),
+            "gwiki_chunks_search_bm25" => Ok(format!(
+                "CREATE INDEX IF NOT EXISTS {index} ON {chunks} USING bm25 (id, path, content) WITH (key_field = 'id');"
+            )),
+            other => Err(SetupError::CreationFailed {
+                object: other.to_string(),
+                message: "unknown gwiki PostgreSQL index".to_string(),
+            }),
+        }
+    }
+
+    fn qualified_relation_name(&self, relation: &str, label: &str) -> Result<String, SetupError> {
+        Ok(format!(
             "{}.{}",
             quote_identifier(&self.schema, "schema")?,
             quote_identifier(relation, label)?
-        );
-        Ok(sql_string_literal(&qualified))
+        ))
     }
 }
 
@@ -213,11 +314,16 @@ fn execute_postgres_ddl(
         });
     };
 
-    pg.batch_execute(sql)
-        .map_err(|err| SetupError::CreationFailed {
+    pg.batch_execute(sql).map_err(|err| {
+        let message = err
+            .as_db_error()
+            .map(|db_error| db_error.message().to_string())
+            .unwrap_or_else(|| err.to_string());
+        SetupError::CreationFailed {
             object: object.to_string(),
-            message: err.to_string(),
-        })
+            message,
+        }
+    })
 }
 
 fn quote_identifier(value: &str, label: &str) -> Result<String, SetupError> {
@@ -244,10 +350,6 @@ fn quote_identifier(value: &str, label: &str) -> Result<String, SetupError> {
         });
     }
     Ok(format!("\"{escaped}\""))
-}
-
-fn sql_string_literal(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
 }
 
 #[cfg(test)]
@@ -301,7 +403,6 @@ mod tests {
             assert!(!combined_sql.contains(forbidden), "{combined_sql}");
         }
 
-        assert!(combined_sql.contains("to_regclass"), "{combined_sql}");
         assert!(combined_sql.contains("pg_extension"), "{combined_sql}");
         for table in GWIKI_POSTGRES_TABLES {
             assert!(combined_sql.contains(table.name()), "{combined_sql}");
@@ -311,8 +412,24 @@ mod tests {
         }
         assert!(!combined_sql.contains("CREATE EXTENSION"), "{combined_sql}");
         assert!(!combined_sql.contains("CREATE SCHEMA"), "{combined_sql}");
-        assert!(!combined_sql.contains("CREATE TABLE"), "{combined_sql}");
-        assert!(!combined_sql.contains("CREATE INDEX"), "{combined_sql}");
+        assert!(
+            combined_sql.contains("CREATE TABLE IF NOT EXISTS"),
+            "{combined_sql}"
+        );
+        assert!(
+            combined_sql.contains("CREATE UNIQUE INDEX IF NOT EXISTS"),
+            "{combined_sql}"
+        );
+        assert!(combined_sql.contains("USING bm25"), "{combined_sql}");
+        assert!(
+            combined_sql.contains("WITH (key_field = 'id')"),
+            "{combined_sql}"
+        );
+        assert!(
+            combined_sql
+                .contains("(scope_kind, scope_id, path, target_path, link_text, link_kind)"),
+            "{combined_sql}"
+        );
         assert!(!combined_sql.contains("ALTER "), "{combined_sql}");
         assert!(!combined_sql.contains("DROP "), "{combined_sql}");
 
