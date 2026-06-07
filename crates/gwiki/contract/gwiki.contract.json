@@ -127,6 +127,7 @@
         "limit",
         "results",
         "degradations",
+        "fusion_key",
         "path",
         "title",
         "summary",
@@ -636,8 +637,32 @@
         "command",
         "scope",
         "status",
+        "daemon_url",
+        "runtime",
+        "services"
+      ]
+    },
+    {
+      "name": "trust",
+      "summary": "Show search, graph, freshness, and audit trust status.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [],
+      "json_output_keys": [
+        "command",
+        "scope",
         "root",
-        "vault"
+        "trust_status",
+        "runtime",
+        "services",
+        "index_counts",
+        "degradations",
+        "freshness",
+        "audit_state",
+        "audit_summary",
+        "link_summary",
+        "graph_metrics",
+        "health_summary"
       ]
     },
     {

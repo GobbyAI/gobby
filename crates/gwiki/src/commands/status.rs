@@ -10,7 +10,7 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
 
 fn render(scope: ScopeIdentity) -> Result<CommandOutcome, WikiError> {
     let daemon_url = gobby_core::daemon_url::daemon_url();
-    let runtime = runtime_status()?;
+    let runtime = runtime_status_for("gwiki status")?;
     let payload = json!({
         "command": "status",
         "scope": scope,
@@ -29,14 +29,14 @@ Runtime: {}",
     Ok(super::scoped_outcome("status", &scope, payload, text))
 }
 
-struct RuntimeStatus {
-    status: &'static str,
-    mode: &'static str,
-    services: serde_json::Value,
+pub(crate) struct RuntimeStatus {
+    pub(crate) status: &'static str,
+    pub(crate) mode: &'static str,
+    pub(crate) services: serde_json::Value,
 }
 
-fn runtime_status() -> Result<RuntimeStatus, WikiError> {
-    let Some(database_url) = crate::support::env::database_url_for("gwiki status")? else {
+pub(crate) fn runtime_status_for(command: &'static str) -> Result<RuntimeStatus, WikiError> {
+    let Some(database_url) = crate::support::env::database_url_for(command)? else {
         return Ok(RuntimeStatus {
             status: "shell-ready",
             mode: "memory",
@@ -45,7 +45,7 @@ fn runtime_status() -> Result<RuntimeStatus, WikiError> {
     };
     let mut conn = gobby_core::postgres::connect_readonly(&database_url).map_err(|error| {
         WikiError::Config {
-            detail: format!("failed to connect to PostgreSQL for gwiki status: {error}"),
+            detail: format!("failed to connect to PostgreSQL for {command}: {error}"),
         }
     })?;
     let home = gobby_home()?;
@@ -53,7 +53,7 @@ fn runtime_status() -> Result<RuntimeStatus, WikiError> {
     let mut source =
         gobby_core::ai_context::AiConfigSource::with_primary_from_gobby_home(primary, &home)
             .map_err(|error| WikiError::Config {
-                detail: format!("failed to resolve runtime config for gwiki status: {error}"),
+                detail: format!("failed to resolve runtime config for {command}: {error}"),
             })?;
     let falkor = gobby_core::config::resolve_falkordb_config(&mut source);
     let qdrant = gobby_core::config::resolve_qdrant_config(&mut source).filter(|config| {

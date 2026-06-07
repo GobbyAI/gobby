@@ -5,7 +5,7 @@ pub mod semantic;
 
 use std::collections::HashSet;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gobby_core::degradation::DegradationKind;
 use serde::{Deserialize, Serialize};
@@ -113,6 +113,21 @@ pub struct WikiSearchResult {
     pub explanations: Vec<SearchSourceExplanation>,
     pub chunk: Option<ChunkProvenance>,
     pub provenance: SearchProvenance,
+}
+
+impl WikiSearchResult {
+    pub fn fusion_key(&self) -> String {
+        format!(
+            "{}:{}:{}",
+            self.scope.scope_kind(),
+            self.scope.scope_value(),
+            normalized_path(&self.path)
+        )
+    }
+}
+
+fn normalized_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

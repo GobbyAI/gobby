@@ -120,6 +120,7 @@ pub struct AskOutput {
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct SearchResultOutput {
     pub title: Option<String>,
+    pub fusion_key: String,
     pub wiki_page: PathBuf,
     pub source_path: PathBuf,
     pub snippet: String,
@@ -262,6 +263,7 @@ mod tests {
             2,
             vec![SearchResultOutput {
                 title: Some("Ownership".to_string()),
+                fusion_key: "topic:rust:wiki/topics/ownership.md".to_string(),
                 wiki_page: "wiki/topics/ownership.md".into(),
                 source_path: "raw/INDEX.md".into(),
                 snippet: "Ownership rules move values.".to_string(),
@@ -302,6 +304,7 @@ mod tests {
                 "limit": 2,
                 "results": [{
                     "title": "Ownership",
+                    "fusion_key": "topic:rust:wiki/topics/ownership.md",
                     "wiki_page": "wiki/topics/ownership.md",
                     "source_path": "raw/INDEX.md",
                     "snippet": "Ownership rules move values.",

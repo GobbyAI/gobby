@@ -46,6 +46,12 @@ pub struct DuplicateConcept {
 }
 
 pub fn run(vault_root: &Path, scope: ScopeIdentity) -> Result<HealthReport, WikiError> {
+    let report = inspect(vault_root, scope)?;
+    persist_report(vault_root, &report)?;
+    Ok(report)
+}
+
+pub fn inspect(vault_root: &Path, scope: ScopeIdentity) -> Result<HealthReport, WikiError> {
     let lint_report = crate::lint::run(vault_root, scope.clone())?;
     let pages = collect_pages(vault_root)?;
     let manifest = SourceManifest::read(vault_root)?;
@@ -84,7 +90,6 @@ pub fn run(vault_root: &Path, scope: ScopeIdentity) -> Result<HealthReport, Wiki
         json_path: PathBuf::from("meta/health/latest.json"),
         text_path: PathBuf::from("meta/health/latest.md"),
     };
-    persist_report(vault_root, &report)?;
     Ok(report)
 }
 
@@ -581,6 +586,29 @@ mod tests {
         assert_eq!(report.uncompiled_sources[0].source_id, source.id);
         assert!(root.join("meta/health/latest.json").exists());
         assert!(root.join("meta/health/latest.md").exists());
+    }
+
+    #[test]
+    fn inspect_does_not_persist_health_snapshots() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        SourceManifest::register(
+            root,
+            SourceDraft::url(
+                "https://example.com/source",
+                "2026-05-29T12:00:00Z",
+                "source",
+            )
+            .with_citation("Example Source"),
+        )
+        .expect("source registered");
+        write_page(root, "wiki/topics/page.md", "# Page\nSee raw/INDEX.md.\n");
+
+        let report = inspect(root, ScopeIdentity::topic("ops")).expect("health inspects");
+
+        assert_eq!(report.command, "health");
+        assert!(!root.join("meta/health/latest.json").exists());
+        assert!(!root.join("meta/health/latest.md").exists());
     }
 
     #[test]

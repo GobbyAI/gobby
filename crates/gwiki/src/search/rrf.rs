@@ -17,31 +17,35 @@ pub fn fuse_sources(
         };
     }
 
-    let bm25_ids = ranked_ids(&bm25_hits);
-    let semantic_ids = ranked_ids(&semantic_hits);
-    let graph_ids = ranked_ids(&graph_hits);
+    let bm25_keys = ranked_keys(&bm25_hits);
+    let semantic_keys = ranked_keys(&semantic_hits);
+    let graph_keys = ranked_keys(&graph_hits);
 
-    let mut by_id = BTreeMap::new();
+    let mut by_key = BTreeMap::new();
     for hit in bm25_hits.into_iter().chain(semantic_hits).chain(graph_hits) {
-        by_id.entry(hit.id.clone()).or_insert(hit);
+        let key = hit.fusion_key();
+        by_key
+            .entry(key)
+            .and_modify(|existing| merge_hit_metadata(existing, &hit))
+            .or_insert(hit);
     }
 
     let mut sources = Vec::new();
-    if !bm25_ids.is_empty() {
-        sources.push((SearchSource::Bm25.as_str(), bm25_ids));
+    if !bm25_keys.is_empty() {
+        sources.push((SearchSource::Bm25.as_str(), bm25_keys));
     }
-    if !graph_ids.is_empty() {
-        sources.push((SearchSource::Graph.as_str(), graph_ids));
+    if !graph_keys.is_empty() {
+        sources.push((SearchSource::Graph.as_str(), graph_keys));
     }
-    if !semantic_ids.is_empty() {
-        sources.push((SearchSource::Semantic.as_str(), semantic_ids));
+    if !semantic_keys.is_empty() {
+        sources.push((SearchSource::Semantic.as_str(), semantic_keys));
     }
 
     let mut results = gobby_core::search::rrf_merge(sources)
         .into_iter()
         .filter_map(|fused| {
-            let Some(mut result) = by_id.remove(&fused.id) else {
-                log::warn!("RRF returned id absent from source hit map: {}", fused.id);
+            let Some(mut result) = by_key.remove(&fused.id) else {
+                log::warn!("RRF returned key absent from source hit map: {}", fused.id);
                 return None;
             };
             result.score = fused.score;
@@ -85,8 +89,20 @@ pub fn fuse_sources(
     }
 }
 
-fn ranked_ids(hits: &[WikiSearchResult]) -> Vec<String> {
-    hits.iter().map(|hit| hit.id.clone()).collect()
+fn ranked_keys(hits: &[WikiSearchResult]) -> Vec<String> {
+    hits.iter().map(WikiSearchResult::fusion_key).collect()
+}
+
+fn merge_hit_metadata(existing: &mut WikiSearchResult, hit: &WikiSearchResult) {
+    if existing.title.is_none() {
+        existing.title.clone_from(&hit.title);
+    }
+    if existing.snippet.is_empty() && !hit.snippet.is_empty() {
+        existing.snippet.clone_from(&hit.snippet);
+    }
+    if existing.chunk.is_none() {
+        existing.chunk.clone_from(&hit.chunk);
+    }
 }
 
 #[cfg(test)]
@@ -157,6 +173,47 @@ mod tests {
                 )
             }),
             "fusion should preserve degradation metadata"
+        );
+    }
+
+    #[test]
+    fn fusion_uses_canonical_page_key() {
+        let response = fuse_sources(
+            vec![search_result(
+                "chunk:wiki/topics/rust.md:0",
+                SearchSource::Bm25,
+            )],
+            vec![search_result("point:semantic-rust", SearchSource::Semantic)],
+            vec![search_result(
+                "document:wiki/topics/rust.md",
+                SearchSource::Graph,
+            )],
+            Vec::new(),
+            10,
+        );
+
+        assert_eq!(response.results.len(), 1);
+        let fused = &response.results[0];
+        assert_eq!(fused.fusion_key(), "project:project-1:wiki/topics/rust.md");
+        assert_eq!(
+            fused.sources,
+            vec![
+                SearchSource::Bm25,
+                SearchSource::Graph,
+                SearchSource::Semantic
+            ]
+        );
+        assert_eq!(
+            fused
+                .explanations
+                .iter()
+                .map(|explanation| explanation.source)
+                .collect::<Vec<_>>(),
+            vec![
+                SearchSource::Bm25,
+                SearchSource::Graph,
+                SearchSource::Semantic
+            ]
         );
     }
 

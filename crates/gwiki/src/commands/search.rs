@@ -267,26 +267,30 @@ where
     let results = response
         .results
         .into_iter()
-        .map(|result| SearchResultOutput {
-            title: result.title,
-            wiki_page: result.path,
-            source_path: result.source_path,
-            snippet: result.snippet,
-            score: result.score,
-            sources: result
-                .sources
-                .iter()
-                .map(|source| source.as_str().to_string())
-                .collect(),
-            explanations: result
-                .explanations
-                .iter()
-                .map(|explanation| crate::output::SearchSourceExplanationOutput {
-                    source: explanation.source.as_str().to_string(),
-                    rank: explanation.rank,
-                    score: explanation.score,
-                })
-                .collect(),
+        .map(|result| {
+            let fusion_key = result.fusion_key();
+            SearchResultOutput {
+                title: result.title,
+                fusion_key,
+                wiki_page: result.path,
+                source_path: result.source_path,
+                snippet: result.snippet,
+                score: result.score,
+                sources: result
+                    .sources
+                    .iter()
+                    .map(|source| source.as_str().to_string())
+                    .collect(),
+                explanations: result
+                    .explanations
+                    .iter()
+                    .map(|explanation| crate::output::SearchSourceExplanationOutput {
+                        source: explanation.source.as_str().to_string(),
+                        rank: explanation.rank,
+                        score: explanation.score,
+                    })
+                    .collect(),
+            }
         })
         .collect::<Vec<_>>();
     let degradations = response

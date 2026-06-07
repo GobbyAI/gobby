@@ -30,6 +30,7 @@ const CLI_SUBCOMMANDS: &[&str] = &[
     "lint",
     "health",
     "status",
+    "trust",
 ];
 
 #[derive(Debug, Parser)]
@@ -124,6 +125,8 @@ enum CliCommand {
     Health,
     /// Show shell readiness.
     Status,
+    /// Show search, graph, freshness, and audit trust status.
+    Trust,
 }
 
 #[derive(Debug, Args)]
@@ -581,6 +584,7 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
         CliCommand::Lint => Ok(Command::Lint { scope }),
         CliCommand::Health => Ok(Command::Health { scope }),
         CliCommand::Status => Ok(Command::Status { scope }),
+        CliCommand::Trust => Ok(Command::Trust { scope }),
     }
 }
 

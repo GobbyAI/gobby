@@ -15,6 +15,7 @@ pub(crate) mod search;
 pub(crate) mod setup;
 pub(crate) mod sources;
 pub(crate) mod status;
+pub(crate) mod trust;
 
 use std::path::Path;
 
@@ -82,6 +83,7 @@ pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
         Command::Lint { scope } => lint::execute(scope),
         Command::Health { scope } => health::execute(scope),
         Command::Status { scope } => status::execute(scope),
+        Command::Trust { scope } => trust::execute(scope),
     }
 }
 

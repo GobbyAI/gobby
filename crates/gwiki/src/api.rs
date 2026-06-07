@@ -95,6 +95,9 @@ pub enum Command {
     Status {
         scope: ScopeSelection,
     },
+    Trust {
+        scope: ScopeSelection,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

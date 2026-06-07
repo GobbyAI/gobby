@@ -276,6 +276,7 @@ mod tests {
             10,
             vec![SearchResultOutput {
                 title: Some("Hooks".to_string()),
+                fusion_key: "topic:docs:wiki/hooks.md".to_string(),
                 wiki_page: PathBuf::from("wiki/hooks.md"),
                 source_path: PathBuf::from("raw/hooks.md"),
                 snippet: "Hooks run at turn boundaries.".to_string(),
