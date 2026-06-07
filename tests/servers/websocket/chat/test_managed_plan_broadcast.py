@@ -105,6 +105,20 @@ def _droid_result() -> StreamEvent:
     return StreamEvent(event_type="result", data={"usage": {}})
 
 
+def _droid_tool_call(tool_name: str, tool_input: dict[str, Any]) -> StreamEvent:
+    # ExitSpecMode reaches Gobby as a permission_request tool call; that kind
+    # skips the pre-tool lifecycle, matching the real plan-exit approval flow.
+    return StreamEvent(
+        event_type="content_delta",
+        data={
+            "kind": "permission_request",
+            "tool_name": tool_name,
+            "tool_input": tool_input,
+            "call_id": "tc-exit-spec",
+        },
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Codex
 # --------------------------------------------------------------------------- #
@@ -234,6 +248,69 @@ async def test_droid_plan_mode_turn_without_content_does_not_broadcast() -> None
 
     assert broadcasts == []
     assert session.has_pending_plan is False
+
+
+async def test_droid_structured_plan_supersedes_prose_preamble() -> None:
+    # The real failure (#15693): Droid streams a short conversational preamble,
+    # then delivers the actual spec via the ExitSpecMode tool argument. The
+    # structured plan must win over the preamble, not the other way around.
+    real_plan = "## Plan\n\n1. Step one\n2. Step two\n3. Step three"
+    session, broadcasts = _make_droid_session(
+        "plan",
+        [
+            _droid_text("Good. I have enough context to propose a plan."),
+            _droid_tool_call("ExitSpecMode", {"plan": real_plan}),
+        ],
+    )
+
+    [e async for e in session.send_message("draft a plan")]
+
+    assert len(broadcasts) == 1
+    assert broadcasts[0][0] == real_plan
+    assert session.has_pending_plan is True
+    assert session._pending_plan_structured is True
+
+
+async def test_droid_structured_plan_not_clobbered_by_later_prose() -> None:
+    # Once a structured plan is pinned, later (even longer) prose chatter must
+    # not displace it.
+    real_plan = "## Plan\n\n1. Step one"
+    session, broadcasts = _make_droid_session(
+        "plan",
+        [_droid_tool_call("ExitSpecMode", {"plan": real_plan})],
+    )
+    [e async for e in session.send_message("draft a plan")]
+    assert broadcasts[-1][0] == real_plan
+
+    session._backend = _FakeDroidBackend(
+        [_droid_text("Let me know if you'd like me to change anything at all here.")]
+    )
+    [e async for e in session.send_message("anything else?")]
+
+    # No new broadcast; the structured plan remains pinned.
+    assert len(broadcasts) == 1
+    assert session._pending_plan_content == real_plan
+    assert session._pending_plan_structured is True
+
+
+async def test_droid_longer_prose_supersedes_shorter_preamble_across_turns() -> None:
+    # Prose-only path (no ExitSpecMode): an early preamble turn must not pin the
+    # plan against a fuller plan emitted in a later turn of the same cycle.
+    session, broadcasts = _make_droid_session(
+        "plan",
+        [_droid_text("Now I have enough context to propose a plan.")],
+    )
+    [e async for e in session.send_message("draft a plan")]
+    assert len(broadcasts) == 1
+
+    real_plan = "## Plan\n\n1. Step one\n2. Step two\n3. Step three\n4. Step four"
+    session._backend = _FakeDroidBackend([_droid_text(real_plan)])
+    [e async for e in session.send_message("continue")]
+
+    assert len(broadcasts) == 2
+    assert broadcasts[1][0] == real_plan
+    assert session._pending_plan_content == real_plan
+    assert session._pending_plan_structured is False
 
 
 # --------------------------------------------------------------------------- #

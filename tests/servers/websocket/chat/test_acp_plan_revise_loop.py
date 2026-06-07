@@ -102,3 +102,42 @@ async def test_request_changes_then_revised_plan_rebroadcasts_with_feedback() ->
     assert session.has_pending_plan is True
     # The feedback was consumed (single-shot injection).
     assert session._plan_feedback is None
+
+
+@pytest.mark.asyncio
+async def test_longer_plan_supersedes_short_preamble_within_cycle() -> None:
+    # The shared guard fix (#15693): an early conversational preamble turn must
+    # not pin the plan against a fuller plan emitted in a LATER turn of the same
+    # cycle (no reject in between). Exercised on the ACP path because the guard
+    # lives in the shared ManagedWebChatPermissionsMixin, not per-backend.
+    prompts: list[str] = []
+    broadcasts: list[tuple[str | None, dict[str, Any]]] = []
+
+    session = ACPManagedChatSession(conversation_id="conv-2")
+    session.chat_mode = "plan"
+    session._connected = True
+
+    async def _on_plan_ready(content: str | None, input_data: dict[str, Any]) -> None:
+        broadcasts.append((content, input_data))
+
+    session._on_plan_ready = _on_plan_ready
+
+    # Turn 1: a short preamble pins (but must not stick for the whole cycle).
+    session._backend = _RecordingBackend(
+        [StreamEvent(event_type="content_delta", data={"content": "Now I have a plan."})],
+        prompts,
+    )
+    [e async for e in session.send_message("draft a plan")]
+    assert broadcasts[-1][0] == "Now I have a plan."
+
+    # Turn 2 (same cycle, no reject): the fuller plan supersedes the preamble.
+    real_plan = "## Plan\n\n1. Step one\n2. Step two\n3. Step three"
+    session._backend = _RecordingBackend(
+        [StreamEvent(event_type="content_delta", data={"content": real_plan})],
+        prompts,
+    )
+    [e async for e in session.send_message("continue")]
+
+    assert broadcasts[-1][0] == real_plan
+    assert session._pending_plan_content == real_plan
+    assert session._pending_plan_structured is False

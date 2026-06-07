@@ -21,6 +21,8 @@ from gobby.llm.claude_models import (
 from gobby.servers.websocket.chat.backends.droid import (
     DroidManagedChatSession,
     DroidWebChatBackend,
+    _extract_plan_from_tool_args,
+    _is_plan_exit_tool,
     droid_tool_name_adapter,
     parse_droid_stream_line,
 )
@@ -193,6 +195,31 @@ def test_droid_tool_name_adapter() -> None:
     assert droid_tool_name_adapter("mcp__gobby__list") == "mcp__gobby__list"
     assert droid_tool_name_adapter("Execute") == "Bash"
     assert droid_tool_name_adapter("Read") == "Read"
+
+
+def test_is_plan_exit_tool_matches_regardless_of_separators_and_case() -> None:
+    # Droid's spec-mode exit tool plus the cross-CLI plan-exit names, matched as
+    # alphanumeric-only lowercase so separators/casing don't matter.
+    assert _is_plan_exit_tool("ExitSpecMode")
+    assert _is_plan_exit_tool("exit_spec_mode")
+    assert _is_plan_exit_tool("ExitPlanMode")
+    assert _is_plan_exit_tool("update_plan")
+    # Ordinary tools are not plan-exit tools.
+    assert not _is_plan_exit_tool("Bash")
+    assert not _is_plan_exit_tool("Read")
+    assert not _is_plan_exit_tool("Write")
+
+
+def test_extract_plan_from_tool_args_prefers_known_keys_in_order() -> None:
+    assert _extract_plan_from_tool_args({"plan": "the plan"}) == "the plan"
+    assert _extract_plan_from_tool_args({"spec": "the spec"}) == "the spec"
+    # `plan` outranks `spec` when both are present.
+    assert _extract_plan_from_tool_args({"spec": "s", "plan": "p"}) == "p"
+    # Blank / non-string / absent values fall through to None so the caller can
+    # use the accumulated prose instead.
+    assert _extract_plan_from_tool_args({"plan": "   "}) is None
+    assert _extract_plan_from_tool_args({"plan": 123}) is None
+    assert _extract_plan_from_tool_args({}) is None
 
 
 def test_parse_stream_json_normalizes_content_blocks() -> None:

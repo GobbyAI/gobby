@@ -109,6 +109,7 @@ class ManagedChatSessionBase:
     _plan_file_path: str | None = field(default=None, repr=False)
     _last_plan_content: str | None = field(default=None, repr=False)
     _pending_plan_content: str | None = field(default=None, repr=False)
+    _pending_plan_structured: bool = field(default=False, repr=False)
     _pending_plan_allowed_prompts: list[str] | None = field(default=None, repr=False)
     _pending_post_plan_mode: str | None = field(default=None, repr=False)
     _pending_agent_name: str | None = field(default=None, repr=False)

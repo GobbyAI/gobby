@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { type ComponentProps } from 'react'
 import { PlanPendingActionStrip } from '../PlanPendingActionStrip'
+import { planPendingColors } from '../planPendingSurface'
 
 function renderStrip(overrides: Partial<ComponentProps<typeof PlanPendingActionStrip>> = {}) {
   const props: ComponentProps<typeof PlanPendingActionStrip> = {
@@ -14,13 +15,15 @@ function renderStrip(overrides: Partial<ComponentProps<typeof PlanPendingActionS
 }
 
 describe('PlanPendingActionStrip', () => {
-  it('renders the warning state without a side-stripe accent', () => {
+  it('renders the pending state without a side-stripe accent', () => {
     renderStrip()
     const strip = screen.getByTestId('plan-pending-strip')
     expect(screen.getByText('Plan awaiting approval')).toBeInTheDocument()
-    // Grayscale-legible: an icon carries the state, not hue alone.
+    // Grayscale-legible: an icon + the shared accent token carry the state,
+    // never hue alone.
     expect(strip.querySelector('svg')).toBeTruthy()
-    expect(strip.className).toContain('--color-warning-foreground')
+    expect(strip.className).toContain(planPendingColors.surfaceBg)
+    expect(strip.innerHTML).toContain(planPendingColors.accentText)
     expect(strip.className).not.toContain('border-l')
     expect(strip.className).not.toContain('border-r')
   })

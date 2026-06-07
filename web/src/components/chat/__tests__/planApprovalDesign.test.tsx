@@ -6,6 +6,7 @@ import { render, screen } from '@testing-library/react'
 import type { Artifact } from '../../../types/artifacts'
 import { PlanReviewCard } from '../../activity/PlanReviewCard'
 import { PlanPendingActionStrip } from '../PlanPendingActionStrip'
+import { planPendingColors } from '../planPendingSurface'
 
 // Render markdown as plain text so the pending banner is the only thing under test.
 vi.mock('../Markdown', () => ({
@@ -27,16 +28,20 @@ function makePlan(): Artifact {
 }
 
 /**
- * Design-fix guards for #15637. These pin the regressions this epic introduced
- * (.impeccable.md: awaiting-approval = warning hue 75; state read by
- * lightness/icon first, never hue alone; tokens, never hardcoded colors):
- *  - the awaiting-approval bar uses a warning SURFACE token for its background
- *    (the muddy-brown bug came from misusing the *foreground* token as a fill);
+ * Design-fix guards for #15637 / #15693. The awaiting-approval surface shares a
+ * single swappable color treatment (`planPendingColors`) across the Plans panel
+ * header and the status-bar strip, so these assert against that treatment and
+ * track the active variant automatically. They still pin the regressions this
+ * epic cared about (.impeccable.md: state read by lightness/icon first, never
+ * hue alone; tokens, never hardcoded colors):
+ *  - the awaiting-approval bar fills with the shared SURFACE token, never the
+ *    *-foreground* token misused as a fill (the original muddy-brown bug);
+ *  - the foreground token still carries the icon + label (grayscale-legible);
  *  - the status bars stay pinned to --activity-panel-bar-height with no inner
  *    redeclaration, and in-bar plan controls to --status-bar-control-height.
  */
 describe('plan-approval design fixes (#15637)', () => {
-  it('PlanReviewCard pending bar fills with the warning SURFACE token, not foreground', () => {
+  it('PlanReviewCard pending bar fills with the shared SURFACE token, not foreground', () => {
     render(
       <PlanReviewCard
         plan={makePlan()}
@@ -46,13 +51,13 @@ describe('plan-approval design fixes (#15637)', () => {
     )
     const banner = screen.getByTestId('plan-review-status')
     expect(banner.getAttribute('data-status')).toBe('pending')
-    // Background is the amber surface wash...
-    expect(banner.className).toContain('bg-[var(--color-warning-soft)]')
-    // ...not the foreground/text token misused as a fill (the brown bug).
-    expect(banner.className).not.toContain('bg-[color-mix(in_srgb,var(--color-warning-foreground)')
+    // Background is the shared surface fill for the active treatment...
+    expect(banner.className).toContain(planPendingColors.surfaceBg)
+    // ...never a *-foreground/text token misused as a fill (the brown bug).
+    expect(banner.className).not.toContain('var(--color-warning-foreground)')
   })
 
-  it('PlanReviewCard keeps the warning FOREGROUND token for the icon + label', () => {
+  it('PlanReviewCard carries the icon + label with the shared accent token', () => {
     render(
       <PlanReviewCard
         plan={makePlan()}
@@ -61,19 +66,19 @@ describe('plan-approval design fixes (#15637)', () => {
       />,
     )
     const banner = screen.getByTestId('plan-review-status')
-    // The semantic warning hue still carries the icon/label (grayscale-legible:
-    // an icon plus the label, never hue alone).
+    // The state hue carries the icon/label (grayscale-legible: an icon plus the
+    // label, never hue alone).
     expect(banner.querySelector('svg')).toBeTruthy()
-    expect(banner.innerHTML).toContain('--color-warning-foreground')
+    expect(banner.innerHTML).toContain(planPendingColors.accentText)
   })
 
-  it('PlanPendingActionStrip fills with the warning SURFACE token, not foreground', () => {
+  it('PlanPendingActionStrip fills with the shared SURFACE token, not foreground', () => {
     render(
       <PlanPendingActionStrip onApprove={vi.fn()} onRequestChanges={vi.fn()} onView={vi.fn()} />,
     )
     const strip = screen.getByTestId('plan-pending-strip')
-    expect(strip.className).toContain('bg-[var(--color-warning-soft)]')
-    expect(strip.className).not.toContain('bg-[color-mix(in_srgb,var(--color-warning-foreground)')
+    expect(strip.className).toContain(planPendingColors.surfaceBg)
+    expect(strip.className).not.toContain('var(--color-warning-foreground)')
   })
 
   it('status bars share --activity-panel-bar-height and never redeclare it on an inner scope', () => {

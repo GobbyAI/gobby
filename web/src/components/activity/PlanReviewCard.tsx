@@ -4,6 +4,7 @@ import type { ApprovalOption } from '../../types/chat'
 import { cn } from '../../lib/utils'
 import { Markdown } from '../chat/Markdown'
 import { PlanApprovalActions } from '../chat/PlanApprovalActions'
+import { planPendingColors } from '../chat/planPendingSurface'
 import { useIsMobile } from '../../hooks/useIsMobile'
 
 interface PlanReviewCardProps {
@@ -69,11 +70,15 @@ export const PlanReviewCard = memo(function PlanReviewCard({
         <div
           data-testid="plan-review-status"
           data-status="pending"
-          className="flex flex-col gap-3 border-b border-[color-mix(in_srgb,var(--color-warning-foreground)_22%,transparent)] bg-[var(--color-warning-soft)] px-4 py-3"
+          className={cn(
+            'flex flex-col gap-3 border-b px-4 py-3',
+            planPendingColors.surfaceBg,
+            planPendingColors.borderColor,
+          )}
         >
           <div className="flex items-center gap-2">
-            <ClockIcon className="shrink-0 text-[var(--color-warning-foreground)]" />
-            <span className="text-sm font-semibold text-[var(--color-warning-foreground)]">
+            <ClockIcon className={cn('shrink-0', planPendingColors.accentText)} />
+            <span className={cn('text-sm font-semibold', planPendingColors.accentText)}>
               Awaiting your approval
             </span>
           </div>
@@ -87,6 +92,7 @@ export const PlanReviewCard = memo(function PlanReviewCard({
               onApprove={onApprovePlan}
               onRequestChanges={handleRequestChanges}
               options={planApprovalOptions}
+              layout="stacked"
               testIdPrefix="plan-review"
             />
           )}

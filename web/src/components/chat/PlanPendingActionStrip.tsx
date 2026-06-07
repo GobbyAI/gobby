@@ -2,6 +2,7 @@ import type { ApprovalOption } from '../../types/chat'
 import { cn } from '../../lib/utils'
 import { Button } from '../shared/Button'
 import { PlanApprovalActions } from './PlanApprovalActions'
+import { planPendingColors } from './planPendingSurface'
 
 interface PlanPendingActionStripProps {
   onApprove: (option?: ApprovalOption) => void
@@ -14,10 +15,12 @@ interface PlanPendingActionStripProps {
 }
 
 /**
- * Altitude-2 glanceable-action surface: a compact warning-state strip with
+ * Altitude-2 glanceable-action surface: a compact pending-state strip with
  * Approve / Request-changes / View, shown as the pending state of the agent
- * status bar (and reused in the mobile chat view). Warning token + clock icon,
- * no side-stripe accent per .impeccable.md BAN 1; reuses the shared actions.
+ * status bar (and reused in the mobile chat view). Shares the approval-surface
+ * color treatment (`planPendingColors`) with the Plans panel header; clock icon
+ * carries the state, no side-stripe accent per .impeccable.md BAN 1; reuses the
+ * shared actions.
  */
 export function PlanPendingActionStrip({
   onApprove,
@@ -33,11 +36,18 @@ export function PlanPendingActionStrip({
       aria-live="polite"
       aria-label="Plan awaiting approval"
       className={cn(
-        'flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-md border border-[color-mix(in_srgb,var(--color-warning-foreground)_24%,transparent)] bg-[var(--color-warning-soft)] px-2.5 py-1.5',
+        'flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-md border px-2.5 py-1.5',
+        planPendingColors.surfaceBg,
+        planPendingColors.borderColor,
         className,
       )}
     >
-      <span className="flex items-center gap-1.5 text-xs font-semibold text-[var(--color-warning-foreground)]">
+      <span
+        className={cn(
+          'flex items-center gap-1.5 text-xs font-semibold',
+          planPendingColors.accentText,
+        )}
+      >
         <ClockIcon className="shrink-0" />
         Plan awaiting approval
       </span>

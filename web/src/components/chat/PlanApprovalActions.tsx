@@ -22,6 +22,13 @@ interface PlanApprovalActionsProps {
    * affordances.
    */
   testIdPrefix?: string
+  /**
+   * Button arrangement. `inline` (default) is one wrapping row, used by the
+   * desktop status-bar strip. `stacked` lays the approve options out 2-up
+   * (Approve (YOLO) | Approve (Act)) with a full-width Reject below and 44px
+   * touch targets — used by the mobile Plans panel.
+   */
+  layout?: 'inline' | 'stacked'
 }
 
 /**
@@ -48,10 +55,12 @@ export function PlanApprovalActions({
   rejectLabel = 'Reject',
   className,
   testIdPrefix,
+  layout = 'inline',
 }: PlanApprovalActionsProps) {
   const [showFeedback, setShowFeedback] = useState(false)
   const [feedback, setFeedback] = useState('')
 
+  const stacked = layout === 'stacked'
   const tid = (suffix: string) => (testIdPrefix ? `${testIdPrefix}-${suffix}` : undefined)
 
   // The comment is optional: an empty submit still rejects the plan.
@@ -79,11 +88,11 @@ export function PlanApprovalActions({
           autoFocus
           rows={2}
         />
-        <div className="flex gap-2">
+        <div className={stacked ? 'grid grid-cols-2 gap-2' : 'flex gap-2'}>
           <Button
             size="sm"
             variant="destructive"
-            className="gap-1.5"
+            className={cn('gap-1.5', stacked && 'w-full pointer-coarse:min-h-11')}
             onClick={submitReject}
             data-testid={tid('send')}
           >
@@ -93,6 +102,7 @@ export function PlanApprovalActions({
           <Button
             size="sm"
             variant="outline"
+            className={cn(stacked && 'w-full pointer-coarse:min-h-11')}
             onClick={() => {
               setShowFeedback(false)
               setFeedback('')
@@ -106,17 +116,18 @@ export function PlanApprovalActions({
   }
 
   const hasOptions = Array.isArray(options) && options.length > 0
+  const approveBtnClass = cn('gap-1.5', stacked && 'w-full pointer-coarse:min-h-11')
 
   return (
     <div className={cn('flex flex-col gap-2', className)}>
-      <div className="flex flex-wrap gap-2">
+      <div className={stacked ? 'grid grid-cols-2 gap-2' : 'flex flex-wrap gap-2'}>
         {hasOptions ? (
           options.map((option) => (
             <Button
               key={option.id}
               size="sm"
               variant={option.emphasis === 'primary' ? 'primary' : 'accent'}
-              className="gap-1.5"
+              className={approveBtnClass}
               onClick={() => onApprove(option)}
               title={option.description}
               data-testid={tid(`option-${option.id}`)}
@@ -129,7 +140,7 @@ export function PlanApprovalActions({
           <Button
             size="sm"
             variant="primary"
-            className="gap-1.5"
+            className={cn(approveBtnClass, stacked && 'col-span-2')}
             onClick={() => onApprove()}
             data-testid={tid('approve')}
           >
@@ -137,17 +148,33 @@ export function PlanApprovalActions({
             {approveLabel}
           </Button>
         )}
+        {/* Inline: Reject shares the wrapping row. Stacked: it drops to its own
+            full-width row below the 2-up approve grid (rendered next). */}
+        {!stacked && (
+          <Button
+            size="sm"
+            variant="destructive"
+            className="gap-1.5"
+            onClick={() => setShowFeedback(true)}
+            data-testid={tid('reject')}
+          >
+            <RejectIcon />
+            {rejectLabel}
+          </Button>
+        )}
+      </div>
+      {stacked && (
         <Button
           size="sm"
           variant="destructive"
-          className="gap-1.5"
+          className="w-full gap-1.5 pointer-coarse:min-h-11"
           onClick={() => setShowFeedback(true)}
           data-testid={tid('reject')}
         >
           <RejectIcon />
           {rejectLabel}
         </Button>
-      </div>
+      )}
     </div>
   )
 }

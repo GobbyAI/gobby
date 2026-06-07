@@ -75,6 +75,38 @@ def droid_tool_name_adapter(raw_tool_name: str) -> str:
     return tool_name if isinstance(tool_name, str) and tool_name else raw_tool_name
 
 
+# Plan-exit / spec tools whose argument carries the structured plan body. Droid
+# presents a plan via ``ExitSpecMode`` (Factory "spec mode"); the others cover
+# Claude-style ``ExitPlanMode`` and Codex-style ``update_plan`` should Droid ever
+# surface them. Compared as alphanumeric-only lowercase so separators/casing in
+# the upstream tool name don't matter.
+_PLAN_EXIT_TOOL_KEYS = frozenset({"exitspecmode", "exitplanmode", "updateplan"})
+
+# Argument keys, in priority order, that may hold the plan/spec body.
+_PLAN_TOOL_ARG_KEYS: tuple[str, ...] = ("plan", "spec", "content", "markdown", "text")
+
+
+def _is_plan_exit_tool(tool_name: str) -> bool:
+    """Whether ``tool_name`` is a plan-exit/spec tool carrying a plan body."""
+    key = "".join(ch for ch in tool_name.lower() if ch.isalnum())
+    return key in _PLAN_EXIT_TOOL_KEYS
+
+
+def _extract_plan_from_tool_args(arguments: dict[str, Any]) -> str | None:
+    """Pull the plan/spec body from a plan-exit tool's arguments.
+
+    Tries the known plan argument keys in priority order and returns the first
+    non-empty string. Returns ``None`` when the tool carries no plan body (some
+    CLIs use the tool purely as an exit signal), so the caller falls back to the
+    accumulated assistant prose.
+    """
+    for key in _PLAN_TOOL_ARG_KEYS:
+        value = arguments.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
 @dataclass
 class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSessionBase):
     """Web-chat session backed by a per-session Droid stream-jsonrpc process."""
@@ -146,6 +178,10 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
             pending_tool_calls: dict[str, dict[str, Any]] = {}
             saw_content_delta = False
             plan_text_parts: list[str] = []
+            # Authoritative plan body captured from a plan-exit tool argument
+            # (Droid ExitSpecMode). Takes priority over accumulated prose, which
+            # is often just a conversational preamble (#15693).
+            structured_plan: str | None = None
             final_done: DoneEvent | None = None
 
             try:
@@ -168,6 +204,19 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
                             "tool_name": chat_event.tool_name,
                             "tool_input": chat_event.arguments,
                         }
+                        if _is_plan_exit_tool(chat_event.tool_name):
+                            extracted = _extract_plan_from_tool_args(chat_event.arguments)
+                            # Diagnostic doubles as the arg-shape confirmation:
+                            # logs the actual argument keys for plan-exit tools so
+                            # the extraction key set stays correct over time.
+                            logger.info(
+                                "[PLAN-DIAG] droid plan-exit tool=%s arg_keys=%s extracted=%s",
+                                chat_event.tool_name,
+                                sorted(chat_event.arguments.keys()),
+                                "yes" if extracted else "no",
+                            )
+                            if extracted is not None:
+                                structured_plan = extracted
                         if stream_event.data.get("kind") != "permission_request":
                             await self._apply_pre_tool_lifecycle(
                                 chat_event.tool_name,
@@ -203,9 +252,12 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
                     if chat_event is not None:
                         yield chat_event
 
-                await self._maybe_broadcast_pending_plan(
-                    "".join(plan_text_parts), saw_content_delta
-                )
+                if structured_plan is not None:
+                    await self._maybe_broadcast_pending_plan(structured_plan, True, structured=True)
+                else:
+                    await self._maybe_broadcast_pending_plan(
+                        "".join(plan_text_parts), saw_content_delta
+                    )
                 yield final_done or DoneEvent(
                     tool_calls_count=0,
                     sdk_session_id=self.sdk_session_id,

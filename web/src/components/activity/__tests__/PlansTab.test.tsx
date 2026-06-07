@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { type ComponentProps } from 'react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { PlansTab } from '../PlansTab'
+import { planPendingColors } from '../../chat/planPendingSurface'
 import type { Artifact } from '../../../types/artifacts'
 
 // Render the markdown as plain text so plan-content assertions are deterministic.
@@ -93,9 +94,11 @@ describe('PlansTab', () => {
     // BAN 1: no left/right side-stripe accent on the card.
     expect(status.className).not.toContain('border-l')
     expect(status.className).not.toContain('border-r')
-    // Grayscale-legible: state carried by an icon + the warning token, not hue alone.
+    // Grayscale-legible: state carried by an icon + the shared accent token on
+    // the icon/label, not hue alone; the surface uses the shared fill.
     expect(status.querySelector('svg')).toBeTruthy()
-    expect(status.className).toContain('--color-warning-foreground')
+    expect(status.className).toContain(planPendingColors.surfaceBg)
+    expect(status.innerHTML).toContain(planPendingColors.accentText)
   })
 
   it('renders approve / reject in the panel on mobile', () => {

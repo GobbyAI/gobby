@@ -63,6 +63,10 @@ class ManagedWebChatPermissionsMixin:
     _plan_file_path: str | None
     _last_plan_content: str | None
     _pending_plan_content: str | None
+    # True when the pinned plan came from a structured plan-exit tool argument
+    # (e.g. Droid ExitSpecMode) rather than accumulated assistant prose. A
+    # structured plan is authoritative and prose never clobbers it.
+    _pending_plan_structured: bool
     _pending_plan_allowed_prompts: list[str] | None
     _pending_post_plan_mode: str | None
     _on_mode_persist: Callable[[str], None] | None
@@ -95,6 +99,7 @@ class ManagedWebChatPermissionsMixin:
             self._plan_file_path = None
             self._last_plan_content = None
             self._pending_plan_content = None
+            self._pending_plan_structured = False
             self._pending_plan_allowed_prompts = None
             self._pending_post_plan_mode = None
         else:
@@ -104,6 +109,7 @@ class ManagedWebChatPermissionsMixin:
             self._plan_approved = False
             self._plan_feedback = None
             self._pending_plan_content = None
+            self._pending_plan_structured = False
             self._pending_plan_allowed_prompts = None
         if self._on_mode_persist:
             try:
@@ -128,15 +134,62 @@ class ManagedWebChatPermissionsMixin:
     def _clear_pending_plan_prompt(self) -> None:
         """Clear the in-flight plan approval prompt shown in the UI."""
         self._pending_plan_content = None
+        self._pending_plan_structured = False
         self._pending_plan_allowed_prompts = None
 
-    async def _maybe_broadcast_pending_plan(self, plan_text: str, saw_content: bool) -> None:
+    def _should_supersede_pending_plan(self, text: str, *, structured: bool) -> bool:
+        """Decide whether ``text`` should replace the currently pinned plan.
+
+        The first substantive content in a plan cycle always broadcasts. After
+        that, within the same approval cycle (the pin is reset on approve/reject
+        via :meth:`_clear_pending_plan_prompt` and on plan-mode entry):
+
+        * A **structured** plan (delivered as a plan-exit tool argument) wins
+          over an earlier prose preamble, and a structured plan is never
+          clobbered by later prose.
+        * **Prose** only supersedes earlier prose when it is genuinely different
+          and not shorter — so an early conversational preamble ("Now I have
+          enough context to propose a plan.") cannot outrank the longer real
+          plan emitted in a later turn, while trailing chatter cannot displace
+          an already-pinned plan.
+
+        Shorter revisions are still surfaced: a reject clears the pin first, so
+        the revised plan broadcasts via the first-content path regardless of
+        length.
+        """
+        current = self._pending_plan_content
+        if current is None:
+            return True
+        if text == current:
+            return False
+        if structured:
+            # Authoritative: a plan-exit tool argument always supersedes a prose
+            # preamble (regardless of length), and a newer structured plan
+            # supersedes an older one.
+            return True
+        if self._pending_plan_structured:
+            # Never let later prose clobber an authoritative structured plan.
+            return False
+        # Prose vs prose: a fuller later turn supersedes a shorter preamble;
+        # trailing chatter cannot displace an already-pinned plan.
+        return len(text) >= len(current)
+
+    async def _maybe_broadcast_pending_plan(
+        self, plan_text: str, saw_content: bool, *, structured: bool = False
+    ) -> None:
         """Surface a presented plan to the web UI for managed CLIs.
 
-        Managed providers have no ExitPlanMode tool, so a plan is delivered as a
-        normal assistant turn. When a substantive turn completes in plan mode,
-        broadcast plan_pending_approval using the same payload shape as the SDK
-        path so it flows through the shared frontend surfaces.
+        Managed providers deliver a plan either as a structured plan-exit tool
+        argument (Droid ``ExitSpecMode``) or as a normal assistant turn. When a
+        substantive turn completes in plan mode, broadcast plan_pending_approval
+        using the same payload shape as the SDK path so it flows through the
+        shared frontend surfaces.
+
+        ``structured`` marks ``plan_text`` as authoritative tool-argument
+        content; :meth:`_should_supersede_pending_plan` lets it replace a prose
+        preamble pinned earlier in the same cycle. Structured callers pass their
+        own ``saw_content`` because the plan does not arrive as ``content_delta``
+        prose.
         """
         if self.chat_mode != "plan" or self._plan_approved:
             return
@@ -145,9 +198,10 @@ class ManagedWebChatPermissionsMixin:
         text = plan_text.strip()
         if not text:
             return
-        if self._pending_plan_content is not None:
+        if not self._should_supersede_pending_plan(text, structured=structured):
             return
         self._pending_plan_content = text
+        self._pending_plan_structured = structured
         self._last_plan_content = text
         if self._on_plan_ready is not None:
             await self._on_plan_ready(text, {"plan": text})

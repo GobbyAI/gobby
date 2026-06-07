@@ -114,4 +114,43 @@ describe('PlanApprovalActions', () => {
     expect(screen.queryByTestId('plan-manual-switch-note')).not.toBeInTheDocument()
     expect(screen.queryByText(/stays in plan mode after approval/i)).not.toBeInTheDocument()
   })
+
+  it('stacked layout makes the options 2-up and Reject full-width with touch targets', () => {
+    render(
+      <PlanApprovalActions
+        onApprove={vi.fn()}
+        onRequestChanges={vi.fn()}
+        options={YOLO_ACT_OPTIONS}
+        layout="stacked"
+        testIdPrefix="x"
+      />,
+    )
+    const yolo = screen.getByTestId('x-option-approve_yolo')
+    const reject = screen.getByTestId('x-reject')
+    // Approve options fill their grid column with a 44px touch target.
+    expect(yolo.className).toContain('w-full')
+    expect(yolo.className).toContain('pointer-coarse:min-h-11')
+    // The two approve options share a 2-up grid row.
+    expect(yolo.parentElement?.className).toContain('grid-cols-2')
+    // Reject drops to its own full-width row below the grid.
+    expect(reject.className).toContain('w-full')
+    expect(reject.className).toContain('pointer-coarse:min-h-11')
+    expect(reject.parentElement?.className).not.toContain('grid-cols-2')
+  })
+
+  it('inline layout (default) keeps one wrapping row and no full-width buttons', () => {
+    render(
+      <PlanApprovalActions
+        onApprove={vi.fn()}
+        onRequestChanges={vi.fn()}
+        options={YOLO_ACT_OPTIONS}
+        testIdPrefix="x"
+      />,
+    )
+    const yolo = screen.getByTestId('x-option-approve_yolo')
+    expect(yolo.className).not.toContain('w-full')
+    expect(yolo.parentElement?.className).toContain('flex-wrap')
+    // Reject shares the same wrapping row as the options.
+    expect(screen.getByTestId('x-reject').parentElement?.className).toContain('flex-wrap')
+  })
 })
