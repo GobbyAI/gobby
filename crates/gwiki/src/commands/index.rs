@@ -1,7 +1,12 @@
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "ai")]
+use gobby_core::ai::effective_route;
 use gobby_core::ai_context::{AiConfigSource, AiContext, LocalAiConfigSource};
-use gobby_core::config::{ConfigSource, resolve_falkordb_config};
+use gobby_core::config::{
+    AiCapability, AiRouting, ConfigSource, QdrantConfig, resolve_embedding_config,
+    resolve_falkordb_config, resolve_qdrant_config,
+};
 use postgres::Client;
 use serde_json::json;
 
@@ -17,7 +22,7 @@ use crate::support::search::PostgresConfigSource;
 use crate::support::time::collect_timestamp;
 use crate::{
     CommandOutcome, IngestFileOptions, ScopeIdentity, ScopeKind, ScopeSelection, WikiError,
-    indexer, store, vault,
+    indexer, store, vault, vector,
 };
 
 const VIDEO_FRAME_INTERVAL_KEY: &str = "gwiki.ingest.video_frame_interval_seconds";
@@ -40,6 +45,7 @@ pub(crate) fn index_resolved_scope(
             let mut store = postgres_store_for_search(&mut conn, &search_scope);
             indexer::index_vault(scope.root(), &mut store)?;
         }
+        sync_qdrant_vectors(&mut conn, &search_scope, "gwiki index")?;
         sync_falkor_graph(&mut conn, &search_scope, "gwiki index")?;
         return indexed_counts_for_postgres(&mut conn, &search_scope, true);
     }
@@ -91,6 +97,7 @@ pub(crate) fn execute_ingest_file(
                 &fetched_at,
             )?
         };
+        sync_qdrant_vectors(&mut conn, &search_scope, "gwiki ingest-file")?;
         let counts = indexed_counts_for_postgres(&mut conn, &search_scope, true)?;
         sync_falkor_graph(&mut conn, &search_scope, "gwiki ingest-file")?;
         return Ok(render_ingest_file(&path, output_scope, &result, counts));
@@ -141,6 +148,7 @@ pub(crate) fn execute_ingest_url(
         let counts =
             indexed_counts_for_postgres(&mut conn, &search_scope, !result.accepted.is_empty())?;
         if !result.accepted.is_empty() {
+            sync_qdrant_vectors(&mut conn, &search_scope, "gwiki ingest-url")?;
             sync_falkor_graph(&mut conn, &search_scope, "gwiki ingest-url")?;
         }
         return Ok(render_ingest_url(output_scope, &result, counts));
@@ -261,6 +269,125 @@ fn sync_falkor_graph(
         );
     }
     Ok(())
+}
+
+fn sync_qdrant_vectors(
+    conn: &mut Client,
+    search_scope: &SearchScope,
+    command: &'static str,
+) -> Result<(), WikiError> {
+    let gobby_home = gobby_home()?;
+    let embedding = {
+        let primary = PostgresConfigSource { conn };
+        let mut source = AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home)
+            .map_err(|error| WikiError::Config {
+                detail: format!("failed to resolve AI config for {command}: {error}"),
+            })?;
+        let ai_context = AiContext::resolve(None, &mut source);
+        resolve_vector_embedding(&ai_context, &mut source)
+    };
+    let qdrant = {
+        let primary = PostgresConfigSource { conn };
+        let mut source = AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home)
+            .map_err(|error| WikiError::Config {
+                detail: format!("failed to resolve Qdrant config for {command}: {error}"),
+            })?;
+        resolve_qdrant_config(&mut source).filter(qdrant_config_has_url)
+    };
+
+    let Some(embedding) = embedding else {
+        log::warn!("{command}: embedding config not found; skipping gwiki vector sync");
+        return Ok(());
+    };
+    let Some(qdrant) = qdrant else {
+        log::warn!("{command}: Qdrant config not found; skipping gwiki vector sync");
+        return Ok(());
+    };
+
+    let mut source = vector::PostgresWikiVectorChunkSource::new(conn);
+    let mut embedder = vector::GwikiEmbeddingBackend::new(embedding);
+    let mut store = vector::GwikiQdrantVectorStore::new(qdrant);
+    let outcome = vector::sync_scope_vectors(search_scope, &mut source, &mut embedder, &mut store)
+        .map_err(|error| WikiError::Config {
+            detail: format!("failed to sync Qdrant vectors for {command}: {error}"),
+        })?;
+    log::debug!(
+        "{command}: synced gwiki Qdrant vectors: chunks={} upserted={} stale_paths_deleted={}",
+        outcome.chunks,
+        outcome.upserted,
+        outcome.deleted_stale_paths
+    );
+    Ok(())
+}
+
+fn resolve_vector_embedding(
+    context: &AiContext,
+    source: &mut impl ConfigSource,
+) -> Option<crate::search::semantic::SemanticEmbedding> {
+    match effective_embedding_route(context) {
+        AiRouting::Off => None,
+        AiRouting::Daemon => {
+            #[cfg(feature = "ai")]
+            {
+                Some(crate::search::semantic::SemanticEmbedding::Daemon(
+                    Box::new(context.clone()),
+                ))
+            }
+            #[cfg(not(feature = "ai"))]
+            {
+                None
+            }
+        }
+        AiRouting::Direct => {
+            resolve_embedding_config(source).map(crate::search::semantic::SemanticEmbedding::Direct)
+        }
+        AiRouting::Auto => {
+            #[cfg(feature = "ai")]
+            {
+                Some(crate::search::semantic::SemanticEmbedding::Daemon(
+                    Box::new(context.clone()),
+                ))
+            }
+            #[cfg(not(feature = "ai"))]
+            {
+                resolve_embedding_config(source)
+                    .map(crate::search::semantic::SemanticEmbedding::Direct)
+            }
+        }
+    }
+}
+
+fn effective_embedding_route(context: &AiContext) -> AiRouting {
+    #[cfg(feature = "ai")]
+    {
+        effective_route(context, AiCapability::Embed)
+    }
+    #[cfg(not(feature = "ai"))]
+    {
+        match context.binding(AiCapability::Embed).routing {
+            AiRouting::Off => AiRouting::Off,
+            AiRouting::Direct => AiRouting::Direct,
+            AiRouting::Daemon => {
+                log::warn!(
+                    "gwiki was built without ai support; daemon-backed embeddings are disabled"
+                );
+                AiRouting::Off
+            }
+            AiRouting::Auto => {
+                log::warn!(
+                    "gwiki was built without ai support; auto embedding route cannot use the daemon"
+                );
+                AiRouting::Auto
+            }
+        }
+    }
+}
+
+fn qdrant_config_has_url(config: &QdrantConfig) -> bool {
+    config
+        .url
+        .as_deref()
+        .is_some_and(|url| !url.trim().is_empty())
 }
 
 fn indexed_counts_for_postgres(

@@ -374,8 +374,14 @@ fn is_external_target(target: &str) -> bool {
 
 fn scope_params(scope: &SearchScope) -> HashMap<String, String> {
     HashMap::from([
-        ("scope_kind".to_string(), scope.scope_kind().to_string()),
-        ("scope_id".to_string(), scope.scope_value().to_string()),
+        (
+            "scope_kind".to_string(),
+            gobby_core::falkor::escape_string(scope.scope_kind()),
+        ),
+        (
+            "scope_id".to_string(),
+            gobby_core::falkor::escape_string(scope.scope_value()),
+        ),
     ])
 }
 
@@ -482,13 +488,16 @@ mod tests {
     }
 
     #[test]
-    fn graph_scope_params_are_raw_driver_values() {
+    fn graph_scope_params_are_cypher_string_literals() {
         let params = scope_params(&SearchScope::topic("rust'async"));
 
-        assert_eq!(params.get("scope_kind").map(String::as_str), Some("topic"));
+        assert_eq!(
+            params.get("scope_kind").map(String::as_str),
+            Some("'topic'")
+        );
         assert_eq!(
             params.get("scope_id").map(String::as_str),
-            Some("rust'async")
+            Some("'rust\\'async'")
         );
     }
 

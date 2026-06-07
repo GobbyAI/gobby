@@ -158,13 +158,13 @@ pub fn validate_topic_name(topic_name: &str) -> Result<String, WikiError> {
 
 pub fn project_collection_name(project_id: &str) -> Result<String, WikiError> {
     Ok(format!(
-        "gwiki:project:{}",
+        "gwiki_project_{}",
         validate_project_id(project_id)?
     ))
 }
 
 pub fn topic_collection_name(topic_name: &str) -> Result<String, WikiError> {
-    Ok(format!("gwiki:topic:{}", validate_topic_name(topic_name)?))
+    Ok(format!("gwiki_topic_{}", validate_topic_name(topic_name)?))
 }
 
 fn validate_scope_id(kind: &'static str, value: &str) -> Result<String, WikiError> {
@@ -195,11 +195,11 @@ mod tests {
         assert_eq!(WIKI_TOPIC_LABEL, "WikiTopic");
         assert_eq!(
             project_collection_name("project-123").expect("valid project collection"),
-            "gwiki:project:project-123"
+            "gwiki_project_project-123"
         );
         assert_eq!(
             topic_collection_name("rust").expect("valid topic collection"),
-            "gwiki:topic:rust"
+            "gwiki_topic_rust"
         );
 
         let project_scope = WikiScope::Project {
@@ -212,7 +212,7 @@ mod tests {
             project_scope
                 .vector_collection_name()
                 .expect("valid project collection"),
-            "gwiki:project:project-123"
+            "gwiki_project_project-123"
         );
 
         let topic_scope = WikiScope::Topic {
@@ -225,7 +225,7 @@ mod tests {
             topic_scope
                 .vector_collection_name()
                 .expect("valid topic collection"),
-            "gwiki:topic:rust"
+            "gwiki_topic_rust"
         );
     }
 

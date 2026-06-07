@@ -57,7 +57,7 @@ pub trait VectorSearchBackend {
         config: &QdrantConfig,
         collection: &str,
         request: SearchRequest,
-    ) -> Result<Vec<SearchHit>, SearchError>;
+    ) -> anyhow::Result<Vec<SearchHit>>;
 }
 
 pub fn search_semantic<E, V>(
@@ -129,12 +129,7 @@ where
     let hits = match vector_backend.search(qdrant, &collection, qdrant_request) {
         Ok(hits) => hits,
         Err(error) => {
-            return Ok(degraded(
-                "qdrant",
-                gobby_core::degradation::ServiceState::Unreachable {
-                    message: error.to_string(),
-                },
-            ));
+            return Ok(qdrant_degradation(error));
         }
     };
 
@@ -372,9 +367,8 @@ impl VectorSearchBackend for GobbyQdrantBackend {
         config: &QdrantConfig,
         collection: &str,
         request: SearchRequest,
-    ) -> Result<Vec<SearchHit>, SearchError> {
+    ) -> anyhow::Result<Vec<SearchHit>> {
         gobby_core::qdrant::search(config, collection, request)
-            .map_err(|error| SearchError::Backend(error.to_string()))
     }
 }
 
@@ -464,6 +458,37 @@ fn degraded(service: &str, state: gobby_core::degradation::ServiceState) -> Sema
     }
 }
 
+fn qdrant_degradation(error: anyhow::Error) -> SemanticSearchOutcome {
+    let message = error.to_string();
+    if let Some(gobby_core::qdrant::QdrantError::HttpStatus { status, .. }) =
+        error.downcast_ref::<gobby_core::qdrant::QdrantError>()
+    {
+        return match status.as_u16() {
+            404 => degraded(
+                "qdrant_collection",
+                gobby_core::degradation::ServiceState::NotConfigured,
+            ),
+            401 | 403 => degraded(
+                "qdrant_auth",
+                gobby_core::degradation::ServiceState::Unreachable { message },
+            ),
+            400..=499 => degraded(
+                "qdrant_config",
+                gobby_core::degradation::ServiceState::Unreachable { message },
+            ),
+            _ => degraded(
+                "qdrant",
+                gobby_core::degradation::ServiceState::Unreachable { message },
+            ),
+        };
+    }
+
+    degraded(
+        "qdrant",
+        gobby_core::degradation::ServiceState::Unreachable { message },
+    )
+}
+
 #[cfg(test)]
 pub struct UnavailableSemanticBackend;
 
@@ -533,7 +558,7 @@ impl VectorSearchBackend for RecordingVectorBackend {
         _config: &QdrantConfig,
         collection: &str,
         request: SearchRequest,
-    ) -> Result<Vec<SearchHit>, SearchError> {
+    ) -> anyhow::Result<Vec<SearchHit>> {
         self.collection = Some(collection.to_string());
         self.filter = request.filter;
         Ok(self.hits.clone())
@@ -564,8 +589,32 @@ impl VectorSearchBackend for FailingVectorBackend {
         _config: &QdrantConfig,
         _collection: &str,
         _request: SearchRequest,
-    ) -> Result<Vec<SearchHit>, SearchError> {
-        Err(SearchError::Backend("qdrant timeout".to_string()))
+    ) -> anyhow::Result<Vec<SearchHit>> {
+        Err(anyhow::anyhow!("qdrant timeout"))
+    }
+}
+
+#[cfg(test)]
+struct QdrantStatusVectorBackend {
+    status: gobby_core::qdrant::StatusCode,
+}
+
+#[cfg(test)]
+impl VectorSearchBackend for QdrantStatusVectorBackend {
+    fn search(
+        &mut self,
+        _config: &QdrantConfig,
+        collection: &str,
+        _request: SearchRequest,
+    ) -> anyhow::Result<Vec<SearchHit>> {
+        Err(gobby_core::qdrant::QdrantError::HttpStatus {
+            operation: "search",
+            status: self.status,
+            body: "qdrant failure".to_string(),
+            collection: Some(collection.to_string()),
+            request: Some(format!("/collections/{collection}/points/search")),
+        }
+        .into())
     }
 }
 
@@ -617,7 +666,7 @@ mod tests {
 
         assert_eq!(
             vector.collection,
-            Some("gwiki:project:project-1".to_string())
+            Some("gwiki_project_project-1".to_string())
         );
         assert_eq!(
             vector.filter,
@@ -755,6 +804,69 @@ mod tests {
                 service,
                 state: ServiceState::Unreachable { message }
             }) if service == "qdrant" && message.contains("qdrant timeout")
+        ));
+    }
+
+    #[test]
+    fn semantic_search_classifies_qdrant_collection_and_auth_failures() {
+        let embedding = EmbeddingConfig {
+            api_base: "http://embeddings.local/v1".to_string(),
+            model: "embed-model".to_string(),
+            api_key: None,
+            query_prefix: None,
+            timeout_seconds: 10,
+        };
+        let qdrant = QdrantConfig {
+            url: Some("http://qdrant.local".to_string()),
+            api_key: None,
+        };
+
+        let mut embedder = FixedEmbedder::new(vec![0.1, 0.2, 0.3]);
+        let mut missing_collection = QdrantStatusVectorBackend {
+            status: gobby_core::qdrant::StatusCode::NOT_FOUND,
+        };
+        let outcome = search_semantic(
+            SemanticSearchRequest {
+                query: "ownership".to_string(),
+                scope: SearchScope::project("project-1"),
+                limit: 5,
+            },
+            Some(&SemanticEmbedding::Direct(embedding.clone())),
+            Some(&qdrant),
+            &mut embedder,
+            &mut missing_collection,
+        )
+        .expect("missing collection degrades");
+        assert!(matches!(
+            outcome.degradation,
+            Some(DegradationKind::ServiceUnavailable {
+                service,
+                state: ServiceState::NotConfigured
+            }) if service == "qdrant_collection"
+        ));
+
+        let mut embedder = FixedEmbedder::new(vec![0.1, 0.2, 0.3]);
+        let mut auth_failure = QdrantStatusVectorBackend {
+            status: gobby_core::qdrant::StatusCode::FORBIDDEN,
+        };
+        let outcome = search_semantic(
+            SemanticSearchRequest {
+                query: "ownership".to_string(),
+                scope: SearchScope::project("project-1"),
+                limit: 5,
+            },
+            Some(&SemanticEmbedding::Direct(embedding)),
+            Some(&qdrant),
+            &mut embedder,
+            &mut auth_failure,
+        )
+        .expect("auth failure degrades");
+        assert!(matches!(
+            outcome.degradation,
+            Some(DegradationKind::ServiceUnavailable {
+                service,
+                state: ServiceState::Unreachable { .. }
+            }) if service == "qdrant_auth"
         ));
     }
 

@@ -75,6 +75,7 @@ pub mod synthesis;
 pub(crate) mod transcribe;
 #[allow(dead_code)]
 pub(crate) mod vault;
+pub(crate) mod vector;
 #[allow(dead_code)]
 pub(crate) mod video;
 #[allow(dead_code)]

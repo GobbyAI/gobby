@@ -10,10 +10,11 @@ use serde_json::{Map, Value};
 use std::time::Duration;
 
 const QDRANT_TIMEOUT: Duration = Duration::from_secs(5);
+pub use reqwest::StatusCode;
 
 #[derive(Debug, thiserror::Error)]
 pub enum QdrantError {
-    #[error("Qdrant {operation} failed{context}: HTTP {status}", context = http_status_context(collection, request))]
+    #[error("Qdrant {operation} failed{context}: HTTP {status}: {body}", context = http_status_context(collection, request))]
     HttpStatus {
         operation: &'static str,
         status: reqwest::StatusCode,
@@ -55,10 +56,22 @@ pub enum CollectionScope<'a> {
 /// Build a collection name from namespace and scope.
 pub fn collection_name(namespace: &str, scope: CollectionScope<'_>) -> String {
     match scope {
-        CollectionScope::Project(id) => format!("{namespace}:project:{id}"),
-        CollectionScope::Topic(name) => format!("{namespace}:topic:{name}"),
+        CollectionScope::Project(id) => format!("{namespace}_project_{id}"),
+        CollectionScope::Topic(name) => format!("{namespace}_topic_{name}"),
         CollectionScope::Custom(name) => name.to_string(),
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VectorCollectionSchema {
+    pub size: usize,
+    pub distance: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExistingVectorCollectionSchema {
+    pub size: Option<usize>,
+    pub distance: Option<String>,
 }
 
 /// Vector upsert request with opaque domain payload.
@@ -175,6 +188,126 @@ pub fn search(
     Ok(hits)
 }
 
+/// Ensure a Qdrant collection exists with the expected vector schema.
+pub fn ensure_collection(
+    config: &QdrantConfig,
+    collection: &str,
+    expected: VectorCollectionSchema,
+) -> anyhow::Result<VectorCollectionSchema> {
+    match collection_schema(config, collection)? {
+        Some(found) => {
+            ensure_compatible_collection(collection, &expected, &found)?;
+            Ok(VectorCollectionSchema {
+                size: found.size.unwrap_or(expected.size),
+                distance: found.distance.unwrap_or_else(|| expected.distance.clone()),
+            })
+        }
+        None => {
+            create_collection(config, collection, &expected)?;
+            Ok(expected)
+        }
+    }
+}
+
+/// Return the collection vector schema, or `None` when the collection is absent.
+pub fn collection_schema(
+    config: &QdrantConfig,
+    collection: &str,
+) -> anyhow::Result<Option<ExistingVectorCollectionSchema>> {
+    let request_path = collection_request_path(collection);
+    let resp = qdrant_request(config, reqwest::Method::GET, &request_path)?.send()?;
+    let status = resp.status();
+    if status == StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    if !status.is_success() {
+        return Err(qdrant_http_error(
+            "get collection",
+            status,
+            resp,
+            collection,
+            request_path,
+        ));
+    }
+
+    let data: Value = resp.json()?;
+    Ok(parse_collection_schema(&data))
+}
+
+/// Delete all points matching a Qdrant filter.
+pub fn delete_points_by_filter(
+    config: &QdrantConfig,
+    collection: &str,
+    filter: Value,
+) -> anyhow::Result<()> {
+    let request_path = format!(
+        "{}/points/delete?wait=true",
+        collection_request_path(collection)
+    );
+    let resp = qdrant_request(config, reqwest::Method::POST, &request_path)?
+        .json(&serde_json::json!({ "filter": filter }))
+        .send()?;
+    let status = resp.status();
+    if status == StatusCode::NOT_FOUND {
+        return Ok(());
+    }
+    if !status.is_success() {
+        return Err(qdrant_http_error(
+            "delete points",
+            status,
+            resp,
+            collection,
+            request_path,
+        ));
+    }
+
+    let data: Value = resp.json()?;
+    if let Some(result) = data.get("result") {
+        let operation_status = result
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("completed");
+        if operation_status != "completed" {
+            return Err(QdrantError::OperationStatus {
+                operation: "delete points",
+                operation_status: operation_status.to_string(),
+                collection: Some(collection.to_string()),
+                request: Some(format!("POST {request_path}")),
+            }
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn create_collection(
+    config: &QdrantConfig,
+    collection: &str,
+    schema: &VectorCollectionSchema,
+) -> anyhow::Result<()> {
+    let request_path = collection_request_path(collection);
+    let body = serde_json::json!({
+        "vectors": {
+            "size": schema.size,
+            "distance": schema.distance,
+        },
+    });
+    let resp = qdrant_request(config, reqwest::Method::PUT, &request_path)?
+        .json(&body)
+        .send()?;
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(qdrant_http_error(
+            "create collection",
+            status,
+            resp,
+            collection,
+            request_path,
+        ));
+    }
+    Ok(())
+}
+
 /// Execute a batch vector upsert via Qdrant REST API.
 pub fn upsert(
     config: &QdrantConfig,
@@ -276,6 +409,41 @@ fn parse_point_id(id: &Value) -> Option<String> {
     }
 }
 
+fn parse_collection_schema(data: &Value) -> Option<ExistingVectorCollectionSchema> {
+    let vectors = data.pointer("/result/config/params/vectors")?;
+    let size = vectors
+        .get("size")
+        .and_then(Value::as_u64)
+        .and_then(|size| usize::try_from(size).ok());
+    let distance = vectors
+        .get("distance")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    Some(ExistingVectorCollectionSchema { size, distance })
+}
+
+fn ensure_compatible_collection(
+    collection: &str,
+    expected: &VectorCollectionSchema,
+    found: &ExistingVectorCollectionSchema,
+) -> anyhow::Result<()> {
+    if found.size.is_some_and(|size| size != expected.size)
+        || found
+            .distance
+            .as_ref()
+            .is_some_and(|distance| distance != &expected.distance)
+    {
+        anyhow::bail!(
+            "Qdrant collection `{collection}` has incompatible schema: expected size {} distance {}, found size {:?} distance {:?}",
+            expected.size,
+            expected.distance,
+            found.size,
+            found.distance
+        );
+    }
+    Ok(())
+}
+
 fn is_qdrant_unreachable(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| {
         cause
@@ -294,6 +462,61 @@ fn encoded_collection(collection: &str) -> String {
     urlencoding::encode(collection).into_owned()
 }
 
+fn collection_request_path(collection: &str) -> String {
+    format!("/collections/{}", encoded_collection(collection))
+}
+
+fn qdrant_request(
+    config: &QdrantConfig,
+    method: reqwest::Method,
+    path: &str,
+) -> anyhow::Result<reqwest::blocking::RequestBuilder> {
+    let url = config
+        .url
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("Qdrant URL not configured"))?
+        .trim_end_matches('/');
+    let client = reqwest::blocking::Client::builder()
+        .timeout(QDRANT_TIMEOUT)
+        .build()?;
+    let mut req = client.request(method, format!("{url}{path}"));
+    if let Some(key) = &config.api_key {
+        req = req.header("api-key", key);
+    }
+    Ok(req)
+}
+
+fn qdrant_http_error(
+    operation: &'static str,
+    status: StatusCode,
+    resp: reqwest::blocking::Response,
+    collection: &str,
+    request_path: String,
+) -> anyhow::Error {
+    let body = resp
+        .text()
+        .unwrap_or_else(|err| format!("<failed to read response body: {err}>"));
+    QdrantError::HttpStatus {
+        operation,
+        status,
+        body,
+        collection: Some(collection.to_string()),
+        request: Some(format!("{} {request_path}", operation_method(operation))),
+    }
+    .into()
+}
+
+fn operation_method(operation: &str) -> &'static str {
+    match operation {
+        "get collection" => "GET",
+        "create collection" => "PUT",
+        "delete points" => "POST",
+        "search" => "POST",
+        "upsert" => "PUT",
+        _ => "POST",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -306,11 +529,11 @@ mod tests {
     fn collection_name_covers_all_scopes() {
         assert_eq!(
             collection_name("gwiki", CollectionScope::Project("abc-123")),
-            "gwiki:project:abc-123"
+            "gwiki_project_abc-123"
         );
         assert_eq!(
             collection_name("gwiki", CollectionScope::Topic("rust-async")),
-            "gwiki:topic:rust-async"
+            "gwiki_topic_rust-async"
         );
         assert_eq!(
             collection_name("gcode", CollectionScope::Custom("code_symbols_abc-123")),
@@ -667,6 +890,76 @@ mod tests {
 
         assert!(!is_qdrant_unreachable(&client_error));
         assert!(is_qdrant_unreachable(&server_error));
+    }
+
+    #[test]
+    fn collection_lifecycle_ensures_schema_and_deletes_filtered_points() {
+        let (schema_url, schema_handle) = spawn_qdrant_response(
+            200,
+            json!({
+                "result": {
+                    "config": {
+                        "params": {
+                            "vectors": {
+                                "size": 3,
+                                "distance": "Cosine"
+                            }
+                        }
+                    }
+                }
+            }),
+        );
+        let config = QdrantConfig {
+            url: Some(schema_url),
+            api_key: Some("secret".to_string()),
+        };
+
+        let schema = ensure_collection(
+            &config,
+            "gwiki_project_project-1",
+            VectorCollectionSchema {
+                size: 3,
+                distance: "Cosine".to_string(),
+            },
+        )
+        .expect("existing collection should be reused");
+        let request = schema_handle
+            .join()
+            .expect("schema request thread")
+            .unwrap();
+        assert!(request.starts_with("GET /collections/gwiki_project_project-1 HTTP/1.1"));
+        assert!(request.contains("api-key: secret"));
+        assert_eq!(schema.size, 3);
+        assert_eq!(schema.distance, "Cosine");
+
+        let filter = json!({
+            "must": [
+                {"key": "namespace", "match": {"value": "gwiki"}},
+                {"key": "scope_kind", "match": {"value": "project"}},
+                {"key": "project_id", "match": {"value": "project-1"}},
+                {"key": "path", "match": {"value": "notes/page.md"}}
+            ]
+        });
+        let (delete_url, delete_handle) = spawn_qdrant_response(
+            200,
+            json!({"status": "ok", "result": {"status": "completed"}}),
+        );
+        let config = QdrantConfig {
+            url: Some(delete_url),
+            api_key: None,
+        };
+
+        delete_points_by_filter(&config, "gwiki_project_project-1", filter)
+            .expect("delete by filter");
+        let request = delete_handle
+            .join()
+            .expect("delete request thread")
+            .unwrap();
+        assert!(request.starts_with(
+            "POST /collections/gwiki_project_project-1/points/delete?wait=true HTTP/1.1"
+        ));
+        assert!(request.contains("\"path\""));
+        assert!(request.contains("\"notes/page.md\""));
     }
 
     fn spawn_qdrant_response(status: u16, body: Value) -> (String, RequestHandle) {
