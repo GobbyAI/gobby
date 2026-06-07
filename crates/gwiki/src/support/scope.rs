@@ -2,6 +2,8 @@ use crate::{
     ScopeIdentity, ScopeSelection, WikiError, indexer, scope as wiki_scope, search, session, store,
 };
 
+use super::config;
+
 pub(crate) const DEFAULT_PROJECT_ID: &str = "current";
 
 pub(crate) fn indexed_store_for_selection(
@@ -16,9 +18,10 @@ pub(crate) fn indexed_store_for_selection(
     WikiError,
 > {
     let resolved = resolve_selection_context(selection)?;
+    let index_options = config::local_index_options()?;
     let mut store = store::MemoryWikiStore::default();
     if resolved.scope.root().is_dir() {
-        indexer::index_vault(resolved.scope.root(), &mut store)?;
+        indexer::index_vault_with_options(resolved.scope.root(), &mut store, index_options)?;
     }
 
     Ok((

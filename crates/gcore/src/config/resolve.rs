@@ -4,6 +4,7 @@ const FALKORDB_DEFAULT_PORT: u16 = 16379;
 pub(crate) const EMBEDDING_DEFAULT_MODEL: &str = "nomic-embed-text";
 pub(crate) const EMBEDDING_DEFAULT_TIMEOUT_SECONDS: u64 = 10;
 const AI_DEFAULT_MAX_CONCURRENCY: u8 = 1;
+pub const INDEXING_RESPECT_GITIGNORE_KEY: &str = "indexing.respect_gitignore";
 
 /// Decode a config_store value from its stored representation.
 pub fn decode_config_value(raw: &str) -> Option<String> {
@@ -81,6 +82,49 @@ pub trait ConfigSource {
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String>;
 }
 
+/// Generic primary/fallback source for non-env layered configuration.
+pub struct LayeredConfigSource<P, F> {
+    primary: Option<P>,
+    fallback: Option<F>,
+}
+
+impl<P, F> LayeredConfigSource<P, F> {
+    pub fn new(primary: Option<P>, fallback: Option<F>) -> Self {
+        Self { primary, fallback }
+    }
+}
+
+impl<P, F> ConfigSource for LayeredConfigSource<P, F>
+where
+    P: ConfigSource,
+    F: ConfigSource,
+{
+    fn config_value(&mut self, key: &str) -> Option<String> {
+        self.primary
+            .as_mut()
+            .and_then(|source| source.config_value(key))
+            .or_else(|| {
+                self.fallback
+                    .as_mut()
+                    .and_then(|source| source.config_value(key))
+            })
+    }
+
+    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+        match self.primary.as_mut() {
+            Some(source) => source.resolve_value(value),
+            None => self
+                .fallback
+                .as_mut()
+                .map(|source| source.resolve_value(value))
+                .unwrap_or_else(|| {
+                    resolve_env_pattern(value)?
+                        .ok_or_else(|| anyhow::anyhow!("unresolved pattern: {value}"))
+                }),
+        }
+    }
+}
+
 /// Environment-only source for consumers without database access.
 pub struct EnvOnlySource;
 
@@ -134,6 +178,16 @@ pub fn resolve_qdrant_config(source: &mut impl ConfigSource) -> Option<QdrantCon
 /// Resolve embedding API config from config_store/gcore.yaml.
 pub fn resolve_embedding_config(source: &mut impl ConfigSource) -> Option<EmbeddingConfig> {
     resolve_embedding_config_resolution(source).map(|resolution| resolution.config)
+}
+
+/// Resolve indexing config from config_store/gcore.yaml/defaults.
+///
+/// No environment-variable layer is consulted for these settings.
+pub fn resolve_indexing_config(source: &mut impl ConfigSource) -> anyhow::Result<IndexingConfig> {
+    Ok(IndexingConfig {
+        respect_gitignore: resolve_config_bool(source, INDEXING_RESPECT_GITIGNORE_KEY)?
+            .unwrap_or(true),
+    })
 }
 
 /// Resolve embedding API config and report which namespace supplied api_base.
@@ -288,6 +342,25 @@ fn resolve_ai_routing_value(source: &mut impl ConfigSource, config_key: &str) ->
 fn resolve_ai_config_value(source: &mut impl ConfigSource, config_key: &str) -> Option<String> {
     let value = source.config_value(config_key)?;
     resolve_ai_non_empty(source, &value)
+}
+
+fn resolve_config_bool(
+    source: &mut impl ConfigSource,
+    config_key: &'static str,
+) -> anyhow::Result<Option<bool>> {
+    let Some(value) = source.config_value(config_key) else {
+        return Ok(None);
+    };
+    let resolved = source.resolve_value(&value)?;
+    parse_config_bool(config_key, &resolved).map(Some)
+}
+
+fn parse_config_bool(config_key: &'static str, value: &str) -> anyhow::Result<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" => Ok(true),
+        "false" | "0" | "no" | "off" => Ok(false),
+        _ => anyhow::bail!("invalid boolean for {config_key}: `{value}`"),
+    }
 }
 
 /// Resolve an AI config value and reject empty or still-unexpanded placeholders.

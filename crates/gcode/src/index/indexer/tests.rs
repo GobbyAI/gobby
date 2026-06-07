@@ -1,7 +1,10 @@
 use super::file::{ExplicitFileRoute, explicit_file_route, write_parsed_file_facts};
 use super::lifecycle::{cleanup_deleted_file_projections, current_file_state};
 use super::overlay::{IndexedFileState, OverlayReconcileAction, overlay_reconcile_action};
-use super::pipeline::cleanup_skipped_explicit_file_if_indexed;
+use super::pipeline::{
+    cleanup_skipped_explicit_file_if_indexed, discovered_explicit_routes,
+    explicit_route_from_discovery,
+};
 use super::sink::CodeFactSink;
 use super::util::DEFAULT_EXCLUDES;
 use super::*;
@@ -344,6 +347,44 @@ fn explicit_file_route_sends_unsupported_text_to_content_only() {
 }
 
 #[test]
+fn explicit_file_routes_follow_respect_gitignore_setting() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    std::fs::create_dir(root.join(".git")).expect("git dir");
+    write_file(root, ".gitignore", b"ignored.rs\n");
+    write_file(root, "ignored.rs", b"fn ignored() {}\n");
+    write_file(root, "src/lib.rs", b"fn visible() {}\n");
+
+    let (ast, content_only) = discovered_explicit_routes(
+        root,
+        DEFAULT_EXCLUDES,
+        walker::DiscoveryOptions {
+            respect_gitignore: true,
+        },
+    );
+    assert_eq!(
+        explicit_route_from_discovery(&root.join("ignored.rs"), &ast, &content_only),
+        ExplicitFileRoute::Skip
+    );
+    assert_eq!(
+        explicit_route_from_discovery(&root.join("src/lib.rs"), &ast, &content_only),
+        ExplicitFileRoute::Ast
+    );
+
+    let (ast, content_only) = discovered_explicit_routes(
+        root,
+        DEFAULT_EXCLUDES,
+        walker::DiscoveryOptions {
+            respect_gitignore: false,
+        },
+    );
+    assert_eq!(
+        explicit_route_from_discovery(&root.join("ignored.rs"), &ast, &content_only),
+        ExplicitFileRoute::Ast
+    );
+}
+
+#[test]
 fn explicit_file_route_indexes_mjs_and_routes_markdown_to_content_only() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
@@ -426,6 +467,7 @@ fn explicit_skip_cleanup_deletes_stale_facts_and_projections() {
         qdrant: None,
         embedding: None,
         code_vectors: crate::config::CodeVectorSettings { vector_dim: None },
+        indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
         index_scope: crate::config::ProjectIndexScope::Single,
     };
@@ -477,6 +519,7 @@ fn explicit_skip_cleanup_ignores_never_indexed_files() {
         qdrant: None,
         embedding: None,
         code_vectors: crate::config::CodeVectorSettings { vector_dim: None },
+        indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
         index_scope: crate::config::ProjectIndexScope::Single,
     };
@@ -560,6 +603,7 @@ fn deleted_file_projection_cleanup_degrades_without_services() {
         qdrant: None,
         embedding: None,
         code_vectors: crate::config::CodeVectorSettings { vector_dim: None },
+        indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
         index_scope: crate::config::ProjectIndexScope::Single,
     };
@@ -599,6 +643,7 @@ fn deleted_file_projection_cleanup_skips_vectors_when_not_previously_synced() {
         qdrant: None,
         embedding: None,
         code_vectors: crate::config::CodeVectorSettings { vector_dim: None },
+        indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
         index_scope: crate::config::ProjectIndexScope::Single,
     };

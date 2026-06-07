@@ -542,6 +542,7 @@ fn overlay_visibility_context(ids: &OverlayFixtureIds) -> Context {
         qdrant: None,
         embedding: None,
         code_vectors: CodeVectorSettings::default(),
+        indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
         index_scope: ProjectIndexScope::Overlay {
             overlay_project_id: ids.overlay_project_id.clone(),

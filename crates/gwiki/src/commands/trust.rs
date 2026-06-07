@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::support::config;
 use crate::support::scope::resolve_selection_context;
 use crate::support::{counts, env};
 use crate::{
@@ -55,18 +56,22 @@ fn load_index_counts(
     scope: &crate::search::SearchScope,
 ) -> Result<IndexCountsOutcome, WikiError> {
     let mut degradations = Vec::new();
+    let mut index_options = config::local_index_options()?;
     if let Some(database_url) = env::database_url_for("gwiki trust")? {
         match gobby_core::postgres::connect_readonly(&database_url) {
-            Ok(mut conn) => match counts::postgres_index_counts(&mut conn, scope) {
-                Ok(counts) => {
-                    return Ok(IndexCountsOutcome {
-                        counts,
-                        backend: "postgres",
-                        degradations,
-                    });
+            Ok(mut conn) => {
+                index_options = config::index_options_from_conn(&mut conn)?;
+                match counts::postgres_index_counts(&mut conn, scope) {
+                    Ok(counts) => {
+                        return Ok(IndexCountsOutcome {
+                            counts,
+                            backend: "postgres",
+                            degradations,
+                        });
+                    }
+                    Err(_) => degradations.push("postgres_index_counts_unavailable".to_string()),
                 }
-                Err(_) => degradations.push("postgres_index_counts_unavailable".to_string()),
-            },
+            }
             Err(_) => degradations.push("postgres_unavailable".to_string()),
         }
     } else {
@@ -74,16 +79,19 @@ fn load_index_counts(
     }
 
     Ok(IndexCountsOutcome {
-        counts: memory_index_counts(root)?,
+        counts: memory_index_counts(root, index_options)?,
         backend: "memory",
         degradations,
     })
 }
 
-fn memory_index_counts(root: &Path) -> Result<counts::IndexCounts, WikiError> {
+fn memory_index_counts(
+    root: &Path,
+    index_options: indexer::IndexOptions,
+) -> Result<counts::IndexCounts, WikiError> {
     let mut store = store::MemoryWikiStore::default();
     if root.is_dir() {
-        indexer::index_vault(root, &mut store)?;
+        indexer::index_vault_with_options(root, &mut store, index_options)?;
     }
     Ok(counts::index_counts(&store))
 }

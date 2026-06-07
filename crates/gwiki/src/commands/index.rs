@@ -12,6 +12,7 @@ use serde_json::json;
 
 use crate::ingest::{self, IngestResult};
 use crate::search::SearchScope;
+use crate::support::config::{index_options_from_conn, local_index_options};
 use crate::support::counts::{IndexCounts, index_counts, postgres_index_counts};
 use crate::support::env::database_url_for;
 use crate::support::scope::{
@@ -41,17 +42,19 @@ pub(crate) fn index_resolved_scope(
     if let Some(database_url) = database_url_for("gwiki index")? {
         let mut conn = connect_postgres_index(&database_url, "gwiki index")?;
         let search_scope = search_scope_for_resolved(scope);
+        let index_options = index_options_from_conn(&mut conn)?;
         {
             let mut store = postgres_store_for_search(&mut conn, &search_scope);
-            indexer::index_vault(scope.root(), &mut store)?;
+            indexer::index_vault_with_options(scope.root(), &mut store, index_options)?;
         }
         sync_qdrant_vectors(&mut conn, &search_scope, "gwiki index")?;
         sync_falkor_graph(&mut conn, &search_scope, "gwiki index")?;
         return indexed_counts_for_postgres(&mut conn, &search_scope, true);
     }
 
+    let index_options = local_index_options()?;
     let mut store = store::MemoryWikiStore::default();
-    indexer::index_vault(scope.root(), &mut store)?;
+    indexer::index_vault_with_options(scope.root(), &mut store, index_options)?;
     Ok(index_counts(&store))
 }
 

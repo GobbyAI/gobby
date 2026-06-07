@@ -1,5 +1,6 @@
 use super::resolve::{EMBEDDING_DEFAULT_MODEL, EMBEDDING_DEFAULT_TIMEOUT_SECONDS};
 use super::*;
+use crate::provisioning::StandaloneConfig;
 use std::collections::HashMap;
 use std::sync::MutexGuard;
 
@@ -28,6 +29,7 @@ impl EnvGuard {
             "GOBBY_FALKORDB_PASSWORD",
             "GOBBY_QDRANT_URL",
             "GOBBY_QDRANT_API_KEY",
+            "GOBBY_INDEXING_RESPECT_GITIGNORE",
             "GOBBY_TEST_PRESENT",
             "GOBBY_TEST_MISSING",
         ] {
@@ -590,6 +592,69 @@ fn qdrant_and_embedding_resolution_order() {
         EMBEDDING_DEFAULT_TIMEOUT_SECONDS
     );
     assert!(resolve_qdrant_config(&mut TestSource::default()).is_none());
+}
+
+#[test]
+fn indexing_config_defaults_to_respecting_gitignore() {
+    let mut source = TestSource::default();
+
+    let indexing = resolve_indexing_config(&mut source).expect("indexing config");
+
+    assert!(indexing.respect_gitignore);
+}
+
+#[test]
+fn indexing_config_resolves_standalone_yaml_values() {
+    for (raw, expected) in [("true", true), ("false", false)] {
+        let standalone =
+            StandaloneConfig::from_yaml_str(&format!("indexing:\n  respect_gitignore: {raw}\n"))
+                .expect("standalone config");
+        let mut source =
+            LayeredConfigSource::<TestSource, StandaloneConfig>::new(None, Some(standalone));
+
+        let indexing = resolve_indexing_config(&mut source).expect("indexing config");
+
+        assert_eq!(indexing.respect_gitignore, expected);
+    }
+}
+
+#[test]
+fn indexing_config_resolves_config_store_values_before_yaml() {
+    for (raw, yaml, expected) in [("false", "true", false), ("true", "false", true)] {
+        let store = TestSource::with_raw_values([(INDEXING_RESPECT_GITIGNORE_KEY, raw)]);
+        let standalone =
+            StandaloneConfig::from_yaml_str(&format!("indexing:\n  respect_gitignore: {yaml}\n"))
+                .expect("standalone config");
+        let mut source = LayeredConfigSource::new(Some(store), Some(standalone));
+
+        let indexing = resolve_indexing_config(&mut source).expect("indexing config");
+
+        assert_eq!(indexing.respect_gitignore, expected);
+    }
+}
+
+#[test]
+fn indexing_config_rejects_invalid_boolean() {
+    let mut source = TestSource::with_values([(INDEXING_RESPECT_GITIGNORE_KEY, "sometimes")]);
+
+    let error = resolve_indexing_config(&mut source).expect_err("invalid boolean");
+
+    assert!(
+        error
+            .to_string()
+            .contains("invalid boolean for indexing.respect_gitignore")
+    );
+}
+
+#[test]
+fn indexing_config_has_no_environment_override() {
+    let env = EnvGuard::new();
+    env.set("GOBBY_INDEXING_RESPECT_GITIGNORE", "false");
+    let mut source = TestSource::default();
+
+    let indexing = resolve_indexing_config(&mut source).expect("indexing config");
+
+    assert!(indexing.respect_gitignore);
 }
 
 #[test]

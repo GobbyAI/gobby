@@ -23,6 +23,7 @@ fn make_ctx_no_falkordb() -> Context {
         qdrant: None,
         embedding: None,
         code_vectors: crate::config::CodeVectorSettings::default(),
+        indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
         index_scope: crate::config::ProjectIndexScope::Single,
     }

@@ -152,6 +152,7 @@ mod tests {
             qdrant: None,
             embedding: None,
             code_vectors: crate::config::CodeVectorSettings { vector_dim: None },
+            indexing: gobby_core::config::IndexingConfig::default(),
             daemon_url: None,
             index_scope: crate::config::ProjectIndexScope::Single,
         }

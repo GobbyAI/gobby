@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use super::services::{
     read_standalone_config_optional, resolve_code_vector_settings, resolve_embedding_config,
-    resolve_falkordb_config, resolve_qdrant_config,
+    resolve_falkordb_config, resolve_indexing_settings, resolve_qdrant_config,
 };
 use crate::db;
 use crate::git::{self, WorktreeKind};
@@ -51,6 +51,8 @@ pub const FALKORDB_PASSWORD_CONFIG_KEY: &str = "databases.falkordb.requirepass";
 pub struct CodeVectorSettings {
     pub vector_dim: Option<usize>,
 }
+
+pub type IndexingSettings = gobby_core::config::IndexingConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ServiceConfigSelection {
@@ -162,6 +164,8 @@ pub struct Context {
     pub embedding: Option<EmbeddingConfig>,
     /// Code-symbol vector projection settings owned by gcode.
     pub code_vectors: CodeVectorSettings,
+    /// Shared indexing behavior.
+    pub indexing: IndexingSettings,
     /// Gobby daemon base URL (e.g. http://localhost:60887)
     pub daemon_url: Option<String>,
     /// Project read/index scope.
@@ -255,6 +259,7 @@ impl Context {
         } else {
             None
         };
+        let indexing = resolve_indexing_settings(&mut conn, standalone_config.clone())?;
         let code_vectors = if services.code_vectors {
             resolve_code_vector_settings(&mut conn, standalone_config)?
         } else {
@@ -272,6 +277,7 @@ impl Context {
             qdrant,
             embedding,
             code_vectors,
+            indexing,
             daemon_url,
             index_scope,
         })
@@ -289,7 +295,8 @@ impl Context {
 
         let standalone_config = read_standalone_config_optional();
         let mut conn = db::connect_readonly(&database_url)?;
-        let falkordb = resolve_falkordb_config(&mut conn, standalone_config, quiet)?;
+        let falkordb = resolve_falkordb_config(&mut conn, standalone_config.clone(), quiet)?;
+        let indexing = resolve_indexing_settings(&mut conn, standalone_config)?;
 
         let daemon_url = resolve_daemon_url();
 
@@ -302,6 +309,7 @@ impl Context {
             qdrant: None,
             embedding: None,
             code_vectors: CodeVectorSettings::default(),
+            indexing,
             daemon_url,
             index_scope: ProjectIndexScope::Single,
         })

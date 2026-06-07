@@ -1,6 +1,8 @@
 use gobby_core::ai_context::AiContext;
 use gobby_core::config::embedding_keys;
-use gobby_core::config::{AiCapability, AiRouting, CapabilityBinding, ConfigSource};
+use gobby_core::config::{
+    AiCapability, AiRouting, CapabilityBinding, ConfigSource, LayeredConfigSource,
+};
 use gobby_core::provisioning::{GCORE_CONFIG_FILENAME, StandaloneConfig};
 use postgres::Client;
 use std::collections::HashMap;
@@ -10,6 +12,7 @@ use std::path::PathBuf;
 use super::{
     CodeVectorConfigError, CodeVectorSettings, FALKORDB_GRAPH_NAME, FalkorConfig, QdrantConfig,
 };
+use crate::config::context::IndexingSettings;
 use crate::{db, secrets};
 
 struct PostgresConfigSource<'a> {
@@ -520,6 +523,15 @@ pub(super) fn resolve_code_vector_settings(
         standalone,
     };
     resolve_code_vector_settings_from_source(&mut source)
+}
+
+pub(super) fn resolve_indexing_settings(
+    conn: &mut Client,
+    standalone: Option<StandaloneConfig>,
+) -> anyhow::Result<IndexingSettings> {
+    let primary = PostgresConfigSource { conn };
+    let mut source = LayeredConfigSource::new(Some(primary), standalone);
+    gobby_core::config::resolve_indexing_config(&mut source)
 }
 
 fn resolve_code_vector_settings_from_source(

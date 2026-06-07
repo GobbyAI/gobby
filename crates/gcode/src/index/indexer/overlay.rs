@@ -109,7 +109,13 @@ pub(super) fn index_overlay_files(
         parent_root: parent_root.to_string_lossy().to_string(),
     });
 
-    let (candidates, content_only) = walker::discover_files(root_path, DEFAULT_EXCLUDES);
+    let (candidates, content_only) = walker::discover_files_with_options(
+        root_path,
+        DEFAULT_EXCLUDES,
+        walker::DiscoveryOptions {
+            respect_gitignore: ctx.indexing.respect_gitignore,
+        },
+    );
     let ast_by_rel = paths_by_relative(root_path, &candidates);
     let content_by_rel = paths_by_relative(root_path, &content_only);
     let import_context = parser::build_import_resolution_context(root_path, &candidates);

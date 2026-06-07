@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use postgres::Client;
@@ -55,7 +56,8 @@ fn index_discovered_files(
     let mut outcome = IndexOutcome::new(project_id);
 
     let excludes = DEFAULT_EXCLUDES;
-    let (mut candidates, mut content_only) = walker::discover_files(root_path, excludes);
+    let (mut candidates, mut content_only) =
+        walker::discover_files_with_options(root_path, excludes, discovery_options(ctx));
     if let Some(filter) = request.path_filter.as_deref() {
         candidates = filter_discovered_paths(root_path, filter, candidates);
         content_only = filter_discovered_paths(root_path, filter, content_only);
@@ -177,6 +179,15 @@ fn index_explicit_files_with_connection(
     let mut routed_files = Vec::new();
     let mut ast_files = Vec::new();
     let mut content_only_files = Vec::new();
+    let discovered_routes = if ctx.indexing.respect_gitignore {
+        Some(discovered_explicit_routes(
+            root_path,
+            excludes,
+            discovery_options(ctx),
+        ))
+    } else {
+        None
+    };
 
     for fp in &request.explicit_files {
         let abs = if fp.is_absolute() {
@@ -193,7 +204,12 @@ fn index_explicit_files_with_connection(
             continue;
         }
 
-        match explicit_file_route(root_path, &abs, excludes) {
+        let route = discovered_routes
+            .as_ref()
+            .map(|(ast, content_only)| explicit_route_from_discovery(&abs, ast, content_only))
+            .unwrap_or_else(|| explicit_file_route(root_path, &abs, excludes));
+
+        match route {
             ExplicitFileRoute::Ast => {
                 ast_files.push(abs.clone());
                 routed_files.push((abs, ExplicitFileRoute::Ast));
@@ -282,6 +298,46 @@ fn index_explicit_files_with_connection(
 
     attach_projection_sync(&mut outcome, request);
     Ok(outcome)
+}
+
+fn discovery_options(ctx: &Context) -> walker::DiscoveryOptions {
+    walker::DiscoveryOptions {
+        respect_gitignore: ctx.indexing.respect_gitignore,
+    }
+}
+
+pub(super) fn discovered_explicit_routes(
+    root_path: &std::path::Path,
+    excludes: &[&str],
+    options: walker::DiscoveryOptions,
+) -> (HashSet<PathBuf>, HashSet<PathBuf>) {
+    let (ast, content_only) = walker::discover_files_with_options(root_path, excludes, options);
+    (
+        ast.into_iter().map(normalize_existing_path).collect(),
+        content_only
+            .into_iter()
+            .map(normalize_existing_path)
+            .collect(),
+    )
+}
+
+pub(super) fn explicit_route_from_discovery(
+    abs: &Path,
+    ast: &HashSet<PathBuf>,
+    content_only: &HashSet<PathBuf>,
+) -> ExplicitFileRoute {
+    let normalized = normalize_existing_path(abs.to_path_buf());
+    if ast.contains(&normalized) {
+        ExplicitFileRoute::Ast
+    } else if content_only.contains(&normalized) {
+        ExplicitFileRoute::ContentOnly
+    } else {
+        ExplicitFileRoute::Skip
+    }
+}
+
+fn normalize_existing_path(path: PathBuf) -> PathBuf {
+    path.canonicalize().unwrap_or(path)
 }
 
 pub(super) fn cleanup_skipped_explicit_file_if_indexed(

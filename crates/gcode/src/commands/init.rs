@@ -63,6 +63,7 @@ pub fn run(project_root: &Path, format: Format, quiet: bool) -> anyhow::Result<(
         qdrant: None,
         embedding: None,
         code_vectors: config::CodeVectorSettings::default(),
+        indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
         index_scope: config::ProjectIndexScope::Single,
     };

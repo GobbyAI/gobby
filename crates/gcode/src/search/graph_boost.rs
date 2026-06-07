@@ -120,6 +120,7 @@ mod tests {
             qdrant: None,
             embedding: None,
             code_vectors: crate::config::CodeVectorSettings::default(),
+            indexing: gobby_core::config::IndexingConfig::default(),
             daemon_url: None,
             index_scope: crate::config::ProjectIndexScope::Single,
         }
@@ -140,6 +141,7 @@ mod tests {
             qdrant: None,
             embedding: None,
             code_vectors: crate::config::CodeVectorSettings::default(),
+            indexing: gobby_core::config::IndexingConfig::default(),
             daemon_url: None,
             index_scope: crate::config::ProjectIndexScope::Overlay {
                 overlay_project_id: "overlay".to_string(),

@@ -209,6 +209,7 @@ fn clone_context(
         qdrant: ctx.qdrant.clone(),
         embedding: ctx.embedding.clone(),
         code_vectors: ctx.code_vectors.clone(),
+        indexing: ctx.indexing,
         daemon_url: ctx.daemon_url.clone(),
         index_scope,
     }

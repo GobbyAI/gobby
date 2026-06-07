@@ -12,6 +12,19 @@ use crate::store::{
     WikiIngestionEvent, WikiLink, WikiSource, configured_memory_index_limit_bytes,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IndexOptions {
+    pub respect_gitignore: bool,
+}
+
+impl Default for IndexOptions {
+    fn default() -> Self {
+        Self {
+            respect_gitignore: true,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum IndexError {
     Io(std::io::Error),
@@ -70,9 +83,17 @@ pub fn index_vault(
     vault_root: impl AsRef<Path>,
     store: &mut impl WikiIndexStore,
 ) -> Result<(), IndexError> {
+    index_vault_with_options(vault_root, store, IndexOptions::default())
+}
+
+pub fn index_vault_with_options(
+    vault_root: impl AsRef<Path>,
+    store: &mut impl WikiIndexStore,
+    options: IndexOptions,
+) -> Result<(), IndexError> {
     let vault_root = vault_root.as_ref();
     let previous_hashes = store.indexed_hashes()?;
-    let current_hashes = discover_indexable_hashes(vault_root)?;
+    let current_hashes = discover_indexable_hashes(vault_root, options)?;
 
     for event in index_events_from_hashes(&previous_hashes, &current_hashes) {
         match event {
@@ -126,16 +147,22 @@ pub fn index_vault(
     Ok(())
 }
 
-fn discover_indexable_hashes(vault_root: &Path) -> Result<BTreeMap<PathBuf, String>, IndexError> {
-    discover_indexable_hashes_with_limit(vault_root, configured_memory_index_limit_bytes())
+fn discover_indexable_hashes(
+    vault_root: &Path,
+    options: IndexOptions,
+) -> Result<BTreeMap<PathBuf, String>, IndexError> {
+    discover_indexable_hashes_with_limit(vault_root, configured_memory_index_limit_bytes(), options)
 }
 
 fn discover_indexable_hashes_with_limit(
     vault_root: &Path,
     memory_limit: Option<u64>,
+    options: IndexOptions,
 ) -> Result<BTreeMap<PathBuf, String>, IndexError> {
     let mut current_hashes = BTreeMap::new();
-    let walker = WalkerSettings::new(vault_root).into_walker().build();
+    let mut settings = WalkerSettings::new(vault_root);
+    settings.respect_gitignore = options.respect_gitignore;
+    let walker = settings.into_walker().build();
     let mut total_indexable_bytes = 0u64;
 
     for entry in walker {
@@ -447,6 +474,43 @@ mod tests {
     }
 
     #[test]
+    fn index_vault_respects_gitignore_by_default_and_option() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(tempdir.path().join(".git")).expect("git dir");
+        write_file(tempdir.path(), ".gitignore", "wiki/topics/ignored.md\n");
+        write_file(tempdir.path(), "wiki/topics/visible.md", "# Visible\n");
+        write_file(tempdir.path(), "wiki/topics/ignored.md", "# Ignored\n");
+
+        let mut default_store = MemoryWikiStore::default();
+        index_vault(tempdir.path(), &mut default_store).expect("default index vault");
+        assert!(
+            default_store
+                .documents
+                .contains_key(&PathBuf::from("wiki/topics/visible.md"))
+        );
+        assert!(
+            !default_store
+                .documents
+                .contains_key(&PathBuf::from("wiki/topics/ignored.md"))
+        );
+
+        let mut disabled_store = MemoryWikiStore::default();
+        index_vault_with_options(
+            tempdir.path(),
+            &mut disabled_store,
+            IndexOptions {
+                respect_gitignore: false,
+            },
+        )
+        .expect("disabled gitignore index vault");
+        assert!(
+            disabled_store
+                .documents
+                .contains_key(&PathBuf::from("wiki/topics/ignored.md"))
+        );
+    }
+
+    #[test]
     fn deleted_file_removes_derived_rows_only() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         write_file(tempdir.path(), "raw/source.txt", "raw source stays\n");
@@ -602,8 +666,9 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         write_file(temp.path(), "wiki/topics/large.md", "# Large\n\nabcdef\n");
 
-        let error = discover_indexable_hashes_with_limit(temp.path(), Some(4))
-            .expect_err("limit rejects vault");
+        let error =
+            discover_indexable_hashes_with_limit(temp.path(), Some(4), IndexOptions::default())
+                .expect_err("limit rejects vault");
 
         assert!(matches!(error, IndexError::MemoryIndexTooLarge { .. }));
     }

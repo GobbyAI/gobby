@@ -1,3 +1,4 @@
+pub(crate) mod config;
 pub(crate) mod counts;
 pub(crate) mod env;
 pub(crate) mod graph;

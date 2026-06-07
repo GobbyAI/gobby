@@ -38,12 +38,14 @@ pub fn project_changed_since(
     project_root: &Path,
     last_indexed_at: SystemTime,
     indexed_paths: &[String],
+    options: walker::DiscoveryOptions,
 ) -> bool {
     let threshold = last_indexed_at
         .checked_sub(SKEW_MARGIN)
         .unwrap_or(last_indexed_at);
 
-    let (candidates, content_only) = walker::discover_files(project_root, DEFAULT_EXCLUDES);
+    let (candidates, content_only) =
+        walker::discover_files_with_options(project_root, DEFAULT_EXCLUDES, options);
 
     // Modify / add: a discovered file whose mtime is newer than the threshold.
     // A freshly added file also carries a recent mtime, so adds are caught here
@@ -108,6 +110,10 @@ mod tests {
         SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000)
     }
 
+    fn default_options() -> walker::DiscoveryOptions {
+        walker::DiscoveryOptions::default()
+    }
+
     #[test]
     fn reports_no_change_when_everything_predates_last_index() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -123,7 +129,12 @@ mod tests {
         let last = base + Duration::from_secs(3600);
         let indexed = vec!["src/lib.rs".to_string(), "README.md".to_string()];
 
-        assert!(!project_changed_since(root, last, &indexed));
+        assert!(!project_changed_since(
+            root,
+            last,
+            &indexed,
+            default_options()
+        ));
     }
 
     #[test]
@@ -136,7 +147,12 @@ mod tests {
         let last = base_time() + Duration::from_secs(3600);
         let indexed = vec!["src/lib.rs".to_string()];
 
-        assert!(project_changed_since(root, last, &indexed));
+        assert!(project_changed_since(
+            root,
+            last,
+            &indexed,
+            default_options()
+        ));
     }
 
     #[test]
@@ -151,7 +167,12 @@ mod tests {
         let last = base_time() + Duration::from_secs(3600);
         let indexed: Vec<String> = Vec::new();
 
-        assert!(project_changed_since(root, last, &indexed));
+        assert!(project_changed_since(
+            root,
+            last,
+            &indexed,
+            default_options()
+        ));
     }
 
     #[test]
@@ -165,7 +186,12 @@ mod tests {
         // "src/gone.rs" is recorded as indexed but no longer exists on disk.
         let indexed = vec!["src/lib.rs".to_string(), "src/gone.rs".to_string()];
 
-        assert!(project_changed_since(root, last, &indexed));
+        assert!(project_changed_since(
+            root,
+            last,
+            &indexed,
+            default_options()
+        ));
     }
 
     #[test]
@@ -180,16 +206,61 @@ mod tests {
         // File is 1s older than last_indexed_at — inside the 2s margin, so the
         // gate refreshes (threshold = last - 2s = mtime - 1s < mtime).
         let within_margin = mtime + Duration::from_secs(1);
-        assert!(project_changed_since(root, within_margin, &indexed));
+        assert!(project_changed_since(
+            root,
+            within_margin,
+            &indexed,
+            default_options()
+        ));
 
         // File sits exactly at the boundary (threshold == mtime, mtime <=
         // threshold), so it counts as unchanged.
         let at_margin = mtime + SKEW_MARGIN;
-        assert!(!project_changed_since(root, at_margin, &indexed));
+        assert!(!project_changed_since(
+            root,
+            at_margin,
+            &indexed,
+            default_options()
+        ));
 
         // File is 3s older than last_indexed_at — beyond the 2s margin, so the
         // gate skips (threshold = last - 2s = mtime + 1s >= mtime).
         let beyond_margin = mtime + Duration::from_secs(3);
-        assert!(!project_changed_since(root, beyond_margin, &indexed));
+        assert!(!project_changed_since(
+            root,
+            beyond_margin,
+            &indexed,
+            default_options()
+        ));
+    }
+
+    #[test]
+    fn gitignored_new_files_follow_respect_gitignore_setting() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        std::fs::create_dir(root.join(".git")).expect("git dir");
+        write_file(root, ".gitignore", b"ignored.rs\n");
+        let ignored = write_file(root, "ignored.rs", b"fn ignored() {}\n");
+        set_mtime(&ignored, base_time() + Duration::from_secs(7200));
+
+        let last = base_time() + Duration::from_secs(3600);
+        let indexed: Vec<String> = Vec::new();
+
+        assert!(!project_changed_since(
+            root,
+            last,
+            &indexed,
+            walker::DiscoveryOptions {
+                respect_gitignore: true
+            }
+        ));
+        assert!(project_changed_since(
+            root,
+            last,
+            &indexed,
+            walker::DiscoveryOptions {
+                respect_gitignore: false
+            }
+        ));
     }
 }

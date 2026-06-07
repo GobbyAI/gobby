@@ -37,17 +37,39 @@ pub enum FileClassification {
     ContentOnly,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiscoveryOptions {
+    pub respect_gitignore: bool,
+}
+
+impl Default for DiscoveryOptions {
+    fn default() -> Self {
+        Self {
+            respect_gitignore: true,
+        }
+    }
+}
+
 /// Discover files eligible for indexing under `root`.
 /// Returns (ast_candidates, content_only_candidates) as absolute paths.
 pub fn discover_files<S: AsRef<str>>(
     root: &Path,
     exclude_patterns: &[S],
 ) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    discover_files_with_options(root, exclude_patterns, DiscoveryOptions::default())
+}
+
+pub fn discover_files_with_options<S: AsRef<str>>(
+    root: &Path,
+    exclude_patterns: &[S],
+    options: DiscoveryOptions,
+) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let mut candidates = Vec::new();
     let mut content_only = Vec::new();
     let mut seen = BTreeSet::new();
 
     let mut settings = gobby_core::indexing::WalkerSettings::new(root);
+    settings.respect_gitignore = options.respect_gitignore;
     settings.max_filesize = Some(MAX_FILE_SIZE);
     let mut builder = settings.into_walker();
     builder.hidden(true);
@@ -455,6 +477,30 @@ mod tests {
                 "skills/gcode/SKILL.md"
             ]
         );
+    }
+
+    #[test]
+    fn discover_files_respects_gitignore_by_default_and_option() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        std::fs::create_dir(root.join(".git")).expect("git dir");
+        write_file(root, ".gitignore", b"ignored.rs\n");
+        write_file(root, "ignored.rs", b"fn ignored() {}\n");
+        write_file(root, "src/lib.rs", b"fn visible() {}\n");
+
+        let (default_ast, _) = discover_files(root, &[] as &[&str]);
+        let default_rels = rels(root, default_ast);
+        assert!(default_rels.contains(&"src/lib.rs".to_string()));
+        assert!(!default_rels.contains(&"ignored.rs".to_string()));
+
+        let (disabled_ast, _) = discover_files_with_options(
+            root,
+            &[] as &[&str],
+            DiscoveryOptions {
+                respect_gitignore: false,
+            },
+        );
+        assert!(rels(root, disabled_ast).contains(&"ignored.rs".to_string()));
     }
 
     #[test]
