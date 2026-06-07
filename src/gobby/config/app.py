@@ -44,6 +44,7 @@ from gobby.config.features import (
     SkillDescriptionConfig,
     ToolSummarizerConfig,
 )
+from gobby.config.indexing import IndexingConfig
 from gobby.config.llm_providers import LLMProvidersConfig
 from gobby.config.local import LocalConfig
 from gobby.config.persistence import (
@@ -454,6 +455,10 @@ class DaemonConfig(BaseModel):
     code_index: CodeIndexConfig = Field(
         default_factory=CodeIndexConfig,
         description="Native AST-based code indexing configuration",
+    )
+    indexing: IndexingConfig = Field(
+        default_factory=IndexingConfig,
+        description="Shared indexing behavior for gcode and gwiki.",
     )
     bin_freshness: BinFreshnessConfig = Field(
         default_factory=BinFreshnessConfig,

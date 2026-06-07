@@ -37,10 +37,12 @@ from gobby.config.app import (
     load_yaml,
     save_config,
 )
+from gobby.config.indexing import IndexingConfig
 
 __all__ = [
     # Core app-level exports only
     "DaemonConfig",
+    "IndexingConfig",
     "expand_env_vars",
     "export_config_to_yaml",
     "load_config",

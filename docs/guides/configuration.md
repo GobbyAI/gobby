@@ -44,6 +44,14 @@ When the daemon has a `ConfigStore`, DB values win over file values. Values in
 `llm_providers.claude.models`; the storage layer JSON-encodes values so numbers,
 booleans, strings, and lists keep their type.
 
+Shared indexing behavior is configured under `indexing`. By default, `gcode`
+and `gwiki` respect `.gitignore`, `.git/info/exclude`, and global git excludes:
+
+```yaml
+indexing:
+  respect_gitignore: true
+```
+
 ### Bootstrap
 
 `~/.gobby/bootstrap.yaml` contains only values needed before the hub database is
