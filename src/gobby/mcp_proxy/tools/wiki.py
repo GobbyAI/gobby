@@ -44,8 +44,8 @@ def create_wiki_registry(
         name="gobby-wiki",
         description=(
             "Wiki tools - wiki_search, wiki_ask, wiki_read, wiki_attach, wiki_ingest, "
-            "wiki_compile, wiki_research, wiki_audit, wiki_health, wiki_list_sources, "
-            "wiki_remove_source"
+            "wiki_compile, wiki_research, wiki_audit, wiki_trust, wiki_health, "
+            "wiki_list_sources, wiki_remove_source"
         ),
     )
 
@@ -245,6 +245,16 @@ def create_wiki_registry(
         topic: str | None = None,
     ) -> dict[str, Any]:
         return await _guard(lambda: write_call(project, topic, lambda gwiki: gwiki.audit()))
+
+    @registry.tool(
+        name="wiki_trust",
+        description="Return wiki trust status.",
+    )
+    async def wiki_trust(
+        project: str | None = None,
+        topic: str | None = None,
+    ) -> dict[str, Any]:
+        return await _guard(lambda: read_call(project, topic, lambda gwiki: gwiki.trust()))
 
     @registry.tool(
         name="wiki_health",

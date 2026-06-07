@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from gobby.config.app import DaemonConfig
+from gobby.gwiki_gateway import GwikiCommandError
 from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.wiki import create_wiki_registry
@@ -120,6 +121,25 @@ class FakeGateway:
         self.calls.append(("audit", None))
         return self._result("audit", {"command": "audit", "changed_paths": ["audit.md"]})
 
+    async def trust(self) -> dict[str, Any]:
+        self.calls.append(("trust", None))
+        return self._result(
+            "trust",
+            {
+                "command": "trust",
+                "trust_status": {"status": "trusted"},
+                "runtime": {"mode": "daemon"},
+                "services": {"search": "available"},
+                "index_counts": {"documents": 1},
+                "degradations": [],
+                "freshness": {"status": "fresh"},
+                "audit_summary": {"open": 0},
+                "link_summary": {"broken": 0},
+                "graph_metrics": {"nodes": 1},
+                "health_summary": {"status": "healthy"},
+            },
+        )
+
     async def health(self) -> dict[str, Any]:
         self.calls.append(("health", None))
         return self._result("health", {"status": "healthy"})
@@ -203,6 +223,7 @@ async def test_tool_schemas() -> None:
         "wiki_ingest",
         "wiki_compile",
         "wiki_audit",
+        "wiki_trust",
         "wiki_health",
         "wiki_list_sources",
         "wiki_remove_source",
@@ -219,6 +240,10 @@ async def test_tool_schemas() -> None:
     remove_schema = _schema("wiki_remove_source")
     assert remove_schema["required"] == ["id"]
     assert {"dry_run", "yes", "keep_asset"} <= set(remove_schema["properties"])
+
+    trust_schema = _schema("wiki_trust")
+    assert {"project", "topic"} <= set(trust_schema["properties"])
+    assert trust_schema["required"] == []
 
     read_result = await registry.call(
         "wiki_read",
@@ -263,6 +288,55 @@ async def test_degradation_passthrough() -> None:
     assert result["payload"]["degradation"] == {"status": "partial"}
     assert result["citations"] == [{"path": "raw/result.md", "title": "Result"}]
     assert result["paths"] == {"raw_paths": ["raw/result.md"], "changed_paths": []}
+
+
+@pytest.mark.asyncio
+async def test_wiki_trust_is_read_only_passthrough() -> None:
+    result = await _registry().call("wiki_trust", {"topic": "docs"})
+
+    assert result["success"] is True
+    assert result["scope"] == {"identity": "topic:docs", "project": None, "topic": "docs"}
+    assert result["payload"]["trust_status"] == {"status": "trusted"}
+    assert result["payload"]["runtime"] == {"mode": "daemon"}
+    assert result["paths"] == {"raw_paths": [], "changed_paths": []}
+    assert FakeGateway.instances[-1].calls == [("trust", None)]
+    assert RecordingCoordinator.instances == []
+
+
+@pytest.mark.asyncio
+async def test_wiki_trust_maps_gateway_command_errors() -> None:
+    class FailingTrustGateway(FakeGateway):
+        async def trust(self) -> dict[str, Any]:
+            self.calls.append(("trust", None))
+            raise GwikiCommandError(
+                command="trust",
+                argv=("gwiki", "trust"),
+                returncode=2,
+                stderr="bad scope",
+                payload={"error": {"code": "bad_scope"}},
+            )
+
+    registry = create_wiki_registry(
+        db=None,
+        gateway_cls=FailingTrustGateway,
+        update_coordinator_cls=RecordingCoordinator,
+    )
+
+    result = await registry.call("wiki_trust", {"topic": "docs"})
+
+    assert result["success"] is False
+    assert result["command"] == "trust"
+    assert result["status"] == "failed"
+    assert result["payload"] == {"error": {"code": "bad_scope"}}
+    assert result["stderr"] == "bad scope"
+    assert result["error"] == {
+        "type": "command",
+        "returncode": 2,
+        "message": "bad scope",
+    }
+    assert result["scope"] == {"identity": "topic:docs", "project": None, "topic": "docs"}
+    assert FakeGateway.instances[-1].calls == [("trust", None)]
+    assert RecordingCoordinator.instances == []
 
 
 @pytest.mark.asyncio
@@ -378,7 +452,13 @@ def test_wiki_registry_registered_and_discoverable() -> None:
     assert registry is not None
 
     tool_names = {tool["name"] for tool in registry.list_tools()}
-    assert {"wiki_search", "wiki_read", "wiki_list_sources", "wiki_remove_source"} <= tool_names
+    assert {
+        "wiki_search",
+        "wiki_read",
+        "wiki_trust",
+        "wiki_list_sources",
+        "wiki_remove_source",
+    } <= tool_names
 
 
 @pytest.mark.asyncio

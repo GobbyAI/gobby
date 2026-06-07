@@ -205,6 +205,7 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
         ),
         ("compile", "compile", lambda: gateway.compile("/tmp/out.md")),
         ("audit", "audit", gateway.audit),
+        ("trust", "trust", gateway.trust),
         ("health", "health", gateway.health),
         ("sources", "sources", gateway.sources),
         (
@@ -344,6 +345,7 @@ def test_wiki_mcp_tools_are_backed_by_documented_gwiki_commands() -> None:
         "wiki_compile": "compile",
         "wiki_research": "research",
         "wiki_audit": "audit",
+        "wiki_trust": "trust",
         "wiki_health": "health",
         "wiki_list_sources": "sources",
         "wiki_remove_source": "remove-source",
@@ -468,6 +470,19 @@ def test_gwiki_contract_documents_daemon_parsed_keys() -> None:
     assert {"path", "raw_path", "source_path"} <= _json_keys(contract, "sources")
     assert {"hits", "related_pages", "sources", "warnings"} <= _json_keys(contract, "ask")
     assert {"changed_paths"} <= _json_keys(contract, "refresh")
+    assert {
+        "trust_status",
+        "runtime",
+        "services",
+        "index_counts",
+        "degradations",
+        "freshness",
+        "audit_state",
+        "audit_summary",
+        "link_summary",
+        "graph_metrics",
+        "health_summary",
+    } <= _json_keys(contract, "trust")
     assert {"root", "text_path"} <= _json_keys(contract, "health")
 
 

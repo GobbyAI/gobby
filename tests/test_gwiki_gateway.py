@@ -84,6 +84,7 @@ async def test_gateway_exposes_expected_methods() -> None:
         "research",
         "compile",
         "audit",
+        "trust",
         "health",
         "sources",
         "remove_source",
@@ -199,6 +200,37 @@ async def test_health_omits_gateway_scope_args(
         "stderr": "",
     }
     assert report_path.read_text() == "# Wiki health report\n\nNo issues\n"
+
+
+async def test_trust_uses_gateway_scope_args(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {
+        "command": "trust",
+        "trust_status": {"status": "trusted"},
+    }
+    calls = _patch_subprocess(
+        monkeypatch,
+        [FakeProcess(stdout=_json_bytes(payload))],
+    )
+    gateway = _gateway()
+
+    result = await gateway.trust()
+
+    assert calls[0] == (
+        "/bin/gwiki",
+        "trust",
+        "--project",
+        "/repo",
+        "--topic",
+        "docs",
+        "--format",
+        "json",
+    )
+    assert result == {
+        "ok": True,
+        "command": "trust",
+        "payload": payload,
+        "stderr": "",
+    }
 
 
 async def test_error_preserves_stderr(monkeypatch: pytest.MonkeyPatch) -> None:

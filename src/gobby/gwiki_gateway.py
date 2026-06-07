@@ -183,6 +183,9 @@ class GwikiGateway:
     async def audit(self) -> dict[str, Any]:
         return await self._run_json("audit", ["audit"])
 
+    async def trust(self) -> dict[str, Any]:
+        return await self._run_json("trust", ["trust"])
+
     async def health(self) -> dict[str, Any]:
         result = await self._run_json("health", ["health"], include_scope=False)
         self._normalize_health_report_heading(result)
