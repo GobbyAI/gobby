@@ -260,7 +260,17 @@ jobs:
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
-        run: cargo build --release --target "$TARGET" -p gobby-wiki
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            openssl_src_perl="C:\\Strawberry\\perl\\bin\\perl.exe"
+            if [ ! -x "$(cygpath -u "$openssl_src_perl")" ]; then
+              echo "::error::Build gwiki: Strawberry Perl not found at '$openssl_src_perl'." >&2
+              exit 1
+            fi
+            export OPENSSL_SRC_PERL="$openssl_src_perl"
+          fi
+          cargo build --release --target "$TARGET" -p gobby-wiki
 
       - name: Package (Unix)
         if: "!startsWith(matrix.os, 'windows')"
