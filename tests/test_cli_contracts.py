@@ -218,6 +218,16 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
     for _command_name, _cli_name, call in calls:
         await call()
 
+    assert _command(contract, "index")["daemon_consumed"] is True
+    assert gateway.argv_by_command["index"] == [
+        "gwiki",
+        "index",
+        "--project",
+        "/tmp/project",
+        "--format",
+        "json",
+    ]
+
     for command_name, cli_name, _call in calls:
         command_contract = _command(contract, cli_name)
         assert command_contract["daemon_consumed"] is True
@@ -243,6 +253,16 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
             assert "--project" not in argv
         else:
             assert "--project" in argv
+
+
+@pytest.mark.unit
+def test_gwiki_setup_remains_cli_owned_outside_daemon_surface() -> None:
+    contract = _contract("gwiki")
+    commands_by_name = {command["name"]: command for command in contract["commands"]}
+
+    assert commands_by_name["index"]["daemon_consumed"] is True
+    assert "setup" not in commands_by_name
+    assert not hasattr(GwikiGateway, "setup")
 
 
 @pytest.mark.unit

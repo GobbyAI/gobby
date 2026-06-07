@@ -62,7 +62,11 @@ class _ClassifyConnection:
             set(),
             "gcore_code_index",
         ),
-        ({"gwiki_pages", "gwiki_links"}, set(), "gwiki_standalone"),
+        (
+            {"gwiki_documents", "gwiki_chunks", "gwiki_sources"},
+            set(),
+            "gwiki_standalone",
+        ),
         (
             {
                 "code_indexed_projects",
@@ -71,14 +75,15 @@ class _ClassifyConnection:
                 "code_imports",
                 "code_calls",
                 "code_content_chunks",
-                "gwiki_pages",
-                "gwiki_links",
+                "gwiki_documents",
+                "gwiki_chunks",
+                "gwiki_sources",
             },
             set(),
             "gcore_code_index",
         ),
         ({"code_symbols"}, set(), "corrupt_partial"),
-        ({"gwiki_pages", "tasks"}, set(), "corrupt_partial"),
+        ({"gwiki_documents", "tasks"}, set(), "corrupt_partial"),
     ],
 )
 def test_classify_baseline_state_distinguishes_fresh_infra_and_corruption(
@@ -159,8 +164,10 @@ CREATE INDEX idx_cs_project ON code_symbols(project_id);
 CREATE INDEX code_symbols_search_bm25 ON code_symbols
 USING bm25 (id, name)
 WITH (key_field='id');
-CREATE TABLE gwiki_pages(id TEXT PRIMARY KEY);
-CREATE INDEX idx_gwiki_pages_hub ON gwiki_pages(hub_id);
+CREATE TABLE gwiki_documents(id TEXT PRIMARY KEY);
+CREATE TABLE gwiki_chunks(id TEXT PRIMARY KEY, document_id TEXT);
+CREATE INDEX idx_gwiki_chunks_document ON gwiki_chunks(document_id);
+CREATE TABLE gwiki_sources(id TEXT PRIMARY KEY);
 CREATE TABLE tasks(id INTEGER);
 """
 
@@ -169,8 +176,10 @@ class _GwikiAdoptionResources(_Resources):
     def read_text(self) -> str:
         self.read_count += 1
         return """
-CREATE TABLE gwiki_pages(id TEXT PRIMARY KEY);
-CREATE INDEX idx_gwiki_pages_hub ON gwiki_pages(hub_id);
+CREATE TABLE gwiki_documents(id TEXT PRIMARY KEY);
+CREATE TABLE gwiki_chunks(id TEXT PRIMARY KEY, document_id TEXT);
+CREATE INDEX idx_gwiki_chunks_document ON gwiki_chunks(document_id);
+CREATE TABLE gwiki_sources(id TEXT PRIMARY KEY);
 CREATE TABLE tasks(id INTEGER);
 """
 
@@ -284,8 +293,10 @@ def test_apply_postgres_baseline_adopts_gcore_code_index_state(monkeypatch) -> N
     assert "CREATE TABLE tasks(id INTEGER)" in stripped
     assert "CREATE TABLE code_symbols(id TEXT PRIMARY KEY)" not in stripped
     assert "CREATE INDEX idx_cs_project ON code_symbols(project_id)" not in stripped
-    assert "CREATE TABLE gwiki_pages(id TEXT PRIMARY KEY)" not in stripped
-    assert "CREATE INDEX idx_gwiki_pages_hub ON gwiki_pages(hub_id)" not in stripped
+    assert "CREATE TABLE gwiki_documents(id TEXT PRIMARY KEY)" not in stripped
+    assert "CREATE TABLE gwiki_chunks(id TEXT PRIMARY KEY, document_id TEXT)" not in stripped
+    assert "CREATE INDEX idx_gwiki_chunks_document ON gwiki_chunks(document_id)" not in stripped
+    assert "CREATE TABLE gwiki_sources(id TEXT PRIMARY KEY)" not in stripped
     assert not any("code_symbols_search_bm25" in statement for statement in locked.statements)
     assert any("INSERT INTO schema_migrations" in statement for statement in locked.statements)
     assert resources.read_count == 1
@@ -304,8 +315,10 @@ def test_apply_postgres_baseline_adopts_gwiki_standalone_state(monkeypatch) -> N
     db._apply_postgres_baseline()
 
     stripped = [statement.strip() for statement in locked.statements]
-    assert "CREATE TABLE gwiki_pages(id TEXT PRIMARY KEY)" not in stripped
-    assert "CREATE INDEX idx_gwiki_pages_hub ON gwiki_pages(hub_id)" not in stripped
+    assert "CREATE TABLE gwiki_documents(id TEXT PRIMARY KEY)" not in stripped
+    assert "CREATE TABLE gwiki_chunks(id TEXT PRIMARY KEY, document_id TEXT)" not in stripped
+    assert "CREATE INDEX idx_gwiki_chunks_document ON gwiki_chunks(document_id)" not in stripped
+    assert "CREATE TABLE gwiki_sources(id TEXT PRIMARY KEY)" not in stripped
     assert "CREATE TABLE tasks(id INTEGER)" in stripped
     assert any("INSERT INTO schema_migrations" in statement for statement in locked.statements)
     assert resources.read_count == 1

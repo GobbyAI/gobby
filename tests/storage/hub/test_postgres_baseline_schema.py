@@ -29,6 +29,10 @@ def test_postgres_baseline_schema_file_is_checked_in() -> None:
     assert POSTGRES_BASELINE_SCHEMA.exists()
 
 
+def test_postgres_baseline_contains_no_gwiki_owned_objects() -> None:
+    assert "gwiki_" not in _schema_text().lower()
+
+
 def test_postgres_baseline_uses_native_types() -> None:
     sql = _schema_text()
     upper_sql = sql.upper()
