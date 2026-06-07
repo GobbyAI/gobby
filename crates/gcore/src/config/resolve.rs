@@ -106,10 +106,13 @@ pub fn resolve_falkordb_config(source: &mut impl ConfigSource) -> Option<FalkorC
         "databases.falkordb.port",
         FALKORDB_DEFAULT_PORT,
     );
-    let password = resolve_setting(
+    let password = resolve_setting_from_keys(
         source,
         "GOBBY_FALKORDB_PASSWORD",
-        "databases.falkordb.requirepass",
+        &[
+            "databases.falkordb.requirepass",
+            "databases.falkordb.password",
+        ],
     );
 
     Some(FalkorConfig {
@@ -312,8 +315,26 @@ fn resolve_setting(
     env_key: &str,
     config_key: &str,
 ) -> Option<String> {
-    let value = env_value(env_key).or_else(|| source.config_value(config_key))?;
-    resolve_non_empty(source, &value)
+    resolve_setting_from_keys(source, env_key, &[config_key])
+}
+
+fn resolve_setting_from_keys(
+    source: &mut impl ConfigSource,
+    env_key: &str,
+    config_keys: &[&str],
+) -> Option<String> {
+    if let Some(value) = env_value(env_key) {
+        return resolve_non_empty(source, &value);
+    }
+    for config_key in config_keys {
+        let Some(value) = source.config_value(config_key) else {
+            continue;
+        };
+        if let Some(resolved) = resolve_non_empty(source, &value) {
+            return Some(resolved);
+        }
+    }
+    None
 }
 
 fn resolve_port(

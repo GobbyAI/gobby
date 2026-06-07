@@ -13,7 +13,7 @@ categories = ["development-tools"]
 
 [features]
 default = []
-postgres = ["dep:postgres", "dep:postgres-types", "dep:postgres-openssl", "dep:openssl"]
+postgres = ["dep:postgres", "dep:postgres-types", "dep:postgres-openssl", "dep:openssl", "dep:base64", "dep:fernet", "dep:pbkdf2", "dep:sha2"]
 falkor = ["dep:falkordb", "dep:urlencoding"]
 qdrant = ["dep:reqwest", "dep:urlencoding"]
 indexing = ["dep:ignore", "dep:sha2"]
@@ -38,6 +38,8 @@ openssl = { version = "0.10", features = ["vendored"], optional = true }
 falkordb = { version = "0.2", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }
 base64 = { version = "0.22", optional = true }
+fernet = { version = "0.2", optional = true }
+pbkdf2 = { version = "0.12", features = ["simple"], optional = true }
 bytes = { version = "1", optional = true }
 httpdate = { version = "1", optional = true }
 rand = { version = "0.8", optional = true }

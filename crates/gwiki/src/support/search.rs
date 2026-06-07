@@ -51,14 +51,7 @@ impl ConfigSource for PostgresConfigSource<'_> {
     }
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
-        if value.contains("$secret:") {
-            anyhow::bail!(
-                "gwiki search config from PostgreSQL config_store contains $secret:, but this CLI source cannot resolve daemon secrets; replace it with a resolved value or environment pattern before running gwiki search"
-            );
-        }
-
-        gobby_core::config::resolve_env_pattern(value)?
-            .ok_or_else(|| anyhow::anyhow!("unresolved environment pattern in `{value}`"))
+        gobby_core::secrets::resolve_config_value(value, self.conn)
     }
 }
 

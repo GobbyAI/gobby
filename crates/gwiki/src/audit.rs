@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::lint::{WikiPage, collect_pages, line_number};
 use crate::markdown::{
@@ -205,10 +206,14 @@ fn unsupported_claims(
 ) -> Vec<UnsupportedClaim> {
     let claims = claim_lines(page, options);
     let supported_lines = supported_claim_lines(page, provenance, &claims);
+    let has_page_source_support = has_codewiki_frontmatter_source_spans(page);
     claims
         .into_iter()
         .filter_map(|claim| {
-            if supported_lines.contains(&claim.line) || has_inline_source_support(&claim.text) {
+            if has_page_source_support
+                || supported_lines.contains(&claim.line)
+                || has_inline_source_support(&claim.text)
+            {
                 return None;
             }
             Some(UnsupportedClaim {
@@ -221,6 +226,43 @@ fn unsupported_claims(
             })
         })
         .collect()
+}
+
+fn has_codewiki_frontmatter_source_spans(page: &WikiPage) -> bool {
+    let page_path = page.relative_path.to_string_lossy().replace('\\', "/");
+    page_path.starts_with("wiki/code/")
+        && ["source_files", "sources"]
+            .iter()
+            .filter_map(|key| page.parsed.frontmatter.unknown.get(*key))
+            .any(frontmatter_value_has_code_source_span)
+}
+
+fn frontmatter_value_has_code_source_span(value: &Value) -> bool {
+    let Value::Array(sources) = value else {
+        return false;
+    };
+    sources.iter().any(frontmatter_source_has_code_span)
+}
+
+fn frontmatter_source_has_code_span(value: &Value) -> bool {
+    let Value::Object(source) = value else {
+        return false;
+    };
+    let Some(file) = source.get("file").and_then(Value::as_str) else {
+        return false;
+    };
+    let Some(Value::Array(ranges)) = source.get("ranges") else {
+        return false;
+    };
+    is_code_source_path(file) && ranges.iter().any(frontmatter_range_is_valid)
+}
+
+fn frontmatter_range_is_valid(value: &Value) -> bool {
+    if let Some(range) = value.as_str() {
+        is_line_span(range)
+    } else {
+        value.as_u64().is_some_and(|line| line > 0)
+    }
 }
 
 fn supported_claim_lines(
@@ -389,9 +431,52 @@ fn has_inline_source_support(line: &str) -> bool {
     let lower = line.to_ascii_lowercase();
     lower.contains("[[wiki/sources/")
         || lower.contains("(wiki/sources/")
+        || has_code_source_span(line)
         || has_link_like_source_token(&lower, "citation:")
         || has_link_like_source_token(&lower, "source:")
         || lower.contains("gwiki-source:")
+}
+
+fn has_code_source_span(line: &str) -> bool {
+    let mut rest = line;
+    while let Some(open_index) = rest.find('[') {
+        let after_open = &rest[open_index + 1..];
+        let Some(close_index) = after_open.find(']') else {
+            return false;
+        };
+        if is_code_source_span(&after_open[..close_index]) {
+            return true;
+        }
+        rest = &after_open[close_index + 1..];
+    }
+    false
+}
+
+fn is_code_source_span(candidate: &str) -> bool {
+    let Some((path, span)) = candidate.rsplit_once(':') else {
+        return false;
+    };
+    is_code_source_path(path) && is_line_span(span)
+}
+
+fn is_code_source_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.contains(char::is_whitespace)
+        && (path.contains('/') || path.contains('.'))
+        && !path.contains("://")
+}
+
+fn is_line_span(span: &str) -> bool {
+    let Some((start, end)) = span.split_once('-') else {
+        return span.parse::<usize>().is_ok_and(|line| line > 0);
+    };
+    let Ok(start) = start.parse::<usize>() else {
+        return false;
+    };
+    let Ok(end) = end.parse::<usize>() else {
+        return false;
+    };
+    start > 0 && end >= start
 }
 
 fn has_link_like_source_token(line: &str, token: &str) -> bool {
@@ -572,6 +657,62 @@ mod tests {
         assert!(has_inline_source_support(
             "Evidence citation: [[wiki/sources/source-1]]"
         ));
+    }
+
+    #[test]
+    fn inline_source_support_accepts_codewiki_source_spans() {
+        assert!(has_inline_source_support(
+            "Purpose: documents the builder. [crates/gcode/src/commands/codewiki/build.rs:3-73]"
+        ));
+        assert!(has_inline_source_support(
+            "Root metadata is loaded from [Cargo.toml:1]"
+        ));
+        assert!(!has_inline_source_support(
+            "Not a source citation [placeholder:123]"
+        ));
+        assert!(!has_inline_source_support(
+            "Invalid range [crates/gwiki/src/audit.rs:42-3]"
+        ));
+    }
+
+    #[test]
+    fn codewiki_frontmatter_source_spans_support_structural_claims() {
+        let markdown = r#"---
+title: crates/example.rs
+type: code_file
+source_files:
+- file: crates/example.rs
+  ranges:
+  - 1-12
+---
+
+# crates/example.rs
+
+Module: [[modules/crates|crates]]
+Signature: `fn example() -> bool {`
+"#;
+        let page = WikiPage {
+            path: PathBuf::from("wiki/code/files/crates/example.rs.md"),
+            relative_path: PathBuf::from("wiki/code/files/crates/example.rs.md"),
+            markdown: markdown.to_string(),
+            parsed: crate::markdown::parse_markdown(
+                "wiki/code/files/crates/example.rs.md",
+                markdown,
+                std::iter::empty::<&str>(),
+            )
+            .expect("parse markdown"),
+            has_frontmatter: true,
+        };
+        assert!(has_codewiki_frontmatter_source_spans(&page));
+
+        let claims = unsupported_claims(
+            &page,
+            &ProvenanceGraph::default(),
+            &Arc::new(Vec::new()),
+            &AuditOptions::default(),
+        );
+
+        assert!(claims.is_empty());
     }
 
     #[test]

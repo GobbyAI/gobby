@@ -196,6 +196,36 @@ fn env_overrides_config_store() {
 }
 
 #[test]
+fn falkordb_password_resolves_current_config_key() {
+    let _env = EnvGuard::new();
+    let mut source = TestSource::with_values([
+        ("databases.falkordb.host", "stored-falkor.local"),
+        ("databases.falkordb.port", "16000"),
+        ("databases.falkordb.password", "stored-pass"),
+    ]);
+
+    let falkordb = resolve_falkordb_config(&mut source).expect("falkordb config");
+
+    assert_eq!(falkordb.host, "stored-falkor.local");
+    assert_eq!(falkordb.port, 16000);
+    assert_eq!(falkordb.password.as_deref(), Some("stored-pass"));
+}
+
+#[test]
+fn falkordb_password_prefers_legacy_key_when_both_exist() {
+    let _env = EnvGuard::new();
+    let mut source = TestSource::with_values([
+        ("databases.falkordb.host", "stored-falkor.local"),
+        ("databases.falkordb.requirepass", "legacy-pass"),
+        ("databases.falkordb.password", "current-pass"),
+    ]);
+
+    let falkordb = resolve_falkordb_config(&mut source).expect("falkordb config");
+
+    assert_eq!(falkordb.password.as_deref(), Some("legacy-pass"));
+}
+
+#[test]
 fn config_source_handles_secrets() {
     let _env = EnvGuard::new();
     let mut source = TestSource::with_values([
