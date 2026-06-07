@@ -334,6 +334,48 @@ class TestCloseTask:
         assert "cwd" in call_kwargs.kwargs
 
     @pytest.mark.asyncio
+    async def test_close_task_uses_project_path_override_for_commit_checks(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """Cross-repo close_task calls should resolve commits in the provided repo."""
+        task = _make_task(commits=["abc1234"])
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.link_commit.return_value = task
+        mock_task_manager.list_tasks.return_value = []
+        mock_task_manager.close_task.return_value = task
+        registry = _create_registry(mock_task_manager, mock_sync_manager)
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
+            ) as mock_vcr,
+            patch(
+                "gobby.utils.git.normalize_commit_sha",
+                side_effect=lambda sha, cwd=None: sha,
+            ),
+        ):
+            mock_vcr.return_value = MagicMock(can_close=True)
+            await registry.call(
+                "close_task",
+                {
+                    "task_id": task.id,
+                    "changes_summary": "done",
+                    "commit_sha": "abc1234",
+                    "project_path": "/external/repo",
+                },
+            )
+
+        mock_task_manager.link_commit.assert_called_with(
+            task.id,
+            "abc1234",
+            cwd="/external/repo",
+        )
+        mock_vcr.assert_called_with(task, "completed", "/external/repo")
+        close_call = mock_task_manager.close_task.call_args
+        assert close_call is not None
+        assert close_call.kwargs["closed_commit_sha"] == "abc1234"
+
+    @pytest.mark.asyncio
     async def test_close_task_valid_llm_result_closes_when_feedback_satisfies_criteria(
         self, mock_task_manager, mock_sync_manager
     ) -> None:

@@ -41,6 +41,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         skip_validation: bool = False,
         override_justification: str | None = None,
         commit_sha: str | None = None,
+        project_path: str | None = None,
     ) -> dict[str, Any]:
         """Close a task with validation.
 
@@ -58,6 +59,8 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             skip_validation: Skip all validation checks
             override_justification: Why agent bypassed validation (stored for audit).
             commit_sha: Git commit SHA to link before closing. Convenience for link + close in one call.
+            project_path: Repository path that contains the commit. Optional; defaults to the
+                task project's repository.
 
         Returns:
             Closed task or error with validation feedback
@@ -95,8 +98,9 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                     "or a previously-claimed task",
                 }
 
-        # Get project repo_path for git commands (needed before link_commit)
-        repo_path = ctx.get_project_repo_path(task.project_id)
+        # Get repo_path for git commands (needed before link_commit). An explicit
+        # project_path supports cross-repo coordination tasks.
+        repo_path = project_path or ctx.get_project_repo_path(task.project_id)
         cwd = repo_path or "."
 
         # Link commit if provided (convenience for link + close in one call)
@@ -466,6 +470,11 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 "commit_sha": {
                     "type": "string",
                     "description": "RECOMMENDED: Git commit SHA to link and close in one call. Use this instead of separate link_commit + close_task calls.",
+                    "default": None,
+                },
+                "project_path": {
+                    "type": "string",
+                    "description": "Repository path that contains the commit. Optional; defaults to the current task project repository.",
                     "default": None,
                 },
             },
