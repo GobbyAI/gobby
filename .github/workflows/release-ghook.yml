@@ -186,10 +186,15 @@ jobs:
           done
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
-        with:
-          files: |
-            ghook-*.tar.gz
-            ghook-*.zip
-            ghook-*.sha256
-          generate_release_notes: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tag="${GITHUB_REF#refs/tags/}"
+          assets=(ghook-*.tar.gz ghook-*.zip ghook-*.sha256)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "::error::No ghook release assets found." >&2
+            exit 1
+          fi
+          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag

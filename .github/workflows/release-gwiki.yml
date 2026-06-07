@@ -378,4 +378,4 @@ jobs:
             echo "::error::No gwiki release assets found." >&2
             exit 1
           fi
-          gh release create "$tag" "${assets[@]}" --generate-notes --verify-tag
+          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag

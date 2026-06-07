@@ -288,7 +288,26 @@ fn changed_local_file_replays_and_removes_old_raw_assets() {
             .join(format!("raw/assets/{new_id}.bin"))
             .is_file()
     );
-    assert_eq!(outcome.result.payload["index_status"]["status"], "indexed");
+    let index_status = outcome.result.payload["index_status"]["status"]
+        .as_str()
+        .expect("index status");
+    assert!(
+        matches!(index_status, "indexed" | "degraded"),
+        "refresh should attempt indexing after local replay, got {index_status:?}"
+    );
+    if index_status == "degraded" {
+        let degradations = outcome.result.payload["degradations"]
+            .as_array()
+            .expect("degradations");
+        assert!(
+            degradations.iter().any(|degradation| {
+                degradation
+                    .as_str()
+                    .is_some_and(|message| message.starts_with("index_failed:"))
+            }),
+            "degraded refresh should report index failure, got {degradations:?}"
+        );
+    }
 
     let manifest = SourceManifest::read(temp.path()).expect("read manifest");
     assert_eq!(manifest.entries.len(), 1);

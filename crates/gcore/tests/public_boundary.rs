@@ -22,7 +22,7 @@ fn cargo_features_define_public_boundary() {
 
     for expected in [
         "default = []",
-        r#"postgres = ["dep:postgres", "dep:postgres-types", "dep:postgres-openssl", "dep:openssl"]"#,
+        r#"postgres = ["dep:postgres", "dep:postgres-types", "dep:postgres-openssl", "dep:openssl", "dep:base64", "dep:fernet", "dep:pbkdf2", "dep:sha2"]"#,
         r#"falkor = ["dep:falkordb", "dep:urlencoding"]"#,
         r#"qdrant = ["dep:reqwest", "dep:urlencoding"]"#,
         r#"indexing = ["dep:ignore", "dep:sha2"]"#,
