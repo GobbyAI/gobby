@@ -1278,6 +1278,7 @@ dependencies = [
  "ureq",
  "url",
  "uuid",
+ "windows-sys 0.61.2",
  "yaml_serde",
  "zip 4.6.1",
 ]

@@ -269,6 +269,18 @@ jobs:
               exit 1
             fi
             export OPENSSL_SRC_PERL="$openssl_src_perl"
+            if [ "$TARGET" = "aarch64-pc-windows-msvc" ]; then
+              if [ -z "${VCToolsInstallDir:-}" ]; then
+                echo "::error::Build gwiki: VCToolsInstallDir was not set by MSVC setup." >&2
+                exit 1
+              fi
+              msvc_link="${VCToolsInstallDir}bin\\Hostx64\\arm64\\link.exe"
+              if [ ! -x "$(cygpath -u "$msvc_link")" ]; then
+                echo "::error::Build gwiki: MSVC ARM64 linker not found at '$msvc_link'." >&2
+                exit 1
+              fi
+              export CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER="$msvc_link"
+            fi
           fi
           cargo build --release --target "$TARGET" -p gobby-wiki
 
