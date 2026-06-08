@@ -139,6 +139,8 @@ enum CliCommand {
     Status,
     /// Show search, graph, freshness, and audit trust status.
     Trust,
+    /// Emit a Markdown report on source citation quality.
+    CitationQuality,
 }
 
 #[derive(Debug, Args)]
@@ -601,6 +603,7 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
         CliCommand::Librarian => Ok(Command::Librarian { scope }),
         CliCommand::Status => Ok(Command::Status { scope }),
         CliCommand::Trust => Ok(Command::Trust { scope }),
+        CliCommand::CitationQuality => Ok(Command::CitationQuality { scope }),
     }
 }
 
