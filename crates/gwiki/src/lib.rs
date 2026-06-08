@@ -46,6 +46,8 @@ pub(crate) mod indexer;
 #[allow(dead_code)]
 pub(crate) mod ingest;
 #[allow(dead_code)]
+pub(crate) mod librarian;
+#[allow(dead_code)]
 pub(crate) mod links;
 #[allow(dead_code)]
 pub(crate) mod lint;

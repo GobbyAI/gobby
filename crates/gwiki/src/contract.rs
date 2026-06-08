@@ -308,6 +308,31 @@ pub fn contract() -> CliContract {
                 ..CommandContract::default()
             },
             CommandContract {
+                name: "librarian",
+                summary: "Emit wiki upkeep proposals without rewriting canonical content.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![],
+                json_output_keys: scoped_keys(vec![
+                    "checks",
+                    "suggested_tasks",
+                    "suggested_patch_diffs",
+                    "artifacts",
+                    "dependency_classification",
+                ]),
+                hard_dependencies: vec!["PostgreSQL", "vault"],
+                optional_dependencies: vec![
+                    "FalkorDB/shared code graph",
+                    "Qdrant+embeddings",
+                    "model provider",
+                ],
+                multimodal: Some("none"),
+                degradation: Some(DegradationContract {
+                    output_shape: "each unavailable optional check is skipped independently; deterministic task proposals still emit for available checks",
+                    metadata_keys: vec!["checks[].available", "checks[].note"],
+                }),
+            },
+            CommandContract {
                 name: "sources",
                 summary: "List raw source manifest entries in the selected scope.",
                 daemon_consumed: true,
