@@ -32,7 +32,7 @@ mod render;
 mod text;
 
 // Document builders.
-pub(crate) use build::{build_file_doc, build_module_docs};
+pub(crate) use build::{build_architecture_doc, build_file_doc, build_module_docs};
 // Module clustering and graph-to-file helpers.
 pub(crate) use cluster::{
     cluster_file_modules, files_for_import_target, first_component_for_file,
@@ -52,13 +52,14 @@ pub(crate) use paths::{
 };
 // Rendered markdown and graph diagrams.
 pub(crate) use render::{
-    build_repo_doc, render_file_doc, render_module_call_mermaid, render_module_dependency_mermaid,
+    build_repo_doc, render_architecture_dependency_mermaid, render_architecture_doc,
+    render_file_doc, render_module_call_mermaid, render_module_dependency_mermaid,
     render_module_doc,
 };
 // AI and structural text helpers.
 pub(crate) use text::{
-    citation_list, collect_link_spans, frontmatter, ground_text, maybe_generate,
-    resolve_text_generator, structural_file_summary, structural_module_summary,
+    citation_list, collect_link_spans, frontmatter, frontmatter_with_degradation, ground_text,
+    maybe_generate, resolve_text_generator, structural_file_summary, structural_module_summary,
     structural_repo_summary, structural_symbol_purpose, write_section,
 };
 
@@ -175,6 +176,21 @@ pub(crate) struct ModuleDoc {
     dependency_diagram: Option<String>,
     call_diagram: Option<String>,
     graph_availability: CodewikiGraphAvailability,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ArchitectureDoc {
+    source_spans: Vec<SourceSpan>,
+    subsystems: Vec<ArchitectureSubsystem>,
+    dependency_diagram: Option<String>,
+    degraded_sources: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ArchitectureSubsystem {
+    module: String,
+    responsibility: String,
+    source_spans: Vec<SourceSpan>,
 }
 
 #[derive(Debug, Clone)]
@@ -392,9 +408,20 @@ fn generate_hierarchical_docs_with_graph_availability(
         &mut generate,
     );
     let repo_doc = build_repo_doc(&file_docs, &module_docs, &mut generate);
+    let architecture_doc = build_architecture_doc(
+        &file_docs,
+        &module_docs,
+        &input.graph_edges,
+        input.graph_availability,
+        &mut generate,
+    );
 
     let mut docs = Vec::new();
     docs.push(("code/repo.md".to_string(), repo_doc));
+    docs.push((
+        "code/_architecture.md".to_string(),
+        render_architecture_doc(&architecture_doc),
+    ));
     for module in &module_docs {
         docs.push((module_doc_path(&module.module), render_module_doc(module)));
     }
