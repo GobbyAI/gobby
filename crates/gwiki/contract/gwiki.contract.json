@@ -1,6 +1,6 @@
 {
   "tool": "gwiki",
-  "contract_version": 2,
+  "contract_version": 3,
   "summary": "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
   "global_flags": [
     {
@@ -186,6 +186,7 @@
         "hits",
         "related_pages",
         "sources",
+        "code_edges",
         "code_citations",
         "gaps",
         "stale_candidates",
@@ -193,7 +194,24 @@
         "warnings",
         "ai",
         "synthesis"
-      ]
+      ],
+      "hard_dependencies": [
+        "PostgreSQL"
+      ],
+      "optional_dependencies": [
+        "model synthesis",
+        "code graph",
+        "Qdrant+embeddings",
+        "FalkorDB"
+      ],
+      "multimodal": "none",
+      "degradation": {
+        "output_shape": "model off emits an extractive citation-list answer; signal loss falls back to wiki-only grounding",
+        "metadata_keys": [
+          "degraded",
+          "degraded_sources[]"
+        ]
+      }
     },
     {
       "name": "read",
@@ -498,7 +516,23 @@
         "changed_paths",
         "session_id",
         "status"
-      ]
+      ],
+      "hard_dependencies": [
+        "PostgreSQL"
+      ],
+      "optional_dependencies": [
+        "model multi-step synthesis loop",
+        "code graph/index",
+        "Qdrant+embeddings"
+      ],
+      "multimodal": "none",
+      "degradation": {
+        "output_shape": "model off emits a retrieval-only research scaffold with candidate sources and citations but no synthesized notes; code graph/index off emits docs-only output",
+        "metadata_keys": [
+          "accepted_notes[].degradation",
+          "report.degradation"
+        ]
+      }
     },
     {
       "name": "compile",
@@ -601,6 +635,8 @@
         "scope",
         "context",
         "source_bundle",
+        "code_edges",
+        "code_citations",
         "trust",
         "freshness",
         "audit",

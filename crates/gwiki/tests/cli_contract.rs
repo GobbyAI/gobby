@@ -57,15 +57,63 @@ fn compile_contract_tracks_compile_json_payload_keys() {
     assert_eq!(compile.json_output_keys, expected_keys);
 }
 
-#[test]
-fn graph_context_contract_tracks_dependency_classification() {
-    let contract = pinned_contract();
-    let graph_context = contract["commands"]
+fn command<'a>(contract: &'a Value, name: &str) -> &'a Value {
+    contract["commands"]
         .as_array()
         .expect("commands array")
         .iter()
-        .find(|command| command["name"] == "graph-context")
-        .expect("graph-context command contract");
+        .find(|command| command["name"] == name)
+        .unwrap_or_else(|| panic!("{name} command contract"))
+}
+
+#[test]
+fn parity_contract_tracks_code_grounding_and_dependency_classification() {
+    let contract = pinned_contract();
+    assert_eq!(contract["contract_version"], 3);
+
+    let ask = command(&contract, "ask");
+    assert_eq!(ask["hard_dependencies"], serde_json::json!(["PostgreSQL"]));
+    assert_eq!(
+        ask["optional_dependencies"],
+        serde_json::json!([
+            "model synthesis",
+            "code graph",
+            "Qdrant+embeddings",
+            "FalkorDB"
+        ])
+    );
+    assert_eq!(ask["multimodal"], "none");
+    assert_eq!(
+        ask["degradation"],
+        serde_json::json!({
+            "output_shape": "model off emits an extractive citation-list answer; signal loss falls back to wiki-only grounding",
+            "metadata_keys": ["degraded", "degraded_sources[]"]
+        })
+    );
+    assert_eq!(
+        ask["json_output_keys"],
+        serde_json::json!([
+            "command",
+            "scope",
+            "query",
+            "status",
+            "degraded",
+            "degraded_sources",
+            "hits",
+            "related_pages",
+            "sources",
+            "code_edges",
+            "code_citations",
+            "gaps",
+            "stale_candidates",
+            "suggested_questions",
+            "warnings",
+            "ai",
+            "synthesis"
+        ])
+    );
+
+    let graph_context = command(&contract, "graph-context");
 
     assert_eq!(
         graph_context["hard_dependencies"],
@@ -88,19 +136,42 @@ fn graph_context_contract_tracks_dependency_classification() {
         })
     );
 
-    let expected_keys = [
-        "command",
-        "scope",
-        "context",
-        "source_bundle",
-        "trust",
-        "freshness",
-        "audit",
-        "warnings",
-        "degradation",
-    ];
     assert_eq!(
         graph_context["json_output_keys"],
-        serde_json::json!(expected_keys)
+        serde_json::json!([
+            "command",
+            "scope",
+            "context",
+            "source_bundle",
+            "code_edges",
+            "code_citations",
+            "trust",
+            "freshness",
+            "audit",
+            "warnings",
+            "degradation"
+        ])
+    );
+
+    let research = command(&contract, "research");
+    assert_eq!(
+        research["hard_dependencies"],
+        serde_json::json!(["PostgreSQL"])
+    );
+    assert_eq!(
+        research["optional_dependencies"],
+        serde_json::json!([
+            "model multi-step synthesis loop",
+            "code graph/index",
+            "Qdrant+embeddings"
+        ])
+    );
+    assert_eq!(research["multimodal"], "none");
+    assert_eq!(
+        research["degradation"],
+        serde_json::json!({
+            "output_shape": "model off emits a retrieval-only research scaffold with candidate sources and citations but no synthesized notes; code graph/index off emits docs-only output",
+            "metadata_keys": ["accepted_notes[].degradation", "report.degradation"]
+        })
     );
 }

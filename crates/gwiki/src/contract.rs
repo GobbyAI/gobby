@@ -6,7 +6,7 @@ use gobby_core::cli_contract::{
 pub fn contract() -> CliContract {
     CliContract {
         tool: "gwiki",
-        contract_version: 2,
+        contract_version: 3,
         summary: "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
         global_flags: vec![format_flag(), FlagContract::switch("--quiet")],
         scope: Some(ScopeContract {
@@ -76,6 +76,7 @@ pub fn contract() -> CliContract {
                     "hits",
                     "related_pages",
                     "sources",
+                    "code_edges",
                     "code_citations",
                     "gaps",
                     "stale_candidates",
@@ -84,7 +85,18 @@ pub fn contract() -> CliContract {
                     "ai",
                     "synthesis",
                 ]),
-                ..CommandContract::default()
+                hard_dependencies: vec!["PostgreSQL"],
+                optional_dependencies: vec![
+                    "model synthesis",
+                    "code graph",
+                    "Qdrant+embeddings",
+                    "FalkorDB",
+                ],
+                multimodal: Some("none"),
+                degradation: Some(DegradationContract {
+                    output_shape: "model off emits an extractive citation-list answer; signal loss falls back to wiki-only grounding",
+                    metadata_keys: vec!["degraded", "degraded_sources[]"],
+                }),
             },
             CommandContract {
                 name: "read",
@@ -201,7 +213,17 @@ pub fn contract() -> CliContract {
                     "session_id",
                     "status",
                 ]),
-                ..CommandContract::default()
+                hard_dependencies: vec!["PostgreSQL"],
+                optional_dependencies: vec![
+                    "model multi-step synthesis loop",
+                    "code graph/index",
+                    "Qdrant+embeddings",
+                ],
+                multimodal: Some("none"),
+                degradation: Some(DegradationContract {
+                    output_shape: "model off emits a retrieval-only research scaffold with candidate sources and citations but no synthesized notes; code graph/index off emits docs-only output",
+                    metadata_keys: vec!["accepted_notes[].degradation", "report.degradation"],
+                }),
             },
             CommandContract {
                 name: "compile",
@@ -256,6 +278,8 @@ pub fn contract() -> CliContract {
                 json_output_keys: scoped_keys(vec![
                     "context",
                     "source_bundle",
+                    "code_edges",
+                    "code_citations",
                     "trust",
                     "freshness",
                     "audit",
