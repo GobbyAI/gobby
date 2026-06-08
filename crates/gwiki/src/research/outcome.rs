@@ -9,7 +9,7 @@ use super::notes::{frontmatter_block, materializing_marker_is_stale, yaml_field_
 use super::{AuditFinding, AuditSeverity, RESEARCH_NOTE_NAMESPACE, ResearchOptions};
 use crate::research_loop::ResearchObservation;
 use crate::scope::{self, ScopeKind};
-use crate::session::{ResearchScope, ResearchSession, research_prompt};
+use crate::session::{ResearchCodeCitation, ResearchScope, ResearchSession, research_prompt};
 use crate::{CommandOutcome, ScopeSelection, WikiError};
 
 pub(crate) fn observation_from_outcome(
@@ -18,6 +18,8 @@ pub(crate) fn observation_from_outcome(
 ) -> ResearchObservation {
     ResearchObservation::new(action, outcome.result.text.clone())
         .with_sources(outcome_sources(&outcome.result.payload))
+        .with_code_citations(outcome_code_citations(&outcome.result.payload, action))
+        .with_degradations(outcome_degradations(&outcome.result.payload))
         .with_changed_paths(outcome_changed_paths(&outcome.result.payload))
 }
 
@@ -46,6 +48,64 @@ pub(crate) fn outcome_changed_paths(payload: &Value) -> Vec<PathBuf> {
         .into_iter()
         .map(PathBuf::from)
         .collect()
+}
+
+pub(crate) fn outcome_code_citations(
+    payload: &Value,
+    provenance: &str,
+) -> Vec<ResearchCodeCitation> {
+    let mut citations = Vec::new();
+    if let Some(values) = payload.get("code_citations").and_then(Value::as_array) {
+        for value in values {
+            let Some(file) = value.get("file").and_then(Value::as_str) else {
+                continue;
+            };
+            if file.trim().is_empty() {
+                continue;
+            }
+            citations.push(ResearchCodeCitation {
+                file: file.trim().to_string(),
+                line: value
+                    .get("line")
+                    .and_then(Value::as_u64)
+                    .and_then(|line| usize::try_from(line).ok()),
+                symbol: value
+                    .get("symbol")
+                    .and_then(Value::as_str)
+                    .map(|symbol| symbol.trim().to_string())
+                    .filter(|symbol| !symbol.is_empty()),
+                provenance: vec![provenance.to_string()],
+            });
+        }
+    }
+    dedup_code_citations(citations)
+}
+
+pub(crate) fn outcome_degradations(payload: &Value) -> Vec<String> {
+    let mut degradations = Vec::new();
+    collect_keyed_strings(
+        payload,
+        &["degradation", "degradations", "degraded_sources"],
+        &mut degradations,
+    );
+    dedup_strings(degradations)
+}
+
+pub(crate) fn dedup_code_citations(
+    citations: Vec<ResearchCodeCitation>,
+) -> Vec<ResearchCodeCitation> {
+    let mut deduped = Vec::new();
+    for citation in citations {
+        if !deduped.iter().any(|existing: &ResearchCodeCitation| {
+            existing.file == citation.file
+                && existing.line == citation.line
+                && existing.symbol == citation.symbol
+                && existing.provenance == citation.provenance
+        }) {
+            deduped.push(citation);
+        }
+    }
+    deduped
 }
 
 pub(crate) fn collect_keyed_strings(value: &Value, keys: &[&str], out: &mut Vec<String>) {

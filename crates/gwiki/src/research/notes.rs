@@ -1,5 +1,5 @@
 use super::*;
-use crate::session::AcceptedResearchNote;
+use crate::session::{AcceptedResearchNote, ResearchCodeCitation};
 
 #[derive(Serialize)]
 pub(crate) struct AcceptedNoteFrontmatter<'a> {
@@ -9,6 +9,14 @@ pub(crate) struct AcceptedNoteFrontmatter<'a> {
     research_status: &'a str,
     indexable: bool,
     sources: &'a [String],
+    #[serde(skip_serializing_if = "code_citations_empty")]
+    code_citations: &'a [ResearchCodeCitation],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    degradation: &'a Option<String>,
+}
+
+fn code_citations_empty(citations: &&[ResearchCodeCitation]) -> bool {
+    citations.is_empty()
 }
 
 pub(crate) struct AcceptedNoteWrite {
@@ -36,6 +44,8 @@ pub(crate) fn write_accepted_note(
             note: AcceptedResearchNote {
                 title: note.title.clone(),
                 path: found.path,
+                code_citations: note.code_citations.clone(),
+                degradation: note.degradation.clone(),
             },
             created: false,
             write_conflict: found.write_conflict,
@@ -52,6 +62,8 @@ pub(crate) fn write_accepted_note(
                 note: AcceptedResearchNote {
                     title: note.title.clone(),
                     path,
+                    code_citations: note.code_citations.clone(),
+                    degradation: note.degradation.clone(),
                 },
                 created: false,
                 write_conflict,
@@ -78,6 +90,8 @@ pub(crate) fn write_accepted_note(
         note: AcceptedResearchNote {
             title: note.title.clone(),
             path,
+            code_citations: note.code_citations.clone(),
+            degradation: note.degradation.clone(),
         },
         created: true,
         write_conflict,
@@ -125,6 +139,8 @@ pub(crate) fn render_accepted_note_body(
         research_status: status,
         indexable,
         sources: &note.sources,
+        code_citations: &note.code_citations,
+        degradation: &note.degradation,
     })
     .map_err(|error| WikiError::Yaml {
         action: "serialize accepted research note frontmatter",

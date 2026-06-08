@@ -94,16 +94,17 @@ fn research_reloads_checkpoint_without_daemon_dispatch() {
 }
 
 #[test]
-fn enrichment_rejects_ai_off() {
+fn enrichment_require_ai_rejects_ai_off() {
     let temp = tempfile::tempdir().expect("tempdir");
     let mut options = default_options(
         "What should be researched?",
         ResearchScope::project_for_id("project-1", temp.path()),
     );
     options.ai = AiRouting::Off;
-    let error = run(options).expect_err("AI off should be rejected for enrichment");
+    options.require_ai = true;
+    let error = run(options).expect_err("required AI off should be rejected for enrichment");
 
-    assert!(matches!(error, WikiError::InvalidInput { field: "ai", .. }));
+    assert!(matches!(error, WikiError::Config { .. }));
 }
 
 #[test]
@@ -119,6 +120,8 @@ fn accepted_notes_land_in_raw_research() {
         title: "Session event monitoring".to_string(),
         body: "Durable event logs are appended as JSONL.".to_string(),
         sources: vec!["raw/source.md".to_string()],
+        code_citations: Vec::new(),
+        degradation: None,
     }];
     let outcome = run(options).expect("research ran");
 
@@ -162,6 +165,8 @@ fn accepted_note_collisions_use_numeric_suffixes() {
             title: "Same title".to_string(),
             body: "first".to_string(),
             sources: Vec::new(),
+            code_citations: Vec::new(),
+            degradation: None,
         },
     )
     .expect("first note");
@@ -172,6 +177,8 @@ fn accepted_note_collisions_use_numeric_suffixes() {
             title: "Same title".to_string(),
             body: "second".to_string(),
             sources: Vec::new(),
+            code_citations: Vec::new(),
+            degradation: None,
         },
     )
     .expect("second note");
@@ -201,6 +208,8 @@ fn accepted_note_draft_collision_with_changed_body_is_write_conflict() {
         title: "Concurrent note".to_string(),
         body: "the validated draft body".to_string(),
         sources: Vec::new(),
+        code_citations: Vec::new(),
+        degradation: None,
     };
     let draft_id = accepted_note_draft_id(&draft);
     // Simulate a concurrent writer: a completed note carrying our draft id
@@ -209,6 +218,8 @@ fn accepted_note_draft_collision_with_changed_body_is_write_conflict() {
         title: draft.title.clone(),
         body: "a different body written by another process".to_string(),
         sources: draft.sources.clone(),
+        code_citations: draft.code_citations.clone(),
+        degradation: draft.degradation.clone(),
     };
     let path = research_dir.join("concurrent-note.md");
     let on_disk =
@@ -237,6 +248,8 @@ fn accepted_notes_are_idempotent_by_draft_id() {
         title: "Same title".to_string(),
         body: "same body".to_string(),
         sources: vec!["same-source.md".to_string()],
+        code_citations: Vec::new(),
+        degradation: None,
     };
 
     let first = write_accepted_note(root, "research-1", &draft).expect("first note");
@@ -262,6 +275,8 @@ fn accepted_note_waits_for_materializing_marker_to_complete() {
         title: "Shared note".to_string(),
         body: "same body".to_string(),
         sources: Vec::new(),
+        code_citations: Vec::new(),
+        degradation: None,
     };
     let draft_id = accepted_note_draft_id(&draft);
     let path = research_dir.join("shared-note.md");
@@ -360,6 +375,8 @@ fn deterministic_audit_uses_checkpoint_inventory() {
         title: "Tracked note".to_string(),
         body: "Tracked body.".to_string(),
         sources: vec!["raw/source.md".to_string()],
+        code_citations: Vec::new(),
+        degradation: None,
     }];
     let setup = run(options).expect("accepted note written");
     assert_eq!(setup.session.accepted_notes.len(), 1);

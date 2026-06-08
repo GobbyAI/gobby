@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use crate::WikiError;
 use crate::research::{AcceptedNoteDraft, ResearchGap, ResearchStopReason};
-use crate::session::AcceptedResearchNote;
+use crate::session::{AcceptedResearchNote, ResearchCodeCitation};
 
 use super::helpers::{
     action_fingerprint, default_stop_message, normalize_sources, sorted_sources, source_evidence,
@@ -90,11 +90,17 @@ impl<'a> ResearchLoop<'a> {
             }) {
                 Ok(decision) => decision,
                 Err(ResearchModelError::AiUnavailable(message)) => {
-                    state.warnings.push(format!("ai_unavailable: {message}"));
+                    let degradation = format!("model_unavailable: {message}");
+                    state.record_degradation(degradation.clone());
                     state.events.push(ResearchLoopEvent {
                         kind: "research_ai_unavailable".to_string(),
-                        message,
+                        message: message.clone(),
                     });
+                    self.write_retrieval_scaffold(&mut state, input.question)?;
+                    state.message = Some(
+                        "research degraded to retrieval-only scaffold; no synthesized notes were written"
+                            .to_string(),
+                    );
                     return Ok(state.finish(ResearchStopReason::AiUnavailable));
                 }
                 Err(ResearchModelError::BudgetExceeded) => {
@@ -225,7 +231,10 @@ impl<'a> ResearchLoop<'a> {
                     title,
                     body,
                     sources,
+                    code_citations: Vec::new(),
+                    degradation: None,
                 };
+                let draft = state.prepare_note(draft);
                 let validated = match self.validated_note(draft, Some(&state.known_sources)) {
                     Ok(validated) => validated,
                     Err(gap) => {
@@ -266,6 +275,20 @@ impl<'a> ResearchLoop<'a> {
                 Ok(StepOutcome::Stop(ResearchStopReason::Finish))
             }
         }
+    }
+
+    fn write_retrieval_scaffold(
+        &mut self,
+        state: &mut LoopState,
+        question: &str,
+    ) -> Result<(), WikiError> {
+        let observation = self.search.search(question, self.config.max_sources)?;
+        state.record_observation(observation, false, &self.config, self.root);
+        state.events.push(ResearchLoopEvent {
+            kind: "research_retrieval_scaffold".to_string(),
+            message: "candidate sources gathered without note synthesis".to_string(),
+        });
+        Ok(())
     }
 
     fn write_validated_note(
@@ -398,10 +421,13 @@ struct LoopState {
     tokens_used: usize,
     write_conflict: bool,
     sources_added: Vec<String>,
+    candidate_sources: HashSet<String>,
     known_sources: HashSet<String>,
     observations: Vec<ResearchObservation>,
     gaps: Vec<ResearchGap>,
     warnings: Vec<String>,
+    degradation: Option<String>,
+    code_citations: Vec<ResearchCodeCitation>,
     changed_paths: Vec<PathBuf>,
     accepted_notes: Vec<AcceptedResearchNote>,
     events: Vec<ResearchLoopEvent>,
@@ -418,6 +444,7 @@ impl LoopState {
     ) -> bool {
         let mut progress = !observation.summary.trim().is_empty();
         for source in &observation.sources {
+            self.candidate_sources.insert(source.clone());
             self.known_sources.insert(source.clone());
             for alias in source_path_aliases(root, source) {
                 self.known_sources.insert(alias);
@@ -434,12 +461,58 @@ impl LoopState {
             self.changed_paths.extend(observation.changed_paths.clone());
             progress = true;
         }
+        for citation in &observation.code_citations {
+            self.push_code_citation(citation.clone());
+            progress = true;
+        }
+        for degradation in &observation.degradations {
+            self.record_degradation(degradation.clone());
+        }
         self.events.push(ResearchLoopEvent {
             kind: format!("research_{}", observation.action),
             message: observation.summary.clone(),
         });
         self.observations.push(observation);
         progress
+    }
+
+    fn prepare_note(&self, mut note: AcceptedNoteDraft) -> AcceptedNoteDraft {
+        if note.code_citations.is_empty() {
+            note.code_citations = citations_for_sources(&self.code_citations, &note.sources);
+        } else {
+            note.code_citations = dedup_code_citations(note.code_citations);
+        }
+        if note.degradation.is_none() {
+            note.degradation = self.degradation.clone();
+        }
+        note
+    }
+
+    fn record_degradation(&mut self, degradation: String) {
+        if degradation.trim().is_empty() {
+            return;
+        }
+        if self.degradation.is_none() {
+            self.degradation = Some(degradation.clone());
+        }
+        let warning = format!("degradation: {degradation}");
+        if !self.warnings.iter().any(|existing| existing == &warning) {
+            self.warnings.push(warning);
+        }
+    }
+
+    fn push_code_citation(&mut self, citation: ResearchCodeCitation) {
+        if citation.file.trim().is_empty() {
+            return;
+        }
+        if !self.code_citations.iter().any(|existing| {
+            existing.file == citation.file
+                && existing.line == citation.line
+                && existing.symbol == citation.symbol
+                && existing.provenance == citation.provenance
+        }) {
+            self.code_citations.push(citation);
+        }
     }
 
     fn finish(self, stop_reason: ResearchStopReason) -> ResearchLoopResult {
@@ -449,6 +522,9 @@ impl LoopState {
             tokens_used: self.tokens_used,
             write_conflict: self.write_conflict,
             sources_added: self.sources_added,
+            candidate_sources: sorted_sources(&self.candidate_sources),
+            code_citations: self.code_citations,
+            degradation: self.degradation,
             gaps: self.gaps,
             warnings: self.warnings,
             changed_paths: self.changed_paths,
@@ -459,6 +535,43 @@ impl LoopState {
                 .unwrap_or_else(|| default_stop_message(stop_reason).to_string()),
         }
     }
+}
+
+fn citations_for_sources(
+    citations: &[ResearchCodeCitation],
+    sources: &[String],
+) -> Vec<ResearchCodeCitation> {
+    let mut selected = Vec::new();
+    for citation in citations {
+        if sources
+            .iter()
+            .any(|source| citation_matches_source(citation, source))
+        {
+            selected.push(citation.clone());
+        }
+    }
+    dedup_code_citations(selected)
+}
+
+fn citation_matches_source(citation: &ResearchCodeCitation, source: &str) -> bool {
+    citation.file == source
+        || source.ends_with(&citation.file)
+        || source.contains(&format!("{}.", citation.file))
+}
+
+fn dedup_code_citations(citations: Vec<ResearchCodeCitation>) -> Vec<ResearchCodeCitation> {
+    let mut deduped = Vec::new();
+    for citation in citations {
+        if !deduped.iter().any(|existing: &ResearchCodeCitation| {
+            existing.file == citation.file
+                && existing.line == citation.line
+                && existing.symbol == citation.symbol
+                && existing.provenance == citation.provenance
+        }) {
+            deduped.push(citation);
+        }
+    }
+    deduped
 }
 
 enum StepOutcome {

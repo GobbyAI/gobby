@@ -16,6 +16,8 @@ fn session_with_note(scope: &ResearchScope, title: &str, relative_path: &str) ->
         accepted_notes: vec![AcceptedResearchNote {
             title: title.to_string(),
             path: scope.root().join(relative_path),
+            code_citations: Vec::new(),
+            degradation: None,
         }],
         compile_state: None,
     }
@@ -139,6 +141,8 @@ fn compile_fails_on_out_of_scope_accepted_note() {
     session.accepted_notes.push(AcceptedResearchNote {
         title: "Out of scope".to_string(),
         path: out_of_scope.path().join("raw/research/out-of-scope.md"),
+        code_citations: Vec::new(),
+        degradation: None,
     });
     let out_path = out_of_scope.path().join("raw/research/out-of-scope.md");
     std::fs::create_dir_all(out_path.parent().expect("out parent")).expect("out raw dir");

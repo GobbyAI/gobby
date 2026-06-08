@@ -6,7 +6,7 @@ use std::time::Duration;
 use crate::WikiError;
 use crate::research::{AcceptedNoteDraft, ResearchStopReason};
 use crate::research_loop::helpers::validate_source_reference;
-use crate::session::AcceptedResearchNote;
+use crate::session::{AcceptedResearchNote, ResearchCodeCitation};
 
 #[derive(Default)]
 struct FakeModel {
@@ -40,6 +40,19 @@ impl ResearchModel for BudgetModel {
         _request: ModelRequest<'_>,
     ) -> Result<ModelDecision, ResearchModelError> {
         Err(ResearchModelError::BudgetExceeded)
+    }
+}
+
+struct AiUnavailableModel;
+
+impl ResearchModel for AiUnavailableModel {
+    fn next_action(
+        &mut self,
+        _request: ModelRequest<'_>,
+    ) -> Result<ModelDecision, ResearchModelError> {
+        Err(ResearchModelError::AiUnavailable(
+            "text generation route is off".to_string(),
+        ))
     }
 }
 
@@ -99,6 +112,8 @@ impl ResearchNoteWriter for FakeWriter {
             note: AcceptedResearchNote {
                 title: note.title.clone(),
                 path: PathBuf::from(format!("raw/research/{}.md", note.title)),
+                code_citations: note.code_citations.clone(),
+                degradation: note.degradation.clone(),
             },
             created: !self.conflict,
             write_conflict: self.conflict,
@@ -192,6 +207,233 @@ fn config() -> ResearchLoopConfig {
         max_wall_time: Duration::from_secs(900),
         max_note_bytes: 24_000,
     }
+}
+
+#[test]
+fn research_code_citations_flow_into_accepted_notes() {
+    struct CodeSearch;
+
+    impl WikiSearch for CodeSearch {
+        fn search(
+            &mut self,
+            _query: &str,
+            _limit: usize,
+        ) -> Result<ResearchObservation, WikiError> {
+            Ok(ResearchObservation::new("search", "1 code hit")
+                .with_sources(vec!["src/handler.rs".to_string()])
+                .with_code_citations(vec![ResearchCodeCitation {
+                    file: "src/handler.rs".to_string(),
+                    line: Some(12),
+                    symbol: Some("handle".to_string()),
+                    provenance: vec!["search".to_string(), "graph_context".to_string()],
+                }]))
+        }
+    }
+
+    let root = tempfile::tempdir().expect("wiki root");
+    let src_dir = root.path().join("src");
+    std::fs::create_dir_all(&src_dir).expect("src dir");
+    std::fs::write(src_dir.join("handler.rs"), "fn handle() {}").expect("source file");
+
+    let expected = ResearchCodeCitation {
+        file: "src/handler.rs".to_string(),
+        line: Some(12),
+        symbol: Some("handle".to_string()),
+        provenance: vec!["search".to_string(), "graph_context".to_string()],
+    };
+    let mut model = FakeModel::new(vec![
+        ModelDecision {
+            action: ResearchAction::Search {
+                query: "handler".to_string(),
+            },
+            tokens_used: 5,
+        },
+        ModelDecision {
+            action: ResearchAction::AcceptNote {
+                title: "Handler note".to_string(),
+                body: "The handler is grounded in code.".to_string(),
+                sources: vec!["src/handler.rs".to_string()],
+            },
+            tokens_used: 7,
+        },
+        ModelDecision {
+            action: ResearchAction::Finish {
+                reason: Some("done".to_string()),
+            },
+            tokens_used: 1,
+        },
+    ]);
+
+    let mut ask = FakeAsk;
+    let mut search = CodeSearch;
+    let mut read = FakeRead;
+    let mut ingest = FakeIngest;
+    let mut writer = FakeWriter::default();
+    let mut loop_ = ResearchLoop::new(
+        root.path(),
+        config(),
+        test_deps(
+            &mut model,
+            &mut ask,
+            &mut search,
+            &mut read,
+            &mut ingest,
+            &mut writer,
+        ),
+    );
+    let result = loop_
+        .run(ResearchLoopInput {
+            question: "Where is handling wired?",
+            source_constraints: &[],
+            initial_notes: &[],
+        })
+        .expect("loop runs");
+
+    assert_eq!(result.stop_reason, ResearchStopReason::Finish);
+    assert_eq!(writer.notes[0].code_citations, vec![expected.clone()]);
+    assert_eq!(result.accepted_notes[0].code_citations, vec![expected]);
+}
+
+#[test]
+fn research_code_model_off_returns_retrieval_only_scaffold() {
+    struct ScaffoldSearch;
+
+    impl WikiSearch for ScaffoldSearch {
+        fn search(
+            &mut self,
+            _query: &str,
+            _limit: usize,
+        ) -> Result<ResearchObservation, WikiError> {
+            Ok(ResearchObservation::new("search", "1 candidate source")
+                .with_sources(vec!["wiki/code/files/src/handler.rs.md".to_string()])
+                .with_code_citations(vec![ResearchCodeCitation {
+                    file: "src/handler.rs".to_string(),
+                    line: Some(3),
+                    symbol: Some("handle".to_string()),
+                    provenance: vec!["retrieval_scaffold".to_string()],
+                }]))
+        }
+    }
+
+    let mut model = AiUnavailableModel;
+    let mut ask = FakeAsk;
+    let mut search = ScaffoldSearch;
+    let mut read = FakeRead;
+    let mut ingest = FakeIngest;
+    let mut writer = FakeWriter::default();
+    let mut loop_ = ResearchLoop::new(
+        Path::new("/tmp/wiki"),
+        config(),
+        test_deps(
+            &mut model,
+            &mut ask,
+            &mut search,
+            &mut read,
+            &mut ingest,
+            &mut writer,
+        ),
+    );
+    let result = loop_
+        .run(ResearchLoopInput {
+            question: "Where is handling wired?",
+            source_constraints: &[],
+            initial_notes: &[],
+        })
+        .expect("loop runs");
+
+    assert_eq!(result.stop_reason, ResearchStopReason::AiUnavailable);
+    assert!(writer.notes.is_empty());
+    assert!(result.accepted_notes.is_empty());
+    assert_eq!(
+        result.candidate_sources,
+        vec!["wiki/code/files/src/handler.rs.md".to_string()]
+    );
+    assert_eq!(result.code_citations.len(), 1);
+    assert_eq!(
+        result.degradation,
+        Some("model_unavailable: text generation route is off".to_string())
+    );
+}
+
+#[test]
+fn research_code_graph_off_keeps_docs_only_degradation_on_notes() {
+    struct DocsOnlySearch;
+
+    impl WikiSearch for DocsOnlySearch {
+        fn search(
+            &mut self,
+            _query: &str,
+            _limit: usize,
+        ) -> Result<ResearchObservation, WikiError> {
+            Ok(ResearchObservation::new("search", "1 docs hit")
+                .with_sources(vec!["raw/source.md".to_string()])
+                .with_degradations(vec!["shared_code_graph_unavailable".to_string()]))
+        }
+    }
+
+    let root = tempfile::tempdir().expect("wiki root");
+    let raw_dir = root.path().join("raw");
+    std::fs::create_dir_all(&raw_dir).expect("raw dir");
+    std::fs::write(raw_dir.join("source.md"), "source").expect("source file");
+
+    let mut model = FakeModel::new(vec![
+        ModelDecision {
+            action: ResearchAction::Search {
+                query: "events".to_string(),
+            },
+            tokens_used: 5,
+        },
+        ModelDecision {
+            action: ResearchAction::AcceptNote {
+                title: "Docs note".to_string(),
+                body: "The answer is grounded in docs only.".to_string(),
+                sources: vec!["raw/source.md".to_string()],
+            },
+            tokens_used: 7,
+        },
+        ModelDecision {
+            action: ResearchAction::Finish {
+                reason: Some("done".to_string()),
+            },
+            tokens_used: 1,
+        },
+    ]);
+
+    let mut ask = FakeAsk;
+    let mut search = DocsOnlySearch;
+    let mut read = FakeRead;
+    let mut ingest = FakeIngest;
+    let mut writer = FakeWriter::default();
+    let mut loop_ = ResearchLoop::new(
+        root.path(),
+        config(),
+        test_deps(
+            &mut model,
+            &mut ask,
+            &mut search,
+            &mut read,
+            &mut ingest,
+            &mut writer,
+        ),
+    );
+    let result = loop_
+        .run(ResearchLoopInput {
+            question: "How are events persisted?",
+            source_constraints: &[],
+            initial_notes: &[],
+        })
+        .expect("loop runs");
+
+    assert_eq!(result.stop_reason, ResearchStopReason::Finish);
+    assert!(writer.notes[0].code_citations.is_empty());
+    assert_eq!(
+        writer.notes[0].degradation,
+        Some("shared_code_graph_unavailable".to_string())
+    );
+    assert_eq!(
+        result.degradation,
+        Some("shared_code_graph_unavailable".to_string())
+    );
 }
 
 #[test]

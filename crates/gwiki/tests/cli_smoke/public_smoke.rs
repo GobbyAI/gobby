@@ -251,6 +251,8 @@ fn public_cli_smoke_continues_research_compile_audit_in_topic_scope() {
     session.accepted_notes.push(AcceptedResearchNote {
         title: "Session scope".to_string(),
         path: note_path,
+        code_citations: Vec::new(),
+        degradation: None,
     });
     session.save_checkpoint().expect("save checkpoint");
 
