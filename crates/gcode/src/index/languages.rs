@@ -370,6 +370,20 @@ pub fn get_ts_language(lang: &str) -> Option<Language> {
     Some(lang_fn.into())
 }
 
+/// Get the parser grammar for a language and concrete file path.
+pub fn get_ts_language_for_path(lang: &str, file_path: &str) -> Option<Language> {
+    if lang == "typescript"
+        && std::path::Path::new(file_path)
+            .extension()
+            .map(|ext| ext.to_string_lossy().eq_ignore_ascii_case("tsx"))
+            .unwrap_or(false)
+    {
+        return Some(tree_sitter_typescript::LANGUAGE_TSX.into());
+    }
+
+    get_ts_language(lang)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,5 +401,11 @@ mod tests {
         assert_eq!(detect_language("src/app.jsx"), Some("javascript"));
         assert_eq!(detect_language("src/app.cjs"), Some("javascript"));
         assert_eq!(detect_language("src/generated.mjs"), Some("javascript"));
+    }
+
+    #[test]
+    fn typescript_extensions_still_detect() {
+        assert_eq!(detect_language("src/app.ts"), Some("typescript"));
+        assert_eq!(detect_language("src/app.tsx"), Some("typescript"));
     }
 }

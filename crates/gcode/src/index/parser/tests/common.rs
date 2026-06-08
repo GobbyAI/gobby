@@ -47,6 +47,10 @@ pub(super) fn parse_typescript(source: &str, extra_files: &[(&str, &str)]) -> Pa
     parse_source("src/sample.ts", source, extra_files)
 }
 
+pub(super) fn parse_tsx(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
+    parse_source("src/sample.tsx", source, extra_files)
+}
+
 pub(super) fn parse_go(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
     parse_source("cmd/sample.go", source, extra_files)
 }

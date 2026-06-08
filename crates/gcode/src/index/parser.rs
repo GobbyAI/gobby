@@ -68,7 +68,7 @@ pub(crate) fn parse_file_with_semantic(
     let Some(spec) = languages::get_spec(language) else {
         return Ok(None);
     };
-    let Some(ts_lang) = languages::get_ts_language(language) else {
+    let Some(ts_lang) = languages::get_ts_language_for_path(language, &file_str) else {
         return Ok(None);
     };
 

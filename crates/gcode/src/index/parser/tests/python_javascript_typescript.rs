@@ -1,4 +1,4 @@
-use super::common::{parse_javascript, parse_python, parse_source, parse_typescript};
+use super::common::{parse_javascript, parse_python, parse_source, parse_tsx, parse_typescript};
 
 #[test]
 fn classifies_external_python_from_import_calls() {
@@ -144,6 +144,45 @@ function run() {
     assert_eq!(call.callee_target_kind.as_str(), "external");
     assert_eq!(call.callee_name, "useState");
     assert_eq!(call.callee_external_module.as_deref(), Some("react"));
+}
+
+#[test]
+fn indexes_tsx_react_component_declarations() {
+    let parsed = parse_tsx(
+        r#"
+export function ChatPage() {
+  return <main />;
+}
+
+export default function App() {
+  return <ChatPage />;
+}
+
+function LocalComponent() {
+  return <section />;
+}
+
+const ArrowComponent = () => <aside />;
+"#,
+        &[],
+    );
+
+    let symbols: Vec<_> = parsed
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.name.as_str(), symbol.kind.as_str()))
+        .collect();
+    for expected in [
+        ("ChatPage", "function"),
+        ("App", "function"),
+        ("LocalComponent", "function"),
+        ("ArrowComponent", "function"),
+    ] {
+        assert!(
+            symbols.contains(&expected),
+            "missing {expected:?}; symbols: {symbols:?}"
+        );
+    }
 }
 
 #[test]
