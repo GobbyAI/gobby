@@ -6,6 +6,15 @@ use serde::Serialize;
 use crate::WikiError;
 use crate::scope::ResolvedScope;
 
+/// Unified Obsidian vault layout shared by gwiki and gcode codewiki.
+///
+/// `code/` contains generated code documentation, `knowledge/` contains
+/// synthesized wiki pages, and `_meta/` contains shared generation metadata.
+/// Legacy `wiki/**` paths remain indexable for existing vaults.
+pub const CODE_ROOT: &str = "code";
+pub const KNOWLEDGE_ROOT: &str = "knowledge";
+pub const SHARED_META_ROOT: &str = "_meta";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VaultPaths {
     pub directories: &'static [&'static str],
@@ -19,6 +28,12 @@ pub struct CreatedVaultPaths {
 }
 
 const DIRECTORIES: &[&str] = &[
+    CODE_ROOT,
+    KNOWLEDGE_ROOT,
+    "knowledge/sources",
+    "knowledge/concepts",
+    "knowledge/topics",
+    SHARED_META_ROOT,
     "raw",
     "raw/assets",
     "wiki",
@@ -34,6 +49,8 @@ const DIRECTORIES: &[&str] = &[
 
 pub const DEFAULT_FILES: &[(&str, &str)] = &[
     ("raw/INDEX.md", "# Raw Sources\n\n"),
+    ("knowledge/INDEX.md", "# Knowledge\n\n"),
+    ("code/INDEX.md", "# Code\n\n"),
     ("_index.md", "# Wiki Index\n\n"),
     ("log.md", "# Log\n\n"),
 ];
@@ -245,12 +262,17 @@ mod tests {
         let paths = required_paths();
 
         assert!(paths.directories.contains(&"raw/assets"));
+        assert!(paths.directories.contains(&"code"));
+        assert!(paths.directories.contains(&"knowledge"));
+        assert!(paths.directories.contains(&"_meta"));
         assert!(paths.directories.contains(&"wiki/sources"));
         assert!(paths.directories.contains(&"wiki/concepts"));
         assert!(paths.directories.contains(&"wiki/topics"));
         assert!(paths.directories.contains(&"outputs"));
         assert!(paths.directories.contains(&"meta/health"));
         assert!(paths.files.contains(&"raw/INDEX.md"));
+        assert!(paths.files.contains(&"knowledge/INDEX.md"));
+        assert!(paths.files.contains(&"code/INDEX.md"));
         assert!(paths.files.contains(&"_index.md"));
         assert!(paths.files.contains(&"log.md"));
     }

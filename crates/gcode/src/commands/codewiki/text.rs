@@ -7,10 +7,14 @@ struct Frontmatter<'a> {
     title: &'a str,
     #[serde(rename = "type")]
     kind: &'a str,
-    source_files: Vec<FrontmatterSourceFile<'a>>,
+    source: Vec<FrontmatterSourceFile<'a>>,
+    provenance: Vec<FrontmatterSourceFile<'a>>,
+    generated_by: &'static str,
+    trust: &'static str,
+    freshness: &'static str,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 struct FrontmatterSourceFile<'a> {
     file: &'a str,
     ranges: Vec<String>,
@@ -242,7 +246,7 @@ pub(crate) fn frontmatter(title: &str, kind: &str, source_spans: &[SourceSpan]) 
             .insert((span.line_start, span.line_end));
     }
 
-    let source_files = files
+    let source_files: Vec<FrontmatterSourceFile<'_>> = files
         .into_iter()
         .map(|(file, ranges)| FrontmatterSourceFile {
             file,
@@ -261,7 +265,11 @@ pub(crate) fn frontmatter(title: &str, kind: &str, source_spans: &[SourceSpan]) 
     let data = Frontmatter {
         title,
         kind,
-        source_files,
+        source: source_files.clone(),
+        provenance: source_files,
+        generated_by: "gcode-codewiki",
+        trust: "generated",
+        freshness: "indexed",
     };
     let yaml = serde_yaml::to_string(&data)
         .expect("codewiki frontmatter only contains YAML-serializable data");

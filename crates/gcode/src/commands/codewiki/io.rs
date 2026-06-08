@@ -164,7 +164,7 @@ pub(crate) fn source_files_from_frontmatter(content: &str) -> BTreeSet<String> {
         return files;
     };
 
-    for key in ["source_files", "sources"] {
+    for key in ["source", "provenance", "source_files", "sources"] {
         let key = serde_yaml::Value::String(key.to_string());
         let Some(serde_yaml::Value::Sequence(sources)) = frontmatter.get(&key) else {
             continue;

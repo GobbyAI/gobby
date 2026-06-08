@@ -26,18 +26,83 @@ fn generates_hierarchical_docs() {
     let docs = generate_hierarchical_docs(&input, None);
     write_doc_set(out_dir.path(), &docs).expect("writes docs");
 
-    let repo = std::fs::read_to_string(out_dir.path().join("repo.md")).expect("repo doc");
-    let module =
-        std::fs::read_to_string(out_dir.path().join("modules/src.md")).expect("src module doc");
+    let repo = std::fs::read_to_string(out_dir.path().join("code/repo.md")).expect("repo doc");
+    let module = std::fs::read_to_string(out_dir.path().join("code/modules/src.md"))
+        .expect("src module doc");
     let file =
-        std::fs::read_to_string(out_dir.path().join("files/src/lib.rs.md")).expect("file doc");
+        std::fs::read_to_string(out_dir.path().join("code/files/src/lib.rs.md")).expect("file doc");
 
-    assert!(repo.contains("[[modules/src|src]]"));
+    assert!(repo.contains("[[code/modules/src|src]]"));
     assert!(repo.contains("Repository Overview"));
-    assert!(module.contains("[[files/src/lib.rs|src/lib.rs]]"));
+    assert!(module.contains("[[code/files/src/lib.rs|src/lib.rs]]"));
     assert!(file.contains("API Symbols"));
     assert!(file.contains("pub struct Client {"));
-    assert!(file.contains("[[modules/src|src]]"));
+    assert!(file.contains("[[code/modules/src|src]]"));
+}
+
+#[test]
+fn codewiki_unified_vault_emits_code_paths_frontmatter_and_wikilinks() {
+    let input = CodewikiInput {
+        files: vec!["src/lib.rs".to_string()],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![test_symbol(
+            "src/lib.rs",
+            "Client",
+            "class",
+            1,
+            "pub struct Client {",
+        )],
+    };
+
+    let docs = generate_hierarchical_docs(&input, None);
+    let paths = docs
+        .iter()
+        .map(|(path, _)| path.as_str())
+        .collect::<BTreeSet<_>>();
+
+    assert!(paths.contains("code/repo.md"));
+    assert!(paths.contains("code/modules/src.md"));
+    assert!(paths.contains("code/files/src/lib.rs.md"));
+
+    let repo = docs
+        .iter()
+        .find(|(path, _)| path == "code/repo.md")
+        .map(|(_, content)| content)
+        .expect("repo doc");
+    let file = docs
+        .iter()
+        .find(|(path, _)| path == "code/files/src/lib.rs.md")
+        .map(|(_, content)| content)
+        .expect("file doc");
+    let yaml = file
+        .strip_prefix("---\n")
+        .and_then(|content| content.split_once("---\n\n"))
+        .map(|(yaml, _)| yaml)
+        .expect("frontmatter block");
+    let frontmatter: serde_yaml::Value = serde_yaml::from_str(yaml).expect("parse frontmatter");
+
+    assert!(repo.contains("[[code/modules/src|src]]"));
+    assert!(file.contains("[[code/modules/src|src]]"));
+    assert_eq!(
+        frontmatter
+            .get("generated_by")
+            .and_then(serde_yaml::Value::as_str),
+        Some("gcode-codewiki")
+    );
+    assert!(frontmatter.get("source").is_some());
+    assert!(frontmatter.get("provenance").is_some());
+    assert_eq!(
+        frontmatter.get("trust").and_then(serde_yaml::Value::as_str),
+        Some("generated")
+    );
+    assert_eq!(
+        frontmatter
+            .get("freshness")
+            .and_then(serde_yaml::Value::as_str),
+        Some("indexed")
+    );
+    assert!(frontmatter.get("source_files").is_none());
 }
 
 #[test]
@@ -108,10 +173,10 @@ fn clusters_modules_from_graph() {
     let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
 
     let module = docs_by_path
-        .get("modules/src.md")
+        .get("code/modules/src.md")
         .expect("graph-connected files cluster under common module");
-    assert!(module.contains("[[files/src/api/handler.rs|src/api/handler.rs]]"));
-    assert!(module.contains("[[files/src/domain/service.rs|src/domain/service.rs]]"));
+    assert!(module.contains("[[code/files/src/api/handler.rs|src/api/handler.rs]]"));
+    assert!(module.contains("[[code/files/src/domain/service.rs|src/domain/service.rs]]"));
     assert!(module.contains(&test_component_id(
         "src/api/handler.rs",
         "handle",
@@ -122,8 +187,8 @@ fn clusters_modules_from_graph() {
         "Service",
         "class"
     )));
-    assert!(!docs_by_path.contains_key("files/tests/domain/service_test.rs.md"));
-    assert!(!docs_by_path.contains_key("files/vendor/generated/client.rs.md"));
+    assert!(!docs_by_path.contains_key("code/files/tests/domain/service_test.rs.md"));
+    assert!(!docs_by_path.contains_key("code/files/vendor/generated/client.rs.md"));
 }
 
 #[test]
@@ -293,12 +358,12 @@ fn clusters_without_falkordb() {
     let docs = generate_hierarchical_docs(&input, None);
     let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
 
-    assert!(docs_by_path.contains_key("modules/src/api.md"));
-    assert!(docs_by_path.contains_key("modules/src/domain.md"));
-    assert!(!docs_by_path.contains_key("files/tests/domain/service_test.rs.md"));
+    assert!(docs_by_path.contains_key("code/modules/src/api.md"));
+    assert!(docs_by_path.contains_key("code/modules/src/domain.md"));
+    assert!(!docs_by_path.contains_key("code/files/tests/domain/service_test.rs.md"));
     assert!(
         docs_by_path
-            .get("files/src/api/handler.rs.md")
+            .get("code/files/src/api/handler.rs.md")
             .expect("handler file doc")
             .contains(&test_component_id(
                 "src/api/handler.rs",
@@ -308,7 +373,7 @@ fn clusters_without_falkordb() {
     );
     assert!(
         docs_by_path
-            .get("files/src/domain/service.rs.md")
+            .get("code/files/src/domain/service.rs.md")
             .expect("service file doc")
             .contains(&test_component_id(
                 "src/domain/service.rs",
@@ -318,7 +383,7 @@ fn clusters_without_falkordb() {
     );
     assert!(
         docs_by_path
-            .get("files/src/domain/service.rs.md")
+            .get("code/files/src/domain/service.rs.md")
             .expect("service file doc")
             .contains(&test_component_id(
                 "src/domain/service.rs",
@@ -328,7 +393,7 @@ fn clusters_without_falkordb() {
     );
     assert!(
         !docs_by_path
-            .get("files/src/domain/service.rs.md")
+            .get("code/files/src/domain/service.rs.md")
             .expect("service file doc")
             .contains("src/domain/service.rs::Service::new")
     );
@@ -393,7 +458,7 @@ fn emits_bounded_mermaid() {
     let docs = generate_hierarchical_docs(&input, None);
     let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
     let rendered = docs_by_path
-        .get("modules/src/api.md")
+        .get("code/modules/src/api.md")
         .expect("api module doc");
 
     assert!(rendered.contains("```mermaid"));
@@ -440,10 +505,10 @@ fn mermaid_degrades_without_falkordb() {
     let docs = generate_hierarchical_docs(&input, None);
     let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
     let module = docs_by_path
-        .get("modules/src/api.md")
+        .get("code/modules/src/api.md")
         .expect("module doc still renders");
     let file = docs_by_path
-        .get("files/src/api/handler.rs.md")
+        .get("code/files/src/api/handler.rs.md")
         .expect("file doc still renders");
 
     assert!(module.contains("degraded: graph-unavailable"));
@@ -473,7 +538,7 @@ fn empty_available_graph_does_not_emit_degradation_marker() {
     let docs = generate_hierarchical_docs(&input, None);
     let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
     let module = docs_by_path
-        .get("modules/src/api.md")
+        .get("code/modules/src/api.md")
         .expect("module doc still renders");
 
     assert!(!module.contains("degraded: graph-unavailable"));
@@ -512,7 +577,7 @@ fn truncated_graph_emits_degradation_marker_with_partial_diagram() {
     let docs = generate_hierarchical_docs(&input, None);
     let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
     let module = docs_by_path
-        .get("modules/src/api.md")
+        .get("code/modules/src/api.md")
         .expect("module doc still renders");
 
     assert!(module.contains("degraded: graph-truncated"));
@@ -665,11 +730,12 @@ fn citations_validated_against_spans() {
     let docs = generate_hierarchical_docs(&input, Some(&mut generator));
     let file_doc = docs
         .iter()
-        .find(|(path, _)| path == "files/src/lib.rs.md")
+        .find(|(path, _)| path == "code/files/src/lib.rs.md")
         .map(|(_, content)| content)
         .expect("file doc");
 
-    assert!(file_doc.contains("source_files:\n"));
+    assert!(file_doc.contains("source:\n"));
+    assert!(file_doc.contains("provenance:\n"));
     assert!(source_files_from_frontmatter(file_doc).contains("src/lib.rs"));
     assert!(file_doc.contains("10-14"));
     assert!(file_doc.contains("20-24"));
@@ -710,12 +776,12 @@ fn incremental_regenerates_only_changed() {
     let first_docs = generate_hierarchical_docs(&input, None);
     let first_written =
         write_incremental_doc_set(project.path(), &out_dir, &first_docs).expect("first write");
-    assert!(first_written.contains(&"repo.md".to_string()));
-    assert!(first_written.contains(&"modules/src.md".to_string()));
-    assert!(first_written.contains(&"files/src/lib.rs.md".to_string()));
-    assert!(first_written.contains(&"files/src/nested/api.rs.md".to_string()));
+    assert!(first_written.contains(&"code/repo.md".to_string()));
+    assert!(first_written.contains(&"code/modules/src.md".to_string()));
+    assert!(first_written.contains(&"code/files/src/lib.rs.md".to_string()));
+    assert!(first_written.contains(&"code/files/src/nested/api.rs.md".to_string()));
 
-    let unchanged_file_doc = out_dir.join("files/src/nested/api.rs.md");
+    let unchanged_file_doc = out_dir.join("code/files/src/nested/api.rs.md");
     let mut unchanged_content =
         std::fs::read_to_string(&unchanged_file_doc).expect("unchanged doc content");
     unchanged_content.push_str("\n<!-- preserve unchanged doc -->\n");
@@ -736,9 +802,9 @@ fn incremental_regenerates_only_changed() {
     assert_eq!(
         changed_written,
         vec![
-            "repo.md".to_string(),
-            "modules/src.md".to_string(),
-            "files/src/lib.rs.md".to_string()
+            "code/repo.md".to_string(),
+            "code/modules/src.md".to_string(),
+            "code/files/src/lib.rs.md".to_string()
         ]
     );
     let meta = std::fs::read_to_string(out_dir.join("_meta/codewiki.json")).expect("read meta log");
@@ -747,9 +813,9 @@ fn incremental_regenerates_only_changed() {
     assert_eq!(
         generated_docs,
         &vec![
-            serde_json::Value::String("repo.md".to_string()),
-            serde_json::Value::String("modules/src.md".to_string()),
-            serde_json::Value::String("files/src/lib.rs.md".to_string())
+            serde_json::Value::String("code/repo.md".to_string()),
+            serde_json::Value::String("code/modules/src.md".to_string()),
+            serde_json::Value::String("code/files/src/lib.rs.md".to_string())
         ]
     );
 
@@ -772,7 +838,11 @@ fn incremental_regenerates_only_changed() {
     let meta =
         std::fs::read_to_string(out_dir.join("_meta/codewiki.json")).expect("read final meta");
     let meta: serde_json::Value = serde_json::from_str(&meta).expect("parse final meta");
-    assert!(meta["docs"].get("files/src/nested/api.rs.md").is_none());
+    assert!(
+        meta["docs"]
+            .get("code/files/src/nested/api.rs.md")
+            .is_none()
+    );
 }
 
 #[test]
