@@ -633,10 +633,17 @@ export default function App() {
 
   const handleStartNewChat = useCallback(
     (agentName?: string) => {
-      updateChatMode(normalizeChatMode(settings.defaultChatMode));
+      const defaultMode = normalizeChatMode(settings.defaultChatMode);
+      // Reset BOTH the UI radio and the backend-facing currentModeRef. Resetting
+      // only the radio leaves currentModeRef holding the prior conversation's
+      // mode, which seeds the next session via createWebChatSession() — the
+      // Plan-shown / session-created-in-bypass desync (#15703). Clearing the
+      // conversation first means sendMode only updates currentModeRef.
       startNewChat(agentName);
+      updateChatMode(defaultMode);
+      sendMode(defaultMode);
     },
-    [settings.defaultChatMode, startNewChat, updateChatMode],
+    [settings.defaultChatMode, startNewChat, updateChatMode, sendMode],
   );
 
   // Restore persisted mode only when we have an active durable web-chat session.

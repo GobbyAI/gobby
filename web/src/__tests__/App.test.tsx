@@ -670,6 +670,41 @@ describe("App wiring", () => {
     });
   });
 
+  it("resets the backend-facing chat mode on New Chat so a fresh session does not inherit the prior mode (#15703)", async () => {
+    const sendMode = vi.fn();
+    const startNewChat = vi.fn();
+    vi.mocked(useChat).mockReturnValue({
+      ...makeChatHookState(),
+      sendMode,
+      startNewChat,
+    } as never);
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(chatPagePropsSpy).toHaveBeenCalled();
+    });
+    const props = chatPagePropsSpy.mock.calls[
+      chatPagePropsSpy.mock.calls.length - 1
+    ]?.[0] as { conversations?: { onNewChat?: (agentName?: string) => void } };
+
+    expect(props.conversations?.onNewChat).toBeTypeOf("function");
+
+    await act(async () => {
+      props.conversations?.onNewChat?.();
+    });
+
+    // handleStartNewChat must reset BOTH the UI radio and the backend-facing
+    // currentModeRef (via sendMode). Before the fix it only reset the radio
+    // (updateChatMode), so currentModeRef kept the prior session's mode and
+    // seeded the next session through createWebChatSession() — the Plan-shown /
+    // session-created-in-bypass desync (#15703). defaultChatMode is "plan".
+    expect(startNewChat).toHaveBeenCalled();
+    expect(sendMode).toHaveBeenCalledWith("plan");
+  });
+
   it("omits MCP from sidebar navigation", async () => {
     await act(async () => {
       render(<App />);
