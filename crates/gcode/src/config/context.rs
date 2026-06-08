@@ -36,7 +36,7 @@ pub type QdrantConfig = gobby_core::config::QdrantConfig;
 /// Embedding API configuration (OpenAI-compatible endpoint).
 pub type EmbeddingConfig = gobby_core::config::EmbeddingConfig;
 
-pub const FALKORDB_GRAPH_NAME: &str = "gobby_code";
+pub const FALKORDB_GRAPH_NAME: &str = gobby_core::config::CODE_GRAPH_NAME;
 pub const CODE_SYMBOL_COLLECTION_PREFIX: &str = "code_symbols_";
 
 pub const GOBBY_FALKORDB_HOST_ENV: &str = "GOBBY_FALKORDB_HOST";
