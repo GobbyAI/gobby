@@ -109,6 +109,7 @@ pub struct AskOutput {
     pub hits: Vec<SearchResultOutput>,
     pub related_pages: Vec<AskRelatedPageOutput>,
     pub sources: Vec<String>,
+    pub code_edges: Vec<AskCodeEdgeOutput>,
     pub code_citations: Vec<AskCodeCitationOutput>,
     pub gaps: Vec<String>,
     pub stale_candidates: Vec<String>,
@@ -118,6 +119,17 @@ pub struct AskOutput {
     pub ai: Option<AskAiOutput>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub synthesis: Option<AskSynthesisOutput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct AskCodeEdgeOutput {
+    pub source: String,
+    pub target: String,
+    pub kind: String,
+    pub direction: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+    pub provenance: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
