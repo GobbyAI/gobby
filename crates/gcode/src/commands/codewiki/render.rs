@@ -418,6 +418,50 @@ pub(crate) fn render_architecture_doc(architecture: &ArchitectureDoc) -> String 
     doc
 }
 
+pub(crate) fn render_onboarding_doc(onboarding: &OnboardingDoc) -> String {
+    let mut doc = frontmatter_with_degradation(
+        "Start Here",
+        "code_onboarding",
+        &onboarding.source_spans,
+        &onboarding.degraded_sources,
+    );
+    doc.push_str("# Start Here\n\n");
+
+    if !onboarding.entry_points.is_empty() {
+        doc.push_str("## Entry Points\n\n");
+        for entry in &onboarding.entry_points {
+            let _ = writeln!(doc, "- {} - {}", entry.link, entry.description);
+        }
+        doc.push('\n');
+    }
+
+    if onboarding.reading_order.is_empty() {
+        if !onboarding.entry_points.is_empty() {
+            doc.push_str("## Structural Start Points\n\n");
+            for entry in &onboarding.entry_points {
+                let _ = writeln!(doc, "- {} - {}", entry.link, entry.description);
+            }
+            doc.push('\n');
+        }
+        return doc;
+    }
+
+    doc.push_str("## Recommended Reading Order\n\n");
+    for (index, step) in onboarding.reading_order.iter().enumerate() {
+        let _ = writeln!(
+            doc,
+            "{}. {} - {} centrality degree, {:.3} score. {}",
+            index + 1,
+            module_wikilink(&step.module),
+            step.degree,
+            step.score,
+            step.summary
+        );
+    }
+    doc.push('\n');
+    doc
+}
+
 pub(crate) fn render_module_doc(module: &ModuleDoc) -> String {
     let mut doc = frontmatter(&module.module, "code_module", &module.source_spans);
     let _ = writeln!(doc, "# {}\n", module.module);
