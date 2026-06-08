@@ -8,10 +8,10 @@ use gobby_core::gobby_home;
 
 use crate::commands::search;
 use crate::graph::WikiGraphFacts;
-use crate::graph::context::{GraphContextOptions, build_context_pack};
+use crate::graph::context::{GraphContextCodeEdge, GraphContextOptions, build_context_pack};
 use crate::output::{
-    AskAiOutput, AskCodeCitationOutput, AskOutput, AskRelatedPageOutput, AskSynthesisOutput,
-    SearchOutput, SearchResultOutput,
+    AskAiOutput, AskCodeCitationOutput, AskCodeEdgeOutput, AskOutput, AskRelatedPageOutput,
+    AskSynthesisOutput, SearchOutput, SearchResultOutput,
 };
 use crate::search::SearchScope;
 use crate::support::env::database_url_for;
@@ -72,6 +72,7 @@ fn ask_output_from_search(search: SearchOutput) -> AskOutput {
         hits: search.results,
         related_pages,
         sources,
+        code_edges: Vec::new(),
         code_citations,
         gaps: Vec::new(),
         stale_candidates: Vec::new(),
@@ -200,6 +201,9 @@ fn enrich_with_unified_graph_context(
         for citation in &neighborhood.citations {
             push_unique(&mut output.sources, citation.clone());
         }
+        for edge in neighborhood.calls.iter().chain(neighborhood.imports.iter()) {
+            push_code_edge(output, code_edge_from_context(edge));
+        }
         for citation in code_citations_from_context_edges(
             neighborhood.calls.iter().chain(neighborhood.imports.iter()),
         ) {
@@ -229,6 +233,17 @@ fn code_citations_from_context_edges<'a>(
     citations
 }
 
+fn code_edge_from_context(edge: &GraphContextCodeEdge) -> AskCodeEdgeOutput {
+    AskCodeEdgeOutput {
+        source: edge.source.clone(),
+        target: edge.target.clone(),
+        kind: edge.kind.clone(),
+        direction: edge.direction.clone(),
+        line: edge.line,
+        provenance: edge.provenance.clone(),
+    }
+}
+
 fn code_citation_from_endpoint(
     endpoint: &str,
     line: Option<usize>,
@@ -248,6 +263,12 @@ fn code_citation_from_endpoint(
         return None;
     }
     Some(AskCodeCitationOutput { file, line, symbol })
+}
+
+fn push_code_edge(output: &mut AskOutput, edge: AskCodeEdgeOutput) {
+    if !output.code_edges.contains(&edge) {
+        output.code_edges.push(edge);
+    }
 }
 
 fn push_code_citation(output: &mut AskOutput, citation: AskCodeCitationOutput) {
@@ -551,6 +572,7 @@ mod tests {
             output.sources,
             vec!["bm25".to_string(), "raw/hooks.md".to_string()]
         );
+        assert!(output.code_edges.is_empty());
         assert_eq!(output.warnings, vec!["semantic_unavailable".to_string()]);
         assert!(output.gaps.is_empty());
         assert!(output.stale_candidates.is_empty());
@@ -679,6 +701,14 @@ mod tests {
         assert!(output.related_pages.iter().any(|page| {
             page.path == PathBuf::from("wiki/code/files/src/handler.rs.md")
                 && page.title.as_deref() == Some("Request handler")
+        }));
+        assert!(output.code_edges.iter().any(|edge| {
+            edge.source == "src/handler.rs:handle"
+                && edge.target == "src/router.rs:route"
+                && edge.kind == "calls"
+                && edge.direction == "outgoing"
+                && edge.line == Some(42)
+                && edge.provenance == "gcode_falkor"
         }));
         assert!(output.code_citations.iter().any(|citation| {
             citation.file == "src/handler.rs"

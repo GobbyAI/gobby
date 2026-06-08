@@ -1,5 +1,11 @@
 mod common;
 
+use std::path::PathBuf;
+
+use gobby_wiki::output::{
+    AskAiOutput, AskCodeCitationOutput, AskCodeEdgeOutput, AskOutput, AskRelatedPageOutput,
+    AskSynthesisOutput, SearchResultOutput,
+};
 use serde_json::Value;
 
 fn pinned_contract() -> Value {
@@ -64,6 +70,82 @@ fn command<'a>(contract: &'a Value, name: &str) -> &'a Value {
         .iter()
         .find(|command| command["name"] == name)
         .unwrap_or_else(|| panic!("{name} command contract"))
+}
+
+#[test]
+fn ask_contract_json_keys_exist_in_serialized_output_shape() {
+    let contract = gobby_wiki::contract::contract();
+    let ask = contract
+        .commands
+        .iter()
+        .find(|command| command.name == "ask")
+        .expect("ask command contract");
+    let output = AskOutput {
+        command: "ask",
+        scope: gobby_wiki::ScopeIdentity::project("project-1"),
+        query: "Where is request handling wired?".to_string(),
+        status: "answered",
+        degraded: false,
+        degraded_sources: Vec::new(),
+        hits: vec![SearchResultOutput {
+            title: Some("Request handler".to_string()),
+            fusion_key: "project:project-1:wiki/code/files/src/handler.rs.md".to_string(),
+            wiki_page: PathBuf::from("wiki/code/files/src/handler.rs.md"),
+            source_path: PathBuf::from("src/handler.rs"),
+            snippet: "fn handle() calls route().".to_string(),
+            score: 0.95,
+            sources: vec!["bm25".to_string(), "graph".to_string()],
+            explanations: Vec::new(),
+        }],
+        related_pages: vec![AskRelatedPageOutput {
+            title: Some("Request handler".to_string()),
+            path: PathBuf::from("wiki/code/files/src/handler.rs.md"),
+            score: 0.95,
+        }],
+        sources: vec!["src/handler.rs".to_string()],
+        code_edges: vec![AskCodeEdgeOutput {
+            source: "src/handler.rs:handle".to_string(),
+            target: "src/router.rs:route".to_string(),
+            kind: "calls".to_string(),
+            direction: "outgoing".to_string(),
+            line: Some(42),
+            provenance: "gcode_falkor".to_string(),
+        }],
+        code_citations: vec![AskCodeCitationOutput {
+            file: "src/handler.rs".to_string(),
+            line: Some(42),
+            symbol: Some("handle".to_string()),
+        }],
+        gaps: Vec::new(),
+        stale_candidates: Vec::new(),
+        suggested_questions: vec!["Where is route defined?".to_string()],
+        warnings: Vec::new(),
+        ai: Some(AskAiOutput {
+            requested: true,
+            requested_mode: "optional",
+            route: "daemon",
+            status: "available",
+            model: Some("test-model".to_string()),
+            error: None,
+        }),
+        synthesis: Some(AskSynthesisOutput {
+            answer: "The handler calls the router.".to_string(),
+            model: Some("test-model".to_string()),
+        }),
+    };
+    let serialized = serde_json::to_value(output).expect("ask output json");
+    let object = serialized.as_object().expect("ask output object");
+    let missing = ask
+        .json_output_keys
+        .iter()
+        .filter(|key| !object.contains_key(**key))
+        .copied()
+        .collect::<Vec<_>>();
+
+    assert!(
+        missing.is_empty(),
+        "ask contract advertises keys missing from serialized AskOutput: {missing:?}"
+    );
 }
 
 #[test]
