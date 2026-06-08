@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import textwrap
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -584,6 +585,76 @@ async def test_build_plan_file_rerun_resumes_open_root_for_same_plan_file(
     assert second.created is False
     assert second.task_id == first.task_id
     assert root_count == 1
+
+
+@pytest.mark.asyncio
+async def test_build_plan_file_uses_registered_open_root_task(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    from gobby.storage.plans import LocalPlanManager
+
+    _disable_dispatcher_tick(monkeypatch)
+    project_id, repo_path = _project(temp_db, tmp_path)
+    plan_file = repo_path / ".gobby" / "plans" / "gwiki-parity-plus.md"
+    plan_file.parent.mkdir(parents=True)
+    plan_file.write_text(
+        textwrap.dedent(
+            """
+            > **Plan ID:** gwiki-parity-plus
+
+            ## P1 Phase
+            `kind: framing`
+
+            ### 1.1 Work [category: docs]
+            `kind: deliverable`
+
+            Target: `docs/demo.md`
+
+            Body.
+
+            **Acceptance:**
+            - 1.1.1 - Docs exist. file: `docs/demo.md`
+            """
+        ).lstrip(),
+        encoding="utf-8",
+    )
+    task_manager = LocalTaskManager(temp_db)
+    root = task_manager.create_task(
+        project_id=project_id,
+        title="Gwiki Parity+ Roadmap",
+        task_type="epic",
+        category="planning",
+    )
+    LocalPlanManager(temp_db).create_plan(
+        project_id=project_id,
+        plan_id="gwiki-parity-plus",
+        plan_path=plan_file,
+        root_task_ref=f"#{root.seq_num}",
+    )
+
+    result = await _build(
+        str(plan_file),
+        _options(isolation="none"),
+        db=temp_db,
+        project_id=project_id,
+    )
+
+    duplicate_count = temp_db.fetchone(
+        """
+        SELECT COUNT(*) AS count
+          FROM tasks
+         WHERE project_id = %s
+           AND parent_task_id IS NULL
+           AND title = %s
+        """,
+        (project_id, f"Build {plan_file.name}"),
+    )["count"]
+
+    assert result.created is False
+    assert result.task_id == root.id
+    assert duplicate_count == 0
 
 
 @pytest.mark.asyncio

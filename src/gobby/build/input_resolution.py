@@ -35,9 +35,15 @@ def open_plan_file_build(
     plan_file: Path,
     project_id: str,
 ) -> Task | None:
-    candidates = plan_file_path_candidates(plan_file)
+    candidates = plan_file_path_candidates(
+        plan_file,
+        project_root=_project_root_for_plan_lookup(task_manager, project_id),
+    )
     if not candidates:
         return None
+    registered = _open_registered_plan_file_build(task_manager, candidates, project_id)
+    if registered is not None:
+        return registered
     placeholders = sql_placeholders(len(candidates))
     row = task_manager.db.fetchone(
         f"""
@@ -59,13 +65,76 @@ def open_plan_file_build(
     return task_manager.get_task(str(row["id"]), project_id=project_id)
 
 
-def plan_file_path_candidates(plan_file: Path) -> tuple[str, ...]:
+def _open_registered_plan_file_build(
+    task_manager: LocalTaskManager,
+    candidates: tuple[str, ...],
+    project_id: str,
+) -> Task | None:
+    placeholders = sql_placeholders(len(candidates))
+    rows = task_manager.db.fetchall(
+        f"""
+        SELECT root_task_ref
+          FROM plans
+         WHERE project_id = %s
+           AND state = 'active'
+           AND plan_path IN ({placeholders})
+         ORDER BY updated_at DESC, plan_id ASC
+        """,  # nosec B608 # placeholder count is derived from normalized candidate paths.
+        (project_id, *candidates),
+    )
+    for row in rows:
+        try:
+            task = task_manager.get_task(str(row["root_task_ref"]), project_id=project_id)
+        except ValueError:
+            continue
+        if task.parent_task_id is None and task.task_type == "epic" and task.closed_at is None:
+            return task
+    return None
+
+
+def plan_file_path_candidates(
+    plan_file: Path,
+    *,
+    project_root: Path | None = None,
+) -> tuple[str, ...]:
     candidates = [str(plan_file)]
     try:
-        candidates.append(str(plan_file.resolve()))
+        resolved = plan_file.resolve()
+        candidates.append(str(resolved))
+        if project_root is not None:
+            candidates.append(str(resolved.relative_to(project_root.resolve())))
+    except ValueError:
+        pass
+    except OSError:
+        pass
+    try:
+        resolved = plan_file.resolve()
+        for discovered_root in _project_roots_for_plan(resolved):
+            candidates.append(str(resolved.relative_to(discovered_root)))
+    except ValueError:
+        pass
     except OSError:
         pass
     return tuple(dict.fromkeys(candidates))
+
+
+def _project_root_for_plan_lookup(
+    task_manager: LocalTaskManager,
+    project_id: str,
+) -> Path | None:
+    project = LocalProjectManager(task_manager.db).get(project_id)
+    if project is None or not project.repo_path:
+        return None
+    return Path(project.repo_path).expanduser().resolve()
+
+
+def _project_roots_for_plan(plan_file: Path) -> tuple[Path, ...]:
+    roots: list[Path] = []
+    for parent in plan_file.parents:
+        if parent.name == "plans" and parent.parent.name == ".gobby":
+            roots.append(parent.parent.parent)
+            break
+    return tuple(roots)
 
 
 def resolve_plan_file_path(
