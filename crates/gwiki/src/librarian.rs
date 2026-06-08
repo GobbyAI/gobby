@@ -12,6 +12,7 @@ const LIBRARIAN_DIR: &str = "meta/librarian";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Options {
+    pub require_postgres_index: bool,
     pub shared_code_graph_available: bool,
     pub semantic_available: bool,
     pub model_available: bool,
@@ -20,6 +21,7 @@ pub struct Options {
 impl Options {
     pub fn offline() -> Self {
         Self {
+            require_postgres_index: false,
             shared_code_graph_available: false,
             semantic_available: false,
             model_available: false,
@@ -29,7 +31,10 @@ impl Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Self::offline()
+        Self {
+            require_postgres_index: true,
+            ..Self::offline()
+        }
     }
 }
 
@@ -98,6 +103,10 @@ pub fn run(
     scope: ScopeIdentity,
     options: Options,
 ) -> Result<ProposalsReport, WikiError> {
+    if options.require_postgres_index {
+        crate::support::postgres::require_attached_index("gwiki librarian")?;
+    }
+
     let health_report = health::inspect(vault_root, scope.clone())?;
     let audit_report =
         audit::run_with_options(vault_root, scope.clone(), audit::AuditOptions::from_env())?;
@@ -119,7 +128,11 @@ pub fn run(
             .map(|issue| issue.path.clone()),
     );
     let weak_provenance = weak_provenance_pages(&pages, &provenance);
-    let outdated_codewiki = outdated_codewiki_pages(&pages);
+    let outdated_codewiki = if options.shared_code_graph_available {
+        outdated_codewiki_pages(&pages)
+    } else {
+        Vec::new()
+    };
 
     let mut checks = vec![
         available_check("stale_pages", stale_pages.clone()),
@@ -129,7 +142,7 @@ pub fn run(
     ];
     checks.push(optional_check(
         "outdated_codewiki",
-        !outdated_codewiki.is_empty() || options.shared_code_graph_available,
+        options.shared_code_graph_available,
         "shared code graph is unavailable; skipped outdated codewiki detection",
         outdated_codewiki.clone(),
     ));
@@ -445,6 +458,8 @@ mod tests {
 
     use super::*;
 
+    static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn librarian_detects_and_proposes_without_rewriting_pages() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -472,8 +487,15 @@ mod tests {
 
         let original_page =
             std::fs::read_to_string(root.join("wiki/topics/stale.md")).expect("read page");
-        let report =
-            run(root, ScopeIdentity::topic("ops"), Options::offline()).expect("librarian runs");
+        let report = run(
+            root,
+            ScopeIdentity::topic("ops"),
+            Options {
+                shared_code_graph_available: true,
+                ..Options::offline()
+            },
+        )
+        .expect("librarian runs");
 
         assert_eq!(
             report.check("stale_pages").items,
@@ -549,9 +571,89 @@ mod tests {
         assert!(!report.check("patch_suggestions").available);
     }
 
+    #[test]
+    fn librarian_outdated_codewiki_unavailable_without_shared_graph_even_when_stale() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write_page(
+            root,
+            "wiki/code/example.md",
+            "---\ntitle: Example code\ngenerated_by: gcode-codewiki\nsource_spans:\n  - path: src/lib.rs\n    start_line: 1\n    end_line: 1\ncodewiki_status: stale\n---\n# Example code\nDocuments old code.\n",
+        );
+
+        let report =
+            run(root, ScopeIdentity::topic("ops"), Options::offline()).expect("librarian runs");
+
+        let check = report.check("outdated_codewiki");
+        assert!(!check.available);
+        assert!(check.items.is_empty());
+        assert_eq!(
+            check.note.as_deref(),
+            Some("shared code graph is unavailable; skipped outdated codewiki detection")
+        );
+    }
+
+    #[test]
+    fn librarian_requires_postgresql_index() {
+        let _guard = ENV_TEST_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let _home = EnvGuard::set("GOBBY_HOME", root.as_os_str());
+        let _gwiki_url = EnvGuard::unset("GWIKI_DATABASE_URL");
+        let _gobby_dsn = EnvGuard::unset("GOBBY_POSTGRES_DSN");
+
+        let error = run(root, ScopeIdentity::global(), Options::default())
+            .expect_err("missing postgres must fail");
+
+        assert!(matches!(error, WikiError::Config { .. }));
+        assert!(error.to_string().contains("PostgreSQL index is required"));
+    }
+
     fn write_page(root: &Path, relative: &str, markdown: &str) {
         let path = root.join(relative);
         std::fs::create_dir_all(path.parent().expect("page parent")).expect("create parent");
         std::fs::write(path, markdown).expect("write page");
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        old_value: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &std::ffi::OsStr) -> Self {
+            let guard = Self {
+                key,
+                old_value: std::env::var_os(key),
+            };
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            guard
+        }
+
+        fn unset(key: &'static str) -> Self {
+            let guard = Self {
+                key,
+                old_value: std::env::var_os(key),
+            };
+            unsafe {
+                std::env::remove_var(key);
+            }
+            guard
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.old_value {
+                Some(value) => unsafe {
+                    std::env::set_var(self.key, value);
+                },
+                None => unsafe {
+                    std::env::remove_var(self.key);
+                },
+            }
+        }
     }
 }
