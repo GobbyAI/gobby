@@ -41,7 +41,7 @@ in this order:
 
 When the daemon has a `ConfigStore`, DB values win over file values. Values in
 `config_store` are flattened dotted keys such as
-`llm_providers.claude.models`; the storage layer JSON-encodes values so numbers,
+`gobby-tasks.validation.candidates`; the storage layer JSON-encodes values so numbers,
 booleans, strings, and lists keep their type.
 
 Shared indexing behavior is configured under `indexing`. By default, `gcode`
@@ -100,11 +100,11 @@ Example MCP calls:
 
 ```python
 call_tool("gobby-config", "get_config", {"key": "memory.enabled"})
-call_tool("gobby-config", "get_config_section", {"prefix": "llm_providers"})
+call_tool("gobby-config", "get_config_section", {"prefix": "gobby-tasks.validation"})
 call_tool(
     "gobby-config",
     "set_config",
-    {"key": "llm_providers.default_model", "value": "sonnet"},
+    {"key": "gobby-tasks.validation.profile", "value": "mid"},
 )
 call_tool(
     "gobby-config",
@@ -208,22 +208,24 @@ mcp_client_proxy:
 live in `embeddings`, shared by memory, skills, code index, and semantic tool
 search.
 
-### LLM Providers
+### LLM Feature Routing
 
 ```yaml
-llm_providers:
-  default_model: opus
-  json_strict: true
-  claude:
-    models: haiku,sonnet,opus
-    auth_mode: subscription
+chat:
+  profile: high
+  candidates:
+    - claude/sonnet
+    - codex/gpt-5.3-codex-spark
+gobby-tasks:
+  validation:
+    profile: mid
+    candidates:
+      - claude/haiku
 ```
 
-Provider `auth_mode` accepts `subscription`, `api_key`, or `adc`. Provider
-`models` is a comma-separated string. CLI/app-server providers such as Codex
-own their own authentication and model configuration outside Gobby's
-`llm_providers`. `json_strict` controls LLM JSON validation and can be
-overridden per workflow with the `llm_json_strict` variable.
+Feature configs select ordered `provider/model` candidates. Provider auth and
+model discovery come from the provider CLIs, local compatible backends, shipped
+catalog metadata, and secrets managed by the relevant provider integration.
 
 ### Storage, Embeddings, And Memory
 

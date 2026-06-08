@@ -285,3 +285,38 @@ def test_embedding_provider_cleanup_migration_is_idempotent(temp_db: HubDatabase
     assert store.get("ai.embeddings.model") == "nomic-embed-text"
     assert store.get("ai.embeddings.provider") is None
     assert store.get("embeddings.provider") is None
+
+
+def test_llm_providers_config_cleanup_migration_is_idempotent(temp_db: HubDatabase) -> None:
+    store = ConfigStore(temp_db)
+    for key in (
+        "llm_providers",
+        "llm_providers.default_model",
+        "llm_providers.claude.enabled",
+        "llm_providers.api_keys.openai_api_key",
+    ):
+        temp_db.execute(
+            """
+            INSERT INTO config_store (key, value, source, is_secret, updated_at)
+            VALUES (%s, %s, 'legacy', %s, NOW())
+            """,
+            (
+                key,
+                json.dumps("$secret:OPENAI_API_KEY" if key.endswith("api_key") else "legacy"),
+                key.endswith("api_key"),
+            ),
+        )
+    store.set("chat.candidates", ["claude/sonnet"])
+    store.set("llm_provider_notes.default_model", "preserved")
+
+    migration = (MIGRATIONS_DIR / "277_drop_llm_providers_config.sql").read_text(encoding="utf-8")
+    for _ in range(2):
+        with temp_db.transaction() as txn:
+            _execute_sql_script(txn, migration)
+
+    assert store.get("llm_providers") is None
+    assert store.get("llm_providers.default_model") is None
+    assert store.get("llm_providers.claude.enabled") is None
+    assert store.get("llm_providers.api_keys.openai_api_key") is None
+    assert store.get("chat.candidates") == ["claude/sonnet"]
+    assert store.get("llm_provider_notes.default_model") == "preserved"

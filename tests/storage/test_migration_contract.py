@@ -17,7 +17,15 @@ MIGRATION_HELPERS_MODULE = "gobby.storage.migration_helpers"
 def _tracked_migration_names(migrations_dir: Path) -> list[str]:
     relative_dir = migrations_dir.relative_to(REPO_ROOT)
     result = subprocess.run(
-        ["git", "ls-files", "--cached", "--", str(relative_dir)],
+        [
+            "git",
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+            str(relative_dir),
+        ],
         cwd=REPO_ROOT,
         capture_output=True,
         check=False,
@@ -116,6 +124,7 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
         "274_memory_dream.sql",
         "275_drop_memory_media.sql",
         "276_memory_dream_constraints.sql",
+        "277_drop_llm_providers_config.sql",
     ]
 
 
@@ -170,6 +179,16 @@ def test_embedding_provider_cleanup_migration_removes_dead_keys() -> None:
     assert "'ai.embeddings.provider'" in migration
     assert "'embeddings.provider'" in migration
     assert "DELETE FROM config_store" in migration
+
+
+def test_llm_providers_cleanup_migration_removes_dead_prefix() -> None:
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "277_drop_llm_providers_config.sql"
+    ).read_text(encoding="utf-8")
+
+    assert "DELETE FROM config_store" in migration
+    assert "key = 'llm_providers'" in migration
+    assert "key LIKE 'llm_providers.%'" in migration
 
 
 def test_removed_migration_baseline_and_import_files_are_absent() -> None:

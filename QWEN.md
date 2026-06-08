@@ -212,7 +212,7 @@ Configuration lives in `src/gobby/config/` with ~15 modules covering:
 - `app.py` — DaemonConfig (YAML config model)
 - `bootstrap.py` — Pre-DB bootstrap settings
 - `features.py` — Feature flags
-- `llm_providers.py` — LLM provider configuration
+- `feature_base.py` — Feature LLM routing configuration
 - `mcp.py` — MCP server configuration
 - `tasks.py`, `sessions.py`, `skills.py` — Subsystem-specific config
 

@@ -141,6 +141,21 @@ class TestConfigStore:
         with pytest.raises(ValueError, match="Embedding"):
             store.clear_secret(key, MagicMock())
 
+    @pytest.mark.parametrize(
+        ("method", "args"),
+        [
+            ("set", ("llm_providers.default_model", "sonnet")),
+            ("set_many", ({"llm_providers.default_model": "sonnet"},)),
+            ("set_secret", ("llm_providers.api_keys.openai_api_key", "secret", MagicMock())),
+            ("clear_secret", ("llm_providers.api_keys.openai_api_key", MagicMock())),
+        ],
+    )
+    def test_write_methods_reject_removed_llm_provider_keys(
+        self, store: ConfigStore, method: str, args: tuple[object, ...]
+    ):
+        with pytest.raises(ValueError, match="llm_providers"):
+            getattr(store, method)(*args)
+
     def test_set_allows_secret_reference(self, store: ConfigStore):
         store.set(AI_EMBEDDING_API_KEY_KEY, "$secret:embeddings_api_key")
         assert store.get(AI_EMBEDDING_API_KEY_KEY) == "$secret:embeddings_api_key"

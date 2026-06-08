@@ -43,17 +43,20 @@ Configuration page.
 
 ## Provider Configuration
 
-Provider configuration is rooted under `llm_providers`. It supports provider
-blocks for backends such as:
+Provider selection is configured on feature-specific routing fields such as
+`chat.candidates`, `session_summary.candidates`, and
+`gobby-tasks.validation.candidates`. Candidate values use `provider/model`
+format for backends such as:
 
 - `claude`
 - `codex`
 - `gemini`
 - `qwen`
 
-The provider routes also report availability for `droid` when present. Provider
-blocks can include enabled state, default model, auth mode, strict JSON behavior,
-and model overrides.
+The provider routes also report availability for `droid` when present. Feature
+configs choose preferred candidate order; provider availability, auth mode, and
+model details come from CLI discovery, local compatible backends, and shipped
+catalog metadata.
 
 Auth modes are provider-specific. Examples include subscription auth, API-key
 auth, and ADC-style auth for providers that support it.
@@ -65,7 +68,6 @@ The provider model catalog:
 - Starts from shipped static model metadata.
 - Discovers live models from provider CLIs or local compatible backends.
 - Caches live discovery to `~/.gobby/provider-model-catalog.json`.
-- Applies config overrides.
 - Filters hidden models before returning data to the UI.
 - Records whether entries came from live discovery, cache, static defaults, or a
   failed discovery path.
@@ -128,7 +130,8 @@ discovery and prefer explicit provider fields over model-name parsing.
 
 ## File Locations
 
-- `src/gobby/config/llm_providers.py`: provider configuration schema.
+- `src/gobby/config/feature_base.py`: feature routing candidate schema.
+- `src/gobby/config/feature_candidate_defaults.py`: default feature candidates.
 - `src/gobby/servers/routes/providers.py`: `/api/providers` and
   `/api/providers/models`.
 - `src/gobby/servers/provider_models.py`: model catalog discovery and cache.

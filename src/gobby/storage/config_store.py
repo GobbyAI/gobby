@@ -40,6 +40,19 @@ _SECRET_SUFFIXES = (
     "_secret_key",
     "_auth",
 )
+_REMOVED_LLM_PROVIDERS_CONFIG_PREFIX = "llm_providers"
+
+
+def _validate_storage_config_key(key: str) -> None:
+    """Reject config keys that no longer have a runtime config surface."""
+    if key == _REMOVED_LLM_PROVIDERS_CONFIG_PREFIX or key.startswith(
+        f"{_REMOVED_LLM_PROVIDERS_CONFIG_PREFIX}."
+    ):
+        raise ValueError(
+            f"Config key '{key}' has been removed. Use feature configs and provider "
+            "discovery instead."
+        )
+    validate_embedding_storage_config_key(key)
 
 
 def config_key_to_secret_name(key: str) -> str:
@@ -80,7 +93,7 @@ def _reject_plaintext_secret_value(key: str, value: Any) -> None:
 class ConfigStore:
     """Key-value config storage backed by the hub database.
 
-    Keys are flattened dotted paths (e.g. "llm_providers.claude.models").
+    Keys are flattened dotted paths (e.g. "gobby-tasks.validation.candidates").
     Values are JSON-encoded for type preservation.
     Secret config keys have a canonical 1:1 mapping to SecretStore names via
     config_key_to_secret_name(); do not share one encrypted secret across keys.
@@ -106,7 +119,7 @@ class ConfigStore:
 
     def set(self, key: str, value: Any, source: str = "user") -> None:
         """Upsert a single config value (JSON-encoded)."""
-        validate_embedding_storage_config_key(key)
+        _validate_storage_config_key(key)
         _reject_plaintext_secret_value(key, value)
         now = datetime.now(UTC).isoformat()
         json_value = json.dumps(value)
@@ -123,7 +136,7 @@ class ConfigStore:
     def set_many(self, entries: dict[str, Any], source: str = "user") -> int:
         """Bulk upsert config entries. Returns count of entries written."""
         for key, value in entries.items():
-            validate_embedding_storage_config_key(key)
+            _validate_storage_config_key(key)
             _reject_plaintext_secret_value(key, value)
         now = datetime.now(UTC).isoformat()
         count = 0
@@ -179,7 +192,7 @@ class ConfigStore:
         The actual value is encrypted in the ``secrets`` table.
         Both writes happen in a single transaction for consistency.
         """
-        validate_embedding_storage_config_key(key)
+        _validate_storage_config_key(key)
         secret_name = config_key_to_secret_name(key)
         ref = f"$secret:{secret_name}"
         now = datetime.now(UTC).isoformat()
@@ -215,7 +228,7 @@ class ConfigStore:
         Both deletions run in a single transaction so either both succeed
         or both roll back.
         """
-        validate_embedding_storage_config_key(key)
+        _validate_storage_config_key(key)
         secret_name = config_key_to_secret_name(key)
         with self.db.transaction():
             self.db.execute("DELETE FROM config_store WHERE key = %s", (key,))
@@ -231,8 +244,8 @@ def flatten_config(config_dict: dict[str, Any], prefix: str = "") -> dict[str, A
     """Flatten a nested config dict into dotted-path keys.
 
     Example:
-        {"llm_providers": {"claude": {"enabled": True}}}
-        → {"llm_providers.claude.enabled": True}
+        {"gobby-tasks": {"validation": {"profile": "mid"}}}
+        → {"gobby-tasks.validation.profile": "mid"}
 
     Lists and non-dict values are kept as leaf values.
     """
@@ -250,8 +263,8 @@ def unflatten_config(flat_dict: dict[str, Any]) -> dict[str, Any]:
     """Unflatten dotted-path keys back into a nested dict.
 
     Example:
-        {"llm_providers.claude.enabled": True}
-        → {"llm_providers": {"claude": {"enabled": True}}}
+        {"gobby-tasks.validation.profile": "mid"}
+        → {"gobby-tasks": {"validation": {"profile": "mid"}}}
     """
     result: dict[str, Any] = {}
     for key, value in flat_dict.items():
