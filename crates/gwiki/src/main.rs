@@ -32,6 +32,7 @@ const CLI_SUBCOMMANDS: &[&str] = &[
     "audit",
     "lint",
     "health",
+    "librarian",
     "status",
     "trust",
 ];
@@ -132,6 +133,8 @@ enum CliCommand {
     Lint,
     /// Write wiki health snapshots under meta/health.
     Health,
+    /// Propose wiki upkeep tasks and patches without rewriting pages.
+    Librarian,
     /// Show shell readiness.
     Status,
     /// Show search, graph, freshness, and audit trust status.
@@ -595,6 +598,7 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
         CliCommand::Audit => Ok(Command::Audit { scope }),
         CliCommand::Lint => Ok(Command::Lint { scope }),
         CliCommand::Health => Ok(Command::Health { scope }),
+        CliCommand::Librarian => Ok(Command::Librarian { scope }),
         CliCommand::Status => Ok(Command::Status { scope }),
         CliCommand::Trust => Ok(Command::Trust { scope }),
     }

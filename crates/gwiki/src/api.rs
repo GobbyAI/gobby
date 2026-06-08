@@ -101,6 +101,9 @@ pub enum Command {
     Health {
         scope: ScopeSelection,
     },
+    Librarian {
+        scope: ScopeSelection,
+    },
     Status {
         scope: ScopeSelection,
     },

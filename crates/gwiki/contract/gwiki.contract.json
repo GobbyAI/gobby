@@ -675,6 +675,39 @@
       ]
     },
     {
+      "name": "librarian",
+      "summary": "Emit wiki upkeep proposals without rewriting canonical content.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [],
+      "json_output_keys": [
+        "command",
+        "scope",
+        "checks",
+        "suggested_tasks",
+        "suggested_patch_diffs",
+        "artifacts",
+        "dependency_classification"
+      ],
+      "hard_dependencies": [
+        "PostgreSQL",
+        "vault"
+      ],
+      "optional_dependencies": [
+        "FalkorDB/shared code graph",
+        "Qdrant+embeddings",
+        "model provider"
+      ],
+      "multimodal": "none",
+      "degradation": {
+        "output_shape": "each unavailable optional check is skipped independently; deterministic task proposals still emit for available checks",
+        "metadata_keys": [
+          "checks[].available",
+          "checks[].note"
+        ]
+      }
+    },
+    {
       "name": "sources",
       "summary": "List raw source manifest entries in the selected scope.",
       "daemon_consumed": true,
