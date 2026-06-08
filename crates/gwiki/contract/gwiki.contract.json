@@ -1,6 +1,6 @@
 {
   "tool": "gwiki",
-  "contract_version": 1,
+  "contract_version": 2,
   "summary": "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
   "global_flags": [
     {
@@ -586,6 +586,40 @@
         "scope",
         "artifacts"
       ]
+    },
+    {
+      "name": "graph-context",
+      "summary": "Build a compact wiki graph context pack.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [],
+      "json_output_keys": [
+        "command",
+        "scope",
+        "context",
+        "source_bundle",
+        "trust",
+        "freshness",
+        "audit",
+        "warnings",
+        "degradation"
+      ],
+      "hard_dependencies": [
+        "PostgreSQL"
+      ],
+      "optional_dependencies": [
+        "FalkorDB",
+        "shared code graph"
+      ],
+      "multimodal": "none",
+      "degradation": {
+        "output_shape": "wiki-link-only neighborhood",
+        "metadata_keys": [
+          "warnings[]",
+          "degradation.degraded",
+          "degradation.degraded_sources[]"
+        ]
+      }
     },
     {
       "name": "health",

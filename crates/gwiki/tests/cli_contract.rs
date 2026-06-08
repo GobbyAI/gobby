@@ -56,3 +56,51 @@ fn compile_contract_tracks_compile_json_payload_keys() {
 
     assert_eq!(compile.json_output_keys, expected_keys);
 }
+
+#[test]
+fn graph_context_contract_tracks_dependency_classification() {
+    let contract = pinned_contract();
+    let graph_context = contract["commands"]
+        .as_array()
+        .expect("commands array")
+        .iter()
+        .find(|command| command["name"] == "graph-context")
+        .expect("graph-context command contract");
+
+    assert_eq!(
+        graph_context["hard_dependencies"],
+        serde_json::json!(["PostgreSQL"])
+    );
+    assert_eq!(
+        graph_context["optional_dependencies"],
+        serde_json::json!(["FalkorDB", "shared code graph"])
+    );
+    assert_eq!(graph_context["multimodal"], "none");
+    assert_eq!(
+        graph_context["degradation"],
+        serde_json::json!({
+            "output_shape": "wiki-link-only neighborhood",
+            "metadata_keys": [
+                "warnings[]",
+                "degradation.degraded",
+                "degradation.degraded_sources[]"
+            ]
+        })
+    );
+
+    let expected_keys = [
+        "command",
+        "scope",
+        "context",
+        "source_bundle",
+        "trust",
+        "freshness",
+        "audit",
+        "warnings",
+        "degradation",
+    ];
+    assert_eq!(
+        graph_context["json_output_keys"],
+        serde_json::json!(expected_keys)
+    );
+}

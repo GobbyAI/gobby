@@ -1,11 +1,12 @@
 use gobby_core::cli_contract::{
-    CliContract, CommandContract, FlagContract, PositionalContract, ScopeContract,
+    CliContract, CommandContract, DegradationContract, FlagContract, PositionalContract,
+    ScopeContract,
 };
 
 pub fn contract() -> CliContract {
     CliContract {
         tool: "gwiki",
-        contract_version: 1,
+        contract_version: 2,
         summary: "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
         global_flags: vec![format_flag(), FlagContract::switch("--quiet")],
         scope: Some(ScopeContract {
@@ -24,6 +25,7 @@ pub fn contract() -> CliContract {
                 positionals: vec![],
                 flags: vec![format_flag()],
                 json_output_keys: contract_keys(),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "index",
@@ -32,6 +34,7 @@ pub fn contract() -> CliContract {
                 positionals: vec![],
                 flags: vec![],
                 json_output_keys: scoped_keys(vec!["status", "indexed_pages", "indexed_sources"]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "search",
@@ -53,6 +56,7 @@ pub fn contract() -> CliContract {
                     "summary",
                     "score",
                 ]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "ask",
@@ -77,6 +81,7 @@ pub fn contract() -> CliContract {
                     "ai",
                     "synthesis",
                 ]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "read",
@@ -94,6 +99,7 @@ pub fn contract() -> CliContract {
                     "frontmatter",
                     "citations",
                 ]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "refresh",
@@ -111,6 +117,7 @@ pub fn contract() -> CliContract {
                     "refreshed",
                     "failed",
                 ]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "ingest-file",
@@ -126,6 +133,7 @@ pub fn contract() -> CliContract {
                     "changed_paths",
                     "citations",
                 ]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "ingest-url",
@@ -144,6 +152,7 @@ pub fn contract() -> CliContract {
                     "url",
                     "status",
                 ]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "collect",
@@ -152,6 +161,7 @@ pub fn contract() -> CliContract {
                 positionals: vec![optional_positional("QUERY", false)],
                 flags: vec![],
                 json_output_keys: scoped_keys(vec!["results", "changed_paths", "status"]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "research",
@@ -188,6 +198,7 @@ pub fn contract() -> CliContract {
                     "session_id",
                     "status",
                 ]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "compile",
@@ -213,6 +224,7 @@ pub fn contract() -> CliContract {
                     "page_writes",
                     "prompt",
                 ]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "audit",
@@ -221,6 +233,7 @@ pub fn contract() -> CliContract {
                 positionals: vec![],
                 flags: vec![],
                 json_output_keys: scoped_keys(vec!["findings", "changed_paths", "status"]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "graph",
@@ -229,6 +242,34 @@ pub fn contract() -> CliContract {
                 positionals: vec![],
                 flags: vec![],
                 json_output_keys: scoped_keys(vec!["artifacts"]),
+                ..CommandContract::default()
+            },
+            CommandContract {
+                name: "graph-context",
+                summary: "Build a compact wiki graph context pack.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![],
+                json_output_keys: scoped_keys(vec![
+                    "context",
+                    "source_bundle",
+                    "trust",
+                    "freshness",
+                    "audit",
+                    "warnings",
+                    "degradation",
+                ]),
+                hard_dependencies: vec!["PostgreSQL"],
+                optional_dependencies: vec!["FalkorDB", "shared code graph"],
+                multimodal: Some("none"),
+                degradation: Some(DegradationContract {
+                    output_shape: "wiki-link-only neighborhood",
+                    metadata_keys: vec![
+                        "warnings[]",
+                        "degradation.degraded",
+                        "degradation.degraded_sources[]",
+                    ],
+                }),
             },
             CommandContract {
                 name: "health",
@@ -237,6 +278,7 @@ pub fn contract() -> CliContract {
                 positionals: vec![],
                 flags: vec![],
                 json_output_keys: vec!["command", "root", "text_path", "json_path", "status"],
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "sources",
@@ -252,6 +294,7 @@ pub fn contract() -> CliContract {
                     "raw_path",
                     "source_path",
                 ]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "backlinks",
@@ -260,6 +303,7 @@ pub fn contract() -> CliContract {
                 positionals: vec![PositionalContract::required("PAGE")],
                 flags: vec![],
                 json_output_keys: scoped_keys(vec!["page", "backlinks", "path", "title"]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "status",
@@ -268,6 +312,7 @@ pub fn contract() -> CliContract {
                 positionals: vec![],
                 flags: vec![],
                 json_output_keys: scoped_keys(vec!["status", "daemon_url", "runtime", "services"]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "trust",
@@ -289,6 +334,7 @@ pub fn contract() -> CliContract {
                     "graph_metrics",
                     "health_summary",
                 ]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "remove-source",
@@ -307,6 +353,7 @@ pub fn contract() -> CliContract {
                     "removed_raw_asset",
                     "changed_paths",
                 ]),
+                ..CommandContract::default()
             },
         ],
         error_codes: vec![

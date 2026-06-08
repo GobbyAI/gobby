@@ -11,7 +11,7 @@ pub struct CliContract {
     pub error_codes: Vec<&'static str>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Serialize)]
 pub struct CommandContract {
     pub name: &'static str,
     pub summary: &'static str,
@@ -19,6 +19,20 @@ pub struct CommandContract {
     pub positionals: Vec<PositionalContract>,
     pub flags: Vec<FlagContract>,
     pub json_output_keys: Vec<&'static str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hard_dependencies: Vec<&'static str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub optional_dependencies: Vec<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub multimodal: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub degradation: Option<DegradationContract>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DegradationContract {
+    pub output_shape: &'static str,
+    pub metadata_keys: Vec<&'static str>,
 }
 
 #[derive(Debug, Serialize)]
