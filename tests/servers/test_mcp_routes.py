@@ -1111,10 +1111,10 @@ class TestCallMCPTool:
         assert data["result"] == {"tool": "list_tasks"}
         assert "response_time_ms" in data
 
-    def test_call_tool_rejects_stale_stdio_wait_wrapper(
+    def test_call_tool_allows_structured_wait_without_wrapper_fingerprint(
         self, session_storage: SessionManager
     ) -> None:
-        """Structured calls from stdio must include a current wrapper fingerprint."""
+        """Structured calls are not stdio wrapper calls without a fingerprint header."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -1142,10 +1142,45 @@ class TestCallMCPTool:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["success"] is False
-        assert data["error_code"] == "GOBBY_MCP_WRAPPER_STALE"
-        assert data["tool_name"] == "wait_for_agent"
-        assert data["restart_required"] is True
+        assert data["success"] is True
+        assert data["result"] == {"tool": "wait_for_agent"}
+
+    def test_call_tool_ignores_explicit_stale_wait_wrapper_fingerprint(
+        self, session_storage: SessionManager
+    ) -> None:
+        """Structured wait calls recover even if a stale wrapper header is present."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server._internal_manager = FakeInternalManager(
+            [
+                FakeInternalRegistry(
+                    name="gobby-agents",
+                    tools=[{"name": "wait_for_agent", "description": "Wait for an agent"}],
+                ),
+            ]
+        )
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/mcp/tools/call",
+                headers={
+                    "X-Gobby-Caller-Project-Id": "project-123",
+                    MCP_WRAPPER_FINGERPRINT_HEADER: "stale-wrapper",
+                },
+                json={
+                    "server_name": "gobby-agents",
+                    "tool_name": "wait_for_agent",
+                    "arguments": {"run_id": "run-123", "timeout_seconds": 300},
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["result"] == {"tool": "wait_for_agent"}
 
     def test_call_tool_internal_server_failure(self, session_storage: SessionManager) -> None:
         """Test calling tool on internal server with error."""
@@ -2062,6 +2097,38 @@ class TestMCPProxy:
         with TestClient(server.app) as client:
             response = client.post(
                 "/api/mcp/gobby-agents/tools/wait_for_agent",
+                json={"run_id": "run-123", "timeout_seconds": 300},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert data["error_code"] == "GOBBY_MCP_WRAPPER_STALE"
+        assert data["tool_name"] == "wait_for_agent"
+        assert data["restart_required"] is True
+
+    def test_proxy_rejects_stale_wait_wrapper_fingerprint(
+        self, session_storage: SessionManager
+    ) -> None:
+        """Legacy stdio proxy route rejects explicitly stale wait wrappers."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server._internal_manager = FakeInternalManager(
+            [
+                FakeInternalRegistry(
+                    name="gobby-agents",
+                    tools=[{"name": "wait_for_agent", "description": "Wait for an agent"}],
+                ),
+            ]
+        )
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/mcp/gobby-agents/tools/wait_for_agent",
+                headers={MCP_WRAPPER_FINGERPRINT_HEADER: "stale-wrapper"},
                 json={"run_id": "run-123", "timeout_seconds": 300},
             )
 

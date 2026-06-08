@@ -41,20 +41,13 @@ logger = logging.getLogger(__name__)
 _ContextTokens = SeededContextTokens
 
 
-def _has_stdio_proxy_context(request: Request) -> bool:
-    return bool(
-        request.headers.get("X-Gobby-Caller-Project-Id")
-        or request.headers.get(MCP_WRAPPER_FINGERPRINT_HEADER)
-    )
-
-
 def _stale_stdio_wrapper_wait_result(
     request: Request,
     tool_name: str,
     *,
     require_stdio_proxy: bool,
 ) -> dict[str, Any] | None:
-    if not require_stdio_proxy and not _has_stdio_proxy_context(request):
+    if not require_stdio_proxy:
         return None
     return mcp_wrapper_fingerprint_stale_result(
         tool_name,

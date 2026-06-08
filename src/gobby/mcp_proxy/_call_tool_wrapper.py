@@ -106,20 +106,21 @@ def canonicalize_call_tool_wrapper(
     )
     nested = canonical_arguments if isinstance(canonical_arguments, dict) else {}
 
+    nested_has_server_name = isinstance(nested.get("server_name"), str) and bool(
+        nested.get("server_name")
+    )
+    nested_has_tool_name = isinstance(nested.get("tool_name"), str) and bool(
+        nested.get("tool_name")
+    )
     server_name_from_nested = (
-        not _has_top_level_wrapper_value(server_name)
-        and isinstance(nested.get("server_name"), str)
-        and bool(nested.get("server_name"))
+        not _has_top_level_wrapper_value(server_name) and nested_has_server_name
     )
-    tool_name_from_nested = (
-        not _has_top_level_wrapper_value(tool_name)
-        and isinstance(nested.get("tool_name"), str)
-        and bool(nested.get("tool_name"))
-    )
+    tool_name_from_nested = not _has_top_level_wrapper_value(tool_name) and nested_has_tool_name
     canonical_server_name = _pick_wrapper_value(server_name, nested.get("server_name"))
     canonical_tool_name = _pick_wrapper_value(tool_name, nested.get("tool_name"))
     canonical_session_id = session_id if isinstance(session_id, str) and session_id else None
     wrapper_route_from_nested = server_name_from_nested or tool_name_from_nested
+    nested_wrapper_route_present = nested_has_server_name or nested_has_tool_name
     canonical_project_id = project_id if isinstance(project_id, str) and project_id else None
     if canonical_project_id is None and wrapper_route_from_nested:
         canonical_project_id = _pick_wrapper_value(None, nested.get("project_id"))
@@ -143,7 +144,7 @@ def canonicalize_call_tool_wrapper(
     if canonical_arguments is not None:
         fields_to_strip = (
             CALL_TOOL_WRAPPER_FIELDS
-            if wrapper_route_from_nested and not unwrapped_target_arguments
+            if nested_wrapper_route_present and not unwrapped_target_arguments
             else ()
         )
         for field in fields_to_strip:

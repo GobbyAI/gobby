@@ -78,6 +78,28 @@ def test_top_level_project_id_stays_wrapper_context() -> None:
     assert canonical.arguments == {"project_id": "target-project"}
 
 
+def test_top_level_route_strips_nested_route_fields_but_keeps_target_session_id() -> None:
+    canonical = canonicalize_call_tool_wrapper(
+        server_name="outer-server",
+        tool_name="outer-tool",
+        arguments={
+            "server_name": "inner-server",
+            "tool_name": "inner-tool",
+            "session_id": "inner-session",
+            "project_id": "inner-project",
+            "value": "ok",
+        },
+        session_id="outer-session",
+        project_id="outer-project",
+    )
+
+    assert canonical.server_name == "outer-server"
+    assert canonical.tool_name == "outer-tool"
+    assert canonical.session_id == "outer-session"
+    assert canonical.project_id == "outer-project"
+    assert canonical.arguments == {"session_id": "inner-session", "value": "ok"}
+
+
 def test_nested_wrapper_preserves_nested_target_project_id() -> None:
     canonical = canonicalize_call_tool_wrapper(
         server_name=None,
