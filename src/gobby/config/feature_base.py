@@ -76,6 +76,19 @@ def normalize_feature_candidate(candidate: str) -> str:
     return candidate
 
 
+def _dedupe_normalized_candidates(candidates: list[str]) -> list[str]:
+    """Normalize candidates and preserve the first occurrence of each value."""
+    seen: set[str] = set()
+    normalized_candidates: list[str] = []
+    for candidate in candidates:
+        normalized = normalize_feature_candidate(candidate)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        normalized_candidates.append(normalized)
+    return normalized_candidates
+
+
 def _legacy_profile(value: Any) -> Any:
     if isinstance(value, FeatureProfile):
         return value
@@ -129,7 +142,7 @@ class FeatureDefaultConfig(BaseModel):
                 if isinstance(raw_candidates, (list, tuple))
                 else []
             )
-            values["candidates"] = [*existing, legacy_candidate]
+            values["candidates"] = _dedupe_normalized_candidates([*existing, legacy_candidate])
         if tier is not None and "profile" not in values:
             values["profile"] = _legacy_profile(tier)
         return values
@@ -147,5 +160,5 @@ class FeatureDefaultConfig(BaseModel):
         if invalid:
             joined = ", ".join(repr(candidate) for candidate in invalid)
             raise ValueError(f"feature candidates must use provider/model format: {joined}")
-        self.candidates = [normalize_feature_candidate(candidate) for candidate in self.candidates]
+        self.candidates = _dedupe_normalized_candidates(self.candidates)
         return self

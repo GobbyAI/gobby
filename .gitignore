@@ -236,7 +236,6 @@ __marimo__/
 !.gobby/project.jsonl
 !.gobby/wiki/
 !.gobby/wiki/**
-.gobby/wiki/.gwiki/
 !.gobby/plans/
 !.gobby/plans/**
 screenshots/

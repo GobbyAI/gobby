@@ -5,10 +5,15 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.memory.dream.service import DreamRunOptions, MemoryDreamService
+from gobby.memory.manager import MemoryManager
+
+if TYPE_CHECKING:
+    from gobby.config.app import DaemonConfig
+    from gobby.llm.service import LLMService
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +54,9 @@ def _handle_background_task(task: asyncio.Task[dict[str, Any]], run_id: str) -> 
 def register_memory_dream_tools(
     registry: InternalToolRegistry,
     *,
-    memory_manager: Any,
-    llm_service: Any | None,
-    config: Any | None,
+    memory_manager: MemoryManager,
+    llm_service: LLMService | None,
+    config: DaemonConfig | None,
     get_project_id: Callable[[], str | None],
 ) -> None:
     """Register memory dream tools on the gobby-memory registry."""
@@ -83,7 +88,7 @@ def register_memory_dream_tools(
         )
         if wait:
             return await service.run(options)
-        started = service.start(options)
+        started = await service.start_async(options)
         if not started.get("success"):
             return started
         run_id = str(started["run_id"])

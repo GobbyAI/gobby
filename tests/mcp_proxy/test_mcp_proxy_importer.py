@@ -21,15 +21,18 @@ class FakeGitHubResponse:
         json_data: dict[str, Any] | None = None,
         text: str = "",
         status_code: int = 200,
+        headers: dict[str, str] | None = None,
     ) -> None:
         self._json_data = json_data or {}
         self.text = text
         self.status_code = status_code
+        self.headers = headers or {}
+        self.request_url = "https://api.github.com/readme"
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
-            request = httpx.Request("GET", "https://api.github.com/readme")
-            response = httpx.Response(self.status_code, request=request)
+            request = httpx.Request("GET", self.request_url)
+            response = httpx.Response(self.status_code, request=request, headers=self.headers)
             raise httpx.HTTPStatusError("GitHub request failed", request=request, response=response)
         return None
 
@@ -82,6 +85,28 @@ class FakeGitHubClient:
             )
 
         raise AssertionError(f"Unexpected GitHub URL: {url}")
+
+
+class QueuedGitHubClient:
+    """Returns responses in order while recording GitHub request metadata."""
+
+    def __init__(self, responses: list[FakeGitHubResponse]) -> None:
+        self.responses = list(responses)
+        self.calls: list[dict[str, Any]] = []
+
+    async def get(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str],
+        params: dict[str, Any] | None = None,
+    ) -> FakeGitHubResponse:
+        self.calls.append({"url": url, "headers": headers, "params": params})
+        if not self.responses:
+            raise AssertionError(f"Unexpected GitHub URL: {url}")
+        response = self.responses.pop(0)
+        response.request_url = url
+        return response
 
 
 @pytest.fixture
@@ -513,8 +538,9 @@ class TestGithubContextFetch:
     """Tests for deterministic GitHub context fetch helpers."""
 
     @pytest.mark.asyncio
-    async def test_fetches_repository_metadata_and_readme(self, importer):
+    async def test_fetches_repository_metadata_and_readme(self, importer, monkeypatch):
         """Repository context uses GitHub API metadata plus README content."""
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
         client = FakeGitHubClient()
 
         context = await importer._fetch_github_repository_context(
@@ -544,8 +570,9 @@ class TestGithubContextFetch:
         assert "GitHub request failed" in context
 
     @pytest.mark.asyncio
-    async def test_fetches_search_candidates_and_readmes(self, importer):
+    async def test_fetches_search_candidates_and_readmes(self, importer, monkeypatch):
         """Query import context uses GitHub repository search and candidate READMEs."""
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
         client = FakeGitHubClient()
 
         context = await importer._fetch_github_search_context(client, "example mcp")
@@ -566,6 +593,63 @@ class TestGithubContextFetch:
         assert client.calls[1]["url"] == "https://api.github.com/repos/example/mcp-server/readme"
         assert "Candidate 1: example/mcp-server" in context
         assert "Run with npx example-mcp." in context
+
+    @pytest.mark.asyncio
+    async def test_fetch_uses_github_token_auth_header(self, importer, monkeypatch):
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_secret")
+        client = FakeGitHubClient()
+
+        await importer._fetch_github_repository_context(
+            client,
+            "https://github.com/example/mcp-server",
+        )
+
+        assert client.calls[0]["headers"]["Authorization"] == "Bearer ghp_secret"
+
+    @pytest.mark.asyncio
+    async def test_fetch_retries_transient_github_failure(self, importer):
+        client = QueuedGitHubClient(
+            [
+                FakeGitHubResponse(status_code=503, headers={"Retry-After": "0"}),
+                FakeGitHubResponse(json_data={"ok": True}),
+            ]
+        )
+
+        with patch("gobby.mcp_proxy.importer.asyncio.sleep", AsyncMock()) as sleep:
+            data = await importer._fetch_github_json(client, "/rate-test")
+
+        assert data == {"ok": True}
+        assert len(client.calls) == 2
+        sleep.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_error_mentions_github_token(self, importer, monkeypatch):
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        client = QueuedGitHubClient(
+            [
+                FakeGitHubResponse(
+                    status_code=403,
+                    json_data={"message": "API rate limit exceeded"},
+                    headers={"x-ratelimit-remaining": "0", "Retry-After": "0"},
+                ),
+                FakeGitHubResponse(
+                    status_code=403,
+                    json_data={"message": "API rate limit exceeded"},
+                    headers={"x-ratelimit-remaining": "0", "Retry-After": "0"},
+                ),
+                FakeGitHubResponse(
+                    status_code=403,
+                    json_data={"message": "API rate limit exceeded"},
+                    headers={"x-ratelimit-remaining": "0", "Retry-After": "0"},
+                ),
+            ]
+        )
+
+        with (
+            patch("gobby.mcp_proxy.importer.asyncio.sleep", AsyncMock()),
+            pytest.raises(RuntimeError, match="GITHUB_TOKEN"),
+        ):
+            await importer._fetch_github_json(client, "/rate-test")
 
 
 class TestImportFromQuery:

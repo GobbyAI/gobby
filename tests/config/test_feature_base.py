@@ -63,6 +63,17 @@ class TestFeatureDefaultConfig:
         )
         assert cfg.candidates == ["qwen/qwen3-coder", "claude/opus"]
 
+    def test_deduplicates_normalized_candidates_preserving_order(self) -> None:
+        cfg = FeatureDefaultConfig(
+            candidates=[
+                "claude/claude-haiku-4-5",
+                "codex/gpt-5.3-codex",
+                "claude/haiku",
+            ],
+        )
+
+        assert cfg.candidates == ["claude/haiku", "codex/gpt-5.3-codex"]
+
     @pytest.mark.parametrize(
         ("candidate", "expected"),
         [

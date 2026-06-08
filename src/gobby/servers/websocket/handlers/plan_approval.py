@@ -16,6 +16,7 @@ from gobby.adapters.plan_options import get_plan_accept_option
 from gobby.servers.websocket.db import run_db
 
 if TYPE_CHECKING:
+    from gobby.adapters.plan_options import PlanAcceptOption
     from gobby.servers.websocket.session_control import SessionControlMixin
 
 logger = logging.getLogger(__name__)
@@ -120,6 +121,7 @@ async def _auto_continue_after_approval(
     mixin: SessionControlMixin,
     websocket: Any,
     conversation_id: str,
+    option: PlanAcceptOption | None,
 ) -> bool:
     """Start a continuation turn so an approved plan actually executes.
 
@@ -128,8 +130,20 @@ async def _auto_continue_after_approval(
     ExitPlanMode in-flight, so it is excluded by the caller and never reaches
     here.
     """
-    content = "The plan is approved. Proceed with the implementation."
+    content = _approval_continuation_content(option)
     return await _inject_turn(mixin, websocket, conversation_id, content)
+
+
+def _approval_continuation_content(option: PlanAcceptOption | None) -> str:
+    if option is not None and option.post_plan_chat_mode == "bypass":
+        return (
+            "The plan is approved in YOLO mode. Proceed with the implementation "
+            "without pausing for tool approvals."
+        )
+    return (
+        "The plan is approved in Act mode. Proceed with the implementation and ask "
+        "before non-exempt tool use."
+    )
 
 
 def _active_chat_task(mixin: SessionControlMixin, conversation_id: str) -> Any:
@@ -154,6 +168,7 @@ async def _continue_after_active_turn(
     mixin: SessionControlMixin,
     websocket: Any,
     conversation_id: str,
+    option: PlanAcceptOption | None,
 ) -> bool:
     """Inject the continuation only after the in-flight plan turn has drained.
 
@@ -182,7 +197,7 @@ async def _continue_after_active_turn(
                 conversation_id[:8],
                 exc_info=True,
             )
-    return await _auto_continue_after_approval(mixin, websocket, conversation_id)
+    return await _auto_continue_after_approval(mixin, websocket, conversation_id, option)
 
 
 async def handle_plan_approval_response(
@@ -264,10 +279,12 @@ async def handle_plan_approval_response(
                 # so inject immediately.
                 blocking_plan = getattr(session, "has_blocking_plan_decision", False)
                 if blocking_plan:
-                    continued = await _continue_after_active_turn(mixin, websocket, conversation_id)
+                    continued = await _continue_after_active_turn(
+                        mixin, websocket, conversation_id, option
+                    )
                 else:
                     continued = await _auto_continue_after_approval(
-                        mixin, websocket, conversation_id
+                        mixin, websocket, conversation_id, option
                     )
                 if not continued:
                     logger.warning(

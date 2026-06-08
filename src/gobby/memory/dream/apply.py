@@ -54,7 +54,7 @@ async def apply_dream_plan(
             logger.exception("Unexpected memory dream action failure")
             raise
 
-    summary["snapshots"] = len(store.list_snapshots(run_id))
+    summary["snapshots"] = len(await asyncio.to_thread(store.list_snapshots, run_id))
     if summary["mutations"] and reconcile_after_apply:
         await _reconcile(memory_manager, summary)
     return summary
@@ -82,15 +82,16 @@ async def revert_dream_run(
         after = snapshot.get("after_data")
         memory_id = str(snapshot["memory_id"])
         if before is None and after is not None:
-            store.delete_memory_row(memory_id)
+            await asyncio.to_thread(store.delete_memory_row, memory_id)
             deleted += 1
             continue
         if isinstance(before, dict):
-            store.restore_memory_row(before)
+            await asyncio.to_thread(store.restore_memory_row, before)
             restored += 1
 
     completed_ts = _now()
-    store.update_run(
+    await asyncio.to_thread(
+        store.update_run,
         run_id,
         status="reverted",
         reverted_at=completed_ts,
@@ -133,10 +134,11 @@ async def _delete(
     memory_id: str,
     action_name: str,
 ) -> int:
-    before = store.get_memory_row(memory_id)
+    before = await asyncio.to_thread(store.get_memory_row, memory_id)
     if before is None:
         return 0
-    snapshot_id = store.insert_snapshot(
+    snapshot_id = await asyncio.to_thread(
+        store.insert_snapshot,
         run_id=run_id,
         memory_id=memory_id,
         action=action_name,
@@ -145,7 +147,7 @@ async def _delete(
     deleted = await memory_manager.delete_memory(memory_id)
     if not deleted:
         return 0
-    store.complete_snapshot(snapshot_id, after_data=None)
+    await asyncio.to_thread(store.complete_snapshot, snapshot_id, after_data=None)
     return 1
 
 
@@ -157,10 +159,11 @@ async def _refresh(
 ) -> int:
     if action.memory_id is None:
         raise ValueError("refresh action requires memory_id")
-    before = store.get_memory_row(action.memory_id)
+    before = await asyncio.to_thread(store.get_memory_row, action.memory_id)
     if before is None:
         return 0
-    snapshot_id = store.insert_snapshot(
+    snapshot_id = await asyncio.to_thread(
+        store.insert_snapshot,
         run_id=run_id,
         memory_id=action.memory_id,
         action="refresh",
@@ -171,8 +174,8 @@ async def _refresh(
         content=action.content,
         tags=action.tags,
     )
-    after = store.get_memory_row(action.memory_id)
-    store.complete_snapshot(snapshot_id, after_data=after)
+    after = await asyncio.to_thread(store.get_memory_row, action.memory_id)
+    await asyncio.to_thread(store.complete_snapshot, snapshot_id, after_data=after)
     return 1
 
 
@@ -186,9 +189,10 @@ async def _merge(
         return 0
     keeper_id = action.memory_ids[0]
     mutations = 0
-    before_keeper = store.get_memory_row(keeper_id)
+    before_keeper = await asyncio.to_thread(store.get_memory_row, keeper_id)
     if before_keeper is not None and before_keeper.get("content") != action.content:
-        snapshot_id = store.insert_snapshot(
+        snapshot_id = await asyncio.to_thread(
+            store.insert_snapshot,
             run_id=run_id,
             memory_id=keeper_id,
             action="merge",
@@ -199,7 +203,8 @@ async def _merge(
             content=action.content,
             tags=action.tags,
         )
-        store.complete_snapshot(snapshot_id, after_data=store.get_memory_row(keeper_id))
+        after_keeper = await asyncio.to_thread(store.get_memory_row, keeper_id)
+        await asyncio.to_thread(store.complete_snapshot, snapshot_id, after_data=after_keeper)
         mutations += 1
 
     for duplicate_id in action.memory_ids[1:]:
@@ -217,7 +222,9 @@ async def _supersede(
     if action.memory_id is None:
         raise ValueError("supersede action requires memory_id")
     mutations = 0
-    target_exists = action.target_id and store.get_memory_row(action.target_id) is not None
+    target_exists = False
+    if action.target_id:
+        target_exists = await asyncio.to_thread(store.get_memory_row, action.target_id) is not None
     if action.content and not target_exists:
         candidate = candidate_map.get(action.memory_id)
         created = await memory_manager.create_memory(
@@ -227,8 +234,9 @@ async def _supersede(
             source_type="agent",
             tags=action.tags or (candidate.tags if candidate else None),
         )
-        after = store.get_memory_row(created.id)
-        store.record_applied_snapshot(
+        after = await asyncio.to_thread(store.get_memory_row, created.id)
+        await asyncio.to_thread(
+            store.record_applied_snapshot,
             run_id=run_id,
             memory_id=created.id,
             action="supersede",

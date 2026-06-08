@@ -77,14 +77,21 @@ class TestMemoryDreamRoutes:
     ) -> None:
         with patch("gobby.servers.routes.memory_dream.MemoryDreamService") as service_cls:
             service = service_cls.return_value
-            service.start.return_value = {"success": True, "run_id": "dream-1"}
+            service.start_async = AsyncMock(return_value={"success": True, "run_id": "dream-1"})
             service.execute_run = AsyncMock(return_value={"success": True})
 
-            response = dream_client.post("/memory/dream", json={"dry_run": True})
+            response = dream_client.post(
+                "/memory/dream",
+                json={"dry_run": True, "project_id": "proj-1", "memory_type": "fact"},
+            )
 
         assert response.status_code == 202
         assert response.json()["run_id"] == "dream-1"
-        service.start.assert_called_once()
+        service.start_async.assert_awaited_once()
+        options = service.start_async.await_args.args[0]
+        assert options.dry_run is True
+        assert options.project_id == "proj-1"
+        assert options.memory_type == "fact"
         mock_server.register_background_task.assert_called_once()
 
     def test_wait_dream_returns_completed_run(self, dream_client: TestClient) -> None:
@@ -94,10 +101,15 @@ class TestMemoryDreamRoutes:
                 return_value={"success": True, "run_id": "dream-1", "run": {"status": "completed"}}
             )
 
-            response = dream_client.post("/memory/dream", json={"wait": True})
+            response = dream_client.post(
+                "/memory/dream",
+                json={"wait": True, "skip_consolidation": True},
+            )
 
         assert response.status_code == 200
         assert response.json()["run"]["status"] == "completed"
+        service.run.assert_awaited_once()
+        assert service.run.await_args.args[0].skip_consolidation is True
 
     def test_status_and_revert(self, dream_client: TestClient) -> None:
         with patch("gobby.servers.routes.memory_dream.MemoryDreamService") as service_cls:
@@ -110,6 +122,8 @@ class TestMemoryDreamRoutes:
 
         assert status.status_code == 200
         assert revert.status_code == 200
+        service.status.assert_called_once_with("dream-1")
+        service.revert.assert_awaited_once_with("dream-1")
 
 
 # =============================================================================

@@ -630,7 +630,7 @@ class TestMemoryDreamTools:
     ) -> None:
         config = SimpleNamespace(memory=SimpleNamespace(dream=SimpleNamespace()))
         service = MagicMock()
-        service.start.return_value = {"success": True, "run_id": "dream-1"}
+        service.start_async = AsyncMock(return_value={"success": True, "run_id": "dream-1"})
         service.execute_run = AsyncMock(return_value={"success": False, "error": "boom"})
         registry = create_memory_registry(
             mock_memory_manager,

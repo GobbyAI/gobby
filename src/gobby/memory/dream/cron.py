@@ -61,8 +61,10 @@ def register_memory_dream_cron(
         run = raw_run if isinstance(raw_run, dict) else {}
         raw_summary = run.get("summary")
         summary = raw_summary if isinstance(raw_summary, dict) else {}
-        run_id = result.get("run_id") or run.get("id")
-        if not run_id:
+        run_id = result.get("run_id")
+        if run_id is None:
+            run_id = run.get("id")
+        if run_id is None:
             raise RuntimeError("memory dream completed without run_id")
         return f"memory dream {run_id} completed: {summary.get('mutations', 0)} mutation(s)"
 

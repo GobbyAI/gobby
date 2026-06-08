@@ -1,7 +1,12 @@
 """MCP server import functionality."""
 
+import asyncio
 import logging
+import os
+import random
 import re
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -33,6 +38,10 @@ GITHUB_RAW_HEADERS = {
 }
 MAX_IMPORT_CONTEXT_CHARS = 14_000
 MAX_SEARCH_REPOSITORIES = 3
+GITHUB_REQUEST_ATTEMPTS = 3
+GITHUB_BASE_BACKOFF_SECONDS = 0.4
+GITHUB_MAX_RETRY_AFTER_SECONDS = 30.0
+GITHUB_RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 class MCPServerImporter:
@@ -335,12 +344,12 @@ class MCPServerImporter:
         path: str,
         params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        response = await client.get(
+        response = await self._fetch_github_response(
+            client,
             f"{GITHUB_API_BASE}{path}",
-            headers=GITHUB_API_HEADERS,
+            base_headers=GITHUB_API_HEADERS,
             params=params,
         )
-        response.raise_for_status()
         data = response.json()
         if not isinstance(data, dict):
             raise ValueError(f"GitHub API returned non-object response for {path}")
@@ -352,12 +361,108 @@ class MCPServerImporter:
         owner: str,
         repo: str,
     ) -> str:
-        response = await client.get(
+        response = await self._fetch_github_response(
+            client,
             f"{GITHUB_API_BASE}/repos/{owner}/{repo}/readme",
-            headers=GITHUB_RAW_HEADERS,
+            base_headers=GITHUB_RAW_HEADERS,
         )
-        response.raise_for_status()
         return response.text
+
+    async def _fetch_github_response(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        base_headers: dict[str, str],
+        params: dict[str, Any] | None = None,
+    ) -> httpx.Response:
+        headers = self._github_headers(base_headers)
+        for attempt in range(GITHUB_REQUEST_ATTEMPTS):
+            try:
+                response = await client.get(url, headers=headers, params=params)
+                if attempt < GITHUB_REQUEST_ATTEMPTS - 1 and self._should_retry_github_response(
+                    response
+                ):
+                    await asyncio.sleep(self._github_retry_delay(response, attempt))
+                    continue
+                self._raise_for_github_status(response)
+                return response
+            except (httpx.TimeoutException, httpx.TransportError):
+                if attempt >= GITHUB_REQUEST_ATTEMPTS - 1:
+                    raise
+                await asyncio.sleep(self._github_retry_delay(None, attempt))
+        raise RuntimeError(f"GitHub request failed after retries: {url}")
+
+    def _github_headers(self, base_headers: dict[str, str]) -> dict[str, str]:
+        headers = dict(base_headers)
+        token = os.environ.get("GITHUB_TOKEN", "").strip()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        return headers
+
+    def _should_retry_github_response(self, response: Any) -> bool:
+        status_code = getattr(response, "status_code", None)
+        if status_code in GITHUB_RETRY_STATUS_CODES:
+            return True
+        return status_code == 403 and self._github_rate_limited(response)
+
+    def _github_retry_delay(self, response: Any | None, attempt: int) -> float:
+        retry_after = self._github_retry_after_seconds(response) if response is not None else None
+        base_delay = retry_after
+        if base_delay is None:
+            base_delay = GITHUB_BASE_BACKOFF_SECONDS * (2**attempt)
+        jitter = random.uniform(0.0, min(0.25, base_delay * 0.2))
+        return base_delay + jitter
+
+    def _github_retry_after_seconds(self, response: Any) -> float | None:
+        raw_value = getattr(response, "headers", {}).get("Retry-After")
+        if not raw_value:
+            return None
+        try:
+            seconds = float(raw_value)
+        except ValueError:
+            try:
+                retry_at = parsedate_to_datetime(raw_value)
+            except (TypeError, ValueError):
+                return None
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=UTC)
+            seconds = (retry_at - datetime.now(UTC)).total_seconds()
+        return max(0.0, min(seconds, GITHUB_MAX_RETRY_AFTER_SECONDS))
+
+    def _github_rate_limited(self, response: Any) -> bool:
+        if getattr(response, "status_code", None) == 429:
+            return True
+        headers = getattr(response, "headers", {})
+        if headers.get("x-ratelimit-remaining") == "0":
+            return True
+        if headers.get("Retry-After"):
+            return True
+        try:
+            data = response.json()
+        except ValueError:
+            return False
+        if not isinstance(data, dict):
+            return False
+        message = str(data.get("message") or "").lower()
+        return "rate limit" in message or "secondary rate limit" in message
+
+    def _raise_for_github_status(self, response: httpx.Response) -> None:
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if response.status_code in {403, 429} and self._github_rate_limited(response):
+                raise RuntimeError(self._github_rate_limit_message(response)) from exc
+            raise
+
+    def _github_rate_limit_message(self, response: Any) -> str:
+        message = "GitHub API rate limit exceeded"
+        retry_after = self._github_retry_after_seconds(response)
+        if retry_after is not None:
+            message += f"; retry after {retry_after:.0f}s"
+        if not os.environ.get("GITHUB_TOKEN", "").strip():
+            message += "; set GITHUB_TOKEN to use an authenticated GitHub API limit"
+        return message
 
     async def _fetch_github_repository_context(
         self,

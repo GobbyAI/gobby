@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -46,17 +47,41 @@ class MemoryDreamService:
         self.dream_config = dream_config or MemoryDreamConfig()
         self.llm_service = llm_service
         self.store = MemoryDreamStore(memory_manager.db)
+        self._schema_ready = False
 
     async def run(self, options: DreamRunOptions) -> dict[str, Any]:
         if not self.dream_config.enabled:
             return {"success": False, "error": "memory dream is disabled"}
 
-        run_id = self.start(options)["run_id"]
+        started = await self.start_async(options)
+        if not started.get("success"):
+            return started
+        run_id = str(started["run_id"])
         return await self.execute_run(run_id, options)
+
+    async def _ensure_schema_async(self) -> None:
+        if self._schema_ready:
+            return
+        await asyncio.to_thread(self.store.ensure_schema)
+        self._schema_ready = True
+
+    async def start_async(self, options: DreamRunOptions) -> dict[str, Any]:
+        if not self.dream_config.enabled:
+            return {"success": False, "error": "memory dream is disabled"}
+        await self._ensure_schema_async()
+        run_id = await asyncio.to_thread(
+            self.store.create_run,
+            project_id=options.project_id,
+            dry_run=options.dry_run,
+            options=options.to_dict(),
+        )
+        return {"success": True, "run_id": run_id}
 
     def start(self, options: DreamRunOptions) -> dict[str, Any]:
         if not self.dream_config.enabled:
             return {"success": False, "error": "memory dream is disabled"}
+        self.store.ensure_schema()
+        self._schema_ready = True
         run_id = self.store.create_run(
             project_id=options.project_id,
             dry_run=options.dry_run,
@@ -77,8 +102,9 @@ class MemoryDreamService:
         )
 
     async def execute_run(self, run_id: str, options: DreamRunOptions) -> dict[str, Any]:
+        await self._ensure_schema_async()
         try:
-            candidates = discover_stale_candidates(
+            candidates = await discover_stale_candidates(
                 self.memory_manager,
                 self.dream_config,
                 project_id=options.project_id,
@@ -108,7 +134,7 @@ class MemoryDreamService:
                 "planner_errors": raw_plan_metadata.get("planner_errors", []),
                 "actions": [action.to_dict() for action in actions],
             }
-            self.store.update_run(run_id, plan=plan)
+            await asyncio.to_thread(self.store.update_run, run_id, plan=plan)
 
             summary = await apply_dream_plan(
                 memory_manager=self.memory_manager,
@@ -122,7 +148,8 @@ class MemoryDreamService:
             summary["candidates_reviewed"] = len(candidates)
             summary["duplicate_groups"] = len(duplicates)
             completed_ts = datetime.now(UTC).isoformat()
-            run = self.store.update_run(
+            run = await asyncio.to_thread(
+                self.store.update_run,
                 run_id,
                 status="completed",
                 completed_at=completed_ts,
@@ -131,7 +158,8 @@ class MemoryDreamService:
             return {"success": True, "run_id": run_id, "run": run}
         except Exception as exc:  # noqa: BLE001 - run status must capture failure
             completed_ts = datetime.now(UTC).isoformat()
-            run = self.store.update_run(
+            run = await asyncio.to_thread(
+                self.store.update_run,
                 run_id,
                 status="failed",
                 completed_at=completed_ts,
@@ -146,6 +174,7 @@ class MemoryDreamService:
         return {"success": True, "run": run}
 
     async def revert(self, run_id: str) -> dict[str, Any]:
+        await self._ensure_schema_async()
         return await revert_dream_run(
             store=self.store,
             run_id=run_id,

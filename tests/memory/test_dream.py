@@ -58,9 +58,10 @@ def _candidate(memory_id: str) -> DreamCandidate:
     )
 
 
-def test_stale_candidate_discovery_reviews_high_access_old_memory() -> None:
+@pytest.mark.asyncio
+async def test_stale_candidate_discovery_reviews_high_access_old_memory() -> None:
     manager = MagicMock()
-    manager.list_memories.side_effect = [[_memory("old-hot", access_count=99)], []]
+    manager.alist_memories = AsyncMock(side_effect=[[_memory("old-hot", access_count=99)], []])
     config = SimpleNamespace(
         stale_age_days=30,
         scan_limit=10,
@@ -68,13 +69,14 @@ def test_stale_candidate_discovery_reviews_high_access_old_memory() -> None:
         include_global_memories=True,
     )
 
-    result = discover_stale_candidates(manager, config, project_id="proj-1")
+    result = await discover_stale_candidates(manager, config, project_id="proj-1")
 
     assert [candidate.id for candidate in result] == ["old-hot"]
     assert result[0].access_count == 99
 
 
-def test_stale_candidate_discovery_ties_by_created_at() -> None:
+@pytest.mark.asyncio
+async def test_stale_candidate_discovery_ties_by_created_at() -> None:
     manager = MagicMock()
     older = _memory("older")
     newer = _memory("newer")
@@ -82,7 +84,7 @@ def test_stale_candidate_discovery_ties_by_created_at() -> None:
         memory.updated_at = "2025-01-01T00:00:00+00:00"
     older.created_at = "2024-01-01T00:00:00+00:00"
     newer.created_at = "2024-02-01T00:00:00+00:00"
-    manager.list_memories.side_effect = [[newer, older], []]
+    manager.alist_memories = AsyncMock(side_effect=[[newer, older], []])
     config = SimpleNamespace(
         stale_age_days=30,
         scan_limit=10,
@@ -90,7 +92,7 @@ def test_stale_candidate_discovery_ties_by_created_at() -> None:
         include_global_memories=True,
     )
 
-    result = discover_stale_candidates(
+    result = await discover_stale_candidates(
         manager,
         config,
         project_id="proj-1",
@@ -98,6 +100,30 @@ def test_stale_candidate_discovery_ties_by_created_at() -> None:
     )
 
     assert [candidate.id for candidate in result] == ["older", "newer"]
+
+
+@pytest.mark.asyncio
+async def test_stale_candidate_discovery_uses_defaults_for_bad_config(caplog) -> None:
+    manager = MagicMock()
+    old = _memory("old")
+    old.updated_at = "2025-01-01T00:00:00+00:00"
+    manager.alist_memories = AsyncMock(side_effect=[[old], []])
+    config = SimpleNamespace(
+        stale_age_days="bad",
+        scan_limit=False,
+        max_scan_rows=0,
+        include_global_memories="yes",
+    )
+
+    result = await discover_stale_candidates(
+        manager,
+        config,
+        project_id="proj-1",
+        now=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    assert [candidate.id for candidate in result] == ["old"]
+    assert "using default" in caplog.text
 
 
 def test_plan_validation_degrades_bad_or_omitted_actions_to_review() -> None:
@@ -196,6 +222,12 @@ def test_duplicate_groups_choose_canonical_without_quadratic_index_lookup() -> N
     assert len(groups) == 1
     assert groups[0].memory_ids == ["older", "newer"]
     assert groups[0].canonical_content == "same"
+
+
+def test_duplicate_groups_ignore_non_string_content() -> None:
+    candidate = replace(_candidate("bad"), content=None)
+
+    assert find_duplicate_groups([candidate]) == []
 
 
 def test_malformed_plan_reviews_all_candidates() -> None:
@@ -451,7 +483,8 @@ class _FakeDreamDB:
         return None
 
     def fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
-        if "FROM memory_dream_snapshots" not in sql:
+        normalized = " ".join(sql.split())
+        if "FROM memory_dream_snapshots" not in normalized:
             return []
         run_id = str(params[0])
         rows = [row for row in self.snapshots if row["run_id"] == run_id and row["applied"]]

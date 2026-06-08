@@ -35,5 +35,7 @@ def find_duplicate_groups(candidates: list[DreamCandidate]) -> list[DuplicateGro
     return duplicate_groups
 
 
-def _normalize_content(content: str) -> str:
+def _normalize_content(content: object) -> str:
+    if not isinstance(content, str):
+        return ""
     return " ".join(content.strip().lower().split())

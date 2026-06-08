@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import signal
 from collections.abc import AsyncIterator
@@ -57,6 +58,11 @@ DROID_FACTORY_PROTOCOL_VERSION = "1.25.0"
 DROID_MACHINE_ID = "gobby-web-chat"
 DROID_PERMISSION_CANCEL = "cancel"
 DROID_PERMISSION_PROCEED_ONCE = "proceed_once"
+DROID_STDERR_MAX_CHARS = 1000
+_DROID_STDERR_REDACTIONS = (
+    re.compile(r"(?i)(authorization:\s*bearer\s+)[^\s]+"),
+    re.compile(r"(?i)\b(api[_-]?key|token|secret|password)\b\s*([=:])\s*[^\s]+"),
+)
 
 
 @dataclass(slots=True)
@@ -73,6 +79,14 @@ def droid_tool_name_adapter(raw_tool_name: str) -> str:
     normalized = normalize_tool_fields({"tool_name": raw_tool_name})
     tool_name = normalized.get("tool_name")
     return tool_name if isinstance(tool_name, str) and tool_name else raw_tool_name
+
+
+def _redact_droid_stderr(text: str) -> str:
+    redacted = _DROID_STDERR_REDACTIONS[0].sub(r"\1<redacted>", text)
+    redacted = _DROID_STDERR_REDACTIONS[1].sub(r"\1\2<redacted>", redacted)
+    if len(redacted) <= DROID_STDERR_MAX_CHARS:
+        return redacted
+    return f"{redacted[:DROID_STDERR_MAX_CHARS]}... [truncated]"
 
 
 # Plan-exit / spec tools whose argument carries the structured plan body. Droid
@@ -852,7 +866,11 @@ class DroidWebChatBackend:
             while line := await stderr.readline():
                 text = line.decode("utf-8", errors="replace").rstrip()
                 if text:
-                    logger.warning("Droid process %s stderr: %s", conversation_id, text)
+                    logger.debug(
+                        "Droid process %s stderr: %s",
+                        conversation_id,
+                        _redact_droid_stderr(text),
+                    )
         except (RuntimeError, OSError) as exc:
             logger.debug("Failed to read Droid process stderr for %s: %s", conversation_id, exc)
 

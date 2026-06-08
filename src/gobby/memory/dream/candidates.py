@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from gobby.memory.dream.models import DreamCandidate
 
+logger = logging.getLogger(__name__)
+
 
 class MemoryManagerProtocol(Protocol):
-    def list_memories(self, *, limit: int, offset: int) -> list[Any]: ...
+    async def alist_memories(self, *, limit: int | None, offset: int) -> list[Any]: ...
 
 
 class DreamConfigProtocol(Protocol):
@@ -19,7 +22,7 @@ class DreamConfigProtocol(Protocol):
     include_global_memories: bool
 
 
-def discover_stale_candidates(
+async def discover_stale_candidates(
     memory_manager: MemoryManagerProtocol,
     dream_config: DreamConfigProtocol,
     *,
@@ -36,15 +39,15 @@ def discover_stale_candidates(
     candidates: list[DreamCandidate] = []
     offset = 0
     scanned = 0
-    page_size = min(500, int(getattr(dream_config, "max_scan_rows", 5000)))
-    max_scan_rows = int(getattr(dream_config, "max_scan_rows", 5000))
-    scan_limit = int(getattr(dream_config, "scan_limit", 500))
-    stale_age_days = int(getattr(dream_config, "stale_age_days", 30))
-    include_global = bool(getattr(dream_config, "include_global_memories", True))
+    max_scan_rows = _positive_int_attr(dream_config, "max_scan_rows", 5000)
+    page_size = min(500, max_scan_rows)
+    scan_limit = _positive_int_attr(dream_config, "scan_limit", 500)
+    stale_age_days = _positive_int_attr(dream_config, "stale_age_days", 30)
+    include_global = _bool_attr(dream_config, "include_global_memories", True)
 
     while scanned < max_scan_rows and len(candidates) < scan_limit:
         page_limit = min(page_size, max_scan_rows - scanned)
-        page = memory_manager.list_memories(limit=page_limit, offset=offset)
+        page = await memory_manager.alist_memories(limit=page_limit, offset=offset)
         if not page:
             break
 
@@ -117,6 +120,36 @@ def _parse_datetime(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+def _positive_int_attr(obj: Any, attr: str, default: int) -> int:
+    value = getattr(obj, attr, default)
+    if isinstance(value, bool):
+        logger.warning("Invalid memory dream %s=%r; using default %s", attr, value, default)
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        logger.warning("Invalid memory dream %s=%r; using default %s", attr, value, default)
+        return default
+    if parsed < 1:
+        logger.warning("Invalid memory dream %s=%r; using default %s", attr, value, default)
+        return default
+    return parsed
+
+
+def _bool_attr(obj: Any, attr: str, default: bool) -> bool:
+    value = getattr(obj, attr, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    logger.warning("Invalid memory dream %s=%r; using default %s", attr, value, default)
+    return default
 
 
 def _int_attr(obj: Any, attr: str) -> int:

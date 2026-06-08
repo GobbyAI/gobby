@@ -352,7 +352,7 @@ class TestCloseTask:
             patch(
                 "gobby.utils.git.normalize_commit_sha",
                 side_effect=lambda sha, cwd=None: sha,
-            ),
+            ) as mock_norm,
         ):
             mock_vcr.return_value = MagicMock(can_close=True)
             await registry.call(
@@ -370,6 +370,7 @@ class TestCloseTask:
             "abc1234",
             cwd="/external/repo",
         )
+        mock_norm.assert_called_with("abc1234", cwd="/external/repo")
         mock_vcr.assert_called_with(task, "completed", "/external/repo")
         close_call = mock_task_manager.close_task.call_args
         assert close_call is not None

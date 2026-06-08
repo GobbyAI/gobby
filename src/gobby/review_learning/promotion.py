@@ -45,10 +45,11 @@ class PromotionMemoryManager(Protocol):
     async def alist_memories(
         self,
         *,
-        project_id: str,
-        memory_type: str,
-        limit: int,
-        tags_all: list[str],
+        project_id: str | None = None,
+        memory_type: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+        tags_all: list[str] | None = None,
     ) -> list[Any]: ...
 
 

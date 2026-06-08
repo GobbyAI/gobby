@@ -113,3 +113,22 @@ async def test_acp_attach_session_resolves_cwd_and_seeds_trust_before_session_re
         )
         client.create_session.assert_not_awaited()
         assert session.sdk_session_id == "loaded"
+
+
+@pytest.mark.asyncio
+async def test_acp_attach_session_requires_resolved_model_before_session_request() -> None:
+    client = MagicMock()
+    client.is_started = True
+    client.session_id = None
+    client.create_session = AsyncMock()
+    client.load_session = AsyncMock()
+
+    backend = GeminiWebChatBackend(client=client, default_model=None)
+    backend._health = ProviderBackendHealth(provider="gemini", available=True)
+    session = GeminiManagedChatSession(conversation_id="conv-gemini", _backend=backend)
+
+    with pytest.raises(RuntimeError, match="model could not be resolved"):
+        await backend.attach_session(session)
+
+    client.create_session.assert_not_awaited()
+    client.load_session.assert_not_awaited()

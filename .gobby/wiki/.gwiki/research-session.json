@@ -1,0 +1,16 @@
+{
+  "session_id": "research-1780575997581-61063025",
+  "question": "Audit wiki scope",
+  "prompt": "Research question: Audit wiki scope\nWorkers: 1\nReturn source-grounded notes suitable for raw/research/.",
+  "scope": {
+    "kind": "project",
+    "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+    "root": ".gobby/wiki"
+  },
+  "source_constraints": [],
+  "agent_count": 1,
+  "dispatch_task_id": null,
+  "dispatch": null,
+  "accepted_notes": [],
+  "compile_state": null
+}

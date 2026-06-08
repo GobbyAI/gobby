@@ -38,7 +38,7 @@ type ReviewStatus = 'pending' | 'approved' | 'idle'
 export const PlanReviewCard = memo(function PlanReviewCard({
   plan,
   planPendingApproval,
-  planApproved = false,
+  planApproved,
   planApprovalOptions,
   onApprovePlan,
   onRequestPlanChanges,
@@ -56,7 +56,7 @@ export const PlanReviewCard = memo(function PlanReviewCard({
   // approved" (#15681 — the symmetric half of #15663).
   const status: ReviewStatus = planPendingApproval
     ? 'pending'
-    : planApproved
+    : planApproved === true
       ? 'approved'
       : 'idle'
 

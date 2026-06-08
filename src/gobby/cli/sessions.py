@@ -332,13 +332,14 @@ def renumber_sessions(project_ref: str, apply_changes: bool) -> None:
 
     changed = sum(1 for item in mapping if item["old_seq_num"] != item["new_seq_num"])
     old_range = _format_seq_range([item["old_seq_num"] for item in mapping])
-    new_range = _format_seq_range([item["new_seq_num"] for item in mapping])
-    max_ref = max(item["new_seq_num"] for item in mapping)
+    new_seq_nums = [item["new_seq_num"] for item in mapping if item["new_seq_num"] is not None]
+    new_range = _format_seq_range(new_seq_nums)
+    max_ref = max(new_seq_nums) if new_seq_nums else None
 
     click.echo(f"Changed refs: {changed}")
     click.echo(f"Old ref range: {old_range}")
     click.echo(f"New ref range: {new_range}")
-    click.echo(f"Final max ref: #{max_ref}")
+    click.echo(f"Final max ref: #{max_ref}" if max_ref is not None else "Final max ref: -")
     if not apply_changes:
         click.echo("No changes written. Re-run with --apply to mutate refs.")
 

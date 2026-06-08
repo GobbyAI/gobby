@@ -137,6 +137,10 @@ class ACPWebChatBackend:
             session._model = model
         elif not session._model:
             session._model = self._default_model
+        if not session._model or not session._model.strip():
+            raise RuntimeError(
+                f"{self.display_name} model could not be resolved before ACP session creation"
+            )
 
         await self.start()
         if not self._health.available:

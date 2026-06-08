@@ -258,25 +258,20 @@ class _QueryMixin:
         Returns:
             Dictionary mapping status to count
         """
+        params: tuple[str, ...] = ()
+        where_clause = ""
         if project_id:
-            rows = self.db.fetchall(
-                """
-                SELECT status, COUNT(*) as count
-                FROM sessions
-                WHERE project_id = %s
-                GROUP BY status
-                """,
-                (project_id,),
-            )
-        else:
-            rows = self.db.fetchall(
-                """
-                SELECT status, COUNT(*) as count
-                FROM sessions
-                GROUP BY status
-                """,
-                (),
-            )
+            where_clause = "WHERE project_id = %s"
+            params = (project_id,)
+        rows = self.db.fetchall(
+            f"""
+            SELECT status, COUNT(*) as count
+            FROM sessions
+            {where_clause}
+            GROUP BY status
+            """,  # nosec B608
+            params,
+        )
         return {row["status"]: row["count"] for row in rows}
 
     def fetch_task_refs_by_session(

@@ -136,7 +136,7 @@ async function seedLocalState(page: Parameters<typeof test>[0]["page"]) {
           fontSize: 16,
           theme: "dark",
           defaultChatMode: "plan",
-          postPlanChatMode: "bypass",
+          planPendingVariant: "amber",
         }),
       );
     },
@@ -174,7 +174,7 @@ async function mockApi(
                 model: "gpt-5.4",
                 theme: "dark",
                 defaultChatMode: "plan",
-                postPlanChatMode: "bypass",
+                planPendingVariant: "amber",
                 fontSize: 16,
               }),
       });
@@ -531,7 +531,7 @@ test.describe("Web Chat Restore And Plan Mode", () => {
             fontSize: 16,
             theme: "dark",
             defaultChatMode: "plan",
-            postPlanChatMode: "bypass",
+            planPendingVariant: "amber",
           }),
         );
       },
@@ -594,8 +594,9 @@ test.describe("Web Chat Restore And Plan Mode", () => {
     await expect(claimedTaskRow).toContainText("Development");
     const detail = page.locator(".activity-task-detail-shell");
     await expect(detail).toContainText("Task #14425");
-    await expect(detail).toContainText("Claimed by");
-    await expect(detail).toContainText(CURRENT_DB_SESSION_ID);
+    await expect(detail).toContainText("web-main");
+    await expect(detail).not.toContainText("Claimed by");
+    await expect(detail).not.toContainText(CURRENT_DB_SESSION_ID);
     await expect(detail).toContainText(/Development: In Progress.*Claimed/);
 
     await page.reload();
@@ -604,7 +605,8 @@ test.describe("Web Chat Restore And Plan Mode", () => {
     await expect(page.getByText("Other session message")).toHaveCount(0);
     await expect(page.locator(".activity-panel-mobile-trigger")).toContainText("Tasks");
     await expect(claimedTaskRow).toBeVisible();
-    await expect(detail).toContainText(CURRENT_DB_SESSION_ID);
+    await expect(detail).toContainText("web-main");
+    await expect(detail).not.toContainText(CURRENT_DB_SESSION_ID);
     await expect(detail).toContainText(/Development: In Progress.*Claimed/);
     expect(counters.currentMessageFetches).toBeGreaterThanOrEqual(2);
     expect(counters.otherMessageFetches).toBe(0);
@@ -763,10 +765,8 @@ test.describe("Web Chat Restore And Plan Mode", () => {
 
     await page.goto("/");
 
-    await expect(
-      page.getByRole("button", { name: "Approve & Execute" }),
-    ).toBeVisible();
-    await page.getByRole("button", { name: "Approve & Execute" }).click();
+    await expect(page.getByTestId("plan-strip-approve")).toBeVisible();
+    await page.getByTestId("plan-strip-approve").click();
 
     await expect(page.getByRole("radio", { name: "YOLO", exact: true })).toHaveAttribute(
       "aria-checked",

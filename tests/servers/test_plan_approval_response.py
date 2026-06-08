@@ -232,6 +232,14 @@ async def test_handle_plan_approval_approve_native_does_not_auto_continue():
     session.has_pending_plan = True
     session.plan_auto_switch = True
     session.sync_sdk_permission_mode = AsyncMock()
+    session._pending_plan_content = "Plan body"
+    session._pending_plan_allowed_prompts = ["approve"]
+
+    def clear_pending_plan_prompt() -> None:
+        session._pending_plan_content = None
+        session._pending_plan_allowed_prompts = None
+
+    session._clear_pending_plan_prompt.side_effect = clear_pending_plan_prompt
 
     conversation_id = "conv-native"
     host._chat_sessions[conversation_id] = session
@@ -250,6 +258,8 @@ async def test_handle_plan_approval_approve_native_does_not_auto_continue():
     session.sync_sdk_permission_mode.assert_awaited_once()
     session.provide_plan_decision.assert_called_once_with("approve")
     host._handle_chat_message.assert_not_awaited()
+    assert session._pending_post_plan_mode == "normal"
+    assert session._pending_plan_content is None
 
 
 def _make_host(*, with_chat_ingress: bool = True) -> SessionControlMixin:
@@ -280,6 +290,14 @@ def _make_session(*, provider: str, has_pending_plan: bool, plan_auto_switch: bo
     # the request_changes blocking-gate branch.
     session.has_blocking_plan_decision = False
     session.sync_sdk_permission_mode = AsyncMock()
+    session._pending_plan_content = "Plan body"
+    session._pending_plan_allowed_prompts = ["approve"]
+
+    def clear_pending_plan_prompt() -> None:
+        session._pending_plan_content = None
+        session._pending_plan_allowed_prompts = None
+
+    session._clear_pending_plan_prompt.side_effect = clear_pending_plan_prompt
     return session
 
 
@@ -301,6 +319,8 @@ async def test_option_yolo_native_drives_bypass_no_auto_continue() -> None:
     session.set_chat_mode.assert_called_once_with("bypass")
     session.provide_plan_decision.assert_called_once_with("approve")
     host._handle_chat_message.assert_not_awaited()
+    assert session._pending_post_plan_mode == "bypass"
+    assert session._pending_plan_content is None
 
 
 @pytest.mark.asyncio
@@ -321,7 +341,8 @@ async def test_option_yolo_managed_drives_bypass_and_auto_continues() -> None:
     host._handle_chat_message.assert_awaited_once()
     _, cont = host._handle_chat_message.await_args[0]
     assert cont["type"] == "chat_message"
-    assert cont["content"].strip()
+    assert "YOLO mode" in cont["content"]
+    assert "without pausing for tool approvals" in cont["content"]
 
 
 @pytest.mark.asyncio
@@ -339,6 +360,9 @@ async def test_option_act_managed_drives_normal_mode_and_auto_continues() -> Non
 
     session.set_chat_mode.assert_called_once_with("normal")
     host._handle_chat_message.assert_awaited_once()
+    _, cont = host._handle_chat_message.await_args[0]
+    assert "Act mode" in cont["content"]
+    assert "ask before non-exempt tool use" in cont["content"]
 
 
 @pytest.mark.asyncio
@@ -362,6 +386,8 @@ async def test_option_act_droid_blocking_gate_still_auto_continues() -> None:
     session.set_chat_mode.assert_called_once_with("normal")
     session.provide_plan_decision.assert_called_once_with("approve")
     host._handle_chat_message.assert_awaited_once()
+    _, cont = host._handle_chat_message.await_args[0]
+    assert "Act mode" in cont["content"]
 
 
 @pytest.mark.asyncio
@@ -381,6 +407,7 @@ async def test_reject_with_empty_comment_denies_pending_plan() -> None:
     session.set_plan_feedback.assert_not_called()
     session.provide_plan_decision.assert_called_once_with("request_changes")
     session.set_chat_mode.assert_not_called()
+    assert session._pending_plan_content is None
 
 
 @pytest.mark.asyncio
@@ -419,3 +446,4 @@ async def test_unknown_option_id_falls_back_to_generic_approve() -> None:
     # Falls back to the generic post-plan default (normal), not an option mode.
     session.set_chat_mode.assert_called_once_with("normal")
     session.provide_plan_decision.assert_called_once_with("approve")
+    assert session._pending_post_plan_mode == "normal"

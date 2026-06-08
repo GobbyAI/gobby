@@ -54,7 +54,7 @@ def create_memory_dream_router(server: HTTPServer) -> APIRouter:
             status = 200 if result.get("success") else 500
             return JSONResponse(status_code=status, content=result)
 
-        started = service.start(options)
+        started = await service.start_async(options)
         if not started.get("success"):
             return JSONResponse(status_code=400, content=started)
         run_id = str(started["run_id"])

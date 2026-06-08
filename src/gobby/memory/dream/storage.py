@@ -55,7 +55,6 @@ class MemoryDreamStore:
 
     def __init__(self, db: HubDatabase):
         self.db = db
-        self.ensure_schema()
 
     def ensure_schema(self) -> None:
         """Create dream tables for upgraded daemons that have not migrated yet."""
