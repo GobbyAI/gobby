@@ -11,7 +11,6 @@ Module structure:
 - local.py: Local model endpoint configs
 - ui.py: Web UI, auth, and tool approval configs
 - servers.py: WebSocket and MCP proxy configs
-- llm_providers.py: Claude SDK generation capability binding configs
 - persistence.py: Memory storage configs
 - tasks.py: Task expansion, validation, and workflow configs
 - extensions.py: Hook extension configs (webhooks, plugins)

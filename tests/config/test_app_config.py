@@ -41,7 +41,6 @@ from gobby.config.features import (
     RecommendToolsConfig,
     ToolSummarizerConfig,
 )
-from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
 from gobby.config.persistence import MemoryBackupConfig, MemoryConfig
 from gobby.config.servers import MCPClientProxyConfig, WebSocketSettings
 from gobby.config.sessions import (
@@ -344,54 +343,6 @@ class TestMCPClientProxyConfig:
             MCPClientProxyConfig(tool_timeout=-1)
 
 
-class TestLLMProviderConfig:
-    """Tests for LLMProviderConfig."""
-
-    def test_models_list(self) -> None:
-        """Test getting models as list."""
-        config = LLMProviderConfig(
-            models="model-a, model-b, model-c",
-        )
-        models = config.get_models_list()
-        assert models == ["model-a", "model-b", "model-c"]
-
-    def test_empty_models_in_list(self) -> None:
-        """Test empty model entries are filtered."""
-        config = LLMProviderConfig(
-            models="model-a, , model-b",
-        )
-        models = config.get_models_list()
-        assert models == ["model-a", "model-b"]
-
-
-class TestLLMProvidersConfig:
-    """Tests for LLMProvidersConfig."""
-
-    def test_default_has_claude(self) -> None:
-        """Test default config has Claude provider enabled."""
-        config = LLMProvidersConfig()
-        assert config.get_enabled_providers() == ["claude"]
-
-    def test_enabled_providers(self) -> None:
-        """Test listing LLMProvider-backed generation bindings."""
-        config = LLMProvidersConfig(
-            claude=LLMProviderConfig(models="claude-haiku-4-5"),
-        )
-        providers = config.get_enabled_providers()
-        assert providers == ["claude"]
-
-    @pytest.mark.parametrize("provider", ["codex", "gemini", "grok", "qwen"])
-    def test_removed_cli_provider_configs_fail_fast(self, provider: str) -> None:
-        """CLI/app-server providers are not accepted under llm_providers."""
-        with pytest.raises(ValidationError):
-            LLMProvidersConfig(**{provider: LLMProviderConfig(models="removed")})
-
-    def test_unknown_provider_configs_are_rejected(self) -> None:
-        """Unknown provider keys still fail validation."""
-        with pytest.raises(ValidationError):
-            LLMProvidersConfig(openai=LLMProviderConfig(models="removed"))
-
-
 class TestUIConfig:
     """Tests for UIConfig."""
 
@@ -592,6 +543,18 @@ class TestLoadConfig:
 
         config = load_config(config_file=str(config_file))
         assert config.daemon_port == 9000
+
+    def test_load_config_rejects_removed_llm_providers_file_section(self, temp_dir: Path) -> None:
+        """Legacy llm_providers file config now fails loudly."""
+        config_file = temp_dir / "config.yaml"
+        config_file.write_text(yaml.dump({"llm_providers": {"claude": {"models": "sonnet"}}}))
+
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {}
+
+        with pytest.raises(ValueError, match="llm_providers config has been removed"):
+            load_config(config_file=str(config_file), config_store=DummyConfigStore())
 
     def test_load_with_cli_overrides(self, temp_dir: Path) -> None:
         """Test loading config with CLI overrides."""
@@ -1600,7 +1563,8 @@ class TestDaemonConfigComposition:
         assert isinstance(config.gobby_tasks.validation, TaskValidationConfig)
 
         # LLM
-        assert isinstance(config.llm_providers, LLMProvidersConfig)
+        assert "llm_providers" not in DaemonConfig.model_fields
+        assert not hasattr(config, "llm_providers")
         assert isinstance(config.digest, DigestConfig)
         assert isinstance(config.recommend_tools, RecommendToolsConfig)
 
@@ -1682,7 +1646,7 @@ class TestChatConfig:
 
 
 class TestAllConfigClassesInstantiate:
-    """Verify all 29 config classes can be instantiated with defaults."""
+    """Verify all active config classes can be instantiated with defaults."""
 
     def test_all_classes_instantiate(self) -> None:
         """Test all config classes instantiate without error."""
@@ -1700,8 +1664,6 @@ class TestAllConfigClassesInstantiate:
             ProjectVerificationSynthesisConfig(),
             MCPClientProxyConfig(),
             GobbyTasksConfig(),
-            LLMProviderConfig(models="test-model"),  # Required field
-            LLMProvidersConfig(),
             DigestConfig(),
             WebSocketBroadcastConfig(),
             WebhookEndpointConfig(name="test", url="https://test.com"),  # Required
@@ -1719,6 +1681,6 @@ class TestAllConfigClassesInstantiate:
             DaemonConfig(),
         ]
 
-        assert len(configs) == 29
+        assert len(configs) == 27
         for config in configs:
             assert config is not None

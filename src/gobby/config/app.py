@@ -45,7 +45,6 @@ from gobby.config.features import (
     ToolSummarizerConfig,
 )
 from gobby.config.indexing import IndexingConfig
-from gobby.config.llm_providers import LLMProvidersConfig
 from gobby.config.local import LocalConfig
 from gobby.config.persistence import (
     DatabasesConfig,
@@ -299,11 +298,6 @@ class DaemonConfig(BaseModel):
         description="gobby-tasks internal MCP server configuration",
     )
 
-    # LLMProvider-backed generation capability binding configuration
-    llm_providers: LLMProvidersConfig = Field(
-        default_factory=LLMProvidersConfig,
-        description="Claude/Codex generation capability binding configuration",
-    )
     web_chat_sandbox: DaemonOwnedSandboxConfig = Field(
         default_factory=DaemonOwnedSandboxConfig,
         description="Daemon-owned sandbox defaults for web chat runtimes.",
@@ -655,6 +649,15 @@ def deep_merge(base: dict[str, Any], updates: dict[str, Any]) -> None:
             base[key] = value
 
 
+def _reject_removed_file_config_sections(file_dict: dict[str, Any], config_path: Path) -> None:
+    """Reject config-file-only surfaces that must not silently round-trip."""
+    if "llm_providers" in file_dict:
+        raise ValueError(
+            "llm_providers config has been removed. Remove the top-level llm_providers "
+            f"section from {config_path} and use feature configs and provider discovery instead."
+        )
+
+
 def _resolve_config_values(
     d: dict[str, Any],
     secret_resolver: Callable[[str], str | None] | None = None,
@@ -869,10 +872,12 @@ def load_config(
                 try:
                     with open(config_path) as f:
                         file_dict = yaml.safe_load(f)
-                    if isinstance(file_dict, dict):
-                        deep_merge(config_dict, file_dict)
                 except Exception as e:
                     logger.warning(f"Failed to read config file {config_path}: {e}")
+                else:
+                    if isinstance(file_dict, dict):
+                        _reject_removed_file_config_sections(file_dict, config_path)
+                        deep_merge(config_dict, file_dict)
 
         # Layer 3: DB values (runtime overrides via config_store)
         reject_stale_default_feature_candidate_rows(config_store)
