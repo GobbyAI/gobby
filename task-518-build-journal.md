@@ -36,3 +36,20 @@ Created: 2026-06-07 20:03:50 CDT
 - Action taken: committed `3960b455e` (`[gobby-#552] test: cover worktree list consistency`) so the regression now verifies one resolved-project worktree is visible through list and task lookup, and that list count matches stats. Focused validation passed with `GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_worktrees_lifecycle.py -q`, Ruff format/check, and targeted mypy on `_crud.py`.
 - Restart gate: unchanged from the #552 fix entry; live daemon restart remains deferred until the next quiet coordinator boundary because active target build agents were still running.
 - Linked task: #552.
+
+### 2026-06-08T04:49:26Z — #553 stale MCP wait-tool recurrence
+
+- Symptom: after #522, coordinator `gobby-agents:wait_for_agent` through the live `mcp__gobby.call_tool` path still returned `GOBBY_MCP_WRAPPER_STALE`, blocking bounded waits while ordinary MCP status calls worked.
+- Where it surfaced: coordinator wait on target #513 after #528/#532 progressed and #529/#533 were active.
+- Affected files/symbols: `src/gobby/mcp_proxy/stdio.py::DaemonProxy.call_tool`, `src/gobby/servers/routes/mcp/endpoints/execution.py::_stale_stdio_wrapper_wait_result`, `tests/mcp_proxy/test_mcp_proxy_stdio.py`, and `tests/servers/test_mcp_routes.py`.
+- Root cause: the stdio wrapper still sent wait calls to the legacy `/api/mcp/{server}/tools/{tool}` route, where the daemon enforced wait-wrapper fingerprints. A daemon restart alone could not update already-running MCP stdio wrappers, and older wrappers might send stale or no fingerprint header.
+- Action taken: committed `0537a6142` (`[gobby-#553] fix: route stdio wait calls through structured proxy`) and `aa42a8998` (`[gobby-#553] fix: tolerate stale wait wrapper fingerprints`). The first routes stdio wait calls through `/api/mcp/tools/call`; the second makes the daemon accept legacy wait-route calls from already-running wrappers so coordinator sessions recover without an MCP-server restart.
+- Validation: `GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/test_mcp_proxy_stdio.py::TestDaemonProxy::test_call_tool_uses_timeout_seconds_buffer_for_wait_tools tests/servers/test_mcp_routes.py::TestCallMCPTool::test_call_tool_ignores_explicit_stale_wait_wrapper_fingerprint tests/servers/test_mcp_routes.py::TestMCPProxy::test_proxy_accepts_missing_wait_wrapper_fingerprint tests/servers/test_mcp_routes.py::TestMCPProxy::test_proxy_accepts_stale_wait_wrapper_fingerprint tests/servers/test_mcp_routes.py::TestMCPProxy::test_proxy_accepts_current_wait_wrapper_fingerprint -q` passed. `uv run ruff format --check ...`, `uv run ruff check ...`, `uv run mypy src/gobby/mcp_proxy/stdio.py src/gobby/servers/routes/mcp/endpoints/execution.py`, and `uv run gobby test-quality audit tests/mcp_proxy/test_mcp_proxy_stdio.py tests/servers/test_mcp_routes.py --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high` passed.
+- Restart/live gate: active #513 agents were notified, daemon restarted, `uv run gobby status` reported Running, and a live `gobby-agents:wait_for_agent` call through `mcp__gobby.call_tool` returned `success=true` with `status=running` instead of `GOBBY_MCP_WRAPPER_STALE`.
+- Linked task: #553.
+
+### 2026-06-08T04:50:40Z — #552 restart gate completed
+
+- Daemon restart was completed while target #513 had active agents #529 and #533; both received a build-scoped notice before restart.
+- Post-restart verification: `uv run gobby status` reported Running. `gobby-worktrees:list_worktrees(project_path=/Users/josh/Projects/gobby-cli,status=active)` returned five active worktrees and `gobby-worktrees:get_worktree_stats(project_path=/Users/josh/Projects/gobby-cli)` returned `total=5`, `active=5`.
+- Result: #552's deferred live gate is complete; worktree list visibility now matches stats for the active build project after restart.
