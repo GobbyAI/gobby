@@ -95,7 +95,27 @@ class MemoryDreamStore:
             ON memory_dream_snapshots(run_id, id)
             """
         )
-        self.db.execute("ALTER TABLE memory_dream_runs ALTER COLUMN status SET DEFAULT 'started'")
+        self.db.execute(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                      FROM pg_class cls
+                      JOIN pg_attribute attr
+                        ON attr.attrelid = cls.oid
+                       AND attr.attname = 'status'
+                      JOIN pg_attrdef def
+                        ON def.adrelid = attr.attrelid
+                       AND def.adnum = attr.attnum
+                     WHERE cls.oid = 'memory_dream_runs'::regclass
+                       AND pg_get_expr(def.adbin, def.adrelid) = '''started''::text'
+                ) THEN
+                    ALTER TABLE memory_dream_runs ALTER COLUMN status SET DEFAULT 'started';
+                END IF;
+            END $$;
+            """
+        )
         self.db.execute(
             """
             DO $$

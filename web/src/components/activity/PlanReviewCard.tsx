@@ -4,7 +4,10 @@ import type { ApprovalOption } from '../../types/chat'
 import { cn } from '../../lib/utils'
 import { Markdown } from '../chat/Markdown'
 import { PlanApprovalActions } from '../chat/PlanApprovalActions'
-import { planPendingColors } from '../chat/planPendingSurface'
+import {
+  getPlanPendingColors,
+  type PlanPendingVariant,
+} from '../chat/planPendingSurface'
 import { useIsMobile } from '../../hooks/useIsMobile'
 
 interface PlanReviewCardProps {
@@ -16,6 +19,7 @@ interface PlanReviewCardProps {
   onApprovePlan?: (option?: ApprovalOption) => void
   onRequestPlanChanges?: (feedback: string) => void
   onSetVersion: (id: string, index: number) => void
+  planPendingVariant?: PlanPendingVariant
 }
 
 type ReviewStatus = 'pending' | 'approved' | 'idle'
@@ -39,6 +43,7 @@ export const PlanReviewCard = memo(function PlanReviewCard({
   onApprovePlan,
   onRequestPlanChanges,
   onSetVersion,
+  planPendingVariant,
 }: PlanReviewCardProps) {
   // Approval actions live on the agent status bar on desktop; the panel
   // carries them only on mobile, where the status bar may be off-screen.
@@ -59,6 +64,7 @@ export const PlanReviewCard = memo(function PlanReviewCard({
     ? plan.versions[plan.currentVersionIndex] ?? plan.versions[plan.versions.length - 1]
     : undefined
   const content = version?.content ?? ''
+  const planPendingColors = getPlanPendingColors(planPendingVariant)
 
   const handleRequestChanges = (feedback: string) => {
     onRequestPlanChanges?.(feedback)

@@ -85,6 +85,17 @@ class TestFeatureDefaultConfig:
         assert cfg.profile == FeatureProfile.HIGH
         assert cfg.candidates[0] == "claude/sonnet"
 
+    def test_appends_legacy_candidate_after_explicit_candidates(self) -> None:
+        cfg = FeatureDefaultConfig(
+            **{
+                "provider": "claude",
+                "model": "claude-sonnet-4-5",
+                "candidates": ["codex/gpt-5.3-codex"],
+            }
+        )
+
+        assert cfg.candidates == ["codex/gpt-5.3-codex", "claude/sonnet"]
+
     @pytest.mark.parametrize("candidate", ["haiku", "claude/", "/sonnet"])
     def test_rejects_malformed_candidate(self, candidate: str) -> None:
         with pytest.raises(ValidationError, match="provider/model"):

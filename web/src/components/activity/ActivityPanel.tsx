@@ -18,6 +18,7 @@ import { WikiTab } from "./WikiTab";
 import type { Artifact } from "../../types/artifacts";
 import type { ApprovalOption } from "../../types/chat";
 import type { GobbySession } from "../../types/sessions";
+import type { PlanPendingVariant } from "../chat/planPendingSurface";
 import type { SessionsFilters } from "./sessionsFilters";
 import type { LayoutMode } from "./useActivityPanel";
 import { PanelIcon } from "../chat/icons/PanelIcon";
@@ -69,6 +70,7 @@ interface ActivityPanelProps {
   planApprovalOptions?: ApprovalOption[];
   onApprovePlan?: (option?: ApprovalOption) => void;
   onRequestPlanChanges?: (feedback: string) => void;
+  planPendingVariant?: PlanPendingVariant;
   // File changes tab
   changedFiles?: { path: string; status: string }[];
   fetchDiff?: (path: string) => Promise<string>;
@@ -184,6 +186,7 @@ export function ActivityPanel({
   planApprovalOptions,
   onApprovePlan,
   onRequestPlanChanges,
+  planPendingVariant,
   changedFiles = [],
   fetchDiff,
   changesLoading = false,
@@ -320,6 +323,7 @@ export function ActivityPanel({
             planApprovalOptions={planApprovalOptions}
             onApprovePlan={onApprovePlan}
             onRequestPlanChanges={onRequestPlanChanges}
+            planPendingVariant={planPendingVariant}
           />
         );
       case "changes":

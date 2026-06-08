@@ -20,6 +20,7 @@ UI_SETTINGS_KEYS = (
     "model",
     "theme",
     "defaultChatMode",
+    "planPendingVariant",
     "selectedProjectId",
     "selectedProvider",
 )

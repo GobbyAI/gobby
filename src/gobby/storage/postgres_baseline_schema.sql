@@ -743,7 +743,7 @@ CREATE INDEX idx_crossrefs_similarity ON memory_crossrefs(similarity DESC);
 
 CREATE TABLE memory_dream_runs (
     id TEXT PRIMARY KEY,
-    project_id TEXT,
+    project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
     status TEXT NOT NULL DEFAULT 'started'
         CONSTRAINT memory_dream_runs_status_check
         CHECK (status IN ('started', 'running', 'completed', 'failed', 'reverted')),

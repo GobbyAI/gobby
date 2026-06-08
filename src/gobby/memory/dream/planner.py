@@ -6,9 +6,22 @@ import json
 import logging
 from typing import Any
 
+from gobby.llm.base import LLMProviderCancellation
+from gobby.llm.resolver import ProviderError
 from gobby.memory.dream.models import DreamCandidate, DuplicateGroup
+from gobby.prompts.loader import PromptLoader
 
 logger = logging.getLogger(__name__)
+_EXPECTED_PLANNER_ERRORS = (
+    json.JSONDecodeError,
+    ValueError,
+    TypeError,
+    LLMProviderCancellation,
+    ProviderError,
+    OSError,
+    TimeoutError,
+    ConnectionError,
+)
 
 
 async def build_raw_plan(
@@ -38,7 +51,7 @@ async def build_raw_plan(
             raw_actions = response.get("actions", []) if isinstance(response, dict) else []
             if isinstance(raw_actions, list):
                 actions.extend(item for item in raw_actions if isinstance(item, dict))
-        except Exception as exc:  # noqa: BLE001 - invalid planner output becomes review
+        except _EXPECTED_PLANNER_ERRORS as exc:
             planner_errors.append(str(exc))
             logger.warning("Memory dream planner unavailable: %s", exc)
 
@@ -57,8 +70,6 @@ async def _call_llm_planner(
     db: Any | None,
     project_id: str | None,
 ) -> dict[str, Any]:
-    from gobby.prompts.loader import PromptLoader
-
     loader = PromptLoader(db=db, project_id=project_id)
     prompt = loader.render(
         getattr(dream_config, "prompt_path", "memory/dream"),

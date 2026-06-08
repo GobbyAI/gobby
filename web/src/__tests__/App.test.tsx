@@ -195,6 +195,7 @@ vi.mock("../hooks/useSettings", () => ({
       sttEnabled: false,
       ttsEnabled: false,
       voiceInputMode: "ptt",
+      planPendingVariant: "info",
     },
     updateFontSize: vi.fn(),
     updateModel: vi.fn(),
@@ -204,6 +205,7 @@ vi.mock("../hooks/useSettings", () => ({
     updateSttEnabled: vi.fn(),
     updateTtsEnabled: vi.fn(),
     updateVoiceInputMode: vi.fn(),
+    updatePlanPendingVariant: vi.fn(),
     resetSettings: vi.fn(),
   })),
 }));

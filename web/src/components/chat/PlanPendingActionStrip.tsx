@@ -2,7 +2,10 @@ import type { ApprovalOption } from '../../types/chat'
 import { cn } from '../../lib/utils'
 import { Button } from '../shared/Button'
 import { PlanApprovalActions } from './PlanApprovalActions'
-import { planPendingColors } from './planPendingSurface'
+import {
+  getPlanPendingColors,
+  type PlanPendingVariant,
+} from './planPendingSurface'
 
 interface PlanPendingActionStripProps {
   onApprove: (option?: ApprovalOption) => void
@@ -11,6 +14,7 @@ interface PlanPendingActionStripProps {
   options?: ApprovalOption[]
   /** Focus the Plans panel (altitude-3 canonical view). */
   onView?: () => void
+  variant?: PlanPendingVariant
   className?: string
 }
 
@@ -27,8 +31,11 @@ export function PlanPendingActionStrip({
   onRequestChanges,
   options,
   onView,
+  variant,
   className,
 }: PlanPendingActionStripProps) {
+  const planPendingColors = getPlanPendingColors(variant)
+
   return (
     <div
       data-testid="plan-pending-strip"

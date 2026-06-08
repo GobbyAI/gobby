@@ -3,6 +3,7 @@
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from gobby.config.app import DaemonConfig, ImportMCPServerConfig
@@ -19,11 +20,17 @@ class FakeGitHubResponse:
         *,
         json_data: dict[str, Any] | None = None,
         text: str = "",
+        status_code: int = 200,
     ) -> None:
         self._json_data = json_data or {}
         self.text = text
+        self.status_code = status_code
 
     def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            request = httpx.Request("GET", "https://api.github.com/readme")
+            response = httpx.Response(self.status_code, request=request)
+            raise httpx.HTTPStatusError("GitHub request failed", request=request, response=response)
         return None
 
     def json(self) -> dict[str, Any]:
@@ -33,8 +40,9 @@ class FakeGitHubResponse:
 class FakeGitHubClient:
     """Records GitHub API calls and returns canned repository/search responses."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, readme_status_code: int = 200) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.readme_status_code = readme_status_code
 
     async def get(
         self,
@@ -54,7 +62,10 @@ class FakeGitHubClient:
                 }
             )
         if url == "https://api.github.com/repos/example/mcp-server/readme":
-            return FakeGitHubResponse(text="# Example MCP\n\nRun with npx example-mcp.")
+            return FakeGitHubResponse(
+                text="# Example MCP\n\nRun with npx example-mcp.",
+                status_code=self.readme_status_code,
+            )
         if url == "https://api.github.com/search/repositories":
             return FakeGitHubResponse(
                 json_data={
@@ -516,6 +527,21 @@ class TestGithubContextFetch:
         assert "GitHub repository: example/mcp-server" in context
         assert "Example MCP server" in context
         assert "Run with npx example-mcp." in context
+
+    @pytest.mark.asyncio
+    async def test_fetches_repository_context_when_readme_unavailable(self, importer):
+        """Repository import falls back to metadata when README fetch fails."""
+        client = FakeGitHubClient(readme_status_code=404)
+
+        context = await importer._fetch_github_repository_context(
+            client,
+            "https://github.com/example/mcp-server",
+        )
+
+        assert "GitHub repository: example/mcp-server" in context
+        assert "Example MCP server" in context
+        assert "README unavailable:" in context
+        assert "GitHub request failed" in context
 
     @pytest.mark.asyncio
     async def test_fetches_search_candidates_and_readmes(self, importer):

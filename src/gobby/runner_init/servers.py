@@ -66,7 +66,7 @@ def init_servers(runner: GobbyRunner) -> None:
         skill_manager=runner.skill_manager,
         hub_manager=runner.hub_manager,
         config_store=runner.config_store,
-        provider_model_catalog=ProviderModelCatalog(runner.config),
+        provider_model_catalog=ProviderModelCatalog(),
         web_chat_runtime_manager=None,
         web_chat_session_registry=web_chat_session_registry,
         prompt_manager=runner.prompt_manager,

@@ -61,6 +61,22 @@ describe('useSettings', () => {
     expect(appleTouchIconLink()).toHaveAttribute('href', '/logo-light.png?v=2')
   })
 
+  it('normalizes and persists plan pending variant', async () => {
+    localStorage.setItem('gobby-settings', JSON.stringify({ planPendingVariant: 'bad-value' }))
+    const { result } = renderHook(() => useSettings())
+
+    expect(result.current.settings.planPendingVariant).toBe('info')
+
+    act(() => {
+      result.current.updatePlanPendingVariant('amber')
+    })
+
+    await waitFor(() => {
+      const stored = JSON.parse(localStorage.getItem('gobby-settings') ?? '{}')
+      expect(stored.planPendingVariant).toBe('amber')
+    })
+  })
+
   it('replaces the icon cache param while preserving other query params and fragments', () => {
     expect(cacheBustedIconHref('/logo.png?theme=dark&v=1#mask')).toBe(
       '/logo.png?theme=dark&v=2#mask',

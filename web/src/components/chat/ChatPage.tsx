@@ -47,6 +47,7 @@ export function ChatPage({
   onSttEnabledChange,
   onTtsEnabledChange,
   onVoiceInputModeChange,
+  planPendingVariant,
 }: ChatPageProps) {
   const messageListRef = useRef<MessageListHandle>(null);
   const lastAutoScrolledLoadRef = useRef<string | null>(null);
@@ -171,6 +172,7 @@ export function ChatPage({
           onTtsEnabledChange={onTtsEnabledChange}
           onVoiceInputModeChange={onVoiceInputModeChange}
           onViewPlan={() => showPlanRef?.current?.()}
+          planPendingVariant={planPendingVariant}
           openCodeAsArtifact={artifacts.openCodeAsArtifact}
           openFileAsArtifact={artifacts.openFileAsArtifact}
           agentDefinitions={agentDefinitions}
@@ -200,6 +202,7 @@ export function ChatPage({
         planApprovalOptions={artifacts.planApprovalOptions}
         onApprovePlan={artifacts.handleApprovePlan}
         onRequestPlanChanges={artifacts.handleRequestPlanChanges}
+        planPendingVariant={planPendingVariant}
         changedFiles={fileChanges.changedFiles}
         fetchDiff={fileChanges.fetchDiff}
         changesLoading={fileChanges.loading}

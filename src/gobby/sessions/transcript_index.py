@@ -587,7 +587,7 @@ def _encode_adjustment_value(value: Any) -> Any:
     except TypeError:
         try:
             value_length = len(value)
-        except Exception:
+        except (TypeError, AttributeError):
             value_length = None
         logger.debug(
             "Skipping non-serializable transcript index adjustment value",

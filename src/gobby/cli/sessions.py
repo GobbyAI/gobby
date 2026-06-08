@@ -313,22 +313,13 @@ def session_stats(project_ref: str | None) -> None:
 
 @sessions.command("renumber")
 @click.option("--project", "-p", "project_ref", required=True, help="Project name, UUID, or path")
-@click.option(
-    "--dry-run",
-    is_flag=True,
-    help="Preview the new dense refs without writing updates. This is the default.",
-)
 @click.option("--apply", "apply_changes", is_flag=True, help="Write the new dense refs.")
-def renumber_sessions(project_ref: str, dry_run: bool, apply_changes: bool) -> None:
+def renumber_sessions(project_ref: str, apply_changes: bool) -> None:
     """Compact per-project session refs."""
-    if dry_run and apply_changes:
-        raise click.UsageError("Use either --dry-run or --apply, not both.")
-
     manager = get_session_manager()
     try:
         project_id = _resolve_project_ref_or_path(project_ref, manager)
-        should_write = apply_changes
-        mapping = manager.renumber_project_sessions(project_id, dry_run=not should_write)
+        mapping = manager.renumber_project_sessions(project_id, dry_run=not apply_changes)
     finally:
         manager.db.close()
 

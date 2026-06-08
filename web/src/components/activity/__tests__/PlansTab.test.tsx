@@ -2,8 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { type ComponentProps } from 'react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { PlansTab } from '../PlansTab'
-import { planPendingColors } from '../../chat/planPendingSurface'
+import { getPlanPendingColors } from '../../chat/planPendingSurface'
 import type { Artifact } from '../../../types/artifacts'
+
+const planPendingColors = getPlanPendingColors('info')
 
 // Render the markdown as plain text so plan-content assertions are deterministic.
 vi.mock('../../chat/Markdown', () => ({
@@ -99,6 +101,14 @@ describe('PlansTab', () => {
     expect(status.querySelector('svg')).toBeTruthy()
     expect(status.className).toContain(planPendingColors.surfaceBg)
     expect(status.innerHTML).toContain(planPendingColors.accentText)
+  })
+
+  it('passes the runtime color variant to the review card', () => {
+    renderPlansTab(makePlan(['# Plan']), { planPendingVariant: 'amber' })
+    const status = screen.getByTestId('plan-review-status')
+    const amber = getPlanPendingColors('amber')
+    expect(status.className).toContain(amber.surfaceBg)
+    expect(status.innerHTML).toContain(amber.accentText)
   })
 
   it('renders approve / reject in the panel on mobile', () => {

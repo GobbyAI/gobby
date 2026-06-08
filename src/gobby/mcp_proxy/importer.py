@@ -366,7 +366,10 @@ class MCPServerImporter:
     ) -> str:
         owner, repo = self._github_repo_from_url(github_url)
         metadata = await self._fetch_github_json(client, f"/repos/{owner}/{repo}")
-        readme = await self._fetch_github_readme(client, owner, repo)
+        try:
+            readme = await self._fetch_github_readme(client, owner, repo)
+        except httpx.HTTPError as exc:
+            readme = f"README unavailable: {exc}"
 
         return "\n".join(
             [

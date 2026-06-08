@@ -26,7 +26,6 @@ _FALLBACK_REASONING_EFFORTS: dict[str, frozenset[str]] = {
     "grok": frozenset({"low", "medium", "high"}),
 }
 _fallback_catalog: ProviderModelCatalog | None = None
-_fallback_catalog_config: DaemonConfig | None = None
 _fallback_catalog_lock = threading.Lock()
 
 
@@ -70,7 +69,7 @@ class SpawnReasoningResolution:
 def _get_provider_models(provider: str, daemon_config: DaemonConfig | None) -> list[dict[str, Any]]:
     from gobby.app_context import get_app_context
 
-    global _fallback_catalog, _fallback_catalog_config
+    global _fallback_catalog
 
     ctx = get_app_context()
     catalog = getattr(ctx, "provider_model_catalog", None) if ctx else None
@@ -78,9 +77,8 @@ def _get_provider_models(provider: str, daemon_config: DaemonConfig | None) -> l
         from gobby.servers.provider_models import ProviderModelCatalog
 
         with _fallback_catalog_lock:
-            if _fallback_catalog is None or daemon_config is not _fallback_catalog_config:
-                _fallback_catalog = ProviderModelCatalog(daemon_config)
-                _fallback_catalog_config = daemon_config
+            if _fallback_catalog is None:
+                _fallback_catalog = ProviderModelCatalog()
             catalog = _fallback_catalog
     snapshot = catalog.get_provider_snapshot(provider)
     models = snapshot.get("models")

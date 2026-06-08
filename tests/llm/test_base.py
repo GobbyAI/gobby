@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import get_args
+
 import pytest
 
 from gobby.llm.base import AuthMode, LLMProviderCancellation, LLMTextResult
@@ -31,4 +33,4 @@ def test_provider_cancellation_is_runtime_error() -> None:
 
 
 def test_auth_mode_values_remain_documented() -> None:
-    assert AuthMode.__args__ == ("subscription", "api_key", "adc")
+    assert get_args(AuthMode) == ("subscription", "api_key", "adc")

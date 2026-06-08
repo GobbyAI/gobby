@@ -1,4 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import {
+  DEFAULT_PLAN_PENDING_VARIANT,
+  normalizePlanPendingVariant,
+  type PlanPendingVariant,
+} from '../components/chat/planPendingSurface'
 import { normalizeChatMode, type ChatMode } from '../types/chat'
 
 export type Theme = 'dark' | 'light' | 'system'
@@ -13,6 +18,7 @@ export interface Settings {
   sttEnabled: boolean
   ttsEnabled: boolean
   voiceInputMode: VoiceInputMode
+  planPendingVariant: PlanPendingVariant
 }
 
 export const MODEL_OPTIONS = [
@@ -31,6 +37,7 @@ const DEFAULT_SETTINGS: Settings = {
   sttEnabled: false,
   ttsEnabled: false,
   voiceInputMode: 'ptt',
+  planPendingVariant: DEFAULT_PLAN_PENDING_VARIANT,
 }
 
 const STORAGE_KEY = 'gobby-settings'
@@ -48,6 +55,7 @@ type PersistableKey =
   | 'sttEnabled'
   | 'ttsEnabled'
   | 'voiceInputMode'
+  | 'planPendingVariant'
 const PERSISTABLE_KEYS: PersistableKey[] = [
   'fontSize',
   'model',
@@ -56,6 +64,7 @@ const PERSISTABLE_KEYS: PersistableKey[] = [
   'sttEnabled',
   'ttsEnabled',
   'voiceInputMode',
+  'planPendingVariant',
 ]
 
 function loadFromLocalStorage(): Partial<Settings> {
@@ -82,6 +91,9 @@ function normalizePersistedSettings(settings: Partial<Settings>): Partial<Settin
   if (settings.chatMode) normalized.chatMode = normalizeChatMode(settings.chatMode)
   if (settings.defaultChatMode) {
     normalized.defaultChatMode = normalizeChatMode(settings.defaultChatMode)
+  }
+  if (settings.planPendingVariant) {
+    normalized.planPendingVariant = normalizePlanPendingVariant(settings.planPendingVariant)
   }
   return normalized
 }
@@ -244,6 +256,10 @@ export function useSettings() {
     setSettings((prev) => ({ ...prev, voiceInputMode }))
   }, [])
 
+  const updatePlanPendingVariant = useCallback((planPendingVariant: PlanPendingVariant) => {
+    setSettings((prev) => ({ ...prev, planPendingVariant }))
+  }, [])
+
   const resetSettings = useCallback(() => {
     setSettings(DEFAULT_SETTINGS)
   }, [])
@@ -258,6 +274,7 @@ export function useSettings() {
     updateSttEnabled,
     updateTtsEnabled,
     updateVoiceInputMode,
+    updatePlanPendingVariant,
     resetSettings,
   }
 }

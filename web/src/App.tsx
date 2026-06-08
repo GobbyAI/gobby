@@ -771,6 +771,7 @@ export default function App() {
               <ChatPage
                 projectId={effectiveProjectId}
                 showPlanRef={showPlanRef}
+                planPendingVariant={settings.planPendingVariant}
                 chat={{
                   messages,
                   sessionRef,

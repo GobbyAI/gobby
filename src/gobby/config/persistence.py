@@ -288,6 +288,10 @@ class MemoryDreamConfig(FeatureDefaultConfig):
         default=True,
         description="Reconcile secondary memory stores after applying mutations",
     )
+    reconcile_after_revert: bool = Field(
+        default=True,
+        description="Reconcile secondary memory stores after reverting mutations",
+    )
     profile: FeatureProfile = Field(
         default=FeatureProfile.MID,
         description="Provider-agnostic capability profile for memory dream planning",

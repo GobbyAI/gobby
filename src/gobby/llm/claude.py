@@ -23,7 +23,7 @@ from gobby.utils.json_helpers import extract_json_from_text
 # Headless settings file — zeroes out all hooks so internal LLM calls
 # don't trigger session registration or title synthesis cascades.
 _HEADLESS_SETTINGS = Path.home() / ".gobby" / "settings" / "headless.json"
-_DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-5-20250929"
+_DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-6"
 
 logger = logging.getLogger(__name__)
 

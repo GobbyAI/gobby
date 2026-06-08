@@ -282,6 +282,9 @@ def test_context_usage_value_constraints_migration_and_baseline_define_invariant
 
 
 def test_memory_dream_constraints_migration_and_baseline_define_invariants() -> None:
+    creation_migration = (SRC_ROOT / "storage" / "migrations" / "274_memory_dream.sql").read_text(
+        encoding="utf-8"
+    )
     migration = (
         SRC_ROOT / "storage" / "migrations" / "276_memory_dream_constraints.sql"
     ).read_text(encoding="utf-8")
@@ -289,7 +292,9 @@ def test_memory_dream_constraints_migration_and_baseline_define_invariants() -> 
     runtime_storage = (SRC_ROOT / "memory" / "dream" / "storage.py").read_text(encoding="utf-8")
     status_invariant = "status IN ('started', 'running', 'completed', 'failed', 'reverted')"
     action_invariant = "action IN ('keep', 'delete', 'refresh', 'merge', 'supersede', 'review')"
+    project_fk = "project_id TEXT REFERENCES projects(id) ON DELETE CASCADE"
 
+    assert project_fk in creation_migration
     assert "memory_dream_runs_status_check" in migration
     assert "ALTER COLUMN status SET DEFAULT 'started'" in migration
     assert "UPDATE memory_dream_runs" in migration
@@ -299,6 +304,7 @@ def test_memory_dream_constraints_migration_and_baseline_define_invariants() -> 
     assert "supersede_create' THEN 'supersede" in migration
     assert action_invariant in migration
     assert "memory_dream_runs_status_check" in baseline
+    assert project_fk in baseline
     assert status_invariant in baseline
     assert "memory_dream_snapshots_action_check" in baseline
     assert action_invariant in baseline

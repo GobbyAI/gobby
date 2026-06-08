@@ -34,7 +34,6 @@ from gobby.servers.provider_models_grok import static_models as grok_static_mode
 
 if TYPE_CHECKING:
     from gobby.adapters.codex_impl.client import CodexAppServerClient
-    from gobby.config.app import DaemonConfig
 
 logger = logging.getLogger(__name__)
 
@@ -228,11 +227,9 @@ class ProviderModelCatalog:
 
     def __init__(
         self,
-        config: DaemonConfig | None,
         *,
         cache_path: Path | None = None,
     ) -> None:
-        _ = config
         self._cache_path = cache_path or (_gobby_home() / _DEFAULT_CACHE_FILE)
         self._providers: dict[str, dict[str, Any]] = {}
         self._generated_at: str | None = None

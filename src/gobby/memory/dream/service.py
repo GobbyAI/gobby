@@ -107,18 +107,20 @@ class MemoryDreamService:
             )
             summary["candidates_reviewed"] = len(candidates)
             summary["duplicate_groups"] = len(duplicates)
+            completed_ts = datetime.now(UTC).isoformat()
             run = self.store.update_run(
                 run_id,
                 status="completed",
-                completed_at=datetime.now(UTC).isoformat(),
+                completed_at=completed_ts,
                 summary=summary,
             )
             return {"success": True, "run_id": run_id, "run": run}
         except Exception as exc:  # noqa: BLE001 - run status must capture failure
+            completed_ts = datetime.now(UTC).isoformat()
             run = self.store.update_run(
                 run_id,
                 status="failed",
-                completed_at=datetime.now(UTC).isoformat(),
+                completed_at=completed_ts,
                 error=str(exc),
             )
             return {"success": False, "run_id": run_id, "run": run, "error": str(exc)}
@@ -134,7 +136,7 @@ class MemoryDreamService:
             store=self.store,
             run_id=run_id,
             memory_manager=self.memory_manager,
-            reconcile_after_revert=self.dream_config.reconcile_after_apply,
+            reconcile_after_revert=self.dream_config.reconcile_after_revert,
         )
 
 

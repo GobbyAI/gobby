@@ -1,6 +1,7 @@
 import { memo, useEffect } from 'react'
 import type { Artifact } from '../../types/artifacts'
 import type { ApprovalOption } from '../../types/chat'
+import type { PlanPendingVariant } from '../chat/planPendingSurface'
 import { ActivityPanelEmpty, PlansEmptyIcon } from './ActivityPanelEmpty'
 import { PlanReviewCard } from './PlanReviewCard'
 
@@ -17,6 +18,7 @@ interface PlansTabProps {
   planApprovalOptions?: ApprovalOption[]
   onApprovePlan?: (option?: ApprovalOption) => void
   onRequestPlanChanges?: (feedback: string) => void
+  planPendingVariant?: PlanPendingVariant
 }
 
 export const PlansTab = memo(function PlansTab({
@@ -29,6 +31,7 @@ export const PlansTab = memo(function PlansTab({
   planApprovalOptions,
   onApprovePlan,
   onRequestPlanChanges,
+  planPendingVariant,
 }: PlansTabProps) {
   // Only plan artifacts, oldest -> newest by latest version timestamp.
   const plans = Array.from(artifacts.values())
@@ -69,6 +72,7 @@ export const PlansTab = memo(function PlansTab({
       onApprovePlan={onApprovePlan}
       onRequestPlanChanges={onRequestPlanChanges}
       onSetVersion={onSetVersion}
+      planPendingVariant={planPendingVariant}
     />
   )
 })

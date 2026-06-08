@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.config.app import DaemonConfig
 from gobby.servers.provider_models import (
     ProviderModelCatalog,
     _model_discovery_cwd_path,
@@ -19,12 +18,15 @@ pytestmark = pytest.mark.unit
 
 
 class TestProviderModelCatalog:
+    def test_constructor_rejects_legacy_config_argument(self, temp_dir: Path) -> None:
+        """ProviderModelCatalog no longer accepts dead daemon config input."""
+        with pytest.raises(TypeError, match="config"):
+            ProviderModelCatalog(config=None, cache_path=temp_dir / "provider-model-catalog.json")
+
     @pytest.mark.asyncio
     async def test_probe_claude_model_records_canonical_id(self, temp_dir: Path) -> None:
         """Claude probes should preserve the user alias and record canonical IDs."""
-        catalog = ProviderModelCatalog(
-            config=None, cache_path=temp_dir / "provider-model-catalog.json"
-        )
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
         process = AsyncMock()
         process.communicate = AsyncMock(
             return_value=(
@@ -59,9 +61,7 @@ class TestProviderModelCatalog:
         self, temp_dir: Path
     ) -> None:
         """Claude discovery should keep successful aliases when one probe fails."""
-        catalog = ProviderModelCatalog(
-            config=None, cache_path=temp_dir / "provider-model-catalog.json"
-        )
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
 
         async def probe(alias: str, label: str) -> dict[str, str]:
             if alias == "haiku":
@@ -85,7 +85,7 @@ class TestProviderModelCatalog:
     async def test_refresh_falls_back_to_cached_models_per_provider(self, temp_dir: Path) -> None:
         """Refresh should use cached models for only the provider that fails."""
         cache_path = temp_dir / "provider-model-catalog.json"
-        catalog = ProviderModelCatalog(config=None, cache_path=cache_path)
+        catalog = ProviderModelCatalog(cache_path=cache_path)
         catalog._providers = {
             "codex": {
                 "source": "live",
@@ -175,7 +175,7 @@ class TestProviderModelCatalog:
             encoding="utf-8",
         )
 
-        catalog = ProviderModelCatalog(config=None, cache_path=cache_path)
+        catalog = ProviderModelCatalog(cache_path=cache_path)
 
         codex = catalog.get_provider_snapshot("codex")["models"][0]
         gemini = catalog.get_provider_snapshot("gemini")["models"][0]
@@ -208,7 +208,7 @@ class TestProviderModelCatalog:
             encoding="utf-8",
         )
 
-        catalog = ProviderModelCatalog(config=None, cache_path=cache_path)
+        catalog = ProviderModelCatalog(cache_path=cache_path)
 
         model = catalog.get_provider_snapshot("codex")["models"][0]
         assert model["context_length"] == 123_000
@@ -218,9 +218,7 @@ class TestProviderModelCatalog:
         self, temp_dir: Path
     ) -> None:
         """Context lookup should match aliases, dated IDs, and Droid core fallbacks."""
-        catalog = ProviderModelCatalog(
-            config=None, cache_path=temp_dir / "provider-model-catalog.json"
-        )
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
         catalog._providers = {
             "claude": {
                 "models": [
@@ -265,11 +263,7 @@ class TestProviderModelCatalog:
 
     def test_live_snapshot_order_and_metadata_are_preserved(self, temp_dir: Path) -> None:
         """Live discovery owns catalog model order and metadata."""
-        config = DaemonConfig()
-        catalog = ProviderModelCatalog(
-            config=config,
-            cache_path=temp_dir / "provider-model-catalog.json",
-        )
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
         catalog._providers = {
             "claude": {
                 "source": "live",
@@ -296,7 +290,7 @@ class TestProviderModelCatalog:
     async def test_refresh_marks_provider_failed_without_prior_cache(self, temp_dir: Path) -> None:
         """Providers without cache should be marked failed when discovery fails."""
         cache_path = temp_dir / "provider-model-catalog.json"
-        catalog = ProviderModelCatalog(config=None, cache_path=cache_path)
+        catalog = ProviderModelCatalog(cache_path=cache_path)
 
         with (
             patch.object(
@@ -323,9 +317,7 @@ class TestProviderModelCatalog:
         self, temp_dir: Path
     ) -> None:
         """ACP discovery clients should run from the trusted model-discovery cwd."""
-        catalog = ProviderModelCatalog(
-            config=None, cache_path=temp_dir / "provider-model-catalog.json"
-        )
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
         client = MagicMock()
         order: list[str] = []
 
@@ -385,9 +377,7 @@ class TestProviderModelCatalog:
         self, temp_dir: Path
     ) -> None:
         """A newly created discovery cwd should be removed when trust fails."""
-        catalog = ProviderModelCatalog(
-            config=None, cache_path=temp_dir / "provider-model-catalog.json"
-        )
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
         client_cls = MagicMock()
         client_cls.cli_name = "gemini"
         gobby_home = temp_dir / "gobby-home"
@@ -412,9 +402,7 @@ class TestProviderModelCatalog:
         self, temp_dir: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Cleanup failures are logged while the authorization error remains primary."""
-        catalog = ProviderModelCatalog(
-            config=None, cache_path=temp_dir / "provider-model-catalog.json"
-        )
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
         client_cls = MagicMock()
         client_cls.cli_name = "gemini"
         gobby_home = temp_dir / "gobby-home"
@@ -444,9 +432,7 @@ class TestProviderModelCatalog:
         self, temp_dir: Path
     ) -> None:
         """Existing discovery cwd directories should survive trust failures."""
-        catalog = ProviderModelCatalog(
-            config=None, cache_path=temp_dir / "provider-model-catalog.json"
-        )
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
         client_cls = MagicMock()
         client_cls.cli_name = "gemini"
         gobby_home = temp_dir / "gobby-home"
@@ -475,7 +461,7 @@ class TestProviderModelCatalog:
             encoding="utf-8",
         )
 
-        catalog = ProviderModelCatalog(config=None, cache_path=cache_path)
+        catalog = ProviderModelCatalog(cache_path=cache_path)
 
         assert catalog.status_snapshot()["codex"]["model_count"] == 0
 
@@ -484,9 +470,7 @@ class TestProviderModelCatalog:
         self, temp_dir: Path
     ) -> None:
         """Qwen discovery should merge ACP models with configured settings models."""
-        catalog = ProviderModelCatalog(
-            config=None, cache_path=temp_dir / "provider-model-catalog.json"
-        )
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
 
         with (
             patch("gobby.servers.provider_models.shutil.which", return_value="/usr/local/bin/qwen"),
@@ -525,9 +509,7 @@ class TestProviderModelCatalog:
         self, temp_dir: Path
     ) -> None:
         """Qwen labels should add provider suffixes only for duplicate base IDs."""
-        catalog = ProviderModelCatalog(
-            config=None, cache_path=temp_dir / "provider-model-catalog.json"
-        )
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
 
         normalized = catalog._normalize_qwen_model_labels(
             [
@@ -548,9 +530,7 @@ class TestProviderModelCatalog:
         self, temp_dir: Path
     ) -> None:
         """Qwen discovery should fall back to configured settings when ACP fails."""
-        catalog = ProviderModelCatalog(
-            config=None, cache_path=temp_dir / "provider-model-catalog.json"
-        )
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
 
         with (
             patch("gobby.servers.provider_models.shutil.which", return_value="/usr/local/bin/qwen"),
@@ -573,9 +553,7 @@ class TestProviderModelCatalog:
     @pytest.mark.asyncio
     async def test_discover_droid_models_returns_static_catalog(self, temp_dir: Path) -> None:
         """Droid provider discovery should return the bundled static model catalog."""
-        catalog = ProviderModelCatalog(
-            config=None, cache_path=temp_dir / "provider-model-catalog.json"
-        )
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
 
         models = await catalog._discover_provider_models("droid")
 
@@ -620,9 +598,7 @@ class TestProviderModelCatalog:
         self, temp_dir: Path
     ) -> None:
         """Grok discovery should fall back to ~/.grok/models_cache.json, then static catalog."""
-        catalog = ProviderModelCatalog(
-            config=None, cache_path=temp_dir / "provider-model-catalog.json"
-        )
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
         grok_home = temp_dir / ".grok"
         grok_home.mkdir()
         (grok_home / "models_cache.json").write_text(
@@ -675,9 +651,7 @@ class TestProviderModelCatalog:
     @pytest.mark.asyncio
     async def test_refresh_marks_agy_unsupported(self, temp_dir: Path) -> None:
         """AGY should be visible but unsupported for model discovery."""
-        catalog = ProviderModelCatalog(
-            config=None, cache_path=temp_dir / "provider-model-catalog.json"
-        )
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
 
         with (
             patch.object(catalog, "_discover_provider_models", new=AsyncMock(return_value=[])),
@@ -725,9 +699,7 @@ class TestProviderModelCatalog:
             encoding="utf-8",
         )
 
-        catalog = ProviderModelCatalog(
-            config=None, cache_path=temp_dir / "provider-model-catalog.json"
-        )
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
 
         with (
             patch.object(Path, "home", return_value=temp_dir),

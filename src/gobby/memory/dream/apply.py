@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
+
+import psycopg
 
 from gobby.memory.dream.models import DreamAction, DreamCandidate
 from gobby.memory.dream.storage import MemoryDreamStore
 
 logger = logging.getLogger(__name__)
+_EXPECTED_ACTION_ERRORS = (ValueError, OSError, psycopg.Error)
 
 
 async def apply_dream_plan(
@@ -37,7 +41,7 @@ async def apply_dream_plan(
                 candidate_map=candidate_map,
             )
             summary["mutations"] += mutations
-        except Exception as exc:  # noqa: BLE001 - one bad action should not hide the plan
+        except _EXPECTED_ACTION_ERRORS as exc:
             summary["errors"] += 1
             summary["error_details"].append(
                 {
@@ -46,6 +50,9 @@ async def apply_dream_plan(
                 }
             )
             logger.warning("Memory dream action failed: %s", exc)
+        except Exception:
+            logger.exception("Unexpected memory dream action failure")
+            raise
 
     summary["snapshots"] = len(store.list_snapshots(run_id))
     if summary["mutations"] and reconcile_after_apply:
@@ -61,7 +68,7 @@ async def revert_dream_run(
     reconcile_after_revert: bool = True,
 ) -> dict[str, Any]:
     """Restore memory rows from a dream run's snapshots in reverse order."""
-    run = store.get_run(run_id)
+    run = await asyncio.to_thread(store.get_run, run_id)
     if run is None:
         return {"success": False, "error": f"Dream run not found: {run_id}"}
     if run.get("status") == "reverted":
@@ -69,7 +76,8 @@ async def revert_dream_run(
 
     restored = 0
     deleted = 0
-    for snapshot in store.list_snapshots(run_id):
+    snapshots = await asyncio.to_thread(store.list_snapshots, run_id)
+    for snapshot in snapshots:
         before = snapshot.get("before_data")
         after = snapshot.get("after_data")
         memory_id = str(snapshot["memory_id"])
@@ -81,7 +89,13 @@ async def revert_dream_run(
             store.restore_memory_row(before)
             restored += 1
 
-    store.update_run(run_id, status="reverted", reverted_at=_now(), completed_at=_now())
+    completed_ts = _now()
+    store.update_run(
+        run_id,
+        status="reverted",
+        reverted_at=completed_ts,
+        completed_at=completed_ts,
+    )
     result: dict[str, Any] = {
         "success": True,
         "run_id": run_id,

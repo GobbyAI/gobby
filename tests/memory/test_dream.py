@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.memory.dream.apply import apply_dream_plan, revert_dream_run
 from gobby.memory.dream.candidates import discover_stale_candidates
+from gobby.memory.dream.duplicates import find_duplicate_groups
 from gobby.memory.dream.models import DreamAction, DreamCandidate
 from gobby.memory.dream.plan import validate_dream_plan
+from gobby.memory.dream.service import MemoryDreamService
 from gobby.memory.dream.storage import MemoryDreamStore
 
 pytestmark = pytest.mark.unit
@@ -71,6 +74,32 @@ def test_stale_candidate_discovery_reviews_high_access_old_memory() -> None:
     assert result[0].access_count == 99
 
 
+def test_stale_candidate_discovery_ties_by_created_at() -> None:
+    manager = MagicMock()
+    older = _memory("older")
+    newer = _memory("newer")
+    for memory in (older, newer):
+        memory.updated_at = "2025-01-01T00:00:00+00:00"
+    older.created_at = "2024-01-01T00:00:00+00:00"
+    newer.created_at = "2024-02-01T00:00:00+00:00"
+    manager.list_memories.side_effect = [[newer, older], []]
+    config = SimpleNamespace(
+        stale_age_days=30,
+        scan_limit=10,
+        max_scan_rows=100,
+        include_global_memories=True,
+    )
+
+    result = discover_stale_candidates(
+        manager,
+        config,
+        project_id="proj-1",
+        now=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    assert [candidate.id for candidate in result] == ["older", "newer"]
+
+
 def test_plan_validation_degrades_bad_or_omitted_actions_to_review() -> None:
     candidates = [_candidate("a"), _candidate("b"), _candidate("c"), _candidate("d")]
     raw_plan = {
@@ -94,6 +123,79 @@ def test_plan_validation_degrades_bad_or_omitted_actions_to_review() -> None:
     assert by_id["b"].action == "review"
     assert by_id["c"].action == "review"
     assert by_id["d"].action == "review"
+
+
+def test_plan_validation_splits_invalid_and_missing_id_review_reasons() -> None:
+    actions = validate_dream_plan(
+        {
+            "actions": [
+                {"action": "delete", "memory_id": "missing", "confidence": 1.0},
+                {"action": "delete", "confidence": 1.0},
+            ]
+        },
+        [_candidate("a")],
+        min_action_confidence=0.7,
+        min_delete_confidence=0.85,
+    )
+
+    no_id_reasons = [action.reason for action in actions if action.memory_id is None]
+    assert no_id_reasons == ["unknown candidate id", "missing candidate id"]
+    assert any(
+        action.memory_id == "a" and action.reason == "candidate omitted from dream plan"
+        for action in actions
+    )
+
+
+def test_plan_validation_reviews_overlaps_and_restricts_action_to_new_ids() -> None:
+    actions = validate_dream_plan(
+        {
+            "actions": [
+                {"action": "delete", "memory_id": "a", "confidence": 1.0},
+                {
+                    "action": "merge",
+                    "memory_ids": ["a", "b"],
+                    "content": "merged",
+                    "confidence": 1.0,
+                },
+            ]
+        },
+        [_candidate("a"), _candidate("b")],
+        min_action_confidence=0.7,
+        min_delete_confidence=0.85,
+    )
+
+    assert any(action.memory_id == "a" and action.action == "delete" for action in actions)
+    assert any(
+        action.memory_id == "a"
+        and action.action == "review"
+        and action.reason == "candidate had overlapping dream actions"
+        for action in actions
+    )
+    assert any(
+        action.memory_id == "b"
+        and action.action == "review"
+        and action.reason == "merge requires at least two candidate ids"
+        for action in actions
+    )
+
+
+def test_duplicate_groups_choose_canonical_without_quadratic_index_lookup() -> None:
+    older = replace(
+        _candidate("older"),
+        content="same",
+        created_at="2024-01-01T00:00:00+00:00",
+    )
+    newer = replace(
+        _candidate("newer"),
+        content="same",
+        created_at="2024-02-01T00:00:00+00:00",
+    )
+
+    groups = find_duplicate_groups([newer, older])
+
+    assert len(groups) == 1
+    assert groups[0].memory_ids == ["older", "newer"]
+    assert groups[0].canonical_content == "same"
 
 
 def test_malformed_plan_reviews_all_candidates() -> None:
@@ -164,6 +266,50 @@ async def test_apply_and_revert_delete_refresh_merge_and_supersede() -> None:
     assert db.memories["merge-drop"]["content"] == "dup"
     assert db.memories["supersede-me"]["content"] == "old fact"
     assert created_id not in db.memories
+
+
+@pytest.mark.asyncio
+async def test_revert_dream_run_uses_newest_first_snapshots_without_reversal() -> None:
+    db = _FakeDreamDB()
+    db.memories = {"memory-1": _row("memory-1", "v3")}
+    store = MemoryDreamStore(db)
+    run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
+    store.record_applied_snapshot(
+        run_id=run_id,
+        memory_id="memory-1",
+        action="refresh",
+        before_data=_row("memory-1", "v1"),
+        after_data=_row("memory-1", "v2"),
+    )
+    store.record_applied_snapshot(
+        run_id=run_id,
+        memory_id="memory-1",
+        action="refresh",
+        before_data=_row("memory-1", "v2"),
+        after_data=_row("memory-1", "v3"),
+    )
+
+    result = await revert_dream_run(store=store, run_id=run_id)
+
+    assert result["success"] is True
+    assert db.memories["memory-1"]["content"] == "v1"
+
+
+@pytest.mark.asyncio
+async def test_memory_dream_service_revert_uses_reconcile_after_revert_config() -> None:
+    db = _FakeDreamDB()
+    manager = _FakeMemoryManager(db)
+    service = MemoryDreamService(
+        memory_manager=manager,
+        dream_config=SimpleNamespace(reconcile_after_revert=False),
+    )
+    revert_mock = AsyncMock(return_value={"success": True, "run_id": "dream-1"})
+
+    with patch("gobby.memory.dream.service.revert_dream_run", revert_mock):
+        result = await service.revert("dream-1")
+
+    assert result["success"] is True
+    assert revert_mock.await_args.kwargs["reconcile_after_revert"] is False
 
 
 def _row(memory_id: str, content: str) -> dict[str, Any]:

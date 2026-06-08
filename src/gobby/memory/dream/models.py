@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+# Planner prompt content budget per candidate; keep prompts bounded and deterministic.
+CONTENT_TRUNCATE_LIMIT = 1600
+
 DreamActionName = Literal["keep", "delete", "refresh", "merge", "supersede", "review"]
 
 
@@ -30,7 +33,7 @@ class DreamCandidate:
         """Return compact JSON-safe context for the planner prompt."""
         return {
             "id": self.id,
-            "content": self.content[:1600],
+            "content": self.content[:CONTENT_TRUNCATE_LIMIT],
             "memory_type": self.memory_type,
             "project_id": self.project_id,
             "source_type": self.source_type,

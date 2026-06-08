@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import signal
@@ -18,7 +19,7 @@ pytestmark = pytest.mark.unit
 @pytest.fixture(autouse=True)
 def _mock_shutdown_source_writes(request: pytest.FixtureRequest):
     """Keep daemon-path coverage tests from creating shutdown markers."""
-    if request.node.name == "test_stop_daemon_writes_shutdown_source_inside_safe_gobby_home":
+    if request.node.name == "test_stop_daemon_writes_shutdown_intent_inside_safe_gobby_home":
         yield
         return
     with patch("gobby.runner_maintenance.write_shutdown_source"):
@@ -1488,7 +1489,10 @@ def test_stop_daemon_writes_shutdown_intent_inside_safe_gobby_home(
         result = stop_daemon(quiet=False)
 
     assert result is True
-    assert not shutdown_marker.exists()
+    assert shutdown_marker.exists()
+    payload = json.loads(shutdown_marker.read_text(encoding="utf-8"))
+    assert payload["source"] == "cli_stop"
+    assert payload["intent"] == "stop"
     assert not expanded_home_marker.exists()
 
 

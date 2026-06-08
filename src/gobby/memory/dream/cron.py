@@ -39,7 +39,11 @@ def register_memory_dream_cron(
     if not getattr(dream_config, "enabled", True):
         existing = cron_storage.get_job_by_name(MEMORY_DREAM_CRON_JOB_NAME)
         if existing and existing.enabled:
-            cron_storage.update_job(existing.id, enabled=False, next_run_at=None)
+            updated = cron_storage.update_job(existing.id, enabled=False, next_run_at=None)
+            if updated is None:
+                raise RuntimeError(
+                    f"Failed to disable system cron job: {MEMORY_DREAM_CRON_JOB_NAME}"
+                )
         return 0
 
     async def _handler(_job: CronJob) -> str:
@@ -49,12 +53,16 @@ def register_memory_dream_cron(
             llm_service=llm_service,
             project_id=project_id,
         )
+        if not isinstance(result, dict):
+            raise RuntimeError("memory dream returned non-object result")
         if not result.get("success"):
             raise RuntimeError(str(result.get("error", "memory dream failed")))
-        summary = (result.get("run") or {}).get("summary") or {}
-        return (
-            f"memory dream {result['run_id']} completed: {summary.get('mutations', 0)} mutation(s)"
-        )
+        run = result.get("run") if isinstance(result.get("run"), dict) else {}
+        summary = run.get("summary") if isinstance(run.get("summary"), dict) else {}
+        run_id = result.get("run_id") or run.get("id")
+        if not run_id:
+            raise RuntimeError("memory dream completed without run_id")
+        return f"memory dream {run_id} completed: {summary.get('mutations', 0)} mutation(s)"
 
     cron_executor.register_handler(MEMORY_DREAM_CRON_HANDLER, _handler)
     _ensure_system_job(cron_storage, dream_config, project_id)

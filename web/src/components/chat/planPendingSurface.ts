@@ -18,13 +18,9 @@
  */
 export type PlanPendingVariant = 'amber' | 'info'
 
-/**
- * The active treatment. Flip this single constant to switch the approval
- * surface color across every surface at once.
- */
-export const PLAN_PENDING_VARIANT: PlanPendingVariant = 'info'
+export const DEFAULT_PLAN_PENDING_VARIANT: PlanPendingVariant = 'info'
 
-interface PlanPendingColors {
+export interface PlanPendingColors {
   /** Background fill of the surface band/strip. */
   surfaceBg: string
   /** Border color utility — pair with a `border` / `border-b` shape class. */
@@ -46,4 +42,10 @@ const VARIANTS: Record<PlanPendingVariant, PlanPendingColors> = {
   },
 }
 
-export const planPendingColors: PlanPendingColors = VARIANTS[PLAN_PENDING_VARIANT]
+export function normalizePlanPendingVariant(value: unknown): PlanPendingVariant {
+  return value === 'amber' ? 'amber' : DEFAULT_PLAN_PENDING_VARIANT
+}
+
+export function getPlanPendingColors(value: unknown): PlanPendingColors {
+  return VARIANTS[normalizePlanPendingVariant(value)]
+}

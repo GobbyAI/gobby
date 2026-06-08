@@ -171,10 +171,6 @@ def _wait_for_completion(
             last_status = status
         if status in _TERMINAL_STATUSES:
             return data
-        if time.monotonic() >= deadline:
-            raise click.ClickException(
-                f"Timed out after {timeout:g}s waiting for dream run {run_id}"
-            )
         sleep_for = min(_WAIT_POLL_INTERVAL_SECONDS, max(0.0, deadline - time.monotonic()))
         time.sleep(sleep_for)
 

@@ -10,6 +10,7 @@ Focuses on:
 """
 
 import asyncio
+import inspect
 import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -596,6 +597,9 @@ class TestMemoryDreamTools:
             llm_service=mock_llm_service,
             config=config,
         )
+        status_tool = registry.get_tool_metadata("memory_dream_status")
+        assert status_tool is not None
+        assert not inspect.iscoroutinefunction(status_tool.func)
 
         with patch(
             "gobby.mcp_proxy.tools.memory_dream.MemoryDreamService",

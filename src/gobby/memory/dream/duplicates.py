@@ -20,7 +20,10 @@ def find_duplicate_groups(candidates: list[DreamCandidate]) -> list[DuplicateGro
         if len(entries) < 2:
             continue
         ordered = sorted(entries, key=lambda item: (item.created_at, item.id))
-        canonical = max(ordered, key=lambda item: (len(item.content), -ordered.index(item)))
+        canonical = max(
+            enumerate(ordered),
+            key=lambda item: (len(item[1].content), -item[0]),
+        )[1]
         duplicate_groups.append(
             DuplicateGroup(
                 memory_ids=[item.id for item in ordered],

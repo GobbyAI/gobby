@@ -99,7 +99,7 @@ def register_memory_dream_tools(
         name="memory_dream_status",
         description="Return status and summary for a memory dream run.",
     )
-    async def memory_dream_status(run_id: str) -> dict[str, Any]:
+    def memory_dream_status(run_id: str) -> dict[str, Any]:
         return _service().status(run_id)
 
     @registry.tool(

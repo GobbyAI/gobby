@@ -215,7 +215,7 @@ class TestConfigStore:
         assert store.get("list_val") == [1, 2, 3]
         assert store.get("null_val") is None
 
-    def test_set_secret_uses_backend_neutral_boolean(self):
+    def test_set_secret_uses_backend_neutral_boolean(self) -> None:
         class FakeDB:
             def __init__(self):
                 self.executed = []
@@ -238,7 +238,7 @@ class TestConfigStore:
         assert "is_secret = excluded.is_secret" in sql
         assert params[3] is True
 
-    def test_get_secret_keys_uses_backend_neutral_boolean(self):
+    def test_get_secret_keys_uses_backend_neutral_boolean(self) -> None:
         class FakeDB:
             def __init__(self):
                 self.calls = []

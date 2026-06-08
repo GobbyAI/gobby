@@ -174,8 +174,8 @@ def test_renumber_sessions_apply_writes_refs(mock_session_manager) -> None:
     mock_session_manager.renumber_project_sessions.assert_called_once_with("proj-1", dry_run=False)
 
 
-def test_renumber_sessions_rejects_apply_and_dry_run(mock_session_manager) -> None:
-    """Test 'sessions renumber' rejects contradictory mutation flags."""
+def test_renumber_sessions_rejects_removed_dry_run_option(mock_session_manager) -> None:
+    """Test 'sessions renumber' has --apply as the only explicit mode flag."""
     runner = CliRunner()
     result = runner.invoke(
         sessions,
@@ -183,5 +183,5 @@ def test_renumber_sessions_rejects_apply_and_dry_run(mock_session_manager) -> No
     )
 
     assert result.exit_code != 0
-    assert "Use either --dry-run or --apply" in result.output
+    assert "No such option: --dry-run" in result.output
     mock_session_manager.renumber_project_sessions.assert_not_called()

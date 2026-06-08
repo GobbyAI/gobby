@@ -121,7 +121,7 @@ class FeatureDefaultConfig(BaseModel):
             legacy_candidate = normalize_feature_candidate(f"{provider}/{model}")
             raw_candidates = values.get("candidates")
             existing = list(raw_candidates) if isinstance(raw_candidates, (list, tuple)) else []
-            values["candidates"] = [legacy_candidate, *existing]
+            values["candidates"] = [*existing, legacy_candidate]
         if tier is not None and "profile" not in values:
             values["profile"] = _legacy_profile(tier)
         return values

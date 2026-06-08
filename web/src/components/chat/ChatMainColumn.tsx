@@ -12,6 +12,7 @@ import { CommandBar } from "./CommandBar";
 import { MessageList, type MessageListHandle } from "./MessageList";
 import { VoiceStatusBar } from "./VoiceStatusBar";
 import type { ChatPagePaletteSelect } from "./ChatPage.types";
+import type { PlanPendingVariant } from "./planPendingSurface";
 import type { UseChatPageProviderStateResult } from "./useChatPageProviderState";
 import type { UseChatPageVoiceStatusResult } from "./useChatPageVoiceStatus";
 
@@ -45,6 +46,7 @@ interface ChatMainColumnProps extends AgentPickerProps {
   onTtsEnabledChange?: (enabled: boolean) => void;
   onVoiceInputModeChange?: (mode: VoiceInputMode) => void;
   onViewPlan?: () => void;
+  planPendingVariant?: PlanPendingVariant;
   openCodeAsArtifact: (
     language: string,
     content: string,
@@ -79,6 +81,7 @@ export function ChatMainColumn({
   onTtsEnabledChange,
   onVoiceInputModeChange,
   onViewPlan,
+  planPendingVariant,
   openCodeAsArtifact,
   openFileAsArtifact,
   agentDefinitions,
@@ -181,6 +184,7 @@ export function ChatMainColumn({
           onApprovePlan={chat.onApprovePlan}
           onRequestPlanChanges={chat.onRequestPlanChanges}
           onViewPlan={onViewPlan}
+          planPendingVariant={planPendingVariant}
         />
 
         {showChatInput && (

@@ -75,7 +75,7 @@ def discover_stale_candidates(
         if len(page) < page_limit:
             break
 
-    return sorted(candidates, key=lambda item: (-item.age_days, item.id))
+    return sorted(candidates, key=lambda item: (-item.age_days, item.created_at))
 
 
 def _in_scope(memory_project_id: str | None, project_id: str | None, include_global: bool) -> bool:

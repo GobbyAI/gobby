@@ -9,6 +9,7 @@ import type { SessionsFilters } from "../activity/sessionsFilters";
 import type { ActivityMcpTabProps } from "../activity/ActivityMcpTab";
 import type { ActivityTab } from "../activity/ActivityPanelTabs";
 import type { CommandPaletteAction } from "./CommandPalette";
+import type { PlanPendingVariant } from "./planPendingSurface";
 
 export interface AgentProps {
   agentDefinitions?: AgentDefInfo[];
@@ -55,6 +56,7 @@ export interface ChatPageProps
   mcp?: ActivityMcpTabProps;
   requestedActivityTab?: ActivityTab | null;
   onActivityTabRequestHandled?: () => void;
+  planPendingVariant?: PlanPendingVariant;
 }
 
 export type ChatPagePaletteSelect = (item: PaletteItem) => void;

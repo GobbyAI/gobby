@@ -36,6 +36,8 @@ from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 
+pytestmark = pytest.mark.unit
+
 SESSION = "s1"
 
 
@@ -334,7 +336,6 @@ def test_droid_sidecar_usage_is_post_pass_adjustment(tmp_path: Path) -> None:
     assert loaded_adjustment.value.output_tokens == 7
 
 
-@pytest.mark.unit
 def test_gzip_block_sidecar_requires_logical_size_before_persist(tmp_path: Path) -> None:
     raw_lines = [
         RawLine(byte_offset=0, raw_line_no=index, text=line)
@@ -356,7 +357,6 @@ def test_gzip_block_sidecar_requires_logical_size_before_persist(tmp_path: Path)
         persist_index_sidecar(str(tmp_path / "transcript.jsonl.gz"), index)
 
 
-@pytest.mark.unit
 def test_nonserializable_adjustment_log_redacts_value(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
@@ -388,6 +388,15 @@ def test_nonserializable_adjustment_log_redacts_value(
     assert record.value_type == "dict"
     assert record.value_length == 1
     assert record.value_redacted is True
+
+
+def test_nonserializable_adjustment_len_value_error_propagates() -> None:
+    class BadLen:
+        def __len__(self) -> int:
+            raise ValueError("bad length")
+
+    with pytest.raises(ValueError, match="bad length"):
+        transcript_index._encode_adjustment_value(BadLen())
 
 
 def test_detect_source_bounded_prefers_path(tmp_path: Path) -> None:

@@ -569,9 +569,9 @@ async def _synthesize_title(
     session_id: str,
     session_manager: Any,
     session: Any,
+    llm_service: Any,
+    digest_config: Any,
     db: Any | None = None,
-    llm_service: Any | None = None,
-    digest_config: Any | None = None,
 ) -> str | None:
     """Synthesize session title from digest via LLM and update tmux window.
 
@@ -697,9 +697,9 @@ async def build_turn_and_digest(
                     session_id,
                     session_manager,
                     session,
+                    llm_service,
+                    digest_config,
                     db,
-                    llm_service=llm_service,
-                    digest_config=digest_config,
                 )
             except LLMProviderCancellation as e:
                 return await _provider_cancelled_fallback(session_manager, session_id, e)

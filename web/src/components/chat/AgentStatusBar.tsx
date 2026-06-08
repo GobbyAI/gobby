@@ -10,6 +10,7 @@ import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { LinkIcon, PlayIcon, UnlinkIcon } from '../icons'
 import { PlusIcon } from './icons/PlusIcon'
 import { PlanPendingActionStrip } from './PlanPendingActionStrip'
+import type { PlanPendingVariant } from './planPendingSurface'
 
 interface AgentStatusBarProps {
   viewingMeta?: SessionObservationMeta | null
@@ -27,6 +28,7 @@ interface AgentStatusBarProps {
   onApprovePlan?: (option?: ApprovalOption) => void
   onRequestPlanChanges?: (feedback: string) => void
   onViewPlan?: () => void
+  planPendingVariant?: PlanPendingVariant
 }
 
 const CONTEXT_USAGE_REFRESH_MS = 15_000
@@ -77,6 +79,7 @@ export function AgentStatusBar({
   onApprovePlan,
   onRequestPlanChanges,
   onViewPlan,
+  planPendingVariant,
 }: AgentStatusBarProps) {
   const [usageClock, setUsageClock] = useState(() => Date.now())
 
@@ -179,6 +182,7 @@ export function AgentStatusBar({
             onRequestChanges={onRequestPlanChanges}
             onView={onViewPlan}
             options={planApprovalOptions}
+            variant={planPendingVariant}
           />
         </div>
       )}

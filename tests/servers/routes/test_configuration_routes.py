@@ -448,6 +448,7 @@ class TestUISettingsRoundTrip:
             json={
                 "fontSize": 18,
                 "defaultChatMode": "plan",
+                "planPendingVariant": "amber",
             },
         )
         assert response.status_code == 200
@@ -457,9 +458,11 @@ class TestUISettingsRoundTrip:
         assert get_response.status_code == 200
         assert get_response.json()["fontSize"] == 18
         assert get_response.json()["defaultChatMode"] == "plan"
+        assert get_response.json()["planPendingVariant"] == "amber"
 
         store = ConfigStore(temp_db)
         assert store.get("ui_settings.defaultChatMode") == "plan"
+        assert store.get("ui_settings.planPendingVariant") == "amber"
 
     def test_ui_settings_rejects_retired_post_plan_mode_key(self, client: TestClient) -> None:
         """The post-plan-mode preference was removed; mode is chosen at approval."""
@@ -1727,6 +1730,7 @@ class TestUISettings:
                 "model": "sonnet",
                 "theme": "light",
                 "defaultChatMode": "act",
+                "planPendingVariant": "info",
                 "selectedProvider": "codex",
             },
         )
@@ -1740,6 +1744,7 @@ class TestUISettings:
         assert data["model"] == "sonnet"
         assert data["theme"] == "light"
         assert data["defaultChatMode"] == "act"
+        assert data["planPendingVariant"] == "info"
         assert data["selectedProvider"] == "codex"
 
     def test_put_partial_update(self, client: TestClient) -> None:

@@ -5,6 +5,8 @@ import logging
 import shlex
 from typing import TYPE_CHECKING, Any
 
+from gobby.config.feature_base import FeatureDefaultConfig
+
 if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
 
@@ -160,7 +162,7 @@ async def execute_exec_step(command: str, context: dict[str, Any]) -> dict[str, 
 
 
 async def execute_prompt_step(
-    prompt: str, context: dict[str, Any], llm_service: Any, feature_config: Any
+    prompt: str, context: dict[str, Any], llm_service: Any, feature_config: FeatureDefaultConfig
 ) -> dict[str, Any]:
     """Execute an LLM prompt step."""
     if not llm_service:

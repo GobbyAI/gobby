@@ -6,7 +6,9 @@ import { render, screen } from '@testing-library/react'
 import type { Artifact } from '../../../types/artifacts'
 import { PlanReviewCard } from '../../activity/PlanReviewCard'
 import { PlanPendingActionStrip } from '../PlanPendingActionStrip'
-import { planPendingColors } from '../planPendingSurface'
+import { getPlanPendingColors } from '../planPendingSurface'
+
+const planPendingColors = getPlanPendingColors('info')
 
 // Render markdown as plain text so the pending banner is the only thing under test.
 vi.mock('../Markdown', () => ({
@@ -29,7 +31,7 @@ function makePlan(): Artifact {
 
 /**
  * Design-fix guards for #15637 / #15693. The awaiting-approval surface shares a
- * single swappable color treatment (`planPendingColors`) across the Plans panel
+ * single swappable color treatment (`getPlanPendingColors`) across the Plans panel
  * header and the status-bar strip, so these assert against that treatment and
  * track the active variant automatically. They still pin the regressions this
  * epic cared about (.impeccable.md: state read by lightness/icon first, never
@@ -79,6 +81,21 @@ describe('plan-approval design fixes (#15637)', () => {
     const strip = screen.getByTestId('plan-pending-strip')
     expect(strip.className).toContain(planPendingColors.surfaceBg)
     expect(strip.className).not.toContain('var(--color-warning-foreground)')
+  })
+
+  it('PlanReviewCard uses the runtime amber variant when requested', () => {
+    render(
+      <PlanReviewCard
+        plan={makePlan()}
+        planPendingApproval
+        onSetVersion={vi.fn()}
+        planPendingVariant="amber"
+      />,
+    )
+    const banner = screen.getByTestId('plan-review-status')
+    const amber = getPlanPendingColors('amber')
+    expect(banner.className).toContain(amber.surfaceBg)
+    expect(banner.innerHTML).toContain(amber.accentText)
   })
 
   it('status bars share --activity-panel-bar-height and never redeclare it on an inner scope', () => {

@@ -2,7 +2,9 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { type ComponentProps } from 'react'
 import { PlanPendingActionStrip } from '../PlanPendingActionStrip'
-import { planPendingColors } from '../planPendingSurface'
+import { getPlanPendingColors } from '../planPendingSurface'
+
+const planPendingColors = getPlanPendingColors('info')
 
 function renderStrip(overrides: Partial<ComponentProps<typeof PlanPendingActionStrip>> = {}) {
   const props: ComponentProps<typeof PlanPendingActionStrip> = {
@@ -48,5 +50,13 @@ describe('PlanPendingActionStrip', () => {
     const { props } = renderStrip()
     fireEvent.click(screen.getByTestId('plan-strip-view'))
     expect(props.onView).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses the runtime amber variant when requested', () => {
+    renderStrip({ variant: 'amber' })
+    const strip = screen.getByTestId('plan-pending-strip')
+    const amber = getPlanPendingColors('amber')
+    expect(strip.className).toContain(amber.surfaceBg)
+    expect(strip.innerHTML).toContain(amber.accentText)
   })
 })

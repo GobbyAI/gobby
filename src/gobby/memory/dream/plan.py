@@ -37,9 +37,35 @@ def validate_dream_plan(
             actions.extend(_review_each(valid_refs, "unknown action", item))
             touched.update(valid_refs)
             continue
-        if invalid_refs or not valid_refs:
-            actions.extend(_review_each(valid_refs, "unknown or missing candidate id", item))
+        if invalid_refs:
+            if valid_refs:
+                actions.extend(_review_each(valid_refs, "unknown candidate id", item))
+            else:
+                actions.append(
+                    DreamAction(
+                        action="review",
+                        reason="unknown candidate id",
+                        confidence=_confidence(item),
+                    )
+                )
             touched.update(valid_refs)
+            continue
+        if not valid_refs:
+            actions.append(
+                DreamAction(
+                    action="review",
+                    reason="missing candidate id",
+                    confidence=_confidence(item),
+                )
+            )
+            continue
+        overlapping_refs = valid_refs & touched
+        if overlapping_refs:
+            actions.extend(
+                _review_each(overlapping_refs, "candidate had overlapping dream actions", item)
+            )
+            valid_refs -= overlapping_refs
+        if not valid_refs:
             continue
         if action in _MUTATING_ACTIONS and not _confidence_ok(
             action,
@@ -196,6 +222,9 @@ def _dedupe_actions(actions: list[DreamAction]) -> list[DreamAction]:
     for action in actions:
         refs = action.affected_ids()
         if refs & seen:
+            if action.action == "review":
+                result.append(action)
+                continue
             for memory_id in sorted(refs - seen):
                 result.append(
                     DreamAction(

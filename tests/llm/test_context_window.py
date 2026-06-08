@@ -345,7 +345,7 @@ class TestResolveContextWindow:
             """,
             encoding="utf-8",
         )
-        catalog = ProviderModelCatalog(config=None, cache_path=cache_path)
+        catalog = ProviderModelCatalog(cache_path=cache_path)
 
         with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
             result = resolve_context_window("gpt-5.4", None, provider="codex", catalog=catalog)
