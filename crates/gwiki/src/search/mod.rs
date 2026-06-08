@@ -445,6 +445,7 @@ mod tests {
                 )),
             }],
             sources: Vec::new(),
+            code_edges: Vec::new(),
         });
         graph
     }

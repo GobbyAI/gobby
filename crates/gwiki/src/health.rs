@@ -260,6 +260,19 @@ fn load_provenance(vault_root: &Path) -> Result<ProvenanceGraph, WikiError> {
     }
 }
 
+pub fn change_triggered_affected_pages(
+    vault_root: &Path,
+    graph_config: Option<&gobby_core::config::FalkorConfig>,
+    project: &str,
+    changes: crate::code_graph::CodeChangeSet,
+) -> Result<crate::code_graph::AffectedPages, WikiError> {
+    let provenance = load_provenance(vault_root)?;
+    crate::code_graph::affected_pages_for_changes(graph_config, project, &provenance, changes)
+        .map_err(|error| WikiError::Config {
+            detail: format!("query change-triggered affected pages: {error}"),
+        })
+}
+
 #[derive(Default)]
 struct SourceCitationIndex {
     cited_source_ids: BTreeSet<String>,
@@ -740,6 +753,47 @@ mod tests {
             &source_record("2025-06-02T18:00:00Z"),
             now
         ));
+    }
+
+    #[test]
+    fn change_triggered_refresh_health_degrades_to_provenance_only_mapping() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let mut provenance = ProvenanceGraph::default();
+        provenance.add_link(crate::provenance::ProvenanceLink {
+            source: crate::provenance::SourceChunkRef {
+                source_id: "source-lib".to_string(),
+                chunk_id: "source-lib#chunk-0".to_string(),
+                path: PathBuf::from("src/lib.rs"),
+                byte_start: 0,
+                byte_end: 10,
+            },
+            section: crate::provenance::WikiSectionRef {
+                page_path: PathBuf::from("wiki/code/lib.md"),
+                heading: "Lib".to_string(),
+                section_id: "lib".to_string(),
+            },
+            claim: None,
+        });
+        provenance.save_to_vault(root).expect("save provenance");
+
+        let affected = change_triggered_affected_pages(
+            root,
+            None,
+            "project-1",
+            crate::code_graph::CodeChangeSet {
+                files: vec!["src/lib.rs".to_string()],
+                symbols: Vec::new(),
+            },
+        )
+        .expect("affected pages");
+
+        assert_eq!(affected.pages.len(), 1);
+        assert_eq!(
+            affected.pages[0].page_path,
+            PathBuf::from("wiki/code/lib.md")
+        );
+        assert_eq!(affected.degradations.len(), 1);
     }
 
     fn write_page(root: &Path, relative: &str, markdown: &str) {

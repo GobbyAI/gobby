@@ -50,6 +50,48 @@ pub(crate) fn render_module_dependency_mermaid(
     Some(diagram)
 }
 
+pub(crate) fn render_architecture_dependency_mermaid(
+    files: &[FileDoc],
+    graph_edges: &[CodewikiGraphEdge],
+) -> Option<String> {
+    let mut component_to_module = HashMap::new();
+    for file in files {
+        for component_id in &file.component_ids {
+            component_to_module.insert(component_id.as_str(), file.module.as_str());
+        }
+    }
+
+    let edges = graph_edges
+        .iter()
+        .filter(|edge| edge.kind == CodewikiGraphEdgeKind::Import)
+        .filter_map(|edge| {
+            let source = component_to_module.get(edge.source_component_id.as_str())?;
+            let target = component_to_module.get(edge.target_component_id.as_str())?;
+            if source == target {
+                return None;
+            }
+            Some(((*source).to_string(), (*target).to_string()))
+        })
+        .collect::<BTreeSet<_>>();
+    if edges.is_empty() {
+        return None;
+    }
+
+    let mut diagram = "```mermaid\ngraph LR\n".to_string();
+    for (source, target) in edges {
+        let _ = writeln!(
+            diagram,
+            "    {}[\"{}\"] --> {}[\"{}\"]",
+            mermaid_node_id(&source),
+            mermaid_label(&source),
+            mermaid_node_id(&target),
+            mermaid_label(&target)
+        );
+    }
+    diagram.push_str("```\n");
+    Some(diagram)
+}
+
 pub(crate) fn render_module_call_mermaid(
     module: &str,
     files: &[FileDoc],
@@ -348,6 +390,152 @@ pub(crate) fn render_repo_doc(
     doc
 }
 
+pub(crate) fn render_architecture_doc(architecture: &ArchitectureDoc) -> String {
+    let mut doc = frontmatter_with_degradation(
+        "Architecture Overview",
+        "code_architecture",
+        &architecture.source_spans,
+        &architecture.degraded_sources,
+    );
+    doc.push_str("# Architecture Overview\n\n");
+    if let Some(diagram) = &architecture.dependency_diagram {
+        doc.push_str("## Subsystem Map\n\n");
+        doc.push_str(diagram);
+        doc.push('\n');
+    }
+    if !architecture.subsystems.is_empty() {
+        doc.push_str("## Subsystems\n\n");
+        for subsystem in &architecture.subsystems {
+            let _ = writeln!(
+                doc,
+                "- {} - {}",
+                module_wikilink(&subsystem.module),
+                subsystem.responsibility
+            );
+        }
+        doc.push('\n');
+    }
+    doc
+}
+
+pub(crate) fn render_onboarding_doc(onboarding: &OnboardingDoc) -> String {
+    let mut doc = frontmatter_with_degradation(
+        "Start Here",
+        "code_onboarding",
+        &onboarding.source_spans,
+        &onboarding.degraded_sources,
+    );
+    doc.push_str("# Start Here\n\n");
+
+    if !onboarding.entry_points.is_empty() {
+        doc.push_str("## Entry Points\n\n");
+        for entry in &onboarding.entry_points {
+            let _ = writeln!(doc, "- {} - {}", entry.link, entry.description);
+        }
+        doc.push('\n');
+    }
+
+    if onboarding.reading_order.is_empty() {
+        if !onboarding.entry_points.is_empty() {
+            doc.push_str("## Structural Start Points\n\n");
+            for entry in &onboarding.entry_points {
+                let _ = writeln!(doc, "- {} - {}", entry.link, entry.description);
+            }
+            doc.push('\n');
+        }
+        return doc;
+    }
+
+    doc.push_str("## Recommended Reading Order\n\n");
+    for (index, step) in onboarding.reading_order.iter().enumerate() {
+        let _ = writeln!(
+            doc,
+            "{}. {} - {} centrality degree, {:.3} score. {}",
+            index + 1,
+            module_wikilink(&step.module),
+            step.degree,
+            step.score,
+            step.summary
+        );
+    }
+    doc.push('\n');
+    doc
+}
+
+pub(crate) fn render_hotspots_doc(hotspots: &HotspotsDoc) -> String {
+    let mut doc = frontmatter_with_degradation(
+        "Hotspots",
+        "code_hotspots",
+        &hotspots.source_spans,
+        &hotspots.degraded_sources,
+    );
+    doc.push_str("# Hotspots\n\n");
+
+    if hotspots
+        .degraded_sources
+        .iter()
+        .any(|source| source == "graph-analytics-unavailable")
+    {
+        doc.push_str("analytics unavailable: graph analytics could not be computed.\n\n");
+        return doc;
+    }
+
+    write_hotspot_section(&mut doc, "Hotspots", &hotspots.hotspots);
+    write_hotspot_section(&mut doc, "God Nodes", &hotspots.god_nodes);
+    write_hotspot_section(&mut doc, "Bridges", &hotspots.bridges);
+
+    if hotspots.hotspots.is_empty() && hotspots.god_nodes.is_empty() && hotspots.bridges.is_empty()
+    {
+        doc.push_str("No graph hotspots were identified from the current code index.\n\n");
+    }
+
+    doc
+}
+
+fn write_hotspot_section(doc: &mut String, title: &str, findings: &[HotspotFinding]) {
+    doc.push_str("## ");
+    doc.push_str(title);
+    doc.push_str("\n\n");
+
+    if findings.is_empty() {
+        doc.push_str("None identified.\n\n");
+        return;
+    }
+
+    for finding in findings {
+        let mut details = Vec::new();
+        details.push(format!("kind {}", inline_code(&finding.node.kind)));
+        details.push(format!("component {}", inline_code(&finding.node.id)));
+        if let Some(degree) = finding.degree {
+            details.push(format!("degree {degree}"));
+        }
+        if let Some(score) = finding.score {
+            details.push(format!("score {score:.3}"));
+        }
+        if let Some(frequency) = finding.frequency {
+            details.push(format!("frequency {frequency}"));
+        }
+        if let Some(weight) = finding.weight {
+            details.push(format!("weight {weight:.1}"));
+        }
+        if let Some(file) = &finding.node.file_wikilink {
+            details.push(format!("file {file}"));
+        }
+        if let Some(span) = &finding.node.source_span {
+            details.push(span.citation());
+        }
+
+        let _ = writeln!(
+            doc,
+            "- {} ({}) - {}",
+            finding.node.wikilink,
+            inline_code(&finding.node.label),
+            details.join(", ")
+        );
+    }
+    doc.push('\n');
+}
+
 pub(crate) fn render_module_doc(module: &ModuleDoc) -> String {
     let mut doc = frontmatter(&module.module, "code_module", &module.source_spans);
     let _ = writeln!(doc, "# {}\n", module.module);
@@ -355,7 +543,7 @@ pub(crate) fn render_module_doc(module: &ModuleDoc) -> String {
         Some(parent) => {
             let _ = writeln!(doc, "Parent: {}\n", module_wikilink(parent));
         }
-        None => doc.push_str("Parent: [[repo|Repository Overview]]\n\n"),
+        None => doc.push_str("Parent: [[code/repo|Repository Overview]]\n\n"),
     }
     write_section(&mut doc, "Overview", &module.summary);
     match module.graph_availability {
@@ -413,7 +601,7 @@ pub(crate) fn render_file_doc(file: &FileDoc) -> String {
     let mut doc = frontmatter(&file.path, "code_file", &file.source_spans);
     let _ = writeln!(doc, "# {}\n", file.path);
     if file.module.is_empty() {
-        doc.push_str("Module: [[repo|Repository Overview]]\n\n");
+        doc.push_str("Module: [[code/repo|Repository Overview]]\n\n");
     } else {
         let _ = writeln!(doc, "Module: {}\n", module_wikilink(&file.module));
     }

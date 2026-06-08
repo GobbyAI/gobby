@@ -13,6 +13,15 @@ pub fn write_incremental_doc_set(
     out_dir: &Path,
     docs: &[(String, String)],
 ) -> anyhow::Result<Vec<String>> {
+    write_incremental_doc_set_with_snapshot(project_root, out_dir, docs, None)
+}
+
+pub(crate) fn write_incremental_doc_set_with_snapshot(
+    project_root: &Path,
+    out_dir: &Path,
+    docs: &[(String, String)],
+    index_snapshot: Option<CodewikiIndexSnapshot>,
+) -> anyhow::Result<Vec<String>> {
     std::fs::create_dir_all(out_dir)?;
     let previous = read_codewiki_meta(out_dir)?;
     let mut next_docs = BTreeMap::new();
@@ -53,6 +62,7 @@ pub fn write_incremental_doc_set(
     let meta = CodewikiMeta {
         docs: next_docs,
         generated_docs: generated_docs.clone(),
+        index_snapshot,
     };
     write_codewiki_meta(out_dir, &meta)?;
     Ok(generated_docs)
@@ -124,6 +134,20 @@ pub(crate) fn write_codewiki_meta(out_dir: &Path, meta: &CodewikiMeta) -> anyhow
     write_doc(out_dir, CODEWIKI_META_PATH, &(content + "\n"))
 }
 
+pub(crate) fn read_ownership_meta(out_dir: &Path) -> anyhow::Result<OwnershipMeta> {
+    let path = safe_doc_path(out_dir, OWNERSHIP_META_PATH)?;
+    match std::fs::read_to_string(&path) {
+        Ok(raw) => Ok(serde_json::from_str(&raw)?),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(OwnershipMeta::default()),
+        Err(err) => Err(err.into()),
+    }
+}
+
+pub(crate) fn write_ownership_meta(out_dir: &Path, meta: &OwnershipMeta) -> anyhow::Result<()> {
+    let content = serde_json::to_string_pretty(meta)?;
+    write_doc(out_dir, OWNERSHIP_META_PATH, &(content + "\n"))
+}
+
 pub(crate) fn source_hashes_for_doc(
     project_root: &Path,
     content: &str,
@@ -164,7 +188,7 @@ pub(crate) fn source_files_from_frontmatter(content: &str) -> BTreeSet<String> {
         return files;
     };
 
-    for key in ["source_files", "sources"] {
+    for key in ["source", "provenance", "source_files", "sources"] {
         let key = serde_yaml::Value::String(key.to_string());
         let Some(serde_yaml::Value::Sequence(sources)) = frontmatter.get(&key) else {
             continue;

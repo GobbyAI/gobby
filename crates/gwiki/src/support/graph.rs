@@ -49,6 +49,7 @@ pub(crate) fn memory_graph_from_store(
         documents,
         links,
         sources,
+        code_edges: Vec::new(),
     });
     mem_graph
 }

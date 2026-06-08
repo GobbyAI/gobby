@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 
 use crate::search::SearchScope;
 
+pub mod analytics;
+pub mod context;
+
 pub const WIKI_DOC_LABEL: &str = "WikiDoc";
 pub const WIKI_SOURCE_LABEL: &str = "WikiSource";
 pub const WIKI_TARGET_LABEL: &str = "WikiTarget";
@@ -39,11 +42,156 @@ pub struct WikiGraphLink {
     pub target: WikiGraphLinkTarget,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WikiGraphCodeEdge {
+    pub document_path: PathBuf,
+    pub source: String,
+    pub target: String,
+    pub kind: String,
+    pub direction: String,
+    pub line: Option<usize>,
+    pub provenance: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WikiGraphFacts {
     pub documents: Vec<WikiGraphDocument>,
     pub links: Vec<WikiGraphLink>,
     pub sources: Vec<WikiGraphSource>,
+    pub code_edges: Vec<WikiGraphCodeEdge>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GraphExportOptions {
+    pub degraded_sources: Vec<String>,
+}
+
+impl GraphExportOptions {
+    pub fn available() -> Self {
+        Self::default()
+    }
+
+    pub fn degraded(degraded_sources: Vec<String>) -> Self {
+        Self { degraded_sources }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct GraphExport {
+    pub command: &'static str,
+    pub degraded: bool,
+    pub degraded_sources: Vec<String>,
+    pub analytics: analytics::GraphExportAnalytics,
+    pub nodes: Vec<GraphExportNode>,
+    pub edges: GraphExportEdges,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct GraphExportNode {
+    pub id: String,
+    pub kind: &'static str,
+    pub scope_kind: String,
+    pub scope_id: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct GraphExportEdges {
+    pub links: Vec<GraphExportEdge>,
+    pub imports: Vec<GraphExportEdge>,
+    pub calls: Vec<GraphExportEdge>,
+    pub trust: Vec<GraphExportEdge>,
+    pub audit: Vec<GraphExportEdge>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct GraphExportEdge {
+    pub source: String,
+    pub target: String,
+    pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_target: Option<String>,
+}
+
+impl WikiGraphFacts {
+    pub fn export_graph(&self, options: GraphExportOptions) -> GraphExport {
+        let mut nodes = Vec::new();
+        let mut node_ids = BTreeSet::new();
+        let mut edges = GraphExportEdges::default();
+
+        for document in &self.documents {
+            let node = document_node(document);
+            if node_ids.insert(node.id.clone()) {
+                nodes.push(node);
+            }
+        }
+
+        for source in &self.sources {
+            let source_node = source_node(source);
+            if node_ids.insert(source_node.id.clone()) {
+                nodes.push(source_node);
+            }
+
+            let citation_node = citation_node(source);
+            if node_ids.insert(citation_node.id.clone()) {
+                nodes.push(citation_node.clone());
+            }
+
+            edges.trust.push(GraphExportEdge {
+                source: source_node_id(&source.source_path),
+                target: document_id(&source.document_path),
+                kind: "supports",
+                raw_target: None,
+            });
+            edges.audit.push(GraphExportEdge {
+                source: citation_node.id,
+                target: source_node_id(&source.source_path),
+                kind: "cites",
+                raw_target: None,
+            });
+        }
+
+        for link in &self.links {
+            edges.links.push(GraphExportEdge {
+                source: document_id(&link.source_path),
+                target: match &link.target {
+                    WikiGraphLinkTarget::Resolved(path) => document_id(path),
+                    WikiGraphLinkTarget::Unresolved(target) => unresolved_target_id(target),
+                },
+                kind: "links",
+                raw_target: Some(link.raw_target.clone()),
+            });
+        }
+        for edge in &self.code_edges {
+            let graph_edge = GraphExportEdge {
+                source: edge.source.clone(),
+                target: edge.target.clone(),
+                kind: if edge.kind == "imports" {
+                    "imports"
+                } else {
+                    "calls"
+                },
+                raw_target: Some(edge.provenance.clone()),
+            };
+            if edge.kind == "imports" {
+                edges.imports.push(graph_edge);
+            } else {
+                edges.calls.push(graph_edge);
+            }
+        }
+
+        let degraded = !options.degraded_sources.is_empty();
+        GraphExport {
+            command: "graph",
+            degraded,
+            degraded_sources: options.degraded_sources,
+            analytics: analytics::analyze_facts(self),
+            nodes,
+            edges,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -375,6 +523,180 @@ fn graph_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
+pub fn render_graph_report(export: &GraphExport) -> String {
+    let mut report = String::from("# GWiki Graph Report\n\n");
+    report.push_str(&format!("- Nodes: {}\n", export.nodes.len()));
+    report.push_str(&format!(
+        "- Edges: {}\n\n",
+        export.edges.links.len()
+            + export.edges.imports.len()
+            + export.edges.calls.len()
+            + export.edges.trust.len()
+            + export.edges.audit.len()
+    ));
+
+    report.push_str("## Degraded sources\n\n");
+    if export.degraded_sources.is_empty() {
+        report.push_str("- none\n\n");
+    } else {
+        for source in &export.degraded_sources {
+            report.push_str(&format!("- {source}\n"));
+        }
+        report.push('\n');
+    }
+
+    report.push_str("## Analytics\n\n");
+    report.push_str(&format!(
+        "- Communities: {}\n",
+        export.analytics.communities.len()
+    ));
+    if let Some(top) = export.analytics.centrality.first() {
+        report.push_str(&format!(
+            "- Top central node: {} (degree {})\n",
+            top.node.id, top.degree
+        ));
+    } else {
+        report.push_str("- Top central node: none\n");
+    }
+    report.push_str(&format!("- Bridges: {}\n", export.analytics.bridges.len()));
+    report.push_str(&format!(
+        "- Hotspots: {}\n\n",
+        export.analytics.hotspots.len()
+    ));
+
+    report.push_str("## Overview\n\n```mermaid\ngraph LR\n");
+    for node in &export.nodes {
+        report.push_str(&format!(
+            "    {}[\"{}\"]\n",
+            mermaid_node_id(&node.id),
+            mermaid_label(node)
+        ));
+    }
+    for edge in export
+        .edges
+        .links
+        .iter()
+        .chain(export.edges.trust.iter())
+        .chain(export.edges.audit.iter())
+    {
+        report.push_str(&format!(
+            "    {} --> {}\n",
+            mermaid_node_id(&edge.source),
+            mermaid_node_id(&edge.target)
+        ));
+    }
+    report.push_str("```\n\n");
+
+    report.push_str("## Edge classes\n\n");
+    report.push_str(&format!("- links: {}\n", export.edges.links.len()));
+    report.push_str(&format!("- imports: {}\n", export.edges.imports.len()));
+    report.push_str(&format!("- calls: {}\n", export.edges.calls.len()));
+    report.push_str(&format!("- trust: {}\n", export.edges.trust.len()));
+    report.push_str(&format!("- audit: {}\n", export.edges.audit.len()));
+    report
+}
+
+fn document_node(document: &WikiGraphDocument) -> GraphExportNode {
+    GraphExportNode {
+        id: document_id(&document.path),
+        kind: document_kind(&document.path),
+        scope_kind: document.scope.scope_kind().to_string(),
+        scope_id: document.scope.scope_value().to_string(),
+        path: graph_path(&document.path),
+        title: document.title.clone(),
+    }
+}
+
+fn source_node(source: &WikiGraphSource) -> GraphExportNode {
+    GraphExportNode {
+        id: source_node_id(&source.source_path),
+        kind: "source",
+        scope_kind: source.scope.scope_kind().to_string(),
+        scope_id: source.scope.scope_value().to_string(),
+        path: graph_path(&source.source_path),
+        title: None,
+    }
+}
+
+fn citation_node(source: &WikiGraphSource) -> GraphExportNode {
+    GraphExportNode {
+        id: format!(
+            "citation:{}:{}",
+            graph_path(&source.source_path),
+            graph_path(&source.document_path)
+        ),
+        kind: "citation",
+        scope_kind: source.scope.scope_kind().to_string(),
+        scope_id: source.scope.scope_value().to_string(),
+        path: graph_path(&source.source_path),
+        title: None,
+    }
+}
+
+fn document_id(path: &Path) -> String {
+    graph_path(path)
+}
+
+fn source_node_id(path: &Path) -> String {
+    format!("source:{}", graph_path(path))
+}
+
+fn unresolved_target_id(target: &str) -> String {
+    format!("unresolved:{target}")
+}
+
+fn document_kind(path: &Path) -> &'static str {
+    let graph_path = graph_path(path);
+    if graph_path.starts_with("wiki/") {
+        "wiki_page"
+    } else if graph_path.starts_with("code/") || is_code_path(path) {
+        "code"
+    } else {
+        "document"
+    }
+}
+
+fn is_code_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some(
+            "c" | "cc"
+                | "cpp"
+                | "cs"
+                | "go"
+                | "h"
+                | "hpp"
+                | "java"
+                | "js"
+                | "jsx"
+                | "kt"
+                | "php"
+                | "py"
+                | "rb"
+                | "rs"
+                | "scala"
+                | "sh"
+                | "sql"
+                | "swift"
+                | "ts"
+                | "tsx"
+        )
+    )
+}
+
+fn mermaid_node_id(id: &str) -> String {
+    id.chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect()
+}
+
+fn mermaid_label(node: &GraphExportNode) -> String {
+    node.title
+        .as_deref()
+        .unwrap_or(&node.path)
+        .replace('"', "\\\"")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,6 +735,7 @@ mod tests {
                 source_path: "raw/INDEX.md".into(),
                 document_path: "wiki/topics/rust.md".into(),
             }],
+            code_edges: Vec::new(),
         };
 
         let joined = graph_write_statements(&facts)
@@ -467,6 +790,7 @@ mod tests {
                 source_path: "raw/missing.md".into(),
                 document_path: "wiki/missing.md".into(),
             }],
+            code_edges: Vec::new(),
         };
 
         let statements = graph_write_statements(&facts);
@@ -509,6 +833,7 @@ mod tests {
                 ),
             ],
             sources: Vec::new(),
+            code_edges: Vec::new(),
         });
 
         let backlinks = graph.backlinks(
@@ -557,6 +882,7 @@ mod tests {
                 ),
             ],
             sources: Vec::new(),
+            code_edges: Vec::new(),
         });
 
         let suggestions = graph.link_suggestions(&SearchScope::project("project-1"), 10);
@@ -584,6 +910,7 @@ mod tests {
                 resolved_link(scope.clone(), "wiki/c.md", "A", "wiki/a.md"),
             ],
             sources: Vec::new(),
+            code_edges: Vec::new(),
         });
 
         let ranked = graph.related_paths_with_options(

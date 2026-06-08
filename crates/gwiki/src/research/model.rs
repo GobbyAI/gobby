@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use gobby_core::ai::{daemon, effective_route, text};
 use gobby_core::ai_context::{AiConfigSource, AiContext, AiContextOptions};
@@ -6,13 +6,16 @@ use gobby_core::config::{AiCapability, AiRouting};
 
 use super::AcceptedNoteDraft;
 use super::notes::write_accepted_note;
-use super::outcome::{dedup_strings, estimate_tokens, observation_from_outcome};
+use super::outcome::{
+    dedup_code_citations, dedup_strings, estimate_tokens, observation_from_outcome,
+};
 use crate::commands::{ask, index, read, search};
 use crate::research_loop::{
     ModelDecision, ModelRequest, NoteWriteOutcome, ResearchModel, ResearchModelError,
     ResearchNoteWriter, ResearchObservation, SourceIngestor, WikiAsk, WikiRead, WikiSearch,
     model_system_prompt, parse_model_action, render_model_prompt,
 };
+use crate::session::ResearchCodeCitation;
 use crate::{IngestFileOptions, ReadTarget, ScopeSelection, WikiError};
 
 pub(crate) struct GcoreResearchModel {
@@ -134,8 +137,44 @@ impl WikiSearch for CommandSearch {
             "search",
             format!("{} search hit(s) for {query}", output.results.len()),
         )
-        .with_sources(dedup_strings(sources)))
+        .with_sources(dedup_strings(sources))
+        .with_code_citations(code_citations_from_search_results(&output.results))
+        .with_degradations(output.degradations))
     }
+}
+
+fn code_citations_from_search_results(
+    results: &[crate::output::SearchResultOutput],
+) -> Vec<ResearchCodeCitation> {
+    let mut citations = Vec::new();
+    for hit in results {
+        if !is_code_result(&hit.wiki_page) {
+            continue;
+        }
+        let provenance = if hit.sources.is_empty() {
+            vec!["search".to_string()]
+        } else {
+            hit.sources.clone()
+        };
+        citations.push(ResearchCodeCitation {
+            file: hit.source_path.display().to_string(),
+            line: None,
+            symbol: hit.title.clone(),
+            provenance,
+        });
+    }
+    dedup_code_citations(citations)
+}
+
+fn is_code_result(path: &Path) -> bool {
+    normalized_path(path).starts_with("wiki/code/files/")
+}
+
+fn normalized_path(path: &Path) -> String {
+    path.components()
+        .collect::<PathBuf>()
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 pub(crate) struct CommandRead {

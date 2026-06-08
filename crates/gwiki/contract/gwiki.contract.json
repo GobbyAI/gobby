@@ -1,6 +1,6 @@
 {
   "tool": "gwiki",
-  "contract_version": 1,
+  "contract_version": 4,
   "summary": "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
   "global_flags": [
     {
@@ -181,16 +181,37 @@
         "scope",
         "query",
         "status",
+        "degraded",
+        "degraded_sources",
         "hits",
         "related_pages",
         "sources",
+        "code_edges",
+        "code_citations",
         "gaps",
         "stale_candidates",
         "suggested_questions",
         "warnings",
         "ai",
         "synthesis"
-      ]
+      ],
+      "hard_dependencies": [
+        "PostgreSQL"
+      ],
+      "optional_dependencies": [
+        "model synthesis",
+        "code graph",
+        "Qdrant+embeddings",
+        "FalkorDB"
+      ],
+      "multimodal": "none",
+      "degradation": {
+        "output_shape": "model off emits an extractive citation-list answer; signal loss falls back to wiki-only grounding",
+        "metadata_keys": [
+          "degraded",
+          "degraded_sources[]"
+        ]
+      }
     },
     {
       "name": "read",
@@ -495,7 +516,23 @@
         "changed_paths",
         "session_id",
         "status"
-      ]
+      ],
+      "hard_dependencies": [
+        "PostgreSQL"
+      ],
+      "optional_dependencies": [
+        "model multi-step synthesis loop",
+        "code graph/index",
+        "Qdrant+embeddings"
+      ],
+      "multimodal": "none",
+      "degradation": {
+        "output_shape": "model off emits a retrieval-only research scaffold with candidate sources and citations but no synthesized notes; code graph/index off emits docs-only output",
+        "metadata_keys": [
+          "accepted_notes[].degradation",
+          "report.degradation"
+        ]
+      }
     },
     {
       "name": "compile",
@@ -576,6 +613,54 @@
       ]
     },
     {
+      "name": "graph",
+      "summary": "Export unified wiki graph artifacts under outputs.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [],
+      "json_output_keys": [
+        "command",
+        "scope",
+        "artifacts"
+      ]
+    },
+    {
+      "name": "graph-context",
+      "summary": "Build a compact wiki graph context pack.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [],
+      "json_output_keys": [
+        "command",
+        "scope",
+        "context",
+        "source_bundle",
+        "code_edges",
+        "code_citations",
+        "trust",
+        "freshness",
+        "audit",
+        "warnings",
+        "degradation"
+      ],
+      "hard_dependencies": [
+        "PostgreSQL"
+      ],
+      "optional_dependencies": [
+        "FalkorDB",
+        "shared code graph"
+      ],
+      "multimodal": "none",
+      "degradation": {
+        "output_shape": "wiki-link-only neighborhood",
+        "metadata_keys": [
+          "warnings[]",
+          "degradation.degraded",
+          "degradation.degraded_sources[]"
+        ]
+      }
+    },
+    {
       "name": "health",
       "summary": "Write wiki health snapshots under meta/health.",
       "daemon_consumed": true,
@@ -588,6 +673,148 @@
         "json_path",
         "status"
       ]
+    },
+    {
+      "name": "librarian",
+      "summary": "Emit wiki upkeep proposals without rewriting canonical content.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [],
+      "json_output_keys": [
+        "command",
+        "scope",
+        "checks",
+        "suggested_tasks",
+        "suggested_patch_diffs",
+        "artifacts",
+        "trust",
+        "freshness",
+        "audit",
+        "sources",
+        "degradation",
+        "dependency_classification"
+      ],
+      "hard_dependencies": [
+        "PostgreSQL",
+        "vault"
+      ],
+      "optional_dependencies": [
+        "FalkorDB/code graph",
+        "Qdrant+embeddings",
+        "model"
+      ],
+      "multimodal": "none",
+      "degradation": {
+        "output_shape": "each check skipped independently with a note",
+        "metadata_keys": [
+          "checks[].available"
+        ]
+      }
+    },
+    {
+      "name": "review-report",
+      "summary": "Emit a review report for changed files, symbols, or a diff.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--file",
+          "takes_value": true,
+          "value_name": "PATH",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": true
+        },
+        {
+          "name": "--symbol",
+          "takes_value": true,
+          "value_name": "SYMBOL_ID",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": true
+        },
+        {
+          "name": "--diff",
+          "takes_value": true,
+          "value_name": "PATH",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--output",
+          "takes_value": true,
+          "value_name": "FILE",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "command",
+        "scope",
+        "change_set",
+        "findings",
+        "risky_shifts",
+        "trust",
+        "freshness",
+        "audit",
+        "sources",
+        "degraded",
+        "degraded_sources",
+        "degradation",
+        "artifacts",
+        "dependency_classification"
+      ],
+      "hard_dependencies": [
+        "PostgreSQL",
+        "change set"
+      ],
+      "optional_dependencies": [
+        "FalkorDB/code graph and analytics"
+      ],
+      "multimodal": "none",
+      "degradation": {
+        "output_shape": "report without risky-shift section",
+        "metadata_keys": [
+          "degraded",
+          "degraded_sources[]"
+        ]
+      }
+    },
+    {
+      "name": "citation-quality",
+      "summary": "Emit source citation quality checks for wiki content.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [],
+      "json_output_keys": [
+        "command",
+        "scope",
+        "sections",
+        "claims",
+        "citations",
+        "trust",
+        "freshness",
+        "audit",
+        "sources",
+        "degradation",
+        "dependency_classification"
+      ],
+      "hard_dependencies": [
+        "PostgreSQL"
+      ],
+      "optional_dependencies": [
+        "credibility signals",
+        "model contradiction detection"
+      ],
+      "multimodal": "none",
+      "degradation": {
+        "output_shape": "per-section skipped with a note",
+        "metadata_keys": [
+          "sections[].available"
+        ]
+      }
     },
     {
       "name": "sources",

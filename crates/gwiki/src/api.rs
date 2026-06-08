@@ -70,6 +70,9 @@ pub enum Command {
         scope: ScopeSelection,
         limit: usize,
     },
+    Benchmark {
+        scope: ScopeSelection,
+    },
     Research(research::ResearchOptions),
     Compile {
         topic: Option<String>,
@@ -83,6 +86,16 @@ pub enum Command {
         scope: ScopeSelection,
         command: exports::ExportCommand,
     },
+    Graph {
+        scope: ScopeSelection,
+    },
+    GraphContext {
+        scope: ScopeSelection,
+    },
+    ReviewReport {
+        scope: ScopeSelection,
+        options: ReviewReportOptions,
+    },
     Audit {
         scope: ScopeSelection,
     },
@@ -92,10 +105,16 @@ pub enum Command {
     Health {
         scope: ScopeSelection,
     },
+    Librarian {
+        scope: ScopeSelection,
+    },
     Status {
         scope: ScopeSelection,
     },
     Trust {
+        scope: ScopeSelection,
+    },
+    CitationQuality {
         scope: ScopeSelection,
     },
 }
@@ -133,6 +152,14 @@ pub struct IngestFileOptions {
     pub transcription_routing: Option<AiRouting>,
     pub vision_routing: Option<AiRouting>,
     pub text_routing: Option<AiRouting>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewReportOptions {
+    pub files: Vec<String>,
+    pub symbols: Vec<String>,
+    pub diff_path: Option<PathBuf>,
+    pub output: String,
 }
 
 impl IngestFileOptions {

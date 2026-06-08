@@ -247,7 +247,9 @@ fn is_indexable_vault_path(path: &Path) -> bool {
     let components = normal_components(path);
     matches!(
         components.as_slice(),
-        ["wiki", "sources", ..]
+        ["code", ..]
+            | ["knowledge", ..]
+            | ["wiki", "sources", ..]
             | ["wiki", "concepts", ..]
             | ["wiki", "topics", ..]
             | ["wiki", "code", ..]
@@ -260,6 +262,11 @@ fn document_kind(path: &Path) -> Option<WikiDocumentKind> {
     }
 
     match normal_components(path).as_slice() {
+        ["code", ..] => Some(WikiDocumentKind::CodeDoc),
+        ["knowledge", "sources", ..] => Some(WikiDocumentKind::SourceNote),
+        ["knowledge", "concepts", ..] => Some(WikiDocumentKind::Concept),
+        ["knowledge", "topics", ..] => Some(WikiDocumentKind::Topic),
+        ["knowledge", ..] => Some(WikiDocumentKind::Concept),
         ["wiki", "sources", ..] => Some(WikiDocumentKind::SourceNote),
         ["wiki", "concepts", ..] => Some(WikiDocumentKind::Concept),
         ["wiki", "topics", ..] => Some(WikiDocumentKind::Topic),
@@ -619,6 +626,39 @@ mod tests {
         );
         assert_eq!(store.links[&path][0].alias.as_deref(), Some("store docs"));
         assert_eq!(store.ingestions[0].event, WikiIngestionEvent::Added);
+    }
+
+    #[test]
+    fn unified_vault_indexes_code_root_wikilinks() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        write_file(
+            tempdir.path(),
+            "code/modules/src.md",
+            "---\nsource:\n  - file: src/lib.rs\n    ranges: [1-2]\nprovenance:\n  - file: src/lib.rs\n    ranges: [1-2]\ngenerated_by: gcode-codewiki\ntrust: generated\nfreshness: indexed\n---\n# src\n\nSee [[code/files/src/lib.rs|src/lib.rs]].\n",
+        );
+        write_file(
+            tempdir.path(),
+            "code/files/src/lib.rs.md",
+            "# src/lib.rs\n\nModule: [[code/modules/src|src]].\n",
+        );
+        let mut store = MemoryWikiStore::default();
+
+        index_vault(tempdir.path(), &mut store).expect("index unified vault");
+
+        let module_path = PathBuf::from("code/modules/src.md");
+        let file_path = PathBuf::from("code/files/src/lib.rs.md");
+        assert_eq!(
+            store.documents[&module_path].kind,
+            WikiDocumentKind::CodeDoc
+        );
+        assert_eq!(store.documents[&file_path].kind, WikiDocumentKind::CodeDoc);
+        assert_eq!(store.links[&module_path][0].target, "code/files/src/lib.rs");
+        assert_eq!(
+            store.links[&module_path][0].alias.as_deref(),
+            Some("src/lib.rs")
+        );
+        assert_eq!(store.links[&file_path][0].target, "code/modules/src");
+        assert_eq!(store.sources[&module_path].kind, WikiDocumentKind::CodeDoc);
     }
 
     #[test]

@@ -1,4 +1,8 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+use gobby_core::graph_analytics::{GraphAnalytics, analyze};
+
+use crate::graph::code_graph::GraphPayload;
 
 use super::RELATES_TO_CODE;
 use super::types::{
@@ -41,45 +45,94 @@ pub(super) fn summarize_hotspots(
     edges: &[ReportCodeEdge],
     top_n: usize,
 ) -> GraphReportHotspots {
+    gcore_hotspots_for_code_graph(nodes, edges, top_n)
+}
+
+fn gcore_hotspots_for_code_graph(
+    nodes: &[ReportNode],
+    edges: &[ReportCodeEdge],
+    top_n: usize,
+) -> GraphReportHotspots {
+    let graph = GraphPayload::analytics_graph_from_parts(
+        nodes
+            .iter()
+            .map(|node| (node.id.clone(), node.node_type.clone(), 1.0)),
+        edges.iter().map(|edge| {
+            (
+                edge.source.clone(),
+                edge.target.clone(),
+                edge.edge_type.clone(),
+            )
+        }),
+    );
+    let analytics = analyze(&graph);
     let mut degree = HashMap::<&str, DegreeStats>::new();
-    let mut incoming_calls = HashMap::<&str, usize>::new();
     for edge in edges {
         degree.entry(&edge.source).or_default().outgoing += 1;
         degree.entry(&edge.target).or_default().incoming += 1;
-        if edge.edge_type == "CALLS" {
-            *incoming_calls.entry(&edge.target).or_insert(0) += 1;
-        }
     }
 
     GraphReportHotspots {
-        high_degree_files: top_hotspots(nodes, &degree, top_n, |node| node.node_type == "file"),
-        high_degree_symbols: top_hotspots(nodes, &degree, top_n, |node| {
+        high_degree_files: analytics_top_hotspots(nodes, &analytics, &degree, top_n, |node| {
+            node.node_type == "file"
+        }),
+        high_degree_symbols: analytics_top_hotspots(nodes, &analytics, &degree, top_n, |node| {
             is_symbol_node(&node.node_type)
         }),
-        high_degree_modules: top_hotspots(nodes, &degree, top_n, |node| node.node_type == "module"),
-        incoming_call_hotspots: top_incoming_call_hotspots(nodes, &incoming_calls, top_n),
+        high_degree_modules: analytics_top_hotspots(nodes, &analytics, &degree, top_n, |node| {
+            node.node_type == "module"
+        }),
+        incoming_call_hotspots: gcore_incoming_call_hotspots(nodes, edges, top_n),
     }
 }
 
-fn top_hotspots(
+fn gcore_incoming_call_hotspots(
     nodes: &[ReportNode],
-    degree: &HashMap<&str, DegreeStats>,
+    edges: &[ReportCodeEdge],
     top_n: usize,
-    include: impl Fn(&ReportNode) -> bool,
 ) -> Vec<GraphHotspot> {
-    let mut hotspots = nodes
+    let node_by_id = nodes
         .iter()
-        .filter(|node| include(node))
-        .filter_map(|node| {
-            let stats = degree.get(node.id.as_str())?;
-            let total = stats.incoming + stats.outgoing;
-            (total > 0).then(|| GraphHotspot {
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
+    let call_edges = edges
+        .iter()
+        .enumerate()
+        .filter(|(_, edge)| edge.edge_type == "CALLS")
+        .collect::<Vec<_>>();
+    let graph = GraphPayload::analytics_graph_from_parts(
+        nodes
+            .iter()
+            .map(|node| (node.id.clone(), node.node_type.clone(), 1.0))
+            .chain(
+                call_edges
+                    .iter()
+                    .map(|(index, _)| (format!("call:{index}"), "call".to_string(), 1.0)),
+            ),
+        call_edges.iter().map(|(index, edge)| {
+            (
+                format!("call:{index}"),
+                edge.target.clone(),
+                edge.edge_type.clone(),
+            )
+        }),
+    );
+    let analytics = analyze(&graph);
+    let mut hotspots = analytics
+        .centrality
+        .iter()
+        .filter_map(|score| {
+            let node = node_by_id.get(score.node.id.as_str()).copied()?;
+            if !is_symbol_node(&node.node_type) || score.degree == 0 {
+                return None;
+            }
+            Some(GraphHotspot {
                 id: node.id.clone(),
                 name: node.name.clone(),
                 node_type: node.node_type.clone(),
-                degree: total,
-                incoming: stats.incoming,
-                outgoing: stats.outgoing,
+                degree: score.degree,
+                incoming: score.degree,
+                outgoing: 0,
                 file_path: node.file_path.clone(),
             })
         })
@@ -89,23 +142,34 @@ fn top_hotspots(
     hotspots
 }
 
-fn top_incoming_call_hotspots(
+fn analytics_top_hotspots(
     nodes: &[ReportNode],
-    incoming_calls: &HashMap<&str, usize>,
+    analytics: &GraphAnalytics,
+    degree: &HashMap<&str, DegreeStats>,
     top_n: usize,
+    include: impl Fn(&ReportNode) -> bool,
 ) -> Vec<GraphHotspot> {
-    let mut hotspots = nodes
+    let node_by_id = nodes
         .iter()
-        .filter(|node| is_symbol_node(&node.node_type))
-        .filter_map(|node| {
-            let incoming = incoming_calls.get(node.id.as_str()).copied().unwrap_or(0);
-            (incoming > 0).then(|| GraphHotspot {
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
+    let mut hotspots = analytics
+        .centrality
+        .iter()
+        .filter_map(|score| {
+            let node = node_by_id.get(score.node.id.as_str()).copied()?;
+            if !include(node) {
+                return None;
+            }
+            let stats = degree.get(node.id.as_str())?;
+            let total = stats.incoming + stats.outgoing;
+            (total > 0).then(|| GraphHotspot {
                 id: node.id.clone(),
                 name: node.name.clone(),
                 node_type: node.node_type.clone(),
-                degree: incoming,
-                incoming,
-                outgoing: 0,
+                degree: total,
+                incoming: stats.incoming,
+                outgoing: stats.outgoing,
                 file_path: node.file_path.clone(),
             })
         })
@@ -154,6 +218,50 @@ pub(super) fn target_frequencies(
 pub(super) fn summarize_bridge_edges(
     edges: &[BridgeEdgeHypothesis],
 ) -> Option<BridgeReportSummary> {
+    gcore_bridge_summary_for_edges(edges)
+}
+
+fn gcore_bridge_summary_for_edges(edges: &[BridgeEdgeHypothesis]) -> Option<BridgeReportSummary> {
+    let graph = GraphPayload::analytics_graph_from_parts(
+        bridge_analytics_nodes(edges),
+        edges.iter().map(|edge| {
+            (
+                edge.source_id.clone(),
+                edge.target_symbol_id.clone(),
+                edge.relation.clone(),
+            )
+        }),
+    );
+    let analytics = analyze(&graph);
+    let unexpected_links = analytics
+        .unexpected_links
+        .iter()
+        .map(|edge| {
+            (
+                edge.source.as_str(),
+                edge.target.as_str(),
+                edge.kind.as_str(),
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    let unexpected_bridge_edges = edges
+        .iter()
+        .filter(|edge| {
+            unexpected_links.contains(&(
+                edge.source_id.as_str(),
+                edge.target_symbol_id.as_str(),
+                edge.relation.as_str(),
+            ))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+
+    bridge_summary_from_analytics_edges(&unexpected_bridge_edges)
+}
+
+fn bridge_summary_from_analytics_edges(
+    edges: &[BridgeEdgeHypothesis],
+) -> Option<BridgeReportSummary> {
     if edges.is_empty() {
         return None;
     }
@@ -191,6 +299,18 @@ pub(super) fn summarize_bridge_edges(
             max: confidence_max,
         }),
     })
+}
+
+fn bridge_analytics_nodes(edges: &[BridgeEdgeHypothesis]) -> Vec<(String, String, f64)> {
+    let mut nodes = BTreeMap::<String, String>::new();
+    for edge in edges {
+        nodes.insert(edge.source_id.clone(), "knowledge".to_string());
+        nodes.insert(edge.target_symbol_id.clone(), "symbol".to_string());
+    }
+    nodes
+        .into_iter()
+        .map(|(id, kind)| (id, kind, 1.0))
+        .collect()
 }
 
 /// Rebuild through `BridgeEdgeHypothesis::new` so inferred relation label,

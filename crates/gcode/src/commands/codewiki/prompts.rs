@@ -6,6 +6,7 @@ pub const SYMBOL_SYSTEM: &str = "You write concise API reference notes. Return o
 pub const FILE_SYSTEM: &str = "You write concise file-level code documentation. Return a short purpose summary that reuses the supplied symbol summaries. Do not include markdown fences.";
 pub const MODULE_SYSTEM: &str = "You write concise module overviews for code documentation. Return a short overview from the supplied child summaries. Do not include markdown fences.";
 pub const REPO_SYSTEM: &str = "You write concise repository overviews for code documentation. Return a short overview from the supplied module summaries. Do not include markdown fences.";
+pub const ARCHITECTURE_SYSTEM: &str = "You write concise architecture documentation. Return one sentence naming the subsystem's responsibility from the supplied lower-level summaries. Do not include markdown fences.";
 
 pub fn symbol_prompt(symbol: &Symbol) -> String {
     let mut prompt = format!(
@@ -106,6 +107,41 @@ pub fn repo_prompt(modules: &[ChildSummary], files: &[ChildSummary]) -> String {
     } else {
         for file in files {
             let _ = writeln!(prompt, "- {}: {}", file.name, file.summary);
+        }
+    }
+    prompt
+}
+
+pub fn architecture_prompt(
+    subsystem: &str,
+    files: &[ChildSummary],
+    modules: &[ChildSummary],
+    components: &[String],
+) -> String {
+    let mut prompt = format!(
+        "Summarize this subsystem's responsibility for a repository architecture overview.\n\nSubsystem: {subsystem}\n\nFiles:\n"
+    );
+    if files.is_empty() {
+        prompt.push_str("- No direct files.\n");
+    } else {
+        for file in files {
+            let _ = writeln!(prompt, "- {}: {}", file.name, file.summary);
+        }
+    }
+    prompt.push_str("\nChild modules:\n");
+    if modules.is_empty() {
+        prompt.push_str("- No child modules.\n");
+    } else {
+        for module in modules {
+            let _ = writeln!(prompt, "- {}: {}", module.name, module.summary);
+        }
+    }
+    prompt.push_str("\nStable component IDs:\n");
+    if components.is_empty() {
+        prompt.push_str("- No indexed components.\n");
+    } else {
+        for component in components {
+            let _ = writeln!(prompt, "- {component}");
         }
     }
     prompt

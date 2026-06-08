@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 #[path = "../common/mod.rs"]
 mod common;
 
+mod benchmark;
 mod config_postgres;
 mod ingest_refresh;
 mod public_smoke;
@@ -156,6 +157,8 @@ citation: Rust Reference, Ownership
     session.accepted_notes.push(AcceptedResearchNote {
         title: "Ownership evidence".to_string(),
         path: note_path,
+        code_citations: Vec::new(),
+        degradation: None,
     });
     session.save_checkpoint().expect("save checkpoint");
 }

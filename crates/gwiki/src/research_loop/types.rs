@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::WikiError;
 use crate::research::{AcceptedNoteDraft, ResearchGap, ResearchStopReason};
-use crate::session::AcceptedResearchNote;
+use crate::session::{AcceptedResearchNote, ResearchCodeCitation};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResearchLoopConfig {
@@ -134,6 +134,8 @@ pub(crate) struct ResearchObservation {
     pub action: String,
     pub summary: String,
     pub sources: Vec<String>,
+    pub code_citations: Vec<ResearchCodeCitation>,
+    pub degradations: Vec<String>,
     pub changed_paths: Vec<PathBuf>,
 }
 
@@ -143,12 +145,24 @@ impl ResearchObservation {
             action: action.into(),
             summary: summary.into(),
             sources: Vec::new(),
+            code_citations: Vec::new(),
+            degradations: Vec::new(),
             changed_paths: Vec::new(),
         }
     }
 
     pub(crate) fn with_sources(mut self, sources: Vec<String>) -> Self {
         self.sources = sources;
+        self
+    }
+
+    pub(crate) fn with_code_citations(mut self, code_citations: Vec<ResearchCodeCitation>) -> Self {
+        self.code_citations = code_citations;
+        self
+    }
+
+    pub(crate) fn with_degradations(mut self, degradations: Vec<String>) -> Self {
+        self.degradations = degradations;
         self
     }
 
@@ -171,6 +185,9 @@ pub(crate) struct ResearchLoopResult {
     pub tokens_used: usize,
     pub write_conflict: bool,
     pub sources_added: Vec<String>,
+    pub candidate_sources: Vec<String>,
+    pub code_citations: Vec<ResearchCodeCitation>,
+    pub degradation: Option<String>,
     pub gaps: Vec<ResearchGap>,
     pub warnings: Vec<String>,
     pub changed_paths: Vec<PathBuf>,

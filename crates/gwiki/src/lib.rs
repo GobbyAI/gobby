@@ -13,7 +13,11 @@ pub(crate) mod test_http;
 #[allow(dead_code)]
 pub(crate) mod audit;
 #[allow(dead_code)]
+pub(crate) mod benchmark;
+#[allow(dead_code)]
 pub(crate) mod citations;
+#[allow(dead_code)]
+pub(crate) mod code_graph;
 #[allow(dead_code)]
 pub(crate) mod collect;
 #[allow(dead_code)]
@@ -41,6 +45,8 @@ pub(crate) mod health;
 pub(crate) mod indexer;
 #[allow(dead_code)]
 pub(crate) mod ingest;
+#[allow(dead_code)]
+pub(crate) mod librarian;
 #[allow(dead_code)]
 pub(crate) mod links;
 #[allow(dead_code)]
@@ -82,8 +88,8 @@ pub(crate) mod video;
 pub(crate) mod vision;
 
 pub use api::{
-    Command, CommandOutcome, CommandResult, IngestFileOptions, ReadTarget, ScopeIdentity,
-    ScopeKind, ScopeSelection, SetupOptions,
+    Command, CommandOutcome, CommandResult, IngestFileOptions, ReadTarget, ReviewReportOptions,
+    ScopeIdentity, ScopeKind, ScopeSelection, SetupOptions,
 };
 pub use error::WikiError;
 pub use runner::{resolve_research_scope, run};

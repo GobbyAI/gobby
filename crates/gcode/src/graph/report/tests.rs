@@ -4,8 +4,10 @@ use std::path::PathBuf;
 
 use super::generation::generate_report_from_snapshot;
 use super::render::render_markdown;
+use super::summary::{summarize_bridge_edges, summarize_hotspots};
 use super::types::{
-    BridgeEdgeInput, GraphHotspot, ReportCodeEdge, ReportGraphSnapshot, ReportNode,
+    BridgeEdgeInput, BridgeReportSummary, ConfidenceRange, GraphHotspot, GraphReportHotspots,
+    NamedCount, ReportCodeEdge, ReportGraphSnapshot, ReportNode,
 };
 use super::*;
 
@@ -59,6 +61,110 @@ fn report_shape() {
             .as_array()
             .unwrap()
             .is_empty()
+    );
+}
+
+#[test]
+fn graph_report_hotspots_and_bridge_summary_match_pinned_output() {
+    let snapshot = ReportGraphSnapshot {
+        nodes: vec![
+            ReportNode::new("src/lib.rs", "src/lib.rs", "file"),
+            ReportNode::new("mod:api", "api", "module"),
+            ReportNode::new("sym:handler", "handler", "function").with_file_path("src/lib.rs"),
+            ReportNode::new("sym:parse", "parse", "function").with_file_path("src/lib.rs"),
+            ReportNode::new("unresolved:do_work", "do_work", "unresolved"),
+            ReportNode::new("external:serde_json", "serde_json", "external"),
+        ],
+        code_edges: vec![
+            ReportCodeEdge::new("src/lib.rs", "sym:handler", "DEFINES"),
+            ReportCodeEdge::new("src/lib.rs", "mod:api", "IMPORTS"),
+            ReportCodeEdge::new("sym:handler", "sym:parse", "CALLS"),
+            ReportCodeEdge::new("sym:parse", "unresolved:do_work", "CALLS"),
+            ReportCodeEdge::new("sym:handler", "external:serde_json", "CALLS"),
+        ],
+        bridge_edges: BridgeEdgeInput::available(vec![BridgeEdgeHypothesis::inferred(
+            "memory-1",
+            "sym:handler",
+            RELATES_TO_CODE,
+            "gobby-memory",
+            Some(0.72),
+        )]),
+        ..ReportGraphSnapshot::default()
+    };
+
+    let bridge_edges = match snapshot.bridge_edges.clone() {
+        BridgeEdgeInput::Available(edges) => edges,
+        BridgeEdgeInput::Unavailable(_) => vec![],
+    };
+
+    assert_eq!(
+        summarize_hotspots(&snapshot.nodes, &snapshot.code_edges, DEFAULT_TOP_LIMIT),
+        GraphReportHotspots {
+            high_degree_files: vec![GraphHotspot {
+                id: "src/lib.rs".to_string(),
+                name: "src/lib.rs".to_string(),
+                node_type: "file".to_string(),
+                degree: 2,
+                incoming: 0,
+                outgoing: 2,
+                file_path: None,
+            }],
+            high_degree_symbols: vec![
+                GraphHotspot {
+                    id: "sym:handler".to_string(),
+                    name: "handler".to_string(),
+                    node_type: "function".to_string(),
+                    degree: 3,
+                    incoming: 1,
+                    outgoing: 2,
+                    file_path: Some("src/lib.rs".to_string()),
+                },
+                GraphHotspot {
+                    id: "sym:parse".to_string(),
+                    name: "parse".to_string(),
+                    node_type: "function".to_string(),
+                    degree: 2,
+                    incoming: 1,
+                    outgoing: 1,
+                    file_path: Some("src/lib.rs".to_string()),
+                },
+            ],
+            high_degree_modules: vec![GraphHotspot {
+                id: "mod:api".to_string(),
+                name: "api".to_string(),
+                node_type: "module".to_string(),
+                degree: 1,
+                incoming: 1,
+                outgoing: 0,
+                file_path: None,
+            }],
+            incoming_call_hotspots: vec![GraphHotspot {
+                id: "sym:parse".to_string(),
+                name: "parse".to_string(),
+                node_type: "function".to_string(),
+                degree: 1,
+                incoming: 1,
+                outgoing: 0,
+                file_path: Some("src/lib.rs".to_string()),
+            }],
+        }
+    );
+    assert_eq!(
+        summarize_bridge_edges(&bridge_edges),
+        Some(BridgeReportSummary {
+            relation: RELATES_TO_CODE.to_string(),
+            edge_count: 1,
+            inferred: true,
+            read_only: true,
+            source_system_counts: vec![NamedCount {
+                name: "gobby-memory".to_string(),
+                count: 1,
+            }],
+            confidence_range: Some(ConfidenceRange {
+                min: 0.72,
+                max: 0.72,
+            }),
+        })
     );
 }
 

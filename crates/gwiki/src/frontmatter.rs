@@ -19,6 +19,12 @@ pub struct WikiFrontmatter {
     pub tags: Vec<String>,
     pub source_kind: Option<WikiSourceKind>,
     pub captured_from: Option<String>,
+    pub source: Option<Value>,
+    pub provenance: Option<Value>,
+    pub generated_by: Option<String>,
+    pub trust: Option<String>,
+    pub freshness: Option<String>,
+    pub indexed_at: Option<String>,
     pub unknown: BTreeMap<String, Value>,
 }
 
@@ -30,6 +36,12 @@ impl WikiFrontmatter {
             tags: Vec::new(),
             source_kind: None,
             captured_from: None,
+            source: None,
+            provenance: None,
+            generated_by: None,
+            trust: None,
+            freshness: None,
+            indexed_at: None,
             unknown: BTreeMap::new(),
         }
     }
@@ -75,6 +87,27 @@ impl WikiFrontmatter {
                 "captured_from".to_string(),
                 Value::String(captured_from.clone()),
             );
+        }
+        if let Some(source) = &self.source {
+            object.insert("source".to_string(), source.clone());
+        }
+        if let Some(provenance) = &self.provenance {
+            object.insert("provenance".to_string(), provenance.clone());
+        }
+        if let Some(generated_by) = &self.generated_by {
+            object.insert(
+                "generated_by".to_string(),
+                Value::String(generated_by.clone()),
+            );
+        }
+        if let Some(trust) = &self.trust {
+            object.insert("trust".to_string(), Value::String(trust.clone()));
+        }
+        if let Some(freshness) = &self.freshness {
+            object.insert("freshness".to_string(), Value::String(freshness.clone()));
+        }
+        if let Some(indexed_at) = &self.indexed_at {
+            object.insert("indexed_at".to_string(), Value::String(indexed_at.clone()));
         }
         Value::Object(object)
     }
@@ -132,6 +165,20 @@ pub fn parse_frontmatter(markdown: &str) -> Result<ParsedFrontmatter<'_>, Frontm
         body: &markdown[body_start..],
         metadata,
     })
+}
+
+pub fn mark_stale_markdown(markdown: &str, reason: &str) -> Result<String, FrontmatterError> {
+    let mut parsed = parse_frontmatter(markdown)?;
+    parsed
+        .metadata
+        .unknown
+        .insert("stale".to_string(), Value::Bool(true));
+    parsed.metadata.unknown.insert(
+        "stale_reason".to_string(),
+        Value::String(reason.trim().to_string()),
+    );
+    let frontmatter = serialize_yaml_frontmatter(&parsed.metadata)?;
+    Ok(format!("---\n{frontmatter}---\n{}", parsed.body))
 }
 
 impl FrontmatterError {
@@ -229,6 +276,22 @@ fn parse_metadata(
     Ok(frontmatter_from_object(object))
 }
 
+fn serialize_yaml_frontmatter(metadata: &WikiFrontmatter) -> Result<String, FrontmatterError> {
+    let mut yaml = serde_yaml::to_string(&metadata.as_json()).map_err(|error| {
+        FrontmatterError::new(format!("failed to serialize YAML frontmatter: {error}"))
+    })?;
+    if let Some(stripped) = yaml.strip_prefix("---\n") {
+        yaml = stripped.to_string();
+    }
+    if let Some(stripped) = yaml.strip_suffix("...\n") {
+        yaml = stripped.to_string();
+    }
+    if !yaml.ends_with('\n') {
+        yaml.push('\n');
+    }
+    Ok(yaml)
+}
+
 fn parse_yaml(raw: &str) -> Result<Value, FrontmatterError> {
     if raw.trim().is_empty() {
         return Ok(Value::Object(Map::new()));
@@ -274,10 +337,30 @@ fn frontmatter_from_object(mut object: Map<String, Value>) -> WikiFrontmatter {
         .or_else(|| object.remove("kind"))
         .and_then(|value| string_value(&value))
         .and_then(|value| parse_source_kind(&value));
+    let source = object.remove("source");
     let captured_from = object
         .remove("captured_from")
-        .or_else(|| object.remove("source"))
         .and_then(|value| string_value(&value));
+    let provenance = object.remove("provenance");
+    let generated_by = object
+        .remove("generated_by")
+        .and_then(|value| string_value(&value));
+    let trust = object
+        .remove("trust")
+        .and_then(|value| string_value(&value));
+    let freshness = object
+        .remove("freshness")
+        .and_then(|value| string_value(&value));
+    let indexed_at = object
+        .remove("indexed_at")
+        .and_then(|value| string_value(&value));
+    let legacy_source = object
+        .get("source_files")
+        .cloned()
+        .or_else(|| object.get("sources").cloned());
+    let captured_from = captured_from.or_else(|| source.as_ref().and_then(string_value));
+    let source = source.or_else(|| legacy_source.clone());
+    let provenance = provenance.or(legacy_source);
 
     WikiFrontmatter {
         title,
@@ -285,6 +368,12 @@ fn frontmatter_from_object(mut object: Map<String, Value>) -> WikiFrontmatter {
         tags,
         source_kind,
         captured_from,
+        source,
+        provenance,
+        generated_by,
+        trust,
+        freshness,
+        indexed_at,
         unknown: object.into_iter().collect(),
     }
 }
@@ -417,5 +506,107 @@ mod tests {
             parsed.metadata.unknown.get("extra").and_then(Value::as_str),
             Some("preserved")
         );
+    }
+
+    #[test]
+    fn frontmatter_migration_normalizes_legacy_source_files_without_rewriting() {
+        let markdown = concat!(
+            "---\n",
+            "title: Legacy Code Page\n",
+            "source_files:\n",
+            "  - file: src/lib.rs\n",
+            "    ranges:\n",
+            "      - 7-9\n",
+            "---\n",
+            "# Body\n",
+        );
+
+        let parsed = parse_frontmatter(markdown).expect("parse legacy frontmatter");
+
+        let source = parsed
+            .metadata
+            .source
+            .as_ref()
+            .expect("legacy source_files normalized to source");
+        assert_eq!(
+            source,
+            parsed.metadata.provenance.as_ref().expect("provenance")
+        );
+        assert_eq!(
+            source
+                .as_array()
+                .and_then(|items| items.first())
+                .and_then(|item| item.get("file"))
+                .and_then(Value::as_str),
+            Some("src/lib.rs")
+        );
+        assert!(parsed.metadata.unknown.contains_key("source_files"));
+        assert_eq!(parsed.body, "# Body\n");
+        assert!(markdown[..parsed.body_start].contains("source_files:"));
+    }
+
+    #[test]
+    fn frontmatter_migration_parses_shared_contract_keys() {
+        let markdown = concat!(
+            "---\n",
+            "title: Code Page\n",
+            "source:\n",
+            "  - file: src/lib.rs\n",
+            "    ranges: [7-9]\n",
+            "provenance:\n",
+            "  - file: src/lib.rs\n",
+            "    ranges: [7-9]\n",
+            "generated_by: gcode-codewiki\n",
+            "trust: generated\n",
+            "freshness: indexed\n",
+            "---\n",
+            "# Body\n",
+        );
+
+        let parsed = parse_frontmatter(markdown).expect("parse shared frontmatter");
+
+        assert_eq!(
+            parsed.metadata.generated_by.as_deref(),
+            Some("gcode-codewiki")
+        );
+        assert_eq!(parsed.metadata.trust.as_deref(), Some("generated"));
+        assert_eq!(parsed.metadata.freshness.as_deref(), Some("indexed"));
+        assert!(parsed.metadata.source.is_some());
+        assert!(parsed.metadata.provenance.is_some());
+        assert!(!parsed.metadata.unknown.contains_key("source"));
+        assert!(!parsed.metadata.unknown.contains_key("provenance"));
+    }
+
+    #[test]
+    fn change_triggered_refresh_marks_page_stale_with_reason() {
+        let markdown = concat!(
+            "---\n",
+            "title: Code Page\n",
+            "generated_by: gcode-codewiki\n",
+            "---\n",
+            "# Code Page\n",
+        );
+
+        let marked = mark_stale_markdown(markdown, "src/lib.rs changed").expect("mark stale");
+        let parsed = parse_frontmatter(&marked).expect("parse marked markdown");
+
+        assert_eq!(
+            parsed
+                .metadata
+                .unknown
+                .get("stale")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            parsed
+                .metadata
+                .unknown
+                .get("stale_reason")
+                .and_then(Value::as_str),
+            Some("src/lib.rs changed")
+        );
+        assert_eq!(parsed.metadata.title.as_deref(), Some("Code Page"));
+        assert_eq!(parsed.body, "# Code Page\n");
     }
 }

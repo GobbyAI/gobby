@@ -284,6 +284,8 @@ mod tests {
             .push(crate::session::AcceptedResearchNote {
                 title: "Missing".to_string(),
                 path: PathBuf::from("raw/research/missing.md"),
+                code_citations: Vec::new(),
+                degradation: None,
             });
 
         let error = collect_accepted_sources(&session).expect_err("missing note must fail");

@@ -18,6 +18,7 @@ use crate::visibility;
 
 const DEFAULT_OUT_DIR: &str = "codewiki";
 const CODEWIKI_META_PATH: &str = "_meta/codewiki.json";
+const OWNERSHIP_META_PATH: &str = "_meta/ownership.json";
 const MAX_MERMAID_HOPS: usize = 2;
 const MAX_MERMAID_EDGES: usize = 20;
 const MAX_EDGE_LIMIT: usize = 100_000;
@@ -26,13 +27,17 @@ mod build;
 mod cluster;
 mod graph;
 mod io;
+mod ownership;
 mod paths;
 mod prompts;
 mod render;
 mod text;
 
 // Document builders.
-pub(crate) use build::{build_file_doc, build_module_docs};
+pub(crate) use build::{
+    build_architecture_doc, build_codewiki_changes_doc, build_codewiki_index_snapshot,
+    build_file_doc, build_hotspots_doc, build_module_docs, build_onboarding_doc,
+};
 // Module clustering and graph-to-file helpers.
 pub(crate) use cluster::{
     cluster_file_modules, files_for_import_target, first_component_for_file,
@@ -44,6 +49,7 @@ pub(crate) use cluster::{common_module_for_files, find_file_root};
 pub(crate) use graph::fetch_codewiki_graph_edges;
 #[cfg(test)]
 pub(crate) use graph::{codewiki_call_edges_query, codewiki_import_edges_query};
+pub(crate) use ownership::{OwnershipMeta, OwnershipOptions, build_ownership_doc};
 // Markdown path and wikilink helpers.
 pub(crate) use paths::{
     component_label, direct_child_modules, file_doc_path, file_wikilink, in_scope, inline_code,
@@ -52,16 +58,20 @@ pub(crate) use paths::{
 };
 // Rendered markdown and graph diagrams.
 pub(crate) use render::{
-    build_repo_doc, render_file_doc, render_module_call_mermaid, render_module_dependency_mermaid,
-    render_module_doc,
+    build_repo_doc, render_architecture_dependency_mermaid, render_architecture_doc,
+    render_file_doc, render_hotspots_doc, render_module_call_mermaid,
+    render_module_dependency_mermaid, render_module_doc, render_onboarding_doc,
 };
 // AI and structural text helpers.
 pub(crate) use text::{
-    citation_list, collect_link_spans, frontmatter, ground_text, maybe_generate,
-    resolve_text_generator, structural_file_summary, structural_module_summary,
+    citation_list, collect_link_spans, frontmatter, frontmatter_with_degradation, ground_text,
+    maybe_generate, resolve_text_generator, structural_file_summary, structural_module_summary,
     structural_repo_summary, structural_symbol_purpose, write_section,
 };
 
+pub(crate) use io::{
+    read_ownership_meta, write_incremental_doc_set_with_snapshot, write_ownership_meta,
+};
 pub use io::{write_doc_set, write_incremental_doc_set};
 
 #[derive(Debug, Clone)]
@@ -178,6 +188,69 @@ pub(crate) struct ModuleDoc {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct ArchitectureDoc {
+    source_spans: Vec<SourceSpan>,
+    subsystems: Vec<ArchitectureSubsystem>,
+    dependency_diagram: Option<String>,
+    degraded_sources: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ArchitectureSubsystem {
+    module: String,
+    responsibility: String,
+    source_spans: Vec<SourceSpan>,
+}
+
+pub(crate) struct OnboardingDoc {
+    source_spans: Vec<SourceSpan>,
+    entry_points: Vec<OnboardingEntryPoint>,
+    reading_order: Vec<OnboardingStep>,
+    degraded_sources: Vec<String>,
+}
+
+pub(crate) struct OnboardingEntryPoint {
+    link: String,
+    description: String,
+    source_span: SourceSpan,
+}
+
+pub(crate) struct OnboardingStep {
+    module: String,
+    summary: String,
+    degree: usize,
+    score: f64,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct HotspotsDoc {
+    source_spans: Vec<SourceSpan>,
+    hotspots: Vec<HotspotFinding>,
+    god_nodes: Vec<HotspotFinding>,
+    bridges: Vec<HotspotFinding>,
+    degraded_sources: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct HotspotFinding {
+    node: HotspotNode,
+    degree: Option<usize>,
+    score: Option<f64>,
+    frequency: Option<usize>,
+    weight: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct HotspotNode {
+    id: String,
+    kind: String,
+    label: String,
+    wikilink: String,
+    file_wikilink: Option<String>,
+    source_span: Option<SourceSpan>,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct FileLink {
     path: String,
     summary: String,
@@ -217,11 +290,38 @@ pub struct CodewikiRunSummary {
 pub(crate) struct CodewikiMeta {
     docs: BTreeMap<String, CodewikiDocMeta>,
     generated_docs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    index_snapshot: Option<CodewikiIndexSnapshot>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct CodewikiDocMeta {
     source_hashes: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct CodewikiIndexSnapshot {
+    files: BTreeMap<String, CodewikiFileSnapshot>,
+    symbols: BTreeMap<String, CodewikiSymbolSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    graph_neighborhoods: Option<BTreeMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    degraded_sources: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct CodewikiFileSnapshot {
+    content_hash: String,
+    symbol_count: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct CodewikiSymbolSnapshot {
+    file_path: String,
+    name: String,
+    qualified_name: String,
+    kind: String,
+    line_start: usize,
 }
 
 pub type TextGenerator<'a> = dyn FnMut(&str, &str) -> Option<String> + 'a;
@@ -282,22 +382,41 @@ pub fn run(
     };
     let mut generator = resolve_text_generator(ctx, ai);
     let ai_enabled = generator.is_some();
-    let docs = generate_hierarchical_docs(&input, generator.as_deref_mut());
+    let out_dir = out.unwrap_or_else(|| DEFAULT_OUT_DIR.to_string());
+    let out_path = Path::new(&out_dir);
+    let previous_meta = io::read_codewiki_meta(out_path)?;
+    let index_snapshot = build_codewiki_index_snapshot(&ctx.project_root, &input)?;
+    let mut ownership_meta = read_ownership_meta(out_path)?;
+    let mut docs = generate_hierarchical_docs_with_ownership(
+        &input,
+        &ctx.project_root,
+        &mut ownership_meta,
+        generator.as_deref_mut(),
+    )?;
+    docs.push((
+        "code/_changes.md".to_string(),
+        build_codewiki_changes_doc(previous_meta.index_snapshot.as_ref(), &index_snapshot),
+    ));
     let module_count = docs
         .iter()
-        .filter(|(path, _)| path.starts_with("modules/"))
+        .filter(|(path, _)| path.starts_with("code/modules/"))
         .count();
     let file_count = docs
         .iter()
-        .filter(|(path, _)| path.starts_with("files/"))
+        .filter(|(path, _)| path.starts_with("code/files/"))
         .count();
     let symbol_count = input
         .symbols
         .iter()
         .filter(|symbol| is_core_file(&symbol.file_path))
         .count();
-    let out_dir = out.unwrap_or_else(|| DEFAULT_OUT_DIR.to_string());
-    let changed_paths = write_incremental_doc_set(&ctx.project_root, Path::new(&out_dir), &docs)?;
+    let changed_paths = write_incremental_doc_set_with_snapshot(
+        &ctx.project_root,
+        out_path,
+        &docs,
+        Some(index_snapshot),
+    )?;
+    write_ownership_meta(out_path, &ownership_meta)?;
     let generated_pages = docs.len();
     let skipped = generated_pages.saturating_sub(changed_paths.len());
 
@@ -343,6 +462,23 @@ fn generate_hierarchical_docs_with_graph_availability(
     input: &CodewikiInput,
     mut generate: Option<&mut TextGenerator<'_>>,
 ) -> Vec<(String, String)> {
+    generate_hierarchical_docs_core(input, None, &mut generate).expect("ownership disabled")
+}
+
+fn generate_hierarchical_docs_with_ownership(
+    input: &CodewikiInput,
+    project_root: &Path,
+    ownership_meta: &mut OwnershipMeta,
+    mut generate: Option<&mut TextGenerator<'_>>,
+) -> anyhow::Result<Vec<(String, String)>> {
+    generate_hierarchical_docs_core(input, Some((project_root, ownership_meta)), &mut generate)
+}
+
+fn generate_hierarchical_docs_core(
+    input: &CodewikiInput,
+    ownership: Option<(&Path, &mut OwnershipMeta)>,
+    generate: &mut Option<&mut TextGenerator<'_>>,
+) -> anyhow::Result<Vec<(String, String)>> {
     let mut files = input
         .files
         .iter()
@@ -381,7 +517,7 @@ fn generate_hierarchical_docs_with_graph_availability(
                     .cloned()
                     .unwrap_or_else(|| module_for_file(file)),
                 symbols_by_file.remove(file).unwrap_or_default(),
-                &mut generate,
+                generate,
             )
         })
         .collect::<Vec<_>>();
@@ -389,20 +525,63 @@ fn generate_hierarchical_docs_with_graph_availability(
         &file_docs,
         &input.graph_edges,
         input.graph_availability,
-        &mut generate,
+        generate,
     );
-    let repo_doc = build_repo_doc(&file_docs, &module_docs, &mut generate);
+    let repo_doc = build_repo_doc(&file_docs, &module_docs, generate);
+    let architecture_doc = build_architecture_doc(
+        &file_docs,
+        &module_docs,
+        &input.graph_edges,
+        input.graph_availability,
+        generate,
+    );
+    let onboarding_doc = build_onboarding_doc(
+        &file_docs,
+        &module_docs,
+        &input.graph_edges,
+        input.graph_availability,
+    );
+    let hotspots_doc = build_hotspots_doc(&file_docs, &input.graph_edges, input.graph_availability);
 
-    let mut docs = Vec::new();
-    docs.push(("repo.md".to_string(), repo_doc));
+    let mut docs = vec![
+        ("code/repo.md".to_string(), repo_doc),
+        (
+            "code/_onboarding.md".to_string(),
+            render_onboarding_doc(&onboarding_doc),
+        ),
+        (
+            "code/_architecture.md".to_string(),
+            render_architecture_doc(&architecture_doc),
+        ),
+        (
+            "code/_hotspots.md".to_string(),
+            render_hotspots_doc(&hotspots_doc),
+        ),
+    ];
+    if let Some((project_root, ownership_meta)) = ownership {
+        docs.push((
+            "code/_ownership.md".to_string(),
+            build_ownership_doc(
+                project_root,
+                &files,
+                &file_modules,
+                ownership_meta,
+                OwnershipOptions::default(),
+            )?,
+        ));
+    }
     for module in &module_docs {
         docs.push((module_doc_path(&module.module), render_module_doc(module)));
     }
     for file in &file_docs {
         docs.push((file_doc_path(&file.path), render_file_doc(file)));
     }
-    docs
+    Ok(docs)
 }
 
+#[cfg(test)]
+mod hotspots_tests;
+#[cfg(test)]
+mod onboarding_tests;
 #[cfg(test)]
 mod tests;

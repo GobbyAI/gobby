@@ -1,16 +1,22 @@
 pub(crate) mod ask;
 pub(crate) mod audit;
 pub(crate) mod backlinks;
+pub(crate) mod benchmark;
+pub(crate) mod citation_quality;
 pub(crate) mod collect;
 pub(crate) mod compile;
 pub(crate) mod export;
+pub(crate) mod graph;
+pub(crate) mod graph_context;
 pub(crate) mod health;
 pub(crate) mod index;
 pub(crate) mod init;
+pub(crate) mod librarian;
 pub(crate) mod lint;
 pub(crate) mod read;
 pub(crate) mod refresh;
 pub(crate) mod research;
+pub(crate) mod review_report;
 pub(crate) mod search;
 pub(crate) mod setup;
 pub(crate) mod sources;
@@ -62,6 +68,7 @@ pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
         Command::Read { target, scope } => read::execute(target, scope),
         Command::Backlinks { page, scope } => backlinks::execute(page, scope),
         Command::LinkSuggest { scope, limit } => backlinks::execute_link_suggest(scope, limit),
+        Command::Benchmark { scope } => benchmark::execute(scope),
         Command::Research(options) => research::execute(options),
         Command::Compile {
             topic,
@@ -79,11 +86,16 @@ pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
             scope,
         ),
         Command::Export { scope, command } => export::execute(scope, command),
+        Command::Graph { scope } => graph::execute(scope),
+        Command::GraphContext { scope } => graph_context::execute(scope),
+        Command::ReviewReport { scope, options } => review_report::execute(scope, options),
         Command::Audit { scope } => audit::execute(scope),
         Command::Lint { scope } => lint::execute(scope),
         Command::Health { scope } => health::execute(scope),
+        Command::Librarian { scope } => librarian::execute(scope),
         Command::Status { scope } => status::execute(scope),
         Command::Trust { scope } => trust::execute(scope),
+        Command::CitationQuality { scope } => citation_quality::execute(scope),
     }
 }
 

@@ -27,6 +27,7 @@ pub fn contract() -> CliContract {
                 positionals: vec![],
                 flags: vec![format_flag()],
                 json_output_keys: contract_keys(),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "index",
@@ -51,6 +52,7 @@ pub fn contract() -> CliContract {
                     "skipped_files",
                     "errors",
                 ],
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "search",
@@ -66,6 +68,7 @@ pub fn contract() -> CliContract {
                 ],
                 flags: search_flags(),
                 json_output_keys: search_keys(),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "search-symbol",
@@ -85,6 +88,7 @@ pub fn contract() -> CliContract {
                     flags
                 },
                 json_output_keys: search_keys(),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "grep",
@@ -100,6 +104,7 @@ pub fn contract() -> CliContract {
                 ],
                 flags: grep_flags(),
                 json_output_keys: grep_keys(),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "callers",
@@ -108,6 +113,7 @@ pub fn contract() -> CliContract {
                 positionals: vec![PositionalContract::required("SYMBOL")],
                 flags: graph_read_flags(),
                 json_output_keys: graph_read_keys(),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "usages",
@@ -116,6 +122,7 @@ pub fn contract() -> CliContract {
                 positionals: vec![PositionalContract::required("SYMBOL")],
                 flags: graph_read_flags(),
                 json_output_keys: graph_read_keys(),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "codewiki",
@@ -140,6 +147,7 @@ pub fn contract() -> CliContract {
                     "symbols",
                     "ai_enabled",
                 ],
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "graph sync-file",
@@ -159,6 +167,7 @@ pub fn contract() -> CliContract {
                     "skipped",
                     "summary",
                 ],
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "graph overview",
@@ -167,6 +176,7 @@ pub fn contract() -> CliContract {
                 positionals: vec![],
                 flags: vec![FlagContract::value("--limit", "N"), format_flag()],
                 json_output_keys: graph_payload_keys(),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "graph file",
@@ -175,6 +185,7 @@ pub fn contract() -> CliContract {
                 positionals: vec![],
                 flags: vec![FlagContract::value("--file", "FILE"), format_flag()],
                 json_output_keys: graph_payload_keys(),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "graph neighbors",
@@ -187,6 +198,7 @@ pub fn contract() -> CliContract {
                     format_flag(),
                 ],
                 json_output_keys: graph_payload_keys(),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "graph blast-radius",
@@ -201,6 +213,7 @@ pub fn contract() -> CliContract {
                     format_flag(),
                 ],
                 json_output_keys: graph_payload_keys(),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "graph clear",
@@ -212,6 +225,7 @@ pub fn contract() -> CliContract {
                     format_flag(),
                 ],
                 json_output_keys: graph_lifecycle_keys(),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "graph rebuild",
@@ -220,6 +234,7 @@ pub fn contract() -> CliContract {
                 positionals: vec![],
                 flags: vec![format_flag()],
                 json_output_keys: graph_lifecycle_keys(),
+                ..CommandContract::default()
             },
         ],
         error_codes: vec![

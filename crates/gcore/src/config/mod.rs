@@ -15,7 +15,7 @@ pub use resolve::{
     resolve_indexing_config, resolve_qdrant_config,
 };
 pub use types::{
-    AiCapability, AiRouting, AiTuning, CapabilityBinding, EmbeddingConfig,
+    AiCapability, AiRouting, AiTuning, CODE_GRAPH_NAME, CapabilityBinding, EmbeddingConfig,
     EmbeddingConfigResolution, FalkorConfig, IndexingConfig, ParseAiCapabilityError,
     ParseAiRoutingError, QdrantConfig, ai_keys, embedding_keys,
 };

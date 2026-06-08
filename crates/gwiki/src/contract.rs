@@ -1,11 +1,12 @@
 use gobby_core::cli_contract::{
-    CliContract, CommandContract, FlagContract, PositionalContract, ScopeContract,
+    CliContract, CommandContract, DegradationContract, FlagContract, PositionalContract,
+    ScopeContract,
 };
 
 pub fn contract() -> CliContract {
     CliContract {
         tool: "gwiki",
-        contract_version: 1,
+        contract_version: 4,
         summary: "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
         global_flags: vec![format_flag(), FlagContract::switch("--quiet")],
         scope: Some(ScopeContract {
@@ -24,6 +25,7 @@ pub fn contract() -> CliContract {
                 positionals: vec![],
                 flags: vec![format_flag()],
                 json_output_keys: contract_keys(),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "index",
@@ -32,6 +34,7 @@ pub fn contract() -> CliContract {
                 positionals: vec![],
                 flags: vec![],
                 json_output_keys: scoped_keys(vec!["status", "indexed_pages", "indexed_sources"]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "search",
@@ -53,6 +56,7 @@ pub fn contract() -> CliContract {
                     "summary",
                     "score",
                 ]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "ask",
@@ -67,9 +71,13 @@ pub fn contract() -> CliContract {
                 json_output_keys: scoped_keys(vec![
                     "query",
                     "status",
+                    "degraded",
+                    "degraded_sources",
                     "hits",
                     "related_pages",
                     "sources",
+                    "code_edges",
+                    "code_citations",
                     "gaps",
                     "stale_candidates",
                     "suggested_questions",
@@ -77,6 +85,18 @@ pub fn contract() -> CliContract {
                     "ai",
                     "synthesis",
                 ]),
+                hard_dependencies: vec!["PostgreSQL"],
+                optional_dependencies: vec![
+                    "model synthesis",
+                    "code graph",
+                    "Qdrant+embeddings",
+                    "FalkorDB",
+                ],
+                multimodal: Some("none"),
+                degradation: Some(DegradationContract {
+                    output_shape: "model off emits an extractive citation-list answer; signal loss falls back to wiki-only grounding",
+                    metadata_keys: vec!["degraded", "degraded_sources[]"],
+                }),
             },
             CommandContract {
                 name: "read",
@@ -94,6 +114,7 @@ pub fn contract() -> CliContract {
                     "frontmatter",
                     "citations",
                 ]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "refresh",
@@ -111,6 +132,7 @@ pub fn contract() -> CliContract {
                     "refreshed",
                     "failed",
                 ]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "ingest-file",
@@ -126,6 +148,7 @@ pub fn contract() -> CliContract {
                     "changed_paths",
                     "citations",
                 ]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "ingest-url",
@@ -144,6 +167,7 @@ pub fn contract() -> CliContract {
                     "url",
                     "status",
                 ]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "collect",
@@ -152,6 +176,7 @@ pub fn contract() -> CliContract {
                 positionals: vec![optional_positional("QUERY", false)],
                 flags: vec![],
                 json_output_keys: scoped_keys(vec!["results", "changed_paths", "status"]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "research",
@@ -188,6 +213,17 @@ pub fn contract() -> CliContract {
                     "session_id",
                     "status",
                 ]),
+                hard_dependencies: vec!["PostgreSQL"],
+                optional_dependencies: vec![
+                    "model multi-step synthesis loop",
+                    "code graph/index",
+                    "Qdrant+embeddings",
+                ],
+                multimodal: Some("none"),
+                degradation: Some(DegradationContract {
+                    output_shape: "model off emits a retrieval-only research scaffold with candidate sources and citations but no synthesized notes; code graph/index off emits docs-only output",
+                    metadata_keys: vec!["accepted_notes[].degradation", "report.degradation"],
+                }),
             },
             CommandContract {
                 name: "compile",
@@ -213,6 +249,7 @@ pub fn contract() -> CliContract {
                     "page_writes",
                     "prompt",
                 ]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "audit",
@@ -221,6 +258,45 @@ pub fn contract() -> CliContract {
                 positionals: vec![],
                 flags: vec![],
                 json_output_keys: scoped_keys(vec!["findings", "changed_paths", "status"]),
+                ..CommandContract::default()
+            },
+            CommandContract {
+                name: "graph",
+                summary: "Export unified wiki graph artifacts under outputs.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![],
+                json_output_keys: scoped_keys(vec!["artifacts"]),
+                ..CommandContract::default()
+            },
+            CommandContract {
+                name: "graph-context",
+                summary: "Build a compact wiki graph context pack.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![],
+                json_output_keys: scoped_keys(vec![
+                    "context",
+                    "source_bundle",
+                    "code_edges",
+                    "code_citations",
+                    "trust",
+                    "freshness",
+                    "audit",
+                    "warnings",
+                    "degradation",
+                ]),
+                hard_dependencies: vec!["PostgreSQL"],
+                optional_dependencies: vec!["FalkorDB", "shared code graph"],
+                multimodal: Some("none"),
+                degradation: Some(DegradationContract {
+                    output_shape: "wiki-link-only neighborhood",
+                    metadata_keys: vec![
+                        "warnings[]",
+                        "degradation.degraded",
+                        "degradation.degraded_sources[]",
+                    ],
+                }),
             },
             CommandContract {
                 name: "health",
@@ -229,6 +305,91 @@ pub fn contract() -> CliContract {
                 positionals: vec![],
                 flags: vec![],
                 json_output_keys: vec!["command", "root", "text_path", "json_path", "status"],
+                ..CommandContract::default()
+            },
+            CommandContract {
+                name: "librarian",
+                summary: "Emit wiki upkeep proposals without rewriting canonical content.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![],
+                json_output_keys: scoped_keys(vec![
+                    "checks",
+                    "suggested_tasks",
+                    "suggested_patch_diffs",
+                    "artifacts",
+                    "trust",
+                    "freshness",
+                    "audit",
+                    "sources",
+                    "degradation",
+                    "dependency_classification",
+                ]),
+                hard_dependencies: vec!["PostgreSQL", "vault"],
+                optional_dependencies: vec!["FalkorDB/code graph", "Qdrant+embeddings", "model"],
+                multimodal: Some("none"),
+                degradation: Some(DegradationContract {
+                    output_shape: "each check skipped independently with a note",
+                    metadata_keys: vec!["checks[].available"],
+                }),
+            },
+            CommandContract {
+                name: "review-report",
+                summary: "Emit a review report for changed files, symbols, or a diff.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![
+                    FlagContract::repeatable_value("--file", "PATH"),
+                    FlagContract::repeatable_value("--symbol", "SYMBOL_ID"),
+                    FlagContract::value("--diff", "PATH"),
+                    FlagContract::value("--output", "FILE"),
+                ],
+                json_output_keys: scoped_keys(vec![
+                    "change_set",
+                    "findings",
+                    "risky_shifts",
+                    "trust",
+                    "freshness",
+                    "audit",
+                    "sources",
+                    "degraded",
+                    "degraded_sources",
+                    "degradation",
+                    "artifacts",
+                    "dependency_classification",
+                ]),
+                hard_dependencies: vec!["PostgreSQL", "change set"],
+                optional_dependencies: vec!["FalkorDB/code graph and analytics"],
+                multimodal: Some("none"),
+                degradation: Some(DegradationContract {
+                    output_shape: "report without risky-shift section",
+                    metadata_keys: vec!["degraded", "degraded_sources[]"],
+                }),
+            },
+            CommandContract {
+                name: "citation-quality",
+                summary: "Emit source citation quality checks for wiki content.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![],
+                json_output_keys: scoped_keys(vec![
+                    "sections",
+                    "claims",
+                    "citations",
+                    "trust",
+                    "freshness",
+                    "audit",
+                    "sources",
+                    "degradation",
+                    "dependency_classification",
+                ]),
+                hard_dependencies: vec!["PostgreSQL"],
+                optional_dependencies: vec!["credibility signals", "model contradiction detection"],
+                multimodal: Some("none"),
+                degradation: Some(DegradationContract {
+                    output_shape: "per-section skipped with a note",
+                    metadata_keys: vec!["sections[].available"],
+                }),
             },
             CommandContract {
                 name: "sources",
@@ -244,6 +405,7 @@ pub fn contract() -> CliContract {
                     "raw_path",
                     "source_path",
                 ]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "backlinks",
@@ -252,6 +414,7 @@ pub fn contract() -> CliContract {
                 positionals: vec![PositionalContract::required("PAGE")],
                 flags: vec![],
                 json_output_keys: scoped_keys(vec!["page", "backlinks", "path", "title"]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "status",
@@ -260,6 +423,7 @@ pub fn contract() -> CliContract {
                 positionals: vec![],
                 flags: vec![],
                 json_output_keys: scoped_keys(vec!["status", "daemon_url", "runtime", "services"]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "trust",
@@ -281,6 +445,7 @@ pub fn contract() -> CliContract {
                     "graph_metrics",
                     "health_summary",
                 ]),
+                ..CommandContract::default()
             },
             CommandContract {
                 name: "remove-source",
@@ -299,6 +464,7 @@ pub fn contract() -> CliContract {
                     "removed_raw_asset",
                     "changed_paths",
                 ]),
+                ..CommandContract::default()
             },
         ],
         error_codes: vec![

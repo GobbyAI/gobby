@@ -1,11 +1,22 @@
 use std::collections::BTreeSet;
+use std::path::Path;
 
 use gobby_core::ai::{daemon, effective_route, text};
 use gobby_core::ai_context::{AiConfigSource, AiContext, AiContextOptions};
-use gobby_core::config::{AiCapability, AiRouting};
+use gobby_core::config::{AiCapability, AiRouting, FalkorConfig, resolve_falkordb_config};
+use gobby_core::gobby_home;
 
 use crate::commands::search;
-use crate::output::{AskAiOutput, AskOutput, AskSynthesisOutput, SearchOutput};
+use crate::graph::WikiGraphFacts;
+use crate::graph::context::{GraphContextCodeEdge, GraphContextOptions, build_context_pack};
+use crate::output::{
+    AskAiOutput, AskCodeCitationOutput, AskCodeEdgeOutput, AskOutput, AskRelatedPageOutput,
+    AskSynthesisOutput, SearchOutput, SearchResultOutput,
+};
+use crate::search::SearchScope;
+use crate::support::env::database_url_for;
+use crate::support::scope::resolve_selection_context;
+use crate::support::search::PostgresConfigSource;
 use crate::{CommandOutcome, ScopeIdentity, ScopeSelection, WikiError};
 
 const DEFAULT_ASK_HIT_LIMIT: usize = 10;
@@ -24,8 +35,9 @@ pub(crate) fn execute(
         });
     }
 
-    let search = search::retrieve(query, selection, DEFAULT_ASK_HIT_LIMIT, true)?;
+    let search = search::retrieve(query, selection.clone(), DEFAULT_ASK_HIT_LIMIT, true)?;
     let mut output = ask_output_from_search(search);
+    enrich_with_attached_unified_graph_context(&mut output, &selection)?;
     if llm {
         synthesize(&mut output, ai, require_ai)?;
     }
@@ -43,6 +55,8 @@ fn ask_output_from_search(search: SearchOutput) -> AskOutput {
         })
         .collect::<Vec<_>>();
     let sources = unique_sources(&search);
+    let code_citations = code_citations_from_results(&search.results);
+    let degraded_sources = search.degradations.clone();
     let status = if search.results.is_empty() {
         "no_results"
     } else {
@@ -53,9 +67,13 @@ fn ask_output_from_search(search: SearchOutput) -> AskOutput {
         scope: search.scope,
         query: search.query,
         status,
+        degraded: !degraded_sources.is_empty(),
+        degraded_sources,
         hits: search.results,
         related_pages,
         sources,
+        code_edges: Vec::new(),
+        code_citations,
         gaps: Vec::new(),
         stale_candidates: Vec::new(),
         suggested_questions: Vec::new(),
@@ -74,6 +92,207 @@ fn unique_sources(search: &SearchOutput) -> Vec<String> {
         }
     }
     seen.into_iter().collect()
+}
+
+fn code_citations_from_results(results: &[SearchResultOutput]) -> Vec<AskCodeCitationOutput> {
+    let mut seen = BTreeSet::new();
+    let mut citations = Vec::new();
+    for hit in results {
+        if !is_code_result(hit) {
+            continue;
+        }
+        let file = hit.source_path.display().to_string();
+        let symbol = hit.title.clone();
+        if seen.insert((file.clone(), symbol.clone())) {
+            citations.push(AskCodeCitationOutput {
+                file,
+                line: None,
+                symbol,
+            });
+        }
+    }
+    citations
+}
+
+fn enrich_with_attached_unified_graph_context(
+    output: &mut AskOutput,
+    selection: &ScopeSelection,
+) -> Result<(), WikiError> {
+    let Some(database_url) = database_url_for("gwiki ask")? else {
+        mark_degraded_source(output, "shared_code_graph_unavailable");
+        return Ok(());
+    };
+    let resolved = resolve_selection_context(selection)?;
+    let mut conn = gobby_core::postgres::connect_readonly(&database_url).map_err(|error| {
+        WikiError::Config {
+            detail: format!("failed to connect to PostgreSQL for gwiki ask graph context: {error}"),
+        }
+    })?;
+    let mut facts = crate::falkor_graph::load_wiki_graph_facts(&mut conn, &resolved.search_scope)?;
+    let mut degraded_sources = Vec::new();
+    let falkor = optional_falkor_config(&mut conn)?;
+    match (falkor, &resolved.search_scope) {
+        (Some(falkor), SearchScope::Project { project_id }) => {
+            match crate::falkor_graph::load_code_graph_edges(&falkor, project_id, &facts.documents)
+            {
+                Ok(code_edges) => facts.code_edges = code_edges,
+                Err(error) => {
+                    log::warn!("failed to load shared code graph for gwiki ask: {error}");
+                    degraded_sources.push("shared_code_graph_unavailable".to_string());
+                }
+            }
+        }
+        (Some(_), SearchScope::Topic { .. }) => {
+            degraded_sources.push("shared_code_graph_unavailable".to_string());
+        }
+        (None, _) => {
+            degraded_sources.push("falkordb_unavailable".to_string());
+            degraded_sources.push("shared_code_graph_unavailable".to_string());
+        }
+    }
+    enrich_with_unified_graph_context(output, &facts, degraded_sources);
+    Ok(())
+}
+
+fn optional_falkor_config(conn: &mut postgres::Client) -> Result<Option<FalkorConfig>, WikiError> {
+    let gobby_home = gobby_home().map_err(|error| WikiError::Config {
+        detail: format!("failed to resolve Gobby home for gwiki ask: {error}"),
+    })?;
+    let primary = PostgresConfigSource { conn };
+    let mut source =
+        AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home).map_err(|error| {
+            WikiError::Config {
+                detail: format!("failed to resolve optional ask graph config: {error}"),
+            }
+        })?;
+
+    Ok(resolve_falkordb_config(&mut source))
+}
+
+fn enrich_with_unified_graph_context(
+    output: &mut AskOutput,
+    facts: &WikiGraphFacts,
+    degraded_sources: Vec<String>,
+) {
+    let options = if degraded_sources.is_empty() {
+        GraphContextOptions::available()
+    } else {
+        GraphContextOptions::degraded(degraded_sources)
+    };
+    let pack = build_context_pack(facts, options);
+    for source in pack.degradation.degraded_sources {
+        mark_degraded_source(output, &source);
+    }
+
+    let mut related_paths = output
+        .related_pages
+        .iter()
+        .map(|page| page.path.clone())
+        .collect::<BTreeSet<_>>();
+    for neighborhood in &pack.neighborhoods {
+        let path = Path::new(&neighborhood.path).to_path_buf();
+        if related_paths.insert(path.clone()) {
+            output.related_pages.push(AskRelatedPageOutput {
+                title: neighborhood.title.clone(),
+                path,
+                score: 0.0,
+            });
+        }
+        for citation in &neighborhood.citations {
+            push_unique(&mut output.sources, citation.clone());
+        }
+        for edge in neighborhood.calls.iter().chain(neighborhood.imports.iter()) {
+            push_code_edge(output, code_edge_from_context(edge));
+        }
+        for citation in code_citations_from_context_edges(
+            neighborhood.calls.iter().chain(neighborhood.imports.iter()),
+        ) {
+            push_code_citation(output, citation);
+        }
+    }
+}
+
+fn mark_degraded_source(output: &mut AskOutput, source: &str) {
+    output.degraded = true;
+    push_unique(&mut output.degraded_sources, source.to_string());
+    push_unique(&mut output.warnings, source.to_string());
+}
+
+fn code_citations_from_context_edges<'a>(
+    edges: impl Iterator<Item = &'a crate::graph::context::GraphContextCodeEdge>,
+) -> Vec<AskCodeCitationOutput> {
+    let mut citations = Vec::new();
+    for edge in edges {
+        if let Some(citation) = code_citation_from_endpoint(&edge.source, edge.line) {
+            citations.push(citation);
+        }
+        if let Some(citation) = code_citation_from_endpoint(&edge.target, None) {
+            citations.push(citation);
+        }
+    }
+    citations
+}
+
+fn code_edge_from_context(edge: &GraphContextCodeEdge) -> AskCodeEdgeOutput {
+    AskCodeEdgeOutput {
+        source: edge.source.clone(),
+        target: edge.target.clone(),
+        kind: edge.kind.clone(),
+        direction: edge.direction.clone(),
+        line: edge.line,
+        provenance: edge.provenance.clone(),
+    }
+}
+
+fn code_citation_from_endpoint(
+    endpoint: &str,
+    line: Option<usize>,
+) -> Option<AskCodeCitationOutput> {
+    let (file, symbol) = match endpoint
+        .split_once('#')
+        .or_else(|| endpoint.rsplit_once(':'))
+    {
+        Some((file, symbol)) => (
+            file.to_string(),
+            (!symbol.is_empty()).then(|| symbol.to_string()),
+        ),
+        None if endpoint.contains('/') || endpoint.contains('.') => (endpoint.to_string(), None),
+        None => return None,
+    };
+    if file.is_empty() {
+        return None;
+    }
+    Some(AskCodeCitationOutput { file, line, symbol })
+}
+
+fn push_code_edge(output: &mut AskOutput, edge: AskCodeEdgeOutput) {
+    if !output.code_edges.contains(&edge) {
+        output.code_edges.push(edge);
+    }
+}
+
+fn push_code_citation(output: &mut AskOutput, citation: AskCodeCitationOutput) {
+    if !output.code_citations.iter().any(|existing| {
+        existing.file == citation.file
+            && existing.line == citation.line
+            && existing.symbol == citation.symbol
+    }) {
+        push_unique(&mut output.sources, citation.file.clone());
+        output.code_citations.push(citation);
+    }
+}
+
+fn push_unique(values: &mut Vec<String>, value: String) {
+    if !values.contains(&value) {
+        values.push(value);
+    }
+}
+
+fn is_code_result(hit: &SearchResultOutput) -> bool {
+    hit.wiki_page
+        .to_string_lossy()
+        .replace('\\', "/")
+        .starts_with("wiki/code/files/")
 }
 
 fn synthesize(
@@ -178,6 +397,16 @@ fn mark_ai_unavailable(
         });
     }
     output.status = "partial";
+    output.degraded = true;
+    if !output
+        .degraded_sources
+        .iter()
+        .any(|source| source == "model_provider_unavailable")
+    {
+        output
+            .degraded_sources
+            .push("model_provider_unavailable".to_string());
+    }
     if !output
         .warnings
         .iter()
@@ -195,24 +424,45 @@ fn synthesis_prompt(output: &AskOutput) -> String {
     let mut prompt = format!("Question: {}\n\nWiki hits:\n", output.query);
     if output.hits.is_empty() {
         prompt.push_str("No wiki hits were found.\n");
-        return prompt;
+    } else {
+        for (index, hit) in output.hits.iter().enumerate() {
+            let title = hit.title.as_deref().unwrap_or("Untitled");
+            prompt.push_str(&format!(
+                "{}. {} ({})\nSource: {}\nSnippet: {}\n\n",
+                index + 1,
+                title,
+                hit.wiki_page.display(),
+                hit.source_path.display(),
+                hit.snippet
+            ));
+        }
     }
-    for (index, hit) in output.hits.iter().enumerate() {
-        let title = hit.title.as_deref().unwrap_or("Untitled");
-        prompt.push_str(&format!(
-            "{}. {} ({})\nSource: {}\nSnippet: {}\n\n",
-            index + 1,
-            title,
-            hit.wiki_page.display(),
-            hit.source_path.display(),
-            hit.snippet
-        ));
+    if !output.related_pages.is_empty() || !output.code_citations.is_empty() {
+        prompt.push_str("Unified graph context:\n");
+        for page in &output.related_pages {
+            let title = page.title.as_deref().unwrap_or("Untitled");
+            prompt.push_str(&format!("- {} ({})\n", title, page.path.display()));
+        }
+        prompt.push('\n');
+    }
+    if !output.code_citations.is_empty() {
+        prompt.push_str("Code citations:\n");
+        for citation in &output.code_citations {
+            let symbol = citation.symbol.as_deref().unwrap_or("unknown symbol");
+            match citation.line {
+                Some(line) => {
+                    prompt.push_str(&format!("- {}:{} ({})\n", citation.file, line, symbol))
+                }
+                None => prompt.push_str(&format!("- {} ({})\n", citation.file, symbol)),
+            }
+        }
+        prompt.push('\n');
     }
     prompt
 }
 
 fn synthesis_system() -> &'static str {
-    "Answer the user's question using only the provided wiki hits. Be concise. Say when the wiki does not contain enough evidence."
+    "Answer the user's question using only the provided wiki hits, unified graph context, and code citations. Be concise. Say when the evidence is insufficient."
 }
 
 fn render(output: AskOutput) -> Result<CommandOutcome, WikiError> {
@@ -235,6 +485,12 @@ fn render_text(query: &str, scope: &ScopeIdentity, output: &AskOutput) -> String
         );
     }
     let mut text = format!("Wiki hits for \"{query}\"\nScope: {scope}\n");
+    if output.degraded {
+        text.push_str(&format!(
+            "Degraded sources: {}\n",
+            output.degraded_sources.join(", ")
+        ));
+    }
     if output.hits.is_empty() {
         text.push_str("No results");
     } else {
@@ -245,6 +501,21 @@ fn render_text(query: &str, scope: &ScopeIdentity, output: &AskOutput) -> String
                 text.push_str(" — ");
             }
             text.push_str(&hit.wiki_page.display().to_string());
+            text.push('\n');
+        }
+    }
+    if !output.code_citations.is_empty() {
+        text.push_str("Code citations\n");
+        for citation in &output.code_citations {
+            text.push_str("- ");
+            text.push_str(&citation.file);
+            if let Some(line) = citation.line {
+                text.push_str(&format!(":{line}"));
+            }
+            if let Some(symbol) = &citation.symbol {
+                text.push(' ');
+                text.push_str(symbol);
+            }
             text.push('\n');
         }
     }
@@ -264,7 +535,12 @@ fn routing_label(route: AiRouting) -> &'static str {
 mod tests {
     use std::path::PathBuf;
 
+    use crate::graph::{
+        WikiGraphCodeEdge, WikiGraphDocument, WikiGraphFacts, WikiGraphLink, WikiGraphLinkTarget,
+        WikiGraphSource,
+    };
     use crate::output::SearchResultOutput;
+    use crate::search::SearchScope;
 
     use super::*;
 
@@ -296,12 +572,175 @@ mod tests {
             output.sources,
             vec!["bm25".to_string(), "raw/hooks.md".to_string()]
         );
+        assert!(output.code_edges.is_empty());
         assert_eq!(output.warnings, vec!["semantic_unavailable".to_string()]);
         assert!(output.gaps.is_empty());
         assert!(output.stale_candidates.is_empty());
         assert!(output.suggested_questions.is_empty());
         assert!(output.ai.is_none());
         assert!(output.synthesis.is_none());
+    }
+
+    #[test]
+    fn ask_unified_graph_output_carries_code_citations_and_degradation() {
+        let output = ask_output_from_search(SearchOutput::new(
+            ScopeIdentity::project("project-1"),
+            "Where is request handling wired?",
+            10,
+            vec![
+                SearchResultOutput {
+                    title: Some("Request handler".to_string()),
+                    fusion_key: "project:project-1:wiki/code/files/src/handler.rs.md".to_string(),
+                    wiki_page: PathBuf::from("wiki/code/files/src/handler.rs.md"),
+                    source_path: PathBuf::from("src/handler.rs"),
+                    snippet: "fn handle() calls route().".to_string(),
+                    score: 0.95,
+                    sources: vec!["bm25".to_string(), "graph".to_string()],
+                    explanations: Vec::new(),
+                },
+                SearchResultOutput {
+                    title: Some("Architecture".to_string()),
+                    fusion_key: "project:project-1:wiki/architecture.md".to_string(),
+                    wiki_page: PathBuf::from("wiki/architecture.md"),
+                    source_path: PathBuf::from("raw/architecture.md"),
+                    snippet: "The handler delegates routing.".to_string(),
+                    score: 0.85,
+                    sources: vec!["graph".to_string()],
+                    explanations: Vec::new(),
+                },
+            ],
+            vec!["shared_code_graph_unavailable".to_string()],
+        ));
+
+        assert!(output.degraded);
+        assert_eq!(
+            output.degraded_sources,
+            vec!["shared_code_graph_unavailable".to_string()]
+        );
+        assert_eq!(output.code_citations.len(), 1);
+        assert_eq!(output.code_citations[0].file, "src/handler.rs");
+        assert_eq!(output.code_citations[0].line, None);
+        assert_eq!(
+            output.code_citations[0].symbol,
+            Some("Request handler".to_string())
+        );
+
+        let prompt = synthesis_prompt(&output);
+        assert!(prompt.contains("Code citations:"));
+        assert!(prompt.contains("src/handler.rs"));
+        assert!(prompt.contains("Request handler"));
+    }
+
+    #[test]
+    fn ask_unified_graph_enrichment_uses_context_pack_code_edges_and_degrades() {
+        let mut output = ask_output_from_search(SearchOutput::new(
+            ScopeIdentity::project("project-1"),
+            "Where is request handling wired?",
+            10,
+            vec![SearchResultOutput {
+                title: Some("Architecture".to_string()),
+                fusion_key: "project:project-1:wiki/architecture.md".to_string(),
+                wiki_page: PathBuf::from("wiki/architecture.md"),
+                source_path: PathBuf::from("raw/architecture.md"),
+                snippet: "The handler delegates routing.".to_string(),
+                score: 0.85,
+                sources: vec!["bm25".to_string()],
+                explanations: Vec::new(),
+            }],
+            Vec::new(),
+        ));
+        let scope = SearchScope::project("project-1");
+        let facts = WikiGraphFacts {
+            documents: vec![
+                WikiGraphDocument {
+                    scope: scope.clone(),
+                    path: PathBuf::from("wiki/architecture.md"),
+                    title: Some("Architecture".to_string()),
+                },
+                WikiGraphDocument {
+                    scope: scope.clone(),
+                    path: PathBuf::from("wiki/code/files/src/handler.rs.md"),
+                    title: Some("Request handler".to_string()),
+                },
+            ],
+            links: vec![WikiGraphLink {
+                scope: scope.clone(),
+                source_path: PathBuf::from("wiki/architecture.md"),
+                raw_target: "handler".to_string(),
+                target: WikiGraphLinkTarget::Resolved(PathBuf::from(
+                    "wiki/code/files/src/handler.rs.md",
+                )),
+            }],
+            sources: vec![WikiGraphSource {
+                scope,
+                source_path: PathBuf::from("src/handler.rs"),
+                document_path: PathBuf::from("wiki/code/files/src/handler.rs.md"),
+            }],
+            code_edges: vec![WikiGraphCodeEdge {
+                document_path: PathBuf::from("wiki/code/files/src/handler.rs.md"),
+                source: "src/handler.rs:handle".to_string(),
+                target: "src/router.rs:route".to_string(),
+                kind: "calls".to_string(),
+                direction: "outgoing".to_string(),
+                line: Some(42),
+                provenance: "gcode_falkor".to_string(),
+            }],
+        };
+
+        enrich_with_unified_graph_context(
+            &mut output,
+            &facts,
+            vec!["shared_code_graph_unavailable".to_string()],
+        );
+
+        assert!(output.degraded);
+        assert_eq!(
+            output.degraded_sources,
+            vec!["shared_code_graph_unavailable".to_string()]
+        );
+        assert!(output.related_pages.iter().any(|page| {
+            page.path == PathBuf::from("wiki/code/files/src/handler.rs.md")
+                && page.title.as_deref() == Some("Request handler")
+        }));
+        assert!(output.code_edges.iter().any(|edge| {
+            edge.source == "src/handler.rs:handle"
+                && edge.target == "src/router.rs:route"
+                && edge.kind == "calls"
+                && edge.direction == "outgoing"
+                && edge.line == Some(42)
+                && edge.provenance == "gcode_falkor"
+        }));
+        assert!(output.code_citations.iter().any(|citation| {
+            citation.file == "src/handler.rs"
+                && citation.line == Some(42)
+                && citation.symbol.as_deref() == Some("handle")
+        }));
+
+        let prompt = synthesis_prompt(&output);
+        assert!(prompt.contains("Unified graph context:"));
+        assert!(prompt.contains("wiki/code/files/src/handler.rs.md"));
+        assert!(prompt.contains("src/handler.rs:42 (handle)"));
+    }
+
+    #[test]
+    fn ask_unified_graph_model_unavailable_marks_degraded() {
+        let mut output = ask_output_from_search(SearchOutput::new(
+            ScopeIdentity::project("project-1"),
+            "Can this synthesize?",
+            10,
+            Vec::new(),
+            Vec::new(),
+        ));
+
+        mark_ai_unavailable(&mut output, false, Some("no model".to_string()))
+            .expect("model unavailable should degrade without require_ai");
+
+        assert!(output.degraded);
+        assert_eq!(
+            output.degraded_sources,
+            vec!["model_provider_unavailable".to_string()]
+        );
+        assert_eq!(output.warnings, vec!["ai_unavailable".to_string()]);
     }
 
     #[test]
