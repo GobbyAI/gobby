@@ -114,6 +114,20 @@ export function handleSessionInfo(
   if (wtPath !== undefined) ctx.setWorktreePath(wtPath);
   const agentName = data.agent_name as string | undefined;
   if (agentName) ctx.setActiveAgent(agentName);
+  // Reconcile the mode radio to the backend session's authoritative chat_mode.
+  // A session can restore a persisted mode (e.g. bypass) that differs from the
+  // UI's optimistic default (Plan); without this the UI showed read-only Plan
+  // while the agent ran permissively and the plan-approval surface was
+  // suppressed (#15709). Update local state only (no set_mode echo) to avoid a
+  // set_mode -> mode_changed loop, mirroring handleSessionContinued.
+  const infoMode = data.chat_mode as string | undefined;
+  if (infoMode && (!infoConvId || infoConvId === ctx.conversationIdRef.current)) {
+    const restored = normalizeChatMode(infoMode);
+    if (restored !== ctx.currentModeRef.current) {
+      ctx.currentModeRef.current = restored;
+      ctx.onModeChangedRef.current?.(restored);
+    }
+  }
 }
 
 export function handleWorktreeSwitched(

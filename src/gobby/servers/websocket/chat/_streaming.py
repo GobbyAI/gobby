@@ -231,6 +231,15 @@ class ChatStreamingMixin:
             # agent out of plan mode on approval; ACP-backed CLIs cannot at the
             # protocol level, so the UI notes a manual switch is required.
             session_info_msg["plan_auto_switch"] = bool(getattr(session, "plan_auto_switch", True))
+            # Carry the session's authoritative chat_mode so the UI mode radio
+            # reflects the backend truth. A session can resolve/restore a persisted
+            # mode (e.g. bypass) that differs from the UI's optimistic default
+            # (Plan); without surfacing it here the UI showed read-only Plan while
+            # the agent ran permissively and the plan-approval surface was
+            # suppressed (#15709). The frontend reconciles its radio on receipt.
+            session_chat_mode = getattr(session, "chat_mode", None)
+            if isinstance(session_chat_mode, str) and session_chat_mode:
+                session_info_msg["chat_mode"] = session_chat_mode
             await transport.send_direct(session_info_msg)
             return session
         except Exception as exc:

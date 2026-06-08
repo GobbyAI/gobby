@@ -268,6 +268,29 @@ describe("useChat streaming and event handling", () => {
     expect(result.current.activeAgent).toBe("test-agent");
   });
 
+  it("reconciles the mode radio to session_info chat_mode (#15709)", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    const modeChanged = vi.fn();
+    act(() => result.current.setOnModeChanged(modeChanged));
+
+    // A session that restored a persisted permissive mode (bypass) must flip the
+    // UI radio off the optimistic Plan default — no silent read-only-Plan desync.
+    act(() => {
+      ws.simulateMessage({
+        type: "session_info",
+        session_ref: "#43",
+        chat_mode: "bypass",
+      });
+    });
+
+    expect(modeChanged).toHaveBeenCalledWith("bypass");
+  });
+
   it("handles mode_changed messages", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());
