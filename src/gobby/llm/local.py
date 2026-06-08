@@ -14,7 +14,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from gobby.llm.base import AuthMode, LLMProvider, LLMTextResult
+from gobby.llm.base import AuthMode, LLMTextResult
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ def _usage_dict(usage: Any) -> dict[str, int] | None:
     return result or None
 
 
-class LocalLLMProvider(LLMProvider):
+class LocalLLMProvider:
     """LLM provider for local OpenAI-compatible endpoints.
 
     Talks to any server that implements the ``/v1/chat/completions``
@@ -158,7 +158,7 @@ class LocalLLMProvider(LLMProvider):
         return model
 
     # ------------------------------------------------------------------
-    # LLMProvider interface
+    # Provider primitives
     # ------------------------------------------------------------------
 
     async def generate_text(

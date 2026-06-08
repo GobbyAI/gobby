@@ -1,15 +1,12 @@
 """
-LLM Provider Abstraction for Gobby Client.
-
-This module provides interfaces and implementations for Gobby's LLM providers
-to make the client CLI-agnostic.
+Feature-routed LLM service entry points.
 
 Usage:
-    service = create_llm_service(config)
-    summary = await service.call_feature(config.session_summary, "Summarize this session.")
+service = create_llm_service(config)
+summary = await service.call_feature(config.session_summary, "Summarize this session.")
 """
 
-from gobby.llm.base import AuthMode, LLMProvider
+from gobby.llm.base import AuthMode
 from gobby.llm.claude_models import (
     ChatEvent,
     DoneEvent,
@@ -23,7 +20,6 @@ __all__ = [
     "AuthMode",
     "ChatEvent",
     "DoneEvent",
-    "LLMProvider",
     "LLMService",
     "LocalLLMProvider",
     "ToolResultEvent",

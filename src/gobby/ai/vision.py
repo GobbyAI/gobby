@@ -12,7 +12,6 @@ from gobby.ai.registry import (
     build_daemon_ai_capability_registry,
 )
 from gobby.config.app import DaemonConfig
-from gobby.llm.base import LLMProvider
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -82,11 +81,29 @@ class VisionExtractService:
         )
 
 
-class LLMProviderVisionExtractAdapter:
-    """Vision adapter for existing LLMProvider implementations."""
+class ClaudeVisionExtractAdapter:
+    """Native vision_extract adapter backed by Claude SDK primitives."""
 
-    def __init__(self, provider: LLMProvider) -> None:
-        self._provider = provider
+    def __init__(self, config: DaemonConfig) -> None:
+        from gobby.llm.claude import ClaudeLLMProvider
+
+        self._provider = ClaudeLLMProvider(config)
+
+    async def extract(self, request: VisionExtractRequest) -> str:
+        return await self._provider.describe_image(
+            request.image_path,
+            context=request.context,
+            model=request.model,
+        )
+
+
+class LocalVisionExtractAdapter:
+    """Native vision_extract adapter backed by a local OpenAI-compatible endpoint."""
+
+    def __init__(self, config: DaemonConfig) -> None:
+        from gobby.llm.local import LocalLLMProvider
+
+        self._provider = LocalLLMProvider(config)
 
     async def extract(self, request: VisionExtractRequest) -> str:
         return await self._provider.describe_image(
@@ -109,19 +126,17 @@ def build_daemon_vision_extract_service(
 
 
 def _daemon_vision_extract_adapters(config: DaemonConfig) -> dict[str, VisionExtractAdapter]:
-    from gobby.llm.claude import ClaudeLLMProvider
-    from gobby.llm.local import LocalLLMProvider
-
     adapters: dict[str, VisionExtractAdapter] = {
-        "claude": LLMProviderVisionExtractAdapter(ClaudeLLMProvider(config)),
+        "claude": ClaudeVisionExtractAdapter(config),
     }
     if config.local:
-        adapters["local"] = LLMProviderVisionExtractAdapter(LocalLLMProvider(config))
+        adapters["local"] = LocalVisionExtractAdapter(config)
     return adapters
 
 
 __all__ = [
-    "LLMProviderVisionExtractAdapter",
+    "ClaudeVisionExtractAdapter",
+    "LocalVisionExtractAdapter",
     "VisionExtractAdapter",
     "VisionExtractRequest",
     "VisionExtractResult",

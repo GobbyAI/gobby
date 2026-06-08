@@ -1,8 +1,4 @@
-"""
-Claude implementation of LLMProvider.
-
-Uses the Claude Agent SDK via the Claude CLI.
-"""
+"""Claude SDK primitives for feature-routed LLM capabilities."""
 
 import asyncio
 import json
@@ -21,7 +17,7 @@ from claude_agent_sdk import (
 )
 
 from gobby.config.app import DaemonConfig
-from gobby.llm.base import LLMProvider, LLMProviderCancellation, LLMTextResult
+from gobby.llm.base import AuthMode, LLMProviderCancellation, LLMTextResult
 from gobby.utils.json_helpers import extract_json_from_text
 
 # Headless settings file — zeroes out all hooks so internal LLM calls
@@ -111,13 +107,18 @@ class ClaudeSDKShutdownCancellation(LLMProviderCancellation):
     """Raised when the Claude SDK child process is terminated during shutdown."""
 
 
-class ClaudeLLMProvider(LLMProvider):
-    """Claude implementation of LLMProvider using the Claude Agent SDK."""
+class ClaudeLLMProvider:
+    """Claude implementation using the Claude Agent SDK."""
 
     @property
     def provider_name(self) -> str:
         """Return provider name."""
         return "claude"
+
+    @property
+    def auth_mode(self) -> AuthMode:
+        """Return Claude authentication mode."""
+        return "subscription"
 
     def __init__(self, config: DaemonConfig):
         """

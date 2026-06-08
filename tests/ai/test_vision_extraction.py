@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import cast
+from typing import ClassVar
 
 import pytest
 
@@ -11,11 +10,12 @@ from gobby.ai import (
     AICapabilityRegistry,
     CapabilityBinding,
     CapabilityUnavailableError,
-    LLMProviderVisionExtractAdapter,
+    ClaudeVisionExtractAdapter,
+    LocalVisionExtractAdapter,
     VisionExtractRequest,
     VisionExtractService,
 )
-from gobby.llm.base import LLMProvider
+from gobby.config.app import DaemonConfig
 
 pytestmark = pytest.mark.unit
 
@@ -29,9 +29,13 @@ class _FakeVisionAdapter:
         return f"extracted:{request.image_path}"
 
 
-@dataclass
-class _FakeLLMProvider:
-    calls: list[tuple[str, str | None, str | None]]
+class _FakeNativeVisionProvider:
+    last_instance: ClassVar[_FakeNativeVisionProvider | None] = None
+
+    def __init__(self, config: DaemonConfig) -> None:
+        self.config = config
+        self.calls: list[tuple[str, str | None, str | None]] = []
+        self.__class__.last_instance = self
 
     async def describe_image(
         self,
@@ -101,9 +105,13 @@ async def test_vision_service_rejects_unproven_provider() -> None:
 
 
 @pytest.mark.asyncio
-async def test_llm_provider_vision_adapter_forwards_image_context_and_model() -> None:
-    provider = _FakeLLMProvider(calls=[])
-    adapter = LLMProviderVisionExtractAdapter(cast(LLMProvider, provider))
+async def test_claude_vision_adapter_forwards_image_context_and_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeNativeVisionProvider.last_instance = None
+    monkeypatch.setattr("gobby.llm.claude.ClaudeLLMProvider", _FakeNativeVisionProvider)
+    config = DaemonConfig()
+    adapter = ClaudeVisionExtractAdapter(config)
 
     result = await adapter.extract(
         VisionExtractRequest(
@@ -113,5 +121,32 @@ async def test_llm_provider_vision_adapter_forwards_image_context_and_model() ->
         )
     )
 
+    provider = _FakeNativeVisionProvider.last_instance
+    assert provider is not None
+    assert provider.config is config
+    assert result == "described"
+    assert provider.calls == [("/tmp/screenshot.png", "settings page", "vision-model")]
+
+
+@pytest.mark.asyncio
+async def test_local_vision_adapter_forwards_image_context_and_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeNativeVisionProvider.last_instance = None
+    monkeypatch.setattr("gobby.llm.local.LocalLLMProvider", _FakeNativeVisionProvider)
+    config = DaemonConfig()
+    adapter = LocalVisionExtractAdapter(config)
+
+    result = await adapter.extract(
+        VisionExtractRequest(
+            image_path="/tmp/screenshot.png",
+            context="settings page",
+            model="vision-model",
+        )
+    )
+
+    provider = _FakeNativeVisionProvider.last_instance
+    assert provider is not None
+    assert provider.config is config
     assert result == "described"
     assert provider.calls == [("/tmp/screenshot.png", "settings page", "vision-model")]

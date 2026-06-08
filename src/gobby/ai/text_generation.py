@@ -61,31 +61,6 @@ class TextGenerateJSONAdapter(Protocol):
 TextGenerateAdapterFactory = Callable[[], TextGenerateAdapter]
 
 
-class LLMProviderLike(Protocol):
-    """Subset of existing LLM providers used by text generation."""
-
-    async def generate_text_result(
-        self,
-        prompt: str,
-        system_prompt: str | None = None,
-        model: str | None = None,
-        max_tokens: int | None = None,
-        *,
-        caller: str | None = None,
-    ) -> LLMTextResult:
-        """Generate text and include provider usage when available."""
-
-    async def generate_json(
-        self,
-        prompt: str,
-        system_prompt: str | None = None,
-        model: str | None = None,
-        *,
-        caller: str | None = None,
-    ) -> dict[str, Any]:
-        """Generate and parse JSON."""
-
-
 class ACPStreamEventLike(Protocol):
     """Subset of normalized ACP stream events used by text generation."""
 
@@ -323,11 +298,39 @@ class TextGenerationService:
         )
 
 
-class LLMProviderTextGenerateAdapter:
-    """Adapter for existing LLMProvider implementations."""
+class ClaudeTextGenerateAdapter:
+    """Native text_generate adapter backed by Claude SDK primitives."""
 
-    def __init__(self, provider: LLMProviderLike) -> None:
-        self._provider = provider
+    def __init__(self, config: DaemonConfig) -> None:
+        from gobby.llm.claude import ClaudeLLMProvider
+
+        self._provider = ClaudeLLMProvider(config)
+
+    async def generate(self, request: TextGenerationRequest) -> LLMTextResult:
+        return await self._provider.generate_text_result(
+            request.prompt,
+            system_prompt=request.system_prompt,
+            model=request.model,
+            max_tokens=request.max_tokens,
+            caller=request.caller,
+        )
+
+    async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
+        return await self._provider.generate_json(
+            request.prompt,
+            system_prompt=request.system_prompt,
+            model=request.model,
+            caller=request.caller,
+        )
+
+
+class LocalTextGenerateAdapter:
+    """Native text_generate adapter backed by a local OpenAI-compatible endpoint."""
+
+    def __init__(self, config: DaemonConfig) -> None:
+        from gobby.llm.local import LocalLLMProvider
+
+        self._provider = LocalLLMProvider(config)
 
     async def generate(self, request: TextGenerationRequest) -> LLMTextResult:
         return await self._provider.generate_text_result(
@@ -521,15 +524,11 @@ def _daemon_text_generation_adapter_factories(
 
 
 def _claude_text_generate_adapter(config: DaemonConfig) -> TextGenerateAdapter:
-    from gobby.llm.claude import ClaudeLLMProvider
-
-    return LLMProviderTextGenerateAdapter(ClaudeLLMProvider(config))
+    return ClaudeTextGenerateAdapter(config)
 
 
 def _local_text_generate_adapter(config: DaemonConfig) -> TextGenerateAdapter:
-    from gobby.llm.local import LocalLLMProvider
-
-    return LLMProviderTextGenerateAdapter(LocalLLMProvider(config))
+    return LocalTextGenerateAdapter(config)
 
 
 def _codex_app_server_client() -> CodexAppServerClientLike:
@@ -672,9 +671,10 @@ def _decode(data: bytes | str) -> str:
 
 __all__ = [
     "ACPTextGenerateAdapter",
+    "ClaudeTextGenerateAdapter",
     "CodexAppServerTextGenerateAdapter",
     "DroidCLITextGenerateAdapter",
-    "LLMProviderTextGenerateAdapter",
+    "LocalTextGenerateAdapter",
     "TextGenerateAdapter",
     "TextGenerationRequest",
     "TextGenerationService",

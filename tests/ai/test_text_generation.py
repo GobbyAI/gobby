@@ -4,7 +4,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -15,16 +15,17 @@ from gobby.ai import (
     AICapability,
     AICapabilityRegistry,
     CapabilityBinding,
+    ClaudeTextGenerateAdapter,
     CodexAppServerTextGenerateAdapter,
     DroidCLITextGenerateAdapter,
-    LLMProviderTextGenerateAdapter,
+    LocalTextGenerateAdapter,
     TextGenerationRequest,
     TextGenerationService,
     build_daemon_text_generation_service,
 )
 from gobby.config.app import DaemonConfig
 from gobby.config.local import LocalConfig
-from gobby.llm.base import LLMProvider, LLMTextResult
+from gobby.llm.base import LLMTextResult
 
 pytestmark = pytest.mark.unit
 
@@ -416,61 +417,14 @@ def test_build_daemon_text_generation_service_defers_adapter_instantiation() -> 
     } == set(providers)
 
 
-class FakeLLMProvider(LLMProvider):
-    @property
-    def provider_name(self) -> str:
-        return "fake"
+class FakeNativeTextProvider:
+    last_instance: ClassVar[FakeNativeTextProvider | None] = None
 
-    async def generate_text(
-        self,
-        prompt: str,
-        system_prompt: str | None = None,
-        model: str | None = None,
-        max_tokens: int | None = None,
-        *,
-        caller: str | None = None,
-    ) -> str:
-        return f"{system_prompt}:{prompt}:{model}:{max_tokens}:{caller}"
-
-    async def generate_json(
-        self,
-        prompt: str,
-        system_prompt: str | None = None,
-        model: str | None = None,
-        *,
-        caller: str | None = None,
-    ) -> dict[str, Any]:
-        return {}
-
-    async def describe_image(
-        self,
-        image_path: str,
-        context: str | None = None,
-        model: str | None = None,
-    ) -> str:
-        return "image"
-
-
-@pytest.mark.asyncio
-async def test_llm_provider_adapter_forwards_text_generation_request() -> None:
-    adapter = LLMProviderTextGenerateAdapter(FakeLLMProvider())
-
-    response = await adapter.generate(
-        TextGenerationRequest(
-            prompt="hello",
-            system_prompt="system",
-            model="model-a",
-            max_tokens=42,
-            caller="test",
-        )
-    )
-
-    assert response.text == "system:hello:model-a:42:test"
-    assert response.usage is None
-
-
-class FakeUsageLLMProvider(FakeLLMProvider):
-    """Provider that surfaces usage from generate_text_result, like Claude."""
+    def __init__(self, config: DaemonConfig) -> None:
+        self.config = config
+        self.text_calls: list[tuple[str, str | None, str | None, int | None, str | None]] = []
+        self.json_calls: list[tuple[str, str | None, str | None, str | None]] = []
+        self.__class__.last_instance = self
 
     async def generate_text_result(
         self,
@@ -481,15 +435,37 @@ class FakeUsageLLMProvider(FakeLLMProvider):
         *,
         caller: str | None = None,
     ) -> LLMTextResult:
+        self.text_calls.append((prompt, system_prompt, model, max_tokens, caller))
         return LLMTextResult(
             text=f"{system_prompt}:{prompt}:{model}:{max_tokens}:{caller}",
             usage={"prompt_tokens": 11, "completion_tokens": 4, "total_tokens": 15},
         )
 
+    async def generate_json(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        *,
+        caller: str | None = None,
+    ) -> dict[str, Any]:
+        self.json_calls.append((prompt, system_prompt, model, caller))
+        return {
+            "prompt": prompt,
+            "system_prompt": system_prompt,
+            "model": model,
+            "caller": caller,
+        }
+
 
 @pytest.mark.asyncio
-async def test_llm_provider_adapter_forwards_usage_and_max_tokens() -> None:
-    adapter = LLMProviderTextGenerateAdapter(FakeUsageLLMProvider())
+async def test_claude_text_generate_adapter_forwards_usage_and_max_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    FakeNativeTextProvider.last_instance = None
+    monkeypatch.setattr("gobby.llm.claude.ClaudeLLMProvider", FakeNativeTextProvider)
+    config = DaemonConfig()
+    adapter = ClaudeTextGenerateAdapter(config)
 
     response = await adapter.generate(
         TextGenerationRequest(
@@ -501,10 +477,42 @@ async def test_llm_provider_adapter_forwards_usage_and_max_tokens() -> None:
         )
     )
 
-    # max_tokens (42) is forwarded into generate_text_result and the provider
-    # usage flows back through unchanged.
+    provider = FakeNativeTextProvider.last_instance
+    assert provider is not None
+    assert provider.config is config
+    assert provider.text_calls == [("hello", "system", "model-a", 42, "test")]
     assert response.text == "system:hello:model-a:42:test"
     assert response.usage == {"prompt_tokens": 11, "completion_tokens": 4, "total_tokens": 15}
+
+
+@pytest.mark.asyncio
+async def test_local_text_generate_adapter_forwards_json_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    FakeNativeTextProvider.last_instance = None
+    monkeypatch.setattr("gobby.llm.local.LocalLLMProvider", FakeNativeTextProvider)
+    config = DaemonConfig()
+    adapter = LocalTextGenerateAdapter(config)
+
+    response = await adapter.generate_json(
+        TextGenerationRequest(
+            prompt="json please",
+            system_prompt="system",
+            model="model-b",
+            caller="test",
+        )
+    )
+
+    provider = FakeNativeTextProvider.last_instance
+    assert provider is not None
+    assert provider.config is config
+    assert provider.json_calls == [("json please", "system", "model-b", "test")]
+    assert response == {
+        "prompt": "json please",
+        "system_prompt": "system",
+        "model": "model-b",
+        "caller": "test",
+    }
 
 
 class FakeACPClient:
