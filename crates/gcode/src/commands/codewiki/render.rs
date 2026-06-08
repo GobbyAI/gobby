@@ -462,6 +462,80 @@ pub(crate) fn render_onboarding_doc(onboarding: &OnboardingDoc) -> String {
     doc
 }
 
+pub(crate) fn render_hotspots_doc(hotspots: &HotspotsDoc) -> String {
+    let mut doc = frontmatter_with_degradation(
+        "Hotspots",
+        "code_hotspots",
+        &hotspots.source_spans,
+        &hotspots.degraded_sources,
+    );
+    doc.push_str("# Hotspots\n\n");
+
+    if hotspots
+        .degraded_sources
+        .iter()
+        .any(|source| source == "graph-analytics-unavailable")
+    {
+        doc.push_str("analytics unavailable: graph analytics could not be computed.\n\n");
+        return doc;
+    }
+
+    write_hotspot_section(&mut doc, "Hotspots", &hotspots.hotspots);
+    write_hotspot_section(&mut doc, "God Nodes", &hotspots.god_nodes);
+    write_hotspot_section(&mut doc, "Bridges", &hotspots.bridges);
+
+    if hotspots.hotspots.is_empty() && hotspots.god_nodes.is_empty() && hotspots.bridges.is_empty()
+    {
+        doc.push_str("No graph hotspots were identified from the current code index.\n\n");
+    }
+
+    doc
+}
+
+fn write_hotspot_section(doc: &mut String, title: &str, findings: &[HotspotFinding]) {
+    doc.push_str("## ");
+    doc.push_str(title);
+    doc.push_str("\n\n");
+
+    if findings.is_empty() {
+        doc.push_str("None identified.\n\n");
+        return;
+    }
+
+    for finding in findings {
+        let mut details = Vec::new();
+        details.push(format!("kind {}", inline_code(&finding.node.kind)));
+        details.push(format!("component {}", inline_code(&finding.node.id)));
+        if let Some(degree) = finding.degree {
+            details.push(format!("degree {degree}"));
+        }
+        if let Some(score) = finding.score {
+            details.push(format!("score {score:.3}"));
+        }
+        if let Some(frequency) = finding.frequency {
+            details.push(format!("frequency {frequency}"));
+        }
+        if let Some(weight) = finding.weight {
+            details.push(format!("weight {weight:.1}"));
+        }
+        if let Some(file) = &finding.node.file_wikilink {
+            details.push(format!("file {file}"));
+        }
+        if let Some(span) = &finding.node.source_span {
+            details.push(span.citation());
+        }
+
+        let _ = writeln!(
+            doc,
+            "- {} ({}) - {}",
+            finding.node.wikilink,
+            inline_code(&finding.node.label),
+            details.join(", ")
+        );
+    }
+    doc.push('\n');
+}
+
 pub(crate) fn render_module_doc(module: &ModuleDoc) -> String {
     let mut doc = frontmatter(&module.module, "code_module", &module.source_spans);
     let _ = writeln!(doc, "# {}\n", module.module);

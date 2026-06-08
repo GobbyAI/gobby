@@ -35,7 +35,8 @@ mod text;
 
 // Document builders.
 pub(crate) use build::{
-    build_architecture_doc, build_file_doc, build_module_docs, build_onboarding_doc,
+    build_architecture_doc, build_file_doc, build_hotspots_doc, build_module_docs,
+    build_onboarding_doc,
 };
 // Module clustering and graph-to-file helpers.
 pub(crate) use cluster::{
@@ -58,8 +59,8 @@ pub(crate) use paths::{
 // Rendered markdown and graph diagrams.
 pub(crate) use render::{
     build_repo_doc, render_architecture_dependency_mermaid, render_architecture_doc,
-    render_file_doc, render_module_call_mermaid, render_module_dependency_mermaid,
-    render_module_doc, render_onboarding_doc,
+    render_file_doc, render_hotspots_doc, render_module_call_mermaid,
+    render_module_dependency_mermaid, render_module_doc, render_onboarding_doc,
 };
 // AI and structural text helpers.
 pub(crate) use text::{
@@ -217,6 +218,34 @@ pub(crate) struct OnboardingStep {
     summary: String,
     degree: usize,
     score: f64,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct HotspotsDoc {
+    source_spans: Vec<SourceSpan>,
+    hotspots: Vec<HotspotFinding>,
+    god_nodes: Vec<HotspotFinding>,
+    bridges: Vec<HotspotFinding>,
+    degraded_sources: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct HotspotFinding {
+    node: HotspotNode,
+    degree: Option<usize>,
+    score: Option<f64>,
+    frequency: Option<usize>,
+    weight: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct HotspotNode {
+    id: String,
+    kind: String,
+    label: String,
+    wikilink: String,
+    file_wikilink: Option<String>,
+    source_span: Option<SourceSpan>,
 }
 
 #[derive(Debug, Clone)]
@@ -472,17 +501,23 @@ fn generate_hierarchical_docs_core(
         &input.graph_edges,
         input.graph_availability,
     );
+    let hotspots_doc = build_hotspots_doc(&file_docs, &input.graph_edges, input.graph_availability);
 
-    let mut docs = Vec::new();
-    docs.push(("code/repo.md".to_string(), repo_doc));
-    docs.push((
-        "code/_onboarding.md".to_string(),
-        render_onboarding_doc(&onboarding_doc),
-    ));
-    docs.push((
-        "code/_architecture.md".to_string(),
-        render_architecture_doc(&architecture_doc),
-    ));
+    let mut docs = vec![
+        ("code/repo.md".to_string(), repo_doc),
+        (
+            "code/_onboarding.md".to_string(),
+            render_onboarding_doc(&onboarding_doc),
+        ),
+        (
+            "code/_architecture.md".to_string(),
+            render_architecture_doc(&architecture_doc),
+        ),
+        (
+            "code/_hotspots.md".to_string(),
+            render_hotspots_doc(&hotspots_doc),
+        ),
+    ];
     if let Some((project_root, ownership_meta)) = ownership {
         docs.push((
             "code/_ownership.md".to_string(),
@@ -504,6 +539,8 @@ fn generate_hierarchical_docs_core(
     Ok(docs)
 }
 
+#[cfg(test)]
+mod hotspots_tests;
 #[cfg(test)]
 mod onboarding_tests;
 #[cfg(test)]
