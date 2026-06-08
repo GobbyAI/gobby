@@ -465,15 +465,15 @@ mod tests {
             },
         );
 
-        assert_eq!(report.token_compression.available, true);
+        assert!(report.token_compression.available);
         assert_eq!(report.token_compression.document_tokens, 8);
         assert_eq!(report.token_compression.chunk_tokens, 4);
         assert_eq!(report.token_compression.ratio, Some(0.5));
-        assert_eq!(report.graph_coverage.available, false);
+        assert!(!report.graph_coverage.available);
         assert_eq!(report.graph_coverage.graph_documents, None);
-        assert_eq!(report.retrieval_precision.available, false);
+        assert!(!report.retrieval_precision.available);
         assert!(report.retrieval_precision.examples.is_empty());
-        assert_eq!(report.source_mix.available, true);
+        assert!(report.source_mix.available);
         assert_eq!(report.source_mix.total_documents, 2);
         assert_eq!(
             report.degraded_sources,
