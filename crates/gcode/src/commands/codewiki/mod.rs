@@ -34,7 +34,9 @@ mod render;
 mod text;
 
 // Document builders.
-pub(crate) use build::{build_architecture_doc, build_file_doc, build_module_docs};
+pub(crate) use build::{
+    build_architecture_doc, build_file_doc, build_module_docs, build_onboarding_doc,
+};
 // Module clustering and graph-to-file helpers.
 pub(crate) use cluster::{
     cluster_file_modules, files_for_import_target, first_component_for_file,
@@ -57,7 +59,7 @@ pub(crate) use paths::{
 pub(crate) use render::{
     build_repo_doc, render_architecture_dependency_mermaid, render_architecture_doc,
     render_file_doc, render_module_call_mermaid, render_module_dependency_mermaid,
-    render_module_doc,
+    render_module_doc, render_onboarding_doc,
 };
 // AI and structural text helpers.
 pub(crate) use text::{
@@ -195,6 +197,26 @@ pub(crate) struct ArchitectureSubsystem {
     module: String,
     responsibility: String,
     source_spans: Vec<SourceSpan>,
+}
+
+pub(crate) struct OnboardingDoc {
+    source_spans: Vec<SourceSpan>,
+    entry_points: Vec<OnboardingEntryPoint>,
+    reading_order: Vec<OnboardingStep>,
+    degraded_sources: Vec<String>,
+}
+
+pub(crate) struct OnboardingEntryPoint {
+    link: String,
+    description: String,
+    source_span: SourceSpan,
+}
+
+pub(crate) struct OnboardingStep {
+    module: String,
+    summary: String,
+    degree: usize,
+    score: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -444,9 +466,19 @@ fn generate_hierarchical_docs_core(
         input.graph_availability,
         generate,
     );
+    let onboarding_doc = build_onboarding_doc(
+        &file_docs,
+        &module_docs,
+        &input.graph_edges,
+        input.graph_availability,
+    );
 
     let mut docs = Vec::new();
     docs.push(("code/repo.md".to_string(), repo_doc));
+    docs.push((
+        "code/_onboarding.md".to_string(),
+        render_onboarding_doc(&onboarding_doc),
+    ));
     docs.push((
         "code/_architecture.md".to_string(),
         render_architecture_doc(&architecture_doc),
@@ -472,5 +504,7 @@ fn generate_hierarchical_docs_core(
     Ok(docs)
 }
 
+#[cfg(test)]
+mod onboarding_tests;
 #[cfg(test)]
 mod tests;
