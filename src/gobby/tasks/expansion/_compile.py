@@ -235,17 +235,6 @@ async def _invoke_llm_compile(
         raise ValueError(
             f"Expansion compiler did not return valid JSON for {scope}: {exc!r}"
         ) from exc
-    except ValueError as exc:
-        if not _is_json_parse_error(exc):
-            raise
-        raise ValueError(
-            f"Expansion compiler did not return valid JSON for {scope}: {exc!r}"
-        ) from exc
-
-
-def _is_json_parse_error(exc: ValueError) -> bool:
-    message = str(exc).lower()
-    return "json" in message or "parse" in message or "decode" in message
 
 
 def _build_prompt_context(self: Any, run: ExpansionRun, task: Task) -> dict[str, Any]:

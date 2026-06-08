@@ -202,7 +202,6 @@ export function ChatInput({
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [queuedFiles, setQueuedFiles] = useState<QueuedFile[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const lastTextareaHeightRef = useRef<number>(-1)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const paletteRef = useRef<HTMLDivElement>(null)
   const primaryButtonRef = useRef<HTMLButtonElement>(null)
@@ -294,19 +293,12 @@ export function ChatInput({
     const textarea = textareaRef.current
     if (!textarea) return
     // Chromium can size the textarea with CSS `field-sizing`; other browsers
-    // use a rAF resize pass against the actual textarea node. Track the last
-    // applied height in `lastTextareaHeightRef` so repeated input that stays
-    // within the same measured size does not rewrite style, and clamp the
-    // applied height to `MAX_TEXTAREA_HEIGHT` before scrolling the cursor into
-    // view.
+    // use a rAF resize pass against the actual textarea node.
     if (supportsFieldSizing()) return
     const frame = requestAnimationFrame(() => {
       textarea.style.height = 'auto'
       const scrollHeight = textarea.scrollHeight
       const next = Math.min(scrollHeight, MAX_TEXTAREA_HEIGHT)
-      if (next !== lastTextareaHeightRef.current) {
-        lastTextareaHeightRef.current = next
-      }
       textarea.style.height = `${next}px`
       if (scrollHeight > MAX_TEXTAREA_HEIGHT) {
         textarea.scrollTop = textarea.scrollHeight

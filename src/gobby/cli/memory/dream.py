@@ -1,20 +1,16 @@
 from __future__ import annotations
 
-import importlib
 import time
-from types import ModuleType
 from typing import Any
 
 import click
 import httpx
 
+from gobby.cli.memory.common import _get_daemon_client
+
 _START_REQUEST_TIMEOUT_SECONDS = 15.0
 _WAIT_POLL_INTERVAL_SECONDS = 2.0
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "reverted"})
-
-
-def _facade() -> ModuleType:
-    return importlib.import_module("gobby.cli.memory")
 
 
 @click.group("dream", invoke_without_command=True)
@@ -118,8 +114,7 @@ def _request(
     json_data: dict[str, Any] | None = None,
     timeout: float = 60.0,
 ) -> dict[str, Any]:
-    memory_module = _facade()
-    client = memory_module._get_daemon_client(ctx)
+    client = _get_daemon_client(ctx)
     try:
         response = client.call_http_api(
             endpoint,

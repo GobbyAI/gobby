@@ -3,14 +3,25 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 
 from gobby.memory.dream.models import DreamCandidate
 
 
+class MemoryManagerProtocol(Protocol):
+    def list_memories(self, *, limit: int, offset: int) -> list[Any]: ...
+
+
+class DreamConfigProtocol(Protocol):
+    max_scan_rows: int
+    scan_limit: int
+    stale_age_days: int
+    include_global_memories: bool
+
+
 def discover_stale_candidates(
-    memory_manager: Any,
-    dream_config: Any,
+    memory_manager: MemoryManagerProtocol,
+    dream_config: DreamConfigProtocol,
     *,
     project_id: str | None = None,
     memory_type: str | None = None,
@@ -87,6 +98,7 @@ def _in_scope(memory_project_id: str | None, project_id: str | None, include_glo
 
 
 def _age_days(memory: Any, now: datetime) -> float | None:
+    """Return age in days from updated/created timestamp, or None when unavailable."""
     updated = _parse_datetime(getattr(memory, "updated_at", None))
     created = _parse_datetime(getattr(memory, "created_at", None))
     timestamp = updated or created

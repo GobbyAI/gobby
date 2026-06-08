@@ -13,7 +13,7 @@ from gobby.memory.dream.candidates import discover_stale_candidates
 from gobby.memory.dream.duplicates import find_duplicate_groups
 from gobby.memory.dream.models import DreamAction, DreamCandidate
 from gobby.memory.dream.plan import validate_dream_plan
-from gobby.memory.dream.service import MemoryDreamService
+from gobby.memory.dream.service import MemoryDreamService, _decode_raw_plan_metadata
 from gobby.memory.dream.storage import MemoryDreamStore
 
 pytestmark = pytest.mark.unit
@@ -310,6 +310,30 @@ async def test_memory_dream_service_revert_uses_reconcile_after_revert_config() 
 
     assert result["success"] is True
     assert revert_mock.await_args.kwargs["reconcile_after_revert"] is False
+
+
+def test_memory_dream_service_record_run_failure_is_idempotent() -> None:
+    db = _FakeDreamDB()
+    manager = _FakeMemoryManager(db)
+    service = MemoryDreamService(memory_manager=manager, dream_config=SimpleNamespace())
+    run_id = service.store.create_run(project_id="proj-1", dry_run=False, options={})
+
+    failed = service.record_run_failure(run_id, "boom")
+    repeated = service.record_run_failure(run_id, "later")
+
+    assert failed is not None
+    assert failed["status"] == "failed"
+    assert failed["error"] == "boom"
+    assert repeated is not None
+    assert repeated["error"] == "boom"
+
+
+def test_decode_raw_plan_metadata_handles_strings_safely() -> None:
+    assert _decode_raw_plan_metadata('{"planner_errors": ["missing llm"]}') == {
+        "planner_errors": ["missing llm"]
+    }
+    assert _decode_raw_plan_metadata("{bad") == {}
+    assert _decode_raw_plan_metadata("[1, 2]") == {}
 
 
 def _row(memory_id: str, content: str) -> dict[str, Any]:

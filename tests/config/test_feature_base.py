@@ -90,11 +90,11 @@ class TestFeatureDefaultConfig:
             **{
                 "provider": "claude",
                 "model": "claude-sonnet-4-5",
-                "candidates": ["codex/gpt-5.3-codex"],
+                "candidates": ["codex/gpt-5.3-codex", "claude/claude-haiku-4-5"],
             }
         )
 
-        assert cfg.candidates == ["codex/gpt-5.3-codex", "claude/sonnet"]
+        assert cfg.candidates == ["codex/gpt-5.3-codex", "claude/haiku", "claude/sonnet"]
 
     @pytest.mark.parametrize("candidate", ["haiku", "claude/", "/sonnet"])
     def test_rejects_malformed_candidate(self, candidate: str) -> None:

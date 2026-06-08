@@ -443,7 +443,7 @@ class TestMemoryDreamCommand:
             {"success": True, "run_id": "dream-1", "status": "started"}
         )
 
-        with patch("gobby.cli.memory._get_daemon_client", return_value=mock_client):
+        with patch("gobby.cli.memory.dream._get_daemon_client", return_value=mock_client):
             result = runner.invoke(
                 memory_cli,
                 ["dream", "--dry-run"],
@@ -488,7 +488,7 @@ class TestMemoryDreamCommand:
         ]
 
         with (
-            patch("gobby.cli.memory._get_daemon_client", return_value=mock_client),
+            patch("gobby.cli.memory.dream._get_daemon_client", return_value=mock_client),
             patch("gobby.cli.memory.dream.time.sleep") as sleep,
         ):
             result = runner.invoke(

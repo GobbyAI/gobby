@@ -12,6 +12,7 @@ from gobby.ai.text_generation import TextGenerationRequest
 from gobby.config.features import ProjectVerificationSynthesisConfig
 from gobby.project_verification.candidates import (
     generate_candidates,
+    is_safe_validation_command,
     select_best_candidates,
     verification_dict_from_candidates,
 )
@@ -240,3 +241,10 @@ async def test_synthesis_rejects_unsupported_or_mutating_commands(tmp_path: Path
         "mutating validation command",
         "command lacks deterministic evidence",
     }
+
+
+def test_safe_validation_command_uses_complete_tokens_for_format_scripts() -> None:
+    assert is_safe_validation_command("npm run format", slot="format") is False
+    assert is_safe_validation_command("cd web && npm run format", slot="format") is False
+    assert is_safe_validation_command("npm run format:check", slot="format") is True
+    assert is_safe_validation_command("yarn format:check", slot="format") is True

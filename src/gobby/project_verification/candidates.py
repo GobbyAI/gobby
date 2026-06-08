@@ -146,10 +146,12 @@ def classify_command(command: str) -> str | None:
 def is_safe_validation_command(command: str, slot: str | None = None) -> bool:
     """Reject mutating forms that are inappropriate for verification."""
     lowered = command.lower()
-    if any(
-        lowered.startswith(token) or f" {token}" in lowered
-        for token in ("--fix", "--write", "npm run format", "yarn format")
-    ):
+    tokens = _command_tokens(lowered)
+    if _has_any_token(tokens, {"--fix", "--write"}):
+        return False
+    if _has_token_sequence(tokens, ("npm", "run", "format")):
+        return False
+    if _has_token_sequence(tokens, ("yarn", "format")):
         return False
     if "ruff format" in lowered and "--check" not in lowered:
         return False
@@ -158,6 +160,26 @@ def is_safe_validation_command(command: str, slot: str | None = None) -> bool:
     if "prettier" in lowered and "--check" not in lowered and slot == "format":
         return False
     return True
+
+
+def _command_tokens(command: str) -> list[str]:
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return command.split()
+
+
+def _has_any_token(tokens: list[str], unsafe_tokens: set[str]) -> bool:
+    return any(token in unsafe_tokens for token in tokens)
+
+
+def _has_token_sequence(tokens: list[str], unsafe_sequence: tuple[str, ...]) -> bool:
+    length = len(unsafe_sequence)
+    if length == 0 or len(tokens) < length:
+        return False
+    return any(
+        tuple(tokens[index : index + length]) == unsafe_sequence for index in range(len(tokens))
+    )
 
 
 def command_evidence_key(name: str, command: str) -> tuple[str, str]:

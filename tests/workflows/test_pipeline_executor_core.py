@@ -462,6 +462,7 @@ class TestExecutePromptStep:
 
         step = PipelineStep(id="prompt", prompt="Use configured feature")
         context: dict = {"inputs": {}, "steps": {}}
+        mock_llm_service.call_feature.return_value = "LLM response"
         result = await executor._execute_step(step, context, "project")
 
         assert result == {"response": "LLM response"}

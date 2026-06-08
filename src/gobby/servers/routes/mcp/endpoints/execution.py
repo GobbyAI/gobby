@@ -633,6 +633,8 @@ async def call_mcp_tool(
                 detail={"success": False, "error": "Required fields: server_name, tool_name"},
             )
 
+        # Structured call_tool requests bypass stale stdio-wrapper recovery; see
+        # test_call_tool_ignores_explicit_stale_wait_wrapper_fingerprint.
         stale_wrapper_result = _stale_stdio_wrapper_wait_result(
             request,
             tool_name,

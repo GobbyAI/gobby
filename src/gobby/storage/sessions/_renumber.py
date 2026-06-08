@@ -62,7 +62,7 @@ class _RenumberMixin:
                         "old_seq_num": int(old_seq_num) if old_seq_num is not None else None,
                         "new_seq_num": index,
                         "status": str(row["status"]),
-                        "title": row["title"] if row["title"] is None else str(row["title"]),
+                        "title": None if row["title"] is None else str(row["title"]),
                     }
                 )
 

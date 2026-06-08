@@ -23,23 +23,31 @@ _MEMORY_COLUMNS = (
     "created_at",
     "updated_at",
 )
-_RUN_JSON_COLUMNS = frozenset({"options", "plan", "summary"})
-_RUN_UPDATE_COLUMNS = frozenset(
-    {
-        "project_id",
-        "status",
-        "dry_run",
-        "options",
-        "plan",
-        "summary",
-        "error",
-        "started_at",
-        "completed_at",
-        "reverted_at",
-        "created_at",
-        "updated_at",
-    }
+_MEMORY_COLUMN_LIST = ", ".join(_MEMORY_COLUMNS)
+_MEMORY_PLACEHOLDERS = ", ".join(["%s"] * len(_MEMORY_COLUMNS))
+_RESTORE_MEMORY_ASSIGNMENTS = ", ".join(
+    f"{column} = EXCLUDED.{column}" for column in _MEMORY_COLUMNS[1:]
 )
+RESTORE_MEMORY_SQL = f"""
+INSERT INTO memories ({_MEMORY_COLUMN_LIST})
+VALUES ({_MEMORY_PLACEHOLDERS})
+ON CONFLICT (id) DO UPDATE SET {_RESTORE_MEMORY_ASSIGNMENTS}
+"""
+_RUN_JSON_COLUMNS = frozenset({"options", "plan", "summary"})
+_RUN_UPDATE_SET_CLAUSES = {
+    "project_id": "project_id = %s",
+    "status": "status = %s",
+    "dry_run": "dry_run = %s",
+    "options": "options = %s",
+    "plan": "plan = %s",
+    "summary": "summary = %s",
+    "error": "error = %s",
+    "started_at": "started_at = %s",
+    "completed_at": "completed_at = %s",
+    "reverted_at": "reverted_at = %s",
+    "created_at": "created_at = %s",
+    "updated_at": "updated_at = %s",
+}
 
 
 class MemoryDreamStore:
@@ -92,7 +100,7 @@ class MemoryDreamStore:
         self.db.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_memory_dream_snapshots_run
-            ON memory_dream_snapshots(run_id, id)
+            ON memory_dream_snapshots(run_id)
             """
         )
         self.db.execute(
@@ -180,7 +188,7 @@ class MemoryDreamStore:
     def update_run(self, run_id: str, **fields: Any) -> dict[str, Any] | None:
         if not fields:
             return self.get_run(run_id)
-        unknown_fields = sorted(set(fields) - _RUN_UPDATE_COLUMNS)
+        unknown_fields = sorted(set(fields) - set(_RUN_UPDATE_SET_CLAUSES))
         if unknown_fields:
             raise ValueError(
                 "Unsupported memory_dream_runs update field(s): " + ", ".join(unknown_fields)
@@ -190,7 +198,7 @@ class MemoryDreamStore:
             key: _json(value) if key in _RUN_JSON_COLUMNS else value
             for key, value in fields.items()
         }
-        set_clause = ", ".join(f"{key} = %s" for key in encoded)
+        set_clause = ", ".join(_RUN_UPDATE_SET_CLAUSES[key] for key in encoded)
         self.db.execute(
             f"UPDATE memory_dream_runs SET {set_clause} WHERE id = %s",  # nosec B608
             tuple(encoded.values()) + (run_id,),
@@ -293,13 +301,8 @@ class MemoryDreamStore:
     def restore_memory_row(self, data: dict[str, Any]) -> None:
         values = {column: data.get(column) for column in _MEMORY_COLUMNS}
         values["tags"] = _json(values.get("tags") or [])
-        assignments = ", ".join(f"{column} = EXCLUDED.{column}" for column in _MEMORY_COLUMNS[1:])
         self.db.execute(
-            f"""
-            INSERT INTO memories ({", ".join(_MEMORY_COLUMNS)})
-            VALUES ({", ".join(["%s"] * len(_MEMORY_COLUMNS))})
-            ON CONFLICT (id) DO UPDATE SET {assignments}
-            """,  # nosec B608
+            RESTORE_MEMORY_SQL,
             tuple(values[column] for column in _MEMORY_COLUMNS),
         )
 

@@ -41,6 +41,7 @@ def mock_server():
     """Create mock HTTPServer with memory_manager."""
     server = MagicMock()
     server._background_tasks = set()
+    server.register_background_task.side_effect = lambda task: server._background_tasks.add(task)
     server.services.config.memory.dream = None
     server.llm_service = None
     server.memory_manager = MagicMock()
@@ -71,7 +72,9 @@ def dream_client(mock_server) -> TestClient:
 class TestMemoryDreamRoutes:
     """Test memory dream HTTP endpoints."""
 
-    def test_start_dream_returns_run_id(self, dream_client) -> None:
+    def test_start_dream_returns_run_id(
+        self, dream_client: TestClient, mock_server: MagicMock
+    ) -> None:
         with patch("gobby.servers.routes.memory_dream.MemoryDreamService") as service_cls:
             service = service_cls.return_value
             service.start.return_value = {"success": True, "run_id": "dream-1"}
@@ -82,8 +85,9 @@ class TestMemoryDreamRoutes:
         assert response.status_code == 202
         assert response.json()["run_id"] == "dream-1"
         service.start.assert_called_once()
+        mock_server.register_background_task.assert_called_once()
 
-    def test_wait_dream_returns_completed_run(self, dream_client) -> None:
+    def test_wait_dream_returns_completed_run(self, dream_client: TestClient) -> None:
         with patch("gobby.servers.routes.memory_dream.MemoryDreamService") as service_cls:
             service = service_cls.return_value
             service.run = AsyncMock(
@@ -95,7 +99,7 @@ class TestMemoryDreamRoutes:
         assert response.status_code == 200
         assert response.json()["run"]["status"] == "completed"
 
-    def test_status_and_revert(self, dream_client) -> None:
+    def test_status_and_revert(self, dream_client: TestClient) -> None:
         with patch("gobby.servers.routes.memory_dream.MemoryDreamService") as service_cls:
             service = service_cls.return_value
             service.status.return_value = {"success": True, "run": {"id": "dream-1"}}

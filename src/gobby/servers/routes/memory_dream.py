@@ -31,7 +31,9 @@ def create_memory_dream_router(server: HTTPServer) -> APIRouter:
     router = APIRouter(prefix="/memory", tags=["memory"])
 
     def _service() -> MemoryDreamService:
-        dream_config = getattr(getattr(server.services.config, "memory", None), "dream", None)
+        config = getattr(server.services, "config", None)
+        memory_config = getattr(config, "memory", None)
+        dream_config = getattr(memory_config, "dream", None)
         return MemoryDreamService(
             memory_manager=server.memory_manager,
             dream_config=dream_config,
@@ -58,13 +60,16 @@ def create_memory_dream_router(server: HTTPServer) -> APIRouter:
         run_id = str(started["run_id"])
 
         async def _background() -> None:
-            result = await service.execute_run(run_id, options)
-            if not result.get("success"):
-                logger.warning("Background memory dream failed: %s", result.get("error"))
+            try:
+                result = await service.execute_run(run_id, options)
+                if not result.get("success"):
+                    logger.warning("Background memory dream failed: %s", result.get("error"))
+            except Exception as exc:
+                service.record_run_failure(run_id, str(exc))
+                logger.warning("Background memory dream failed: %s", exc, exc_info=True)
 
         task = asyncio.create_task(_background(), name=f"memory-dream:{run_id}")
-        server._background_tasks.add(task)
-        task.add_done_callback(server._background_tasks.discard)
+        server.register_background_task(task)
         return JSONResponse(
             status_code=202,
             content={"success": True, "status": "started", "run_id": run_id},

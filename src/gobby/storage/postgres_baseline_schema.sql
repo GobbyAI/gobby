@@ -743,6 +743,7 @@ CREATE INDEX idx_crossrefs_similarity ON memory_crossrefs(similarity DESC);
 
 CREATE TABLE memory_dream_runs (
     id TEXT PRIMARY KEY,
+    -- Nullable for global/system dream runs; cron rows are anchored to PERSONAL_PROJECT_ID.
     project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
     status TEXT NOT NULL DEFAULT 'started'
         CONSTRAINT memory_dream_runs_status_check
@@ -774,7 +775,7 @@ CREATE TABLE memory_dream_snapshots (
 );
 
 CREATE INDEX idx_memory_dream_snapshots_run
-ON memory_dream_snapshots(run_id, id);
+ON memory_dream_snapshots(run_id);
 
 CREATE TABLE worktrees (
     id TEXT PRIMARY KEY,

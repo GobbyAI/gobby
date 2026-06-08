@@ -36,7 +36,7 @@ def register_memory_dream_cron(
     project_id: str | None = None,
 ) -> int:
     """Register the memory dream handler and reconcile its single system row."""
-    if not getattr(dream_config, "enabled", True):
+    if not dream_config.enabled:
         existing = cron_storage.get_job_by_name(MEMORY_DREAM_CRON_JOB_NAME)
         if existing and existing.enabled:
             updated = cron_storage.update_job(existing.id, enabled=False, next_run_at=None)
@@ -57,8 +57,10 @@ def register_memory_dream_cron(
             raise RuntimeError("memory dream returned non-object result")
         if not result.get("success"):
             raise RuntimeError(str(result.get("error", "memory dream failed")))
-        run = result.get("run") if isinstance(result.get("run"), dict) else {}
-        summary = run.get("summary") if isinstance(run.get("summary"), dict) else {}
+        raw_run = result.get("run")
+        run = raw_run if isinstance(raw_run, dict) else {}
+        raw_summary = run.get("summary")
+        summary = raw_summary if isinstance(raw_summary, dict) else {}
         run_id = result.get("run_id") or run.get("id")
         if not run_id:
             raise RuntimeError("memory dream completed without run_id")

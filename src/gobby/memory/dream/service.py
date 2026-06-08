@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -63,6 +64,18 @@ class MemoryDreamService:
         )
         return {"success": True, "run_id": run_id}
 
+    def record_run_failure(self, run_id: str, error: str) -> dict[str, Any] | None:
+        """Persist a failed status unless the run already reached a terminal state."""
+        run = self.store.get_run(run_id)
+        if run is None or run.get("status") in {"completed", "failed", "reverted"}:
+            return run
+        return self.store.update_run(
+            run_id,
+            status="failed",
+            completed_at=datetime.now(UTC).isoformat(),
+            error=error,
+        )
+
     async def execute_run(self, run_id: str, options: DreamRunOptions) -> dict[str, Any]:
         try:
             candidates = discover_stale_candidates(
@@ -82,6 +95,7 @@ class MemoryDreamService:
                 project_id=options.project_id,
                 skip_consolidation=options.skip_consolidation,
             )
+            raw_plan_metadata = _decode_raw_plan_metadata(raw_plan)
             actions = validate_dream_plan(
                 raw_plan,
                 candidates,
@@ -91,7 +105,7 @@ class MemoryDreamService:
             plan = {
                 "candidate_count": len(candidates),
                 "duplicate_group_count": len(duplicates),
-                "planner_errors": raw_plan.get("planner_errors", []),
+                "planner_errors": raw_plan_metadata.get("planner_errors", []),
                 "actions": [action.to_dict() for action in actions],
             }
             self.store.update_run(run_id, plan=plan)
@@ -163,3 +177,13 @@ async def run_memory_dream(
             project_id=project_id,
         )
     )
+
+
+def _decode_raw_plan_metadata(raw_plan: Any) -> dict[str, Any]:
+    if isinstance(raw_plan, str):
+        try:
+            decoded = json.loads(raw_plan)
+        except json.JSONDecodeError:
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+    return raw_plan if isinstance(raw_plan, dict) else {}

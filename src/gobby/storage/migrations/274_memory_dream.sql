@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS memory_dream_runs (
     id TEXT PRIMARY KEY,
+    -- Nullable for global/system dream runs; cron rows are anchored to PERSONAL_PROJECT_ID.
     project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
     status TEXT NOT NULL DEFAULT 'started'
         CONSTRAINT memory_dream_runs_status_check
@@ -31,7 +32,7 @@ CREATE TABLE IF NOT EXISTS memory_dream_snapshots (
 );
 
 CREATE INDEX IF NOT EXISTS idx_memory_dream_snapshots_run
-ON memory_dream_snapshots(run_id, id);
+ON memory_dream_snapshots(run_id);
 
 DELETE FROM cron_jobs
 WHERE name IN (

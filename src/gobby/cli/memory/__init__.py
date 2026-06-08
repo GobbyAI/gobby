@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import click
 
 from gobby.cli.utils import resolve_project_ref
@@ -9,10 +7,8 @@ from gobby.config.app import DaemonConfig
 from gobby.memory.manager import MemoryManager
 from gobby.storage.hub.runtime import open_runtime_hub_database
 
+from .common import _get_daemon_client
 from .main import memory
-
-if TYPE_CHECKING:
-    from gobby.utils.daemon_client import DaemonClient
 
 
 def get_memory_manager(ctx: click.Context) -> MemoryManager:
@@ -21,14 +17,6 @@ def get_memory_manager(ctx: click.Context) -> MemoryManager:
     db = open_runtime_hub_database(apply_migrations=False)
 
     return MemoryManager(db, config.memory)
-
-
-def _get_daemon_client(ctx: click.Context) -> DaemonClient:
-    """Get a DaemonClient for calling daemon HTTP API."""
-    from gobby.utils.daemon_client import DaemonClient
-
-    config: DaemonConfig = ctx.obj["config"]
-    return DaemonClient(host="localhost", port=config.daemon_port)
 
 
 def resolve_memory_id(

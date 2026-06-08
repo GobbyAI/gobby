@@ -23,6 +23,7 @@ from gobby.mcp_proxy.semantic_search import (
     SemanticToolSearch,
 )
 from gobby.mcp_proxy.server import GobbyDaemonTools, create_mcp_server
+from gobby.mcp_proxy.tools import memory_dream as memory_dream_tools
 from gobby.telemetry.instruments import inc_counter
 
 if TYPE_CHECKING:
@@ -120,6 +121,11 @@ class HTTPServer:
         if self._runner_getter is not None:
             return self._runner_getter()
         return self._runner
+
+    def register_background_task(self, task: asyncio.Task[Any]) -> None:
+        """Track a background task so shutdown can cancel and await it."""
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     def _init_mcp_subsystems(self, services: ServiceContainer, port: int) -> None:
         """Initialize MCP proxy, internal registries, and semantic search."""
@@ -490,7 +496,14 @@ class HTTPServer:
 
             # Cancel pending background tasks immediately instead of polling
             current_task = asyncio.current_task()
-            background_tasks = {task for task in self._background_tasks if task is not current_task}
+            background_tasks = {
+                task
+                for task in (
+                    *self._background_tasks,
+                    *memory_dream_tools.get_background_tasks(),
+                )
+                if task is not current_task
+            }
             pending_tasks_count = len(background_tasks)
             if pending_tasks_count > 0:
                 logger.debug(

@@ -102,7 +102,7 @@ async def revert_dream_run(
         "restored": restored,
         "deleted_created_memories": deleted,
     }
-    if reconcile_after_revert and memory_manager is not None:
+    if reconcile_after_revert and memory_manager is not None and (restored or deleted):
         await _reconcile(memory_manager, result)
     return result
 

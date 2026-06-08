@@ -420,6 +420,7 @@ async def test_session_stats(mock_session_manager, full_sessions_registry):
     mock_session_manager.count_by_status.assert_called_once_with(project_id=None)
 
 
+@pytest.mark.asyncio
 async def test_session_stats_scopes_project_aggregates(
     mock_session_manager, full_sessions_registry
 ):

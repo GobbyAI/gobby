@@ -108,18 +108,18 @@ class SessionRegistration:
 
 
 @dataclass(frozen=True)
-class SessionSeqMutation:
-    """Serializes project-scoped session sequence allocation and compaction."""
-
-    PRIORITY: ClassVar[int] = 750
-    project_id: str
-
-
-@dataclass(frozen=True)
 class SessionRecoveryByProject:
     """Serializes project-scoped recovery scans for moved sessions."""
 
     PRIORITY: ClassVar[int] = 700
+    project_id: str
+
+
+@dataclass(frozen=True)
+class SessionSeqMutation:
+    """Serializes project-scoped session sequence allocation and compaction."""
+
+    PRIORITY: ClassVar[int] = 750
     project_id: str
 
 

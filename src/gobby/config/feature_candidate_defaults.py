@@ -6,8 +6,6 @@ import json
 import logging
 from typing import Any
 
-import psycopg
-
 from gobby.config.feature_base import FeatureProfile
 
 logger = logging.getLogger(__name__)
@@ -48,7 +46,7 @@ def reject_stale_default_feature_candidate_rows(config_store: Any | None) -> Non
             "SELECT key, value FROM config_store WHERE source = %s",
             ("defaults",),
         )
-    except psycopg.Error as exc:
+    except Exception as exc:
         logger.debug("Failed to inspect defaults-seeded feature candidate rows: %s", exc)
         return
 

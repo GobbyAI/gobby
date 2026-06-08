@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -226,3 +227,13 @@ def test_compile_rejects_missing_manifest_entry(
         service.compile_plan_to_spec(parse_plan(plan, parse_mode="draft"), parent)
 
     assert "1.1" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_invoke_llm_compile_wraps_json_decode_error(service: ExpansionService) -> None:
+    service.llm_service.call_json_feature.side_effect = json.JSONDecodeError("bad", "x", 0)
+    service._render_prompt = MagicMock(return_value="prompt")
+    run = MagicMock(id="expand-1", provider=None, model=None)
+
+    with pytest.raises(ValueError, match="did not return valid JSON"):
+        await service._invoke_llm_compile(run, {"task": {}})

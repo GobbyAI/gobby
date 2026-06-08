@@ -12,6 +12,8 @@ from gobby.memory.dream.models import DreamCandidate, DuplicateGroup
 from gobby.prompts.loader import PromptLoader
 
 logger = logging.getLogger(__name__)
+DEFAULT_MIN_ACTION_CONFIDENCE = 0.72
+DEFAULT_MIN_DELETE_CONFIDENCE = 0.85
 _EXPECTED_PLANNER_ERRORS = (
     json.JSONDecodeError,
     ValueError,
@@ -84,8 +86,16 @@ async def _call_llm_planner(
                 indent=2,
                 sort_keys=True,
             ),
-            "min_action_confidence": getattr(dream_config, "min_action_confidence", 0.72),
-            "min_delete_confidence": getattr(dream_config, "min_delete_confidence", 0.85),
+            "min_action_confidence": getattr(
+                dream_config,
+                "min_action_confidence",
+                DEFAULT_MIN_ACTION_CONFIDENCE,
+            ),
+            "min_delete_confidence": getattr(
+                dream_config,
+                "min_delete_confidence",
+                DEFAULT_MIN_DELETE_CONFIDENCE,
+            ),
         },
     )
     response = await llm_service.call_json_feature(
