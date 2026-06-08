@@ -632,6 +632,7 @@ mod tests {
         old_value: Option<OsString>,
     }
 
+    // EnvGuard mutates process-wide environment and must only be used by #[serial_test::serial] tests.
     impl EnvGuard {
         fn set(key: &'static str, value: &OsStr) -> Self {
             let guard = Self {

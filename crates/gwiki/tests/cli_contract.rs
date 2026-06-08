@@ -305,7 +305,24 @@ fn parity_contract_tracks_code_grounding_and_dependency_classification() {
         serde_json::json!(["credibility signals", "model contradiction detection"]),
         serde_json::json!({
             "output_shape": "per-section skipped with a note",
-            "metadata_keys": ["sections[].available"]
+            "metadata_keys": [
+                "sections.credibility.available",
+                "sections.coverage_gaps.available",
+                "sections.contradictions.available",
+                "sections.stale_sources.available",
+                "sections.confidence.available"
+            ]
         }),
+    );
+    assert_eq!(
+        citation_quality["json_output_keys"],
+        serde_json::json!([
+            "command",
+            "scope",
+            "artifact_path",
+            "dependencies",
+            "sections",
+            "markdown"
+        ])
     );
 }

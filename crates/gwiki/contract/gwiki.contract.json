@@ -791,15 +791,10 @@
       "json_output_keys": [
         "command",
         "scope",
+        "artifact_path",
+        "dependencies",
         "sections",
-        "claims",
-        "citations",
-        "trust",
-        "freshness",
-        "audit",
-        "sources",
-        "degradation",
-        "dependency_classification"
+        "markdown"
       ],
       "hard_dependencies": [
         "PostgreSQL"
@@ -812,7 +807,11 @@
       "degradation": {
         "output_shape": "per-section skipped with a note",
         "metadata_keys": [
-          "sections[].available"
+          "sections.credibility.available",
+          "sections.coverage_gaps.available",
+          "sections.contradictions.available",
+          "sections.stale_sources.available",
+          "sections.confidence.available"
         ]
       }
     },

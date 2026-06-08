@@ -672,11 +672,12 @@ mod tests {
                 )),
             }],
             sources: vec![WikiGraphSource {
-                scope,
+                scope: scope.clone(),
                 source_path: PathBuf::from("src/handler.rs"),
                 document_path: PathBuf::from("wiki/code/files/src/handler.rs.md"),
             }],
             code_edges: vec![WikiGraphCodeEdge {
+                scope: scope.clone(),
                 document_path: PathBuf::from("wiki/code/files/src/handler.rs.md"),
                 source: "src/handler.rs:handle".to_string(),
                 target: "src/router.rs:route".to_string(),

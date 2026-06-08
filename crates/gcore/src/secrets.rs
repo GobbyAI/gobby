@@ -149,11 +149,9 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn resolve_config_value_expands_secret_then_environment() {
-        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = ENV_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // SAFETY: serial_test keeps this process-wide environment mutation isolated.
         unsafe { std::env::set_var("GOBBY_SECRET_TEST_HOST", "example.test") };
 
         let resolved = resolve_config_value_with(
@@ -162,6 +160,7 @@ mod tests {
         )
         .expect("config value resolves");
 
+        // SAFETY: serial_test keeps this process-wide environment mutation isolated.
         unsafe { std::env::remove_var("GOBBY_SECRET_TEST_HOST") };
         assert_eq!(resolved, "https://example.test/token/secret-api-key");
     }

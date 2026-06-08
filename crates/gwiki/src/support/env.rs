@@ -7,7 +7,7 @@ use crate::error::WikiError;
 use anyhow::{Context, anyhow, bail};
 use gobby_core::provisioning::{StandaloneConfig, gcore_config_path};
 use serde::Deserialize;
-use std::net::ToSocketAddrs;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::Path;
 use std::time::Duration;
 
@@ -21,6 +21,12 @@ const DEFAULT_BROKER_TIMEOUT: Duration = Duration::from_millis(7000);
 struct HubBootstrap {
     hub_backend: Option<String>,
     database_url: Option<String>,
+}
+
+#[derive(Debug)]
+struct ValidatedDaemonUrl {
+    request_base_url: String,
+    host_header: String,
 }
 
 pub(crate) fn database_url() -> anyhow::Result<Option<String>> {
@@ -100,15 +106,16 @@ fn read_local_cli_token_at(gobby_home: &Path) -> anyhow::Result<String> {
 }
 
 fn request_broker_database_url(daemon_url: &str, token: &str) -> anyhow::Result<String> {
-    validate_loopback_daemon_url(daemon_url)?;
+    let daemon = validate_loopback_daemon_url(daemon_url)?;
     let url = format!(
         "{}/api/local/runtime/database-url",
-        daemon_url.trim_end_matches('/')
+        daemon.request_base_url.trim_end_matches('/')
     );
     let timeout = broker_timeout();
     let agent = ureq::AgentBuilder::new().timeout(timeout).build();
     let response = agent
         .post(&url)
+        .set("Host", &daemon.host_header)
         .set("X-Gobby-Local-Token", token)
         .call()
         .map_err(|err| {
@@ -143,7 +150,7 @@ fn broker_timeout() -> Duration {
         .unwrap_or(DEFAULT_BROKER_TIMEOUT)
 }
 
-fn validate_loopback_daemon_url(daemon_url: &str) -> anyhow::Result<()> {
+fn validate_loopback_daemon_url(daemon_url: &str) -> anyhow::Result<ValidatedDaemonUrl> {
     let url = url::Url::parse(daemon_url)
         .with_context(|| format!("database_url broker daemon URL is invalid: {daemon_url}"))?;
     let host = url
@@ -152,17 +159,40 @@ fn validate_loopback_daemon_url(daemon_url: &str) -> anyhow::Result<()> {
     let port = url.port_or_known_default().ok_or_else(|| {
         anyhow!("database_url broker daemon URL must include a port or known scheme")
     })?;
-    let mut resolved = (host, port)
+    let resolved = (host, port)
         .to_socket_addrs()
         .with_context(|| format!("resolve database_url broker daemon host `{host}`"))?
-        .peekable();
-    if resolved.peek().is_none() {
+        .collect::<Vec<_>>();
+    if resolved.is_empty() {
         bail!("database_url broker daemon host `{host}` resolved no addresses");
     }
-    if resolved.all(|addr| addr.ip().is_loopback()) {
-        Ok(())
-    } else {
+    if resolved.iter().any(|addr| !addr.ip().is_loopback()) {
         bail!("database_url broker daemon host `{host}` must resolve only to loopback addresses");
+    }
+    let target_addr = resolved[0];
+    Ok(ValidatedDaemonUrl {
+        request_base_url: request_base_url(&url, target_addr)?,
+        host_header: host_header(host, url.port()),
+    })
+}
+
+fn request_base_url(url: &url::Url, target_addr: SocketAddr) -> anyhow::Result<String> {
+    let mut request_url = url::Url::parse(&format!("{}://{}", url.scheme(), target_addr))
+        .context("construct database_url broker request URL")?;
+    request_url.set_path(url.path());
+    request_url.set_query(url.query());
+    Ok(request_url.to_string())
+}
+
+fn host_header(host: &str, port: Option<u16>) -> String {
+    let host = if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]")
+    } else {
+        host.to_string()
+    };
+    match port {
+        Some(port) => format!("{host}:{port}"),
+        None => host,
     }
 }
 
@@ -246,7 +276,20 @@ mod tests {
         assert_eq!(resolved, expected_database_url);
         let request = handle.join().expect("broker thread");
         assert!(request.starts_with("POST /api/local/runtime/database-url "));
+        assert!(request.contains(&format!("Host: 127.0.0.1:{port}")));
         assert!(request.contains("X-Gobby-Local-Token: local-token"));
+    }
+
+    #[test]
+    fn database_url_broker_rejects_non_loopback_daemon_host() {
+        let error = validate_loopback_daemon_url("http://192.0.2.1:60887")
+            .expect_err("non-loopback daemon host is rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("must resolve only to loopback addresses")
+        );
     }
 
     fn spawn_database_url_broker(

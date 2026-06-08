@@ -107,6 +107,32 @@ fn codewiki_onboarding_degrades_to_structural_entry_points_without_graph_analyti
     assert!(onboarding.contains("[[code/files/src/lib.rs|src/lib.rs]]"));
 }
 
+#[test]
+fn codewiki_onboarding_available_empty_reading_order_is_not_unavailable() {
+    let input = CodewikiInput {
+        files: vec!["src/lib.rs".to_string()],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![test_symbol(
+            "src/lib.rs",
+            "Client",
+            "class",
+            1,
+            "pub struct Client;",
+        )],
+    };
+
+    let docs = generate_hierarchical_docs(&input, None)
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+    let onboarding = docs
+        .get("code/_onboarding.md")
+        .expect("onboarding page renders");
+
+    assert!(!onboarding.contains("degraded: true"));
+    assert!(!onboarding.contains("- graph-analytics-unavailable"));
+}
+
 fn test_symbol(
     file_path: &str,
     name: &str,

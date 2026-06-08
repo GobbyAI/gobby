@@ -66,6 +66,7 @@ mod tests {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             let previous = std::env::var_os("GOBBY_HOME");
+            // SAFETY: ENV_LOCK serializes test-only process environment mutation.
             unsafe { std::env::set_var("GOBBY_HOME", path) };
             Self {
                 _lock: lock,
@@ -77,7 +78,9 @@ mod tests {
     impl Drop for EnvGuard {
         fn drop(&mut self) {
             match self.previous.as_ref() {
+                // SAFETY: ENV_LOCK serializes test-only process environment restoration.
                 Some(value) => unsafe { std::env::set_var("GOBBY_HOME", value) },
+                // SAFETY: ENV_LOCK serializes test-only process environment restoration.
                 None => unsafe { std::env::remove_var("GOBBY_HOME") },
             }
         }

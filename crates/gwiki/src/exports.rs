@@ -412,7 +412,7 @@ mod tests {
         );
         assert_eq!(
             graph_json["analytics"]["centrality"][0]["node"]["id"],
-            serde_json::json!("wiki/pages/overview.md")
+            serde_json::json!("document:project:project-123:wiki/pages/overview.md")
         );
         assert_eq!(
             graph_json["analytics"]["centrality"][0]["degree"],
@@ -430,11 +430,15 @@ mod tests {
             fs::read_to_string(root.join("outputs/GRAPH_REPORT.md")).expect("graph report");
         assert!(report.contains("# GWiki Graph Report"));
         assert!(report.contains("## Analytics"));
-        assert!(report.contains("- Top central node: wiki/pages/overview.md (degree 2)"));
+        assert!(report.contains(
+            "- Top central node: document:project:project-123:wiki/pages/overview.md (degree 2)"
+        ));
         assert!(report.contains("- Communities: 5"));
         assert!(report.contains("## Degraded sources"));
         assert!(report.contains("- falkordb_unavailable"));
         assert!(report.contains("```mermaid"));
-        assert!(report.contains("wiki_pages_overview_md --> code_src_lib_rs"));
+        assert!(report.contains(
+            "document_project_project_123_wiki_pages_overview_md --> document_project_project_123_code_src_lib_rs"
+        ));
     }
 }

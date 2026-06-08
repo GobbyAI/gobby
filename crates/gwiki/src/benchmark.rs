@@ -215,7 +215,7 @@ fn load_benchmark_rows(conn: &mut Client, scope: &SearchScope) -> Result<Benchma
     )?;
     let links = scalar_count(
         conn,
-        "SELECT COUNT(*) FROM gwiki_links WHERE scope_kind = $1 AND scope_id = $2",
+        "SELECT COUNT(*) FROM gwiki_links WHERE scope_kind = $1 AND scope_id = $2 AND link_kind = 'wiki'",
         scope_kind,
         scope_id,
         "query gwiki benchmark link count",
@@ -510,7 +510,7 @@ fn query_graph_counts(config: &FalkorConfig, scope: &SearchScope) -> anyhow::Res
         Some(params.clone()),
     )?;
     let link_rows = client.query(
-        "MATCH (source:WikiDoc {scope_kind: $scope_kind, scope_id: $scope_id})-[:WIKI_LINKS_TO]->(target:WikiDoc {scope_kind: $scope_kind, scope_id: $scope_id}) RETURN count(*) AS count",
+        "MATCH (source:WikiDoc {scope_kind: $scope_kind, scope_id: $scope_id})-[rel:WIKI_LINKS_TO|MENTIONS_TARGET]->(target) WHERE (target:WikiDoc AND target.scope_kind = $scope_kind AND target.scope_id = $scope_id) OR (target:WikiTarget AND target.scope_kind = $scope_kind AND target.scope_id = $scope_id) RETURN count(rel) AS count",
         Some(params),
     )?;
     Ok((falkor_count(&doc_rows), falkor_count(&link_rows)))

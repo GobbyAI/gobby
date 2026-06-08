@@ -807,6 +807,8 @@ fn incremental_regenerates_only_changed() {
         changed_written,
         vec![
             "code/repo.md".to_string(),
+            "code/_onboarding.md".to_string(),
+            "code/_architecture.md".to_string(),
             "code/modules/src.md".to_string(),
             "code/files/src/lib.rs.md".to_string()
         ]
@@ -818,6 +820,8 @@ fn incremental_regenerates_only_changed() {
         generated_docs,
         &vec![
             serde_json::Value::String("code/repo.md".to_string()),
+            serde_json::Value::String("code/_onboarding.md".to_string()),
+            serde_json::Value::String("code/_architecture.md".to_string()),
             serde_json::Value::String("code/modules/src.md".to_string()),
             serde_json::Value::String("code/files/src/lib.rs.md".to_string())
         ]

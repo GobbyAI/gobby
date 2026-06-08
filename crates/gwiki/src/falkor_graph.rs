@@ -78,20 +78,23 @@ pub(crate) fn load_code_graph_edges(
     let code_documents = documents
         .iter()
         .filter_map(|document| {
-            code_doc_source_path(&document.path).map(|file_path| (document.path.clone(), file_path))
+            code_doc_source_path(&document.path)
+                .map(|file_path| (document.scope.clone(), document.path.clone(), file_path))
         })
         .collect::<Vec<_>>();
     let mut edges = Vec::new();
-    for (document_path, file_path) in code_documents {
+    for (scope, document_path, file_path) in code_documents {
         edges.extend(code_call_edges(
             &mut client,
             project_id,
+            &scope,
             &document_path,
             &file_path,
         )?);
         edges.extend(code_import_edges(
             &mut client,
             project_id,
+            &scope,
             &document_path,
             &file_path,
         )?);
@@ -102,6 +105,7 @@ pub(crate) fn load_code_graph_edges(
 fn code_call_edges(
     client: &mut GraphClient,
     project_id: &str,
+    scope: &SearchScope,
     document_path: &Path,
     file_path: &str,
 ) -> anyhow::Result<Vec<WikiGraphCodeEdge>> {
@@ -131,6 +135,7 @@ fn code_call_edges(
                 optional_row_string(&row, "target_name").unwrap_or_else(|| "unknown".to_string());
             let incoming = target_file == file_path && source_file != file_path;
             WikiGraphCodeEdge {
+                scope: scope.clone(),
                 document_path: document_path.to_path_buf(),
                 source: code_endpoint(&source_file, &source_name),
                 target: code_endpoint(&target_file, &target_name),
@@ -146,6 +151,7 @@ fn code_call_edges(
 fn code_import_edges(
     client: &mut GraphClient,
     project_id: &str,
+    scope: &SearchScope,
     document_path: &Path,
     file_path: &str,
 ) -> anyhow::Result<Vec<WikiGraphCodeEdge>> {
@@ -168,6 +174,7 @@ fn code_import_edges(
             let target_name =
                 optional_row_string(&row, "target_name").unwrap_or_else(|| "unknown".to_string());
             WikiGraphCodeEdge {
+                scope: scope.clone(),
                 document_path: document_path.to_path_buf(),
                 source: source_file,
                 target: target_name,

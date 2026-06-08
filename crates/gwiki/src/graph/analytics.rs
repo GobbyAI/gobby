@@ -69,14 +69,14 @@ pub fn analytics_graph_from_facts(facts: &WikiGraphFacts) -> AnalyticsGraph {
     for document in &facts.documents {
         insert_node(
             &mut nodes,
-            document_id(&document.path),
+            document_id(&document.scope, &document.path),
             document_kind(&document.path),
             1.0,
         );
     }
 
     for source in &facts.sources {
-        let source_id = source_node_id(&source.source_path);
+        let source_id = source_node_id(&source.scope, &source.source_path);
         insert_node(&mut nodes, source_id.clone(), "source", 0.5);
 
         let citation_id = citation_node(source).id;
@@ -84,27 +84,27 @@ pub fn analytics_graph_from_facts(facts: &WikiGraphFacts) -> AnalyticsGraph {
 
         edges.push(AnalyticsEdge {
             source: source_id,
-            target: document_id(&source.document_path),
+            target: document_id(&source.scope, &source.document_path),
             kind: "supports".to_string(),
         });
         edges.push(AnalyticsEdge {
             source: citation_id,
-            target: source_node_id(&source.source_path),
+            target: source_node_id(&source.scope, &source.source_path),
             kind: "cites".to_string(),
         });
     }
 
     for link in &facts.links {
         let target = match &link.target {
-            WikiGraphLinkTarget::Resolved(path) => document_id(path),
+            WikiGraphLinkTarget::Resolved(path) => document_id(&link.scope, path),
             WikiGraphLinkTarget::Unresolved(target) => {
-                let node_id = unresolved_target_id(target);
+                let node_id = unresolved_target_id(&link.scope, target);
                 insert_node(&mut nodes, node_id.clone(), "unresolved_target", 0.25);
                 node_id
             }
         };
         edges.push(AnalyticsEdge {
-            source: document_id(&link.source_path),
+            source: document_id(&link.scope, &link.source_path),
             target,
             kind: "links".to_string(),
         });

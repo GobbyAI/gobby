@@ -7,25 +7,7 @@ pub(crate) fn render_module_dependency_mermaid(
     files: &[FileDoc],
     graph_edges: &[CodewikiGraphEdge],
 ) -> Option<String> {
-    let mut component_to_module = HashMap::new();
-    for file in files {
-        for component_id in &file.component_ids {
-            component_to_module.insert(component_id.as_str(), file.module.as_str());
-        }
-    }
-
-    let all_edges = graph_edges
-        .iter()
-        .filter(|edge| edge.kind == CodewikiGraphEdgeKind::Import)
-        .filter_map(|edge| {
-            let source = component_to_module.get(edge.source_component_id.as_str())?;
-            let target = component_to_module.get(edge.target_component_id.as_str())?;
-            if source == target {
-                return None;
-            }
-            Some(((*source).to_string(), (*target).to_string()))
-        })
-        .collect::<BTreeSet<_>>();
+    let all_edges = collect_module_edges(files, graph_edges);
     if all_edges.is_empty() {
         return None;
     }
@@ -54,25 +36,7 @@ pub(crate) fn render_architecture_dependency_mermaid(
     files: &[FileDoc],
     graph_edges: &[CodewikiGraphEdge],
 ) -> Option<String> {
-    let mut component_to_module = HashMap::new();
-    for file in files {
-        for component_id in &file.component_ids {
-            component_to_module.insert(component_id.as_str(), file.module.as_str());
-        }
-    }
-
-    let edges = graph_edges
-        .iter()
-        .filter(|edge| edge.kind == CodewikiGraphEdgeKind::Import)
-        .filter_map(|edge| {
-            let source = component_to_module.get(edge.source_component_id.as_str())?;
-            let target = component_to_module.get(edge.target_component_id.as_str())?;
-            if source == target {
-                return None;
-            }
-            Some(((*source).to_string(), (*target).to_string()))
-        })
-        .collect::<BTreeSet<_>>();
+    let edges = collect_module_edges(files, graph_edges);
     if edges.is_empty() {
         return None;
     }
@@ -90,6 +54,31 @@ pub(crate) fn render_architecture_dependency_mermaid(
     }
     diagram.push_str("```\n");
     Some(diagram)
+}
+
+fn collect_module_edges(
+    files: &[FileDoc],
+    graph_edges: &[CodewikiGraphEdge],
+) -> BTreeSet<(String, String)> {
+    let mut component_to_module = HashMap::new();
+    for file in files {
+        for component_id in &file.component_ids {
+            component_to_module.insert(component_id.as_str(), file.module.as_str());
+        }
+    }
+
+    graph_edges
+        .iter()
+        .filter(|edge| edge.kind == CodewikiGraphEdgeKind::Import)
+        .filter_map(|edge| {
+            let source = component_to_module.get(edge.source_component_id.as_str())?;
+            let target = component_to_module.get(edge.target_component_id.as_str())?;
+            if source == target {
+                return None;
+            }
+            Some(((*source).to_string(), (*target).to_string()))
+        })
+        .collect()
 }
 
 pub(crate) fn render_module_call_mermaid(

@@ -163,7 +163,10 @@ pub(crate) fn citation_list(spans: &[SourceSpan]) -> String {
         .into_iter()
         .map(|span| span.citation())
         .collect::<Vec<_>>()
-        .join(" ")
+        .chunks(4)
+        .map(|chunk| chunk.join(" "))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub(crate) fn ground_text(
@@ -174,6 +177,8 @@ pub(crate) fn ground_text(
     let cleaned = strip_invalid_citations(text, valid_spans);
     if fallback_citation.is_empty() || contains_valid_citation(&cleaned, valid_spans) {
         cleaned
+    } else if fallback_citation.contains('\n') {
+        format!("{cleaned}\n{fallback_citation}")
     } else {
         format!("{cleaned} {fallback_citation}")
     }

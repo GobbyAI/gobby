@@ -488,6 +488,7 @@ mod tests {
             )],
             code_edges: vec![
                 code_edge(
+                    scope.clone(),
                     "wiki/code/files/src/handler.rs.md",
                     "src/handler.rs:handle",
                     "src/router.rs:route",
@@ -496,6 +497,7 @@ mod tests {
                     Some(42),
                 ),
                 code_edge(
+                    scope.clone(),
                     "wiki/code/files/src/handler.rs.md",
                     "src/main.rs:main",
                     "src/handler.rs:handle",
@@ -504,6 +506,7 @@ mod tests {
                     Some(7),
                 ),
                 code_edge(
+                    scope.clone(),
                     "wiki/code/files/src/handler.rs.md",
                     "src/handler.rs",
                     "crate::router",
@@ -597,6 +600,7 @@ mod tests {
     }
 
     fn code_edge(
+        scope: SearchScope,
         document_path: &str,
         source: &str,
         target: &str,
@@ -605,6 +609,7 @@ mod tests {
         line: Option<usize>,
     ) -> WikiGraphCodeEdge {
         WikiGraphCodeEdge {
+            scope,
             document_path: PathBuf::from(document_path),
             source: source.to_string(),
             target: target.to_string(),

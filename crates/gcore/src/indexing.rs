@@ -4,6 +4,7 @@
 //! parsers, symbol models, and graph facts stay in consumer crates.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
@@ -69,7 +70,7 @@ impl WalkerSettings {
 pub fn content_hash(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
-    format!("{:x}", hasher.finalize())
+    hex_digest(hasher.finalize())
 }
 
 /// SHA-256 content hash for a file, read incrementally.
@@ -86,7 +87,16 @@ pub fn file_content_hash(path: impl AsRef<Path>) -> io::Result<String> {
         hasher.update(&buffer[..read]);
     }
 
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(hex_digest(hasher.finalize()))
+}
+
+fn hex_digest(digest: impl AsRef<[u8]>) -> String {
+    let bytes = digest.as_ref();
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(&mut hex, "{byte:02x}");
+    }
+    hex
 }
 
 /// A content chunk with byte range and opaque domain metadata.

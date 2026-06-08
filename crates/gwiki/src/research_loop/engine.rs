@@ -554,9 +554,21 @@ fn citations_for_sources(
 }
 
 fn citation_matches_source(citation: &ResearchCodeCitation, source: &str) -> bool {
-    citation.file == source
-        || source.ends_with(&citation.file)
-        || source.contains(&format!("{}.", citation.file))
+    let citation_components = path_components(&citation.file);
+    let source_components = path_components(source);
+    if citation_components.is_empty() || source_components.is_empty() {
+        return false;
+    }
+    source_components == citation_components
+        || source_components.ends_with(&citation_components)
+        || source_components.last() == citation_components.last()
+}
+
+fn path_components(value: &str) -> Vec<&str> {
+    value
+        .split(['/', '\\'])
+        .filter(|component| !component.is_empty() && *component != ".")
+        .collect()
 }
 
 fn dedup_code_citations(citations: Vec<ResearchCodeCitation>) -> Vec<ResearchCodeCitation> {

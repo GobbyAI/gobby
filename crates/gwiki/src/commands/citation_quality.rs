@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -276,7 +276,10 @@ fn coverage_gap_section(
     })
 }
 
-fn contradiction_section(provenance: &ProvenanceGraph, ai_available: bool) -> ContradictionSection {
+fn contradiction_section(
+    _provenance: &ProvenanceGraph,
+    ai_available: bool,
+) -> ContradictionSection {
     if !ai_available {
         return ContradictionSection {
             available: false,
@@ -288,37 +291,13 @@ fn contradiction_section(provenance: &ProvenanceGraph, ai_available: bool) -> Co
         };
     }
 
-    let mut claims: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for link in provenance.links() {
-        let Some(claim) = link
-            .claim
-            .as_deref()
-            .map(str::trim)
-            .filter(|claim| !claim.is_empty())
-        else {
-            continue;
-        };
-        claims
-            .entry(claim.to_string())
-            .or_default()
-            .insert(link.source.source_id.clone());
-    }
-    let findings = claims
-        .into_iter()
-        .filter_map(|(claim, sources)| {
-            (sources.len() > 1).then(|| ContradictionFinding {
-                claim,
-                source_ids: sources.into_iter().collect(),
-            })
-        })
-        .collect::<Vec<_>>();
-
     ContradictionSection {
         available: true,
-        note: findings.is_empty().then(|| {
-            "AI-assisted pass completed; exact conflicting claim groups are reported.".to_string()
-        }),
-        findings,
+        note: Some(
+            "AI-assisted pass completed; repeated support is not treated as contradiction evidence."
+                .to_string(),
+        ),
+        findings: Vec::new(),
     }
 }
 
@@ -613,7 +592,7 @@ mod tests {
     }
 
     #[test]
-    fn citation_quality_report_flags_conflicting_claim_sources_when_ai_available() {
+    fn citation_quality_report_ignores_repeated_support_when_ai_available() {
         let temp = tempfile::tempdir().expect("tempdir");
         write_page(
             temp.path(),
@@ -654,8 +633,9 @@ mod tests {
 
         assert!(report.markdown.contains("## Contradictions"));
         assert!(report.markdown.contains("available: true"));
-        assert!(report.markdown.contains("Shared claim."));
-        assert!(report.markdown.contains("src-1, src-2"));
+        assert!(!report.markdown.contains("Shared claim."));
+        assert!(!report.markdown.contains("src-1, src-2"));
+        assert!(report.markdown.contains("No contradictions reported."));
     }
 
     #[test]
