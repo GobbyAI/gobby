@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use crate::graph::{WikiGraphFacts, WikiGraphLinkTarget};
+use crate::graph::{WikiGraphCodeEdge, WikiGraphFacts, WikiGraphLinkTarget};
 use crate::search::SearchScope;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -81,6 +81,10 @@ pub struct GraphContextCodeEdge {
     pub source: String,
     pub target: String,
     pub kind: String,
+    pub direction: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+    pub provenance: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -115,8 +119,8 @@ pub fn build_context_pack(
                 .get(path)
                 .map(|citations| citations.iter().cloned().collect())
                 .unwrap_or_default(),
-            calls: Vec::new(),
-            imports: Vec::new(),
+            calls: code_calls_for_path(facts, path),
+            imports: code_imports_for_path(facts, path),
         })
         .collect::<Vec<_>>();
 
@@ -254,12 +258,52 @@ fn doc_links_for_path(facts: &WikiGraphFacts, path: &Path) -> Vec<GraphContextDo
             },
         })
         .collect::<Vec<_>>();
+    links.extend(facts.links.iter().filter_map(|link| match &link.target {
+        WikiGraphLinkTarget::Resolved(target) if link.source_path != path && target == path => {
+            Some(GraphContextDocLink {
+                source: display_path(&link.source_path),
+                target: display_path(path),
+                raw_target: link.raw_target.clone(),
+                status: "resolved",
+            })
+        }
+        _ => None,
+    }));
     links.sort_by(|left, right| {
         left.target
             .cmp(&right.target)
             .then_with(|| left.raw_target.cmp(&right.raw_target))
     });
     links
+}
+
+fn code_calls_for_path(facts: &WikiGraphFacts, path: &Path) -> Vec<GraphContextCodeEdge> {
+    facts
+        .code_edges
+        .iter()
+        .filter(|edge| edge.document_path == path && edge.kind != "imports")
+        .map(graph_context_code_edge)
+        .collect()
+}
+
+fn code_imports_for_path(facts: &WikiGraphFacts, path: &Path) -> Vec<GraphContextCodeEdge> {
+    facts
+        .code_edges
+        .iter()
+        .filter(|edge| edge.document_path == path && edge.kind == "imports")
+        .map(graph_context_code_edge)
+        .collect()
+}
+
+fn graph_context_code_edge(edge: &WikiGraphCodeEdge) -> GraphContextCodeEdge {
+    GraphContextCodeEdge {
+        source: edge.source.clone(),
+        target: edge.target.clone(),
+        kind: edge.kind.clone(),
+        direction: edge.direction.clone(),
+        line: edge.line,
+        provenance: edge.provenance.clone(),
+    }
 }
 
 fn recommendations(
@@ -321,7 +365,8 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::graph::{
-        WikiGraphDocument, WikiGraphFacts, WikiGraphLink, WikiGraphLinkTarget, WikiGraphSource,
+        WikiGraphCodeEdge, WikiGraphDocument, WikiGraphFacts, WikiGraphLink, WikiGraphLinkTarget,
+        WikiGraphSource,
     };
     use crate::search::SearchScope;
 
@@ -340,6 +385,7 @@ mod tests {
                 unresolved_link(scope.clone(), "wiki/a.md", "Missing"),
             ],
             sources: vec![source(scope.clone(), "raw/a.md", "wiki/a.md")],
+            code_edges: Vec::new(),
         };
 
         let pack = super::build_context_pack(
@@ -417,6 +463,100 @@ mod tests {
         );
     }
 
+    #[test]
+    fn ask_unified_graph_context_merges_wiki_and_code_edges() {
+        let scope = SearchScope::project("project-1");
+        let facts = WikiGraphFacts {
+            documents: vec![
+                doc(scope.clone(), "wiki/architecture.md", Some("Architecture")),
+                doc(
+                    scope.clone(),
+                    "wiki/code/files/src/handler.rs.md",
+                    Some("src/handler.rs"),
+                ),
+            ],
+            links: vec![resolved_link(
+                scope.clone(),
+                "wiki/architecture.md",
+                "Handler",
+                "wiki/code/files/src/handler.rs.md",
+            )],
+            sources: vec![source(
+                scope.clone(),
+                "src/handler.rs",
+                "wiki/code/files/src/handler.rs.md",
+            )],
+            code_edges: vec![
+                code_edge(
+                    "wiki/code/files/src/handler.rs.md",
+                    "src/handler.rs:handle",
+                    "src/router.rs:route",
+                    "calls",
+                    "outgoing",
+                    Some(42),
+                ),
+                code_edge(
+                    "wiki/code/files/src/handler.rs.md",
+                    "src/main.rs:main",
+                    "src/handler.rs:handle",
+                    "callers",
+                    "incoming",
+                    Some(7),
+                ),
+                code_edge(
+                    "wiki/code/files/src/handler.rs.md",
+                    "src/handler.rs",
+                    "crate::router",
+                    "imports",
+                    "outgoing",
+                    None,
+                ),
+            ],
+        };
+
+        let pack = super::build_context_pack(&facts, super::GraphContextOptions::available());
+        let json = serde_json::to_value(&pack).expect("serialize pack");
+        let neighborhoods = json["neighborhoods"].as_array().expect("neighborhoods");
+        let code = neighborhoods
+            .iter()
+            .find(|node| node["path"] == "wiki/code/files/src/handler.rs.md")
+            .expect("code neighborhood");
+
+        assert!(
+            code["calls"]
+                .as_array()
+                .expect("calls")
+                .iter()
+                .any(|edge| edge["kind"] == "calls"
+                    && edge["direction"] == "outgoing"
+                    && edge["line"] == 42
+                    && edge["provenance"] == "shared_code_graph")
+        );
+        assert!(
+            code["calls"]
+                .as_array()
+                .expect("calls")
+                .iter()
+                .any(|edge| edge["kind"] == "callers" && edge["direction"] == "incoming")
+        );
+        assert!(
+            code["imports"]
+                .as_array()
+                .expect("imports")
+                .iter()
+                .any(|edge| edge["target"] == "crate::router"
+                    && edge["provenance"] == "shared_code_graph")
+        );
+        assert!(
+            code["doc_links"]
+                .as_array()
+                .expect("doc links")
+                .iter()
+                .any(|link| link["source"] == "wiki/architecture.md"
+                    && link["target"] == "wiki/code/files/src/handler.rs.md")
+        );
+    }
+
     fn doc(scope: SearchScope, path: &str, title: Option<&str>) -> WikiGraphDocument {
         WikiGraphDocument {
             scope,
@@ -453,6 +593,25 @@ mod tests {
             source_path: PathBuf::from(source_path),
             raw_target: raw_target.to_string(),
             target: WikiGraphLinkTarget::Unresolved(raw_target.to_string()),
+        }
+    }
+
+    fn code_edge(
+        document_path: &str,
+        source: &str,
+        target: &str,
+        kind: &str,
+        direction: &str,
+        line: Option<usize>,
+    ) -> WikiGraphCodeEdge {
+        WikiGraphCodeEdge {
+            document_path: PathBuf::from(document_path),
+            source: source.to_string(),
+            target: target.to_string(),
+            kind: kind.to_string(),
+            direction: direction.to_string(),
+            line,
+            provenance: "shared_code_graph".to_string(),
         }
     }
 }

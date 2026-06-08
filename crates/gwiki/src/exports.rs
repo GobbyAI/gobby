@@ -339,6 +339,7 @@ mod tests {
                 source_path: "raw/sources/example.md".into(),
                 document_path: "wiki/pages/overview.md".into(),
             }],
+            code_edges: Vec::new(),
         };
 
         let artifacts = export_graph_artifacts(

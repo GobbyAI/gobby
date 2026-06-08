@@ -5,7 +5,10 @@ use gobby_core::ai_context::{AiConfigSource, AiContext, AiContextOptions};
 use gobby_core::config::{AiCapability, AiRouting};
 
 use crate::commands::search;
-use crate::output::{AskAiOutput, AskOutput, AskSynthesisOutput, SearchOutput};
+use crate::output::{
+    AskAiOutput, AskCodeCitationOutput, AskOutput, AskSynthesisOutput, SearchOutput,
+    SearchResultOutput,
+};
 use crate::{CommandOutcome, ScopeIdentity, ScopeSelection, WikiError};
 
 const DEFAULT_ASK_HIT_LIMIT: usize = 10;
@@ -43,6 +46,8 @@ fn ask_output_from_search(search: SearchOutput) -> AskOutput {
         })
         .collect::<Vec<_>>();
     let sources = unique_sources(&search);
+    let code_citations = code_citations_from_results(&search.results);
+    let degraded_sources = search.degradations.clone();
     let status = if search.results.is_empty() {
         "no_results"
     } else {
@@ -53,9 +58,12 @@ fn ask_output_from_search(search: SearchOutput) -> AskOutput {
         scope: search.scope,
         query: search.query,
         status,
+        degraded: !degraded_sources.is_empty(),
+        degraded_sources,
         hits: search.results,
         related_pages,
         sources,
+        code_citations,
         gaps: Vec::new(),
         stale_candidates: Vec::new(),
         suggested_questions: Vec::new(),
@@ -74,6 +82,33 @@ fn unique_sources(search: &SearchOutput) -> Vec<String> {
         }
     }
     seen.into_iter().collect()
+}
+
+fn code_citations_from_results(results: &[SearchResultOutput]) -> Vec<AskCodeCitationOutput> {
+    let mut seen = BTreeSet::new();
+    let mut citations = Vec::new();
+    for hit in results {
+        if !is_code_result(hit) {
+            continue;
+        }
+        let file = hit.source_path.display().to_string();
+        let symbol = hit.title.clone();
+        if seen.insert((file.clone(), symbol.clone())) {
+            citations.push(AskCodeCitationOutput {
+                file,
+                line: None,
+                symbol,
+            });
+        }
+    }
+    citations
+}
+
+fn is_code_result(hit: &SearchResultOutput) -> bool {
+    hit.wiki_page
+        .to_string_lossy()
+        .replace('\\', "/")
+        .starts_with("wiki/code/files/")
 }
 
 fn synthesize(
@@ -178,6 +213,16 @@ fn mark_ai_unavailable(
         });
     }
     output.status = "partial";
+    output.degraded = true;
+    if !output
+        .degraded_sources
+        .iter()
+        .any(|source| source == "model_provider_unavailable")
+    {
+        output
+            .degraded_sources
+            .push("model_provider_unavailable".to_string());
+    }
     if !output
         .warnings
         .iter()
@@ -208,6 +253,19 @@ fn synthesis_prompt(output: &AskOutput) -> String {
             hit.snippet
         ));
     }
+    if !output.code_citations.is_empty() {
+        prompt.push_str("Code citations:\n");
+        for citation in &output.code_citations {
+            let symbol = citation.symbol.as_deref().unwrap_or("unknown symbol");
+            match citation.line {
+                Some(line) => {
+                    prompt.push_str(&format!("- {}:{} ({})\n", citation.file, line, symbol))
+                }
+                None => prompt.push_str(&format!("- {} ({})\n", citation.file, symbol)),
+            }
+        }
+        prompt.push('\n');
+    }
     prompt
 }
 
@@ -235,6 +293,12 @@ fn render_text(query: &str, scope: &ScopeIdentity, output: &AskOutput) -> String
         );
     }
     let mut text = format!("Wiki hits for \"{query}\"\nScope: {scope}\n");
+    if output.degraded {
+        text.push_str(&format!(
+            "Degraded sources: {}\n",
+            output.degraded_sources.join(", ")
+        ));
+    }
     if output.hits.is_empty() {
         text.push_str("No results");
     } else {
@@ -245,6 +309,21 @@ fn render_text(query: &str, scope: &ScopeIdentity, output: &AskOutput) -> String
                 text.push_str(" — ");
             }
             text.push_str(&hit.wiki_page.display().to_string());
+            text.push('\n');
+        }
+    }
+    if !output.code_citations.is_empty() {
+        text.push_str("Code citations\n");
+        for citation in &output.code_citations {
+            text.push_str("- ");
+            text.push_str(&citation.file);
+            if let Some(line) = citation.line {
+                text.push_str(&format!(":{line}"));
+            }
+            if let Some(symbol) = &citation.symbol {
+                text.push(' ');
+                text.push_str(symbol);
+            }
             text.push('\n');
         }
     }
@@ -302,6 +381,77 @@ mod tests {
         assert!(output.suggested_questions.is_empty());
         assert!(output.ai.is_none());
         assert!(output.synthesis.is_none());
+    }
+
+    #[test]
+    fn ask_unified_graph_output_carries_code_citations_and_degradation() {
+        let output = ask_output_from_search(SearchOutput::new(
+            ScopeIdentity::project("project-1"),
+            "Where is request handling wired?",
+            10,
+            vec![
+                SearchResultOutput {
+                    title: Some("Request handler".to_string()),
+                    fusion_key: "project:project-1:wiki/code/files/src/handler.rs.md".to_string(),
+                    wiki_page: PathBuf::from("wiki/code/files/src/handler.rs.md"),
+                    source_path: PathBuf::from("src/handler.rs"),
+                    snippet: "fn handle() calls route().".to_string(),
+                    score: 0.95,
+                    sources: vec!["bm25".to_string(), "graph".to_string()],
+                    explanations: Vec::new(),
+                },
+                SearchResultOutput {
+                    title: Some("Architecture".to_string()),
+                    fusion_key: "project:project-1:wiki/architecture.md".to_string(),
+                    wiki_page: PathBuf::from("wiki/architecture.md"),
+                    source_path: PathBuf::from("raw/architecture.md"),
+                    snippet: "The handler delegates routing.".to_string(),
+                    score: 0.85,
+                    sources: vec!["graph".to_string()],
+                    explanations: Vec::new(),
+                },
+            ],
+            vec!["shared_code_graph_unavailable".to_string()],
+        ));
+
+        assert!(output.degraded);
+        assert_eq!(
+            output.degraded_sources,
+            vec!["shared_code_graph_unavailable".to_string()]
+        );
+        assert_eq!(output.code_citations.len(), 1);
+        assert_eq!(output.code_citations[0].file, "src/handler.rs");
+        assert_eq!(output.code_citations[0].line, None);
+        assert_eq!(
+            output.code_citations[0].symbol,
+            Some("Request handler".to_string())
+        );
+
+        let prompt = synthesis_prompt(&output);
+        assert!(prompt.contains("Code citations:"));
+        assert!(prompt.contains("src/handler.rs"));
+        assert!(prompt.contains("Request handler"));
+    }
+
+    #[test]
+    fn ask_unified_graph_model_unavailable_marks_degraded() {
+        let mut output = ask_output_from_search(SearchOutput::new(
+            ScopeIdentity::project("project-1"),
+            "Can this synthesize?",
+            10,
+            Vec::new(),
+            Vec::new(),
+        ));
+
+        mark_ai_unavailable(&mut output, false, Some("no model".to_string()))
+            .expect("model unavailable should degrade without require_ai");
+
+        assert!(output.degraded);
+        assert_eq!(
+            output.degraded_sources,
+            vec!["model_provider_unavailable".to_string()]
+        );
+        assert_eq!(output.warnings, vec!["ai_unavailable".to_string()]);
     }
 
     #[test]

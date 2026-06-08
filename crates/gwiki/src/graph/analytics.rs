@@ -252,6 +252,7 @@ mod tests {
                 target: WikiGraphLinkTarget::Resolved("wiki/b.md".into()),
             }],
             sources: Vec::new(),
+            code_edges: Vec::new(),
         });
 
         let analytics_graph = analytics_graph_from_memory(&graph);
