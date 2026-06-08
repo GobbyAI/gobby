@@ -4,6 +4,9 @@ use std::path::PathBuf;
 
 use super::generation::generate_report_from_snapshot;
 use super::render::render_markdown;
+use super::summary::{
+    gcore_analytics_for_report_snapshot, summarize_bridge_edges, summarize_hotspots,
+};
 use super::types::{
     BridgeEdgeInput, GraphHotspot, ReportCodeEdge, ReportGraphSnapshot, ReportNode,
 };
@@ -59,6 +62,55 @@ fn report_shape() {
             .as_array()
             .unwrap()
             .is_empty()
+    );
+}
+
+#[test]
+fn graph_analytics_parity_matches_legacy_report_snapshot() {
+    let snapshot = ReportGraphSnapshot {
+        nodes: vec![
+            ReportNode::new("src/lib.rs", "src/lib.rs", "file"),
+            ReportNode::new("mod:api", "api", "module"),
+            ReportNode::new("sym:handler", "handler", "function").with_file_path("src/lib.rs"),
+            ReportNode::new("sym:parse", "parse", "function").with_file_path("src/lib.rs"),
+            ReportNode::new("unresolved:do_work", "do_work", "unresolved"),
+            ReportNode::new("external:serde_json", "serde_json", "external"),
+        ],
+        code_edges: vec![
+            ReportCodeEdge::new("src/lib.rs", "sym:handler", "DEFINES"),
+            ReportCodeEdge::new("src/lib.rs", "mod:api", "IMPORTS"),
+            ReportCodeEdge::new("sym:handler", "sym:parse", "CALLS"),
+            ReportCodeEdge::new("sym:parse", "unresolved:do_work", "CALLS"),
+            ReportCodeEdge::new("sym:handler", "external:serde_json", "CALLS"),
+        ],
+        bridge_edges: BridgeEdgeInput::available(vec![BridgeEdgeHypothesis::inferred(
+            "memory-1",
+            "sym:handler",
+            RELATES_TO_CODE,
+            "gobby-memory",
+            Some(0.72),
+        )]),
+        ..ReportGraphSnapshot::default()
+    };
+
+    let bridge_edges = match snapshot.bridge_edges.clone() {
+        BridgeEdgeInput::Available(edges) => edges,
+        BridgeEdgeInput::Unavailable(_) => vec![],
+    };
+    let gcore_analytics = gcore_analytics_for_report_snapshot(
+        &snapshot.nodes,
+        &snapshot.code_edges,
+        &bridge_edges,
+        DEFAULT_TOP_LIMIT,
+    );
+
+    assert_eq!(
+        gcore_analytics.hotspots,
+        summarize_hotspots(&snapshot.nodes, &snapshot.code_edges, DEFAULT_TOP_LIMIT)
+    );
+    assert_eq!(
+        gcore_analytics.bridge_summary,
+        summarize_bridge_edges(&bridge_edges)
     );
 }
 

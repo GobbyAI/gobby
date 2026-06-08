@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use gobby_core::graph_analytics::{AnalyticsEdge, AnalyticsGraph, AnalyticsNode};
 use serde::{Deserialize, Serialize};
 
 use crate::models::{ProjectionMetadata, ProjectionProvenance};
@@ -49,6 +50,26 @@ impl GraphPayload {
         self.nodes.len()
     }
 
+    pub(crate) fn analytics_graph_from_parts(
+        nodes: impl IntoIterator<Item = (String, String, f64)>,
+        edges: impl IntoIterator<Item = (String, String, String)>,
+    ) -> AnalyticsGraph {
+        AnalyticsGraph {
+            nodes: nodes
+                .into_iter()
+                .map(|(id, kind, weight)| AnalyticsNode { id, kind, weight })
+                .collect(),
+            edges: edges
+                .into_iter()
+                .map(|(source, target, kind)| AnalyticsEdge {
+                    source,
+                    target,
+                    kind,
+                })
+                .collect(),
+        }
+    }
+
     fn refresh_node_cache(&mut self) {
         self.node_ids = self
             .nodes
@@ -64,6 +85,31 @@ impl PartialEq for GraphPayload {
     fn eq(&self, other: &Self) -> bool {
         self.nodes == other.nodes && self.links == other.links && self.center == other.center
     }
+}
+
+impl From<&GraphPayload> for AnalyticsGraph {
+    fn from(payload: &GraphPayload) -> Self {
+        GraphPayload::analytics_graph_from_parts(
+            payload.nodes().iter().map(|node| {
+                (
+                    node.id.clone(),
+                    node.node_type.clone(),
+                    analytics_node_weight(node.symbol_count),
+                )
+            }),
+            payload.links.iter().map(|link| {
+                (
+                    link.source.clone(),
+                    link.target.clone(),
+                    link.link_type.clone(),
+                )
+            }),
+        )
+    }
+}
+
+fn analytics_node_weight(symbol_count: Option<usize>) -> f64 {
+    symbol_count.map(|count| count.max(1) as f64).unwrap_or(1.0)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
