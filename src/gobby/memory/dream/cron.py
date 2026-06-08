@@ -41,8 +41,9 @@ def register_memory_dream_cron(
         if existing and existing.enabled:
             updated = cron_storage.update_job(existing.id, enabled=False, next_run_at=None)
             if updated is None:
-                raise RuntimeError(
-                    f"Failed to disable system cron job: {MEMORY_DREAM_CRON_JOB_NAME}"
+                logger.warning(
+                    "System cron job already disappeared during disable: %s",
+                    MEMORY_DREAM_CRON_JOB_NAME,
                 )
         return 0
 
@@ -98,6 +99,7 @@ def _ensure_system_job(
 
     if not existing.is_system:
         cron_storage.mark_as_system_job(existing.id)
+    was_enabled = existing.enabled
     repaired = cron_storage.reconcile_system_job_definition(
         existing.id,
         action_type="handler",
@@ -108,5 +110,5 @@ def _ensure_system_job(
         interval_seconds=None,
         run_at=None,
     )
-    if repaired and not repaired.enabled:
+    if repaired and was_enabled and not repaired.enabled:
         cron_storage.toggle_job(repaired.id)

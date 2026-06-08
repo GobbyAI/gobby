@@ -79,6 +79,11 @@ uv run mypy src/
 - Always use connection context managers for SQLite
 - Use structured logging with context
 
+### Generated Local Artifacts
+
+`gwiki health` writes local health reports under `.gobby/wiki/meta/health/`.
+These files are generated diagnostics and should not be committed.
+
 ## Pull Request Process
 
 1. **Fork the repository** and create a feature branch from `main`

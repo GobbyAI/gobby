@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from gobby.config.persistence import MemoryDreamConfig
 from gobby.servers.routes.memory import create_memory_router
 from gobby.servers.routes.memory_dream import create_memory_dream_router
 from gobby.storage.memories import Memory
@@ -42,7 +44,9 @@ def mock_server():
     server = MagicMock()
     server._background_tasks = set()
     server.register_background_task.side_effect = lambda task: server._background_tasks.add(task)
-    server.services.config.memory.dream = None
+    server.services = SimpleNamespace(
+        config=SimpleNamespace(memory=SimpleNamespace(dream=MemoryDreamConfig()))
+    )
     server.llm_service = None
     server.memory_manager = MagicMock()
     server.memory_manager.create_memory = AsyncMock(return_value=_make_memory())
@@ -114,7 +118,7 @@ class TestMemoryDreamRoutes:
     def test_status_and_revert(self, dream_client: TestClient) -> None:
         with patch("gobby.servers.routes.memory_dream.MemoryDreamService") as service_cls:
             service = service_cls.return_value
-            service.status.return_value = {"success": True, "run": {"id": "dream-1"}}
+            service.status = AsyncMock(return_value={"success": True, "run": {"id": "dream-1"}})
             service.revert = AsyncMock(return_value={"success": True, "run_id": "dream-1"})
 
             status = dream_client.get("/memory/dream/dream-1")
@@ -122,8 +126,28 @@ class TestMemoryDreamRoutes:
 
         assert status.status_code == 200
         assert revert.status_code == 200
-        service.status.assert_called_once_with("dream-1")
+        service.status.assert_awaited_once_with("dream-1")
         service.revert.assert_awaited_once_with("dream-1")
+
+    def test_missing_memory_manager_returns_503(self, mock_server: MagicMock) -> None:
+        mock_server.memory_manager = None
+        app = FastAPI()
+        app.include_router(create_memory_dream_router(mock_server))
+
+        response = TestClient(app).post("/memory/dream", json={"wait": True})
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == "memory manager is unavailable"
+
+    def test_missing_dream_config_returns_503(self, mock_server: MagicMock) -> None:
+        mock_server.services.config.memory.dream = None
+        app = FastAPI()
+        app.include_router(create_memory_dream_router(mock_server))
+
+        response = TestClient(app).post("/memory/dream", json={"wait": True})
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == "memory dream config is unavailable"
 
 
 # =============================================================================

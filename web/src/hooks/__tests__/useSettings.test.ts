@@ -77,6 +77,13 @@ describe('useSettings', () => {
     })
   })
 
+  it('normalizes an empty persisted plan pending variant', () => {
+    localStorage.setItem('gobby-settings', JSON.stringify({ planPendingVariant: '' }))
+    const { result } = renderHook(() => useSettings())
+
+    expect(result.current.settings.planPendingVariant).toBe('info')
+  })
+
   it('replaces the icon cache param while preserving other query params and fragments', () => {
     expect(cacheBustedIconHref('/logo.png?theme=dark&v=1#mask')).toBe(
       '/logo.png?theme=dark&v=2#mask',

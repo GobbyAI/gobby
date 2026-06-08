@@ -237,3 +237,15 @@ async def test_invoke_llm_compile_wraps_json_decode_error(service: ExpansionServ
 
     with pytest.raises(ValueError, match="did not return valid JSON"):
         await service._invoke_llm_compile(run, {"task": {}})
+
+
+@pytest.mark.asyncio
+async def test_invoke_llm_compile_wraps_value_error(service: ExpansionService) -> None:
+    service.llm_service.call_json_feature.side_effect = ValueError("bad json")
+    service._render_prompt = MagicMock(return_value="prompt")
+    run = MagicMock(id="expand-1", provider=None, model=None)
+
+    with pytest.raises(ValueError, match="did not return valid JSON") as excinfo:
+        await service._invoke_llm_compile(run, {"task": {}})
+
+    assert isinstance(excinfo.value.__cause__, ValueError)

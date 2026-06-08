@@ -564,10 +564,11 @@ class MemoryManager:
         tags_all: list[str] | None = None,
     ) -> list[Memory]:
         """List memories via backend (async)."""
+        resolved_limit = DEFAULT_LIST_LIMIT if limit is None else limit
         records = await self._backend.list_memories(
             project_id=project_id,
             memory_type=memory_type,
-            limit=limit or DEFAULT_LIST_LIMIT,
+            limit=resolved_limit,
             offset=offset,
             tags_all=tags_all,
         )

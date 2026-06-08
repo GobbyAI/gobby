@@ -92,7 +92,7 @@ function normalizePersistedSettings(settings: Partial<Settings>): Partial<Settin
   if (settings.defaultChatMode) {
     normalized.defaultChatMode = normalizeChatMode(settings.defaultChatMode)
   }
-  if (settings.planPendingVariant) {
+  if (settings.planPendingVariant !== undefined && settings.planPendingVariant !== null) {
     normalized.planPendingVariant = normalizePlanPendingVariant(settings.planPendingVariant)
   }
   return normalized

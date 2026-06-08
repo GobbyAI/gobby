@@ -161,6 +161,12 @@ if [ -n "$CHANGED_FILES" ]; then
                             "http://localhost:${DAEMON_PORT}/api/code-index/codewiki/refresh" >/dev/null 2>&1; then
                             echo "gobby: codewiki refresh request failed for $ROOT_PATH" >&2
                         fi
+                    elif [[ "$ROOT_PATH" == *$'\n'* ]]; then
+                        echo "gobby: codewiki refresh skipped; ROOT_PATH contains newline" >&2
+                    elif [[ "$ROOT_PATH" == *$'\r'* ]]; then
+                        echo "gobby: codewiki refresh skipped; ROOT_PATH contains carriage return" >&2
+                    elif [[ "$ROOT_PATH" == *$'\t'* ]]; then
+                        echo "gobby: codewiki refresh skipped; ROOT_PATH contains tab" >&2
                     elif printf '%s' "$ROOT_PATH" | LC_ALL=C grep -q '[[:cntrl:]]'; then
                         echo "gobby: codewiki refresh skipped; ROOT_PATH contains control characters" >&2
                     else

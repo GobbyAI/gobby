@@ -307,7 +307,6 @@ class MCPServerImporter:
         render_context = {
             **context,
             "fetched_context": fetched_context,
-            "documentation_context": fetched_context,
         }
         base_prompt = self._loader.render(prompt_path, render_context)
         return (

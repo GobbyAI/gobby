@@ -236,6 +236,7 @@ __marimo__/
 !.gobby/project.jsonl
 !.gobby/wiki/
 !.gobby/wiki/**
+.gobby/wiki/meta/health/
 !.gobby/plans/
 !.gobby/plans/**
 screenshots/

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 from starlette.testclient import TestClient
 
@@ -38,7 +36,7 @@ def test_config_values_expose_indexing_default(client: TestClient) -> None:
 
 def test_config_values_round_trip_indexing_respect_gitignore(
     client: TestClient,
-    temp_db: Any,
+    temp_db: HubDatabase,
 ) -> None:
     response = client.put(
         "/api/config/values",

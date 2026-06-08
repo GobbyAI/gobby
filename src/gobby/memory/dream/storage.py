@@ -197,6 +197,8 @@ class MemoryDreamStore:
             key: _json(value) if key in _RUN_JSON_COLUMNS else value
             for key, value in fields.items()
         }
+        # Column assignments are selected from _RUN_UPDATE_SET_CLAUSES above;
+        # values remain parameterized with psycopg placeholders.
         set_clause = ", ".join(_RUN_UPDATE_SET_CLAUSES[key] for key in encoded)
         self.db.execute(
             f"UPDATE memory_dream_runs SET {set_clause} WHERE id = %s",  # nosec B608

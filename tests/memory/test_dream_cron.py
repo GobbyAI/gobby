@@ -11,15 +11,61 @@ from gobby.memory.dream.cron import (
     MEMORY_DREAM_CRON_JOB_NAME,
     register_memory_dream_cron,
 )
-from gobby.storage.cron_models import CronJob
 
 pytestmark = pytest.mark.unit
 
 
+class _FakeCronStorage:
+    def __init__(
+        self,
+        *,
+        existing: Any | None = None,
+        repaired: Any | None = None,
+        update_result: Any | None = None,
+    ) -> None:
+        self.existing = existing
+        self.repaired = repaired
+        self.update_result = update_result
+        self.created_jobs: list[dict[str, Any]] = []
+        self.updated_jobs: list[tuple[str, dict[str, Any]]] = []
+        self.reconciled_jobs: list[tuple[str, dict[str, Any]]] = []
+        self.system_job_ids: list[str] = []
+        self.toggled_job_ids: list[str] = []
+
+    def get_job_by_name(self, _name: str) -> Any | None:
+        return self.existing
+
+    def create_job(self, **kwargs: Any) -> Any:
+        self.created_jobs.append(kwargs)
+        return SimpleNamespace(id="created-job", **kwargs)
+
+    def update_job(self, job_id: str, **kwargs: Any) -> Any | None:
+        self.updated_jobs.append((job_id, kwargs))
+        return self.update_result
+
+    def mark_as_system_job(self, job_id: str) -> None:
+        self.system_job_ids.append(job_id)
+
+    def reconcile_system_job_definition(self, job_id: str, **kwargs: Any) -> Any | None:
+        self.reconciled_jobs.append((job_id, kwargs))
+        return self.repaired
+
+    def toggle_job(self, job_id: str) -> Any:
+        self.toggled_job_ids.append(job_id)
+        return SimpleNamespace(id=job_id, enabled=True)
+
+
+class _FakeCronExecutor:
+    def __init__(self) -> None:
+        self.handlers: dict[str, Any] = {}
+
+    def register_handler(self, name: str, handler: Any) -> None:
+        self.handlers[name] = handler
+
+
 def test_register_memory_dream_cron_creates_single_system_job() -> None:
-    cron_storage = MagicMock()
-    cron_storage.get_job_by_name.return_value = None
-    cron_executor = MagicMock()
+    cron_storage = _FakeCronStorage()
+    cron_executor = _FakeCronExecutor()
     config = SimpleNamespace(enabled=True, schedule_cron="0 3 * * *")
 
     registered = register_memory_dream_cron(
@@ -31,10 +77,9 @@ def test_register_memory_dream_cron_creates_single_system_job() -> None:
     )
 
     assert registered == 1
-    cron_executor.register_handler.assert_called_once()
-    assert cron_executor.register_handler.call_args.args[0] == MEMORY_DREAM_CRON_HANDLER
-    cron_storage.create_job.assert_called_once()
-    kwargs = cron_storage.create_job.call_args.kwargs
+    assert set(cron_executor.handlers) == {MEMORY_DREAM_CRON_HANDLER}
+    assert len(cron_storage.created_jobs) == 1
+    kwargs = cron_storage.created_jobs[0]
     assert kwargs["name"] == MEMORY_DREAM_CRON_JOB_NAME
     assert kwargs["schedule_type"] == "cron"
     assert kwargs["cron_expr"] == "0 3 * * *"
@@ -43,9 +88,8 @@ def test_register_memory_dream_cron_creates_single_system_job() -> None:
 
 
 def test_register_memory_dream_cron_does_not_register_pipeline_action() -> None:
-    cron_storage = MagicMock()
-    cron_storage.get_job_by_name.return_value = None
-    cron_executor = MagicMock()
+    cron_storage = _FakeCronStorage()
+    cron_executor = _FakeCronExecutor()
 
     register_memory_dream_cron(
         cron_storage=cron_storage,
@@ -55,31 +99,74 @@ def test_register_memory_dream_cron_does_not_register_pipeline_action() -> None:
         project_id="proj-1",
     )
 
-    kwargs = cron_storage.create_job.call_args.kwargs
+    kwargs = cron_storage.created_jobs[0]
     assert kwargs["action_type"] == "handler"
     assert kwargs["action_config"] == {"handler": MEMORY_DREAM_CRON_HANDLER}
 
 
-def test_register_memory_dream_cron_checks_disable_update_result() -> None:
-    cron_storage = MagicMock()
-    cron_storage.get_job_by_name.return_value = SimpleNamespace(id="job-1", enabled=True)
-    cron_storage.update_job.return_value = None
+def test_register_memory_dream_cron_tolerates_missing_job_during_disable(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    cron_storage = _FakeCronStorage(
+        existing=SimpleNamespace(id="job-1", enabled=True),
+        update_result=None,
+    )
 
-    with pytest.raises(RuntimeError, match="Failed to disable system cron job"):
-        register_memory_dream_cron(
-            cron_storage=cron_storage,
-            cron_executor=MagicMock(),
-            memory_manager=MagicMock(),
-            dream_config=SimpleNamespace(enabled=False),
-            project_id="proj-1",
-        )
+    registered = register_memory_dream_cron(
+        cron_storage=cron_storage,
+        cron_executor=MagicMock(),
+        memory_manager=MagicMock(),
+        dream_config=SimpleNamespace(enabled=False),
+        project_id="proj-1",
+    )
+
+    assert registered == 0
+    assert cron_storage.updated_jobs == [("job-1", {"enabled": False, "next_run_at": None})]
+    assert "already disappeared during disable" in caplog.text
+
+
+def test_register_memory_dream_cron_preserves_disabled_system_job() -> None:
+    cron_storage = _FakeCronStorage(
+        existing=SimpleNamespace(id="job-1", enabled=False, is_system=True),
+        repaired=SimpleNamespace(id="job-1", enabled=False),
+    )
+
+    register_memory_dream_cron(
+        cron_storage=cron_storage,
+        cron_executor=MagicMock(),
+        memory_manager=MagicMock(),
+        dream_config=SimpleNamespace(enabled=True, schedule_cron="0 3 * * *"),
+        project_id="proj-1",
+    )
+
+    assert cron_storage.reconciled_jobs[0][0] == "job-1"
+    assert cron_storage.toggled_job_ids == []
+
+
+def test_register_memory_dream_cron_restores_previously_enabled_system_job() -> None:
+    cron_storage = _FakeCronStorage(
+        existing=SimpleNamespace(id="job-1", enabled=True, is_system=True),
+        repaired=SimpleNamespace(id="job-1", enabled=False),
+    )
+
+    register_memory_dream_cron(
+        cron_storage=cron_storage,
+        cron_executor=MagicMock(),
+        memory_manager=MagicMock(),
+        dream_config=SimpleNamespace(enabled=True, schedule_cron="0 3 * * *"),
+        project_id="proj-1",
+    )
+
+    assert cron_storage.reconciled_jobs[0][0] == "job-1"
+    assert cron_storage.toggled_job_ids == ["job-1"]
 
 
 @pytest.mark.asyncio
-async def test_memory_dream_cron_handler_formats_valid_result(monkeypatch) -> None:
-    cron_storage = MagicMock()
-    cron_storage.get_job_by_name.return_value = None
-    cron_executor = MagicMock()
+async def test_memory_dream_cron_handler_formats_valid_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cron_storage = _FakeCronStorage()
+    cron_executor = _FakeCronExecutor()
 
     async def fake_run_memory_dream(**_kwargs: Any) -> dict[str, Any]:
         return {"success": True, "run": {"id": "dream-1", "summary": {"mutations": 2}}}
@@ -92,18 +179,19 @@ async def test_memory_dream_cron_handler_formats_valid_result(monkeypatch) -> No
         dream_config=SimpleNamespace(enabled=True, schedule_cron="0 3 * * *"),
         project_id="proj-1",
     )
-    handler = cron_executor.register_handler.call_args.args[1]
+    handler = cron_executor.handlers[MEMORY_DREAM_CRON_HANDLER]
 
-    message = await handler(MagicMock(spec=CronJob))
+    message = await handler(SimpleNamespace())
 
     assert message == "memory dream dream-1 completed: 2 mutation(s)"
 
 
 @pytest.mark.asyncio
-async def test_memory_dream_cron_handler_rejects_missing_run_id(monkeypatch) -> None:
-    cron_storage = MagicMock()
-    cron_storage.get_job_by_name.return_value = None
-    cron_executor = MagicMock()
+async def test_memory_dream_cron_handler_rejects_missing_run_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cron_storage = _FakeCronStorage()
+    cron_executor = _FakeCronExecutor()
 
     async def fake_run_memory_dream(**_kwargs: Any) -> dict[str, Any]:
         return {"success": True, "run": {"summary": {"mutations": 2}}}
@@ -116,7 +204,7 @@ async def test_memory_dream_cron_handler_rejects_missing_run_id(monkeypatch) -> 
         dream_config=SimpleNamespace(enabled=True, schedule_cron="0 3 * * *"),
         project_id="proj-1",
     )
-    handler = cron_executor.register_handler.call_args.args[1]
+    handler = cron_executor.handlers[MEMORY_DREAM_CRON_HANDLER]
 
     with pytest.raises(RuntimeError, match="without run_id"):
-        await handler(MagicMock(spec=CronJob))
+        await handler(SimpleNamespace())

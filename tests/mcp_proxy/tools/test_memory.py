@@ -599,7 +599,7 @@ class TestMemoryDreamTools:
         )
         status_tool = registry.get_tool_metadata("memory_dream_status")
         assert status_tool is not None
-        assert not inspect.iscoroutinefunction(status_tool.func)
+        assert inspect.iscoroutinefunction(status_tool.func)
 
         with patch(
             "gobby.mcp_proxy.tools.memory_dream.MemoryDreamService",
@@ -662,7 +662,7 @@ class TestMemoryDreamTools:
     ) -> None:
         config = SimpleNamespace(memory=SimpleNamespace(dream=SimpleNamespace()))
         service = MagicMock()
-        service.status.return_value = {"success": True, "run": {"id": "dream-1"}}
+        service.status = AsyncMock(return_value={"success": True, "run": {"id": "dream-1"}})
         service.revert = AsyncMock(return_value={"success": True, "run_id": "dream-1"})
         registry = create_memory_registry(
             mock_memory_manager,
@@ -679,5 +679,5 @@ class TestMemoryDreamTools:
 
         assert status["success"] is True
         assert revert["success"] is True
-        service.status.assert_called_once_with("dream-1")
+        service.status.assert_awaited_once_with("dream-1")
         service.revert.assert_awaited_once_with("dream-1")

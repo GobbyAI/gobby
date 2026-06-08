@@ -39,11 +39,15 @@ async def discover_stale_candidates(
     candidates: list[DreamCandidate] = []
     offset = 0
     scanned = 0
-    max_scan_rows = _positive_int_attr(dream_config, "max_scan_rows", 5000)
+    max_scan_rows = _positive_int_value(dream_config.max_scan_rows, "max_scan_rows", 5000)
     page_size = min(500, max_scan_rows)
-    scan_limit = _positive_int_attr(dream_config, "scan_limit", 500)
-    stale_age_days = _positive_int_attr(dream_config, "stale_age_days", 30)
-    include_global = _bool_attr(dream_config, "include_global_memories", True)
+    scan_limit = _positive_int_value(dream_config.scan_limit, "scan_limit", 500)
+    stale_age_days = _positive_int_value(dream_config.stale_age_days, "stale_age_days", 30)
+    include_global = _bool_value(
+        dream_config.include_global_memories,
+        "include_global_memories",
+        True,
+    )
 
     while scanned < max_scan_rows and len(candidates) < scan_limit:
         page_limit = min(page_size, max_scan_rows - scanned)
@@ -122,8 +126,7 @@ def _parse_datetime(value: Any) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
-def _positive_int_attr(obj: Any, attr: str, default: int) -> int:
-    value = getattr(obj, attr, default)
+def _positive_int_value(value: Any, attr: str, default: int) -> int:
     if isinstance(value, bool):
         logger.warning("Invalid memory dream %s=%r; using default %s", attr, value, default)
         return default
@@ -138,8 +141,7 @@ def _positive_int_attr(obj: Any, attr: str, default: int) -> int:
     return parsed
 
 
-def _bool_attr(obj: Any, attr: str, default: bool) -> bool:
-    value = getattr(obj, attr, default)
+def _bool_value(value: Any, attr: str, default: bool) -> bool:
     if isinstance(value, bool):
         return value
     if isinstance(value, str):

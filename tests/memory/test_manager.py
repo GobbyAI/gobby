@@ -747,6 +747,13 @@ class TestAListMemories:
         result = await memory_manager.alist_memories(limit=3)
         assert len(result) == 3
 
+    @pytest.mark.asyncio
+    async def test_alist_with_zero_limit(self, memory_manager) -> None:
+        """alist_memories preserves explicit limit=0."""
+        await memory_manager.create_memory(content="AList zero")
+        result = await memory_manager.alist_memories(limit=0)
+        assert result == []
+
 
 # =============================================================================
 # Test: acontent_exists (async content exists)

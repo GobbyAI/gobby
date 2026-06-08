@@ -420,6 +420,24 @@ class TestInstallGitHooks:
             content = hook_path.read_text()
             assert content.startswith("#!/usr/bin/env bash")
 
+    def test_post_commit_manual_json_branch_rejects_control_characters(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Manual JSON construction refuses unsafe path control characters."""
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        hooks_dir = git_dir / "hooks"
+        hooks_dir.mkdir()
+
+        install_git_hooks(tmp_path)
+
+        content = (hooks_dir / "post-commit").read_text()
+        assert "[[ \"$ROOT_PATH\" == *$'\\n'* ]]" in content
+        assert "[[ \"$ROOT_PATH\" == *$'\\r'* ]]" in content
+        assert "[[ \"$ROOT_PATH\" == *$'\\t'* ]]" in content
+        assert "grep -q '[[:cntrl:]]'" in content
+
     def test_skips_already_installed_hooks(self, tmp_path: Path) -> None:
         """Test that already installed hooks are skipped."""
         git_dir = tmp_path / ".git"

@@ -534,6 +534,29 @@ class TestImportFromGithub:
         importer._parse_and_add_config.assert_awaited_once_with('{"name": "example"}')
 
 
+class TestRenderImportPrompt:
+    """Tests for import prompt context rendering."""
+
+    def test_uses_fetched_context_without_legacy_alias(self, importer) -> None:
+        importer._loader.render = MagicMock(return_value="base prompt")
+
+        prompt = importer._render_import_prompt(
+            "import/custom",
+            {"search_query": "example mcp"},
+            "README docs",
+        )
+
+        importer._loader.render.assert_called_once_with(
+            "import/custom",
+            {
+                "search_query": "example mcp",
+                "fetched_context": "README docs",
+            },
+        )
+        assert "Fetched documentation context:" in prompt
+        assert "README docs" in prompt
+
+
 class TestGithubContextFetch:
     """Tests for deterministic GitHub context fetch helpers."""
 

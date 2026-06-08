@@ -231,7 +231,7 @@ async def _invoke_llm_compile(
             caller="tasks.expansion.compile",
         )
         return cast(dict[str, Any], result)
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, ValueError) as exc:
         raise ValueError(
             f"Expansion compiler did not return valid JSON for {scope}: {exc!r}"
         ) from exc

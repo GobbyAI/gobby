@@ -31,9 +31,13 @@ def create_memory_dream_router(server: HTTPServer) -> APIRouter:
     router = APIRouter(prefix="/memory", tags=["memory"])
 
     def _service() -> MemoryDreamService:
+        if server.memory_manager is None:
+            raise HTTPException(status_code=503, detail="memory manager is unavailable")
         config = getattr(server.services, "config", None)
         memory_config = getattr(config, "memory", None)
         dream_config = getattr(memory_config, "dream", None)
+        if dream_config is None:
+            raise HTTPException(status_code=503, detail="memory dream config is unavailable")
         return MemoryDreamService(
             memory_manager=server.memory_manager,
             dream_config=dream_config,
@@ -77,7 +81,7 @@ def create_memory_dream_router(server: HTTPServer) -> APIRouter:
 
     @router.get("/dream/{run_id}")
     async def memory_dream_status(run_id: str) -> dict[str, Any]:
-        result = _service().status(run_id)
+        result = await _service().status(run_id)
         if not result.get("success"):
             raise HTTPException(status_code=404, detail=result.get("error"))
         return result

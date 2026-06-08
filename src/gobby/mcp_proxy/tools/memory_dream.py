@@ -104,8 +104,8 @@ def register_memory_dream_tools(
         name="memory_dream_status",
         description="Return status and summary for a memory dream run.",
     )
-    def memory_dream_status(run_id: str) -> dict[str, Any]:
-        return _service().status(run_id)
+    async def memory_dream_status(run_id: str) -> dict[str, Any]:
+        return await _service().status(run_id)
 
     @registry.tool(
         name="memory_dream_revert",
