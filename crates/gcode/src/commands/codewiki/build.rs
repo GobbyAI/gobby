@@ -2,6 +2,184 @@ use super::*;
 use gobby_core::graph_analytics::{self, AnalyticsEdge, AnalyticsGraph, AnalyticsNode};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+pub(crate) fn build_codewiki_index_snapshot(
+    project_root: &Path,
+    input: &CodewikiInput,
+) -> anyhow::Result<CodewikiIndexSnapshot> {
+    let mut files = input
+        .files
+        .iter()
+        .filter(|file| is_core_file(file))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    for symbol in &input.symbols {
+        if is_core_file(&symbol.file_path) {
+            files.insert(symbol.file_path.clone());
+        }
+    }
+
+    let symbols_by_file = input
+        .symbols
+        .iter()
+        .filter(|symbol| is_core_file(&symbol.file_path))
+        .fold(BTreeMap::<String, usize>::new(), |mut counts, symbol| {
+            *counts.entry(symbol.file_path.clone()).or_default() += 1;
+            counts
+        });
+    let mut file_snapshots = BTreeMap::new();
+    for file in files {
+        file_snapshots.insert(
+            file.clone(),
+            CodewikiFileSnapshot {
+                content_hash: hash_snapshot_file(project_root, &file)?,
+                symbol_count: symbols_by_file.get(&file).copied().unwrap_or_default(),
+            },
+        );
+    }
+
+    let symbols = input
+        .symbols
+        .iter()
+        .filter(|symbol| is_core_file(&symbol.file_path))
+        .map(|symbol| {
+            (
+                symbol.id.clone(),
+                CodewikiSymbolSnapshot {
+                    file_path: symbol.file_path.clone(),
+                    name: symbol.name.clone(),
+                    qualified_name: symbol.qualified_name.clone(),
+                    kind: symbol.kind.clone(),
+                    line_start: symbol.line_start,
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    let mut degraded_sources = Vec::new();
+    let graph_neighborhoods = match input.graph_availability {
+        CodewikiGraphAvailability::Available => Some(graph_neighborhood_fingerprints(
+            &symbols,
+            &input.graph_edges,
+        )),
+        CodewikiGraphAvailability::Truncated => {
+            degraded_sources.push("graph-truncated".to_string());
+            Some(graph_neighborhood_fingerprints(
+                &symbols,
+                &input.graph_edges,
+            ))
+        }
+        CodewikiGraphAvailability::Unavailable => {
+            degraded_sources.push("graph-unavailable".to_string());
+            None
+        }
+    };
+
+    Ok(CodewikiIndexSnapshot {
+        files: file_snapshots,
+        symbols,
+        graph_neighborhoods,
+        degraded_sources,
+    })
+}
+
+pub(crate) fn build_codewiki_changes_doc(
+    previous: Option<&CodewikiIndexSnapshot>,
+    current: &CodewikiIndexSnapshot,
+) -> String {
+    let baseline = previous.is_none();
+    let degraded = !current.degraded_sources.is_empty();
+    let mut doc = changes_frontmatter(baseline, degraded, &current.degraded_sources);
+    doc.push_str("# Index Changes\n\n");
+    doc.push_str("## Current Snapshot\n\n");
+    doc.push_str(&format!("- Files: {}\n", current.files.len()));
+    doc.push_str(&format!("- Symbols: {}\n", current.symbols.len()));
+    match &current.graph_neighborhoods {
+        Some(neighborhoods) => {
+            doc.push_str(&format!("- Graph neighborhoods: {}\n", neighborhoods.len()));
+        }
+        None => doc.push_str("- Graph neighborhoods: unavailable\n"),
+    }
+    doc.push('\n');
+
+    let Some(previous) = previous else {
+        doc.push_str("No previous index snapshot was available.\n");
+        doc.push_str("This page is the baseline for future index changes.\n");
+        return doc;
+    };
+
+    let added_files = current
+        .files
+        .keys()
+        .filter(|file| !previous.files.contains_key(*file))
+        .cloned()
+        .collect::<Vec<_>>();
+    let removed_files = previous
+        .files
+        .keys()
+        .filter(|file| !current.files.contains_key(*file))
+        .cloned()
+        .collect::<Vec<_>>();
+    let changed_files = current
+        .files
+        .iter()
+        .filter(|(file, current_file)| {
+            previous.files.get(*file).is_some_and(|previous_file| {
+                previous_file.content_hash != current_file.content_hash
+            })
+        })
+        .map(|(file, _)| file.clone())
+        .collect::<Vec<_>>();
+    let new_symbols = current
+        .symbols
+        .iter()
+        .filter(|(id, _)| !previous.symbols.contains_key(*id))
+        .map(|(_, symbol)| symbol_label(symbol))
+        .collect::<Vec<_>>();
+    let removed_symbols = previous
+        .symbols
+        .iter()
+        .filter(|(id, _)| !current.symbols.contains_key(*id))
+        .map(|(_, symbol)| symbol_label(symbol))
+        .collect::<Vec<_>>();
+
+    write_bullet_section(&mut doc, "Added Files", added_files, "`", "`");
+    write_bullet_section(&mut doc, "Removed Files", removed_files, "`", "`");
+    write_bullet_section(&mut doc, "Changed Files", changed_files, "`", "`");
+    write_bullet_section(&mut doc, "New Symbols", new_symbols, "", "");
+    write_bullet_section(&mut doc, "Removed Symbols", removed_symbols, "", "");
+
+    if let (Some(previous_graph), Some(current_graph)) =
+        (&previous.graph_neighborhoods, &current.graph_neighborhoods)
+    {
+        let graph_ids = previous_graph
+            .keys()
+            .chain(current_graph.keys())
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let changed_graph = graph_ids
+            .into_iter()
+            .filter(|id| previous_graph.get(id) != current_graph.get(id))
+            .map(|id| {
+                current
+                    .symbols
+                    .get(&id)
+                    .or_else(|| previous.symbols.get(&id))
+                    .map(symbol_label)
+                    .unwrap_or_else(|| format!("`{id}`"))
+            })
+            .collect::<Vec<_>>();
+        write_bullet_section(
+            &mut doc,
+            "Changed Graph Neighborhoods",
+            changed_graph,
+            "",
+            "",
+        );
+    }
+
+    doc
+}
+
 pub(crate) fn build_file_doc(
     file: &str,
     module: String,
@@ -72,6 +250,116 @@ pub(crate) fn build_file_doc(
         symbols: symbol_docs,
         component_ids,
     }
+}
+
+fn hash_snapshot_file(project_root: &Path, file: &str) -> anyhow::Result<String> {
+    let canonical_root = project_root
+        .canonicalize()
+        .map_err(|err| anyhow::anyhow!("failed to resolve codewiki project root: {err}"))?;
+    let source_path = project_root.join(file);
+    let canonical_source = source_path
+        .canonicalize()
+        .map_err(|err| anyhow::anyhow!("failed to resolve codewiki source file {file}: {err}"))?;
+    if !canonical_source.starts_with(&canonical_root) {
+        anyhow::bail!("codewiki source file {file} resolves outside project root");
+    }
+    hasher::file_content_hash(&canonical_source)
+        .map_err(|err| anyhow::anyhow!("failed to hash codewiki source file {file}: {err}"))
+}
+
+fn graph_neighborhood_fingerprints(
+    symbols: &BTreeMap<String, CodewikiSymbolSnapshot>,
+    graph_edges: &[CodewikiGraphEdge],
+) -> BTreeMap<String, String> {
+    let mut neighborhoods = symbols
+        .keys()
+        .map(|id| (id.clone(), Vec::<String>::new()))
+        .collect::<BTreeMap<_, _>>();
+    for edge in graph_edges {
+        let edge_key = format!(
+            "{}:{}->{}",
+            match edge.kind {
+                CodewikiGraphEdgeKind::Call => "call",
+                CodewikiGraphEdgeKind::Import => "import",
+            },
+            edge.source_component_id,
+            edge.target_component_id
+        );
+        if let Some(source) = neighborhoods.get_mut(&edge.source_component_id) {
+            source.push(edge_key.clone());
+        }
+        if let Some(target) = neighborhoods.get_mut(&edge.target_component_id) {
+            target.push(edge_key);
+        }
+    }
+    neighborhoods
+        .into_iter()
+        .map(|(id, mut edges)| {
+            edges.sort();
+            let joined = edges.join("\n");
+            (id, hasher::content_hash(joined.as_bytes()))
+        })
+        .collect()
+}
+
+#[derive(Serialize)]
+struct ChangesFrontmatter<'a> {
+    title: &'a str,
+    kind: &'a str,
+    generated_by: &'a str,
+    trust: &'a str,
+    freshness: &'a str,
+    baseline: bool,
+    degraded: bool,
+    degraded_sources: Vec<&'a str>,
+}
+
+fn changes_frontmatter(baseline: bool, degraded: bool, degraded_sources: &[String]) -> String {
+    let data = ChangesFrontmatter {
+        title: "Index Changes",
+        kind: "code_changes",
+        generated_by: "gcode-codewiki",
+        trust: "generated",
+        freshness: "indexed",
+        baseline,
+        degraded,
+        degraded_sources: degraded_sources.iter().map(String::as_str).collect(),
+    };
+    let yaml = serde_yaml::to_string(&data)
+        .expect("codewiki changes frontmatter only contains YAML-serializable data");
+    let yaml = yaml.strip_prefix("---\n").unwrap_or(&yaml);
+    let mut out = String::from("---\n");
+    out.push_str(yaml);
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str("---\n\n");
+    out
+}
+
+fn write_bullet_section(
+    doc: &mut String,
+    title: &str,
+    items: Vec<String>,
+    prefix: &str,
+    suffix: &str,
+) {
+    doc.push_str(&format!("## {title}\n\n"));
+    if items.is_empty() {
+        doc.push_str("- None\n\n");
+        return;
+    }
+    for item in items {
+        doc.push_str(&format!("- {prefix}{item}{suffix}\n"));
+    }
+    doc.push('\n');
+}
+
+fn symbol_label(symbol: &CodewikiSymbolSnapshot) -> String {
+    format!(
+        "`{}` {} in `{}`",
+        symbol.qualified_name, symbol.kind, symbol.file_path
+    )
 }
 
 pub(crate) fn build_module_docs(
