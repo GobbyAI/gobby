@@ -4,6 +4,7 @@ Session management CLI commands.
 
 import asyncio
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -44,7 +45,7 @@ def _resolve_project_ref_or_path(project_ref: str, manager: SessionManager) -> s
     raise click.ClickException(f"Project not found: {project_ref}")
 
 
-def _format_seq_range(values: list[int | None]) -> str:
+def _format_seq_range(values: Sequence[int | None]) -> str:
     seq_nums = [value for value in values if value is not None]
     if not seq_nums:
         return "none"
