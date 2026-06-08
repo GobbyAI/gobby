@@ -34,6 +34,7 @@ async def test_handle_plan_approval_request_changes_legacy_sends_mode_changed():
     # Mock a session
     session = MagicMock()
     session.has_pending_plan = False
+    session.has_blocking_plan_decision = False
     session.chat_mode = "plan"
 
     conversation_id = "test-conv-id"
@@ -273,6 +274,11 @@ def _make_session(*, provider: str, has_pending_plan: bool, plan_auto_switch: bo
     session.provider = provider
     session.has_pending_plan = has_pending_plan
     session.plan_auto_switch = plan_auto_switch
+    # Default: no blocking plan-decision gate (text-plan CLIs). Tests that model
+    # a tool-plan CLI (Droid ExitSpecMode) override this to True. Without an
+    # explicit value a MagicMock attribute is truthy, which would wrongly trip
+    # the request_changes blocking-gate branch.
+    session.has_blocking_plan_decision = False
     session.sync_sdk_permission_mode = AsyncMock()
     return session
 
@@ -332,6 +338,29 @@ async def test_option_act_managed_drives_normal_mode_and_auto_continues() -> Non
     )
 
     session.set_chat_mode.assert_called_once_with("normal")
+    host._handle_chat_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_option_act_droid_blocking_gate_still_auto_continues() -> None:
+    """Regression guard (#15619): a tool-plan CLI (Droid ExitSpecMode) parks
+    approval on the plan-decision gate, then ENDS its turn once released -- it
+    does not auto-execute natively (verified live). The approve path must still
+    inject a continuation for a blocking-gate CLI, so do NOT re-add a
+    `not blocking_plan` skip here or the approved plan just sits idle."""
+    host = _make_host()
+    session = _make_session(provider="droid", has_pending_plan=True, plan_auto_switch=False)
+    session.has_blocking_plan_decision = True
+    host._chat_sessions["c"] = session
+
+    await SessionControlMixin._handle_plan_approval_response(
+        host,
+        AsyncMock(),
+        {"conversation_id": "c", "decision": "approve", "option_id": "approve_act"},
+    )
+
+    session.set_chat_mode.assert_called_once_with("normal")
+    session.provide_plan_decision.assert_called_once_with("approve")
     host._handle_chat_message.assert_awaited_once()
 
 

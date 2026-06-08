@@ -5,6 +5,7 @@ Handles plan_approval_response and recovered plan approval after daemon restart.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -18,6 +19,12 @@ if TYPE_CHECKING:
     from gobby.servers.websocket.session_control import SessionControlMixin
 
 logger = logging.getLogger(__name__)
+
+# A tool-plan CLI (Droid ExitSpecMode) leaves its plan turn in-flight, parked on
+# the plan-decision gate. After approval that turn resumes and ends on its own;
+# we wait up to this long for it to drain before injecting the continuation so
+# the inject path does not cancel a still-streaming turn.
+_PLAN_TURN_DRAIN_TIMEOUT_SECONDS = 120.0
 
 
 async def _send_mode_changed(
@@ -125,6 +132,59 @@ async def _auto_continue_after_approval(
     return await _inject_turn(mixin, websocket, conversation_id, content)
 
 
+def _active_chat_task(mixin: SessionControlMixin, conversation_id: str) -> Any:
+    """Return the in-flight chat task for a conversation, or None."""
+    registry = getattr(mixin, "web_chat_session_registry", None)
+    if registry is not None:
+        getter = getattr(registry, "get_active_task", None)
+        if callable(getter):
+            try:
+                return getter(conversation_id)
+            except Exception:
+                logger.debug(
+                    "Failed to read active task for %s", conversation_id[:8], exc_info=True
+                )
+    tasks = getattr(mixin, "_active_chat_tasks", None)
+    if isinstance(tasks, dict):
+        return tasks.get(conversation_id)
+    return None
+
+
+async def _continue_after_active_turn(
+    mixin: SessionControlMixin,
+    websocket: Any,
+    conversation_id: str,
+) -> bool:
+    """Inject the continuation only after the in-flight plan turn has drained.
+
+    A tool-plan CLI (Droid ExitSpecMode) parks its plan turn on the
+    plan-decision gate. Once approved, that turn resumes and ends on its own
+    (Droid closes the spec stream). Injecting before it ends would route through
+    ``_handle_chat_message`` -> ``_cancel_active_chat`` and abort the still-open
+    stream (observed live as "Droid stream ended before result"). Wait for the
+    turn's task to finish first, then inject; never cancel the in-flight turn.
+    """
+    task = _active_chat_task(mixin, conversation_id)
+    if task is not None and not task.done():
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=_PLAN_TURN_DRAIN_TIMEOUT_SECONDS)
+        except TimeoutError:
+            logger.warning(
+                "In-flight plan turn for %s did not drain within %.0fs; continuing",
+                conversation_id[:8],
+                _PLAN_TURN_DRAIN_TIMEOUT_SECONDS,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.debug(
+                "In-flight plan turn for %s ended with error before continuation",
+                conversation_id[:8],
+                exc_info=True,
+            )
+    return await _auto_continue_after_approval(mixin, websocket, conversation_id)
+
+
 async def handle_plan_approval_response(
     mixin: SessionControlMixin, websocket: Any, data: dict[str, Any]
 ) -> None:
@@ -177,10 +237,6 @@ async def handle_plan_approval_response(
         post_plan_mode = option.post_plan_chat_mode if option else "normal"
         should_auto_continue = option.auto_continue if option else True
         if session.has_pending_plan:
-            # Capture before releasing: a tool-plan CLI (Droid ExitSpecMode)
-            # parks its plan-exit tool on a blocking gate that resumes the turn
-            # natively once released, so it must not also be auto-continued.
-            blocking_plan = getattr(session, "has_blocking_plan_decision", False)
             session._pending_post_plan_mode = post_plan_mode
             session.set_chat_mode(post_plan_mode)
             _clear_pending_plan_prompt(session)
@@ -192,17 +248,28 @@ async def handle_plan_approval_response(
                 conversation_id[:8],
                 post_plan_mode,
             )
-            # Managed text-plan CLIs have no in-flight plan-exit tool to unblock;
-            # the plan was a completed assistant turn, so inject a continuation.
-            # Native Claude (plan_auto_switch) and tool-plan CLIs that blocked on
-            # the plan-decision gate (blocking_plan) resume the paused turn
-            # themselves, so skip injection for them.
-            if (
-                not getattr(session, "plan_auto_switch", False)
-                and should_auto_continue
-                and not blocking_plan
-            ):
-                if not await _auto_continue_after_approval(mixin, websocket, conversation_id):
+            # Drive execution after approval unless the CLI resumes it natively.
+            # Native Claude (plan_auto_switch) keeps the ExitPlanMode turn alive
+            # through the SDK and continues into execution on its own, so it is the
+            # only case we skip. Every other managed CLI needs the injected
+            # continuation: text-plan CLIs presented the plan as a completed
+            # assistant turn, and tool-plan CLIs like Droid END their ExitSpecMode
+            # turn once the plan-decision gate releases -- verified live, the turn
+            # does not auto-execute -- so without the nudge the approved plan would
+            # just sit idle.
+            if not getattr(session, "plan_auto_switch", False) and should_auto_continue:
+                # A blocking-gate CLI (Droid ExitSpecMode) still has its plan turn
+                # in-flight; drain it before injecting so the inject path does not
+                # cancel the open stream. Text-plan CLIs have no in-flight turn,
+                # so inject immediately.
+                blocking_plan = getattr(session, "has_blocking_plan_decision", False)
+                if blocking_plan:
+                    continued = await _continue_after_active_turn(mixin, websocket, conversation_id)
+                else:
+                    continued = await _auto_continue_after_approval(
+                        mixin, websocket, conversation_id
+                    )
+                if not continued:
                     logger.warning(
                         "Plan approval continuation injection failed for conversation %s",
                         conversation_id[:8],
