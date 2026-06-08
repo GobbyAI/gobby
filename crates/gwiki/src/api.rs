@@ -83,6 +83,9 @@ pub enum Command {
         scope: ScopeSelection,
         command: exports::ExportCommand,
     },
+    Graph {
+        scope: ScopeSelection,
+    },
     Audit {
         scope: ScopeSelection,
     },

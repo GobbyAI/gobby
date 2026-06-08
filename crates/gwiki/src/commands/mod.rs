@@ -4,6 +4,7 @@ pub(crate) mod backlinks;
 pub(crate) mod collect;
 pub(crate) mod compile;
 pub(crate) mod export;
+pub(crate) mod graph;
 pub(crate) mod health;
 pub(crate) mod index;
 pub(crate) mod init;
@@ -79,6 +80,7 @@ pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
             scope,
         ),
         Command::Export { scope, command } => export::execute(scope, command),
+        Command::Graph { scope } => graph::execute(scope),
         Command::Audit { scope } => audit::execute(scope),
         Command::Lint { scope } => lint::execute(scope),
         Command::Health { scope } => health::execute(scope),

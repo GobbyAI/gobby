@@ -223,6 +223,14 @@ pub fn contract() -> CliContract {
                 json_output_keys: scoped_keys(vec!["findings", "changed_paths", "status"]),
             },
             CommandContract {
+                name: "graph",
+                summary: "Export unified wiki graph artifacts under outputs.",
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![],
+                json_output_keys: scoped_keys(vec!["artifacts"]),
+            },
+            CommandContract {
                 name: "health",
                 summary: "Write wiki health snapshots under meta/health.",
                 daemon_consumed: true,

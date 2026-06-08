@@ -198,7 +198,7 @@ fn partial_graph_degradation(capped: &[String]) -> Option<DegradationKind> {
     })
 }
 
-fn load_wiki_graph_facts(
+pub(crate) fn load_wiki_graph_facts(
     conn: &mut Client,
     scope: &SearchScope,
 ) -> Result<WikiGraphFacts, WikiError> {
