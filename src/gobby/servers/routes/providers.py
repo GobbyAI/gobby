@@ -106,69 +106,13 @@ _PROVIDER_META = {entry.provider: entry for entry in provider_metadata()}
 _LAZY_ACP_PROVIDERS = frozenset({"gemini", "grok", "qwen"})
 
 
-def _friendly_label(provider: str, model: str) -> str:
-    """Return a compact UI label for a provider model ID."""
-    if provider == "gemini":
-        parts = model.split("-")
-        if len(parts) >= 3:
-            version = parts[1]
-            tier = parts[2]
-            return f"{tier}-{version}"
-    if provider == "codex":
-        if model == "gpt-5.4":
-            return "codex-5.4"
-        if model == "gpt-5.4-mini":
-            return "mini-5.4"
-        if model == "gpt-5.3-codex":
-            return "codex-5.3"
-        if model == "gpt-5.3-codex-spark":
-            return "spark-5.3"
-    return model
-
-
-def _configured_model_entries(config: Any, provider: str) -> list[dict[str, Any]]:
-    if provider != "claude":
-        return []
-    providers = getattr(config, "llm_providers", None)
-    provider_config = getattr(providers, provider, None) if providers is not None else None
-    fields_set = getattr(providers, "model_fields_set", None)
-    if fields_set is not None and provider not in fields_set:
-        return []
-    if provider_config is None or not hasattr(provider_config, "get_models_list"):
-        return []
-    return [
-        {"value": model, "label": _friendly_label(provider, model)}
-        for model in provider_config.get_models_list()
-    ]
-
-
-def _merge_model_entries(
-    primary: list[dict[str, Any]], secondary: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    merged: list[dict[str, Any]] = []
-    by_value: dict[str, dict[str, Any]] = {}
-    for item in [*primary, *secondary]:
-        value = str(item.get("value") or "").strip()
-        if not value:
-            continue
-        if value in by_value:
-            existing = by_value[value]
-            for key, field_value in item.items():
-                existing.setdefault(key, field_value)
-            continue
-        entry = dict(item)
-        by_value[value] = entry
-        merged.append(entry)
-    return merged
-
-
 def _build_model_catalog(
     server: HTTPServer | None = None,
 ) -> dict[str, tuple[list[dict[str, Any]], str]]:
     """Return the canonical web-chat provider model catalog.
 
-    Configured model lists are prepended when present, then live or static
-    catalog entries fill in labels, reasoning, context windows, and fallbacks.
+    Live discovery owns model availability when present; static catalog entries
+    fill in labels, reasoning, context windows, and fallbacks.
     """
     provider_model_catalog = getattr(
         getattr(server, "services", None), "provider_model_catalog", None
@@ -196,14 +140,6 @@ def _build_model_catalog(
         }
 
     config = getattr(getattr(server, "services", None), "config", None)
-    for provider, (models, source) in list(catalog.items()):
-        configured_models = _configured_model_entries(config, provider)
-        if configured_models:
-            catalog[provider] = (
-                with_context_lengths(provider, _merge_model_entries(configured_models, models)),
-                source,
-            )
-
     ai_cfg = getattr(config, "ai", None) if config is not None else None
     generation_cfg = getattr(ai_cfg, "generation", None)
     local_cfg = getattr(generation_cfg, "local", None)

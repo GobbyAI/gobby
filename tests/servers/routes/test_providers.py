@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 
 from gobby.config.ai import AIConfig, GenerationConfig, LocalGenerationConfig
 from gobby.config.app import DaemonConfig
-from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
 from gobby.servers.routes.providers import create_providers_router
 
 pytestmark = pytest.mark.unit
@@ -352,14 +351,10 @@ class TestProviderModelsRoute:
 
         assert claude_models["local"] == "Local (qwen-coder-32b)"
 
-    def test_current_catalog_prepends_partial_configured_claude_lists(self) -> None:
-        """Claude binding model lists take precedence before static fallbacks."""
+    def test_current_catalog_uses_static_catalog_without_provider_config(self) -> None:
+        """Provider model lists come from the catalog without daemon provider config."""
         app = FastAPI()
-        config = DaemonConfig(
-            llm_providers=LLMProvidersConfig(
-                claude=LLMProviderConfig(models="haiku,sonnet"),
-            )
-        )
+        config = DaemonConfig()
         server = SimpleNamespace(services=SimpleNamespace(config=config))
         app.include_router(create_providers_router(server))
         client = TestClient(app)
@@ -373,11 +368,11 @@ class TestProviderModelsRoute:
             "gemini-3.1-pro-preview",
             "gemini-3-flash-preview",
         ]
-        assert [m["value"] for m in providers["claude"]["models"][:2]] == [
-            "haiku",
+        assert [m["value"] for m in providers["claude"]["models"]] == [
+            "opus",
             "sonnet",
+            "haiku",
         ]
-        assert "opus" in [m["value"] for m in providers["claude"]["models"][2:]]
         assert [m["value"] for m in providers["codex"]["models"]] == [
             "gpt-5.5",
             "gpt-5.4",
@@ -395,16 +390,10 @@ class TestProviderModelsRoute:
             "gpt-5.2",
         ]
 
-    def test_current_catalog_ignores_non_claude_provider_config(self) -> None:
-        """Only Claude reads llm_providers; Codex comes from provider discovery/static catalog."""
+    def test_current_catalog_uses_static_codex_models_without_provider_config(self) -> None:
+        """Codex model rows come from provider discovery/static catalog."""
         app = FastAPI()
-        config = SimpleNamespace(
-            llm_providers=SimpleNamespace(
-                codex=LLMProviderConfig(models="gpt-custom"),
-                model_fields_set={"codex"},
-            ),
-            local=None,
-        )
+        config = DaemonConfig()
         server = SimpleNamespace(services=SimpleNamespace(config=config))
         app.include_router(create_providers_router(server))
         client = TestClient(app)
@@ -413,10 +402,9 @@ class TestProviderModelsRoute:
         providers = {p["provider"]: p for p in response.json()["providers"]}
 
         assert providers["codex"]["models"][0]["value"] == "gpt-5.5"
-        assert "gpt-custom" not in [m["value"] for m in providers["codex"]["models"]]
 
     def test_current_catalog_uses_static_gemini_preview_models(self) -> None:
-        """Gemini models come from current provider catalog, not llm_providers config."""
+        """Gemini models come from current provider catalog/static defaults."""
         app = FastAPI()
         config = DaemonConfig()
         server = SimpleNamespace(services=SimpleNamespace(config=config))

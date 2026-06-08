@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.config.app import DaemonConfig
-from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
 from gobby.servers.provider_models import (
     ProviderModelCatalog,
     _model_discovery_cwd_path,
@@ -264,15 +263,9 @@ class TestProviderModelCatalog:
         assert catalog.get_context_window("droid", "z-ai/glm-5") == 128_000
         assert catalog.get_context_window("droid", "custom/byok-model") is None
 
-    def test_configured_models_precede_live_snapshot_and_keep_metadata(
-        self, temp_dir: Path
-    ) -> None:
-        """Configured models should sort first while retaining live metadata."""
-        config = DaemonConfig(
-            llm_providers=LLMProvidersConfig(
-                claude=LLMProviderConfig(models="opus,sonnet"),
-            )
-        )
+    def test_live_snapshot_order_and_metadata_are_preserved(self, temp_dir: Path) -> None:
+        """Live discovery owns catalog model order and metadata."""
+        config = DaemonConfig()
         catalog = ProviderModelCatalog(
             config=config,
             cache_path=temp_dir / "provider-model-catalog.json",

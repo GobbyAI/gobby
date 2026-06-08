@@ -223,21 +223,6 @@ def _merge_models(
     return merged
 
 
-def _configured_models_for_provider(
-    config: DaemonConfig | None, provider: str
-) -> list[dict[str, Any]]:
-    if provider != "claude":
-        return []
-    providers = getattr(config, "llm_providers", None)
-    provider_config = getattr(providers, provider, None) if providers is not None else None
-    fields_set = getattr(providers, "model_fields_set", None)
-    if fields_set is not None and provider not in fields_set:
-        return []
-    if provider_config is None or not hasattr(provider_config, "get_models_list"):
-        return []
-    return [{"value": model} for model in provider_config.get_models_list()]
-
-
 class ProviderModelCatalog:
     """Caches provider model discovery for route and status consumers."""
 
@@ -247,7 +232,7 @@ class ProviderModelCatalog:
         *,
         cache_path: Path | None = None,
     ) -> None:
-        self._config = config
+        _ = config
         self._cache_path = cache_path or (_gobby_home() / _DEFAULT_CACHE_FILE)
         self._providers: dict[str, dict[str, Any]] = {}
         self._generated_at: str | None = None
@@ -326,10 +311,8 @@ class ProviderModelCatalog:
         """Return a single provider snapshot for routing/status."""
         entry = self._providers.get(provider, {})
         models = entry.get("models")
-        if isinstance(models, list):
-            models = _merge_models(_configured_models_for_provider(self._config, provider), models)
-        else:
-            models = _configured_models_for_provider(self._config, provider)
+        if not isinstance(models, list):
+            models = []
         return {
             "source": entry.get("source", "failed"),
             "cli_version": entry.get("cli_version"),

@@ -33,7 +33,6 @@ class AICapability(StrEnum):
 
 
 CANONICAL_AI_CAPABILITIES: tuple[AICapability, ...] = tuple(AICapability)
-_CLAUDE_ALIAS_MODELS = ("haiku", "sonnet", "opus")
 
 
 class AIAdapterStyle(StrEnum):
@@ -345,10 +344,10 @@ def build_daemon_ai_capability_registry(
     for entry in provider_metadata():
         if entry.provider == "agy":
             continue
-        text_binding = _text_generate_binding(config, entry, installed)
+        text_binding = _text_generate_binding(entry, installed)
         if text_binding is not None:
             bindings.append(text_binding)
-        vision_binding = _vision_extract_binding(config, entry, installed)
+        vision_binding = _vision_extract_binding(entry, installed)
         if vision_binding is not None:
             bindings.append(vision_binding)
         bindings.append(_provider_binding(AICapability.AGENT_SPAWN, entry, installed))
@@ -508,12 +507,10 @@ def _openai_compatible_audio_binding(
 
 
 def _text_generate_binding(
-    config: DaemonConfig | None,
     entry: ProviderMetadata,
     provider_installed: Callable[[ProviderMetadata], bool],
 ) -> CapabilityBinding | None:
-    metadata = _metadata_for_generation_binding(config, entry)
-    models = _models_for_generation_binding(config, entry.provider)
+    metadata = _metadata_for_generation_binding(entry)
 
     adapter_style = _text_generate_adapter_style(entry.provider)
     if adapter_style is None:
@@ -525,7 +522,6 @@ def _text_generate_binding(
             provider=entry.provider,
             adapter_style=adapter_style,
             available=True,
-            models=models,
             metadata=metadata,
         )
 
@@ -534,7 +530,6 @@ def _text_generate_binding(
         entry.provider,
         adapter_style=adapter_style,
         reason=f"{entry.display_name} CLI is not installed.",
-        models=models,
         metadata=metadata,
     )
 
@@ -565,12 +560,10 @@ def _local_text_generate_binding(config: DaemonConfig | None) -> CapabilityBindi
 
 
 def _vision_extract_binding(
-    config: DaemonConfig | None,
     entry: ProviderMetadata,
     provider_installed: Callable[[ProviderMetadata], bool],
 ) -> CapabilityBinding | None:
-    metadata = _metadata_for_generation_binding(config, entry)
-    models = _models_for_generation_binding(config, entry.provider)
+    metadata = _metadata_for_generation_binding(entry)
 
     adapter_style = _vision_extract_adapter_style(entry.provider)
     if adapter_style is None:
@@ -585,7 +578,6 @@ def _vision_extract_binding(
                 "No daemon vision_extract adapter has proven image payload support for "
                 f"{entry.display_name}."
             ),
-            models=models,
             metadata=metadata,
         )
 
@@ -595,7 +587,6 @@ def _vision_extract_binding(
             provider=entry.provider,
             adapter_style=adapter_style,
             available=True,
-            models=models,
             metadata=metadata,
         )
 
@@ -604,7 +595,6 @@ def _vision_extract_binding(
         entry.provider,
         adapter_style=adapter_style,
         reason=f"{entry.display_name} CLI is not installed.",
-        models=models,
         metadata=metadata,
     )
 
@@ -632,55 +622,12 @@ def _local_vision_extract_binding(config: DaemonConfig | None) -> CapabilityBind
     )
 
 
-def _metadata_for_generation_binding(
-    config: DaemonConfig | None,
-    entry: ProviderMetadata,
-) -> dict[str, object]:
-    metadata: dict[str, object] = {
+def _metadata_for_generation_binding(entry: ProviderMetadata) -> dict[str, object]:
+    return {
         "display_name": entry.display_name,
         "deprecated": entry.deprecated,
         "deprecation_message": entry.deprecation_message,
     }
-    binding_config = _generation_binding_config(config, entry.provider)
-    if binding_config is not None:
-        assert config is not None
-        metadata["auth_mode"] = binding_config.auth_mode
-        default_model = binding_config.default_model or config.llm_providers.default_model
-        if default_model:
-            metadata["default_model"] = default_model
-    return metadata
-
-
-def _models_for_generation_binding(
-    config: DaemonConfig | None,
-    provider: str,
-) -> tuple[str, ...]:
-    binding_config = _generation_binding_config(config, provider)
-    if binding_config is None:
-        return ()
-    models = tuple(binding_config.get_models_list())
-    if provider != "claude":
-        return models
-    aliases = tuple(
-        alias
-        for alias in _CLAUDE_ALIAS_MODELS
-        if any(_claude_model_matches_alias(model, alias) for model in models)
-    )
-    return tuple(dict.fromkeys((*models, *aliases)))
-
-
-def _claude_model_matches_alias(model: str, alias: str) -> bool:
-    normalized_parts = model.lower().replace("_", "-").split("-")
-    return alias in normalized_parts
-
-
-def _generation_binding_config(config: DaemonConfig | None, provider: str) -> Any | None:
-    if config is None:
-        return None
-    providers = getattr(config, "llm_providers", None)
-    if providers is None or provider != "claude":
-        return None
-    return getattr(providers, provider, None)
 
 
 def _text_generate_adapter_style(provider: str) -> AIAdapterStyle | None:
