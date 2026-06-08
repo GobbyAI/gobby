@@ -17,6 +17,8 @@ pub(crate) mod benchmark;
 #[allow(dead_code)]
 pub(crate) mod citations;
 #[allow(dead_code)]
+pub(crate) mod code_graph;
+#[allow(dead_code)]
 pub(crate) mod collect;
 #[allow(dead_code)]
 pub(crate) mod commands;
