@@ -13,6 +13,8 @@ pub(crate) mod test_http;
 #[allow(dead_code)]
 pub(crate) mod audit;
 #[allow(dead_code)]
+pub(crate) mod benchmark;
+#[allow(dead_code)]
 pub(crate) mod citations;
 #[allow(dead_code)]
 pub(crate) mod collect;

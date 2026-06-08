@@ -70,6 +70,9 @@ pub enum Command {
         scope: ScopeSelection,
         limit: usize,
     },
+    Benchmark {
+        scope: ScopeSelection,
+    },
     Research(research::ResearchOptions),
     Compile {
         topic: Option<String>,

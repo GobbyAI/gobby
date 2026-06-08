@@ -23,6 +23,7 @@ const CLI_SUBCOMMANDS: &[&str] = &[
     "read",
     "backlinks",
     "link-suggest",
+    "benchmark",
     "research",
     "compile",
     "export",
@@ -112,6 +113,8 @@ enum CliCommand {
     Backlinks(BacklinksArgs),
     /// Suggest unresolved wiki links in the selected scope.
     LinkSuggest(LinkSuggestArgs),
+    /// Report benchmark metrics for an indexed seeded project.
+    Benchmark,
     /// Dispatch research workers and checkpoint wiki research state.
     Research(ResearchArgs),
     /// Compile accepted research notes into wiki articles.
@@ -546,6 +549,7 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             scope,
             limit: args.limit,
         }),
+        CliCommand::Benchmark => Ok(Command::Benchmark { scope }),
         CliCommand::Research(args) => {
             let question = match (args.audit, args.question) {
                 (_, Some(question)) => question,
@@ -936,5 +940,18 @@ mod tests {
         assert_eq!(options.falkordb_port, Some(26379));
         assert_eq!(options.qdrant_url.as_deref(), Some("http://localhost:7333"));
         assert_eq!(options.embedding_vector_dim, Some(1024));
+    }
+
+    #[test]
+    fn benchmark_cli_maps_to_command_options() {
+        let command = command_from_cli(CliCommand::Benchmark, ScopeSelection::topic("rust"))
+            .expect("benchmark command maps");
+
+        assert_eq!(
+            command,
+            Command::Benchmark {
+                scope: ScopeSelection::topic("rust")
+            }
+        );
     }
 }
