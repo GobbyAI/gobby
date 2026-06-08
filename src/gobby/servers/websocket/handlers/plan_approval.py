@@ -177,6 +177,10 @@ async def handle_plan_approval_response(
         post_plan_mode = option.post_plan_chat_mode if option else "normal"
         should_auto_continue = option.auto_continue if option else True
         if session.has_pending_plan:
+            # Capture before releasing: a tool-plan CLI (Droid ExitSpecMode)
+            # parks its plan-exit tool on a blocking gate that resumes the turn
+            # natively once released, so it must not also be auto-continued.
+            blocking_plan = getattr(session, "has_blocking_plan_decision", False)
             session._pending_post_plan_mode = post_plan_mode
             session.set_chat_mode(post_plan_mode)
             _clear_pending_plan_prompt(session)
@@ -188,10 +192,16 @@ async def handle_plan_approval_response(
                 conversation_id[:8],
                 post_plan_mode,
             )
-            # Managed CLIs have no in-flight ExitPlanMode to unblock; the plan
-            # was a completed assistant turn. Native Claude (plan_auto_switch)
-            # continues the paused turn itself, so only auto-continue managed.
-            if not getattr(session, "plan_auto_switch", False) and should_auto_continue:
+            # Managed text-plan CLIs have no in-flight plan-exit tool to unblock;
+            # the plan was a completed assistant turn, so inject a continuation.
+            # Native Claude (plan_auto_switch) and tool-plan CLIs that blocked on
+            # the plan-decision gate (blocking_plan) resume the paused turn
+            # themselves, so skip injection for them.
+            if (
+                not getattr(session, "plan_auto_switch", False)
+                and should_auto_continue
+                and not blocking_plan
+            ):
                 if not await _auto_continue_after_approval(mixin, websocket, conversation_id):
                     logger.warning(
                         "Plan approval continuation injection failed for conversation %s",
@@ -219,12 +229,18 @@ async def handle_plan_approval_response(
         feedback = data.get("feedback", "")
         if feedback:
             session.set_plan_feedback(feedback)
+        # Capture the blocking-gate state before _clear_pending_plan_prompt zeros
+        # the content-based has_pending_plan used by managed (tool-plan) CLIs.
+        blocking_plan = getattr(session, "has_blocking_plan_decision", False)
         _clear_pending_plan_prompt(session)
-        if session.has_pending_plan:
-            # ExitPlanMode is blocking — deny it so agent stays in plan mode
+        if session.has_pending_plan or blocking_plan:
+            # A blocking plan-exit tool is parked (native ExitPlanMode, whose
+            # event-based has_pending_plan survives the clear, or a managed
+            # tool-plan CLI's gate, e.g. Droid ExitSpecMode). Deny it so the
+            # agent stays in plan mode; queued feedback rides the next turn.
             session.provide_plan_decision("request_changes")
             logger.info(
-                f"Plan changes requested (ExitPlanMode denied) for conversation {conversation_id[:8]}",
+                f"Plan changes requested (plan-exit tool denied) for conversation {conversation_id[:8]}",
             )
         else:
             await _send_mode_changed(

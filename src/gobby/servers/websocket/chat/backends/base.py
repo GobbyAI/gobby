@@ -110,6 +110,11 @@ class ManagedChatSessionBase:
     _last_plan_content: str | None = field(default=None, repr=False)
     _pending_plan_content: str | None = field(default=None, repr=False)
     _pending_plan_structured: bool = field(default=False, repr=False)
+    # Blocking plan-decision gate (tool-plan CLIs, e.g. Droid ExitSpecMode). The
+    # event is created/awaited by ManagedWebChatPermissionsMixin._wait_for_plan_decision
+    # and released by provide_plan_decision; text-plan CLIs leave it None.
+    _pending_plan_event: asyncio.Event | None = field(default=None, repr=False)
+    _pending_plan_decision: str | None = field(default=None, repr=False)
     _pending_plan_allowed_prompts: list[str] | None = field(default=None, repr=False)
     _pending_post_plan_mode: str | None = field(default=None, repr=False)
     _pending_agent_name: str | None = field(default=None, repr=False)

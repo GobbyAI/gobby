@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import shutil
@@ -18,6 +19,7 @@ from gobby.llm.claude_models import (
     ToolCallEvent,
     ToolResultEvent,
 )
+from gobby.servers.websocket.chat import permissions
 from gobby.servers.websocket.chat.backends.droid import (
     DroidManagedChatSession,
     DroidWebChatBackend,
@@ -516,6 +518,140 @@ async def test_plan_mode_cancels_unapproved_tool_and_broadcasts_plan() -> None:
     # Stream completed, so the end-of-stream pending-plan broadcast fired once.
     assert broadcasts == [plan_text]
     assert isinstance(events[-1], DoneEvent)
+
+
+def _exit_spec_session(
+    backend: DroidWebChatBackend,
+) -> tuple[DroidManagedChatSession, list[str | None]]:
+    """A plan-mode Droid session wired to capture plan broadcasts."""
+    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session.project_path = "/tmp/project"
+    session.chat_mode = "plan"
+    broadcasts: list[str | None] = []
+
+    async def on_plan_ready(content: str | None, input_data: dict[str, Any]) -> None:
+        broadcasts.append(content)
+
+    session._on_plan_ready = on_plan_ready
+    return session, broadcasts
+
+
+async def _park_on_plan_gate(session: DroidManagedChatSession) -> None:
+    """Yield until the resolver has broadcast + parked on the decision gate."""
+    for _ in range(10):
+        await asyncio.sleep(0)
+        if session.has_blocking_plan_decision:
+            return
+    raise AssertionError("resolver did not park on the plan-decision gate")
+
+
+@pytest.mark.asyncio
+async def test_exit_spec_mode_broadcasts_and_blocks_then_approve_proceeds() -> None:
+    # #15682: ExitSpecMode must broadcast the spec AND block on the user's
+    # decision (mirroring native ExitPlanMode), not cancel-and-drop it. Approve
+    # releases with Droid's approve option (proceed_once) so Droid exits Spec
+    # Mode and executes.
+    backend = DroidWebChatBackend()
+    session, broadcasts = _exit_spec_session(backend)
+    spec = "## Spec\n\n1. Add multiply helper\n2. Add tests"
+    events = parse_droid_stream_line(
+        _permission_request_line(tool_name="ExitSpecMode", tool_input={"plan": spec})
+    )
+
+    resolve = asyncio.create_task(backend._resolve_permission_request(session, events))
+    await _park_on_plan_gate(session)
+
+    # (a) spec broadcast as the authoritative structured plan.
+    assert broadcasts == [spec]
+    assert session._pending_plan_structured is True
+    # (b) the resolver awaits the decision rather than returning immediately.
+    assert not resolve.done()
+    assert session._plan_exit_blocked_this_turn is True
+
+    # (c) approve releases with proceed_once.
+    session.provide_plan_decision("approve")
+    result = await asyncio.wait_for(resolve, timeout=1.0)
+    assert result == "proceed_once"
+    assert session._plan_approved is True
+    assert session.has_blocking_plan_decision is False
+
+
+@pytest.mark.asyncio
+async def test_exit_spec_mode_request_changes_cancels_and_queues_feedback() -> None:
+    # (d) request_changes releases the gate with cancel (Droid stays in Spec
+    # Mode) and the feedback is queued onto the next turn's plan-mode context.
+    backend = DroidWebChatBackend()
+    session, _broadcasts = _exit_spec_session(backend)
+    events = parse_droid_stream_line(
+        _permission_request_line(tool_name="ExitSpecMode", tool_input={"plan": "## Spec\n\n1. x"})
+    )
+
+    resolve = asyncio.create_task(backend._resolve_permission_request(session, events))
+    await _park_on_plan_gate(session)
+
+    session.set_plan_feedback("tighten step 1")
+    session.provide_plan_decision("request_changes")
+    result = await asyncio.wait_for(resolve, timeout=1.0)
+
+    assert result == "cancel"
+    assert session._plan_approved is False
+    # Feedback rides the next plan-mode prompt context.
+    plan_context = session._pop_plan_mode_context()
+    assert plan_context is not None
+    assert "tighten step 1" in plan_context
+
+
+@pytest.mark.asyncio
+async def test_exit_spec_mode_decision_gate_times_out_to_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # (e) timeout path returns reject (cancel) so Droid stays in Spec Mode
+    # rather than silently proceeding.
+    monkeypatch.setattr(permissions, "MANAGED_PLAN_DECISION_TIMEOUT_SECONDS", 0.01)
+    backend = DroidWebChatBackend()
+    session, broadcasts = _exit_spec_session(backend)
+    events = parse_droid_stream_line(
+        _permission_request_line(tool_name="ExitSpecMode", tool_input={"plan": "## Spec"})
+    )
+
+    result = await backend._resolve_permission_request(session, events)
+
+    assert result == "cancel"
+    assert session._plan_approved is False
+    assert broadcasts == ["## Spec"]
+    assert session.has_blocking_plan_decision is False
+
+
+@pytest.mark.asyncio
+async def test_plan_mode_still_cancels_write_tool_without_blocking() -> None:
+    # Criterion 3: side-effecting tools stay cancelled in plan mode and never
+    # reach the plan-decision gate.
+    backend = DroidWebChatBackend()
+    session, broadcasts = _exit_spec_session(backend)
+    events = parse_droid_stream_line(
+        _permission_request_line(
+            tool_name="Write",
+            tool_input={"file_path": "src/x.py", "content": "print(1)"},
+        )
+    )
+
+    result = await backend._resolve_permission_request(session, events)
+
+    assert result == "cancel"
+    assert session.has_blocking_plan_decision is False
+    assert broadcasts == []
+
+
+@pytest.mark.asyncio
+async def test_wait_for_plan_decision_times_out_to_reject() -> None:
+    # The blocking primitive defaults to "deny" (reject) on timeout.
+    backend = DroidWebChatBackend()
+    session, _broadcasts = _exit_spec_session(backend)
+
+    decision = await session._wait_for_plan_decision(timeout=0.01)
+
+    assert decision == "deny"
+    assert session.has_blocking_plan_decision is False
 
 
 @pytest.mark.asyncio

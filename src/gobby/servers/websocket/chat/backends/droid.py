@@ -121,6 +121,10 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
     _pending_approval_decision: str | None = field(default=None, repr=False)
     _plan_approved: bool = field(default=False, repr=False)
     _plan_feedback: str | None = field(default=None, repr=False)
+    # Set when the permission resolver broadcasts + blocks a plan-exit tool
+    # (ExitSpecMode) this turn, so send_message's post-loop broadcast does not
+    # re-broadcast the spec (or a prose preamble) after the decision (#15682).
+    _plan_exit_blocked_this_turn: bool = field(default=False, repr=False)
     _is_first_turn: bool = field(default=True, repr=False)
 
     def _web_chat_source(self) -> str:
@@ -183,6 +187,10 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
             # is often just a conversational preamble (#15693).
             structured_plan: str | None = None
             final_done: DoneEvent | None = None
+            # Reset per turn: the permission resolver sets this when it
+            # broadcasts + blocks an ExitSpecMode plan-exit tool, so the
+            # post-loop broadcast below knows not to re-broadcast (#15682).
+            self._plan_exit_blocked_this_turn = False
 
             try:
                 async for stream_event in self._backend.send_message(self, full_prompt):
@@ -252,7 +260,12 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
                     if chat_event is not None:
                         yield chat_event
 
-                if structured_plan is not None:
+                if self._plan_exit_blocked_this_turn:
+                    # The permission resolver already broadcast the spec and
+                    # parked the turn for this ExitSpecMode; the decision has
+                    # since resolved, so don't re-broadcast post-loop (#15682).
+                    self._plan_exit_blocked_this_turn = False
+                elif structured_plan is not None:
                     await self._maybe_broadcast_pending_plan(structured_plan, True, structured=True)
                 else:
                     await self._maybe_broadcast_pending_plan(
@@ -747,14 +760,36 @@ class DroidWebChatBackend:
             return DROID_PERMISSION_PROCEED_ONCE
 
         if session.chat_mode == "plan":
+            # Tool-plan model (#15682): Droid presents its finalized plan via the
+            # ExitSpecMode plan-exit tool, riding the spec in the tool input.
+            # ExitSpecMode arrives only as a permission request and is filtered
+            # out of the session stream (_read_until_terminal), so this resolver
+            # is the only place that sees it. Broadcast the spec and BLOCK on the
+            # user's decision here — mirroring the native ExitPlanMode gate —
+            # instead of cancelling and dropping it (which left the card never
+            # surfacing). proceed_once exits Spec Mode and executes; cancel keeps
+            # Droid in Spec Mode for revision (request_changes / reject /
+            # timeout). Queued feedback rides the next turn's plan-mode context.
+            for tool_name, tool_input, _tool_id in tool_payloads:
+                if not _is_plan_exit_tool(tool_name):
+                    continue
+                spec = _extract_plan_from_tool_args(tool_input)
+                if not spec:
+                    # No spec body to show; fall through to the cancel below
+                    # rather than blocking on an invisible plan card.
+                    break
+                await session._maybe_broadcast_pending_plan(spec, True, structured=True)
+                session._plan_exit_blocked_this_turn = True
+                decision = await session._wait_for_plan_decision()
+                if decision == "approve":
+                    return DROID_PERMISSION_PROCEED_ONCE
+                return DROID_PERMISSION_CANCEL
+
             # Read-only planning mode (#15664): destructive tools were cancelled
             # in the per-tool loop above and auto-allowed reads already
-            # proceeded. Anything still here needs interactive approval, which
-            # cannot be granted during the headless plan turn — awaiting it
-            # stalls the stream loop so the end-of-stream pending-plan broadcast
-            # (_maybe_broadcast_pending_plan) never runs and the plan card never
-            # surfaces. Cancel deterministically instead of blocking so the turn
-            # completes and the plan is broadcast, matching Codex/ACP behavior.
+            # proceeded. Any non-plan-exit tool still here needs interactive
+            # approval, which cannot be granted during the headless plan turn;
+            # cancel deterministically so the turn completes.
             return DROID_PERMISSION_CANCEL
 
         approval_tool_name, approval_input = self._approval_prompt_payload(tool_payloads)

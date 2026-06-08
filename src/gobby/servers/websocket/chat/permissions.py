@@ -29,6 +29,11 @@ from gobby.servers.tool_approvals import approval_key_for_tool
 
 logger = logging.getLogger(__name__)
 
+# Plan-decision gate timeout for tool-plan managed CLIs (Droid ExitSpecMode),
+# mirroring the native ExitPlanMode gate (servers/chat_session_permissions.py).
+# On timeout the decision defaults to reject so the CLI stays in plan mode.
+MANAGED_PLAN_DECISION_TIMEOUT_SECONDS = 600.0
+
 
 class ManagedWebChatPermissionsMixin:
     """Permission and plan helpers for managed (non-SDK) web-chat sessions.
@@ -73,6 +78,12 @@ class ManagedWebChatPermissionsMixin:
     _pending_approval: PendingApproval | None
     _pending_approval_decision: str | None
     _pending_approval_event: asyncio.Event | None
+    # Blocking plan-decision gate for tool-plan CLIs (Droid ExitSpecMode). The
+    # plan-exit tool parks on _pending_plan_event while the web UI shows
+    # plan_pending_approval; provide_plan_decision() releases it. Text-plan CLIs
+    # (Codex / ACP / Droid-prose) never set the event and so never block.
+    _pending_plan_event: asyncio.Event | None
+    _pending_plan_decision: str | None
 
     _DANGEROUS_BASH_PATTERNS = re.compile(
         r"(?:^|[;&|]\s*)(?:sudo|rm|chmod|chown|kill|killall|mkfs|dd|reboot|shutdown|halt|"
@@ -126,6 +137,45 @@ class ManagedWebChatPermissionsMixin:
     def provide_plan_decision(self, decision: str) -> None:
         if decision == "approve":
             self._plan_approved = True
+        # Release a blocking plan-exit tool (Droid ExitSpecMode) if one is
+        # parked; a harmless no-op for text-plan CLIs (the event is None).
+        self._pending_plan_decision = decision
+        if self._pending_plan_event is not None:
+            self._pending_plan_event.set()
+
+    async def _wait_for_plan_decision(self, *, timeout: float | None = None) -> str:
+        """Block a plan-exit tool until the user approves or requests changes.
+
+        Mirrors the native ExitPlanMode gate: a tool-plan CLI (Droid
+        ExitSpecMode) parks its plan-exit tool here while the web UI shows
+        plan_pending_approval. :meth:`provide_plan_decision` unblocks it. A
+        timeout defaults to ``"deny"`` (reject) so the CLI stays in plan mode
+        rather than silently proceeding. ``timeout`` is resolved from the module
+        constant at call time when not given, so tests can patch it.
+        """
+        wait_timeout = MANAGED_PLAN_DECISION_TIMEOUT_SECONDS if timeout is None else timeout
+        self._pending_plan_event = asyncio.Event()
+        self._pending_plan_decision = None
+        try:
+            await asyncio.wait_for(self._pending_plan_event.wait(), timeout=wait_timeout)
+        except TimeoutError:
+            self._pending_plan_decision = "deny"
+            logger.warning("Managed plan-decision gate timed out; defaulting to reject")
+        decision = self._pending_plan_decision or "deny"
+        self._pending_plan_event = None
+        self._pending_plan_decision = None
+        return decision
+
+    @property
+    def has_blocking_plan_decision(self) -> bool:
+        """True while a plan-exit tool is parked awaiting the user's decision.
+
+        Marks the tool-plan model (Droid ExitSpecMode blocks the turn) so the
+        plan-approval handler skips continuation injection: releasing the
+        decision resumes the paused turn natively, the same way native Claude's
+        plan_auto_switch resumes its own ExitPlanMode turn.
+        """
+        return self._pending_plan_event is not None
 
     @property
     def has_pending_plan(self) -> bool:
