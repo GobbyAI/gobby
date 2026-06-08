@@ -57,6 +57,37 @@ describe('PlanApprovalActions', () => {
     expect(screen.getByTestId('x-option-approve_act').className).toContain('var(--accent-tint)')
   })
 
+  it('holds the single-accent contract: exactly one solid primary, however many approve options (#15680)', () => {
+    // .impeccable single-accent: only the emphasis:'primary' option may render
+    // the solid accent CTA. Every other approve option is a tinted secondary,
+    // never a peer primary — even if a CLI ever surfaces three+ accept variants.
+    // Guards against the original defect (every ExitPlanMode option rendered
+    // primary -> three accent buttons in a row for Droid).
+    const MULTI: ApprovalOption[] = [
+      { id: 'approve_yolo', label: 'Approve (YOLO)', decision: 'approve', emphasis: 'primary' },
+      { id: 'approve_act', label: 'Approve (Act)', decision: 'approve', emphasis: 'accent' },
+      { id: 'approve_edits', label: 'Approve (auto-edits)', decision: 'approve', emphasis: 'accent' },
+    ]
+    render(
+      <PlanApprovalActions
+        onApprove={vi.fn()}
+        onRequestChanges={vi.fn()}
+        options={MULTI}
+        testIdPrefix="x"
+      />,
+    )
+    // The solid-accent slab (`bg-accent`) is unique to the `primary` variant;
+    // the tinted `accent` variant uses `bg-[var(--accent-tint)]`.
+    const solidPrimaries = MULTI.map((o) =>
+      screen.getByTestId(`x-option-${o.id}`),
+    ).filter((el) => el.className.includes('bg-accent'))
+    expect(solidPrimaries).toHaveLength(1)
+    expect(solidPrimaries[0]).toBe(screen.getByTestId('x-option-approve_yolo'))
+    // Remaining approve options are tinted, not peer primaries.
+    expect(screen.getByTestId('x-option-approve_act').className).toContain('var(--accent-tint)')
+    expect(screen.getByTestId('x-option-approve_edits').className).toContain('var(--accent-tint)')
+  })
+
   it('selecting an option calls onApprove with that option', () => {
     const onApprove = vi.fn()
     render(
