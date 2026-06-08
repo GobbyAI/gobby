@@ -53,5 +53,8 @@ pub mod indexing;
 #[cfg(feature = "search")]
 pub mod search;
 
+#[cfg(feature = "graph-analytics")]
+pub mod graph_analytics;
+
 #[cfg(test)]
 pub(crate) mod test_http;

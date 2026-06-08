@@ -18,9 +18,10 @@ falkor = ["dep:falkordb", "dep:urlencoding"]
 qdrant = ["dep:reqwest", "dep:urlencoding"]
 indexing = ["dep:ignore", "dep:sha2"]
 search = []
+graph-analytics = []
 local-backend = ["dep:ureq"]
 ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:httpdate", "dep:rand", "local-backend", "reqwest/multipart"]
-full = ["postgres", "falkor", "qdrant", "indexing", "search", "ai"]
+full = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics", "ai"]
 
 [dependencies]
 anyhow = "1"

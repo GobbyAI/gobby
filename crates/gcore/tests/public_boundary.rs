@@ -27,9 +27,10 @@ fn cargo_features_define_public_boundary() {
         r#"qdrant = ["dep:reqwest", "dep:urlencoding"]"#,
         r#"indexing = ["dep:ignore", "dep:sha2"]"#,
         "search = []",
+        "graph-analytics = []",
         r#"local-backend = ["dep:ureq"]"#,
         r#"ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:httpdate", "dep:rand", "local-backend", "reqwest/multipart"]"#,
-        r#"full = ["postgres", "falkor", "qdrant", "indexing", "search", "ai"]"#,
+        r#"full = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics", "ai"]"#,
         r#"serde = { version = "1", features = ["derive"] }"#,
         r#"thiserror = "2""#,
         r#"postgres = { version = "0.19", optional = true }"#,
@@ -91,6 +92,8 @@ fn lib_rs_exposes_lightweight_and_feature_gated_modules() {
         "pub mod indexing;",
         r#"#[cfg(feature = "search")]"#,
         "pub mod search;",
+        r#"#[cfg(feature = "graph-analytics")]"#,
+        "pub mod graph_analytics;",
     ] {
         assert!(
             lib_rs.contains(expected),
