@@ -35,8 +35,8 @@ mod text;
 
 // Document builders.
 pub(crate) use build::{
-    build_architecture_doc, build_file_doc, build_hotspots_doc, build_module_docs,
-    build_onboarding_doc,
+    build_architecture_doc, build_codewiki_changes_doc, build_codewiki_index_snapshot,
+    build_file_doc, build_hotspots_doc, build_module_docs, build_onboarding_doc,
 };
 // Module clustering and graph-to-file helpers.
 pub(crate) use cluster::{
@@ -69,7 +69,9 @@ pub(crate) use text::{
     structural_repo_summary, structural_symbol_purpose, write_section,
 };
 
-pub(crate) use io::{read_ownership_meta, write_ownership_meta};
+pub(crate) use io::{
+    read_ownership_meta, write_incremental_doc_set_with_snapshot, write_ownership_meta,
+};
 pub use io::{write_doc_set, write_incremental_doc_set};
 
 #[derive(Debug, Clone)]
@@ -288,11 +290,38 @@ pub struct CodewikiRunSummary {
 pub(crate) struct CodewikiMeta {
     docs: BTreeMap<String, CodewikiDocMeta>,
     generated_docs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    index_snapshot: Option<CodewikiIndexSnapshot>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct CodewikiDocMeta {
     source_hashes: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct CodewikiIndexSnapshot {
+    files: BTreeMap<String, CodewikiFileSnapshot>,
+    symbols: BTreeMap<String, CodewikiSymbolSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    graph_neighborhoods: Option<BTreeMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    degraded_sources: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct CodewikiFileSnapshot {
+    content_hash: String,
+    symbol_count: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct CodewikiSymbolSnapshot {
+    file_path: String,
+    name: String,
+    qualified_name: String,
+    kind: String,
+    line_start: usize,
 }
 
 pub type TextGenerator<'a> = dyn FnMut(&str, &str) -> Option<String> + 'a;
@@ -355,13 +384,19 @@ pub fn run(
     let ai_enabled = generator.is_some();
     let out_dir = out.unwrap_or_else(|| DEFAULT_OUT_DIR.to_string());
     let out_path = Path::new(&out_dir);
+    let previous_meta = io::read_codewiki_meta(out_path)?;
+    let index_snapshot = build_codewiki_index_snapshot(&ctx.project_root, &input)?;
     let mut ownership_meta = read_ownership_meta(out_path)?;
-    let docs = generate_hierarchical_docs_with_ownership(
+    let mut docs = generate_hierarchical_docs_with_ownership(
         &input,
         &ctx.project_root,
         &mut ownership_meta,
         generator.as_deref_mut(),
     )?;
+    docs.push((
+        "code/_changes.md".to_string(),
+        build_codewiki_changes_doc(previous_meta.index_snapshot.as_ref(), &index_snapshot),
+    ));
     let module_count = docs
         .iter()
         .filter(|(path, _)| path.starts_with("code/modules/"))
@@ -375,7 +410,12 @@ pub fn run(
         .iter()
         .filter(|symbol| is_core_file(&symbol.file_path))
         .count();
-    let changed_paths = write_incremental_doc_set(&ctx.project_root, out_path, &docs)?;
+    let changed_paths = write_incremental_doc_set_with_snapshot(
+        &ctx.project_root,
+        out_path,
+        &docs,
+        Some(index_snapshot),
+    )?;
     write_ownership_meta(out_path, &ownership_meta)?;
     let generated_pages = docs.len();
     let skipped = generated_pages.saturating_sub(changed_paths.len());

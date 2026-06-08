@@ -4,6 +4,8 @@ use super::io::{
 use super::*;
 
 mod architecture;
+#[path = "changes_tests.rs"]
+mod changes_tests;
 
 #[test]
 fn generates_hierarchical_docs() {

@@ -13,6 +13,15 @@ pub fn write_incremental_doc_set(
     out_dir: &Path,
     docs: &[(String, String)],
 ) -> anyhow::Result<Vec<String>> {
+    write_incremental_doc_set_with_snapshot(project_root, out_dir, docs, None)
+}
+
+pub(crate) fn write_incremental_doc_set_with_snapshot(
+    project_root: &Path,
+    out_dir: &Path,
+    docs: &[(String, String)],
+    index_snapshot: Option<CodewikiIndexSnapshot>,
+) -> anyhow::Result<Vec<String>> {
     std::fs::create_dir_all(out_dir)?;
     let previous = read_codewiki_meta(out_dir)?;
     let mut next_docs = BTreeMap::new();
@@ -53,6 +62,7 @@ pub fn write_incremental_doc_set(
     let meta = CodewikiMeta {
         docs: next_docs,
         generated_docs: generated_docs.clone(),
+        index_snapshot,
     };
     write_codewiki_meta(out_dir, &meta)?;
     Ok(generated_docs)
