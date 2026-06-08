@@ -253,20 +253,29 @@ async def test_list_worktrees_resolves_project_path(
         merged_at=None,
     )
     mock_worktree_storage.list_worktrees.return_value = [wt1]
+    mock_worktree_storage.count_by_status.return_value = {"active": 1}
+    mock_worktree_storage.get_by_task.return_value = wt1
 
     with patch(
         "gobby.mcp_proxy.tools.worktrees._crud.resolve_project_context",
         return_value=(mock_git_manager, "target-proj", None),
     ) as resolve_project_context:
-        result = await registry.call(
+        list_result = await registry.call(
             "list_worktrees", {"status": "active", "project_path": "/tmp/target-project"}
         )
+        stats_result = await registry.call(
+            "get_worktree_stats", {"project_path": "/tmp/target-project"}
+        )
+        task_result = await registry.call("get_worktree_by_task", {"task_id": "task-1"})
 
-    assert result["success"] is True
-    assert result["count"] == 1
-    resolve_project_context.assert_called_once_with(
-        "/tmp/target-project", mock_git_manager, "proj-1"
-    )
+    assert list_result["success"] is True
+    assert list_result["count"] == 1
+    assert list_result["worktrees"][0]["id"] == task_result["worktree"]["id"]
+    assert list_result["count"] == stats_result["counts"]["active"]
+    assert resolve_project_context.call_count == 2
+    resolve_project_context.assert_any_call("/tmp/target-project", mock_git_manager, "proj-1")
+    mock_worktree_storage.count_by_status.assert_called_once_with("target-proj")
+    mock_worktree_storage.get_by_task.assert_called_once_with("task-1")
     mock_worktree_storage.list_worktrees.assert_called_with(
         project_id="target-proj", status="active", agent_session_id=None, limit=50
     )
