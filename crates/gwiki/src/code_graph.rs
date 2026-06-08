@@ -1,10 +1,13 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::path::PathBuf;
 
 use gobby_core::config::FalkorConfig;
 use gobby_core::degradation::{DegradationKind, ServiceState};
 use gobby_core::falkor::{self, GraphClient, Row};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use crate::provenance::ProvenanceGraph;
 
 pub(crate) const CODE_GRAPH_NAME: &str = gobby_core::config::CODE_GRAPH_NAME;
 const GRAPH_SERVICE: &str = "gcode_code_graph";
@@ -23,6 +26,25 @@ pub(crate) struct CodeGraphEdge {
     pub detail: Option<String>,
     pub file_path: Option<String>,
     pub line: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CodeChangeSet {
+    pub files: Vec<String>,
+    pub symbols: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AffectedPages {
+    pub pages: Vec<AffectedPage>,
+    pub degradations: Vec<DegradationKind>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AffectedPage {
+    pub page_path: PathBuf,
+    pub source_ids: Vec<String>,
+    pub source_paths: Vec<PathBuf>,
 }
 
 pub(crate) fn code_edges(
@@ -44,6 +66,105 @@ pub(crate) fn code_edges(
     };
 
     Ok((edges, degradation))
+}
+
+pub(crate) fn affected_pages_for_changes(
+    config: Option<&FalkorConfig>,
+    project: &str,
+    provenance: &ProvenanceGraph,
+    changes: CodeChangeSet,
+) -> anyhow::Result<AffectedPages> {
+    affected_pages_for_changes_with_edges(provenance, &changes, |query| {
+        code_edges(config, project, query)
+    })
+}
+
+fn affected_pages_for_changes_with_edges(
+    provenance: &ProvenanceGraph,
+    changes: &CodeChangeSet,
+    mut edges_for: impl FnMut(
+        CodeGraphQuery<'_>,
+    ) -> anyhow::Result<(Vec<CodeGraphEdge>, Option<DegradationKind>)>,
+) -> anyhow::Result<AffectedPages> {
+    let mut target_paths = changes
+        .files
+        .iter()
+        .filter_map(|path| normalized_path(path))
+        .collect::<BTreeSet<_>>();
+    let target_source_ids = changes
+        .symbols
+        .iter()
+        .filter_map(|symbol| normalized_source_id(symbol))
+        .collect::<BTreeSet<_>>();
+    let mut degradations = Vec::new();
+
+    for file in &changes.files {
+        let (edges, degradation) = edges_for(CodeGraphQuery::File(file))?;
+        if let Some(degradation) = degradation {
+            degradations.push(degradation);
+        }
+        add_edge_paths(&mut target_paths, edges);
+    }
+    for symbol in &changes.symbols {
+        let (edges, degradation) = edges_for(CodeGraphQuery::Symbol(symbol))?;
+        if let Some(degradation) = degradation {
+            degradations.push(degradation);
+        }
+        add_edge_paths(&mut target_paths, edges);
+    }
+
+    Ok(AffectedPages {
+        pages: affected_pages_for_targets(provenance, &target_paths, &target_source_ids),
+        degradations,
+    })
+}
+
+fn add_edge_paths(target_paths: &mut BTreeSet<PathBuf>, edges: Vec<CodeGraphEdge>) {
+    for edge in edges {
+        if let Some(path) = edge.file_path.as_deref().and_then(normalized_path) {
+            target_paths.insert(path);
+        }
+    }
+}
+
+fn affected_pages_for_targets(
+    provenance: &ProvenanceGraph,
+    target_paths: &BTreeSet<PathBuf>,
+    target_source_ids: &BTreeSet<String>,
+) -> Vec<AffectedPage> {
+    let mut pages: BTreeMap<PathBuf, (BTreeSet<String>, BTreeSet<PathBuf>)> = BTreeMap::new();
+    for link in provenance.links() {
+        if !target_paths.contains(&link.source.path)
+            && !target_source_ids.contains(&link.source.source_id)
+            && !target_source_ids.contains(&link.source.chunk_id)
+        {
+            continue;
+        }
+        let (source_ids, source_paths) = pages
+            .entry(link.section.page_path.clone())
+            .or_insert_with(|| (BTreeSet::new(), BTreeSet::new()));
+        source_ids.insert(link.source.source_id.clone());
+        source_paths.insert(link.source.path.clone());
+    }
+
+    pages
+        .into_iter()
+        .map(|(page_path, (source_ids, source_paths))| AffectedPage {
+            page_path,
+            source_ids: source_ids.into_iter().collect(),
+            source_paths: source_paths.into_iter().collect(),
+        })
+        .collect()
+}
+
+fn normalized_path(path: &str) -> Option<PathBuf> {
+    let path = path.trim();
+    (!path.is_empty()).then(|| PathBuf::from(path))
+}
+
+fn normalized_source_id(source_id: &str) -> Option<String> {
+    let source_id = source_id.trim();
+    (!source_id.is_empty()).then(|| source_id.to_string())
 }
 
 fn query_edges(
@@ -177,5 +298,115 @@ mod tests {
         assert!(query.contains("-[import:IMPORTS]->"));
         assert!(query.contains("-[calls:CALLS]->"));
         assert!(query.contains("<-[caller_call:CALLS]-"));
+    }
+
+    #[test]
+    fn change_triggered_refresh_maps_changed_files_through_graph_and_provenance() {
+        let mut provenance = crate::provenance::ProvenanceGraph::default();
+        provenance.add_link(crate::provenance::ProvenanceLink {
+            source: crate::provenance::SourceChunkRef {
+                source_id: "src-a".to_string(),
+                chunk_id: "src-a#chunk-0".to_string(),
+                path: "src/a.rs".into(),
+                byte_start: 0,
+                byte_end: 10,
+            },
+            section: crate::provenance::WikiSectionRef {
+                page_path: "wiki/code/a.md".into(),
+                heading: "A".to_string(),
+                section_id: "a".to_string(),
+            },
+            claim: None,
+        });
+        provenance.add_link(crate::provenance::ProvenanceLink {
+            source: crate::provenance::SourceChunkRef {
+                source_id: "src-b".to_string(),
+                chunk_id: "src-b#chunk-0".to_string(),
+                path: "src/b.rs".into(),
+                byte_start: 0,
+                byte_end: 10,
+            },
+            section: crate::provenance::WikiSectionRef {
+                page_path: "wiki/code/b.md".into(),
+                heading: "B".to_string(),
+                section_id: "b".to_string(),
+            },
+            claim: None,
+        });
+        let changes = CodeChangeSet {
+            files: vec!["src/a.rs".to_string()],
+            symbols: Vec::new(),
+        };
+
+        let affected = affected_pages_for_changes_with_edges(&provenance, &changes, |query| {
+            assert_eq!(query, CodeGraphQuery::File("src/a.rs"));
+            Ok((
+                vec![CodeGraphEdge {
+                    edge: "CALLS".to_string(),
+                    source: "symbol-a".to_string(),
+                    target: "symbol-b".to_string(),
+                    detail: Some("b".to_string()),
+                    file_path: Some("src/b.rs".into()),
+                    line: Some(7),
+                }],
+                None,
+            ))
+        })
+        .expect("affected pages");
+
+        assert!(affected.degradations.is_empty());
+        assert_eq!(
+            affected
+                .pages
+                .iter()
+                .map(|page| page.page_path.as_path())
+                .collect::<Vec<_>>(),
+            vec![
+                std::path::Path::new("wiki/code/a.md"),
+                std::path::Path::new("wiki/code/b.md")
+            ]
+        );
+    }
+
+    #[test]
+    fn change_triggered_refresh_degrades_to_provenance_only_mapping() {
+        let mut provenance = crate::provenance::ProvenanceGraph::default();
+        provenance.add_link(crate::provenance::ProvenanceLink {
+            source: crate::provenance::SourceChunkRef {
+                source_id: "src-a".to_string(),
+                chunk_id: "src-a#chunk-0".to_string(),
+                path: "src/a.rs".into(),
+                byte_start: 0,
+                byte_end: 10,
+            },
+            section: crate::provenance::WikiSectionRef {
+                page_path: "wiki/code/a.md".into(),
+                heading: "A".to_string(),
+                section_id: "a".to_string(),
+            },
+            claim: None,
+        });
+        let changes = CodeChangeSet {
+            files: vec!["src/a.rs".to_string()],
+            symbols: Vec::new(),
+        };
+
+        let affected = affected_pages_for_changes_with_edges(&provenance, &changes, |_query| {
+            Ok((
+                Vec::new(),
+                Some(DegradationKind::ServiceUnavailable {
+                    service: "gcode_code_graph".to_string(),
+                    state: ServiceState::NotConfigured,
+                }),
+            ))
+        })
+        .expect("affected pages");
+
+        assert_eq!(affected.pages.len(), 1);
+        assert_eq!(
+            affected.pages[0].page_path,
+            std::path::PathBuf::from("wiki/code/a.md")
+        );
+        assert_eq!(affected.degradations.len(), 1);
     }
 }

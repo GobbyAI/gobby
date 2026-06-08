@@ -167,6 +167,20 @@ pub fn parse_frontmatter(markdown: &str) -> Result<ParsedFrontmatter<'_>, Frontm
     })
 }
 
+pub fn mark_stale_markdown(markdown: &str, reason: &str) -> Result<String, FrontmatterError> {
+    let mut parsed = parse_frontmatter(markdown)?;
+    parsed
+        .metadata
+        .unknown
+        .insert("stale".to_string(), Value::Bool(true));
+    parsed.metadata.unknown.insert(
+        "stale_reason".to_string(),
+        Value::String(reason.trim().to_string()),
+    );
+    let frontmatter = serialize_yaml_frontmatter(&parsed.metadata)?;
+    Ok(format!("---\n{frontmatter}---\n{}", parsed.body))
+}
+
 impl FrontmatterError {
     fn new(detail: impl Into<String>) -> Self {
         Self {
@@ -260,6 +274,22 @@ fn parse_metadata(
     };
 
     Ok(frontmatter_from_object(object))
+}
+
+fn serialize_yaml_frontmatter(metadata: &WikiFrontmatter) -> Result<String, FrontmatterError> {
+    let mut yaml = serde_yaml::to_string(&metadata.as_json()).map_err(|error| {
+        FrontmatterError::new(format!("failed to serialize YAML frontmatter: {error}"))
+    })?;
+    if let Some(stripped) = yaml.strip_prefix("---\n") {
+        yaml = stripped.to_string();
+    }
+    if let Some(stripped) = yaml.strip_suffix("...\n") {
+        yaml = stripped.to_string();
+    }
+    if !yaml.ends_with('\n') {
+        yaml.push('\n');
+    }
+    Ok(yaml)
 }
 
 fn parse_yaml(raw: &str) -> Result<Value, FrontmatterError> {
@@ -545,5 +575,38 @@ mod tests {
         assert!(parsed.metadata.provenance.is_some());
         assert!(!parsed.metadata.unknown.contains_key("source"));
         assert!(!parsed.metadata.unknown.contains_key("provenance"));
+    }
+
+    #[test]
+    fn change_triggered_refresh_marks_page_stale_with_reason() {
+        let markdown = concat!(
+            "---\n",
+            "title: Code Page\n",
+            "generated_by: gcode-codewiki\n",
+            "---\n",
+            "# Code Page\n",
+        );
+
+        let marked = mark_stale_markdown(markdown, "src/lib.rs changed").expect("mark stale");
+        let parsed = parse_frontmatter(&marked).expect("parse marked markdown");
+
+        assert_eq!(
+            parsed
+                .metadata
+                .unknown
+                .get("stale")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            parsed
+                .metadata
+                .unknown
+                .get("stale_reason")
+                .and_then(Value::as_str),
+            Some("src/lib.rs changed")
+        );
+        assert_eq!(parsed.metadata.title.as_deref(), Some("Code Page"));
+        assert_eq!(parsed.body, "# Code Page\n");
     }
 }
