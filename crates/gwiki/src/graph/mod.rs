@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::search::SearchScope;
 
 pub mod analytics;
+pub mod context;
 
 pub const WIKI_DOC_LABEL: &str = "WikiDoc";
 pub const WIKI_SOURCE_LABEL: &str = "WikiSource";
