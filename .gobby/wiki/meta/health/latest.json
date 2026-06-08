@@ -1,0 +1,16 @@
+{
+  "command": "health",
+  "scope": {
+    "kind": "project",
+    "id": "d45545c5-ded5-4335-b115-0245752edacf"
+  },
+  "root": "/Users/josh/Projects/gobby/.gobby/wiki",
+  "stale_pages": [],
+  "stale_citations": [],
+  "uncited_sources": [],
+  "broken_links": [],
+  "duplicate_concepts": [],
+  "uncompiled_sources": [],
+  "json_path": "meta/health/latest.json",
+  "text_path": "meta/health/latest.md"
+}
