@@ -72,6 +72,18 @@ fn command<'a>(contract: &'a Value, name: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("{name} command contract"))
 }
 
+fn assert_classification(
+    command: &Value,
+    hard_dependencies: Value,
+    optional_dependencies: Value,
+    degradation: Value,
+) {
+    assert_eq!(command["hard_dependencies"], hard_dependencies);
+    assert_eq!(command["optional_dependencies"], optional_dependencies);
+    assert_eq!(command["multimodal"], "none");
+    assert_eq!(command["degradation"], degradation);
+}
+
 #[test]
 fn ask_contract_json_keys_exist_in_serialized_output_shape() {
     let contract = gobby_wiki::contract::contract();
@@ -151,26 +163,22 @@ fn ask_contract_json_keys_exist_in_serialized_output_shape() {
 #[test]
 fn parity_contract_tracks_code_grounding_and_dependency_classification() {
     let contract = pinned_contract();
-    assert_eq!(contract["contract_version"], 3);
+    assert_eq!(contract["contract_version"], 4);
 
     let ask = command(&contract, "ask");
-    assert_eq!(ask["hard_dependencies"], serde_json::json!(["PostgreSQL"]));
-    assert_eq!(
-        ask["optional_dependencies"],
+    assert_classification(
+        ask,
+        serde_json::json!(["PostgreSQL"]),
         serde_json::json!([
             "model synthesis",
             "code graph",
             "Qdrant+embeddings",
             "FalkorDB"
-        ])
-    );
-    assert_eq!(ask["multimodal"], "none");
-    assert_eq!(
-        ask["degradation"],
+        ]),
         serde_json::json!({
             "output_shape": "model off emits an extractive citation-list answer; signal loss falls back to wiki-only grounding",
             "metadata_keys": ["degraded", "degraded_sources[]"]
-        })
+        }),
     );
     assert_eq!(
         ask["json_output_keys"],
@@ -197,17 +205,10 @@ fn parity_contract_tracks_code_grounding_and_dependency_classification() {
 
     let graph_context = command(&contract, "graph-context");
 
-    assert_eq!(
-        graph_context["hard_dependencies"],
-        serde_json::json!(["PostgreSQL"])
-    );
-    assert_eq!(
-        graph_context["optional_dependencies"],
-        serde_json::json!(["FalkorDB", "shared code graph"])
-    );
-    assert_eq!(graph_context["multimodal"], "none");
-    assert_eq!(
-        graph_context["degradation"],
+    assert_classification(
+        graph_context,
+        serde_json::json!(["PostgreSQL"]),
+        serde_json::json!(["FalkorDB", "shared code graph"]),
         serde_json::json!({
             "output_shape": "wiki-link-only neighborhood",
             "metadata_keys": [
@@ -215,7 +216,7 @@ fn parity_contract_tracks_code_grounding_and_dependency_classification() {
                 "degradation.degraded",
                 "degradation.degraded_sources[]"
             ]
-        })
+        }),
     );
 
     assert_eq!(
@@ -236,24 +237,50 @@ fn parity_contract_tracks_code_grounding_and_dependency_classification() {
     );
 
     let research = command(&contract, "research");
-    assert_eq!(
-        research["hard_dependencies"],
-        serde_json::json!(["PostgreSQL"])
-    );
-    assert_eq!(
-        research["optional_dependencies"],
+    assert_classification(
+        research,
+        serde_json::json!(["PostgreSQL"]),
         serde_json::json!([
             "model multi-step synthesis loop",
             "code graph/index",
             "Qdrant+embeddings"
-        ])
-    );
-    assert_eq!(research["multimodal"], "none");
-    assert_eq!(
-        research["degradation"],
+        ]),
         serde_json::json!({
             "output_shape": "model off emits a retrieval-only research scaffold with candidate sources and citations but no synthesized notes; code graph/index off emits docs-only output",
             "metadata_keys": ["accepted_notes[].degradation", "report.degradation"]
-        })
+        }),
+    );
+
+    let librarian = command(&contract, "librarian");
+    assert_classification(
+        librarian,
+        serde_json::json!(["PostgreSQL", "vault"]),
+        serde_json::json!(["FalkorDB/code graph", "Qdrant+embeddings", "model"]),
+        serde_json::json!({
+            "output_shape": "each check skipped independently with a note",
+            "metadata_keys": ["checks[].available"]
+        }),
+    );
+
+    let review_report = command(&contract, "review-report");
+    assert_classification(
+        review_report,
+        serde_json::json!(["PostgreSQL", "change set"]),
+        serde_json::json!(["FalkorDB/code graph and analytics"]),
+        serde_json::json!({
+            "output_shape": "report without risky-shift section",
+            "metadata_keys": ["degraded", "degraded_sources[]"]
+        }),
+    );
+
+    let citation_quality = command(&contract, "citation-quality");
+    assert_classification(
+        citation_quality,
+        serde_json::json!(["PostgreSQL"]),
+        serde_json::json!(["credibility signals", "model contradiction detection"]),
+        serde_json::json!({
+            "output_shape": "per-section skipped with a note",
+            "metadata_keys": ["sections[].available"]
+        }),
     );
 }
