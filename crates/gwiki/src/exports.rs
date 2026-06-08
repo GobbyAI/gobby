@@ -306,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn graph_export_artifacts_include_degradation_and_mermaid() {
+    fn graph_analytics_export_artifacts_include_degradation_and_mermaid() {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path();
         let scope = SearchScope::project("project-123");
@@ -394,10 +394,28 @@ mod tests {
                 .len(),
             1
         );
+        assert_eq!(
+            graph_json["analytics"]["centrality"][0]["node"]["id"],
+            serde_json::json!("wiki/pages/overview.md")
+        );
+        assert_eq!(
+            graph_json["analytics"]["centrality"][0]["degree"],
+            serde_json::json!(2)
+        );
+        assert_eq!(
+            graph_json["analytics"]["communities"][0]["nodes"]
+                .as_array()
+                .expect("community nodes")
+                .len(),
+            1
+        );
 
         let report =
             fs::read_to_string(root.join("outputs/GRAPH_REPORT.md")).expect("graph report");
         assert!(report.contains("# GWiki Graph Report"));
+        assert!(report.contains("## Analytics"));
+        assert!(report.contains("- Top central node: wiki/pages/overview.md (degree 2)"));
+        assert!(report.contains("- Communities: 5"));
         assert!(report.contains("## Degraded sources"));
         assert!(report.contains("- falkordb_unavailable"));
         assert!(report.contains("```mermaid"));

@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use crate::search::SearchScope;
 
+pub mod analytics;
+
 pub const WIKI_DOC_LABEL: &str = "WikiDoc";
 pub const WIKI_SOURCE_LABEL: &str = "WikiSource";
 pub const WIKI_TARGET_LABEL: &str = "WikiTarget";
@@ -61,11 +63,12 @@ impl GraphExportOptions {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct GraphExport {
     pub command: &'static str,
     pub degraded: bool,
     pub degraded_sources: Vec<String>,
+    pub analytics: analytics::GraphExportAnalytics,
     pub nodes: Vec<GraphExportNode>,
     pub edges: GraphExportEdges,
 }
@@ -154,6 +157,7 @@ impl WikiGraphFacts {
             command: "graph",
             degraded,
             degraded_sources: options.degraded_sources,
+            analytics: analytics::analyze_facts(self),
             nodes,
             edges,
         }
@@ -510,6 +514,25 @@ pub fn render_graph_report(export: &GraphExport) -> String {
         }
         report.push('\n');
     }
+
+    report.push_str("## Analytics\n\n");
+    report.push_str(&format!(
+        "- Communities: {}\n",
+        export.analytics.communities.len()
+    ));
+    if let Some(top) = export.analytics.centrality.first() {
+        report.push_str(&format!(
+            "- Top central node: {} (degree {})\n",
+            top.node.id, top.degree
+        ));
+    } else {
+        report.push_str("- Top central node: none\n");
+    }
+    report.push_str(&format!("- Bridges: {}\n", export.analytics.bridges.len()));
+    report.push_str(&format!(
+        "- Hotspots: {}\n\n",
+        export.analytics.hotspots.len()
+    ));
 
     report.push_str("## Overview\n\n```mermaid\ngraph LR\n");
     for node in &export.nodes {
