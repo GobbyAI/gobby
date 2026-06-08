@@ -279,8 +279,18 @@ class DaemonProxy:
                 raw_timeout = arg_map.get("timeout_seconds", 300.0)
             arg_timeout = float(raw_timeout)
             timeout = arg_timeout + WAIT_TOOL_HTTP_TIMEOUT_BUFFER_SECONDS
+        request_path = f"/api/mcp/{server_name}/tools/{tool_name}"
+        request_payload: Any = arguments if arguments is not None else {}
+        if tool_name in WAIT_TOOL_NAMES:
+            request_path = "/api/mcp/tools/call"
+            request_payload = {
+                "server_name": server_name,
+                "tool_name": tool_name,
+                "arguments": arguments if arguments is not None else {},
+            }
+
         request_kwargs: dict[str, Any] = {
-            "json": arguments if arguments is not None else {},
+            "json": request_payload,
             "timeout": timeout,
         }
         if project_id:
@@ -289,7 +299,7 @@ class DaemonProxy:
             request_kwargs["session_id"] = session_id
         return await self._request(
             "POST",
-            f"/api/mcp/{server_name}/tools/{tool_name}",
+            request_path,
             **request_kwargs,
             preflight=preflight_enabled,
         )

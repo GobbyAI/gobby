@@ -903,8 +903,12 @@ class TestDaemonProxy:
                 assert result["success"] is True
                 mock_request.assert_called_once_with(
                     "POST",
-                    "/api/mcp/gobby-agents/tools/wait_for_agent",
-                    json={"run_id": "run-123", "timeout_seconds": 120},
+                    "/api/mcp/tools/call",
+                    json={
+                        "server_name": "gobby-agents",
+                        "tool_name": "wait_for_agent",
+                        "arguments": {"run_id": "run-123", "timeout_seconds": 120},
+                    },
                     timeout=150.0,
                     preflight=True,
                 )
