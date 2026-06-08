@@ -166,6 +166,21 @@ pub fn export_graph_artifacts(
     ])
 }
 
+pub fn export_markdown_report(
+    root: &Path,
+    filename: impl Into<String>,
+    contents: String,
+) -> Result<ExportArtifact, WikiError> {
+    write_export(
+        root,
+        ExportRequest {
+            filename: filename.into(),
+            kind: ExportKind::Report,
+            contents,
+        },
+    )
+}
+
 pub fn write_export(root: &Path, request: ExportRequest) -> Result<ExportArtifact, WikiError> {
     let relative_path = export_relative_path(&request.filename)?;
     let path = root.join("outputs").join(relative_path);

@@ -16,6 +16,7 @@ pub(crate) mod lint;
 pub(crate) mod read;
 pub(crate) mod refresh;
 pub(crate) mod research;
+pub(crate) mod review_report;
 pub(crate) mod search;
 pub(crate) mod setup;
 pub(crate) mod sources;
@@ -87,6 +88,7 @@ pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
         Command::Export { scope, command } => export::execute(scope, command),
         Command::Graph { scope } => graph::execute(scope),
         Command::GraphContext { scope } => graph_context::execute(scope),
+        Command::ReviewReport { scope, options } => review_report::execute(scope, options),
         Command::Audit { scope } => audit::execute(scope),
         Command::Lint { scope } => lint::execute(scope),
         Command::Health { scope } => health::execute(scope),
