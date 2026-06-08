@@ -141,17 +141,17 @@ pub(crate) fn module_depth(module: &str) -> usize {
 }
 
 pub(crate) fn file_doc_path(file: &str) -> String {
-    format!("files/{file}.md")
+    format!("code/files/{file}.md")
 }
 
 pub(crate) fn module_doc_path(module: &str) -> String {
-    format!("modules/{module}.md")
+    format!("code/modules/{module}.md")
 }
 
 pub(crate) fn file_wikilink(file: &str) -> String {
-    format!("[[files/{file}|{file}]]")
+    format!("[[code/files/{file}|{file}]]")
 }
 
 pub(crate) fn module_wikilink(module: &str) -> String {
-    format!("[[modules/{module}|{module}]]")
+    format!("[[code/modules/{module}|{module}]]")
 }

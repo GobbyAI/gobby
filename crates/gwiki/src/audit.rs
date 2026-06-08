@@ -230,10 +230,18 @@ fn unsupported_claims(
 
 fn has_codewiki_frontmatter_source_spans(page: &WikiPage) -> bool {
     let page_path = page.relative_path.to_string_lossy().replace('\\', "/");
-    page_path.starts_with("wiki/code/")
-        && ["source_files", "sources"]
+    (page_path.starts_with("code/") || page_path.starts_with("wiki/code/"))
+        && page
+            .parsed
+            .frontmatter
+            .source
             .iter()
-            .filter_map(|key| page.parsed.frontmatter.unknown.get(*key))
+            .chain(page.parsed.frontmatter.provenance.iter())
+            .chain(
+                ["source_files", "sources"]
+                    .iter()
+                    .filter_map(|key| page.parsed.frontmatter.unknown.get(*key)),
+            )
             .any(frontmatter_value_has_code_source_span)
 }
 
@@ -713,6 +721,72 @@ Signature: `fn example() -> bool {`
         );
 
         assert!(claims.is_empty());
+    }
+
+    #[test]
+    fn frontmatter_migration_audits_legacy_and_shared_sources_equivalently() {
+        let legacy = r#"---
+title: crates/example.rs
+source_files:
+- file: crates/example.rs
+  ranges:
+  - 1-12
+---
+
+# crates/example.rs
+
+Signature: `fn example() -> bool {`
+"#;
+        let shared = r#"---
+title: crates/example.rs
+source:
+- file: crates/example.rs
+  ranges:
+  - 1-12
+provenance:
+- file: crates/example.rs
+  ranges:
+  - 1-12
+generated_by: gcode-codewiki
+trust: generated
+freshness: indexed
+---
+
+# crates/example.rs
+
+Signature: `fn example() -> bool {`
+"#;
+
+        let legacy_page = test_codewiki_page("code/files/crates/example.rs.md", legacy);
+        let shared_page = test_codewiki_page("code/files/crates/example.rs.md", shared);
+
+        assert!(has_codewiki_frontmatter_source_spans(&legacy_page));
+        assert!(has_codewiki_frontmatter_source_spans(&shared_page));
+        assert_eq!(
+            unsupported_claims(
+                &legacy_page,
+                &ProvenanceGraph::default(),
+                &Arc::new(Vec::new()),
+                &AuditOptions::default(),
+            ),
+            unsupported_claims(
+                &shared_page,
+                &ProvenanceGraph::default(),
+                &Arc::new(Vec::new()),
+                &AuditOptions::default(),
+            )
+        );
+    }
+
+    fn test_codewiki_page(path: &str, markdown: &str) -> WikiPage {
+        WikiPage {
+            path: PathBuf::from(path),
+            relative_path: PathBuf::from(path),
+            markdown: markdown.to_string(),
+            parsed: crate::markdown::parse_markdown(path, markdown, std::iter::empty::<&str>())
+                .expect("parse markdown"),
+            has_frontmatter: true,
+        }
     }
 
     #[test]

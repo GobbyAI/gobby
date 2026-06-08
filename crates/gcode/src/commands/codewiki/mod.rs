@@ -394,7 +394,7 @@ fn generate_hierarchical_docs_with_graph_availability(
     let repo_doc = build_repo_doc(&file_docs, &module_docs, &mut generate);
 
     let mut docs = Vec::new();
-    docs.push(("repo.md".to_string(), repo_doc));
+    docs.push(("code/repo.md".to_string(), repo_doc));
     for module in &module_docs {
         docs.push((module_doc_path(&module.module), render_module_doc(module)));
     }

@@ -355,7 +355,7 @@ pub(crate) fn render_module_doc(module: &ModuleDoc) -> String {
         Some(parent) => {
             let _ = writeln!(doc, "Parent: {}\n", module_wikilink(parent));
         }
-        None => doc.push_str("Parent: [[repo|Repository Overview]]\n\n"),
+        None => doc.push_str("Parent: [[code/repo|Repository Overview]]\n\n"),
     }
     write_section(&mut doc, "Overview", &module.summary);
     match module.graph_availability {
@@ -413,7 +413,7 @@ pub(crate) fn render_file_doc(file: &FileDoc) -> String {
     let mut doc = frontmatter(&file.path, "code_file", &file.source_spans);
     let _ = writeln!(doc, "# {}\n", file.path);
     if file.module.is_empty() {
-        doc.push_str("Module: [[repo|Repository Overview]]\n\n");
+        doc.push_str("Module: [[code/repo|Repository Overview]]\n\n");
     } else {
         let _ = writeln!(doc, "Module: {}\n", module_wikilink(&file.module));
     }
