@@ -39,11 +39,8 @@ def mock_session_manager():
 
 @pytest.fixture
 def mock_llm_service():
-    """Create a mock LLM service with provider chain."""
+    """Create a mock LLM service."""
     service = MagicMock()
-    provider = MagicMock()
-    provider.generate_text = AsyncMock(return_value="Generated Title")
-    service.get_default_provider.return_value = provider
     service.call_feature = AsyncMock(return_value="Generated Summary Content")
     return service
 

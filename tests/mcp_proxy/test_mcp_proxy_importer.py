@@ -461,11 +461,10 @@ class TestImportFromGithub:
         assert "disabled" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_uses_feature_call_without_claude_provider(self, mock_config, mock_db):
+    async def test_uses_feature_call(self, mock_config, mock_db):
         """GitHub import routes synthesis through import_mcp_server feature config."""
         llm_service = MagicMock()
         llm_service.call_feature = AsyncMock(return_value='{"name": "example"}')
-        llm_service.get_provider = MagicMock(side_effect=AssertionError("legacy provider used"))
         importer = MCPServerImporter(
             config=mock_config,
             db=mock_db,
@@ -489,7 +488,6 @@ class TestImportFromGithub:
             ANY,
             "https://github.com/example/mcp-server",
         )
-        llm_service.get_provider.assert_not_called()
         llm_service.call_feature.assert_awaited_once()
         feature_config = llm_service.call_feature.await_args.args[0]
         kwargs = llm_service.call_feature.await_args.kwargs
@@ -562,11 +560,10 @@ class TestImportFromQuery:
         assert "disabled" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_uses_feature_call_without_claude_provider(self, mock_config, mock_db):
+    async def test_uses_feature_call(self, mock_config, mock_db):
         """Query import routes synthesis through import_mcp_server feature config."""
         llm_service = MagicMock()
         llm_service.call_feature = AsyncMock(return_value='{"name": "example"}')
-        llm_service.get_provider = MagicMock(side_effect=AssertionError("legacy provider used"))
         importer = MCPServerImporter(
             config=mock_config,
             db=mock_db,
@@ -587,7 +584,6 @@ class TestImportFromQuery:
 
         assert result == {"success": True}
         importer._fetch_github_search_context.assert_awaited_once_with(ANY, "example mcp")
-        llm_service.get_provider.assert_not_called()
         llm_service.call_feature.assert_awaited_once()
         feature_config = llm_service.call_feature.await_args.args[0]
         kwargs = llm_service.call_feature.await_args.kwargs

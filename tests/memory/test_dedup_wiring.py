@@ -33,9 +33,7 @@ def _make_manager(
     llm_service = MagicMock() if has_llm else None
 
     if has_llm:
-        provider = MagicMock()
-        provider.generate_json = AsyncMock(return_value={"facts": []})
-        llm_service.get_default_provider.return_value = provider
+        llm_service.call_json_feature = AsyncMock(return_value={"facts": []})
 
     vector_store = MagicMock() if has_vector_store else None
     if vector_store:

@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.ai import AIAdapterStyle, AICapability, AICapabilityRegistry, CapabilityBinding
-from gobby.config.ai import AIConfig, GenerationConfig, LocalGenerationConfig
 from gobby.config.app import DaemonConfig
 from gobby.config.sessions import DigestConfig
 from gobby.llm.service import LLMService
@@ -17,10 +15,10 @@ pytestmark = pytest.mark.unit
 
 
 class FakeTextGeneration:
-    def __init__(self) -> None:
+    def __init__(self, bindings: list[CapabilityBinding] | None = None) -> None:
         self.requests: list[Any] = []
-        self.registry = AICapabilityRegistry(
-            [
+        if bindings is None:
+            bindings = [
                 CapabilityBinding(
                     capability=AICapability.TEXT_GENERATE,
                     provider="claude",
@@ -29,7 +27,7 @@ class FakeTextGeneration:
                     models=("haiku", "sonnet"),
                 )
             ]
-        )
+        self.registry = AICapabilityRegistry(bindings)
 
     async def generate(self, request: Any) -> str:
         self.requests.append(request)
@@ -46,25 +44,17 @@ def llm_config() -> DaemonConfig:
 
 
 def test_init_with_empty_providers_succeeds() -> None:
-    service = LLMService(DaemonConfig())
+    service = LLMService(DaemonConfig(), text_generation=FakeTextGeneration(bindings=[]))
 
-    assert service.initialized_providers == []
+    assert repr(service) == "LLMService(enabled=[])"
 
 
-def test_get_provider_claude_caches_instance(llm_config: DaemonConfig) -> None:
-    service = LLMService(llm_config)
+def test_direct_provider_accessors_are_not_public(llm_config: DaemonConfig) -> None:
+    service = LLMService(llm_config, text_generation=FakeTextGeneration())
 
-    with patch("gobby.llm.claude.ClaudeLLMProvider") as mock_provider_class:
-        mock_provider = MagicMock()
-        mock_provider_class.return_value = mock_provider
-
-        first = service.get_provider("claude")
-        second = service.get_provider("claude")
-
-    assert first is mock_provider
-    assert second is mock_provider
-    assert mock_provider_class.call_count == 1
-    assert service.initialized_providers == ["claude"]
+    assert not hasattr(service, "get_provider")
+    assert not hasattr(service, "get_default_provider")
+    assert not hasattr(service, "initialized_providers")
 
 
 @pytest.mark.asyncio
@@ -103,33 +93,3 @@ def test_enabled_providers_reflects_text_generation_registry(llm_config: DaemonC
     service = LLMService(llm_config, text_generation=fake_generation)
 
     assert service.enabled_providers == ["claude"]
-
-
-def test_get_provider_local_requires_generation_or_local_config(llm_config: DaemonConfig) -> None:
-    service = LLMService(llm_config)
-
-    with pytest.raises(ValueError, match="ai.generation.local"):
-        service.get_provider("local")
-
-
-def test_get_provider_local_uses_ai_generation_config() -> None:
-    config = DaemonConfig(
-        ai=AIConfig(
-            generation=GenerationConfig(
-                local=LocalGenerationConfig(
-                    enabled=True,
-                    api_base="http://localhost:1234/v1",
-                    model="qwen-coder",
-                )
-            )
-        )
-    )
-    service = LLMService(config)
-
-    with patch("gobby.llm.local.LocalLLMProvider") as mock_provider_class:
-        mock_provider = MagicMock()
-        mock_provider_class.return_value = mock_provider
-
-        provider = service.get_provider("local")
-
-    assert provider is mock_provider

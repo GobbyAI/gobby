@@ -85,16 +85,6 @@ def mock_mcp_manager():
 @pytest.fixture
 def mock_llm_service():
     service = MagicMock()
-    provider = MagicMock()
-    provider.generate_text = AsyncMock(
-        return_value='{"recommendations": [{"server": "s1", "tool": "t1", "reason": "r1"}]}'
-    )
-    service.get_provider.return_value = provider
-    service.get_default_provider.return_value = provider
-    # Mock generate directly on the service instance since RecommendationService calls it
-    service.generate = AsyncMock(
-        return_value='{"recommendations": [{"server": "s1", "tool": "t1", "reason": "r1"}]}'
-    )
     # RecommendationService calls llm_service.call_feature(config, prompt, caller=...)
     service.call_feature = AsyncMock(
         return_value='{"recommendations": [{"server": "s1", "tool": "t1", "reason": "r1"}]}'
@@ -528,8 +518,8 @@ async def test_call_tool_resolves_hash_session_in_caller_project_before_target_o
 
 
 @pytest.mark.asyncio
-async def test_call_tool_project_id_stripped_from_arguments(daemon_tools):
-    """project_id in arguments dict is stripped (leaked-key protection)."""
+async def test_call_tool_preserves_target_project_id_argument(daemon_tools):
+    """arguments.project_id remains a target-tool argument."""
     from unittest.mock import sentinel
 
     daemon_tools.tool_proxy.call_tool = AsyncMock(return_value={"ok": True})
@@ -554,12 +544,12 @@ async def test_call_tool_project_id_stripped_from_arguments(daemon_tools):
             project_id="real-project",
         )
 
-    # Verify project_id was stripped from the arguments passed to tool_proxy
+    # Top-level project_id routes wrapper context; arguments.project_id belongs to target tool.
     call_args = daemon_tools.tool_proxy.call_tool.call_args
     effective_args = call_args.kwargs.get("arguments")
     if effective_args is None:
         effective_args = call_args[0][2]
-    assert "project_id" not in effective_args
+    assert effective_args["project_id"] == "leaked-value"
     assert effective_args["title"] == "Test"
 
 

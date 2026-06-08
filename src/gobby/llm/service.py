@@ -1,4 +1,4 @@
-"""LLM service facade for feature generation and direct provider access."""
+"""LLM service facade for feature generation."""
 
 import logging
 from typing import TYPE_CHECKING, Any, Protocol
@@ -12,7 +12,6 @@ if TYPE_CHECKING:
     from gobby.config.app import (
         DaemonConfig,
     )
-    from gobby.llm.base import LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +46,9 @@ def _feature_request(
 
 class LLMService:
     """
-    Service for managing multiple LLM providers.
+    Service for feature-routed LLM calls.
 
-    Provides direct access to LLMProvider-backed providers and routes feature
-    generation through the daemon text generation capability registry.
+    Routes feature generation through the daemon text generation capability registry.
     """
 
     def __init__(
@@ -64,106 +62,11 @@ class LLMService:
         Args:
             config: Daemon configuration.
         """
-        self._config = config
-        self._providers: dict[str, LLMProvider] = {}
-        self._initialized_providers: set[str] = set()
         self._text_generation = text_generation or build_daemon_text_generation_service(config)
 
         # Log enabled providers
         enabled = self.enabled_providers
         logger.debug(f"LLMService initialized with providers: {enabled}")
-
-    def _get_provider_instance(self, name: str) -> "LLMProvider":
-        """
-        Get or create a provider instance by name (lazy initialization).
-
-        Args:
-            name: Provider name (claude, local)
-
-        Returns:
-            LLMProvider instance
-
-        Raises:
-            ValueError: If provider is not configured or not supported
-        """
-        if name in self._providers:
-            return self._providers[name]
-
-        # Handle "local" provider specially; feature text generation uses
-        # ai.generation.local, while local vision/local-agent paths can still
-        # use the existing top-level local endpoint.
-        if name == "local":
-            local_generation = self._config.ai.generation.local
-            if not local_generation.enabled and not self._config.local:
-                raise ValueError(
-                    "Provider 'local' requires ai.generation.local or local endpoint config"
-                )
-            from gobby.llm.local import LocalLLMProvider
-
-            provider: LLMProvider = LocalLLMProvider(self._config)
-            if local_generation.enabled:
-                local_url = local_generation.api_base
-            else:
-                assert self._config.local is not None
-                local_url = self._config.local.url
-            logger.debug("Initialized Local provider (url: %s)", local_url)
-            self._providers[name] = provider
-            self._initialized_providers.add(name)
-            return provider
-
-        if name == "claude":
-            from gobby.llm.claude import ClaudeLLMProvider
-
-            provider = ClaudeLLMProvider(self._config)
-            logger.debug("Initialized Claude provider")
-
-        else:
-            supported = ", ".join(f"{provider!r}" for provider in ("claude", "local"))
-            raise ValueError(f"Unknown provider '{name}'. Supported providers: {supported}")
-
-        self._providers[name] = provider
-        self._initialized_providers.add(name)
-        return provider
-
-    def get_provider(self, name: str) -> "LLMProvider":
-        """
-        Get a provider by name.
-
-        Args:
-            name: Provider name (claude, local)
-
-        Returns:
-            LLMProvider instance
-
-        Raises:
-            ValueError: If provider is not configured or not supported
-
-        Example:
-            claude = service.get_provider("claude")
-            result = await claude.describe_image("/tmp/screenshot.png")
-        """
-        return self._get_provider_instance(name)
-
-    def get_default_provider(self) -> "LLMProvider":
-        """
-        Get the default provider (first enabled provider, preferring Claude).
-
-        Returns:
-            LLMProvider instance
-
-        Raises:
-            ValueError: If no providers are configured
-        """
-        enabled = self.enabled_providers
-        if not enabled:
-            raise ValueError("No providers available")
-
-        # Prefer Claude if available
-        if "claude" in enabled:
-            return self._get_provider_instance("claude")
-
-        # Otherwise use first available
-        return self._get_provider_instance(enabled[0])
 
     async def call_feature(
         self,
@@ -229,12 +132,6 @@ class LLMService:
             )
         ]
 
-    @property
-    def initialized_providers(self) -> list[str]:
-        """Get list of providers that have been initialized (lazily loaded)."""
-        return list(self._initialized_providers)
-
     def __repr__(self) -> str:
         enabled = self.enabled_providers
-        initialized = self.initialized_providers
-        return f"LLMService(enabled={enabled}, initialized={initialized})"
+        return f"LLMService(enabled={enabled})"
