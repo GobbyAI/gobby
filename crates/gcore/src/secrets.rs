@@ -58,19 +58,40 @@ pub fn resolve_secret(conn: &mut Client, secret_name: &str) -> anyhow::Result<St
 
 /// Resolve `$secret:NAME` and `${VAR}` patterns in a config value.
 pub fn resolve_config_value(value: &str, conn: &mut Client) -> anyhow::Result<String> {
+    resolve_config_value_with(value, |name| resolve_secret(conn, name))
+}
+
+fn resolve_config_value_with(
+    value: &str,
+    mut resolve: impl FnMut(&str) -> anyhow::Result<String>,
+) -> anyhow::Result<String> {
     if !value.contains("$secret:") && !value.contains("${") {
         return Ok(value.to_string());
     }
 
-    if let Some(name) = value.strip_prefix("$secret:") {
-        return resolve_secret(conn, name);
+    let mut output = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(start) = rest.find("$secret:") {
+        output.push_str(&rest[..start]);
+        let after_prefix = &rest[start + "$secret:".len()..];
+        let name_len = after_prefix
+            .bytes()
+            .take_while(|byte| byte.is_ascii_alphanumeric() || matches!(*byte, b'_' | b'-' | b'.'))
+            .count();
+        if name_len == 0 {
+            bail!("empty secret reference in `{value}`");
+        }
+        let name = &after_prefix[..name_len];
+        output.push_str(&resolve(name)?);
+        rest = &after_prefix[name_len..];
     }
+    output.push_str(rest);
 
-    if let Some(resolved) = crate::config::resolve_env_pattern(value)? {
+    if let Some(resolved) = crate::config::resolve_env_pattern(&output)? {
         return Ok(resolved);
     }
 
-    Ok(value.to_string())
+    bail!("unresolved environment pattern in `{value}`")
 }
 
 #[cfg(test)]
@@ -103,5 +124,81 @@ mod tests {
         let decrypted = decrypt_fernet(&fernet_key, &token).expect("decrypts");
 
         assert_eq!(decrypted, "my-secret-password");
+    }
+
+    #[test]
+    fn resolve_config_value_expands_embedded_secret() {
+        let resolved = resolve_config_value_with(
+            "postgres://user:$secret:DB_PASS@localhost/db",
+            test_secret_resolver,
+        )
+        .expect("config value resolves");
+
+        assert_eq!(resolved, "postgres://user:secret-db-pass@localhost/db");
+    }
+
+    #[test]
+    fn resolve_config_value_expands_multiple_secrets() {
+        let resolved = resolve_config_value_with(
+            "$secret:USER:$secret:PASSWORD@localhost",
+            test_secret_resolver,
+        )
+        .expect("config value resolves");
+
+        assert_eq!(resolved, "secret-user:secret-password@localhost");
+    }
+
+    #[test]
+    fn resolve_config_value_expands_secret_then_environment() {
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe { std::env::set_var("GOBBY_SECRET_TEST_HOST", "example.test") };
+
+        let resolved = resolve_config_value_with(
+            "https://${GOBBY_SECRET_TEST_HOST}/token/$secret:API_KEY",
+            test_secret_resolver,
+        )
+        .expect("config value resolves");
+
+        unsafe { std::env::remove_var("GOBBY_SECRET_TEST_HOST") };
+        assert_eq!(resolved, "https://example.test/token/secret-api-key");
+    }
+
+    #[test]
+    fn resolve_config_value_rejects_unresolved_secret() {
+        let error =
+            resolve_config_value_with("$secret:MISSING", test_secret_resolver).expect_err("error");
+
+        assert!(error.to_string().contains("missing test secret MISSING"));
+    }
+
+    #[test]
+    fn resolve_config_value_rejects_unresolved_environment() {
+        let error = resolve_config_value_with("${GOBBY_SECRET_TEST_MISSING}", test_secret_resolver)
+            .expect_err("error");
+
+        assert!(error.to_string().contains("unresolved environment pattern"));
+    }
+
+    #[test]
+    fn resolve_config_value_plain_value_uses_fast_path() {
+        let resolved = resolve_config_value_with("plain-value", |_| {
+            bail!("secret resolver should not be called")
+        })
+        .expect("plain value resolves");
+
+        assert_eq!(resolved, "plain-value");
+    }
+
+    fn test_secret_resolver(name: &str) -> anyhow::Result<String> {
+        match name {
+            "API_KEY" => Ok("secret-api-key".to_string()),
+            "DB_PASS" => Ok("secret-db-pass".to_string()),
+            "PASSWORD" => Ok("secret-password".to_string()),
+            "USER" => Ok("secret-user".to_string()),
+            _ => bail!("missing test secret {name}"),
+        }
     }
 }

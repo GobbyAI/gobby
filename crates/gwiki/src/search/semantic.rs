@@ -42,6 +42,17 @@ pub trait QueryEmbedder {
         embedding: &SemanticEmbedding,
         query: &str,
     ) -> Result<Vec<f32>, SearchError>;
+
+    fn embed_queries(
+        &mut self,
+        embedding: &SemanticEmbedding,
+        queries: &[String],
+    ) -> Result<Vec<Vec<f32>>, SearchError> {
+        queries
+            .iter()
+            .map(|query| self.embed_query(embedding, query))
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -249,26 +260,52 @@ impl QueryEmbedder for OpenAiEmbeddingBackend {
         query: &str,
     ) -> Result<Vec<f32>, SearchError> {
         match embedding {
-            SemanticEmbedding::Direct(config) => embed_direct_query(&self.client, config, query),
+            SemanticEmbedding::Direct(config) => {
+                let mut embeddings =
+                    embed_direct_queries(&self.client, config, &[query.to_string()])?;
+                embeddings.pop().ok_or_else(|| {
+                    SearchError::Backend("missing data[0].embedding array".to_string())
+                })
+            }
             #[cfg(feature = "ai")]
             SemanticEmbedding::Daemon(context) => embed_daemon_query(context, query),
+        }
+    }
+
+    fn embed_queries(
+        &mut self,
+        embedding: &SemanticEmbedding,
+        queries: &[String],
+    ) -> Result<Vec<Vec<f32>>, SearchError> {
+        match embedding {
+            SemanticEmbedding::Direct(config) => {
+                embed_direct_queries(&self.client, config, queries)
+            }
+            #[cfg(feature = "ai")]
+            SemanticEmbedding::Daemon(_) => queries
+                .iter()
+                .map(|query| self.embed_query(embedding, query))
+                .collect(),
         }
     }
 }
 
 #[cfg(feature = "embeddings-http")]
-fn embed_direct_query(
+fn embed_direct_queries(
     client: &reqwest::blocking::Client,
     config: &EmbeddingConfig,
-    query: &str,
-) -> Result<Vec<f32>, SearchError> {
+    queries: &[String],
+) -> Result<Vec<Vec<f32>>, SearchError> {
+    if queries.is_empty() {
+        return Ok(Vec::new());
+    }
     let url = format!("{}/embeddings", config.api_base.trim_end_matches('/'));
     let mut request = client
         .post(url)
         .timeout(Duration::from_secs(config.timeout_seconds))
         .json(&json!({
             "model": config.model,
-            "input": query,
+            "input": queries,
         }));
     if let Some(api_key) = &config.api_key {
         request = request.bearer_auth(api_key);
@@ -290,19 +327,28 @@ fn embed_direct_query(
     let data = response
         .json::<Value>()
         .map_err(|error| SearchError::Backend(error.to_string()))?;
-    data.get("data")
+    let embeddings = data
+        .get("data")
         .and_then(Value::as_array)
-        .and_then(|items| items.first())
-        .and_then(|item| item.get("embedding"))
-        .and_then(Value::as_array)
-        .ok_or_else(|| SearchError::Backend("missing data[0].embedding array".to_string()))?
+        .ok_or_else(|| SearchError::Backend("missing data array".to_string()))?
         .iter()
-        .map(|value| {
-            value.as_f64().map(|value| value as f32).ok_or_else(|| {
-                SearchError::Backend("embedding array contains a non-number".to_string())
-            })
+        .enumerate()
+        .map(|(index, item)| {
+            item.get("embedding")
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    SearchError::Backend(format!("missing data[{index}].embedding array"))
+                })?
+                .iter()
+                .map(|value| {
+                    value.as_f64().map(|value| value as f32).ok_or_else(|| {
+                        SearchError::Backend("embedding array contains a non-number".to_string())
+                    })
+                })
+                .collect()
         })
-        .collect()
+        .collect::<Result<Vec<Vec<f32>>, SearchError>>()?;
+    Ok(embeddings)
 }
 
 #[cfg(not(feature = "embeddings-http"))]

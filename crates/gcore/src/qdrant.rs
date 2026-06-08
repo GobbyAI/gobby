@@ -45,9 +45,9 @@ fn http_status_context(collection: &Option<String>, request: &Option<String>) ->
 /// Scope for a Qdrant collection, allowing caller-controlled naming.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CollectionScope<'a> {
-    /// `{namespace}:project:{id}` — per-project vector store.
+    /// `{namespace}_project_{id}` — per-project vector store.
     Project(&'a str),
-    /// `{namespace}:topic:{name}` — topic-scoped store.
+    /// `{namespace}_topic_{name}` — topic-scoped store.
     Topic(&'a str),
     /// Verbatim collection name, without namespace prefixing.
     Custom(&'a str),

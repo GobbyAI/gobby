@@ -5,6 +5,7 @@ pub(crate) const EMBEDDING_DEFAULT_MODEL: &str = "nomic-embed-text";
 pub(crate) const EMBEDDING_DEFAULT_TIMEOUT_SECONDS: u64 = 10;
 const AI_DEFAULT_MAX_CONCURRENCY: u8 = 1;
 pub const INDEXING_RESPECT_GITIGNORE_KEY: &str = "indexing.respect_gitignore";
+const INDEXING_RESPECT_GITIGNORE_ENV: &str = "GOBBY_INDEXING_RESPECT_GITIGNORE";
 
 /// Decode a config_store value from its stored representation.
 pub fn decode_config_value(raw: &str) -> Option<String> {
@@ -180,14 +181,14 @@ pub fn resolve_embedding_config(source: &mut impl ConfigSource) -> Option<Embedd
     resolve_embedding_config_resolution(source).map(|resolution| resolution.config)
 }
 
-/// Resolve indexing config from config_store/gcore.yaml/defaults.
-///
-/// No environment-variable layer is consulted for these settings.
+/// Resolve indexing config from env/config_store/gcore.yaml/defaults.
 pub fn resolve_indexing_config(source: &mut impl ConfigSource) -> anyhow::Result<IndexingConfig> {
-    Ok(IndexingConfig {
-        respect_gitignore: resolve_config_bool(source, INDEXING_RESPECT_GITIGNORE_KEY)?
-            .unwrap_or(true),
-    })
+    let respect_gitignore = match env_value(INDEXING_RESPECT_GITIGNORE_ENV) {
+        Some(value) => parse_config_bool(INDEXING_RESPECT_GITIGNORE_KEY, &value)?,
+        None => resolve_config_bool(source, INDEXING_RESPECT_GITIGNORE_KEY)?.unwrap_or(true),
+    };
+
+    Ok(IndexingConfig { respect_gitignore })
 }
 
 /// Resolve embedding API config and report which namespace supplied api_base.

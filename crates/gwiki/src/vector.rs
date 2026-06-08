@@ -330,14 +330,10 @@ impl WikiVectorEmbedder for GwikiEmbeddingBackend {
                     .map(|result| result.embeddings)
                     .map_err(|error| WikiVectorError::Embedding(error.to_string()))
             }
-            SemanticEmbedding::Direct(_) => texts
-                .iter()
-                .map(|text| {
-                    self.query_backend
-                        .embed_query(&self.embedding, text)
-                        .map_err(|error| WikiVectorError::Embedding(error.to_string()))
-                })
-                .collect(),
+            SemanticEmbedding::Direct(_) => self
+                .query_backend
+                .embed_queries(&self.embedding, texts)
+                .map_err(|error| WikiVectorError::Embedding(error.to_string())),
         }
     }
 }
@@ -485,6 +481,44 @@ mod tests {
                 .and_then(Value::as_str),
             Some("project")
         );
+    }
+
+    #[cfg(feature = "embeddings-http")]
+    #[test]
+    fn direct_embedding_backend_batches_texts() {
+        let (api_base, request_handle) = crate::test_http::spawn_json_response(
+            serde_json::json!({
+                "data": [
+                    {"embedding": [0.1, 0.2]},
+                    {"embedding": [0.3, 0.4]}
+                ]
+            })
+            .to_string(),
+        )
+        .expect("spawn test server");
+        let embedding = SemanticEmbedding::Direct(gobby_core::config::EmbeddingConfig {
+            api_base,
+            model: "embed-model".to_string(),
+            api_key: Some("test-key".to_string()),
+            query_prefix: None,
+            timeout_seconds: 5,
+        });
+        let mut backend = GwikiEmbeddingBackend::new(embedding);
+        let texts = vec!["first chunk".to_string(), "second chunk".to_string()];
+
+        let vectors = backend.embed_texts(&texts).expect("embeddings resolve");
+        let request = request_handle.join().expect("request thread").unwrap();
+        let body = request
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body)
+            .expect("request body");
+        let payload: Value = serde_json::from_str(body).expect("request json");
+
+        assert_eq!(vectors, vec![vec![0.1, 0.2], vec![0.3, 0.4]]);
+        assert!(request.starts_with("POST /embeddings HTTP/1.1"));
+        assert!(request.contains("authorization: Bearer test-key"));
+        assert_eq!(payload["model"], "embed-model");
+        assert_eq!(payload["input"], serde_json::json!(texts));
     }
 
     struct MockChunkSource {

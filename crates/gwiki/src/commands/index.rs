@@ -280,22 +280,16 @@ fn sync_qdrant_vectors(
     command: &'static str,
 ) -> Result<(), WikiError> {
     let gobby_home = gobby_home()?;
-    let embedding = {
+    let (embedding, qdrant) = {
         let primary = PostgresConfigSource { conn };
         let mut source = AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home)
             .map_err(|error| WikiError::Config {
                 detail: format!("failed to resolve AI config for {command}: {error}"),
             })?;
         let ai_context = AiContext::resolve(None, &mut source);
-        resolve_vector_embedding(&ai_context, &mut source)
-    };
-    let qdrant = {
-        let primary = PostgresConfigSource { conn };
-        let mut source = AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home)
-            .map_err(|error| WikiError::Config {
-                detail: format!("failed to resolve Qdrant config for {command}: {error}"),
-            })?;
-        resolve_qdrant_config(&mut source).filter(qdrant_config_has_url)
+        let embedding = resolve_vector_embedding(&ai_context, &mut source);
+        let qdrant = resolve_qdrant_config(&mut source).filter(qdrant_config_has_url);
+        (embedding, qdrant)
     };
 
     let Some(embedding) = embedding else {
