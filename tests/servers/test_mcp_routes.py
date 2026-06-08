@@ -2076,10 +2076,10 @@ class TestMCPProxy:
         assert data["success"] is True
         assert data["result"] == {"tool": "list_tasks"}
 
-    def test_proxy_rejects_missing_wait_wrapper_fingerprint(
+    def test_proxy_accepts_missing_wait_wrapper_fingerprint(
         self, session_storage: SessionManager
     ) -> None:
-        """Legacy stdio proxy route rejects stale wait wrappers before dispatch."""
+        """Legacy route accepts older wrappers without fingerprint headers."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -2102,15 +2102,13 @@ class TestMCPProxy:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["success"] is False
-        assert data["error_code"] == "GOBBY_MCP_WRAPPER_STALE"
-        assert data["tool_name"] == "wait_for_agent"
-        assert data["restart_required"] is True
+        assert data["success"] is True
+        assert data["result"] == {"tool": "wait_for_agent"}
 
-    def test_proxy_rejects_stale_wait_wrapper_fingerprint(
+    def test_proxy_accepts_stale_wait_wrapper_fingerprint(
         self, session_storage: SessionManager
     ) -> None:
-        """Legacy stdio proxy route rejects explicitly stale wait wrappers."""
+        """Legacy route accepts already-running wrappers with stale fingerprints."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -2134,10 +2132,8 @@ class TestMCPProxy:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["success"] is False
-        assert data["error_code"] == "GOBBY_MCP_WRAPPER_STALE"
-        assert data["tool_name"] == "wait_for_agent"
-        assert data["restart_required"] is True
+        assert data["success"] is True
+        assert data["result"] == {"tool": "wait_for_agent"}
 
     def test_proxy_accepts_current_wait_wrapper_fingerprint(
         self, session_storage: SessionManager
