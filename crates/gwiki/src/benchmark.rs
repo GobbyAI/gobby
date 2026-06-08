@@ -12,6 +12,10 @@ use serde_json::Value;
 
 use crate::falkor_graph::FALKORDB_GRAPH_NAME;
 use crate::search::SearchScope;
+use crate::search::semantic::{
+    GobbyQdrantBackend, OpenAiEmbeddingBackend, QueryEmbedder, SemanticEmbedding,
+    SemanticSearchRequest, VectorSearchBackend, search_semantic,
+};
 use crate::{ScopeIdentity, WikiError};
 
 const DEGRADE_FALKORDB: &str = "falkordb";
@@ -91,13 +95,21 @@ pub struct OptionalBenchmarkSources {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct BenchmarkRows {
+    document_paths: Vec<String>,
     document_bodies: Vec<String>,
+    chunk_paths: Vec<String>,
     chunk_contents: Vec<String>,
     documents: u64,
     links: u64,
     sources: u64,
     document_kinds: BTreeMap<String, u64>,
     source_kinds: BTreeMap<String, u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RetrievalPrecisionCandidate {
+    query: String,
+    expected_path: String,
 }
 
 pub fn report_from_postgres(
@@ -110,7 +122,7 @@ pub fn report_from_postgres(
     let token_compression = token_compression(&rows);
     let source_mix = source_mix(&rows);
     let graph_coverage = graph_coverage(&rows, &search_scope, optional.falkor.as_ref());
-    let retrieval_precision = retrieval_precision(&optional);
+    let retrieval_precision = retrieval_precision(&rows, &search_scope, &optional);
     let model_provider = model_provider(&optional);
     Ok(build_report(
         scope,
@@ -169,23 +181,23 @@ fn build_report(
 fn load_benchmark_rows(conn: &mut Client, scope: &SearchScope) -> Result<BenchmarkRows, WikiError> {
     let scope_kind = scope.scope_kind();
     let scope_id = scope.scope_value();
-    let document_bodies = conn
+    let document_rows = conn
         .query(
-            "SELECT body FROM gwiki_documents WHERE scope_kind = $1 AND scope_id = $2 ORDER BY path",
+            "SELECT path, body FROM gwiki_documents WHERE scope_kind = $1 AND scope_id = $2 ORDER BY path",
             &[&scope_kind, &scope_id],
         )
         .map_err(postgres_error("query gwiki benchmark documents"))?
         .into_iter()
-        .map(|row| row.get::<_, String>(0))
+        .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
         .collect::<Vec<_>>();
-    let chunk_contents = conn
+    let chunk_rows = conn
         .query(
-            "SELECT content FROM gwiki_chunks WHERE scope_kind = $1 AND scope_id = $2 ORDER BY path, chunk_index",
+            "SELECT path, content FROM gwiki_chunks WHERE scope_kind = $1 AND scope_id = $2 ORDER BY path, chunk_index",
             &[&scope_kind, &scope_id],
         )
         .map_err(postgres_error("query gwiki benchmark chunks"))?
         .into_iter()
-        .map(|row| row.get::<_, String>(0))
+        .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
         .collect::<Vec<_>>();
     let document_kinds = grouped_counts(
         conn,
@@ -210,11 +222,13 @@ fn load_benchmark_rows(conn: &mut Client, scope: &SearchScope) -> Result<Benchma
     )?;
 
     Ok(BenchmarkRows {
-        documents: document_bodies.len() as u64,
+        documents: document_rows.len() as u64,
         sources: source_kinds.values().sum(),
         links,
-        document_bodies,
-        chunk_contents,
+        document_paths: document_rows.iter().map(|(path, _)| path.clone()).collect(),
+        document_bodies: document_rows.into_iter().map(|(_, body)| body).collect(),
+        chunk_paths: chunk_rows.iter().map(|(path, _)| path.clone()).collect(),
+        chunk_contents: chunk_rows.into_iter().map(|(_, content)| content).collect(),
         document_kinds,
         source_kinds,
     })
@@ -324,27 +338,144 @@ fn graph_coverage(
     }
 }
 
-fn retrieval_precision(optional: &OptionalBenchmarkSources) -> RetrievalPrecisionReport {
+fn retrieval_precision(
+    rows: &BenchmarkRows,
+    scope: &SearchScope,
+    optional: &OptionalBenchmarkSources,
+) -> RetrievalPrecisionReport {
+    let mut embedder = OpenAiEmbeddingBackend::new();
+    let mut vector_backend = GobbyQdrantBackend;
+    retrieval_precision_with_backends(rows, scope, optional, &mut embedder, &mut vector_backend)
+}
+
+fn retrieval_precision_with_backends<E, V>(
+    rows: &BenchmarkRows,
+    scope: &SearchScope,
+    optional: &OptionalBenchmarkSources,
+    embedder: &mut E,
+    vector_backend: &mut V,
+) -> RetrievalPrecisionReport
+where
+    E: QueryEmbedder,
+    V: VectorSearchBackend,
+{
     let qdrant_available = optional
         .qdrant
         .as_ref()
         .and_then(|config| config.url.as_deref())
         .is_some_and(|url| !url.trim().is_empty());
-    if qdrant_available && optional.embedding.is_some() {
+    let Some(qdrant) = optional.qdrant.as_ref().filter(|_| qdrant_available) else {
         return RetrievalPrecisionReport {
-            available: true,
+            available: false,
+            examples: Vec::new(),
+            reason: Some("Qdrant and embedding provider are not both configured".to_string()),
+        };
+    };
+    let Some(embedding) = optional.embedding.as_ref() else {
+        return RetrievalPrecisionReport {
+            available: false,
+            examples: Vec::new(),
+            reason: Some("Qdrant and embedding provider are not both configured".to_string()),
+        };
+    };
+    let candidates = seeded_retrieval_candidates(rows);
+    if candidates.is_empty() {
+        return RetrievalPrecisionReport {
+            available: false,
             examples: Vec::new(),
             reason: Some(
-                "Qdrant and embedding provider are configured; retrieval examples require a live semantic benchmark query"
-                    .to_string(),
+                "seeded project has no path-backed chunks for retrieval precision".to_string(),
             ),
         };
     }
-    RetrievalPrecisionReport {
-        available: false,
-        examples: Vec::new(),
-        reason: Some("Qdrant and embedding provider are not both configured".to_string()),
+
+    let embedding = SemanticEmbedding::Direct(embedding.clone());
+    let mut examples = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        let outcome = match search_semantic(
+            SemanticSearchRequest {
+                query: candidate.query.clone(),
+                scope: scope.clone(),
+                limit: 1,
+            },
+            Some(&embedding),
+            Some(qdrant),
+            embedder,
+            vector_backend,
+        ) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                return RetrievalPrecisionReport {
+                    available: false,
+                    examples: Vec::new(),
+                    reason: Some(error.to_string()),
+                };
+            }
+        };
+        if let Some(degradation) = outcome.degradation {
+            return RetrievalPrecisionReport {
+                available: false,
+                examples: Vec::new(),
+                reason: Some(format!("{degradation:?}")),
+            };
+        }
+        let returned_path = outcome
+            .hits
+            .first()
+            .map(|hit| hit.path.to_string_lossy().to_string());
+        let precision_at_1 = returned_path.as_deref().map(|path| {
+            if path == candidate.expected_path {
+                1.0
+            } else {
+                0.0
+            }
+        });
+        examples.push(RetrievalPrecisionExample {
+            query: candidate.query,
+            expected_path: candidate.expected_path,
+            returned_path,
+            precision_at_1,
+        });
     }
+
+    if examples.is_empty() {
+        return RetrievalPrecisionReport {
+            available: false,
+            examples,
+            reason: Some("semantic benchmark returned no retrieval examples".to_string()),
+        };
+    }
+
+    RetrievalPrecisionReport {
+        available: true,
+        examples,
+        reason: None,
+    }
+}
+
+fn seeded_retrieval_candidates(rows: &BenchmarkRows) -> Vec<RetrievalPrecisionCandidate> {
+    rows.document_paths
+        .iter()
+        .filter_map(|expected_path| {
+            rows.chunk_paths
+                .iter()
+                .zip(rows.chunk_contents.iter())
+                .find(|(chunk_path, content)| *chunk_path == expected_path && non_empty(content))
+                .map(|(_, content)| RetrievalPrecisionCandidate {
+                    query: benchmark_query(content),
+                    expected_path: expected_path.clone(),
+                })
+        })
+        .take(3)
+        .collect()
+}
+
+fn benchmark_query(content: &str) -> String {
+    content
+        .split_whitespace()
+        .take(8)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn model_provider(optional: &OptionalBenchmarkSources) -> AvailabilityReport {
@@ -430,13 +561,63 @@ fn postgres_error(action: &'static str) -> impl FnOnce(postgres::Error) -> WikiE
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gobby_core::qdrant::{SearchHit, SearchRequest};
+
+    struct FixedEmbedder;
+
+    impl QueryEmbedder for FixedEmbedder {
+        fn embed_query(
+            &mut self,
+            _embedding: &SemanticEmbedding,
+            _query: &str,
+        ) -> Result<Vec<f32>, crate::search::SearchError> {
+            Ok(vec![1.0])
+        }
+    }
+
+    struct SequenceVectorBackend {
+        paths: Vec<String>,
+    }
+
+    impl SequenceVectorBackend {
+        fn new(paths: Vec<&str>) -> Self {
+            Self {
+                paths: paths.into_iter().map(str::to_string).collect(),
+            }
+        }
+    }
+
+    impl VectorSearchBackend for SequenceVectorBackend {
+        fn search(
+            &mut self,
+            _config: &QdrantConfig,
+            _collection: &str,
+            _request: SearchRequest,
+        ) -> anyhow::Result<Vec<SearchHit>> {
+            let path = self.paths.remove(0);
+            let mut payload = serde_json::Map::new();
+            payload.insert("namespace".to_string(), serde_json::json!("gwiki"));
+            payload.insert("scope_kind".to_string(), serde_json::json!("topic"));
+            payload.insert("topic".to_string(), serde_json::json!("rust"));
+            payload.insert("project_id".to_string(), serde_json::json!("rust"));
+            payload.insert("path".to_string(), serde_json::json!(path));
+            payload.insert("source_kind".to_string(), serde_json::json!("wiki"));
+            Ok(vec![SearchHit {
+                id: "hit".to_string(),
+                score: 1.0,
+                payload,
+            }])
+        }
+    }
 
     fn rows() -> BenchmarkRows {
         BenchmarkRows {
+            document_paths: vec!["ownership.md".to_string(), "rust.md".to_string()],
             document_bodies: vec![
                 "one two three four".to_string(),
                 "five six seven eight".to_string(),
             ],
+            chunk_paths: vec!["ownership.md".to_string(), "rust.md".to_string()],
             chunk_contents: vec!["one two".to_string(), "five six".to_string()],
             documents: 2,
             links: 1,
@@ -446,18 +627,73 @@ mod tests {
         }
     }
 
+    fn configured_optional_sources() -> OptionalBenchmarkSources {
+        OptionalBenchmarkSources {
+            falkor: None,
+            qdrant: Some(QdrantConfig {
+                url: Some("http://qdrant.local".to_string()),
+                api_key: None,
+            }),
+            embedding: Some(EmbeddingConfig {
+                api_base: "http://embeddings.local/v1".to_string(),
+                model: "embed-model".to_string(),
+                api_key: None,
+                query_prefix: Some("query: ".to_string()),
+                timeout_seconds: 10,
+            }),
+            model_provider_available: false,
+        }
+    }
+
+    #[test]
+    fn retrieval_precision_available_path_includes_examples() {
+        let mut embedder = FixedEmbedder;
+        let mut vector_backend = SequenceVectorBackend::new(vec!["ownership.md", "rust.md"]);
+        let report = retrieval_precision_with_backends(
+            &rows(),
+            &SearchScope::topic("rust"),
+            &configured_optional_sources(),
+            &mut embedder,
+            &mut vector_backend,
+        );
+
+        assert!(report.available);
+        assert_eq!(
+            report.examples,
+            vec![
+                RetrievalPrecisionExample {
+                    query: "one two".to_string(),
+                    expected_path: "ownership.md".to_string(),
+                    returned_path: Some("ownership.md".to_string()),
+                    precision_at_1: Some(1.0),
+                },
+                RetrievalPrecisionExample {
+                    query: "five six".to_string(),
+                    expected_path: "rust.md".to_string(),
+                    returned_path: Some("rust.md".to_string()),
+                    precision_at_1: Some(1.0),
+                },
+            ]
+        );
+        assert_eq!(report.reason, None);
+    }
+
     #[test]
     fn benchmark_report_marks_optional_sources_degraded_without_zero_fill() {
         let report = build_report(
             ScopeIdentity::topic("rust"),
             token_compression(&rows()),
             graph_coverage(&rows(), &SearchScope::topic("rust"), None),
-            retrieval_precision(&OptionalBenchmarkSources {
-                falkor: None,
-                qdrant: None,
-                embedding: None,
-                model_provider_available: false,
-            }),
+            retrieval_precision(
+                &rows(),
+                &SearchScope::topic("rust"),
+                &OptionalBenchmarkSources {
+                    falkor: None,
+                    qdrant: None,
+                    embedding: None,
+                    model_provider_available: false,
+                },
+            ),
             source_mix(&rows()),
             AvailabilityReport {
                 available: false,
