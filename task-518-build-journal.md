@@ -17,6 +17,26 @@ Created: 2026-06-07 20:03:50 CDT
 
 ## Build/Daemon Issues
 
+### 2026-06-08T01:09:10Z — #520 plan-file build created duplicate target #519
+
+- Symptom: the required plan-file build command created duplicate target #519 (`Build gwiki-parity-plus.md`) while intended root epic #513 remained `never_started`. Planner runs `run-0dabb82eb1db` and `run-24077b4e790d` targeted #519 and failed in step-workflow setup.
+- Where it surfaced: initial coordinator launch for `.gobby/plans/gwiki-parity-plus.md` before the real #513 lifecycle started.
+- Affected file/symbol: `src/gobby/build/input_resolution.py::open_plan_file_build`; regression coverage in `tests/build_pipeline/test_service.py::test_build_plan_file_uses_registered_open_root_task`.
+- Root cause: plan-file resolution only reused open roots that already had matching `task_artifacts.plan_file_path`; it did not consult the active plan registry row binding the plan path to root task #513.
+- Action taken: committed `6d923aa9a` (`[gobby-#520] fix: reuse registered plan root task`) to resolve active registered roots before creating a new task, then committed `7316d9c7c` to close the validation gap around duplicate-target prevention and dispatch targeting. Focused validation passed for the new build-service regression and relevant lint/type checks. The wrong duplicate target #519 was disabled during recovery and later closed as obsolete once #513 completed.
+- Restart gate: daemon restarted with `uv run gobby restart`; `uv run gobby status` reported Running before #513 automation resumed.
+- Linked task: #520.
+
+### 2026-06-08T01:47:10Z — #522 stale MCP wrapper blocked coordinator waits after restart
+
+- Symptom: `gobby-agents:wait_for_agent` returned `GOBBY_MCP_WRAPPER_STALE` after a daemon/build-system restart, while other MCP status calls still worked. The coordinator had to fall back to manual status polling for agent completion.
+- Where it surfaced: coordinator monitoring loop for #513 after the daemon restarted from the #520 fix.
+- Affected files/symbols: `src/gobby/servers/routes/mcp/endpoints/execution.py`, MCP route tests in `tests/servers/test_mcp_routes.py`, and wrapper canonicalization coverage for wait-tool calls.
+- Root cause: structured wait calls still depended on wrapper fingerprint freshness in paths used by long-lived coordinator sessions after daemon restart. Older wrappers could send stale or missing metadata even though the wait operation itself was otherwise safe to proxy.
+- Action taken: committed `83d8b5b3a` and `eda9805ac` for #522 to recover coordinator-style wait calls with missing/stale wrapper metadata, add route-field canonicalization coverage, and preserve timeout caps. Focused validation passed for the MCP route/wrapper tests, Ruff format/check, mypy, and test-quality audit. A later live stdio recurrence was filed separately as #553 and fixed there.
+- Restart gate: daemon restarted; `uv run gobby status` reported Running. Subsequent coordinator status calls worked, and the remaining live wait recurrence was tracked under #553 rather than folded into #522.
+- Linked task: #522.
+
 ### 2026-06-08T04:11:30Z — #552 worktree list visibility mismatch
 
 - Symptom: `gobby-worktrees:list_worktrees` returned `count=0` for the active gobby-cli build project while `get_worktree_by_task` returned active worktrees for #513/#528/#530 and `get_worktree_stats(project_path=/Users/josh/Projects/gobby-cli)` reported five active worktrees.
