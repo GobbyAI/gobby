@@ -153,6 +153,18 @@ class TestCLICommands:
         assert result.exit_code == 0
         assert "Gobby" in result.output
 
+    def test_cli_hello(self, runner: CliRunner) -> None:
+        """Test --hello prints a greeting."""
+        result = runner.invoke(cli, ["--hello"])
+        assert result.exit_code == 0
+        assert result.output == "Hello from Gobby!\n"
+
+    def test_cli_goodbye(self, runner: CliRunner) -> None:
+        """Test --goodbye prints a farewell."""
+        result = runner.invoke(cli, ["--goodbye"])
+        assert result.exit_code == 0
+        assert result.output == "Goodbye from Gobby!\n"
+
     def test_start_help(self, runner: CliRunner) -> None:
         """Test start --help displays help."""
         result = runner.invoke(cli, ["start", "--help"])
