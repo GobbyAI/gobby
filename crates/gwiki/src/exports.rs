@@ -1,11 +1,13 @@
 use std::path::{Component, Path, PathBuf};
 
+use crate::graph::{GraphExportOptions, WikiGraphFacts, render_graph_report};
 use crate::{ScopeIdentity, WikiError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExportKind {
     Bundle,
+    Graph,
     Report,
 }
 
@@ -132,6 +134,38 @@ pub fn export_report_file(
     )
 }
 
+pub fn export_graph_artifacts(
+    root: &Path,
+    facts: &WikiGraphFacts,
+    options: GraphExportOptions,
+) -> Result<Vec<ExportArtifact>, WikiError> {
+    let export = facts.export_graph(options);
+    let graph_json = serde_json::to_string_pretty(&export).map_err(|error| WikiError::Json {
+        action: "serialize graph export",
+        path: None,
+        source: error,
+    })?;
+    let report = render_graph_report(&export);
+    Ok(vec![
+        write_export(
+            root,
+            ExportRequest {
+                filename: "graph.json".to_string(),
+                kind: ExportKind::Graph,
+                contents: graph_json,
+            },
+        )?,
+        write_export(
+            root,
+            ExportRequest {
+                filename: "GRAPH_REPORT.md".to_string(),
+                kind: ExportKind::Report,
+                contents: report,
+            },
+        )?,
+    ])
+}
+
 pub fn write_export(root: &Path, request: ExportRequest) -> Result<ExportArtifact, WikiError> {
     let relative_path = export_relative_path(&request.filename)?;
     let path = root.join("outputs").join(relative_path);
@@ -206,6 +240,12 @@ fn workflow_assets_bundle() -> String {
 mod tests {
     use std::fs;
 
+    use crate::graph::{
+        GraphExportOptions, WikiGraphDocument, WikiGraphFacts, WikiGraphLink, WikiGraphLinkTarget,
+        WikiGraphSource,
+    };
+    use crate::search::SearchScope;
+
     use super::*;
 
     #[test]
@@ -263,5 +303,104 @@ mod tests {
             "# Health\n\nGenerated report.\n"
         );
         assert_eq!(fs::read_to_string(&wiki_page).expect("read final"), before);
+    }
+
+    #[test]
+    fn graph_export_artifacts_include_degradation_and_mermaid() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let scope = SearchScope::project("project-123");
+        let facts = WikiGraphFacts {
+            documents: vec![
+                WikiGraphDocument {
+                    scope: scope.clone(),
+                    path: "wiki/pages/overview.md".into(),
+                    title: Some("Overview".to_string()),
+                },
+                WikiGraphDocument {
+                    scope: scope.clone(),
+                    path: "code/src/lib.rs".into(),
+                    title: Some("lib.rs".to_string()),
+                },
+                WikiGraphDocument {
+                    scope: scope.clone(),
+                    path: "documents/design.md".into(),
+                    title: Some("Design Notes".to_string()),
+                },
+            ],
+            links: vec![WikiGraphLink {
+                scope: scope.clone(),
+                source_path: "wiki/pages/overview.md".into(),
+                raw_target: "code/src/lib.rs".to_string(),
+                target: WikiGraphLinkTarget::Resolved("code/src/lib.rs".into()),
+            }],
+            sources: vec![WikiGraphSource {
+                scope,
+                source_path: "raw/sources/example.md".into(),
+                document_path: "wiki/pages/overview.md".into(),
+            }],
+        };
+
+        let artifacts = export_graph_artifacts(
+            root,
+            &facts,
+            GraphExportOptions::degraded(vec![
+                "falkordb_unavailable".to_string(),
+                "semantic_relations_unavailable".to_string(),
+            ]),
+        )
+        .expect("graph artifacts exported");
+
+        assert_eq!(artifacts.len(), 2);
+        assert_eq!(artifacts[0].path, root.join("outputs/graph.json"));
+        assert_eq!(artifacts[1].path, root.join("outputs/GRAPH_REPORT.md"));
+
+        let graph_json: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(root.join("outputs/graph.json")).expect("graph json"),
+        )
+        .expect("valid graph json");
+        assert_eq!(graph_json["degraded"], true);
+        assert_eq!(
+            graph_json["degraded_sources"],
+            serde_json::json!(["falkordb_unavailable", "semantic_relations_unavailable"])
+        );
+        assert_eq!(graph_json["nodes"].as_array().expect("nodes").len(), 5);
+        assert_eq!(
+            graph_json["edges"]["links"]
+                .as_array()
+                .expect("links")
+                .len(),
+            1
+        );
+        assert_eq!(
+            graph_json["edges"]["imports"].as_array().expect("imports"),
+            &Vec::<serde_json::Value>::new()
+        );
+        assert_eq!(
+            graph_json["edges"]["calls"].as_array().expect("calls"),
+            &Vec::<serde_json::Value>::new()
+        );
+        assert_eq!(
+            graph_json["edges"]["trust"]
+                .as_array()
+                .expect("trust")
+                .len(),
+            1
+        );
+        assert_eq!(
+            graph_json["edges"]["audit"]
+                .as_array()
+                .expect("audit")
+                .len(),
+            1
+        );
+
+        let report =
+            fs::read_to_string(root.join("outputs/GRAPH_REPORT.md")).expect("graph report");
+        assert!(report.contains("# GWiki Graph Report"));
+        assert!(report.contains("## Degraded sources"));
+        assert!(report.contains("- falkordb_unavailable"));
+        assert!(report.contains("```mermaid"));
+        assert!(report.contains("wiki_pages_overview_md --> code_src_lib_rs"));
     }
 }

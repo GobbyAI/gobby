@@ -26,6 +26,7 @@ const CLI_SUBCOMMANDS: &[&str] = &[
     "research",
     "compile",
     "export",
+    "graph",
     "audit",
     "lint",
     "health",
@@ -117,6 +118,8 @@ enum CliCommand {
     Compile(CompileArgs),
     /// Export generated bundles and reports under outputs/.
     Export(ExportArgs),
+    /// Export unified wiki graph artifacts under outputs/.
+    Graph,
     /// Report claims that lack source support.
     Audit,
     /// Detect broken links and vault hygiene issues.
@@ -580,6 +583,7 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             scope,
             command: args.into(),
         }),
+        CliCommand::Graph => Ok(Command::Graph { scope }),
         CliCommand::Audit => Ok(Command::Audit { scope }),
         CliCommand::Lint => Ok(Command::Lint { scope }),
         CliCommand::Health => Ok(Command::Health { scope }),
