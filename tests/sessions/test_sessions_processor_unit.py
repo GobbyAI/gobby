@@ -12,6 +12,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.sessions.processor import SessionMessageProcessor
+from gobby.sessions.transcript_index import (
+    build_index_from_file,
+    load_index_sidecar,
+    persist_index_sidecar,
+)
 from gobby.sessions.transcripts.base import ParsedMessage, TokenUsage
 from tests._timing import wait_for_async_condition
 
@@ -28,6 +33,42 @@ def mock_db():
 def processor(mock_db):
     """Create a processor with mocked dependencies."""
     return SessionMessageProcessor(mock_db, poll_interval=0.1)
+
+
+def _codex_response_message(role: str, text: str) -> str:
+    block_type = "output_text" if role == "assistant" else "input_text"
+    return (
+        json.dumps(
+            {
+                "timestamp": "2026-04-20T04:05:07.572Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": role,
+                    "content": [{"type": block_type, "text": text}],
+                },
+            }
+        )
+        + "\n"
+    )
+
+
+def _codex_function_call(name: str, call_id: str) -> str:
+    return (
+        json.dumps(
+            {
+                "timestamp": "2026-04-20T04:05:07.572Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "name": name,
+                    "arguments": "{}",
+                    "call_id": call_id,
+                },
+            }
+        )
+        + "\n"
+    )
 
 
 class TestProcessorLifecycle:
@@ -135,6 +176,122 @@ class TestSessionRegistration:
         assert "claude-session" in processor._parsers
         assert "gemini-session" in processor._parsers
         assert "codex-session" in processor._parsers
+
+    def test_register_session_hydrates_matching_sidecar(self, mock_db, tmp_path) -> None:
+        """Registration should resume byte offset, message index, stats, and appender."""
+        session_manager = MagicMock()
+        processor = SessionMessageProcessor(mock_db, session_manager=session_manager)
+        transcript = tmp_path / "rollout.jsonl"
+        transcript.write_text(
+            _codex_response_message("user", "hello")
+            + _codex_response_message("assistant", "let me check")
+            + _codex_function_call("read", "call_1"),
+            encoding="utf-8",
+        )
+        st = transcript.stat()
+        index = build_index_from_file(
+            str(transcript), "codex", "sid", mtime_ns=st.st_mtime_ns, size=st.st_size
+        )
+        persist_index_sidecar(str(transcript), index)
+
+        processor.register_session("sid", str(transcript), source="codex")
+
+        assert processor._byte_offsets["sid"] == st.st_size
+        assert processor._message_indices["sid"] == (index.next_parser_index or 0) - 1
+        assert processor._stats["sid"] == index.session_stats
+        appender = processor._index_appenders["sid"]
+        assert appender.index.parsed_message_count == index.parsed_message_count
+        assert appender._next_start_index == index.next_parser_index
+        assert appender._next_raw_line_no == index.next_raw_line_no
+        assert appender._safe_to_start_event == index.safe_to_start_event
+        assert appender._state.current_message is not None
+        assert appender._state.current_message.role == "assistant"
+        assert "call_1" in appender._state.pending_tool_calls
+        session_manager.touch.assert_not_called()
+        assert index.session_stats is not None
+        session_manager.update_stats.assert_called_once_with(
+            "sid",
+            message_count=index.session_stats["message_count"],
+            turn_count=index.session_stats["turn_count"],
+            tool_call_count=index.session_stats["tool_call_count"],
+            last_assistant_content=index.session_stats["last_assistant_content"],
+        )
+
+    def test_register_session_with_legacy_sidecar_skips_stats_update(
+        self, mock_db, tmp_path
+    ) -> None:
+        session_manager = MagicMock()
+        processor = SessionMessageProcessor(mock_db, session_manager=session_manager)
+        transcript = tmp_path / "legacy-rollout.jsonl"
+        transcript.write_text(
+            _codex_response_message("user", "hello")
+            + _codex_response_message("assistant", "cached"),
+            encoding="utf-8",
+        )
+        st = transcript.stat()
+        index = build_index_from_file(
+            str(transcript), "codex", "sid", mtime_ns=st.st_mtime_ns, size=st.st_size
+        )
+        persist_index_sidecar(str(transcript), index)
+        sidecar = tmp_path / "legacy-rollout.jsonl.gobby-index.json"
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+        payload.pop("session_stats", None)
+        sidecar.write_text(json.dumps(payload), encoding="utf-8")
+
+        processor.register_session("sid", str(transcript), source="codex")
+
+        assert processor._byte_offsets["sid"] == st.st_size
+        assert "sid" not in processor._stats
+        assert "sid" in processor._stats_hydration_skipped
+        session_manager.update_stats.assert_not_called()
+        session_manager.touch.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_append_after_sidecar_hydration_continues_assistant_group(
+        self, mock_db, tmp_path
+    ) -> None:
+        session_manager = MagicMock()
+        processor = SessionMessageProcessor(mock_db, session_manager=session_manager)
+        transcript = tmp_path / "continuation.jsonl"
+        transcript.write_text(
+            _codex_response_message("user", "hello")
+            + _codex_response_message("assistant", "first"),
+            encoding="utf-8",
+        )
+        initial_stat = transcript.stat()
+        index = build_index_from_file(
+            str(transcript),
+            "codex",
+            "sid",
+            mtime_ns=initial_stat.st_mtime_ns,
+            size=initial_stat.st_size,
+        )
+        persist_index_sidecar(str(transcript), index)
+
+        processor.register_session("sid", str(transcript), source="codex")
+        assert index.session_stats is not None
+        initial_groups = index.total_groups
+        initial_count = index.session_stats["message_count"]
+
+        with transcript.open("a", encoding="utf-8") as handle:
+            handle.write(_codex_response_message("assistant", "second"))
+
+        await processor._process_session("sid", str(transcript))
+
+        stats = processor._stats["sid"]
+        assert stats["message_count"] == initial_count + 1
+        assert stats["last_assistant_content"] == "second"
+        assert processor._index_appenders["sid"].index.total_groups == initial_groups
+        latest = load_index_sidecar(
+            str(transcript),
+            "codex",
+            seek_mode="byte",
+            mtime_ns=transcript.stat().st_mtime_ns,
+            size=transcript.stat().st_size,
+        )
+        assert latest is not None
+        assert latest.total_groups == initial_groups
+        assert latest.session_stats == stats
 
     def test_unregister_session_existing(self, processor, tmp_path) -> None:
         """Unregister should remove session and parser."""

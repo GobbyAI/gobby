@@ -38,8 +38,14 @@ from collections import OrderedDict
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
+from gobby.sessions.message_stats import (
+    MessageProtocol,
+    MessageStats,
+    accumulate_message_stats,
+    empty_message_stats,
+)
 from gobby.sessions.transcript_parsing import _get_parser
 from gobby.sessions.transcript_renderer import RenderState, render_incremental
 from gobby.sessions.transcript_source import (
@@ -140,6 +146,10 @@ class TranscriptIndex:
     post_pass_adjustments: list[RenderedAdjustment] = field(default_factory=list)
     parsed_boundaries: list[ParsedBoundary] = field(default_factory=list)
     role_message_counts: dict[str, int] = field(default_factory=dict)
+    session_stats: MessageStats | None = None
+    next_parser_index: int | None = None
+    next_raw_line_no: int | None = None
+    safe_to_start_event: bool | None = None
     logical_size: int | None = None
 
     def group_index_for_parsed_index(self, parsed_index: int) -> int | None:
@@ -246,6 +256,18 @@ def _counting(raws: Iterable[RawLine], counter: list[int]) -> Iterator[RawLine]:
         yield raw
 
 
+def _counting_with_line_cursor(
+    raws: Iterable[RawLine],
+    nonempty_counter: list[int],
+    next_line_no: list[int],
+) -> Iterator[RawLine]:
+    for raw in raws:
+        next_line_no[0] = max(next_line_no[0], raw.raw_line_no + 1)
+        if raw.text.strip():
+            nonempty_counter[0] += 1
+        yield raw
+
+
 # --------------------------------------------------------------------------- #
 # Index build core
 # --------------------------------------------------------------------------- #
@@ -307,6 +329,10 @@ class TranscriptIndexAppender:
             seek_mode=seek_mode,
             mtime_ns=0,
             size=0,
+            session_stats=empty_message_stats(),
+            next_parser_index=0,
+            next_raw_line_no=0,
+            safe_to_start_event=True,
         )
 
     def append_raw_lines(
@@ -314,8 +340,11 @@ class TranscriptIndexAppender:
     ) -> TranscriptIndex:
         """Append complete positioned raw lines and update snapshot metadata."""
         raw_counter = [0]
+        next_raw_line_no = [self._next_raw_line_no]
+        stats_messages: list[ParsedMessage] = []
         events = self._parser.iter_parse_events(
-            _counting(raw_lines, raw_counter), start_index=self._next_start_index
+            _counting_with_line_cursor(raw_lines, raw_counter, next_raw_line_no),
+            start_index=self._next_start_index,
         )
         for event in events:
             if self._safe_to_start_event and _should_record_parsed_boundary(
@@ -336,6 +365,7 @@ class TranscriptIndexAppender:
             for offset_in_event, record in enumerate(event.records):
                 if not isinstance(record, ParsedMessage):
                     continue
+                stats_messages.append(record)
                 self.index.parsed_message_count += 1
                 self._role_counts[record.role] = self._role_counts.get(record.role, 0) + 1
 
@@ -373,9 +403,17 @@ class TranscriptIndexAppender:
                 event.records, self._next_start_index, event.parsed_index
             )
 
+        if stats_messages:
+            self.index.session_stats = accumulate_message_stats(
+                self.index.session_stats, cast("list[MessageProtocol]", stats_messages)
+            )
         self.index.raw_record_count += raw_counter[0]
+        self._next_raw_line_no = max(self._next_raw_line_no, next_raw_line_no[0])
         self.index.total_groups = len(self.index.boundaries)
         self.index.role_message_counts = dict(self._role_counts)
+        self.index.next_parser_index = self._next_start_index
+        self.index.next_raw_line_no = self._next_raw_line_no
+        self.index.safe_to_start_event = self._safe_to_start_event
         self.index.mtime_ns = mtime_ns
         self.index.size = size
         return self.index
@@ -387,7 +425,6 @@ class TranscriptIndexAppender:
         line_list = list(lines)
         offset_list = list(byte_offsets)
         start_line_no = self._next_raw_line_no
-        self._next_raw_line_no += len(line_list)
         return self.append_raw_lines(
             _raw_lines_from_positions(line_list, offset_list, start_line_no),
             mtime_ns=mtime_ns,
@@ -400,6 +437,9 @@ class TranscriptIndexAppender:
         self.index.size = size
         self.index.total_groups = len(self.index.boundaries)
         self.index.role_message_counts = dict(self._role_counts)
+        self.index.next_parser_index = self._next_start_index
+        self.index.next_raw_line_no = self._next_raw_line_no
+        self.index.safe_to_start_event = self._safe_to_start_event
         self.index.post_pass_adjustments = _resolve_adjustments(self._parser, self.index)
         return self.index
 
@@ -648,6 +688,10 @@ def _index_to_payload(path: str, index: TranscriptIndex) -> dict[str, Any]:
         "total_groups": index.total_groups,
         "tool_first_open": index.tool_first_open,
         "role_message_counts": index.role_message_counts,
+        "session_stats": index.session_stats,
+        "next_parser_index": index.next_parser_index,
+        "next_raw_line_no": index.next_raw_line_no,
+        "safe_to_start_event": index.safe_to_start_event,
         "logical_size": index.logical_size,
         "post_pass_adjustments": [
             {
@@ -661,6 +705,26 @@ def _index_to_payload(path: str, index: TranscriptIndex) -> dict[str, Any]:
 
 
 def _payload_to_index(payload: dict[str, Any]) -> TranscriptIndex:
+    raw_session_stats = payload.get("session_stats")
+    session_stats: MessageStats | None = None
+    if isinstance(raw_session_stats, dict):
+        session_stats = MessageStats(
+            message_count=int(raw_session_stats.get("message_count", 0)),
+            turn_count=int(raw_session_stats.get("turn_count", 0)),
+            tool_call_count=int(raw_session_stats.get("tool_call_count", 0)),
+            last_assistant_content=(
+                raw_session_stats["last_assistant_content"]
+                if isinstance(raw_session_stats.get("last_assistant_content"), str)
+                else None
+            ),
+        )
+    next_parser_index = payload.get("next_parser_index", payload["parsed_message_count"])
+    if next_parser_index is None:
+        next_parser_index = payload["parsed_message_count"]
+    next_raw_line_no = payload.get("next_raw_line_no", payload["raw_record_count"])
+    if next_raw_line_no is None:
+        next_raw_line_no = payload["raw_record_count"]
+    safe_to_start_event = payload.get("safe_to_start_event")
     boundaries = [
         GroupBoundary(
             group_index=int(item["group_index"]),
@@ -712,6 +776,12 @@ def _payload_to_index(payload: dict[str, Any]) -> TranscriptIndex:
         role_message_counts={
             str(role): int(count) for role, count in payload.get("role_message_counts", {}).items()
         },
+        session_stats=session_stats,
+        next_parser_index=int(next_parser_index),
+        next_raw_line_no=int(next_raw_line_no),
+        safe_to_start_event=(
+            bool(safe_to_start_event) if safe_to_start_event is not None else True
+        ),
         logical_size=(
             int(payload["logical_size"]) if payload.get("logical_size") is not None else None
         ),

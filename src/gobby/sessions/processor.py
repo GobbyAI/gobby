@@ -46,8 +46,17 @@ from gobby.sessions.context_usage import (
     snapshot_from_token_usage,
     snapshot_from_window_metadata,
 )
-from gobby.sessions.message_stats import compute_message_stats
-from gobby.sessions.transcript_index import TranscriptIndexAppender, persist_index_sidecar
+from gobby.sessions.message_stats import (
+    MessageStats,
+    accumulate_message_stats,
+    empty_message_stats,
+)
+from gobby.sessions.transcript_index import (
+    TranscriptIndexAppender,
+    load_index_sidecar,
+    persist_index_sidecar,
+)
+from gobby.sessions.transcript_index_resume import hydrate_appender_from_index
 from gobby.sessions.transcript_renderer import RenderState, render_incremental
 from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent, TranscriptParser
@@ -108,7 +117,8 @@ class SessionMessageProcessor:
         self._index_appenders: dict[str, TranscriptIndexAppender] = {}
 
         # Incremental stat accumulators per session
-        self._stats: dict[str, dict[str, Any]] = {}
+        self._stats: dict[str, MessageStats] = {}
+        self._stats_hydration_skipped: set[str] = set()
 
         self._running = False
         self._task: asyncio.Task[None] | None = None
@@ -220,31 +230,117 @@ class SessionMessageProcessor:
             metadata=metadata,
         )
 
-    def _accumulate_stats(self, session_id: str, messages: list[Any]) -> dict[str, Any]:
+    def _accumulate_stats(self, session_id: str, messages: list[Any]) -> MessageStats:
         """Accumulate incremental stats from parsed messages.
 
-        Per-batch counts come from the shared :func:`compute_message_stats`
-        predicate (also used by the lifecycle expiry path) and are folded into
-        the running per-session totals so the live and batch writers cannot
-        drift.
+        Per-batch counts come from the shared message-stat helpers (also used
+        by the lifecycle expiry path) and are folded into the running
+        per-session totals so the live and batch writers cannot drift.
         """
-        stats = self._stats.get(
-            session_id,
-            {
-                "message_count": 0,
-                "turn_count": 0,
-                "tool_call_count": 0,
-                "last_assistant_content": None,
-            },
-        )
-        batch = compute_message_stats(messages)
-        stats["message_count"] = stats.get("message_count", 0) + batch["message_count"]
-        stats["turn_count"] = stats.get("turn_count", 0) + batch["turn_count"]
-        stats["tool_call_count"] = stats.get("tool_call_count", 0) + batch["tool_call_count"]
-        if batch["last_assistant_content"] is not None:
-            stats["last_assistant_content"] = batch["last_assistant_content"]
+        stats = self._stats.get(session_id)
+        if stats is None:
+            if session_id in self._stats_hydration_skipped:
+                stats = self._stats_from_session_manager(session_id)
+                self._stats_hydration_skipped.discard(session_id)
+            else:
+                stats = empty_message_stats()
+        stats = accumulate_message_stats(stats, messages)
         self._stats[session_id] = stats
         return stats
+
+    def _stats_from_session_manager(self, session_id: str) -> MessageStats:
+        stats = empty_message_stats()
+        if self.session_manager is None:
+            return stats
+        try:
+            session = self.session_manager.get(session_id)
+        except Exception:
+            logger.debug("Failed to read existing stats for %s", session_id, exc_info=True)
+            return stats
+        if session is None:
+            return stats
+
+        message_count = getattr(session, "message_count", None)
+        if isinstance(message_count, int) and not isinstance(message_count, bool):
+            stats["message_count"] = max(0, message_count)
+        turn_count = getattr(session, "turn_count", None)
+        if isinstance(turn_count, int) and not isinstance(turn_count, bool):
+            stats["turn_count"] = max(0, turn_count)
+        tool_call_count = getattr(session, "tool_call_count", None)
+        if isinstance(tool_call_count, int) and not isinstance(tool_call_count, bool):
+            stats["tool_call_count"] = max(0, tool_call_count)
+        last_assistant = getattr(session, "last_assistant_content", None)
+        if isinstance(last_assistant, str):
+            stats["last_assistant_content"] = last_assistant
+        return stats
+
+    def _hydrate_registration_from_sidecar(
+        self,
+        session_id: str,
+        transcript_path: str,
+        source: str,
+        appender: TranscriptIndexAppender,
+    ) -> None:
+        try:
+            st = os.stat(transcript_path)
+        except OSError:
+            return
+
+        index = load_index_sidecar(
+            transcript_path,
+            source,
+            seek_mode="byte",
+            mtime_ns=st.st_mtime_ns,
+            size=st.st_size,
+        )
+        if index is None:
+            return
+
+        hydrate_appender_from_index(appender, index)
+        self._byte_offsets[session_id] = index.size
+        next_parser_index = (
+            index.next_parser_index
+            if index.next_parser_index is not None
+            else index.parsed_message_count
+        )
+        self._message_indices[session_id] = next_parser_index - 1
+
+        if index.session_stats is None:
+            self._stats.pop(session_id, None)
+            self._stats_hydration_skipped.add(session_id)
+            return
+
+        stats = MessageStats(
+            message_count=index.session_stats["message_count"],
+            turn_count=index.session_stats["turn_count"],
+            tool_call_count=index.session_stats["tool_call_count"],
+            last_assistant_content=index.session_stats["last_assistant_content"],
+        )
+        self._stats[session_id] = stats
+        self._stats_hydration_skipped.discard(session_id)
+        if self.session_manager:
+            self.session_manager.update_stats(
+                session_id,
+                message_count=stats.get("message_count", 0),
+                turn_count=stats.get("turn_count", 0),
+                tool_call_count=stats.get("tool_call_count", 0),
+                last_assistant_content=stats.get("last_assistant_content"),
+            )
+
+    def _persist_appender_snapshot(
+        self,
+        session_id: str,
+        transcript_path: str,
+        appender: TranscriptIndexAppender,
+        st: os.stat_result,
+    ) -> None:
+        try:
+            persist_index_sidecar(
+                transcript_path,
+                appender.snapshot(mtime_ns=st.st_mtime_ns, size=st.st_size),
+            )
+        except Exception as exc:
+            logger.debug("Failed to persist transcript index for %s: %s", session_id, exc)
 
     @staticmethod
     def _coerce_context_window(value: Any) -> int | None:
@@ -537,13 +633,19 @@ class SessionMessageProcessor:
             session_id=session_id,
             transcript_path=transcript_path,
         )
+        transcript_exists = os.path.exists(transcript_path)
         if not transcript_path.endswith(".json"):
-            self._index_appenders[session_id] = TranscriptIndexAppender(
+            appender = TranscriptIndexAppender(
                 source,
                 session_id,
                 transcript_path,
             )
-        if os.path.exists(transcript_path):
+            self._index_appenders[session_id] = appender
+            if transcript_exists:
+                self._hydrate_registration_from_sidecar(
+                    session_id, transcript_path, source, appender
+                )
+        if transcript_exists:
             logger.debug("Registered session %s for processing (%s)", session_id, source)
         else:
             logger.debug(
@@ -572,6 +674,7 @@ class SessionMessageProcessor:
                 del self._parsers[session_id]
             self._last_mtime.pop(session_id, None)
             self._stats.pop(session_id, None)
+            self._stats_hydration_skipped.discard(session_id)
             self._byte_offsets.pop(session_id, None)
             self._message_indices.pop(session_id, None)
             self._index_appenders.pop(session_id, None)
@@ -690,28 +793,42 @@ class SessionMessageProcessor:
         # a re-tail would reprocess already-consumed transcript lines.
         self._byte_offsets[session_id] = valid_offset
         appender = self._index_appenders.get(session_id)
+        appender_stat: os.stat_result | None = None
+        should_persist_appender = False
         if appender is not None:
             try:
-                st = os.stat(transcript_path)
+                appender_stat = os.stat(transcript_path)
                 appender.append_positioned_lines(
                     new_lines,
                     new_line_offsets,
-                    mtime_ns=st.st_mtime_ns,
+                    mtime_ns=appender_stat.st_mtime_ns,
                     size=valid_offset,
                 )
-                if valid_offset == st.st_size:
-                    persist_index_sidecar(
-                        transcript_path,
-                        appender.snapshot(mtime_ns=st.st_mtime_ns, size=st.st_size),
-                    )
+                should_persist_appender = valid_offset == appender_stat.st_size
             except Exception as exc:
                 logger.debug("Failed to update transcript index for %s: %s", session_id, exc)
 
         if not parsed_messages:
+            if appender is not None and appender_stat is not None and should_persist_appender:
+                self._persist_appender_snapshot(
+                    session_id,
+                    transcript_path,
+                    appender,
+                    appender_stat,
+                )
             return
 
         # Compute incremental stats (no DB message writes)
         stats = self._accumulate_stats(session_id, parsed_messages)
+        if appender is not None:
+            appender.index.session_stats = stats
+            if appender_stat is not None and should_persist_appender:
+                self._persist_appender_snapshot(
+                    session_id,
+                    transcript_path,
+                    appender,
+                    appender_stat,
+                )
 
         # Write stats to sessions table
         if self.session_manager:

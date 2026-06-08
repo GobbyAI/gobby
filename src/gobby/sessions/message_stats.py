@@ -9,8 +9,8 @@ computes the full transcript at once.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Protocol, TypedDict
+from collections.abc import Mapping, Sequence
+from typing import Any, Protocol, TypedDict
 
 _LAST_ASSISTANT_CONTENT_LIMIT = 500
 
@@ -65,3 +65,53 @@ def compute_message_stats(messages: Sequence[MessageProtocol]) -> MessageStats:
         tool_call_count=tool_call_count,
         last_assistant_content=last_assistant_content,
     )
+
+
+def empty_message_stats() -> MessageStats:
+    """Return a fresh zero-value stats accumulator."""
+    return MessageStats(
+        message_count=0,
+        turn_count=0,
+        tool_call_count=0,
+        last_assistant_content=None,
+    )
+
+
+def _coerce_count(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    try:
+        count = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, count)
+
+
+def merge_message_stats(
+    current: Mapping[str, Any] | None,
+    batch: MessageStats,
+) -> MessageStats:
+    """Fold a batch stats block into an existing accumulator."""
+    stats = empty_message_stats()
+    if current is not None:
+        stats["message_count"] = _coerce_count(current.get("message_count"))
+        stats["turn_count"] = _coerce_count(current.get("turn_count"))
+        stats["tool_call_count"] = _coerce_count(current.get("tool_call_count"))
+        last_assistant = current.get("last_assistant_content")
+        if isinstance(last_assistant, str):
+            stats["last_assistant_content"] = last_assistant
+
+    stats["message_count"] += batch["message_count"]
+    stats["turn_count"] += batch["turn_count"]
+    stats["tool_call_count"] += batch["tool_call_count"]
+    if batch["last_assistant_content"] is not None:
+        stats["last_assistant_content"] = batch["last_assistant_content"]
+    return stats
+
+
+def accumulate_message_stats(
+    current: Mapping[str, Any] | None,
+    messages: Sequence[MessageProtocol],
+) -> MessageStats:
+    """Compute and merge stats for a parsed-message batch."""
+    return merge_message_stats(current, compute_message_stats(messages))

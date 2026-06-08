@@ -548,6 +548,59 @@ def test_transcript_index_appender_persists_append_growth(tmp_path: Path) -> Non
     assert loaded.parsed_boundaries
 
 
+def test_sidecar_round_trips_stats_and_resume_metadata(tmp_path: Path) -> None:
+    lines = _codex_lines()
+    path = _write(tmp_path, "codex-resume", lines)
+    st = os.stat(path)
+    index = build_index_from_file(path, "codex", SESSION, mtime_ns=st.st_mtime_ns, size=st.st_size)
+
+    persist_index_sidecar(path, index)
+    loaded = load_index_sidecar(
+        path, "codex", seek_mode="byte", mtime_ns=st.st_mtime_ns, size=st.st_size
+    )
+
+    assert loaded is not None
+    assert loaded.session_stats == index.session_stats
+    assert loaded.session_stats == {
+        "message_count": 7,
+        "turn_count": 3,
+        "tool_call_count": 1,
+        "last_assistant_content": "you are welcome",
+    }
+    assert loaded.next_parser_index == index.next_parser_index
+    assert loaded.next_parser_index == loaded.parsed_message_count
+    assert loaded.next_raw_line_no == index.next_raw_line_no
+    assert loaded.safe_to_start_event == index.safe_to_start_event
+
+
+def test_legacy_sidecar_without_stats_loads_with_resume_fallbacks(tmp_path: Path) -> None:
+    lines = _codex_lines()
+    path = _write(tmp_path, "codex-legacy", lines)
+    st = os.stat(path)
+    index = build_index_from_file(path, "codex", SESSION, mtime_ns=st.st_mtime_ns, size=st.st_size)
+    persist_index_sidecar(path, index)
+    sidecar = Path(f"{os.path.abspath(path)}{transcript_index.INDEX_SIDECAR_SUFFIX}")
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    for key in (
+        "session_stats",
+        "next_parser_index",
+        "next_raw_line_no",
+        "safe_to_start_event",
+    ):
+        payload.pop(key, None)
+    sidecar.write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = load_index_sidecar(
+        path, "codex", seek_mode="byte", mtime_ns=st.st_mtime_ns, size=st.st_size
+    )
+
+    assert loaded is not None
+    assert loaded.session_stats is None
+    assert loaded.next_parser_index == loaded.parsed_message_count
+    assert loaded.next_raw_line_no == loaded.raw_record_count
+    assert loaded.safe_to_start_event is True
+
+
 @pytest.mark.asyncio
 async def test_index_cache_evicts_beyond_capacity(tmp_path: Path) -> None:
     clear_index_cache()
