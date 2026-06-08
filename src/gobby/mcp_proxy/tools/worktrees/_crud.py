@@ -71,6 +71,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         agent_session_id: str | None = None,
         limit: int | str = 50,
         project_id: str | None = None,
+        project_path: str | None = None,
     ) -> dict[str, Any]:
         """List worktrees with optional filters.
 
@@ -79,6 +80,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             agent_session_id: Session reference to filter by owning session.
             limit: Maximum results (default: 50).
             project_id: Project ID to filter by. Defaults to current project context.
+            project_path: Project path to resolve when project_id is not provided.
 
         Returns:
             Dict with list of worktrees.
@@ -95,8 +97,16 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             except ValueError as e:
                 return {"success": False, "error": str(e)}
 
+        resolved_project_id = project_id
+        if resolved_project_id is None:
+            _, resolved_project_id, error = resolve_project_context(
+                project_path, ctx.git_manager, ctx.project_id
+            )
+            if error:
+                return {"success": False, "error": error}
+
         worktrees = ctx.worktree_storage.list_worktrees(
-            project_id=project_id or ctx.project_id,
+            project_id=resolved_project_id,
             status=status,
             agent_session_id=resolved_session_id,
             limit=limit,

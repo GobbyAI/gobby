@@ -236,6 +236,43 @@ async def test_list_worktrees_accepts_explicit_project_id(registry, mock_worktre
 
 
 @pytest.mark.asyncio
+async def test_list_worktrees_resolves_project_path(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
+    wt1 = Worktree(
+        id="1",
+        project_id="target-proj",
+        branch_name="b1",
+        worktree_path="p1",
+        base_branch="main",
+        status="active",
+        created_at="",
+        updated_at="",
+        task_id=None,
+        agent_session_id=None,
+        merged_at=None,
+    )
+    mock_worktree_storage.list_worktrees.return_value = [wt1]
+
+    with patch(
+        "gobby.mcp_proxy.tools.worktrees._crud.resolve_project_context",
+        return_value=(mock_git_manager, "target-proj", None),
+    ) as resolve_project_context:
+        result = await registry.call(
+            "list_worktrees", {"status": "active", "project_path": "/tmp/target-project"}
+        )
+
+    assert result["success"] is True
+    assert result["count"] == 1
+    resolve_project_context.assert_called_once_with(
+        "/tmp/target-project", mock_git_manager, "proj-1"
+    )
+    mock_worktree_storage.list_worktrees.assert_called_with(
+        project_id="target-proj", status="active", agent_session_id=None, limit=50
+    )
+
+
+@pytest.mark.asyncio
 async def test_claim_worktree_success(registry, mock_worktree_storage) -> None:
     wt = Worktree(
         id="wt-1",
