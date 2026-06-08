@@ -4,11 +4,10 @@ use std::path::PathBuf;
 
 use super::generation::generate_report_from_snapshot;
 use super::render::render_markdown;
-use super::summary::{
-    gcore_analytics_for_report_snapshot, summarize_bridge_edges, summarize_hotspots,
-};
+use super::summary::{summarize_bridge_edges, summarize_hotspots};
 use super::types::{
-    BridgeEdgeInput, GraphHotspot, ReportCodeEdge, ReportGraphSnapshot, ReportNode,
+    BridgeEdgeInput, BridgeReportSummary, ConfidenceRange, GraphHotspot, GraphReportHotspots,
+    NamedCount, ReportCodeEdge, ReportGraphSnapshot, ReportNode,
 };
 use super::*;
 
@@ -66,7 +65,7 @@ fn report_shape() {
 }
 
 #[test]
-fn graph_analytics_parity_matches_legacy_report_snapshot() {
+fn graph_report_hotspots_and_bridge_summary_match_pinned_output() {
     let snapshot = ReportGraphSnapshot {
         nodes: vec![
             ReportNode::new("src/lib.rs", "src/lib.rs", "file"),
@@ -97,20 +96,75 @@ fn graph_analytics_parity_matches_legacy_report_snapshot() {
         BridgeEdgeInput::Available(edges) => edges,
         BridgeEdgeInput::Unavailable(_) => vec![],
     };
-    let gcore_analytics = gcore_analytics_for_report_snapshot(
-        &snapshot.nodes,
-        &snapshot.code_edges,
-        &bridge_edges,
-        DEFAULT_TOP_LIMIT,
-    );
 
     assert_eq!(
-        gcore_analytics.hotspots,
-        summarize_hotspots(&snapshot.nodes, &snapshot.code_edges, DEFAULT_TOP_LIMIT)
+        summarize_hotspots(&snapshot.nodes, &snapshot.code_edges, DEFAULT_TOP_LIMIT),
+        GraphReportHotspots {
+            high_degree_files: vec![GraphHotspot {
+                id: "src/lib.rs".to_string(),
+                name: "src/lib.rs".to_string(),
+                node_type: "file".to_string(),
+                degree: 2,
+                incoming: 0,
+                outgoing: 2,
+                file_path: None,
+            }],
+            high_degree_symbols: vec![
+                GraphHotspot {
+                    id: "sym:handler".to_string(),
+                    name: "handler".to_string(),
+                    node_type: "function".to_string(),
+                    degree: 3,
+                    incoming: 1,
+                    outgoing: 2,
+                    file_path: Some("src/lib.rs".to_string()),
+                },
+                GraphHotspot {
+                    id: "sym:parse".to_string(),
+                    name: "parse".to_string(),
+                    node_type: "function".to_string(),
+                    degree: 2,
+                    incoming: 1,
+                    outgoing: 1,
+                    file_path: Some("src/lib.rs".to_string()),
+                },
+            ],
+            high_degree_modules: vec![GraphHotspot {
+                id: "mod:api".to_string(),
+                name: "api".to_string(),
+                node_type: "module".to_string(),
+                degree: 1,
+                incoming: 1,
+                outgoing: 0,
+                file_path: None,
+            }],
+            incoming_call_hotspots: vec![GraphHotspot {
+                id: "sym:parse".to_string(),
+                name: "parse".to_string(),
+                node_type: "function".to_string(),
+                degree: 1,
+                incoming: 1,
+                outgoing: 0,
+                file_path: Some("src/lib.rs".to_string()),
+            }],
+        }
     );
     assert_eq!(
-        gcore_analytics.bridge_summary,
-        summarize_bridge_edges(&bridge_edges)
+        summarize_bridge_edges(&bridge_edges),
+        Some(BridgeReportSummary {
+            relation: RELATES_TO_CODE.to_string(),
+            edge_count: 1,
+            inferred: true,
+            read_only: true,
+            source_system_counts: vec![NamedCount {
+                name: "gobby-memory".to_string(),
+                count: 1,
+            }],
+            confidence_range: Some(ConfidenceRange {
+                min: 0.72,
+                max: 0.72,
+            }),
+        })
     );
 }
 
