@@ -233,7 +233,10 @@ fn code_citation_from_endpoint(
     endpoint: &str,
     line: Option<usize>,
 ) -> Option<AskCodeCitationOutput> {
-    let (file, symbol) = match endpoint.split_once('#') {
+    let (file, symbol) = match endpoint
+        .split_once('#')
+        .or_else(|| endpoint.rsplit_once(':'))
+    {
         Some((file, symbol)) => (
             file.to_string(),
             (!symbol.is_empty()).then(|| symbol.to_string()),
@@ -653,8 +656,8 @@ mod tests {
             }],
             code_edges: vec![WikiGraphCodeEdge {
                 document_path: PathBuf::from("wiki/code/files/src/handler.rs.md"),
-                source: "src/handler.rs#handle".to_string(),
-                target: "src/router.rs#route".to_string(),
+                source: "src/handler.rs:handle".to_string(),
+                target: "src/router.rs:route".to_string(),
                 kind: "calls".to_string(),
                 direction: "outgoing".to_string(),
                 line: Some(42),
