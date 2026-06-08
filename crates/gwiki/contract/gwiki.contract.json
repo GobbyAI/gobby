@@ -1,6 +1,6 @@
 {
   "tool": "gwiki",
-  "contract_version": 3,
+  "contract_version": 4,
   "summary": "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
   "global_flags": [
     {
@@ -687,6 +687,11 @@
         "suggested_tasks",
         "suggested_patch_diffs",
         "artifacts",
+        "trust",
+        "freshness",
+        "audit",
+        "sources",
+        "degradation",
         "dependency_classification"
       ],
       "hard_dependencies": [
@@ -694,16 +699,120 @@
         "vault"
       ],
       "optional_dependencies": [
-        "FalkorDB/shared code graph",
+        "FalkorDB/code graph",
         "Qdrant+embeddings",
-        "model provider"
+        "model"
       ],
       "multimodal": "none",
       "degradation": {
-        "output_shape": "each unavailable optional check is skipped independently; deterministic task proposals still emit for available checks",
+        "output_shape": "each check skipped independently with a note",
         "metadata_keys": [
-          "checks[].available",
-          "checks[].note"
+          "checks[].available"
+        ]
+      }
+    },
+    {
+      "name": "review-report",
+      "summary": "Emit a review report for changed files, symbols, or a diff.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--file",
+          "takes_value": true,
+          "value_name": "PATH",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": true
+        },
+        {
+          "name": "--symbol",
+          "takes_value": true,
+          "value_name": "SYMBOL_ID",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": true
+        },
+        {
+          "name": "--diff",
+          "takes_value": true,
+          "value_name": "PATH",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--output",
+          "takes_value": true,
+          "value_name": "FILE",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "command",
+        "scope",
+        "change_set",
+        "findings",
+        "risky_shifts",
+        "trust",
+        "freshness",
+        "audit",
+        "sources",
+        "degraded",
+        "degraded_sources",
+        "degradation",
+        "artifacts",
+        "dependency_classification"
+      ],
+      "hard_dependencies": [
+        "PostgreSQL",
+        "change set"
+      ],
+      "optional_dependencies": [
+        "FalkorDB/code graph and analytics"
+      ],
+      "multimodal": "none",
+      "degradation": {
+        "output_shape": "report without risky-shift section",
+        "metadata_keys": [
+          "degraded",
+          "degraded_sources[]"
+        ]
+      }
+    },
+    {
+      "name": "citation-quality",
+      "summary": "Emit source citation quality checks for wiki content.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [],
+      "json_output_keys": [
+        "command",
+        "scope",
+        "sections",
+        "claims",
+        "citations",
+        "trust",
+        "freshness",
+        "audit",
+        "sources",
+        "degradation",
+        "dependency_classification"
+      ],
+      "hard_dependencies": [
+        "PostgreSQL"
+      ],
+      "optional_dependencies": [
+        "credibility signals",
+        "model contradiction detection"
+      ],
+      "multimodal": "none",
+      "degradation": {
+        "output_shape": "per-section skipped with a note",
+        "metadata_keys": [
+          "sections[].available"
         ]
       }
     },
