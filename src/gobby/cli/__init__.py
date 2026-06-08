@@ -56,20 +56,6 @@ def _version_callback(ctx: click.Context, _param: click.Parameter, value: bool) 
     ctx.exit()
 
 
-def _hello_callback(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
-    if not value or ctx.resilient_parsing:
-        return
-    click.echo("Hello from Gobby!")
-    ctx.exit()
-
-
-def _goodbye_callback(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
-    if not value or ctx.resilient_parsing:
-        return
-    click.echo("Goodbye from Gobby!")
-    ctx.exit()
-
-
 @click.group()
 @click.option(
     "--config",
@@ -83,22 +69,6 @@ def _goodbye_callback(ctx: click.Context, _param: click.Parameter, value: bool) 
     expose_value=False,
     callback=_version_callback,
     help="Show the version and exit.",
-)
-@click.option(
-    "--hello",
-    is_flag=True,
-    is_eager=True,
-    expose_value=False,
-    callback=_hello_callback,
-    help="Print a greeting and exit.",
-)
-@click.option(
-    "--goodbye",
-    is_flag=True,
-    is_eager=True,
-    expose_value=False,
-    callback=_goodbye_callback,
-    help="Print a farewell and exit.",
 )
 @click.pass_context
 def cli(ctx: click.Context, config: str | None) -> None:
