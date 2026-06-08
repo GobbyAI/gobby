@@ -105,6 +105,7 @@ pub(crate) struct OutputConfidence {
 }
 
 pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
+    crate::support::postgres::require_attached_index("gwiki citation-quality")?;
     let resolved = resolve_selection_context(&selection)?;
     let _postgres_index =
         crate::support::postgres::require_postgres_index("gwiki citation-quality")?;
@@ -542,6 +543,22 @@ mod tests {
     use std::ffi::{OsStr, OsString};
     use std::path::PathBuf;
 
+    static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn citation_quality_execute_requires_postgresql_index() {
+        let _guard = ENV_TEST_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _home = EnvGuard::set("GOBBY_HOME", temp.path().as_os_str());
+        let _gwiki_url = EnvGuard::unset("GWIKI_DATABASE_URL");
+        let _gobby_dsn = EnvGuard::unset("GOBBY_POSTGRES_DSN");
+
+        let error = execute(ScopeSelection::Detect).expect_err("missing postgres must fail");
+
+        assert!(matches!(error, WikiError::Config { .. }));
+        assert!(error.to_string().contains("PostgreSQL index is required"));
+    }
+
     #[test]
     fn citation_quality_report_covers_sections_and_degradation() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -697,6 +714,7 @@ mod tests {
 
     impl EnvGuard {
         fn set(key: &'static str, value: &OsStr) -> Self {
+
             let guard = Self {
                 key,
                 old_value: std::env::var_os(key),
@@ -706,6 +724,18 @@ mod tests {
             }
             guard
         }
+
+        fn unset(key: &'static str) -> Self {
+            let guard = Self {
+                key,
+                old_value: std::env::var_os(key),
+            };
+            unsafe {
+                std::env::remove_var(key);
+            }
+            guard
+        }
+
     }
 
     impl Drop for EnvGuard {
@@ -715,6 +745,7 @@ mod tests {
                     Some(value) => std::env::set_var(self.key, value),
                     None => std::env::remove_var(self.key),
                 }
+
             }
         }
     }

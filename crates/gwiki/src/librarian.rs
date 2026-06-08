@@ -462,6 +462,8 @@ mod tests {
 
     use super::*;
 
+    static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn librarian_detects_and_proposes_without_rewriting_pages() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -489,8 +491,15 @@ mod tests {
 
         let original_page =
             std::fs::read_to_string(root.join("wiki/topics/stale.md")).expect("read page");
-        let report =
-            run(root, ScopeIdentity::topic("ops"), Options::offline()).expect("librarian runs");
+        let report = run(
+            root,
+            ScopeIdentity::topic("ops"),
+            Options {
+                shared_code_graph_available: true,
+                ..Options::offline()
+            },
+        )
+        .expect("librarian runs");
 
         assert_eq!(
             report.check("stale_pages").items,
@@ -569,6 +578,28 @@ mod tests {
         );
         assert!(!report.check("semantic_gaps").available);
         assert!(!report.check("patch_suggestions").available);
+    }
+
+    #[test]
+    fn librarian_outdated_codewiki_unavailable_without_shared_graph_even_when_stale() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write_page(
+            root,
+            "wiki/code/example.md",
+            "---\ntitle: Example code\ngenerated_by: gcode-codewiki\nsource_spans:\n  - path: src/lib.rs\n    start_line: 1\n    end_line: 1\ncodewiki_status: stale\n---\n# Example code\nDocuments old code.\n",
+        );
+
+        let report =
+            run(root, ScopeIdentity::topic("ops"), Options::offline()).expect("librarian runs");
+
+        let check = report.check("outdated_codewiki");
+        assert!(!check.available);
+        assert!(check.items.is_empty());
+        assert_eq!(
+            check.note.as_deref(),
+            Some("shared code graph is unavailable; skipped outdated codewiki detection")
+        );
     }
 
     #[test]
