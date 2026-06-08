@@ -3,6 +3,9 @@
 import logging
 import re
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
+
+import httpx
 
 from gobby.config.app import DaemonConfig
 from gobby.prompts import PromptLoader
@@ -19,14 +22,17 @@ logger = logging.getLogger(__name__)
 
 # Pattern to detect placeholder secrets like <YOUR_API_KEY>
 SECRET_PLACEHOLDER_PATTERN = re.compile(r"<YOUR_[A-Z0-9_]+>")
-
-
-def _claude_model_candidate(candidates: list[str]) -> str:
-    for candidate in candidates:
-        provider, separator, model = candidate.partition("/")
-        if separator and provider.strip().casefold() == "claude" and model.strip():
-            return model.strip()
-    raise ValueError("Tool-based MCP import requires a valid claude/* candidate")
+GITHUB_API_BASE = "https://api.github.com"
+GITHUB_API_HEADERS = {
+    "Accept": "application/vnd.github+json",
+    "User-Agent": "gobby-mcp-importer",
+}
+GITHUB_RAW_HEADERS = {
+    "Accept": "application/vnd.github.raw",
+    "User-Agent": "gobby-mcp-importer",
+}
+MAX_IMPORT_CONTEXT_CHARS = 14_000
+MAX_SEARCH_REPOSITORIES = 3
 
 
 class MCPServerImporter:
@@ -58,7 +64,6 @@ class MCPServerImporter:
         self.mcp_client_manager = mcp_client_manager
         self.llm_service = llm_service
         self.import_config = config.get_import_mcp_server_config()
-        self._claude_import_model = _claude_model_candidate(self.import_config.candidates)
 
         # Initialize prompt loader
         self._loader = PromptLoader(db=self.db)
@@ -170,7 +175,8 @@ class MCPServerImporter:
         """
         Import MCP server from GitHub repository.
 
-        Uses Claude Agent SDK to fetch and parse the README.
+        Fetches repository context through GitHub APIs, then uses the configured
+        import_mcp_server feature to synthesize a server config.
 
         Args:
             github_url: GitHub repository URL
@@ -188,26 +194,29 @@ class MCPServerImporter:
             if not self.llm_service:
                 raise RuntimeError("LLM service not initialized")
 
-            from gobby.llm.claude import ClaudeLLMProvider
-
-            provider = self.llm_service.get_provider("claude")
-            if not isinstance(provider, ClaudeLLMProvider):
-                raise RuntimeError("Claude provider required for tool-based import")
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+                repository_context = await self._fetch_github_repository_context(
+                    client,
+                    github_url,
+                )
 
             # Build prompt to fetch and extract config
             prompt_path = self.import_config.github_fetch_prompt_path or "import/github_fetch"
-            prompt = self._loader.render(prompt_path, {"github_url": github_url})
+            prompt = self._render_import_prompt(
+                prompt_path,
+                {"github_url": github_url},
+                repository_context,
+            )
 
             # Get system prompt
             sys_prompt_path = self.import_config.prompt_path or "import/system"
             system_prompt = self._loader.render(sys_prompt_path, {})
 
-            result_text = await provider.generate_with_tools(
+            result_text = await self.llm_service.call_feature(
+                self.import_config,
                 prompt=prompt,
                 system_prompt=system_prompt,
-                allowed_tools=["WebFetch"],
-                max_turns=3,
-                model=self._claude_import_model,
+                caller="mcp_proxy.importer.github",
             )
 
             # Parse and add if no secrets needed
@@ -225,7 +234,8 @@ class MCPServerImporter:
         """
         Import MCP server by searching for it.
 
-        Uses Claude Agent SDK to search and extract configuration.
+        Searches GitHub deterministically, fetches candidate repository context,
+        then uses the configured import_mcp_server feature to synthesize a config.
 
         Args:
             search_query: Natural language search query
@@ -243,26 +253,29 @@ class MCPServerImporter:
             if not self.llm_service:
                 raise RuntimeError("LLM service not initialized")
 
-            from gobby.llm.claude import ClaudeLLMProvider
-
-            provider = self.llm_service.get_provider("claude")
-            if not isinstance(provider, ClaudeLLMProvider):
-                raise RuntimeError("Claude provider required for tool-based import")
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+                search_context = await self._fetch_github_search_context(
+                    client,
+                    search_query,
+                )
 
             # Build prompt to search and extract config
             prompt_path = self.import_config.search_fetch_prompt_path or "import/search_fetch"
-            prompt = self._loader.render(prompt_path, {"search_query": search_query})
+            prompt = self._render_import_prompt(
+                prompt_path,
+                {"search_query": search_query},
+                search_context,
+            )
 
             # Get system prompt
             sys_prompt_path = self.import_config.prompt_path or "import/system"
             system_prompt = self._loader.render(sys_prompt_path, {})
 
-            result_text = await provider.generate_with_tools(
+            result_text = await self.llm_service.call_feature(
+                self.import_config,
                 prompt=prompt,
                 system_prompt=system_prompt,
-                allowed_tools=["WebSearch", "WebFetch"],
-                max_turns=5,
-                model=self._claude_import_model,
+                caller="mcp_proxy.importer.query",
             )
 
             # Parse and add if no secrets needed
@@ -275,6 +288,162 @@ class MCPServerImporter:
                 "error": str(e),
                 "error_type": type(e).__name__,
             }
+
+    def _render_import_prompt(
+        self,
+        prompt_path: str,
+        context: dict[str, Any],
+        fetched_context: str,
+    ) -> str:
+        render_context = {
+            **context,
+            "fetched_context": fetched_context,
+            "documentation_context": fetched_context,
+        }
+        base_prompt = self._loader.render(prompt_path, render_context)
+        return (
+            f"{base_prompt}\n\n"
+            "Fetched documentation context:\n"
+            f"{self._truncate_context(fetched_context)}\n\n"
+            "Use only the fetched documentation context above. "
+            "Return the JSON object requested by the system prompt."
+        )
+
+    def _github_repo_from_url(self, github_url: str) -> tuple[str, str]:
+        parsed = urlparse(github_url)
+        if not parsed.netloc and parsed.path.startswith("github.com/"):
+            parsed = urlparse(f"https://{github_url}")
+
+        hostname = parsed.netloc.casefold().removeprefix("www.")
+        if hostname != "github.com":
+            raise ValueError("GitHub import URL must use github.com")
+
+        parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) < 2:
+            raise ValueError("GitHub import URL must include owner and repository")
+
+        owner = parts[0].strip()
+        repo = parts[1].strip().removesuffix(".git")
+        if not owner or not repo:
+            raise ValueError("GitHub import URL must include owner and repository")
+
+        return owner, repo
+
+    async def _fetch_github_json(
+        self,
+        client: httpx.AsyncClient,
+        path: str,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        response = await client.get(
+            f"{GITHUB_API_BASE}{path}",
+            headers=GITHUB_API_HEADERS,
+            params=params,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict):
+            raise ValueError(f"GitHub API returned non-object response for {path}")
+        return data
+
+    async def _fetch_github_readme(
+        self,
+        client: httpx.AsyncClient,
+        owner: str,
+        repo: str,
+    ) -> str:
+        response = await client.get(
+            f"{GITHUB_API_BASE}/repos/{owner}/{repo}/readme",
+            headers=GITHUB_RAW_HEADERS,
+        )
+        response.raise_for_status()
+        return response.text
+
+    async def _fetch_github_repository_context(
+        self,
+        client: httpx.AsyncClient,
+        github_url: str,
+    ) -> str:
+        owner, repo = self._github_repo_from_url(github_url)
+        metadata = await self._fetch_github_json(client, f"/repos/{owner}/{repo}")
+        readme = await self._fetch_github_readme(client, owner, repo)
+
+        return "\n".join(
+            [
+                f"GitHub repository: {owner}/{repo}",
+                f"URL: https://github.com/{owner}/{repo}",
+                f"Description: {metadata.get('description') or ''}",
+                f"Default branch: {metadata.get('default_branch') or ''}",
+                f"Primary language: {metadata.get('language') or ''}",
+                "",
+                "README:",
+                readme,
+            ]
+        )
+
+    async def _fetch_github_search_context(
+        self,
+        client: httpx.AsyncClient,
+        search_query: str,
+    ) -> str:
+        search = await self._fetch_github_json(
+            client,
+            "/search/repositories",
+            params={
+                "q": self._github_repository_search_query(search_query),
+                "sort": "stars",
+                "order": "desc",
+                "per_page": MAX_SEARCH_REPOSITORIES,
+            },
+        )
+        raw_items = search.get("items")
+        items = raw_items if isinstance(raw_items, list) else []
+        if not items:
+            return f"No GitHub repositories found for query: {search_query}"
+
+        sections = [f"GitHub repository search query: {search_query}"]
+        for index, item in enumerate(items[:MAX_SEARCH_REPOSITORIES], start=1):
+            if not isinstance(item, dict):
+                continue
+            full_name = str(item.get("full_name") or "")
+            owner, separator, repo = full_name.partition("/")
+            if not separator or not owner or not repo:
+                continue
+
+            try:
+                readme = await self._fetch_github_readme(client, owner, repo)
+            except httpx.HTTPError as exc:
+                readme = f"README unavailable: {exc}"
+
+            sections.extend(
+                [
+                    "",
+                    f"Candidate {index}: {full_name}",
+                    f"URL: {item.get('html_url') or f'https://github.com/{full_name}'}",
+                    f"Description: {item.get('description') or ''}",
+                    f"Primary language: {item.get('language') or ''}",
+                    f"Stars: {item.get('stargazers_count') or 0}",
+                    "README:",
+                    readme,
+                ]
+            )
+
+        return "\n".join(sections)
+
+    def _github_repository_search_query(self, search_query: str) -> str:
+        normalized = search_query.casefold()
+        terms = [search_query]
+        if "mcp" not in normalized:
+            terms.append("mcp")
+        if "server" not in normalized:
+            terms.append("server")
+        return " ".join(term for term in terms if term.strip())
+
+    def _truncate_context(self, text: str) -> str:
+        if len(text) <= MAX_IMPORT_CONTEXT_CHARS:
+            return text
+        truncated = text[:MAX_IMPORT_CONTEXT_CHARS].rstrip()
+        return f"{truncated}\n\n[truncated]"
 
     async def _add_server(
         self,

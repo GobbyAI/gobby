@@ -1,6 +1,7 @@
 """Tests for the MCP proxy importer module."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -10,14 +11,75 @@ from gobby.mcp_proxy.importer import SECRET_PLACEHOLDER_PATTERN, MCPServerImport
 pytestmark = pytest.mark.unit
 
 
+class FakeGitHubResponse:
+    """Small response stub for deterministic GitHub context tests."""
+
+    def __init__(
+        self,
+        *,
+        json_data: dict[str, Any] | None = None,
+        text: str = "",
+    ) -> None:
+        self._json_data = json_data or {}
+        self.text = text
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict[str, Any]:
+        return self._json_data
+
+
+class FakeGitHubClient:
+    """Records GitHub API calls and returns canned repository/search responses."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def get(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str],
+        params: dict[str, Any] | None = None,
+    ) -> FakeGitHubResponse:
+        self.calls.append({"url": url, "headers": headers, "params": params})
+
+        if url == "https://api.github.com/repos/example/mcp-server":
+            return FakeGitHubResponse(
+                json_data={
+                    "description": "Example MCP server",
+                    "default_branch": "main",
+                    "language": "TypeScript",
+                }
+            )
+        if url == "https://api.github.com/repos/example/mcp-server/readme":
+            return FakeGitHubResponse(text="# Example MCP\n\nRun with npx example-mcp.")
+        if url == "https://api.github.com/search/repositories":
+            return FakeGitHubResponse(
+                json_data={
+                    "items": [
+                        {
+                            "full_name": "example/mcp-server",
+                            "html_url": "https://github.com/example/mcp-server",
+                            "description": "Example MCP server",
+                            "language": "TypeScript",
+                            "stargazers_count": 42,
+                        }
+                    ]
+                }
+            )
+
+        raise AssertionError(f"Unexpected GitHub URL: {url}")
+
+
 @pytest.fixture
 def mock_config() -> DaemonConfig:
     """Create a mock DaemonConfig."""
     config = MagicMock(spec=DaemonConfig)
     config.get_import_mcp_server_config.return_value = ImportMCPServerConfig(
         enabled=True,
-        model="claude-haiku-4-5",
-        prompt="Extract MCP config",
+        candidates=["openai/gpt-test"],
     )
     return config
 
@@ -28,8 +90,7 @@ def mock_config_disabled() -> DaemonConfig:
     config = MagicMock(spec=DaemonConfig)
     config.get_import_mcp_server_config.return_value = ImportMCPServerConfig(
         enabled=False,
-        model="claude-haiku-4-5",
-        prompt="",
+        candidates=["openai/gpt-test"],
     )
     return config
 
@@ -399,6 +460,89 @@ class TestImportFromGithub:
         assert result["success"] is False
         assert "disabled" in result["error"]
 
+    @pytest.mark.asyncio
+    async def test_uses_feature_call_without_claude_provider(self, mock_config, mock_db):
+        """GitHub import routes synthesis through import_mcp_server feature config."""
+        llm_service = MagicMock()
+        llm_service.call_feature = AsyncMock(return_value='{"name": "example"}')
+        llm_service.get_provider = MagicMock(side_effect=AssertionError("legacy provider used"))
+        importer = MCPServerImporter(
+            config=mock_config,
+            db=mock_db,
+            current_project_id="proj",
+            llm_service=llm_service,
+        )
+        importer._loader.render = MagicMock(
+            side_effect=lambda path, context: (
+                "system prompt" if path == "import/system" else f"fetch {context['github_url']}"
+            )
+        )
+        importer._fetch_github_repository_context = AsyncMock(
+            return_value="README docs with npx example-mcp"
+        )
+        importer._parse_and_add_config = AsyncMock(return_value={"success": True})
+
+        result = await importer.import_from_github("https://github.com/example/mcp-server")
+
+        assert result == {"success": True}
+        importer._fetch_github_repository_context.assert_awaited_once_with(
+            ANY,
+            "https://github.com/example/mcp-server",
+        )
+        llm_service.get_provider.assert_not_called()
+        llm_service.call_feature.assert_awaited_once()
+        feature_config = llm_service.call_feature.await_args.args[0]
+        kwargs = llm_service.call_feature.await_args.kwargs
+        assert feature_config is importer.import_config
+        assert "README docs with npx example-mcp" in kwargs["prompt"]
+        assert kwargs["system_prompt"] == "system prompt"
+        assert kwargs["caller"] == "mcp_proxy.importer.github"
+        importer._parse_and_add_config.assert_awaited_once_with('{"name": "example"}')
+
+
+class TestGithubContextFetch:
+    """Tests for deterministic GitHub context fetch helpers."""
+
+    @pytest.mark.asyncio
+    async def test_fetches_repository_metadata_and_readme(self, importer):
+        """Repository context uses GitHub API metadata plus README content."""
+        client = FakeGitHubClient()
+
+        context = await importer._fetch_github_repository_context(
+            client,
+            "https://github.com/example/mcp-server/tree/main",
+        )
+
+        assert client.calls[0]["url"] == "https://api.github.com/repos/example/mcp-server"
+        assert client.calls[1]["url"] == "https://api.github.com/repos/example/mcp-server/readme"
+        assert "GitHub repository: example/mcp-server" in context
+        assert "Example MCP server" in context
+        assert "Run with npx example-mcp." in context
+
+    @pytest.mark.asyncio
+    async def test_fetches_search_candidates_and_readmes(self, importer):
+        """Query import context uses GitHub repository search and candidate READMEs."""
+        client = FakeGitHubClient()
+
+        context = await importer._fetch_github_search_context(client, "example mcp")
+
+        assert client.calls[0] == {
+            "url": "https://api.github.com/search/repositories",
+            "headers": {
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "gobby-mcp-importer",
+            },
+            "params": {
+                "q": "example mcp server",
+                "sort": "stars",
+                "order": "desc",
+                "per_page": 3,
+            },
+        }
+        assert client.calls[1]["url"] == "https://api.github.com/repos/example/mcp-server/readme"
+        assert "Candidate 1: example/mcp-server" in context
+        assert "Run with npx example-mcp." in context
+
 
 class TestImportFromQuery:
     """Tests for import_from_query method."""
@@ -416,6 +560,42 @@ class TestImportFromQuery:
 
         assert result["success"] is False
         assert "disabled" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_uses_feature_call_without_claude_provider(self, mock_config, mock_db):
+        """Query import routes synthesis through import_mcp_server feature config."""
+        llm_service = MagicMock()
+        llm_service.call_feature = AsyncMock(return_value='{"name": "example"}')
+        llm_service.get_provider = MagicMock(side_effect=AssertionError("legacy provider used"))
+        importer = MCPServerImporter(
+            config=mock_config,
+            db=mock_db,
+            current_project_id="proj",
+            llm_service=llm_service,
+        )
+        importer._loader.render = MagicMock(
+            side_effect=lambda path, context: (
+                "system prompt" if path == "import/system" else f"search {context['search_query']}"
+            )
+        )
+        importer._fetch_github_search_context = AsyncMock(
+            return_value="Candidate README with npx example-mcp"
+        )
+        importer._parse_and_add_config = AsyncMock(return_value={"success": True})
+
+        result = await importer.import_from_query("example mcp")
+
+        assert result == {"success": True}
+        importer._fetch_github_search_context.assert_awaited_once_with(ANY, "example mcp")
+        llm_service.get_provider.assert_not_called()
+        llm_service.call_feature.assert_awaited_once()
+        feature_config = llm_service.call_feature.await_args.args[0]
+        kwargs = llm_service.call_feature.await_args.kwargs
+        assert feature_config is importer.import_config
+        assert "Candidate README with npx example-mcp" in kwargs["prompt"]
+        assert kwargs["system_prompt"] == "system prompt"
+        assert kwargs["caller"] == "mcp_proxy.importer.query"
+        importer._parse_and_add_config.assert_awaited_once_with('{"name": "example"}')
 
 
 class TestParseAndAddConfig:
