@@ -103,10 +103,13 @@ pub fn run(
     scope: ScopeIdentity,
     options: Options,
 ) -> Result<ProposalsReport, WikiError> {
-    if options.require_postgres_index {
-        crate::support::postgres::require_attached_index("gwiki librarian")?;
-    }
-
+    let _postgres_index = if options.require_postgres_index {
+        Some(crate::support::postgres::require_postgres_index(
+            "gwiki librarian",
+        )?)
+    } else {
+        None
+    };
     let health_report = health::inspect(vault_root, scope.clone())?;
     let audit_report =
         audit::run_with_options(vault_root, scope.clone(), audit::AuditOptions::from_env())?;
@@ -451,6 +454,7 @@ fn write_text(vault_root: &Path, relative: &Path, text: &str) -> Result<(), Wiki
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::{OsStr, OsString};
     use std::path::{Path, PathBuf};
 
     use crate::ScopeIdentity;
@@ -513,9 +517,14 @@ mod tests {
             report.check("weak_provenance").items,
             vec![PathBuf::from("wiki/code/example.md")]
         );
+        assert!(!report.check("outdated_codewiki").available);
         assert_eq!(
             report.check("outdated_codewiki").items,
-            vec![PathBuf::from("wiki/code/example.md")]
+            Vec::<PathBuf>::new()
+        );
+        assert_eq!(
+            report.check("outdated_codewiki").note.as_deref(),
+            Some("shared code graph is unavailable; skipped outdated codewiki detection")
         );
         assert!(!report.check("patch_suggestions").available);
         assert!(
@@ -594,19 +603,25 @@ mod tests {
     }
 
     #[test]
-    fn librarian_requires_postgresql_index() {
-        let _guard = ENV_TEST_LOCK.lock().expect("env lock");
+    #[serial_test::serial]
+    fn librarian_requires_configured_postgres_index() {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path();
-        let _home = EnvGuard::set("GOBBY_HOME", root.as_os_str());
-        let _gwiki_url = EnvGuard::unset("GWIKI_DATABASE_URL");
-        let _gobby_dsn = EnvGuard::unset("GOBBY_POSTGRES_DSN");
+        write_page(root, "wiki/topics/page.md", "# Page\n\nSupported enough.\n");
+        let _database_url = EnvGuard::set(
+            "GWIKI_DATABASE_URL",
+            OsStr::new("postgresql://127.0.0.1:1/gwiki"),
+        );
 
-        let error = run(root, ScopeIdentity::global(), Options::default())
-            .expect_err("missing postgres must fail");
+        let error = run(root, ScopeIdentity::topic("ops"), Options::default())
+            .expect_err("PostgreSQL is required");
 
-        assert!(matches!(error, WikiError::Config { .. }));
-        assert!(error.to_string().contains("PostgreSQL index is required"));
+        assert!(
+            error
+                .to_string()
+                .contains("failed to connect to PostgreSQL for gwiki librarian"),
+            "{error}"
+        );
     }
 
     fn write_page(root: &Path, relative: &str, markdown: &str) {
@@ -617,11 +632,11 @@ mod tests {
 
     struct EnvGuard {
         key: &'static str,
-        old_value: Option<std::ffi::OsString>,
+        old_value: Option<OsString>,
     }
 
     impl EnvGuard {
-        fn set(key: &'static str, value: &std::ffi::OsStr) -> Self {
+        fn set(key: &'static str, value: &OsStr) -> Self {
             let guard = Self {
                 key,
                 old_value: std::env::var_os(key),
@@ -631,28 +646,15 @@ mod tests {
             }
             guard
         }
-
-        fn unset(key: &'static str) -> Self {
-            let guard = Self {
-                key,
-                old_value: std::env::var_os(key),
-            };
-            unsafe {
-                std::env::remove_var(key);
-            }
-            guard
-        }
     }
 
     impl Drop for EnvGuard {
         fn drop(&mut self) {
-            match &self.old_value {
-                Some(value) => unsafe {
-                    std::env::set_var(self.key, value);
-                },
-                None => unsafe {
-                    std::env::remove_var(self.key);
-                },
+            unsafe {
+                match &self.old_value {
+                    Some(value) => std::env::set_var(self.key, value),
+                    None => std::env::remove_var(self.key),
+                }
             }
         }
     }
