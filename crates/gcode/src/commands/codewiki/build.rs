@@ -162,3 +162,100 @@ pub(crate) fn build_module_docs(
     docs.sort_by(|a, b| a.module.cmp(&b.module));
     docs
 }
+
+pub(crate) fn build_architecture_doc(
+    files: &[FileDoc],
+    modules: &[ModuleDoc],
+    graph_edges: &[CodewikiGraphEdge],
+    graph_availability: CodewikiGraphAvailability,
+    generate: &mut Option<&mut TextGenerator<'_>>,
+) -> ArchitectureDoc {
+    let subsystem_names = files
+        .iter()
+        .map(|file| file.module.clone())
+        .collect::<BTreeSet<_>>();
+    let mut degraded_sources = BTreeSet::new();
+    match graph_availability {
+        CodewikiGraphAvailability::Available => {}
+        CodewikiGraphAvailability::Truncated => {
+            degraded_sources.insert("graph-truncated".to_string());
+        }
+        CodewikiGraphAvailability::Unavailable => {
+            degraded_sources.insert("graph-unavailable".to_string());
+        }
+    }
+
+    let mut subsystems = Vec::new();
+    for module in modules
+        .iter()
+        .filter(|module| subsystem_names.contains(&module.module))
+    {
+        let file_summaries = module
+            .direct_files
+            .iter()
+            .map(|file| prompts::ChildSummary {
+                name: file.path.clone(),
+                summary: file.summary.clone(),
+            })
+            .collect::<Vec<_>>();
+        let child_summaries = module
+            .child_modules
+            .iter()
+            .map(|module| prompts::ChildSummary {
+                name: module.module.clone(),
+                summary: module.summary.clone(),
+            })
+            .collect::<Vec<_>>();
+        let fallback =
+            structural_module_summary(&module.module, &module.direct_files, &module.child_modules);
+        let source_spans = collect_link_spans(&module.direct_files, &module.child_modules);
+        let generated = maybe_generate(
+            generate,
+            &prompts::architecture_prompt(
+                &module.module,
+                &file_summaries,
+                &child_summaries,
+                &module.component_ids,
+            ),
+            prompts::ARCHITECTURE_SYSTEM,
+        );
+        let responsibility = match generated {
+            Some(generated) => generated,
+            None => {
+                degraded_sources.insert("model-unavailable".to_string());
+                fallback
+            }
+        };
+        let responsibility = ground_text(
+            &responsibility,
+            &source_spans,
+            &citation_list(&source_spans),
+        );
+
+        subsystems.push(ArchitectureSubsystem {
+            module: module.module.clone(),
+            responsibility,
+            source_spans,
+        });
+    }
+
+    let dependency_diagram = match graph_availability {
+        CodewikiGraphAvailability::Unavailable => None,
+        CodewikiGraphAvailability::Available | CodewikiGraphAvailability::Truncated => {
+            render_architecture_dependency_mermaid(files, graph_edges)
+        }
+    };
+    let source_spans = subsystems
+        .iter()
+        .flat_map(|subsystem| subsystem.source_spans.iter().cloned())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    ArchitectureDoc {
+        source_spans,
+        subsystems,
+        dependency_diagram,
+        degraded_sources: degraded_sources.into_iter().collect(),
+    }
+}

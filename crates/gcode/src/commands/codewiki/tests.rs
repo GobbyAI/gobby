@@ -3,6 +3,8 @@ use super::io::{
 };
 use super::*;
 
+mod architecture;
+
 #[test]
 fn generates_hierarchical_docs() {
     let out_dir = tempfile::tempdir().expect("tempdir");

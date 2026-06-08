@@ -12,6 +12,10 @@ struct Frontmatter<'a> {
     generated_by: &'static str,
     trust: &'static str,
     freshness: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    degraded: Option<bool>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    degraded_sources: Vec<&'a str>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -238,6 +242,15 @@ pub(crate) fn citation_parts(value: &str) -> Option<(&str, usize, usize)> {
 }
 
 pub(crate) fn frontmatter(title: &str, kind: &str, source_spans: &[SourceSpan]) -> String {
+    frontmatter_with_degradation(title, kind, source_spans, &[])
+}
+
+pub(crate) fn frontmatter_with_degradation(
+    title: &str,
+    kind: &str,
+    source_spans: &[SourceSpan],
+    degraded_sources: &[String],
+) -> String {
     let mut files: BTreeMap<&str, BTreeSet<(usize, usize)>> = BTreeMap::new();
     for span in source_spans {
         files
@@ -270,6 +283,8 @@ pub(crate) fn frontmatter(title: &str, kind: &str, source_spans: &[SourceSpan]) 
         generated_by: "gcode-codewiki",
         trust: "generated",
         freshness: "indexed",
+        degraded: (!degraded_sources.is_empty()).then_some(true),
+        degraded_sources: degraded_sources.iter().map(String::as_str).collect(),
     };
     let yaml = serde_yaml::to_string(&data)
         .expect("codewiki frontmatter only contains YAML-serializable data");
