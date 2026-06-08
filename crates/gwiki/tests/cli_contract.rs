@@ -2,9 +2,12 @@ mod common;
 
 use std::path::PathBuf;
 
-use gobby_wiki::output::{
-    AskAiOutput, AskCodeCitationOutput, AskCodeEdgeOutput, AskOutput, AskRelatedPageOutput,
-    AskSynthesisOutput, SearchResultOutput,
+use gobby_wiki::{
+    ScopeIdentity,
+    output::{
+        AskAiOutput, AskCodeCitationOutput, AskCodeEdgeOutput, AskOutput, AskRelatedPageOutput,
+        AskSynthesisOutput, SearchResultOutput, SearchSourceExplanationOutput,
+    },
 };
 use serde_json::Value;
 
@@ -85,79 +88,101 @@ fn assert_classification(
 }
 
 #[test]
-fn ask_contract_json_keys_exist_in_serialized_output_shape() {
+fn ask_contract_keys_serialize_from_representative_output() {
     let contract = gobby_wiki::contract::contract();
     let ask = contract
         .commands
         .iter()
         .find(|command| command.name == "ask")
         .expect("ask command contract");
-    let output = AskOutput {
+    let output =
+        serde_json::to_value(representative_ask_output()).expect("representative ask output JSON");
+
+    let missing_key = missing_json_output_key(&ask.json_output_keys, &output);
+    assert!(
+        missing_key.is_none(),
+        "command `{}` declares json_output_key `{}`, but representative output does not serialize \
+         that key:\n{}",
+        ask.name,
+        missing_key.unwrap_or("<none>"),
+        serde_json::to_string_pretty(&output).expect("serialize output context")
+    );
+}
+
+fn representative_ask_output() -> AskOutput {
+    AskOutput {
         command: "ask",
-        scope: gobby_wiki::ScopeIdentity::project("project-1"),
-        query: "Where is request handling wired?".to_string(),
+        scope: ScopeIdentity::topic("contract-guardrails"),
+        query: "How do contract keys stay honest?".to_string(),
         status: "answered",
         degraded: false,
         degraded_sources: Vec::new(),
         hits: vec![SearchResultOutput {
-            title: Some("Request handler".to_string()),
-            fusion_key: "project:project-1:wiki/code/files/src/handler.rs.md".to_string(),
-            wiki_page: PathBuf::from("wiki/code/files/src/handler.rs.md"),
-            source_path: PathBuf::from("src/handler.rs"),
-            snippet: "fn handle() calls route().".to_string(),
-            score: 0.95,
-            sources: vec!["bm25".to_string(), "graph".to_string()],
-            explanations: Vec::new(),
+            title: Some("Contract guardrails".to_string()),
+            fusion_key: "wiki:contract-guardrails".to_string(),
+            wiki_page: PathBuf::from("wiki/contract-guardrails.md"),
+            source_path: PathBuf::from("crates/gwiki/src/contract.rs"),
+            snippet: "Contracts must describe serialized command output.".to_string(),
+            score: 0.98,
+            sources: vec!["fts".to_string(), "semantic".to_string()],
+            explanations: vec![SearchSourceExplanationOutput {
+                source: "fts".to_string(),
+                rank: 1,
+                score: 0.91,
+            }],
         }],
         related_pages: vec![AskRelatedPageOutput {
-            title: Some("Request handler".to_string()),
-            path: PathBuf::from("wiki/code/files/src/handler.rs.md"),
-            score: 0.95,
+            title: Some("CLI contracts".to_string()),
+            path: PathBuf::from("wiki/cli-contracts.md"),
+            score: 0.72,
         }],
-        sources: vec!["src/handler.rs".to_string()],
+        sources: vec!["wiki/contract-guardrails.md".to_string()],
         code_edges: vec![AskCodeEdgeOutput {
-            source: "src/handler.rs:handle".to_string(),
-            target: "src/router.rs:route".to_string(),
-            kind: "calls".to_string(),
+            source: "crates/gwiki/src/contract.rs:contract".to_string(),
+            target: "crates/gwiki/src/output.rs:AskOutput".to_string(),
+            kind: "references".to_string(),
             direction: "outgoing".to_string(),
             line: Some(42),
             provenance: "gcode_falkor".to_string(),
         }],
         code_citations: vec![AskCodeCitationOutput {
-            file: "src/handler.rs".to_string(),
-            line: Some(42),
-            symbol: Some("handle".to_string()),
+            file: "crates/gwiki/src/output.rs".to_string(),
+            line: Some(102),
+            symbol: Some("AskOutput".to_string()),
         }],
-        gaps: Vec::new(),
-        stale_candidates: Vec::new(),
-        suggested_questions: vec!["Where is route defined?".to_string()],
-        warnings: Vec::new(),
+        gaps: vec!["No daemon fixture covered this output shape.".to_string()],
+        stale_candidates: vec!["wiki/old-contract-keys.md".to_string()],
+        suggested_questions: vec!["Which commands publish json_output_keys?".to_string()],
+        warnings: vec!["semantic search degraded".to_string()],
         ai: Some(AskAiOutput {
             requested: true,
-            requested_mode: "optional",
-            route: "daemon",
-            status: "available",
+            requested_mode: "auto",
+            route: "local",
+            status: "degraded",
             model: Some("test-model".to_string()),
-            error: None,
+            error: Some("synthetic warning".to_string()),
         }),
         synthesis: Some(AskSynthesisOutput {
-            answer: "The handler calls the router.".to_string(),
+            answer: "Contract keys must serialize from command output.".to_string(),
             model: Some("test-model".to_string()),
         }),
-    };
-    let serialized = serde_json::to_value(output).expect("ask output json");
-    let object = serialized.as_object().expect("ask output object");
-    let missing = ask
-        .json_output_keys
-        .iter()
-        .filter(|key| !object.contains_key(**key))
-        .copied()
-        .collect::<Vec<_>>();
+    }
+}
 
-    assert!(
-        missing.is_empty(),
-        "ask contract advertises keys missing from serialized AskOutput: {missing:?}"
-    );
+fn missing_json_output_key<'a>(keys: &'a [&str], output: &Value) -> Option<&'a str> {
+    keys.iter()
+        .copied()
+        .find(|key| !json_contains_key(output, key))
+}
+
+fn json_contains_key(value: &Value, key: &str) -> bool {
+    match value {
+        Value::Object(object) => {
+            object.contains_key(key) || object.values().any(|value| json_contains_key(value, key))
+        }
+        Value::Array(values) => values.iter().any(|value| json_contains_key(value, key)),
+        _ => false,
+    }
 }
 
 #[test]
