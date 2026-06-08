@@ -161,6 +161,7 @@ venv.bak/
 
 # Local dogfood coordination logs
 gobby-build-journal.md
+task-*-build-journal.md
 dmypy.json
 
 # Pyre type checker
