@@ -105,7 +105,10 @@ pub(crate) struct OutputConfidence {
 }
 
 pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
+    crate::support::postgres::require_attached_index("gwiki citation-quality")?;
     let resolved = resolve_selection_context(&selection)?;
+    let _postgres_index =
+        crate::support::postgres::require_postgres_index("gwiki citation-quality")?;
     let report = build_report(resolved.scope.root(), resolved.output_scope, false)?;
     write_artifact(
         resolved.scope.root(),
@@ -537,7 +540,24 @@ mod tests {
     use crate::sources::{
         CompileStatus, IngestionMethod, SourceKind, SourceManifest, SourceRecord,
     };
+    use std::ffi::{OsStr, OsString};
     use std::path::PathBuf;
+
+    static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn citation_quality_execute_requires_postgresql_index() {
+        let _guard = ENV_TEST_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _home = EnvGuard::set("GOBBY_HOME", temp.path().as_os_str());
+        let _gwiki_url = EnvGuard::unset("GWIKI_DATABASE_URL");
+        let _gobby_dsn = EnvGuard::unset("GOBBY_POSTGRES_DSN");
+
+        let error = execute(ScopeSelection::Detect).expect_err("missing postgres must fail");
+
+        assert!(matches!(error, WikiError::Config { .. }));
+        assert!(error.to_string().contains("PostgreSQL index is required"));
+    }
 
     #[test]
     fn citation_quality_report_covers_sections_and_degradation() {
@@ -638,6 +658,32 @@ mod tests {
         assert!(report.markdown.contains("src-1, src-2"));
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn citation_quality_requires_configured_postgres_index() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(temp.path().join(".gobby/wiki")).expect("create wiki root");
+        std::fs::write(
+            temp.path().join(".gobby/project.json"),
+            r#"{"id":"11111111-1111-4111-8111-111111111111"}"#,
+        )
+        .expect("write project json");
+        let _database_url = EnvGuard::set(
+            "GWIKI_DATABASE_URL",
+            OsStr::new("postgresql://127.0.0.1:1/gwiki"),
+        );
+
+        let error =
+            execute(ScopeSelection::project(temp.path())).expect_err("PostgreSQL is required");
+
+        assert!(
+            error
+                .to_string()
+                .contains("failed to connect to PostgreSQL for gwiki citation-quality"),
+            "{error}"
+        );
+    }
+
     fn write_page(root: &std::path::Path, relative: &str, markdown: &str) {
         let path = root.join("wiki").join(relative);
         std::fs::create_dir_all(path.parent().expect("parent")).expect("create wiki dir");
@@ -658,6 +704,46 @@ mod tests {
             ingestion_method: IngestionMethod::Research,
             compile_status: CompileStatus::Compiled,
             replay: None,
+        }
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        old_value: Option<OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &OsStr) -> Self {
+            let guard = Self {
+                key,
+                old_value: std::env::var_os(key),
+            };
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            guard
+        }
+
+        fn unset(key: &'static str) -> Self {
+            let guard = Self {
+                key,
+                old_value: std::env::var_os(key),
+            };
+            unsafe {
+                std::env::remove_var(key);
+            }
+            guard
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.old_value {
+                    Some(value) => std::env::set_var(self.key, value),
+                    None => std::env::remove_var(self.key),
+                }
+            }
         }
     }
 }
