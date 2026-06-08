@@ -157,6 +157,8 @@ citation: Rust Reference, Ownership
     session.accepted_notes.push(AcceptedResearchNote {
         title: "Ownership evidence".to_string(),
         path: note_path,
+        code_citations: Vec::new(),
+        degradation: None,
     });
     session.save_checkpoint().expect("save checkpoint");
 }

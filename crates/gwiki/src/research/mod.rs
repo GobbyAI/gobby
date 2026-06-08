@@ -14,7 +14,7 @@ use crate::research_loop::{
     ResearchLoop, ResearchLoopConfig, ResearchLoopDeps, ResearchLoopEvent, ResearchLoopInput,
     ResearchLoopResult,
 };
-use crate::session::{ResearchScope, ResearchSession};
+use crate::session::{ResearchCodeCitation, ResearchScope, ResearchSession};
 
 const MAX_RESEARCH_NOTE_SUFFIX_ATTEMPTS: usize = 1000;
 /// Enforced research-loop budgets, echoed in JSON output so callers see every
@@ -78,6 +78,8 @@ pub struct AcceptedNoteDraft {
     pub title: String,
     pub body: String,
     pub sources: Vec<String>,
+    pub code_citations: Vec<ResearchCodeCitation>,
+    pub degradation: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,6 +111,9 @@ pub struct ResearchOutcome {
     pub max_note_bytes: usize,
     pub write_conflict: bool,
     pub sources_added: Vec<String>,
+    pub candidate_sources: Vec<String>,
+    pub code_citations: Vec<ResearchCodeCitation>,
+    pub degradation: Option<String>,
     pub findings: Vec<AuditFinding>,
     pub gaps: Vec<ResearchGap>,
     pub warnings: Vec<String>,
@@ -161,13 +166,6 @@ pub struct ResearchGap {
 }
 
 pub fn run(options: ResearchOptions) -> Result<ResearchOutcome, WikiError> {
-    if !options.audit && options.ai == AiRouting::Off {
-        return Err(WikiError::InvalidInput {
-            field: "ai",
-            message: "research enrichment requires AI; use --audit for deterministic checks"
-                .to_string(),
-        });
-    }
     if options.audit && options.require_ai && matches!(options.ai, AiRouting::Auto | AiRouting::Off)
     {
         return Err(WikiError::InvalidInput {
@@ -231,6 +229,9 @@ pub fn run(options: ResearchOptions) -> Result<ResearchOutcome, WikiError> {
             max_note_bytes: RESEARCH_MAX_NOTE_BYTES,
             write_conflict: loop_result.write_conflict,
             sources_added: loop_result.sources_added,
+            candidate_sources: loop_result.candidate_sources,
+            code_citations: loop_result.code_citations,
+            degradation: loop_result.degradation,
             findings: Vec::new(),
             gaps: loop_result.gaps,
             warnings,
@@ -270,6 +271,9 @@ pub fn run(options: ResearchOptions) -> Result<ResearchOutcome, WikiError> {
         max_note_bytes: RESEARCH_MAX_NOTE_BYTES,
         write_conflict: false,
         sources_added: Vec::new(),
+        candidate_sources: Vec::new(),
+        code_citations: Vec::new(),
+        degradation: None,
         findings,
         gaps: Vec::new(),
         warnings,
