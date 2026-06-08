@@ -1,7 +1,9 @@
 use gobby_core::ai_context::AiConfigSource;
+use gobby_core::config::FalkorConfig;
 use gobby_core::gobby_home;
 
 use crate::graph::context::{GraphContextOptions, build_context_pack};
+use crate::search::SearchScope;
 use crate::support::env::database_url_for;
 use crate::support::scope::resolve_selection_context;
 use crate::support::search::PostgresConfigSource;
@@ -19,8 +21,28 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
         }
     })?;
 
-    let degraded_sources = degraded_optional_sources(&mut conn)?;
-    let facts = crate::falkor_graph::load_wiki_graph_facts(&mut conn, &resolved.search_scope)?;
+    let falkor = optional_falkor_config(&mut conn)?;
+    let mut degraded_sources = Vec::new();
+    let mut facts = crate::falkor_graph::load_wiki_graph_facts(&mut conn, &resolved.search_scope)?;
+    match (falkor, &resolved.search_scope) {
+        (Some(falkor), SearchScope::Project { project_id }) => {
+            match crate::falkor_graph::load_code_graph_edges(&falkor, project_id, &facts.documents)
+            {
+                Ok(code_edges) => facts.code_edges = code_edges,
+                Err(error) => {
+                    log::warn!("failed to load shared code graph for gwiki graph-context: {error}");
+                    degraded_sources.push("shared_code_graph_unavailable".to_string());
+                }
+            }
+        }
+        (Some(_), SearchScope::Topic { .. }) => {
+            degraded_sources.push("shared_code_graph_unavailable".to_string());
+        }
+        (None, _) => {
+            degraded_sources.push("falkordb_unavailable".to_string());
+            degraded_sources.push("shared_code_graph_unavailable".to_string());
+        }
+    }
     let options = if degraded_sources.is_empty() {
         GraphContextOptions::available()
     } else {
@@ -44,7 +66,7 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
     ))
 }
 
-fn degraded_optional_sources(conn: &mut postgres::Client) -> Result<Vec<String>, WikiError> {
+fn optional_falkor_config(conn: &mut postgres::Client) -> Result<Option<FalkorConfig>, WikiError> {
     let gobby_home = gobby_home().map_err(|error| WikiError::Config {
         detail: format!("failed to resolve Gobby home for gwiki graph-context: {error}"),
     })?;
@@ -56,10 +78,5 @@ fn degraded_optional_sources(conn: &mut postgres::Client) -> Result<Vec<String>,
             }
         })?;
 
-    let mut degraded = Vec::new();
-    if gobby_core::config::resolve_falkordb_config(&mut source).is_none() {
-        degraded.push("falkordb_unavailable".to_string());
-    }
-    degraded.push("shared_code_graph_unavailable".to_string());
-    Ok(degraded)
+    Ok(gobby_core::config::resolve_falkordb_config(&mut source))
 }

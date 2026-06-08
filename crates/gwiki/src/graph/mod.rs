@@ -42,11 +42,23 @@ pub struct WikiGraphLink {
     pub target: WikiGraphLinkTarget,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WikiGraphCodeEdge {
+    pub document_path: PathBuf,
+    pub source: String,
+    pub target: String,
+    pub kind: String,
+    pub direction: String,
+    pub line: Option<usize>,
+    pub provenance: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WikiGraphFacts {
     pub documents: Vec<WikiGraphDocument>,
     pub links: Vec<WikiGraphLink>,
     pub sources: Vec<WikiGraphSource>,
+    pub code_edges: Vec<WikiGraphCodeEdge>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -151,6 +163,23 @@ impl WikiGraphFacts {
                 kind: "links",
                 raw_target: Some(link.raw_target.clone()),
             });
+        }
+        for edge in &self.code_edges {
+            let graph_edge = GraphExportEdge {
+                source: edge.source.clone(),
+                target: edge.target.clone(),
+                kind: if edge.kind == "imports" {
+                    "imports"
+                } else {
+                    "calls"
+                },
+                raw_target: Some(edge.provenance.clone()),
+            };
+            if edge.kind == "imports" {
+                edges.imports.push(graph_edge);
+            } else {
+                edges.calls.push(graph_edge);
+            }
         }
 
         let degraded = !options.degraded_sources.is_empty();
@@ -706,6 +735,7 @@ mod tests {
                 source_path: "raw/INDEX.md".into(),
                 document_path: "wiki/topics/rust.md".into(),
             }],
+            code_edges: Vec::new(),
         };
 
         let joined = graph_write_statements(&facts)
@@ -760,6 +790,7 @@ mod tests {
                 source_path: "raw/missing.md".into(),
                 document_path: "wiki/missing.md".into(),
             }],
+            code_edges: Vec::new(),
         };
 
         let statements = graph_write_statements(&facts);
@@ -802,6 +833,7 @@ mod tests {
                 ),
             ],
             sources: Vec::new(),
+            code_edges: Vec::new(),
         });
 
         let backlinks = graph.backlinks(
@@ -850,6 +882,7 @@ mod tests {
                 ),
             ],
             sources: Vec::new(),
+            code_edges: Vec::new(),
         });
 
         let suggestions = graph.link_suggestions(&SearchScope::project("project-1"), 10);
@@ -877,6 +910,7 @@ mod tests {
                 resolved_link(scope.clone(), "wiki/c.md", "A", "wiki/a.md"),
             ],
             sources: Vec::new(),
+            code_edges: Vec::new(),
         });
 
         let ranked = graph.related_paths_with_options(

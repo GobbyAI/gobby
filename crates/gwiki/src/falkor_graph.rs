@@ -9,13 +9,15 @@ use serde_json::Value;
 
 use crate::WikiError;
 use crate::graph::{
-    GraphStatement, WikiGraphDocument, WikiGraphFacts, WikiGraphLink, WikiGraphLinkTarget,
-    WikiGraphSource, graph_write_statements,
+    GraphStatement, WikiGraphCodeEdge, WikiGraphDocument, WikiGraphFacts, WikiGraphLink,
+    WikiGraphLinkTarget, WikiGraphSource, graph_write_statements,
 };
 use crate::search::{SearchError, SearchScope};
 use crate::support::text::slugify;
 
 pub const FALKORDB_GRAPH_NAME: &str = "gobby_wiki";
+const CODE_FALKORDB_GRAPH_NAME: &str = "gobby_code";
+const CODE_GRAPH_PROVENANCE: &str = "shared_code_graph";
 
 pub(crate) struct GraphBoostData {
     pub documents: Vec<crate::search::graph_boost::GraphBoostDocument>,
@@ -65,6 +67,117 @@ pub(crate) fn load_graph_boost_data(
         links: links.items,
         degradation,
     })
+}
+
+pub(crate) fn load_code_graph_edges(
+    config: &FalkorConfig,
+    project_id: &str,
+    documents: &[WikiGraphDocument],
+) -> anyhow::Result<Vec<WikiGraphCodeEdge>> {
+    let mut client = GraphClient::from_config(config, CODE_FALKORDB_GRAPH_NAME)?;
+    let code_documents = documents
+        .iter()
+        .filter_map(|document| {
+            code_doc_source_path(&document.path).map(|file_path| (document.path.clone(), file_path))
+        })
+        .collect::<Vec<_>>();
+    let mut edges = Vec::new();
+    for (document_path, file_path) in code_documents {
+        edges.extend(code_call_edges(
+            &mut client,
+            project_id,
+            &document_path,
+            &file_path,
+        )?);
+        edges.extend(code_import_edges(
+            &mut client,
+            project_id,
+            &document_path,
+            &file_path,
+        )?);
+    }
+    Ok(edges)
+}
+
+fn code_call_edges(
+    client: &mut GraphClient,
+    project_id: &str,
+    document_path: &Path,
+    file_path: &str,
+) -> anyhow::Result<Vec<WikiGraphCodeEdge>> {
+    let query = "\
+        MATCH (source:CodeSymbol {project: $project})-[r:CALLS]->(target {project: $project}) \
+        WHERE source.file_path = $path OR (target:CodeSymbol AND target.file_path = $path) \
+        RETURN source.file_path AS source_file_path, source.name AS source_name, \
+               target.file_path AS target_file_path, target.name AS target_name, r.line AS line \
+        LIMIT 200";
+    let rows = client.query(
+        query,
+        Some(HashMap::from([
+            ("project".to_string(), project_id.to_string()),
+            ("path".to_string(), file_path.to_string()),
+        ])),
+    )?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let source_file = optional_row_string(&row, "source_file_path")
+                .unwrap_or_else(|| file_path.to_string());
+            let source_name =
+                optional_row_string(&row, "source_name").unwrap_or_else(|| "unknown".to_string());
+            let target_file = optional_row_string(&row, "target_file_path")
+                .unwrap_or_else(|| "external".to_string());
+            let target_name =
+                optional_row_string(&row, "target_name").unwrap_or_else(|| "unknown".to_string());
+            let incoming = target_file == file_path && source_file != file_path;
+            WikiGraphCodeEdge {
+                document_path: document_path.to_path_buf(),
+                source: code_endpoint(&source_file, &source_name),
+                target: code_endpoint(&target_file, &target_name),
+                kind: if incoming { "callers" } else { "calls" }.to_string(),
+                direction: if incoming { "incoming" } else { "outgoing" }.to_string(),
+                line: optional_row_usize(&row, "line"),
+                provenance: CODE_GRAPH_PROVENANCE.to_string(),
+            }
+        })
+        .collect())
+}
+
+fn code_import_edges(
+    client: &mut GraphClient,
+    project_id: &str,
+    document_path: &Path,
+    file_path: &str,
+) -> anyhow::Result<Vec<WikiGraphCodeEdge>> {
+    let query = "\
+        MATCH (file:CodeFile {path: $path, project: $project})-[r:IMPORTS]->(module:CodeModule {project: $project}) \
+        RETURN file.path AS source_file_path, module.name AS target_name \
+        LIMIT 200";
+    let rows = client.query(
+        query,
+        Some(HashMap::from([
+            ("project".to_string(), project_id.to_string()),
+            ("path".to_string(), file_path.to_string()),
+        ])),
+    )?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let source_file = optional_row_string(&row, "source_file_path")
+                .unwrap_or_else(|| file_path.to_string());
+            let target_name =
+                optional_row_string(&row, "target_name").unwrap_or_else(|| "unknown".to_string());
+            WikiGraphCodeEdge {
+                document_path: document_path.to_path_buf(),
+                source: source_file,
+                target: target_name,
+                kind: "imports".to_string(),
+                direction: "outgoing".to_string(),
+                line: None,
+                provenance: CODE_GRAPH_PROVENANCE.to_string(),
+            }
+        })
+        .collect())
 }
 
 fn clear_scope(client: &mut GraphClient, scope: &SearchScope) -> anyhow::Result<()> {
@@ -281,6 +394,7 @@ pub(crate) fn load_wiki_graph_facts(
         documents,
         links,
         sources,
+        code_edges: Vec::new(),
     })
 }
 
@@ -362,6 +476,25 @@ fn normalize_path(path: PathBuf) -> PathBuf {
     normalized
 }
 
+fn code_doc_source_path(path: &Path) -> Option<String> {
+    normalize_graph_path(path)
+        .strip_prefix("wiki/code/files/")
+        .and_then(|path| path.strip_suffix(".md"))
+        .map(str::to_string)
+}
+
+fn code_endpoint(file_path: &str, symbol: &str) -> String {
+    if symbol.is_empty() {
+        file_path.to_string()
+    } else {
+        format!("{file_path}:{symbol}")
+    }
+}
+
+fn normalize_graph_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
 fn is_external_target(target: &str) -> bool {
     let lower = target.to_ascii_lowercase();
     lower.starts_with("http://")
@@ -394,6 +527,12 @@ fn optional_row_string(row: &Row, key: &'static str) -> Option<String> {
     row.get(key)
         .and_then(Value::as_str)
         .map(ToString::to_string)
+}
+
+fn optional_row_usize(row: &Row, key: &'static str) -> Option<usize> {
+    row.get(key)
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
 }
 
 #[cfg(test)]
@@ -502,6 +641,15 @@ mod tests {
     }
 
     #[test]
+    fn ask_unified_graph_code_doc_source_path_maps_to_code_file() {
+        assert_eq!(
+            code_doc_source_path(Path::new("wiki/code/files/crates/gwiki/src/lib.rs.md")),
+            Some("crates/gwiki/src/lib.rs".to_string())
+        );
+        assert_eq!(code_doc_source_path(Path::new("wiki/notes.md")), None);
+    }
+
+    #[test]
     fn cypher_string_literal_escapes_like_gcode() {
         assert_eq!(
             cypher_string_literal("a\"b\\c'd\n\r\t\u{0008}\u{000C}\u{001F}"),
@@ -557,6 +705,7 @@ mod tests {
                 source_path: PathBuf::from("raw/a.md"),
                 document_path: PathBuf::from("wiki/a.md"),
             }],
+            code_edges: Vec::new(),
         };
         let joined = graph_write_statements(&facts)
             .into_iter()

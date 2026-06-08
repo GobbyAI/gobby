@@ -71,9 +71,12 @@ pub fn contract() -> CliContract {
                 json_output_keys: scoped_keys(vec![
                     "query",
                     "status",
+                    "degraded",
+                    "degraded_sources",
                     "hits",
                     "related_pages",
                     "sources",
+                    "code_citations",
                     "gaps",
                     "stale_candidates",
                     "suggested_questions",

@@ -104,9 +104,12 @@ pub struct AskOutput {
     pub scope: ScopeIdentity,
     pub query: String,
     pub status: &'static str,
+    pub degraded: bool,
+    pub degraded_sources: Vec<String>,
     pub hits: Vec<SearchResultOutput>,
     pub related_pages: Vec<AskRelatedPageOutput>,
     pub sources: Vec<String>,
+    pub code_citations: Vec<AskCodeCitationOutput>,
     pub gaps: Vec<String>,
     pub stale_candidates: Vec<String>,
     pub suggested_questions: Vec<String>,
@@ -115,6 +118,15 @@ pub struct AskOutput {
     pub ai: Option<AskAiOutput>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub synthesis: Option<AskSynthesisOutput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct AskCodeCitationOutput {
+    pub file: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
