@@ -215,6 +215,7 @@ class ServiceContainer:
                 session_manager=self.session_manager,
                 completion_registry=self.completion_registry,
                 run_db=self.run_db,
+                pipeline_config=self.config.pipelines if self.config else None,
             )
 
             # Wire event broadcasting via WebSocket

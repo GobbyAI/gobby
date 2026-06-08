@@ -513,6 +513,7 @@ class HookManagerFactory:
                 template_engine=template_engine,
                 tool_proxy_getter=tool_proxy_getter,
                 session_manager=storage.session,
+                pipeline_config=config.pipelines if config else None,
             )
         except Exception as e:
             logger.debug(f"Pipeline executor not available: {e}")

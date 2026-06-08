@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.config.pipelines import PipelineConfig
 from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
 
 pytestmark = pytest.mark.unit
@@ -352,18 +353,17 @@ class TestExecutePromptStep:
         """Test that prompt step calls the LLM service."""
         from gobby.workflows.pipeline.handlers import execute_prompt_step
 
-        mock_llm_service.get_default_provider.return_value.generate_text.return_value = (
-            "LLM response text"
-        )
+        prompt_step_config = PipelineConfig().prompt_step
+        mock_llm_service.call_feature.return_value = "LLM response text"
 
         context: dict = {"inputs": {}, "steps": {}}
-        await execute_prompt_step("Analyze this data", context, mock_llm_service)
-
-        mock_llm_service.get_default_provider.return_value.generate_text.assert_called_once()
-        assert mock_llm_service.get_default_provider.return_value.generate_text.call_count == 1
-        assert (
-            mock_llm_service.get_default_provider.return_value.generate_text.call_args is not None
+        await execute_prompt_step(
+            "Analyze this data", context, mock_llm_service, prompt_step_config
         )
+
+        mock_llm_service.call_feature.assert_awaited_once()
+        assert mock_llm_service.call_feature.await_args is not None
+        assert mock_llm_service.call_feature.await_args.args[0] is prompt_step_config
 
     @pytest.mark.asyncio
     async def test_prompt_step_returns_response(
@@ -372,12 +372,13 @@ class TestExecutePromptStep:
         """Test that prompt step returns the LLM response."""
         from gobby.workflows.pipeline.handlers import execute_prompt_step
 
-        mock_llm_service.get_default_provider.return_value.generate_text.return_value = (
-            "Generated analysis"
-        )
+        prompt_step_config = PipelineConfig().prompt_step
+        mock_llm_service.call_feature.return_value = "Generated analysis"
 
         context: dict = {"inputs": {}, "steps": {}}
-        result = await execute_prompt_step("Analyze this", context, mock_llm_service)
+        result = await execute_prompt_step(
+            "Analyze this", context, mock_llm_service, prompt_step_config
+        )
 
         assert result is not None
         assert "response" in result
@@ -390,18 +391,22 @@ class TestExecutePromptStep:
         """Test that prompt step passes the prompt text to LLM."""
         from gobby.workflows.pipeline.handlers import execute_prompt_step
 
-        mock_llm_service.get_default_provider.return_value.generate_text.return_value = "Response"
+        prompt_step_config = PipelineConfig().prompt_step
+        mock_llm_service.call_feature.return_value = "Response"
 
         context: dict = {"inputs": {}, "steps": {}}
-        await execute_prompt_step("Generate a report", context, mock_llm_service)
+        await execute_prompt_step(
+            "Generate a report", context, mock_llm_service, prompt_step_config
+        )
 
         # Inspect args/kwargs directly instead of str(call_args) so the test
         # fails cleanly if the call signature changes.
-        call_args = mock_llm_service.get_default_provider.return_value.generate_text.call_args
+        call_args = mock_llm_service.call_feature.await_args
         actual_prompt = call_args.kwargs.get("prompt")
-        if actual_prompt is None and call_args.args:
-            actual_prompt = call_args.args[0]
+        if actual_prompt is None and len(call_args.args) > 1:
+            actual_prompt = call_args.args[1]
         assert actual_prompt == "Generate a report"
+        assert call_args.kwargs["caller"] == "workflows.pipeline.prompt_step"
 
     @pytest.mark.asyncio
     async def test_prompt_step_handles_llm_error(
@@ -410,12 +415,13 @@ class TestExecutePromptStep:
         """Test that prompt step handles LLM errors gracefully."""
         from gobby.workflows.pipeline.handlers import execute_prompt_step
 
-        mock_llm_service.get_default_provider.return_value.generate_text.side_effect = RuntimeError(
-            "LLM API error"
-        )
+        prompt_step_config = PipelineConfig().prompt_step
+        mock_llm_service.call_feature.side_effect = RuntimeError("LLM API error")
 
         context: dict = {"inputs": {}, "steps": {}}
-        result = await execute_prompt_step("Generate something", context, mock_llm_service)
+        result = await execute_prompt_step(
+            "Generate something", context, mock_llm_service, prompt_step_config
+        )
 
         assert result is not None
         assert "error" in result
@@ -427,12 +433,37 @@ class TestExecutePromptStep:
         """Test that prompt step returns proper dict structure."""
         from gobby.workflows.pipeline.handlers import execute_prompt_step
 
-        mock_llm_service.get_default_provider.return_value.generate_text.return_value = (
-            "Test response"
-        )
+        prompt_step_config = PipelineConfig().prompt_step
+        mock_llm_service.call_feature.return_value = "Test response"
 
         context: dict = {"inputs": {}, "steps": {}}
-        result = await execute_prompt_step("Test prompt", context, mock_llm_service)
+        result = await execute_prompt_step(
+            "Test prompt", context, mock_llm_service, prompt_step_config
+        )
 
         assert isinstance(result, dict)
         assert "response" in result
+
+    @pytest.mark.asyncio
+    async def test_executor_prompt_step_uses_pipeline_config(
+        self, mock_db, mock_execution_manager, mock_llm_service
+    ) -> None:
+        """Test that executor prompt steps use the configured prompt-step feature."""
+        from gobby.workflows.definitions import PipelineStep
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        pipeline_config = PipelineConfig()
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            pipeline_config=pipeline_config,
+        )
+
+        step = PipelineStep(id="prompt", prompt="Use configured feature")
+        context: dict = {"inputs": {}, "steps": {}}
+        result = await executor._execute_step(step, context, "project")
+
+        assert result == {"response": "LLM response"}
+        mock_llm_service.call_feature.assert_awaited_once()
+        assert mock_llm_service.call_feature.await_args.args[0] is pipeline_config.prompt_step

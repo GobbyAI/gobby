@@ -72,13 +72,11 @@ def mock_execution_manager():
 def mock_llm_service():
     """Create a mock LLM service.
 
-    Uses MagicMock (not AsyncMock) because get_default_provider() is sync.
-    The provider itself is AsyncMock since generate_text() is async.
+    Uses MagicMock so callers can hang sync attributes off the service while
+    LLM feature calls remain awaitable.
     """
     service = MagicMock()
-    mock_provider = AsyncMock()
-    mock_provider.generate_text.return_value = "LLM response"
-    service.get_default_provider.return_value = mock_provider
+    service.call_feature = AsyncMock(return_value="LLM response")
     return service
 
 

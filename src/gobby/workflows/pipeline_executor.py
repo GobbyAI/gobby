@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from opentelemetry.trace import Status, StatusCode
 
+from gobby.config.pipelines import PipelineConfig
 from gobby.telemetry.tracing import create_span
 from gobby.workflows.pipeline.gatekeeper import ApprovalManager
 from gobby.workflows.pipeline.handlers import (
@@ -90,6 +91,7 @@ class PipelineExecutor:
         session_manager: Any | None = None,
         completion_registry: Any | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
+        pipeline_config: PipelineConfig | None = None,
     ):
         """Initialize the pipeline executor.
 
@@ -117,6 +119,7 @@ class PipelineExecutor:
         self.session_manager = session_manager
         self.completion_registry = completion_registry
         self.run_db = run_db
+        self.pipeline_config = pipeline_config or PipelineConfig()
 
         self.renderer = StepRenderer(template_engine)
         self.approval_manager = ApprovalManager(
@@ -256,13 +259,7 @@ class PipelineExecutor:
         with create_span("pipeline.execute", attributes=span_attrs) as span:
             try:
                 # 0. Enforce nesting depth limit and cycle detection
-                depth_limit = 10
-                try:
-                    from gobby.config.pipelines import PipelineConfig
-
-                    depth_limit = PipelineConfig().nesting_depth_limit
-                except (ImportError, ValueError):
-                    pass
+                depth_limit = self.pipeline_config.nesting_depth_limit
 
                 if _depth > depth_limit:
                     raise RuntimeError(
@@ -711,7 +708,10 @@ class PipelineExecutor:
                 elif step.prompt:
                     # Execute LLM prompt
                     return await execute_prompt_step(
-                        rendered_step.prompt, context, self.llm_service
+                        rendered_step.prompt,
+                        context,
+                        self.llm_service,
+                        self.pipeline_config.prompt_step,
                     )
                 elif step.invoke_pipeline:
                     # Execute nested pipeline

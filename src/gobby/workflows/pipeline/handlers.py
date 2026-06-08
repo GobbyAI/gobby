@@ -160,15 +160,15 @@ async def execute_exec_step(command: str, context: dict[str, Any]) -> dict[str, 
 
 
 async def execute_prompt_step(
-    prompt: str, context: dict[str, Any], llm_service: Any
+    prompt: str, context: dict[str, Any], llm_service: Any, feature_config: Any
 ) -> dict[str, Any]:
     """Execute an LLM prompt step."""
     if not llm_service:
         return {"error": "prompt step requires llm_service but none configured"}
 
     try:
-        provider = llm_service.get_default_provider()
-        response = await provider.generate_text(
+        response = await llm_service.call_feature(
+            feature_config,
             prompt,
             caller="workflows.pipeline.prompt_step",
         )

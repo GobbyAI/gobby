@@ -23,6 +23,7 @@ their external form; for task features that is `gobby-tasks`, matching the MCP s
 | `tool_summarizer` | `tool_summarizer` | `feature_low` | `LLMService.call_feature(config.tool_summarizer, ...)` | `tools.tool_summary`, `tools.server_description`: MCP tool/server summaries |
 | `recommend_tools` | `recommend_tools` | `feature_mid` | `LLMService.call_feature(config.recommend_tools, ...)` | `mcp_proxy.recommendation.hybrid_rerank`, `mcp_proxy.recommendation.llm`: tool recommendations |
 | `import_mcp_server` | `import_mcp_server` | `feature_low` | `LLMService.call_feature(config.import_mcp_server, ...)` | MCP server import synthesis |
+| `pipelines.prompt_step` | `pipelines.prompt_step` | `feature_low` | `LLMService.call_feature(config.pipelines.prompt_step, ...)` | `workflows.pipeline.prompt_step`: pipeline prompt steps |
 | `skill_description` | `skill_description` | `feature_low` | `LLMService.call_feature(config.skill_description, ...)` | `skills.github_collection.description`: skill description synthesis |
 | `merge_resolution` | `merge_resolution` | `feature_mid` | `LLMService.call_feature(config.merge_resolution, ...)` | `worktrees.merge.resolve_hunks`, `worktrees.merge.resolve_full_file`: merge conflict resolution |
 | `gobby-tasks.expansion` | `gobby-tasks.expansion` | `feature_high` | `LLMService.call_feature(config.gobby_tasks.expansion, ...)` | `tasks.expansion.compile`: task expansion compilation |
