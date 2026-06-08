@@ -92,6 +92,10 @@ pub enum Command {
     GraphContext {
         scope: ScopeSelection,
     },
+    ReviewReport {
+        scope: ScopeSelection,
+        options: ReviewReportOptions,
+    },
     Audit {
         scope: ScopeSelection,
     },
@@ -142,6 +146,14 @@ pub struct IngestFileOptions {
     pub transcription_routing: Option<AiRouting>,
     pub vision_routing: Option<AiRouting>,
     pub text_routing: Option<AiRouting>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewReportOptions {
+    pub files: Vec<String>,
+    pub symbols: Vec<String>,
+    pub diff_path: Option<PathBuf>,
+    pub output: String,
 }
 
 impl IngestFileOptions {
