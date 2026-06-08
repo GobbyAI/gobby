@@ -593,9 +593,12 @@ async def test_build_plan_file_uses_registered_open_root_task(
     temp_db,
     tmp_path: Path,
 ) -> None:
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.build.service import build
+    from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.plans import LocalPlanManager
+    from gobby.storage.sessions import SessionManager
 
-    _disable_dispatcher_tick(monkeypatch)
     project_id, repo_path = _project(temp_db, tmp_path)
     plan_file = repo_path / ".gobby" / "plans" / "gwiki-parity-plus.md"
     plan_file.parent.mkdir(parents=True)
@@ -621,6 +624,26 @@ async def test_build_plan_file_uses_registered_open_root_task(
         encoding="utf-8",
     )
     task_manager = LocalTaskManager(temp_db)
+    session_manager = SessionManager(temp_db)
+    sync_bundled_agents(temp_db)
+    spawn_calls: list[dict[str, object]] = []
+
+    async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
+        spawn_calls.append(dict(kwargs))
+        run = LocalAgentRunManager(temp_db).create(
+            parent_session_id=str(kwargs["parent_session_id"]),
+            provider="codex",
+            prompt=str(kwargs["prompt"]),
+            agent_name=str(kwargs["agent_lookup_name"]),
+            task_id=str(kwargs["task_id"]),
+            run_id=f"run-registered-root-{len(spawn_calls)}",
+        )
+        return {"success": True, "run_id": run.id, "isolation": kwargs["isolation"]}
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
     root = task_manager.create_task(
         project_id=project_id,
         title="Gwiki Parity+ Roadmap",
@@ -634,11 +657,17 @@ async def test_build_plan_file_uses_registered_open_root_task(
         root_task_ref=f"#{root.seq_num}",
     )
 
-    result = await _build(
+    result = await build(
         str(plan_file),
         _options(isolation="none"),
         db=temp_db,
         project_id=project_id,
+        services=SimpleNamespace(
+            database=temp_db,
+            task_manager=task_manager,
+            session_manager=session_manager,
+            agent_runner=SimpleNamespace(),
+        ),
     )
 
     duplicate_count = temp_db.fetchone(
@@ -655,6 +684,8 @@ async def test_build_plan_file_uses_registered_open_root_task(
     assert result.created is False
     assert result.task_id == root.id
     assert duplicate_count == 0
+    assert result.tick_dispatched >= 1
+    assert {call["task_id"] for call in spawn_calls} == {root.id}
 
 
 @pytest.mark.asyncio
