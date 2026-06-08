@@ -714,7 +714,6 @@ mod tests {
 
     impl EnvGuard {
         fn set(key: &'static str, value: &OsStr) -> Self {
-
             let guard = Self {
                 key,
                 old_value: std::env::var_os(key),
@@ -735,7 +734,6 @@ mod tests {
             }
             guard
         }
-
     }
 
     impl Drop for EnvGuard {
@@ -745,7 +743,6 @@ mod tests {
                     Some(value) => std::env::set_var(self.key, value),
                     None => std::env::remove_var(self.key),
                 }
-
             }
         }
     }

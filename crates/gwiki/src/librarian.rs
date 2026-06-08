@@ -517,15 +517,12 @@ mod tests {
             report.check("weak_provenance").items,
             vec![PathBuf::from("wiki/code/example.md")]
         );
-        assert!(!report.check("outdated_codewiki").available);
+        assert!(report.check("outdated_codewiki").available);
         assert_eq!(
             report.check("outdated_codewiki").items,
-            Vec::<PathBuf>::new()
+            vec![PathBuf::from("wiki/code/example.md")]
         );
-        assert_eq!(
-            report.check("outdated_codewiki").note.as_deref(),
-            Some("shared code graph is unavailable; skipped outdated codewiki detection")
-        );
+        assert!(report.check("outdated_codewiki").note.is_none());
         assert!(!report.check("patch_suggestions").available);
         assert!(
             report
