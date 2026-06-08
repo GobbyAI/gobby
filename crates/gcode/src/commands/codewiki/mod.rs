@@ -18,6 +18,7 @@ use crate::visibility;
 
 const DEFAULT_OUT_DIR: &str = "codewiki";
 const CODEWIKI_META_PATH: &str = "_meta/codewiki.json";
+const OWNERSHIP_META_PATH: &str = "_meta/ownership.json";
 const MAX_MERMAID_HOPS: usize = 2;
 const MAX_MERMAID_EDGES: usize = 20;
 const MAX_EDGE_LIMIT: usize = 100_000;
@@ -26,6 +27,7 @@ mod build;
 mod cluster;
 mod graph;
 mod io;
+mod ownership;
 mod paths;
 mod prompts;
 mod render;
@@ -44,6 +46,7 @@ pub(crate) use cluster::{common_module_for_files, find_file_root};
 pub(crate) use graph::fetch_codewiki_graph_edges;
 #[cfg(test)]
 pub(crate) use graph::{codewiki_call_edges_query, codewiki_import_edges_query};
+pub(crate) use ownership::{OwnershipMeta, OwnershipOptions, build_ownership_doc};
 // Markdown path and wikilink helpers.
 pub(crate) use paths::{
     component_label, direct_child_modules, file_doc_path, file_wikilink, in_scope, inline_code,
@@ -63,6 +66,7 @@ pub(crate) use text::{
     structural_repo_summary, structural_symbol_purpose, write_section,
 };
 
+pub(crate) use io::{read_ownership_meta, write_ownership_meta};
 pub use io::{write_doc_set, write_incremental_doc_set};
 
 #[derive(Debug, Clone)]
@@ -298,22 +302,30 @@ pub fn run(
     };
     let mut generator = resolve_text_generator(ctx, ai);
     let ai_enabled = generator.is_some();
-    let docs = generate_hierarchical_docs(&input, generator.as_deref_mut());
+    let out_dir = out.unwrap_or_else(|| DEFAULT_OUT_DIR.to_string());
+    let out_path = Path::new(&out_dir);
+    let mut ownership_meta = read_ownership_meta(out_path)?;
+    let docs = generate_hierarchical_docs_with_ownership(
+        &input,
+        &ctx.project_root,
+        &mut ownership_meta,
+        generator.as_deref_mut(),
+    )?;
     let module_count = docs
         .iter()
-        .filter(|(path, _)| path.starts_with("modules/"))
+        .filter(|(path, _)| path.starts_with("code/modules/"))
         .count();
     let file_count = docs
         .iter()
-        .filter(|(path, _)| path.starts_with("files/"))
+        .filter(|(path, _)| path.starts_with("code/files/"))
         .count();
     let symbol_count = input
         .symbols
         .iter()
         .filter(|symbol| is_core_file(&symbol.file_path))
         .count();
-    let out_dir = out.unwrap_or_else(|| DEFAULT_OUT_DIR.to_string());
-    let changed_paths = write_incremental_doc_set(&ctx.project_root, Path::new(&out_dir), &docs)?;
+    let changed_paths = write_incremental_doc_set(&ctx.project_root, out_path, &docs)?;
+    write_ownership_meta(out_path, &ownership_meta)?;
     let generated_pages = docs.len();
     let skipped = generated_pages.saturating_sub(changed_paths.len());
 
@@ -359,6 +371,23 @@ fn generate_hierarchical_docs_with_graph_availability(
     input: &CodewikiInput,
     mut generate: Option<&mut TextGenerator<'_>>,
 ) -> Vec<(String, String)> {
+    generate_hierarchical_docs_core(input, None, &mut generate).expect("ownership disabled")
+}
+
+fn generate_hierarchical_docs_with_ownership(
+    input: &CodewikiInput,
+    project_root: &Path,
+    ownership_meta: &mut OwnershipMeta,
+    mut generate: Option<&mut TextGenerator<'_>>,
+) -> anyhow::Result<Vec<(String, String)>> {
+    generate_hierarchical_docs_core(input, Some((project_root, ownership_meta)), &mut generate)
+}
+
+fn generate_hierarchical_docs_core(
+    input: &CodewikiInput,
+    ownership: Option<(&Path, &mut OwnershipMeta)>,
+    generate: &mut Option<&mut TextGenerator<'_>>,
+) -> anyhow::Result<Vec<(String, String)>> {
     let mut files = input
         .files
         .iter()
@@ -397,7 +426,7 @@ fn generate_hierarchical_docs_with_graph_availability(
                     .cloned()
                     .unwrap_or_else(|| module_for_file(file)),
                 symbols_by_file.remove(file).unwrap_or_default(),
-                &mut generate,
+                generate,
             )
         })
         .collect::<Vec<_>>();
@@ -405,15 +434,15 @@ fn generate_hierarchical_docs_with_graph_availability(
         &file_docs,
         &input.graph_edges,
         input.graph_availability,
-        &mut generate,
+        generate,
     );
-    let repo_doc = build_repo_doc(&file_docs, &module_docs, &mut generate);
+    let repo_doc = build_repo_doc(&file_docs, &module_docs, generate);
     let architecture_doc = build_architecture_doc(
         &file_docs,
         &module_docs,
         &input.graph_edges,
         input.graph_availability,
-        &mut generate,
+        generate,
     );
 
     let mut docs = Vec::new();
@@ -422,13 +451,25 @@ fn generate_hierarchical_docs_with_graph_availability(
         "code/_architecture.md".to_string(),
         render_architecture_doc(&architecture_doc),
     ));
+    if let Some((project_root, ownership_meta)) = ownership {
+        docs.push((
+            "code/_ownership.md".to_string(),
+            build_ownership_doc(
+                project_root,
+                &files,
+                &file_modules,
+                ownership_meta,
+                OwnershipOptions::default(),
+            )?,
+        ));
+    }
     for module in &module_docs {
         docs.push((module_doc_path(&module.module), render_module_doc(module)));
     }
     for file in &file_docs {
         docs.push((file_doc_path(&file.path), render_file_doc(file)));
     }
-    docs
+    Ok(docs)
 }
 
 #[cfg(test)]
