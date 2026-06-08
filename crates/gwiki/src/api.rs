@@ -107,6 +107,9 @@ pub enum Command {
     Trust {
         scope: ScopeSelection,
     },
+    CitationQuality {
+        scope: ScopeSelection,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

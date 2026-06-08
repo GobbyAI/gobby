@@ -2,6 +2,7 @@ pub(crate) mod ask;
 pub(crate) mod audit;
 pub(crate) mod backlinks;
 pub(crate) mod benchmark;
+pub(crate) mod citation_quality;
 pub(crate) mod collect;
 pub(crate) mod compile;
 pub(crate) mod export;
@@ -90,6 +91,7 @@ pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
         Command::Health { scope } => health::execute(scope),
         Command::Status { scope } => status::execute(scope),
         Command::Trust { scope } => trust::execute(scope),
+        Command::CitationQuality { scope } => citation_quality::execute(scope),
     }
 }
 
