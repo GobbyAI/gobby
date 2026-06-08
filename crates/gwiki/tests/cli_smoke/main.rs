@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 #[path = "../common/mod.rs"]
 mod common;
 
+mod benchmark;
 mod config_postgres;
 mod ingest_refresh;
 mod public_smoke;

@@ -1,6 +1,7 @@
 pub(crate) mod ask;
 pub(crate) mod audit;
 pub(crate) mod backlinks;
+pub(crate) mod benchmark;
 pub(crate) mod collect;
 pub(crate) mod compile;
 pub(crate) mod export;
@@ -63,6 +64,7 @@ pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
         Command::Read { target, scope } => read::execute(target, scope),
         Command::Backlinks { page, scope } => backlinks::execute(page, scope),
         Command::LinkSuggest { scope, limit } => backlinks::execute_link_suggest(scope, limit),
+        Command::Benchmark { scope } => benchmark::execute(scope),
         Command::Research(options) => research::execute(options),
         Command::Compile {
             topic,
