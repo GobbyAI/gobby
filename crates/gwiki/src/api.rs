@@ -89,6 +89,9 @@ pub enum Command {
     Graph {
         scope: ScopeSelection,
     },
+    GraphContext {
+        scope: ScopeSelection,
+    },
     Audit {
         scope: ScopeSelection,
     },

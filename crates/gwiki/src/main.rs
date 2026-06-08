@@ -28,6 +28,7 @@ const CLI_SUBCOMMANDS: &[&str] = &[
     "compile",
     "export",
     "graph",
+    "graph-context",
     "audit",
     "lint",
     "health",
@@ -123,6 +124,8 @@ enum CliCommand {
     Export(ExportArgs),
     /// Export unified wiki graph artifacts under outputs/.
     Graph,
+    /// Build a compact wiki graph context pack.
+    GraphContext,
     /// Report claims that lack source support.
     Audit,
     /// Detect broken links and vault hygiene issues.
@@ -588,6 +591,7 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             command: args.into(),
         }),
         CliCommand::Graph => Ok(Command::Graph { scope }),
+        CliCommand::GraphContext => Ok(Command::GraphContext { scope }),
         CliCommand::Audit => Ok(Command::Audit { scope }),
         CliCommand::Lint => Ok(Command::Lint { scope }),
         CliCommand::Health => Ok(Command::Health { scope }),
@@ -798,6 +802,30 @@ mod tests {
         assert!(llm);
         assert_eq!(ai, AiRouting::Direct);
         assert!(require_ai);
+    }
+
+    #[test]
+    fn graph_context_cli_maps_to_command() {
+        let cli = Cli::try_parse_from([
+            "gwiki",
+            "--format",
+            "json",
+            "graph-context",
+            "--topic",
+            "docs",
+        ])
+        .expect("parse graph-context command");
+        assert_eq!(cli.scope.topic.as_deref(), Some("docs"));
+        let CliCommand::GraphContext = cli.command else {
+            panic!("expected parsed graph-context command");
+        };
+
+        let command = command_from_cli(CliCommand::GraphContext, ScopeSelection::topic("docs"))
+            .expect("map graph-context command");
+        let Command::GraphContext { scope } = command else {
+            panic!("expected graph-context command");
+        };
+        assert_eq!(scope.topic_name(), Some("docs"));
     }
 
     #[test]
