@@ -110,29 +110,14 @@ class TestResolveProvider:
         assert result.source == "workflow"
         assert result.model == "gpt-4o"
 
-    def test_config_provider_third_priority(self) -> None:
-        """Test that config provider has third priority."""
-        # Create mock config
+    def test_config_argument_does_not_change_default(self) -> None:
+        """Config no longer contributes provider selection."""
         mock_config = MagicMock()
-        mock_config.llm_providers.get_enabled_providers.return_value = ["claude"]
 
         result = resolve_provider(config=mock_config)
 
         assert result.provider == "claude"
-        assert result.source == "config"
-
-    def test_config_prefers_claude(self) -> None:
-        """Test that config prefers claude when available."""
-        mock_config = MagicMock()
-        mock_config.llm_providers.get_enabled_providers.return_value = [
-            "custom",
-            "claude",
-        ]
-
-        result = resolve_provider(config=mock_config)
-
-        assert result.provider == "claude"
-        assert result.source == "config"
+        assert result.source == "default"
 
     def test_default_provider_lowest_priority(self) -> None:
         """Test that default is used when nothing else is available."""
@@ -151,13 +136,12 @@ class TestResolveProvider:
         assert result.provider == "claude"
         assert result.source == "explicit"
 
-    def test_workflow_overrides_config(self) -> None:
-        """Test that workflow overrides config."""
+    def test_workflow_ignores_config(self) -> None:
+        """Workflow provider is independent from daemon provider config."""
         mock_workflow = MagicMock()
         mock_workflow.variables = {"provider": "claude"}
 
         mock_config = MagicMock()
-        mock_config.llm_providers.get_enabled_providers.return_value = ["claude"]
 
         result = resolve_provider(workflow=mock_workflow, config=mock_config)
 
@@ -169,27 +153,23 @@ class TestResolveProvider:
         with pytest.raises(InvalidProviderError):
             resolve_provider(explicit_provider="invalid/provider")
 
-    def test_validates_against_config(self) -> None:
-        """Test provider validation against config when not allow_unconfigured."""
+    def test_explicit_ignores_config(self) -> None:
+        """Explicit provider is independent from daemon provider config."""
         mock_config = MagicMock()
-        mock_config.llm_providers.get_enabled_providers.return_value = ["claude"]
 
-        with pytest.raises(ProviderNotConfiguredError) as exc_info:
-            resolve_provider(
-                explicit_provider="codex",
-                config=mock_config,
-                allow_unconfigured=False,
-            )
+        result = resolve_provider(
+            explicit_provider="codex",
+            config=mock_config,
+            allow_unconfigured=False,
+        )
 
-        assert exc_info.value.provider == "codex"
-        assert "claude" in exc_info.value.available
+        assert result.provider == "codex"
+        assert result.source == "explicit"
 
-    def test_allow_unconfigured_skips_validation(self) -> None:
-        """Test that allow_unconfigured=True skips config validation."""
+    def test_allow_unconfigured_kept_for_call_site_compatibility(self) -> None:
+        """The flag remains accepted while provider config validation is gone."""
         mock_config = MagicMock()
-        mock_config.llm_providers.get_enabled_providers.return_value = ["claude"]
 
-        # Should not raise
         result = resolve_provider(
             explicit_provider="codex",
             config=mock_config,

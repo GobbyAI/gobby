@@ -4,8 +4,7 @@ Provider resolution for LLM providers.
 Implements provider resolution hierarchy:
 1. Explicit provider parameter (highest priority)
 2. Workflow settings
-3. Config.yaml llm_providers section
-4. Hardcoded default ("claude")
+3. Hardcoded default ("claude")
 
 Provides validation and error handling.
 """
@@ -13,17 +12,11 @@ Provides validation and error handling.
 import logging
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
     from gobby.workflows.definitions import WorkflowDefinition
-
-
-class _LegacyProvidersConfig(Protocol):
-    """Compatibility surface for non-DaemonConfig tests/mocks during removal."""
-
-    def get_enabled_providers(self) -> list[str]: ...
 
 
 logger = logging.getLogger(__name__)
@@ -65,7 +58,7 @@ class MissingProviderError(ProviderError):
 
 
 class ProviderNotConfiguredError(ProviderError):
-    """Raised when a provider is not configured in llm_providers."""
+    """Raised when a provider is unavailable."""
 
     def __init__(self, provider: str, available: list[str]):
         self.provider = provider
@@ -149,13 +142,12 @@ def resolve_provider(
     Resolution order (highest to lowest priority):
     1. Explicit provider parameter
     2. Workflow settings (workflow.variables.get("provider"))
-    3. Config.yaml llm_providers (first enabled provider)
-    4. Hardcoded default ("claude")
+    3. Hardcoded default ("claude")
 
     Args:
         explicit_provider: Explicitly specified provider (highest priority).
         workflow: Optional workflow definition with provider settings.
-        config: Optional daemon config with llm_providers.
+        config: Optional daemon config. Kept for call-site compatibility.
         allow_unconfigured: If True, skip config validation for the provider.
 
     Returns:
@@ -164,7 +156,7 @@ def resolve_provider(
     Raises:
         InvalidProviderError: If a provider name is invalid.
         MissingProviderError: If no provider can be resolved (shouldn't happen with default).
-        ProviderNotConfiguredError: If provider is not in llm_providers (unless allow_unconfigured).
+        ProviderNotConfiguredError: If provider availability validation fails.
     """
     checked_levels: list[str] = []
 
@@ -173,11 +165,6 @@ def resolve_provider(
         checked_levels.append("explicit")
         provider = validate_provider_name(explicit_provider)
         logger.debug(f"Resolved provider '{provider}' from explicit parameter")
-
-        # Validate against config if available and not allowing unconfigured
-        llm_providers = getattr(config, "llm_providers", None)
-        if llm_providers and not allow_unconfigured:
-            _validate_provider_configured(provider, llm_providers)
 
         return ResolvedProvider(provider=provider, source="explicit")
 
@@ -191,65 +178,14 @@ def resolve_provider(
             provider = validate_provider_name(workflow_provider)
             logger.debug(f"Resolved provider '{provider}' from workflow variables")
 
-            llm_providers = getattr(config, "llm_providers", None)
-            if llm_providers and not allow_unconfigured:
-                _validate_provider_configured(provider, llm_providers)
-
             return ResolvedProvider(
                 provider=provider,
                 source="workflow",
                 model=workflow_model if isinstance(workflow_model, str) else None,
             )
 
-    # 3. Check llm_providers config
-    llm_providers = getattr(config, "llm_providers", None)
-    if llm_providers:
-        checked_levels.append("config")
-        enabled = llm_providers.get_enabled_providers()
-
-        if enabled:
-            # Prefer claude if available
-            if "claude" in enabled:
-                provider = "claude"
-            else:
-                provider = enabled[0]
-
-            logger.debug(f"Resolved provider '{provider}' from config (enabled: {enabled})")
-            return ResolvedProvider(provider=provider, source="config")
-
-    # 4. Hardcoded default
+    # 3. Hardcoded default
     checked_levels.append("default")
     logger.debug(f"Resolved provider '{DEFAULT_PROVIDER}' from hardcoded default")
 
-    # Validate default is configured if config exists
-    llm_providers = getattr(config, "llm_providers", None)
-    if llm_providers and not allow_unconfigured:
-        enabled = llm_providers.get_enabled_providers()
-        if enabled and DEFAULT_PROVIDER not in enabled:
-            # Default not configured, but we have other providers - use first
-            provider = enabled[0]
-            logger.debug(f"Default not configured, using first enabled: {provider}")
-            return ResolvedProvider(provider=provider, source="config")
-
     return ResolvedProvider(provider=DEFAULT_PROVIDER, source="default")
-
-
-def _validate_provider_configured(provider: str, llm_providers: _LegacyProvidersConfig) -> None:
-    """
-    Validate that a provider is configured in llm_providers.
-
-    Args:
-        provider: Provider name to validate.
-        llm_providers: LLM providers configuration.
-
-    Raises:
-        ProviderNotConfiguredError: If provider is not configured.
-    """
-    # Local provider config lives on DaemonConfig.local, not llm_providers.
-    if provider == "local":
-        return
-
-    enabled = llm_providers.get_enabled_providers()
-
-    if provider not in enabled:
-        raise ProviderNotConfiguredError(provider, enabled)

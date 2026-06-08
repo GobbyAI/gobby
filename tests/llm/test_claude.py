@@ -15,7 +15,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from gobby.config.app import DaemonConfig
-from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
 
 pytestmark = pytest.mark.unit
 
@@ -64,11 +63,7 @@ class MockExitCodeError(Exception):
 @pytest.fixture
 def claude_config() -> DaemonConfig:
     """DaemonConfig with Claude provider."""
-    return DaemonConfig(
-        llm_providers=LLMProvidersConfig(
-            claude=LLMProviderConfig(models="claude-sonnet-4-5"),
-        ),
-    )
+    return DaemonConfig()
 
 
 @contextmanager

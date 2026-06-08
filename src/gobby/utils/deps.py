@@ -496,13 +496,16 @@ def check_config_mismatches(config: Any) -> list[dict[str, str]]:
     """
     issues: list[dict[str, str]] = []
 
-    # LLM providers vs CLIs
-    providers = config.llm_providers
-    if providers.claude and not shutil.which("claude"):
+    # Chat candidates vs CLIs
+    chat_candidates = getattr(getattr(config, "chat", None), "candidates", ())
+    uses_claude_chat = any(
+        str(candidate).partition("/")[0] == "claude" for candidate in chat_candidates
+    )
+    if uses_claude_chat and not shutil.which("claude"):
         issues.append(
             {
                 "subsystem": "Claude Code",
-                "error": "provider configured but claude CLI not in PATH",
+                "error": "chat candidates include Claude but claude CLI not in PATH",
             }
         )
     # Embedding provider vs local tools

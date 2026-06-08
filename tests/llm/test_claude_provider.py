@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from gobby.config.app import DaemonConfig
-from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
 from gobby.llm.claude import ClaudeLLMProvider, _normalize_claude_usage
 
 pytestmark = pytest.mark.unit
@@ -53,11 +52,7 @@ class MockClaudeAgentOptions:
 
 @pytest.fixture
 def claude_config() -> DaemonConfig:
-    return DaemonConfig(
-        llm_providers=LLMProvidersConfig(
-            claude=LLMProviderConfig(models="claude-3-5-sonnet"),
-        )
-    )
+    return DaemonConfig()
 
 
 @contextmanager

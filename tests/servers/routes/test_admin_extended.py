@@ -28,12 +28,7 @@ class TestAdminRoutesExtended:
         server.llm_service = MagicMock()
         server.llm_service.enabled_providers = ["claude"]
 
-        # Mock services config for models
         server.services = MagicMock()
-        mock_provider_config = MagicMock()
-        mock_provider_config.get_models_list.return_value = ["claude-3-opus", "claude-3-sonnet"]
-        mock_provider_config.auth_mode = "api_key"
-        server.services.config.llm_providers.claude = mock_provider_config
 
         # Mock internal manager for workflows/reload
         server._internal_manager = MagicMock()

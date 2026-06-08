@@ -17,13 +17,10 @@ def create_llm_service(config: DaemonConfig) -> LLMService:
     Create an LLM service for multi-provider support.
 
     Args:
-        config: Client configuration with llm_providers.
+        config: Daemon configuration.
 
     Returns:
-        LLMService instance with access to all configured providers.
-
-    Raises:
-        ValueError: If config doesn't have llm_providers set.
+        LLMService instance backed by feature routing.
 
     Example:
         service = create_llm_service(config)

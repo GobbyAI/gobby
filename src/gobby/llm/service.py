@@ -111,19 +111,6 @@ class LLMService:
             self._initialized_providers.add(name)
             return provider
 
-        # Check if provider is configured
-        if not self._config.llm_providers:
-            raise ValueError("llm_providers not configured")
-
-        provider_config = getattr(self._config.llm_providers, name, None)
-        if not provider_config:
-            enabled = ", ".join(
-                f"{provider!r}" for provider in self._config.llm_providers.get_enabled_providers()
-            )
-            if not enabled:
-                enabled = "<none>"
-            raise ValueError(f"Provider '{name}' is not configured. Available providers: {enabled}")
-
         if name == "claude":
             from gobby.llm.claude import ClaudeLLMProvider
 
@@ -167,12 +154,9 @@ class LLMService:
         Raises:
             ValueError: If no providers are configured
         """
-        if not self._config.llm_providers:
-            raise ValueError("llm_providers not configured")
-
-        enabled = self._config.llm_providers.get_enabled_providers()
+        enabled = self.enabled_providers
         if not enabled:
-            raise ValueError("No providers configured in llm_providers")
+            raise ValueError("No providers available")
 
         # Prefer Claude if available
         if "claude" in enabled:

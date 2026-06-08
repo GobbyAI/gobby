@@ -151,20 +151,15 @@ def decode_llm_response(
 ```
 
 ### Configuration
-Added to `llm_providers.py`:
-```python
-class LLMProvidersConfig(BaseModel):
-    json_strict: bool = Field(
-        default=False,  # LLM responses often have type quirks; use permissive default
-        description="Strict JSON validation. Set True for pre-validated data.",
-    )
-```
+Strictness is now caller policy rather than provider config. Workflows can set
+`llm_json_strict`; otherwise callers pass the default they want for the response
+shape.
 
 ### Usage Pattern
 Callers look up config/workflow variable and pass explicit `strict` value:
 ```python
-# Get strict mode: workflow variable > config default
-strict = workflow_state.variables.get("llm_json_strict", config.llm_providers.json_strict)
+# Get strict mode from workflow variables, defaulting permissive for LLM output
+strict = workflow_state.variables.get("llm_json_strict", False)
 result = decode_llm_response(llm_text, MyResponseType, strict=strict)
 ```
 

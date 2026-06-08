@@ -10,7 +10,6 @@ import pytest
 from gobby.ai import AIAdapterStyle, AICapability, AICapabilityRegistry, CapabilityBinding
 from gobby.config.ai import AIConfig, GenerationConfig, LocalGenerationConfig
 from gobby.config.app import DaemonConfig
-from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
 from gobby.config.sessions import DigestConfig
 from gobby.llm.service import LLMService
 
@@ -43,15 +42,11 @@ class FakeTextGeneration:
 
 @pytest.fixture
 def llm_config() -> DaemonConfig:
-    return DaemonConfig(
-        llm_providers=LLMProvidersConfig(
-            claude=LLMProviderConfig(models="haiku,sonnet", default_model="sonnet")
-        )
-    )
+    return DaemonConfig()
 
 
 def test_init_with_empty_providers_succeeds() -> None:
-    service = LLMService(DaemonConfig(llm_providers=LLMProvidersConfig(claude=None)))
+    service = LLMService(DaemonConfig())
 
     assert service.initialized_providers == []
 

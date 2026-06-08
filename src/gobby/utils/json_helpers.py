@@ -153,9 +153,9 @@ def decode_llm_response[T](
         text: Raw LLM response text (may contain markdown code blocks, preamble, etc.)
         response_type: The msgspec.Struct or other type to decode to
         strict: If True (default), type mismatches raise errors.
-                If False, allows coercion (e.g., "5" -> 5 for int fields).
-                Configure via llm_providers.json_strict in gobby-config,
-                or override per-workflow with llm_json_strict variable.
+            If False, allows coercion (e.g., "5" -> 5 for int fields).
+            Callers may derive this from workflow variables such as
+            llm_json_strict.
 
     Returns:
         Decoded response of type T, or None if extraction/decoding fails.

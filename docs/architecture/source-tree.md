@@ -320,11 +320,10 @@ gobby/                                  # Project root
 │   │   ├── validation.py               # TaskValidator
 │   │   └── prompts/                    # LLM prompts for expansion
 │   │
-│   ├── config/                         # Configuration (~18 modules)
+│   ├── config/                         # Configuration (~17 modules)
 │   │   ├── app.py                      # DaemonConfig (YAML config model)
 │   │   ├── bootstrap.py                # Pre-DB bootstrap settings
 │   │   ├── features.py                 # Feature flags
-│   │   ├── llm_providers.py            # LLM provider config
 │   │   ├── logging.py                  # Logging config
 │   │   ├── mcp.py                      # MCP config
 │   │   ├── sessions.py                 # Session config

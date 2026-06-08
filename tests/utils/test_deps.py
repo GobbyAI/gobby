@@ -536,7 +536,7 @@ def test_get_configured_embedding_provider_reraises_unexpected_errors() -> None:
 
 def test_check_config_mismatches() -> None:
     config = MagicMock()
-    config.llm_providers.claude = True
+    config.chat.candidates = ["claude/sonnet"]
     config.embeddings.api_base = "http://localhost:1234/v1"
 
     with patch("shutil.which", return_value=False):

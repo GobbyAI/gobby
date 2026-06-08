@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.config.app import DaemonConfig, LocalConfig
-from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
 from gobby.llm.local import _CLOUD_MODEL_ALIASES, LocalLLMProvider
 
 pytestmark = pytest.mark.unit
@@ -23,12 +22,7 @@ def local_config() -> LocalConfig:
 
 @pytest.fixture
 def daemon_config(local_config: LocalConfig) -> DaemonConfig:
-    return DaemonConfig(
-        llm_providers=LLMProvidersConfig(
-            claude=LLMProviderConfig(models="haiku,sonnet,opus"),
-        ),
-        local=local_config,
-    )
+    return DaemonConfig(local=local_config)
 
 
 @pytest.fixture
@@ -54,12 +48,7 @@ class TestLocalLLMProviderInit:
         assert p._url == "http://localhost:1234/v1"
 
     def test_init_without_local_config_raises(self) -> None:
-        config = DaemonConfig(
-            llm_providers=LLMProvidersConfig(
-                claude=LLMProviderConfig(models="haiku"),
-            ),
-            local=None,
-        )
+        config = DaemonConfig(local=None)
         with pytest.raises(ValueError, match="local"):
             LocalLLMProvider(config)
 
@@ -75,9 +64,6 @@ class TestLocalLLMProviderInit:
 
     def test_api_key_passthrough(self) -> None:
         config = DaemonConfig(
-            llm_providers=LLMProvidersConfig(
-                claude=LLMProviderConfig(models="haiku"),
-            ),
             local=LocalConfig(
                 url="http://localhost:1234/v1",
                 model="test",

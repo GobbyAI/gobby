@@ -178,14 +178,12 @@ class ChatSession(ChatSessionPermissionsMixin):
             return None
 
         chat_cfg = getattr(self._config, "chat", None)
-        chat_provider: str | None = getattr(chat_cfg, "provider", None)
-        chat_model: str | None = getattr(chat_cfg, "model", None)
-        if chat_model and (not chat_provider or chat_provider == self.provider):
-            return chat_model
+        candidates = getattr(chat_cfg, "candidates", ()) if chat_cfg else ()
+        for candidate in candidates:
+            candidate_provider, separator, candidate_model = str(candidate).partition("/")
+            if separator and candidate_provider == self.provider and candidate_model:
+                return candidate_model
 
-        if hasattr(self._config, "llm_providers"):
-            model: str | None = self._config.llm_providers.default_model
-            return model
         return None
 
     async def _resolve_requested_model(
@@ -237,8 +235,7 @@ class ChatSession(ChatSessionPermissionsMixin):
         if not cli_path:
             raise RuntimeError(
                 "Claude CLI not found in PATH. "
-                "Install Claude Code for subscription mode, or set "
-                "auth_mode to 'api_key' in llm_providers config."
+                "Install Claude Code and authenticate it before starting chat."
             )
 
         self._model = model

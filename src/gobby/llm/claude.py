@@ -27,6 +27,7 @@ from gobby.utils.json_helpers import extract_json_from_text
 # Headless settings file — zeroes out all hooks so internal LLM calls
 # don't trigger session registration or title synthesis cascades.
 _HEADLESS_SETTINGS = Path.home() / ".gobby" / "settings" / "headless.json"
+_DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-5-20250929"
 
 logger = logging.getLogger(__name__)
 
@@ -130,15 +131,7 @@ class ClaudeLLMProvider(LLMProvider):
 
         self._claude_cli_path = self._find_cli_path()
 
-        # Resolve default model from provider config → global config.
-        # Pydantic defaults guarantee llm_providers.default_model is never None.
-        providers = getattr(config, "llm_providers", None)
-        claude_cfg = getattr(providers, "claude", None) if providers else None
-        self._default_model: str = str(
-            getattr(claude_cfg, "default_model", None)
-            or getattr(providers, "default_model", None)
-            or config.llm_providers.default_model
-        )
+        self._default_model = _DEFAULT_CLAUDE_MODEL
 
     def _find_cli_path(self) -> str | None:
         """Find Claude CLI path. Delegates to claude_cli.find_cli_path()."""
