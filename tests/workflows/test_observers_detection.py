@@ -56,6 +56,7 @@ def _claimed_task(
     category: str | None = "code",
     validation_criteria: str | None = None,
     additional_skills: list[str] | None = None,
+    claimed_by_session_id: str | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=task_id,
@@ -66,8 +67,7 @@ def _claimed_task(
         category=category,
         validation_criteria=validation_criteria,
         additional_skills=additional_skills,
-        claimed_by_session_id=SESSION_ID,
-        assignee=None,
+        claimed_by_session_id=claimed_by_session_id,
         closed_at=None,
         is_escalated=False,
         stages=(),
@@ -639,6 +639,7 @@ class TestDetectTaskClaimClaimOperations:
             task_id="task-uuid-123",
             title="Update src/gobby/workflows/hooks.py",
             validation_criteria="src/gobby/workflows/hooks.py caches metadata",
+            claimed_by_session_id=SESSION_ID,
         )
         mock_task_manager.get_task.return_value = task
         variables["claimed_tasks"] = {"task-uuid-123": "#123"}

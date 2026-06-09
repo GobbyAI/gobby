@@ -11,7 +11,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
+from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from gobby.workflows.templates import TemplateEngine
@@ -105,7 +105,7 @@ class TestMCPRewriteNesting:
             manager,
             "strip-flag",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[
                     RuleEffect(
                         type="rewrite_input",
@@ -148,7 +148,7 @@ class TestMCPRewriteNesting:
             manager,
             "rewrite-command",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[
                     RuleEffect(
                         type="rewrite_input",
@@ -183,7 +183,7 @@ class TestMCPRewriteNesting:
             manager,
             "strip-flag",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[
                     RuleEffect(
                         type="rewrite_input",
@@ -362,7 +362,7 @@ def _insert_require_uv_block_rule(manager: LocalWorkflowDefinitionManager) -> No
         manager,
         "require-uv",
         RuleDefinitionBody(
-            event=RuleEvent.BEFORE_TOOL,
+            event=RuleTriggerEvent.BEFORE_TOOL,
             when="variables.get('require_uv')",
             effects=[
                 RuleEffect(
@@ -553,7 +553,7 @@ class TestPermissionResponseEffects:
             manager,
             "permission-clear",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[
                     RuleEffect(
                         type="set_permission_response",
@@ -585,7 +585,7 @@ class TestPermissionResponseEffects:
             manager,
             "no-retry",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="set_retry", retry=False)],
             ),
         )

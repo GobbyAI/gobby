@@ -11,9 +11,9 @@ import {
  *
  * Presentational primitives only: they own a local draft, commit the
  * changed value via `onCommit`, and never call endpoints. The host (D5)
- * wires `onCommit` to useTaskInlineEdit.commitField. State / assignee /
- * stage are deliberately NOT free-text here — those render as dedicated
- * action controls (claim/release, stage move, close/reopen) in the host.
+ * wires `onCommit` to useTaskInlineEdit.commitField. State/stage and
+ * terminal actions are deliberately NOT free-text here — those render as
+ * dedicated action controls in the host.
  *
  * Shared interaction contract: Esc cancels (reverts to the committed
  * value), blur and Enter commit. The committed value is reconciled from

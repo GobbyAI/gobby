@@ -15,7 +15,7 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
-from gobby.storage.tasks._crud import update_task
+from gobby.storage.tasks._updates import update_task
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.definitions import WorkflowInstance

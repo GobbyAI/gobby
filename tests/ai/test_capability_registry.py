@@ -143,7 +143,7 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
 
     codex = registry.binding(AICapability.TEXT_GENERATE, "codex")
     assert codex is not None
-    assert codex.models == ("gpt-5.3-codex-spark", "gpt-5.4-mini", "gpt-5.3-codex")
+    assert codex.models == ("gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark")
     assert "default_model" not in codex.metadata
     assert "auth_mode" not in codex.metadata
 

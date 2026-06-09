@@ -9,7 +9,7 @@ Modules:
 - protocol.py: Protocol/interface definitions
 - client.py: CodexAppServerClient implementation
 - app_server_adapter.py: CodexAdapter implementation
-- hooks_adapter.py: CodexHooksAdapter and CodexNotifyAdapter implementations
+- hooks_adapter.py: CodexHooksAdapter implementation
 
 Importer analysis (from codex.py):
 - src/gobby/servers/app_factory.py: imports CodexAdapter from app_server_adapter

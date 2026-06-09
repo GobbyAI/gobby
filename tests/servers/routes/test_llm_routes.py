@@ -164,7 +164,7 @@ def test_generate_defaults_to_feature_low_and_accepts_system_alias(
                 provider="codex",
                 adapter_style=AIAdapterStyle.DAEMON,
                 available=True,
-                models=("gpt-5.3-codex-spark",),
+                models=("gpt-5.4-mini",),
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
@@ -189,17 +189,17 @@ def test_generate_defaults_to_feature_low_and_accepts_system_alias(
     assert response.status_code == 200
     build_service.assert_called_once_with(server_with_llm.config)
     assert response.json() == {
-        "text": "Generated text",
-        "capability": "text_generate",
-        "provider": "codex",
-        "model": "gpt-5.3-codex-spark",
+            "text": "Generated text",
+            "capability": "text_generate",
+            "provider": "codex",
+            "model": "gpt-5.4-mini",
     }
     assert codex.requests == [
         TextGenerationRequest(
             prompt="Summarize this",
             provider="codex",
             profile="feature_low",
-            model="gpt-5.3-codex-spark",
+            model="gpt-5.4-mini",
             system_prompt="Be concise",
             caller="llm-generate-route",
         )

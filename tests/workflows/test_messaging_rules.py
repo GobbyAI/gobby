@@ -16,7 +16,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
+from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.enforcement.blocking import is_message_delivery_tool
 from gobby.workflows.engine.core import RuleEngine
 
@@ -87,7 +87,7 @@ class TestDeliverPendingMessages:
 
     def _rule_body(self) -> RuleDefinitionBody:
         return RuleDefinitionBody(
-            event=RuleEvent.TURN_START,
+            event=RuleTriggerEvent.TURN_START,
             when="event.metadata.get('_platform_session_id')",
             effects=[
                 RuleEffect(
@@ -284,7 +284,7 @@ def _make_event_with_metadata(
 def _notify_unread_mail_body() -> RuleDefinitionBody:
     """Build the notify-unread-mail rule body matching the YAML template."""
     return RuleDefinitionBody(
-        event=RuleEvent.BEFORE_TOOL,
+        event=RuleTriggerEvent.BEFORE_TOOL,
         agent_scope=["*"],
         when=(
             "has_pending_messages(event.metadata.get('_platform_session_id', '')) "
@@ -477,7 +477,7 @@ class TestJinja2HelperRendering:
         _insert_undelivered_message(db, target_session)
 
         body = RuleDefinitionBody(
-            event=RuleEvent.BEFORE_TOOL,
+            event=RuleTriggerEvent.BEFORE_TOOL,
             agent_scope=["*"],
             when="has_pending_messages(event.metadata.get('_platform_session_id', ''))",
             effects=[
@@ -510,7 +510,7 @@ class TestJinja2HelperRendering:
         _insert_undelivered_message(db, target_session)
 
         body = RuleDefinitionBody(
-            event=RuleEvent.BEFORE_TOOL,
+            event=RuleTriggerEvent.BEFORE_TOOL,
             agent_scope=["*"],
             when="has_pending_messages(event.metadata.get('_platform_session_id', ''))",
             effects=[

@@ -38,6 +38,7 @@ describe("useChat plan feedback", () => {
     act(() => {
       ws.simulateMessage({
         type: "plan_pending_approval",
+        conversation_id: result.current.conversationId,
         plan_content: "# My Plan\n\nStep 1...",
       });
     });

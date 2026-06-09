@@ -324,7 +324,6 @@ describe("TasksTab — filters", () => {
           seq_num: 777,
           path_cache: "777",
           requires_user_review: false,
-          assignee: null,
           agent_name: null,
           sequence_order: null,
           start_date: null,

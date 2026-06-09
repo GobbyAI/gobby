@@ -30,7 +30,7 @@ def _make_task(
     status: str = "open",
     priority: int = 2,
     task_type: str = "task",
-    assignee: str | None = None,
+    claimed_by_session_id: str | None = None,
     labels: list[str] | None = None,
     validation_criteria: str | None = None,
     commits: list[str] | None = None,
@@ -51,7 +51,7 @@ def _make_task(
         created_at="2024-01-01T00:00:00Z",
         updated_at="2024-01-01T00:00:00Z",
         closed_at="2024-01-02T00:00:00Z" if status == "closed" else None,
-        assignee=assignee,
+        claimed_by_session_id=claimed_by_session_id,
         labels=labels or [],
         validation_criteria=validation_criteria,
         commits=commits,
@@ -659,11 +659,11 @@ class TestReopenTask:
 
     @pytest.mark.asyncio
     async def test_reopen_clears_claimed_tasks_variable(self, mock_task_manager, mock_sync_manager):
-        """Reopen removes task from claimed_tasks session variable for prior assignee."""
+        """Reopen removes task from claimed_tasks session variable for prior claimed_by_session_id."""
         task_id = "550e8400-e29b-41d4-a716-446655440000"
         session_id = "session-abc"
         mock_task_manager.get_task.return_value = _make_task(
-            status="in_progress", assignee=session_id
+            status="in_progress", claimed_by_session_id=session_id
         )
 
         with (
@@ -911,7 +911,7 @@ class TestEscalateTask:
         """Escalation removes the task from the prior owner's claimed_tasks."""
         task_id = "550e8400-e29b-41d4-a716-446655440000"
         session_id = "session-abc"
-        task = _make_task(id=task_id, status="in_progress", assignee=session_id)
+        task = _make_task(id=task_id, status="in_progress", claimed_by_session_id=session_id)
         mock_task_manager.get_task.return_value = task
         mock_task_manager.escalate_task.return_value = task
 
@@ -1025,7 +1025,7 @@ class TestMarkTaskReviewApproved:
         """Review approval removes the task from the prior owner's claimed_tasks."""
         task_id = "550e8400-e29b-41d4-a716-446655440000"
         session_id = "session-abc"
-        task = _make_task(id=task_id, status="needs_review", assignee=session_id)
+        task = _make_task(id=task_id, status="needs_review", claimed_by_session_id=session_id)
         mock_task_manager.get_task.return_value = task
         mock_task_manager.approve_review.return_value = task
 
@@ -1136,7 +1136,7 @@ class TestMarkTaskNeedsReview:
         """Needs-review transition removes the task from the prior owner's claimed_tasks."""
         task_id = "550e8400-e29b-41d4-a716-446655440000"
         session_id = "session-abc"
-        task = _make_task(id=task_id, status="in_progress", assignee=session_id)
+        task = _make_task(id=task_id, status="in_progress", claimed_by_session_id=session_id)
         mock_task_manager.get_task.return_value = task
         mock_task_manager.submit_for_review.return_value = task
 
@@ -1200,7 +1200,7 @@ class TestCloseTaskSessionContextGuard:
         import logging as _logging
 
         claimed_session = "claimed-session-uuid"
-        task = _make_task(assignee=claimed_session, commits=None)
+        task = _make_task(claimed_by_session_id=claimed_session, commits=None)
         mock_task_manager.get_task.return_value = task
         mock_task_manager.list_tasks.return_value = []
         mock_task_manager.close_task.return_value = task
@@ -1231,7 +1231,7 @@ class TestCloseTaskSessionContextGuard:
         self, mock_task_manager, mock_sync_manager
     ) -> None:
         """No SessionContext and no claimed_by → explicit no_session_context error."""
-        task = _make_task(assignee=None, commits=None)
+        task = _make_task(claimed_by_session_id=None, commits=None)
         mock_task_manager.get_task.return_value = task
 
         registry = _create_registry(mock_task_manager, mock_sync_manager)

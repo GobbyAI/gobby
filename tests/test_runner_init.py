@@ -1,9 +1,7 @@
 """Initialization and configuration tests for GobbyRunner."""
 
 import json
-import logging
 from contextlib import ExitStack
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -206,78 +204,6 @@ class TestWakeTmuxSenders:
         ]
 
 
-class TestStaleNeo4jConfigStartup:
-    """Startup cleanup for stale Neo4j config rows."""
-
-    def test_init_storage_warns_and_cleans_stale_neo4j_config_before_final_load(
-        self,
-        tmp_path: Path,
-        temp_db: Any,
-        caplog: pytest.LogCaptureFixture,
-        enable_log_propagation: None,
-    ) -> None:
-        """Stale Neo4j config is warned, cleaned, and migrated before services read config."""
-        from gobby.runner_init.storage import init_storage_and_config
-
-        temp_db.execute(
-            "DELETE FROM config_store WHERE key = %s",
-            ("databases.falkordb.rrf_k",),
-        )
-        _set_config_value(temp_db, "databases.neo4j.rrf_k", 80)
-        _set_config_value(temp_db, "databases.neo4j.auth", "$secret:auth", is_secret=True)
-        _set_config_value(temp_db, "mock.test.auth", "$secret:auth", is_secret=True)
-        _set_config_value(temp_db, "databases.falkordb.host", "127.0.0.1")
-        _set_config_value(temp_db, "databases.falkordb.port", 16379)
-        _set_config_value(temp_db, "databases.falkordb.password", "safe-pass")
-        temp_db.execute(
-            """
-            INSERT INTO secrets (id, name, encrypted_value, category, description, created_at, updated_at)
-            VALUES ('secret-auth', 'auth', 'encrypted', 'general', 'shared auth', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            """
-        )
-
-        class FakeSecretStore:
-            def __init__(self, db: Any) -> None:
-                self.db = db
-
-            def get(self, name: str) -> str | None:
-                return "shared-pass" if name == "auth" else None
-
-        class FakeModelCostStore:
-            def __init__(self, db: Any) -> None:
-                self.db = db
-
-            def populate(self) -> None:
-                return None
-
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("{}\n")
-        runner = SimpleNamespace()
-
-        with (
-            patch("gobby.runner_init.storage.init_telemetry"),
-            patch("gobby.runner_init.storage.get_machine_id", return_value="test-machine"),
-            patch("gobby.runner_init.storage.init_hub_database", return_value=temp_db),
-            patch("gobby.storage.secrets.SecretStore", FakeSecretStore),
-            patch("gobby.storage.model_costs.ModelCostStore", FakeModelCostStore),
-            patch("gobby.utils.dev.is_dev_mode", return_value=False),
-        ):
-            with caplog.at_level(logging.WARNING, logger="gobby"):
-                init_storage_and_config(runner, config_file, verbose=False)
-
-        assert "Detected stale Neo4j config keys" in caplog.text
-        assert "databases.neo4j.rrf_k" in caplog.text
-        assert "databases.neo4j.auth" in caplog.text
-        assert "Cleaning them up now" in caplog.text
-
-        assert runner.config.databases.falkordb.rrf_k == 80
-        assert _config_value(temp_db, "databases.falkordb.rrf_k") == 80
-        assert _config_value(temp_db, "databases.neo4j.rrf_k") is None
-        assert _config_value(temp_db, "databases.neo4j.auth") is None
-        assert _config_value(temp_db, "mock.test.auth") == "$secret:auth"
-        assert temp_db.fetchone("SELECT name FROM secrets WHERE name = %s", ("auth",)) is not None
-
-
 class TestSetMockDefault:
     """Tests for test helper default assignment behavior."""
 
@@ -460,8 +386,8 @@ class TestGobbyRunnerInitialization:
             assert runner.memory_manager is None
             assert runner.memory_sync_manager is None
 
-    def test_init_with_memory_sync_manager_does_not_import_jsonl(self) -> None:
-        """Test MemorySyncManager initializes without automatic JSONL import."""
+    def test_init_with_memory_backup_manager_does_not_import_jsonl(self) -> None:
+        """Test MemoryBackupManager initializes without automatic JSONL import."""
         mock_config = MagicMock()
         mock_config.daemon_port = 60887
         mock_config.websocket = None
@@ -478,13 +404,13 @@ class TestGobbyRunnerInitialization:
 
         patches = create_base_patches(mock_config=mock_config)
         patches = [p for p in patches if "MemoryManager" not in str(p)]
-        patches = [p for p in patches if "MemorySyncManager" not in str(p)]
+        patches = [p for p in patches if "MemoryBackupManager" not in str(p)]
         patches.append(
             patch("gobby.runner_init.services.MemoryManager", return_value=mock_memory_manager)
         )
         patches.append(
             patch(
-                "gobby.runner_init.services.MemorySyncManager",
+                "gobby.runner_init.services.MemoryBackupManager",
                 return_value=mock_memory_sync_manager,
             )
         )
@@ -525,8 +451,8 @@ class TestGobbyRunnerInitialization:
             assert runner.memory_sync_manager is None
             mock_task_sync_manager.import_from_jsonl.assert_not_called()
 
-    def test_init_memory_sync_manager_exception(self) -> None:
-        """Test MemorySyncManager initialization exception is handled."""
+    def test_init_memory_backup_manager_exception(self) -> None:
+        """Test MemoryBackupManager initialization exception is handled."""
         mock_config = MagicMock()
         mock_config.daemon_port = 60887
         mock_config.websocket = None
@@ -541,13 +467,13 @@ class TestGobbyRunnerInitialization:
 
         patches = create_base_patches(mock_config=mock_config)
         patches = [p for p in patches if "MemoryManager" not in str(p)]
-        patches = [p for p in patches if "MemorySyncManager" not in str(p)]
+        patches = [p for p in patches if "MemoryBackupManager" not in str(p)]
         patches.append(
             patch("gobby.runner_init.services.MemoryManager", return_value=mock_memory_manager)
         )
         patches.append(
             patch(
-                "gobby.runner_init.services.MemorySyncManager",
+                "gobby.runner_init.services.MemoryBackupManager",
                 side_effect=Exception("Sync manager error"),
             )
         )

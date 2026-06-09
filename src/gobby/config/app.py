@@ -95,7 +95,6 @@ __all__ = [
     "apply_cli_overrides",
     "export_config_to_yaml",
     "load_config",
-    "save_config",  # deprecated alias for export_config_to_yaml
 ]
 
 logger = logging.getLogger(__name__)
@@ -687,7 +686,7 @@ def _resolve_config_values(
 _LEGACY_KEYS_TO_DROP = frozenset(
     {"_meta", "review", "task_description", "title_synthesis", "rules", "ui_settings"}
 )
-_LEGACY_NEO4J_CONFIG_PREFIX = "databases.neo4j."
+_REMOVED_CONFIG_STORE_KEYS = frozenset({"databases.falkordb.requirepass"})
 _UI_MODE_CONFIG_KEY = "ui.mode"
 
 # Mapping from old logging.* field names to new telemetry.* field names
@@ -733,30 +732,6 @@ def _migrate_legacy_config(config_dict: dict[str, Any]) -> dict[str, Any]:
     return config_dict
 
 
-def _drop_legacy_neo4j_config_store_keys(
-    flat_config: dict[str, Any], config_store: Any | None
-) -> dict[str, Any]:
-    """Ignore and delete stale Neo4j config_store keys after the FalkorDB migration."""
-    legacy_keys = sorted(key for key in flat_config if key.startswith(_LEGACY_NEO4J_CONFIG_PREFIX))
-    if not legacy_keys:
-        return flat_config
-
-    logger.warning(
-        "Ignoring stale Neo4j config_store keys after FalkorDB migration: %s",
-        ", ".join(legacy_keys),
-    )
-    migrated = dict(flat_config)
-    for key in legacy_keys:
-        migrated.pop(key, None)
-        delete = getattr(config_store, "delete", None)
-        if callable(delete):
-            try:
-                delete(key)
-            except Exception as exc:
-                logger.debug("Failed to delete stale Neo4j config key %s: %s", key, exc)
-    return migrated
-
-
 def _drop_legacy_embedding_config_store_keys(
     flat_config: dict[str, Any], config_store: Any | None
 ) -> dict[str, Any]:
@@ -778,6 +753,26 @@ def _drop_legacy_embedding_config_store_keys(
                 delete(key)
             except Exception as exc:
                 logger.debug("Failed to delete stale embedding config key %s: %s", key, exc)
+    return migrated
+
+
+def _drop_removed_config_store_keys(
+    flat_config: dict[str, Any], config_store: Any | None
+) -> dict[str, Any]:
+    removed_keys = sorted(key for key in flat_config if key in _REMOVED_CONFIG_STORE_KEYS)
+    if not removed_keys:
+        return flat_config
+
+    logger.warning("Ignoring removed config_store keys: %s", ", ".join(removed_keys))
+    migrated = dict(flat_config)
+    for key in removed_keys:
+        migrated.pop(key, None)
+        delete = getattr(config_store, "delete", None)
+        if callable(delete):
+            try:
+                delete(key)
+            except Exception as exc:
+                logger.debug("Failed to delete removed config key %s: %s", key, exc)
     return migrated
 
 
@@ -883,8 +878,8 @@ def load_config(
         # Layer 3: DB values (runtime overrides via config_store)
         delete_stale_default_feature_candidate_rows(config_store)
         flat_db = config_store.get_all()
-        flat_db = _drop_legacy_neo4j_config_store_keys(flat_db, config_store)
         flat_db = _drop_legacy_embedding_config_store_keys(flat_db, config_store)
+        flat_db = _drop_removed_config_store_keys(flat_db, config_store)
         flat_db = _migrate_default_ui_mode_config_store_row(flat_db, config_store)
         if flat_db:
             db_dict = unflatten_config(storage_embedding_config_entries_to_runtime(flat_db))
@@ -981,9 +976,3 @@ def export_config_to_yaml(config: DaemonConfig, config_file: str | None = None) 
 
     # Set restrictive permissions (owner read/write only)
     config_path.chmod(0o600)
-
-
-def save_config(config: DaemonConfig, config_file: str | None = None) -> None:
-    """Deprecated: use export_config_to_yaml() instead."""
-    logger.warning("save_config() is deprecated - use export_config_to_yaml()")
-    export_config_to_yaml(config, config_file)

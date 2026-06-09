@@ -6,7 +6,7 @@ using the strangler fig pattern for incremental migration.
 """
 
 from .claude import install_claude, uninstall_claude
-from .codex import install_codex, install_codex_notify, uninstall_codex, uninstall_codex_notify
+from .codex import install_codex, uninstall_codex
 from .droid import install_droid, uninstall_droid
 from .embedding import install_embedding
 from .falkor import install_falkordb, uninstall_falkordb
@@ -50,8 +50,6 @@ __all__ = [
     # Codex
     "install_codex",
     "uninstall_codex",
-    "install_codex_notify",  # backward-compat alias
-    "uninstall_codex_notify",  # backward-compat alias
     # Git Hooks
     "install_git_hooks",
     # Embedding

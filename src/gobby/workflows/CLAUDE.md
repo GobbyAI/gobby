@@ -18,7 +18,7 @@ This directory implements Gobby's rule engine, pipeline executor, and workflow i
 - `rule_engine.py` — Core rule evaluation: event matching, condition eval, effect dispatch, auto-management (stop counting, consecutive block tracking)
 - `safe_evaluator.py` — `SafeExpressionEvaluator` (AST-based), `LazyBool` (deferred booleans)
 - `condition_helpers.py` — Built-in condition functions: `task_tree_complete`, `mcp_called`, `has_stop_signal`, progressive discovery helpers
-- `definitions.py` — All definition models: `RuleDefinitionBody`, `RuleEffect`, `RuleEvent`, `AgentDefinitionBody`, `WorkflowStep`, `PipelineDefinition`, `PipelineStep`, `VariableDefinitionBody`
+- `definitions.py` — All definition models: `RuleDefinitionBody`, `RuleEffect`, `RuleTriggerEvent`, `AgentDefinitionBody`, `WorkflowStep`, `PipelineDefinition`, `PipelineStep`, `VariableDefinitionBody`
 
 ### Pipeline Executor
 - `pipeline_executor.py` — Pipeline execution engine, wait step handling, nested pipeline invocation

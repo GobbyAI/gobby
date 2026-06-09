@@ -896,7 +896,7 @@ class TestVariablePersistence:
         review_task.id = "task-uuid-review"
         review_task.seq_num = 123
         review_task.status = "needs_review"
-        review_task.assignee = "test-session"
+        review_task.claimed_by_session_id = "test-session"
         mock_task_manager.list_tasks.return_value = [review_task]
 
         rule_engine = RuleEngine(db=db)

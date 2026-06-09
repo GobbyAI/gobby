@@ -41,10 +41,10 @@ async def test_default_manifest_positions_are_zero_indexed_and_returned(
         project_id=sample_project["id"],
     )
 
-    assert result.stage_manifest is not None
-    payload_positions = [row["position"] for row in result.stage_manifest]
-    assert payload_positions == list(range(len(result.stage_manifest)))
+    assert result.manifest is not None
+    payload_positions = [row["position"] for row in result.manifest]
+    assert payload_positions == list(range(len(result.manifest)))
 
     rows = task_manager.stage_states.list_for_task(result.task_id)
     assert [row.position for row in rows] == payload_positions
-    assert [row.stage_name for row in rows] == [row["stage_name"] for row in result.stage_manifest]
+    assert [row.stage_name for row in rows] == [row["stage_name"] for row in result.manifest]

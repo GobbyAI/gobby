@@ -436,13 +436,11 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         title: str | None = None,
         description: str | None = None,
         priority: int | None = None,
-        assignee: str | None = None,
         labels: list[str] | None = None,
         validation_criteria: str | None = None,
         parent_task_id: str | None = None,
         category: str | None = None,
         task_type: str | None = None,
-        status: str | None = None,
         workflow_name: str | None = None,
         verification: str | None = None,
         sequence_order: int | None = None,
@@ -462,27 +460,6 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             return {"error": str(e)}
         except ValueError as e:
             return {"error": str(e)}
-
-        if assignee is not None:
-            return {
-                "error": "Cannot set assignee via update_task. "
-                "Use claim_task(task_id, session_id='...') to properly claim tasks with session tracking."
-            }
-        if status is not None:
-            normalized_status = "needs_review" if status == "review" else status
-            transition_tool = {
-                "open": "reopen_task",
-                "in_progress": "claim_task",
-                "needs_review": "submit_for_review",
-                "closed": "close_task",
-                "escalated": "escalate_task",
-            }.get(normalized_status, "dedicated lifecycle tools")
-            return {
-                "error": (
-                    f"Cannot set status to '{normalized_status}' via update_task. "
-                    f"Use {transition_tool} instead."
-                )
-            }
 
         # Build kwargs only for non-None values to avoid overwriting with NULL
         kwargs: dict[str, Any] = {}
@@ -563,7 +540,6 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "default": None,
                 },
                 "priority": {"type": "integer", "description": "New priority", "default": None},
-                "assignee": {"type": "string", "description": "New assignee", "default": None},
                 "labels": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -590,11 +566,6 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "type": "string",
                     "description": "Task type",
                     "enum": list(TASK_TYPE_ENUM),
-                    "default": None,
-                },
-                "status": {
-                    "type": "string",
-                    "description": "Legacy status field. Rejected; use lifecycle tools.",
                     "default": None,
                 },
                 "workflow_name": {
@@ -660,7 +631,6 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         current_stage_state: str | list[str] | None = None,
         priority: int | None = None,
         task_type: str | None = None,
-        assignee: str | None = None,
         label: str | None = None,
         parent_task_id: str | None = None,
         title_like: str | None = None,
@@ -692,7 +662,6 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             current_stage_state=current_stage_filter,
             priority=priority,
             task_type=task_type,
-            assignee=assignee,
             label=label,
             parent_task_id=parent_task_id,
             title_like=title_like,
@@ -720,11 +689,6 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "task_type": {
                     "type": "string",
                     "description": "Filter by task type",
-                    "default": None,
-                },
-                "assignee": {
-                    "type": "string",
-                    "description": "Filter by assignee",
                     "default": None,
                 },
                 "label": {

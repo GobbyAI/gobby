@@ -1,5 +1,5 @@
 import type { ReviewPolicy, StageState5, StageStateView } from './stageActions'
-import type { CanonicalTaskState, OwnerSessionRef, TaskCompatProjection } from './taskState'
+import type { CanonicalTaskState, OwnerSessionRef } from './taskState'
 import { getCanonicalTaskState, getTaskDisplayState } from './taskState'
 import { DEFAULT_TASK_PRIORITY } from './taskOptions'
 
@@ -107,7 +107,6 @@ export type RawTaskPayload = {
   updated_at?: string | null
   seq_num?: number | null
   path_cache?: string | null
-  assignee?: string | null
   agent_name?: string | null
   sequence_order?: number | null
   start_date?: string | null
@@ -125,7 +124,6 @@ export type RawTaskPayload = {
   current_stage?: RawStagePayload | null
   stages?: RawStagePayload[] | null
   state?: Partial<CanonicalTaskState> | null
-  compat?: TaskCompatProjection | null
   allow_automation?: boolean | null
   yolo?: boolean | null
   isolation?: string | null
@@ -145,7 +143,6 @@ export type NormalizedTaskPayload = Omit<RawTaskPayload, 'current_stage' | 'stag
   updated_at: string
   seq_num: number | null
   path_cache: string | null
-  assignee: string | null
   agent_name: string | null
   sequence_order: number | null
   start_date: string | null
@@ -208,7 +205,6 @@ const OPTIONAL_TASK_FIELD_VALIDATORS = {
   created_at: isOptionalString,
   updated_at: isOptionalString,
   path_cache: isOptionalString,
-  assignee: isOptionalString,
   agent_name: isOptionalString,
   start_date: isOptionalString,
   due_date: isOptionalString,
@@ -230,7 +226,6 @@ const OPTIONAL_TASK_FIELD_VALIDATORS = {
   yolo: isOptionalBoolean,
   current_stage: isOptionalRecord,
   state: isOptionalRecord,
-  compat: isOptionalRecord,
   owner_session_ref: isOptionalOwnerSessionRef,
   labels: isStringArrayOrNull,
   additional_skills: isStringArrayOrNull,
@@ -415,7 +410,6 @@ export function normalizeTaskPayload<T extends RawTaskPayload>(
     updated_at: task.updated_at ?? '',
     seq_num: task.seq_num ?? null,
     path_cache: task.path_cache ?? null,
-    assignee: task.assignee ?? null,
     agent_name: task.agent_name ?? null,
     sequence_order: task.sequence_order ?? null,
     start_date: task.start_date ?? null,

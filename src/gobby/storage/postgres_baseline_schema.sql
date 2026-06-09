@@ -302,7 +302,6 @@ CREATE TABLE tasks (
     description TEXT,
     priority INTEGER DEFAULT 2,
     task_type TEXT DEFAULT 'task',
-    assignee TEXT,
     labels JSONB,
     closed_reason TEXT,
     compacted_at TIMESTAMPTZ,

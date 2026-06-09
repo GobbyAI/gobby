@@ -22,7 +22,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
-from gobby.sync.memories import MemorySyncManager
+from gobby.sync.memories import MemoryBackupManager
 from gobby.sync.tasks import TaskSyncManager
 
 if TYPE_CHECKING:
@@ -47,7 +47,7 @@ class ServiceContainer:
 
     # Sync Managers
     task_sync_manager: TaskSyncManager | None = None
-    memory_sync_manager: MemorySyncManager | None = None
+    memory_sync_manager: MemoryBackupManager | None = None
 
     # Advanced Features
     memory_manager: MemoryManager | None = None

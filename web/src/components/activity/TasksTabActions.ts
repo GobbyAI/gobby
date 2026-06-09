@@ -11,8 +11,8 @@ export const QUICK_BUILD_STOP_RETRY_JITTER_MS = 75;
 
 /**
  * PATCH-safe task fields only. Mirrors the backend TaskUpdateRequest subset
- * that the PATCH route accepts without 400ing (it rejects `assignee`,
- * `status`, and stage keys — those route to dedicated endpoints instead).
+ * that the PATCH route accepts. Stage and terminal actions route to dedicated
+ * endpoints instead.
  */
 export type PatchTaskFields = {
   title?: string;

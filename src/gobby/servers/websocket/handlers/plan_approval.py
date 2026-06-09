@@ -459,7 +459,7 @@ async def handle_plan_approval_response(
                 reason="plan_approved",
             )
             logger.info(
-                "Plan approved (legacy, option=%s) for conversation %s -> %s",
+                "Plan approved (option=%s) for conversation %s -> %s",
                 option.id if option else "-",
                 conversation_id[:8],
                 post_plan_mode,
@@ -488,7 +488,7 @@ async def handle_plan_approval_response(
                 mode="plan",
                 reason="plan_changes_requested",
             )
-            logger.info(f"Plan changes requested (legacy) for conversation {conversation_id[:8]}")
+            logger.info(f"Plan changes requested for conversation {conversation_id[:8]}")
 
 
 async def handle_recovered_plan_approval(
@@ -511,18 +511,6 @@ async def handle_recovered_plan_approval(
         db_session = await run_db(mixin, session_manager.get, conversation_id)
     except Exception as e:
         logger.debug(f"Failed to load recovered web-chat session {conversation_id}: {e}")
-
-    # Compatibility fallback for older clients that still send external_id.
-    if not db_session:
-        for source in ("claude", "gemini", "grok", "qwen", "codex", "droid"):
-            try:
-                db_session = await run_db(
-                    mixin, session_manager.find_active_by_external_id, conversation_id, source
-                )
-                if db_session:
-                    break
-            except Exception as e:
-                logger.debug(f"Failed to find session for source={source}: {e}", exc_info=True)
 
     if not db_session:
         logger.warning(

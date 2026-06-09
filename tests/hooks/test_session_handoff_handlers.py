@@ -523,7 +523,7 @@ class TestSessionStartHandoff:
         mock_dependencies["session_task_manager"] = MagicMock()
         claimed_task = MagicMock(
             status="in_progress",
-            assignee="parent-sess-123",
+            claimed_by_session_id="parent-sess-123",
             current_stage={"state": "in_progress"},
         )
         mock_dependencies["task_manager"].get_task.return_value = claimed_task
@@ -687,7 +687,7 @@ class TestSessionStartHandoff:
         mock_dependencies["session_task_manager"] = MagicMock()
         claimed_task = MagicMock(
             status="needs_review",
-            assignee="parent-sess-500",
+            claimed_by_session_id="parent-sess-500",
             current_stage={"state": "needs_review"},
         )
         mock_dependencies["task_manager"].get_task.return_value = claimed_task
@@ -770,7 +770,7 @@ class TestSessionStartHandoff:
         mock_dependencies["session_task_manager"] = MagicMock()
         mock_dependencies["task_manager"].get_task.return_value = MagicMock(
             status="needs_review",
-            assignee="other-session",
+            claimed_by_session_id="other-session",
         )
 
         handlers = EventHandlers(**mock_dependencies)

@@ -13,7 +13,7 @@ from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
+from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -48,7 +48,7 @@ def _create_workflow(wf_manager: LocalWorkflowDefinitionManager, **kwargs) -> di
     defaults = {
         "name": "test-workflow",
         "definition_json": RuleDefinitionBody(
-            event=RuleEvent.BEFORE_TOOL,
+            event=RuleTriggerEvent.BEFORE_TOOL,
             effects=[RuleEffect(type="block", reason="test")],
         ).model_dump_json(),
         "workflow_type": "rule",
@@ -131,7 +131,7 @@ class TestCreateWorkflow:
         body = {
             "name": "new-workflow",
             "definition_json": RuleDefinitionBody(
-                event=RuleEvent.STOP,
+                event=RuleTriggerEvent.STOP,
                 effects=[RuleEffect(type="block", reason="stop")],
             ).model_dump_json(),
             "workflow_type": "rule",
@@ -439,21 +439,6 @@ class TestTemplates:
         data = resp.json()
         assert data["status"] == "success"
         assert "templates" in data
-
-
-# ---------------------------------------------------------------------------
-# Removed legacy install routes
-# ---------------------------------------------------------------------------
-
-
-class TestRemovedInstallRoutes:
-    def test_install_all_templates_route_removed(self, client: TestClient) -> None:
-        resp = client.post("/api/workflows/install-all-templates")
-        assert resp.status_code == 404
-
-    def test_install_from_template_route_removed(self, client: TestClient) -> None:
-        resp = client.post("/api/workflows/workflow-id/install")
-        assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------

@@ -47,7 +47,6 @@ def _current_stage_display(state: dict[str, Any]) -> str:
 @click.option("--project", "-p", "project_ref", help="Filter by project (name or UUID)")
 @click.option("--stage", "stage_name", help="Filter by exact stage name")
 @click.option("--state", "stage_state", type=STAGE_STATE_CHOICE, help="Filter by stage state")
-@click.option("--assignee", "-a", help="Filter by assignee")
 @click.option("--claimed", is_flag=True, help="Show only claimed tasks")
 @click.option("--unclaimed", is_flag=True, help="Show only unclaimed tasks")
 @click.option(
@@ -75,7 +74,6 @@ def list_tasks(
     project_ref: str | None,
     stage_name: str | None,
     stage_state: str | None,
-    assignee: str | None,
     claimed: bool,
     unclaimed: bool,
     ready: bool,
@@ -131,7 +129,6 @@ def list_tasks(
         # Use ready task detection (open/in_progress tasks with no unresolved blocking dependencies)
         tasks_list = manager.list_ready_tasks(
             project_id=project_id,
-            assignee=assignee,
             limit=limit,
         )
         label = "ready tasks"
@@ -147,7 +144,6 @@ def list_tasks(
     else:
         tasks_list = manager.list_tasks(
             project_id=project_id,
-            assignee=assignee,
             claimed=claimed_filter,
             closed=closed_filter,
             limit=10000 if stage_name or escalated else limit,
@@ -546,8 +542,6 @@ def show_task(task_id: str) -> None:
         click.echo(f"Escalated At: {state['escalated_at']}")
     if state["escalation_reason"]:
         click.echo(f"Escalation Reason: {state['escalation_reason']}")
-    if task.assignee:
-        click.echo(f"Compatibility Assignee: {task.assignee}")
     if task.labels:
         click.echo(f"Labels: {', '.join(task.labels)}")
     if blocker_ids:

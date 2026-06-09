@@ -186,17 +186,6 @@ class TestListTasks:
         legacy_task = next(item for item in task_payloads if item["id"] == task.id)
         assert legacy_task["task_type"] == canonical_type
 
-    def test_list_rejects_legacy_status_filter(self, client: TestClient, sample_task: dict) -> None:
-        response = client.get("/api/tasks?status=open")
-        assert response.status_code == 400
-        assert "Unsupported legacy task filter" in response.json()["detail"]
-
-    def test_list_rejects_comma_separated_legacy_status(
-        self, client: TestClient, sample_task: dict
-    ) -> None:
-        response = client.get("/api/tasks?status=open,in_progress")
-        assert response.status_code == 400
-
     def test_list_with_priority_filter(self, client: TestClient, sample_task: dict) -> None:
         # sample_task has priority=1
         response = client.get("/api/tasks?priority=1")
@@ -427,15 +416,15 @@ class TestUpdateTask:
             json={"status": "in_progress"},
         )
         assert response.status_code == 400
-        assert "Unsupported legacy task field" in response.json()["detail"]
+        assert "Unsupported task field(s): status" in response.json()["detail"]
 
-    def test_update_assignee_rejected(self, client: TestClient, sample_task: dict) -> None:
+    def test_update_claimed_session_rejected(self, client: TestClient, sample_task: dict) -> None:
         response = client.patch(
             f"/api/tasks/{sample_task['id']}",
-            json={"assignee": "session-123"},
+            json={"claimed_by_session_id": "session-123"},
         )
         assert response.status_code == 400
-        assert "Use dedicated task endpoints instead of PATCH" in response.json()["detail"]
+        assert "Unsupported task field(s): claimed_by_session_id" in response.json()["detail"]
 
     def test_update_no_fields_returns_existing(self, client: TestClient, sample_task: dict) -> None:
         """Empty update returns the existing task unchanged."""

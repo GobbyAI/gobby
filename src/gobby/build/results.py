@@ -19,11 +19,6 @@ class BuildResult:
     warnings: list[str] = field(default_factory=list)
     dry_run: bool = False
 
-    @property
-    def stage_manifest(self) -> list[dict[str, str | int | None]] | None:
-        """Intentionally alias ``manifest`` for compatibility."""
-        return self.manifest
-
 
 @dataclass(frozen=True)
 class BuildLifecycleEvent:

@@ -421,7 +421,6 @@ def create_readiness_registry(
     def list_ready_tasks(
         priority: int | None = None,
         task_type: str | None = None,
-        assignee: str | None = None,
         parent_task_id: str | None = None,
         limit: int = 10,
         all_projects: bool = False,
@@ -443,7 +442,6 @@ def create_readiness_registry(
         tasks = task_manager.list_ready_tasks(
             priority=priority,
             task_type=task_type,
-            assignee=assignee,
             parent_task_id=parent_task_id,
             limit=limit,
             project_id=project_id,
@@ -462,11 +460,6 @@ def create_readiness_registry(
                     "default": None,
                 },
                 "task_type": {"type": "string", "description": "Filter by type", "default": None},
-                "assignee": {
-                    "type": "string",
-                    "description": "Filter by assignee",
-                    "default": None,
-                },
                 "parent_task_id": {
                     "type": "string",
                     "description": "Filter by parent task (find ready subtasks): #N, N (seq_num), path (1.2.3), or UUID",

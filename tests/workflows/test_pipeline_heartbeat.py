@@ -45,6 +45,16 @@ def _seed_db(db: HubDatabase) -> None:
     )
 
 
+def _seed_session(db: HubDatabase, session_id: str, *, status: str = "stopped") -> None:
+    db.execute(
+        """INSERT INTO sessions
+           (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
+           VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+           ON CONFLICT DO NOTHING""",
+        (session_id, f"{session_id}-ext", "machine-1", "claude_code", PROJECT_ID, status),
+    )
+
+
 @pytest.fixture
 def exec_manager(temp_db: HubDatabase) -> LocalPipelineExecutionManager:
     _seed_db(temp_db)
@@ -247,7 +257,7 @@ async def test_pipeline_heartbeat_cron_keeps_schedule_after_stale_task_recovery(
 ) -> None:
     """A recovered stale claim counts as work and does not park the row."""
     _seed_db(temp_db)
-    _create_in_progress_task(task_manager, assignee="sess-does-not-exist")
+    _create_in_progress_task(task_manager, claimed_by_session_id="sess-does-not-exist")
     storage = CronJobStorage(temp_db)
     job = _create_pipeline_heartbeat_job(storage)
     original_next_run = job.next_run_at
@@ -296,21 +306,20 @@ def heartbeat_with_tasks(
 def _create_in_progress_task(
     task_manager: LocalTaskManager,
     project_id: str = PROJECT_ID,
-    assignee: str = "agent-dead",
+    claimed_by_session_id: str = "agent-dead",
     max_work_attempts: int | None = None,
 ) -> str:
     """Create a task with an in-progress current stage and an owner."""
+    _seed_session(task_manager.db, claimed_by_session_id)
     task = task_manager.create_task(
         title="Test stale task",
         task_type="task",
         project_id=project_id,
     )
-    task_manager.db.execute("UPDATE tasks SET assignee = %s WHERE id = %s", (assignee, task.id))
-    if task_manager.db.fetchone("SELECT 1 FROM sessions WHERE id = %s", (assignee,)):
-        task_manager.db.execute(
-            "UPDATE tasks SET claimed_by_session_id = %s WHERE id = %s",
-            (assignee, task.id),
-        )
+    task_manager.db.execute(
+        "UPDATE tasks SET claimed_by_session_id = %s WHERE id = %s",
+        (claimed_by_session_id, task.id),
+    )
     task_manager.initialize_task_manifest(task.id)
     current_stage = task_manager.stage_states.current_stage(task.id)
     assert current_stage is not None
@@ -361,7 +370,7 @@ async def test_stale_task_with_terminal_agent_run_recovered(
     task = task_manager.get_task(task_id)
     assert task is not None
     assert projected_task_state(task) == "ready"
-    assert task.assignee is None
+    assert task.claimed_by_session_id is None
     assert task.claimed_by_session_id is None
     assert task.is_escalated is False
     stage = task_manager.stage_states.get(task_id, "development")
@@ -407,7 +416,7 @@ async def test_stale_task_with_commits_promoted_to_needs_review(
     task = task_manager.get_task(task_id)
     assert task is not None
     assert projected_task_state(task) == "needs_review"
-    assert task.assignee is None
+    assert task.claimed_by_session_id is None
     assert task.claimed_by_session_id is None
 
 
@@ -417,16 +426,18 @@ async def test_stale_review_task_releases_claim_without_status_regression(
     task_manager: LocalTaskManager,
     temp_db: HubDatabase,
 ) -> None:
-    """needs_review task with dead assignee should only clear ownership."""
+    """needs_review task with dead claimed_by_session_id should only clear ownership."""
     _seed_db(temp_db)
     task = task_manager.create_task(
         title="Review me",
         task_type="task",
         project_id=PROJECT_ID,
     )
+    stale_session_id = "review-stale-session"
+    _seed_session(task_manager.db, stale_session_id)
     task_manager.db.execute(
-        "UPDATE tasks SET assignee = %s WHERE id = %s",
-        ("sess-does-not-exist", task.id),
+        "UPDATE tasks SET claimed_by_session_id = %s WHERE id = %s",
+        (stale_session_id, task.id),
     )
     task_manager.initialize_task_manifest(task.id)
     current_stage = task_manager.stage_states.current_stage(task.id)
@@ -448,7 +459,7 @@ async def test_stale_review_task_releases_claim_without_status_regression(
     updated = task_manager.get_task(task.id)
     assert updated is not None
     assert projected_task_state(updated) == "needs_review"
-    assert updated.assignee is None
+    assert updated.claimed_by_session_id is None
     assert updated.claimed_by_session_id is None
 
 
@@ -501,7 +512,7 @@ async def test_interactive_session_task_not_recovered(
     """in_progress task assigned to a live interactive session → not touched."""
     _seed_db(temp_db)
     # SESSION_ID is seeded as 'active' — simulates an interactive CLI session
-    task_id = _create_in_progress_task(task_manager, assignee=SESSION_ID)
+    task_id = _create_in_progress_task(task_manager, claimed_by_session_id=SESSION_ID)
 
     recovered = await heartbeat_with_tasks.check_stale_tasks()
     assert recovered == 0
@@ -509,7 +520,7 @@ async def test_interactive_session_task_not_recovered(
     task = task_manager.get_task(task_id)
     assert task is not None
     assert projected_task_state(task) == "in_progress"
-    assert task.assignee == SESSION_ID
+    assert task.claimed_by_session_id == SESSION_ID
 
 
 @pytest.mark.asyncio
@@ -524,7 +535,7 @@ async def test_expired_session_task_recovered(
     temp_db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (SESSION_ID,))
     task_id = _create_in_progress_task(
         task_manager,
-        assignee=SESSION_ID,
+        claimed_by_session_id=SESSION_ID,
         max_work_attempts=1,
     )
 
@@ -534,7 +545,7 @@ async def test_expired_session_task_recovered(
     task = task_manager.get_task(task_id)
     assert task is not None
     assert projected_task_state(task) == "ready"
-    assert task.assignee is None
+    assert task.claimed_by_session_id is None
     assert task.claimed_by_session_id is None
     assert task.is_escalated is False
     stage = task_manager.stage_states.get(task_id, "development")
@@ -554,7 +565,7 @@ async def test_paused_agent_session_task_recovered(
     temp_db.execute(
         "UPDATE sessions SET status = 'paused', agent_depth = 1 WHERE id = %s", (SESSION_ID,)
     )
-    task_id = _create_in_progress_task(task_manager, assignee=SESSION_ID)
+    task_id = _create_in_progress_task(task_manager, claimed_by_session_id=SESSION_ID)
 
     recovered = await heartbeat_with_tasks.check_stale_tasks()
     assert recovered == 1
@@ -562,7 +573,7 @@ async def test_paused_agent_session_task_recovered(
     task = task_manager.get_task(task_id)
     assert task is not None
     assert projected_task_state(task) == "ready"
-    assert task.assignee is None
+    assert task.claimed_by_session_id is None
     assert task.claimed_by_session_id is None
 
 
@@ -578,7 +589,7 @@ async def test_paused_interactive_session_task_not_recovered(
     temp_db.execute(
         "UPDATE sessions SET status = 'paused', agent_depth = 0 WHERE id = %s", (SESSION_ID,)
     )
-    task_id = _create_in_progress_task(task_manager, assignee=SESSION_ID)
+    task_id = _create_in_progress_task(task_manager, claimed_by_session_id=SESSION_ID)
 
     recovered = await heartbeat_with_tasks.check_stale_tasks()
     assert recovered == 0
@@ -586,18 +597,18 @@ async def test_paused_interactive_session_task_not_recovered(
     task = task_manager.get_task(task_id)
     assert task is not None
     assert projected_task_state(task) == "in_progress"
-    assert task.assignee == SESSION_ID
+    assert task.claimed_by_session_id == SESSION_ID
 
 
 @pytest.mark.asyncio
-async def test_nonexistent_session_task_recovered(
+async def test_inactive_session_task_recovered(
     heartbeat_with_tasks: PipelineHeartbeat,
     task_manager: LocalTaskManager,
     temp_db: HubDatabase,
 ) -> None:
-    """In-progress task assigned to unknown session returns to ready."""
+    """In-progress task assigned to an inactive session returns to ready."""
     _seed_db(temp_db)
-    task_id = _create_in_progress_task(task_manager, assignee="sess-does-not-exist")
+    task_id = _create_in_progress_task(task_manager, claimed_by_session_id="sess-does-not-exist")
 
     recovered = await heartbeat_with_tasks.check_stale_tasks()
     assert recovered == 1
@@ -605,5 +616,5 @@ async def test_nonexistent_session_task_recovered(
     task = task_manager.get_task(task_id)
     assert task is not None
     assert projected_task_state(task) == "ready"
-    assert task.assignee is None
+    assert task.claimed_by_session_id is None
     assert task.claimed_by_session_id is None

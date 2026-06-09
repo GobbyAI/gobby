@@ -258,7 +258,6 @@ class TestInstallFalkorDB:
         assert store.get("databases.falkordb.host") == "127.0.0.1"
         assert store.get("databases.falkordb.port") == 16379
         assert store.get("databases.falkordb.password") == "$secret:falkordb_password"
-        assert store.get("databases.neo4j.auth") is None
 
         row = hub_db.fetchone(
             "SELECT value, is_secret FROM config_store WHERE key = %s",

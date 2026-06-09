@@ -50,7 +50,7 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
     config.databases.falkordb = getattr(config.databases, "falkordb", MagicMock())
     set_mock_default(config.databases.falkordb, "host", "127.0.0.1")
     set_mock_default(config.databases.falkordb, "port", 16379)
-    set_mock_default(config.databases.falkordb, "requirepass", None)
+    set_mock_default(config.databases.falkordb, "password", None)
     set_mock_default(config.databases.falkordb, "graph_name", "gobby_kg")
     set_mock_default(config.databases.falkordb, "graph_search", True)
     set_mock_default(config.databases.falkordb, "graph_min_score", 0.5)
@@ -103,7 +103,7 @@ def create_base_patches(
         patch("gobby.runner_init.storage.SessionTaskManager"),
         patch("gobby.runner_init.services.MCPClientManager", return_value=mock_mcp_manager),
         patch("gobby.runner_init.services.TaskSyncManager"),
-        patch("gobby.runner_init.services.MemorySyncManager"),
+        patch("gobby.runner_init.services.MemoryBackupManager"),
         patch("gobby.runner_init.services.SessionMessageProcessor", return_value=AsyncMock()),
         patch("gobby.runner_init.services.TaskValidator"),
         patch("gobby.runner_init.orchestration.SessionLifecycleManager", return_value=AsyncMock()),

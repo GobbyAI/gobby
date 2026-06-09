@@ -93,7 +93,6 @@ export interface AgentItemForPanel {
     max_turns: number
     default_workflow: string | null
     sandbox: Record<string, unknown> | null
-    skill_profile: Record<string, unknown> | null
     workflows: {
       pipeline?: string
       rules?: string[]
@@ -501,13 +500,6 @@ export function AgentEditForm({
               <pre className={AGENT_DEF_JSON_CLS}>{JSON.stringify(rd.sandbox, null, 2)}</pre>
             </div>
           )}
-          {rd.skill_profile && (
-            <div className={AGENT_EDIT_SECTION_CLS}>
-              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Skill Profile</Heading>
-              <pre className={AGENT_DEF_JSON_CLS}>{JSON.stringify(rd.skill_profile, null, 2)}</pre>
-            </div>
-          )}
-
           <div className={AGENT_EDIT_SECTION_CLS}>
             <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Source</Heading>
             <div className={AGENT_DEF_SOURCE_INFO_CLS}>

@@ -17,7 +17,7 @@ from pydantic import ValidationError
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
+from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 
 pytestmark = pytest.mark.unit
 
@@ -277,7 +277,7 @@ class TestAgentScopeOnRuleDefinitionBody:
     def test_agent_scope_default_none(self) -> None:
         """agent_scope defaults to None (global rule)."""
         body = RuleDefinitionBody(
-            event=RuleEvent.BEFORE_TOOL,
+            event=RuleTriggerEvent.BEFORE_TOOL,
             effects=[RuleEffect(type="block", reason="test")],
         )
         assert body.agent_scope is None
@@ -285,7 +285,7 @@ class TestAgentScopeOnRuleDefinitionBody:
     def test_agent_scope_with_single_agent(self) -> None:
         """agent_scope can be set to a single agent name."""
         body = RuleDefinitionBody(
-            event=RuleEvent.BEFORE_TOOL,
+            event=RuleTriggerEvent.BEFORE_TOOL,
             effects=[RuleEffect(type="block", reason="test")],
             agent_scope=["developer"],
         )
@@ -294,7 +294,7 @@ class TestAgentScopeOnRuleDefinitionBody:
     def test_agent_scope_with_multiple_agents(self) -> None:
         """agent_scope can include multiple agent names."""
         body = RuleDefinitionBody(
-            event=RuleEvent.BEFORE_TOOL,
+            event=RuleTriggerEvent.BEFORE_TOOL,
             effects=[RuleEffect(type="block", reason="test")],
             agent_scope=["developer", "qa"],
         )
@@ -304,7 +304,7 @@ class TestAgentScopeOnRuleDefinitionBody:
     def test_agent_scope_json_round_trip(self) -> None:
         """agent_scope survives JSON serialization."""
         body = RuleDefinitionBody(
-            event=RuleEvent.BEFORE_TOOL,
+            event=RuleTriggerEvent.BEFORE_TOOL,
             effects=[RuleEffect(type="block", reason="test")],
             agent_scope=["coordinator"],
             group="coordinator-agent",
@@ -317,7 +317,7 @@ class TestAgentScopeOnRuleDefinitionBody:
     def test_agent_scope_none_not_in_json(self) -> None:
         """When agent_scope is None, it's excluded from JSON output (or set to null)."""
         body = RuleDefinitionBody(
-            event=RuleEvent.BEFORE_TOOL,
+            event=RuleTriggerEvent.BEFORE_TOOL,
             effects=[RuleEffect(type="block", reason="test")],
         )
         data = body.model_dump()
@@ -460,7 +460,7 @@ class TestAgentScopeStorage:
     def test_rule_with_agent_scope_storage(self, manager: LocalWorkflowDefinitionManager) -> None:
         """Rule with agent_scope stores and retrieves correctly."""
         body = RuleDefinitionBody(
-            event=RuleEvent.BEFORE_TOOL,
+            event=RuleTriggerEvent.BEFORE_TOOL,
             effects=[RuleEffect(type="block", tools=["Edit", "Write"], reason="QA no code")],
             agent_scope=["qa"],
             group="qa-agent",
@@ -483,7 +483,7 @@ class TestAgentScopeStorage:
     ) -> None:
         """Rule without agent_scope (global) stores and retrieves correctly."""
         body = RuleDefinitionBody(
-            event=RuleEvent.BEFORE_TOOL,
+            event=RuleTriggerEvent.BEFORE_TOOL,
             effects=[RuleEffect(type="block", reason="Global rule")],
         )
 

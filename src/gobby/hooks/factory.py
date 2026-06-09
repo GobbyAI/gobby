@@ -145,7 +145,7 @@ class HookManagerFactory:
             broadcaster: Optional HookEventBroadcaster instance
             tool_proxy_getter: Callable returning ToolProxyService
             message_processor: SessionMessageProcessor instance
-            memory_sync_manager: Optional MemorySyncManager instance
+            memory_sync_manager: Optional MemoryBackupManager instance
             task_sync_manager: Optional TaskSyncManager instance
             agent_runner: Optional AgentRunner for agent-scoped workflow completion
             completion_registry: Optional CompletionEventRegistry for wait-step wakeups

@@ -35,12 +35,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Backwards-compatible alias — older call sites (and tests) may still reach for
-# ``_ContextTokens``. The returned shape is now ``SeededContextTokens``; callers
-# treat it as an opaque handle for ``_reset_context`` / ``reset_seeded_contexts``.
-_ContextTokens = SeededContextTokens
-
-
 def _stale_stdio_wrapper_wait_result(
     request: Request,
     tool_name: str,

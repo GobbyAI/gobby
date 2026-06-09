@@ -55,7 +55,6 @@ export interface LifecycleTask {
   } | null
   is_blocked?: boolean
   blocked_reason?: string | null
-  assignee?: string | null
   claimed_by_session_id?: string | null
   closed_at?: string | null
   closed_reason?: string | null
@@ -136,7 +135,6 @@ export type OptimisticMoveResult<T extends LifecycleTask> =
   | T
   | (Omit<
     T,
-    | 'assignee'
     | 'claimed_by_session_id'
     | 'closed_at'
     | 'closed_commit_sha'
@@ -152,7 +150,6 @@ export type OptimisticMoveResult<T extends LifecycleTask> =
     | 'state'
     | 'validation_fail_count'
   > & {
-    assignee: null
     claimed_by_session_id: null
     closed_at: null
     closed_commit_sha: null
@@ -226,7 +223,6 @@ export function optimisticMoveTaskToStage<T extends LifecycleTask>(
         escalation_reason: null,
       }
       : task.state,
-    assignee: null,
     claimed_by_session_id: null,
     owner_session_ref: null,
     closed_at: null,

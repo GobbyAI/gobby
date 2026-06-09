@@ -3,7 +3,7 @@ Tests for claim_task MCP tool.
 
 The claim_task tool provides a semantic way to claim ownership of a task,
 combining:
-1. Setting the assignee to the current session
+1. Setting the claimed_by_session_id to the current session
 2. Marking the task as in_progress
 3. Linking the task to the session
 
@@ -41,7 +41,7 @@ def _task(
     task_id: str,
     title: str,
     stage_state: str = "ready",
-    assignee: str | None = None,
+    claimed_by_session_id: str | None = None,
     description: str | None = None,
     labels: list[str] | None = None,
 ) -> Task:
@@ -55,8 +55,7 @@ def _task(
         updated_at="2024-01-01T00:00:00Z",
         description=description,
         labels=labels or [],
-        assignee=assignee,
-        claimed_by_session_id=assignee,
+        claimed_by_session_id=claimed_by_session_id,
         stages=(
             {
                 "stage_name": "development",
@@ -86,7 +85,7 @@ def claimed_task():
         title="Claimed Task",
         stage_state="in_progress",
         description="Already claimed",
-        assignee="other-session-id",  # Claimed by another session
+        claimed_by_session_id="other-session-id",  # Claimed by another session
     )
 
 
@@ -98,7 +97,7 @@ def parent_owned_task():
         title="Parent Owned Task",
         stage_state="in_progress",
         description="Delegated to child",
-        assignee="parent-session-id",
+        claimed_by_session_id="parent-session-id",
     )
 
 
@@ -134,7 +133,7 @@ class TestClaimTaskTool:
             mock_task_manager.get_task.return_value = sample_task
             updated_task = MagicMock()
             updated_task.id = sample_task.id
-            updated_task.assignee = "my-session-id"
+            updated_task.claimed_by_session_id = "my-session-id"
             mock_task_manager.claim_task.return_value = updated_task
 
             result = await registry.call(
@@ -210,7 +209,7 @@ class TestClaimTaskTool:
             mock_task_manager.get_task.return_value = claimed_task
             updated_task = MagicMock()
             updated_task.id = claimed_task.id
-            updated_task.assignee = "my-session-id"
+            updated_task.claimed_by_session_id = "my-session-id"
             mock_task_manager.claim_task.return_value = updated_task
 
             result = await registry.call(
@@ -256,7 +255,7 @@ class TestClaimTaskTool:
             mock_task_manager.db.fetchone.return_value = {"id": "run-delegated"}
             updated_task = MagicMock()
             updated_task.id = parent_owned_task.id
-            updated_task.assignee = "my-session-id"
+            updated_task.claimed_by_session_id = "my-session-id"
             mock_task_manager.claim_task.return_value = updated_task
 
             result = await registry.call(
@@ -288,7 +287,7 @@ class TestClaimTaskTool:
             stage_state="in_progress",
             description=parent_owned_task.description,
             labels=parent_owned_task.labels,
-            assignee="third-party-session-id",
+            claimed_by_session_id="third-party-session-id",
         )
 
         with (
@@ -334,7 +333,7 @@ class TestClaimTaskTool:
             task_id="550e8400-e29b-41d4-a716-446655440002",
             title="My Task",
             stage_state="in_progress",
-            assignee="my-session-id",  # Same session
+            claimed_by_session_id="my-session-id",  # Same session
         )
 
         with (
@@ -513,7 +512,7 @@ class TestClaimTaskSchema:
         assert "description" in schema
         description = schema["description"].lower()
         # Description should mention key behaviors
-        assert "claim" in description or "assignee" in description or "in_progress" in description
+        assert "claim" in description or "claimed_by_session_id" in description or "in_progress" in description
 
 
 class TestClaimTaskSessionVariables:

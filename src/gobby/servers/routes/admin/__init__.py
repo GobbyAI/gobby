@@ -13,7 +13,6 @@ from gobby.servers.routes.admin._config import register_config_routes
 from gobby.servers.routes.admin._health import register_health_routes
 from gobby.servers.routes.admin._lifecycle import register_lifecycle_routes
 from gobby.servers.routes.admin._savings import register_savings_routes
-from gobby.servers.routes.admin._setup import register_setup_routes
 from gobby.servers.routes.admin._stats import register_stats_routes
 from gobby.servers.routes.admin._testing import register_testing_routes
 from gobby.servers.routes.admin._token_timeseries import register_token_timeseries_routes
@@ -43,7 +42,6 @@ def create_admin_router(server: "HTTPServer") -> APIRouter:
     register_config_routes(router, server)
     register_lifecycle_routes(router, server)
     register_testing_routes(router, server)
-    register_setup_routes(router, server)
     register_savings_routes(router, server)
     register_stats_routes(router, server)
     register_usage_routes(router, server)

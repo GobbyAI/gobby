@@ -1101,7 +1101,7 @@ class TestConsecutiveBlockScoping:
 def _make_task(
     task_id: str,
     status: str = "in_progress",
-    assignee: str | None = "sess-1",
+    claimed_by_session_id: str | None = "sess-1",
 ):
     """Create a minimal Task dataclass for reconciliation tests."""
     from gobby.storage.tasks import Task
@@ -1120,7 +1120,7 @@ def _make_task(
         created_at="2026-01-01T00:00:00Z",
         updated_at="2026-01-01T00:00:00Z",
         closed_at="2026-01-02T00:00:00Z" if status == "closed" else None,
-        assignee=assignee,
+        claimed_by_session_id=claimed_by_session_id,
         escalated_at="2026-01-02T00:00:00Z" if status == "escalated" else None,
         is_escalated=status == "escalated",
         stages=(
@@ -1187,7 +1187,7 @@ class TestClaimedTaskReconciliation:
 
         task_manager = MagicMock()
         task_manager.get_task.return_value = _make_task(
-            "uuid-1", status="in_progress", assignee="other-session"
+            "uuid-1", status="in_progress", claimed_by_session_id="other-session"
         )
 
         variables: dict[str, object] = {
@@ -1226,7 +1226,7 @@ class TestClaimedTaskReconciliation:
 
         task_manager = MagicMock()
         task_manager.get_task.return_value = _make_task(
-            "uuid-1", status="in_progress", assignee="sess-1"
+            "uuid-1", status="in_progress", claimed_by_session_id="sess-1"
         )
 
         variables: dict[str, object] = {
@@ -1248,7 +1248,7 @@ class TestClaimedTaskReconciliation:
         task_manager.get_task.return_value = _make_task(
             "uuid-review",
             status="needs_review",
-            assignee="sess-1",
+            claimed_by_session_id="sess-1",
         )
 
         variables: dict[str, object] = {
@@ -1270,7 +1270,7 @@ class TestClaimedTaskReconciliation:
         task_manager.get_task.return_value = _make_task(
             "uuid-anchor",
             status="in_progress",
-            assignee="parent-sess",
+            claimed_by_session_id="parent-sess",
         )
         session_manager = MagicMock()
         session_manager.is_ancestor.side_effect = (
@@ -1323,7 +1323,7 @@ class TestClaimedTaskReconciliation:
         task_manager.get_task.return_value = _make_task(
             "uuid-anchor",
             status="in_progress",
-            assignee="parent-sess",
+            claimed_by_session_id="parent-sess",
         )
         session_manager = MagicMock()
         session_manager.is_ancestor.side_effect = (
@@ -1366,9 +1366,9 @@ class TestClaimedTaskReconciliation:
 
         def get_task_side_effect(task_id):
             if task_id == "uuid-valid":
-                return _make_task("uuid-valid", status="in_progress", assignee="sess-1")
+                return _make_task("uuid-valid", status="in_progress", claimed_by_session_id="sess-1")
             elif task_id == "uuid-closed":
-                return _make_task("uuid-closed", status="closed", assignee="sess-1")
+                return _make_task("uuid-closed", status="closed", claimed_by_session_id="sess-1")
             else:
                 raise TaskNotFoundError("gone")
 
@@ -1408,7 +1408,7 @@ class TestClaimedTaskReconciliation:
         from gobby.workflows.observers import reconcile_claimed_tasks
 
         task_manager = MagicMock()
-        db_task = _make_task("uuid-db", status="in_progress", assignee="sess-1")
+        db_task = _make_task("uuid-db", status="in_progress", claimed_by_session_id="sess-1")
         db_task.seq_num = 42
         task_manager.list_tasks.return_value = [db_task]
 
@@ -1433,7 +1433,7 @@ class TestClaimedTaskReconciliation:
 
         task_manager = MagicMock()
         db_task = _make_task(
-            "abcdef12-3456-7890-abcd-ef1234567890", status="in_progress", assignee="sess-1"
+            "abcdef12-3456-7890-abcd-ef1234567890", status="in_progress", claimed_by_session_id="sess-1"
         )
         db_task.seq_num = None
         task_manager.list_tasks.return_value = [db_task]
@@ -1454,7 +1454,7 @@ class TestClaimedTaskReconciliation:
         from gobby.workflows.observers import reconcile_claimed_tasks
 
         task_manager = MagicMock()
-        db_task = _make_task("uuid-review-db", status="needs_review", assignee="sess-1")
+        db_task = _make_task("uuid-review-db", status="needs_review", claimed_by_session_id="sess-1")
         db_task.seq_num = 77
         task_manager.list_tasks.return_value = [db_task]
 

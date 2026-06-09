@@ -101,11 +101,6 @@ class RuleTriggerEvent(str, Enum):
     ELICITATION_RESULT = "elicitation_result"
 
 
-# Backward-compatible alias for older imports. This still resolves to the
-# unified rule trigger enum; there is no longer a separate filtered rule enum.
-RuleEvent = RuleTriggerEvent
-
-
 class RuleEffect(BaseModel):
     """What happens when a rule fires."""
 

@@ -201,10 +201,6 @@ class TestInstallFalkorDB:
             _ = apply_migrations
             return NonClosingDb()
 
-        store = ConfigStore(hub_db)
-        store.set("databases.neo4j.url", "http://localhost:8474")
-        store.set("databases.neo4j.password", "$secret:password")
-
         with patch("gobby.cli.installers.falkor._open_config_db", side_effect=open_db):
             _update_config(
                 host="127.0.0.1",
@@ -213,8 +209,7 @@ class TestInstallFalkorDB:
                 gobby_home=tmp_path,
             )
 
-        assert store.get("databases.neo4j.url") is None
-        assert store.get("databases.neo4j.password") is None
+        store = ConfigStore(hub_db)
         assert store.get("databases.falkordb.host") == "127.0.0.1"
 
     def test_install_falkordb_returns_error_on_compose_failure(self, tmp_path: Path) -> None:

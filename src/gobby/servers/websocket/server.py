@@ -78,8 +78,6 @@ class WebSocketServer(
         daemon_config: Any = None,
         internal_manager: Any = None,
         web_chat_session_registry: WebChatSessionRegistry | None = None,
-        # Deprecated: kept for backwards-compat callers, ignored
-        message_manager: object | None = None,
     ):
         """
         Initialize WebSocket server.
@@ -92,7 +90,6 @@ class WebSocketServer(
             stop_registry: Optional StopRegistry for handling stop requests from clients.
             session_manager: Optional SessionManager for persisting web-chat sessions.
             db_executor: Optional bounded executor for daemon database work.
-            message_manager: Deprecated, ignored. Kept for backwards compatibility.
             daemon_config: Optional DaemonConfig for voice and other features.
             internal_manager: Optional InternalRegistryManager for routing to internal MCP servers.
             web_chat_session_registry: Shared live web-chat session registry.

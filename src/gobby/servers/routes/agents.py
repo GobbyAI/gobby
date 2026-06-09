@@ -701,19 +701,6 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             logger.error(f"Error cancelling agent run '{run_id}': {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
-    @router.post("/definitions/{name}/install")
-    async def install_definition_from_template(
-        name: str,
-    ) -> dict[str, Any]:
-        """Legacy endpoint — template rows no longer exist.
-
-        Definitions are now installed directly by sync functions.
-        """
-        raise HTTPException(
-            status_code=410,
-            detail="Template installation is no longer needed. Definitions are installed directly during sync.",
-        )
-
     @router.post("/definitions/import/{name}")
     async def import_definition(
         name: str,

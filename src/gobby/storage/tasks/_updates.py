@@ -13,7 +13,6 @@ from gobby.storage.tasks._models import (
     validate_implementation_domain,
     validate_task_type,
 )
-from gobby.storage.tasks._ownership import _derive_claimed_by_session_id
 from gobby.storage.tasks._read import get_task
 
 
@@ -24,7 +23,6 @@ def update_task(
     description: MaybeUnset[str | None] = UNSET,
     priority: MaybeUnset[int | None] = UNSET,
     task_type: MaybeUnset[str | None] = UNSET,
-    assignee: MaybeUnset[str | None] = UNSET,
     claimed_by_session_id: MaybeUnset[str | None] = UNSET,
     labels: MaybeUnset[list[str] | None] = UNSET,
     parent_task_id: MaybeUnset[str | None] = UNSET,
@@ -83,17 +81,9 @@ def update_task(
     if task_type is not UNSET:
         updates.append("task_type = %s")
         params.append(validate_task_type(cast(str | None, task_type)))
-    if assignee is not UNSET:
-        updates.append("assignee = %s")
-        params.append(assignee)
-    derived_claimed_by_session_id = _derive_claimed_by_session_id(
-        db,
-        assignee=assignee,
-        claimed_by_session_id=claimed_by_session_id,
-    )
-    if derived_claimed_by_session_id is not UNSET:
+    if claimed_by_session_id is not UNSET:
         updates.append("claimed_by_session_id = %s")
-        params.append(derived_claimed_by_session_id)
+        params.append(claimed_by_session_id)
     if labels is not UNSET:
         updates.append("labels = %s")
         if labels is None:
@@ -246,7 +236,6 @@ def update_task_metadata(
     description: MaybeUnset[str | None] = UNSET,
     priority: MaybeUnset[int | None] = UNSET,
     task_type: MaybeUnset[str | None] = UNSET,
-    assignee: MaybeUnset[str | None] = UNSET,
     claimed_by_session_id: MaybeUnset[str | None] = UNSET,
     labels: MaybeUnset[list[str] | None] = UNSET,
     parent_task_id: MaybeUnset[str | None] = UNSET,
@@ -285,8 +274,7 @@ def update_task_metadata(
     blocked_fields = [
         field_name
         for field_name, value in (
-            ("assignee", assignee),
-            ("claimed_by_session_id", claimed_by_session_id),
+        ("claimed_by_session_id", claimed_by_session_id),
             ("closed_reason", closed_reason),
             ("closed_at", closed_at),
             ("closed_in_session_id", closed_in_session_id),
@@ -323,7 +311,6 @@ def update_task_metadata(
         description=description,
         priority=priority,
         task_type=task_type,
-        assignee=assignee,
         claimed_by_session_id=claimed_by_session_id,
         labels=labels,
         parent_task_id=parent_task_id,

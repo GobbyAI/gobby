@@ -16,8 +16,9 @@ from gobby.storage.agents import AgentRunTerminalReason, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.storage.tasks._crud import get_task, update_task
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.storage.tasks._read import get_task
+from gobby.storage.tasks._updates import update_task
 from tests.storage.tasks.stage_test_helpers import initialize_manifest, set_stage_state, spec
 
 pytestmark = pytest.mark.unit

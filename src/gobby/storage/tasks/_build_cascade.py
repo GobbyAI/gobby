@@ -202,8 +202,7 @@ def _remove_pristine_omitted_stages_for_build_cascade(
             conn.execute(
                 """
                 UPDATE tasks
-                   SET assignee = NULL,
-                       claimed_by_session_id = NULL,
+                   SET claimed_by_session_id = NULL,
                        updated_at = %s
                  WHERE id = %s
                 """,

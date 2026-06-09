@@ -60,7 +60,6 @@ class SessionMessagesTestRegistry(InternalToolRegistry):
 
 
 def create_test_registry(
-    message_manager: Any = None,
     session_manager: Any = None,
     inter_session_message_manager: Any = None,
     transcript_reader: Any = None,

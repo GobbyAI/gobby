@@ -62,7 +62,7 @@ def mock_task():
     task.updated_at = "2024-01-01T00:00:00Z"
     task.project_id = "proj-123"
     task.parent_task_id = None
-    task.assignee = None
+    task.claimed_by_session_id = None
     task.claimed_by_session_id = None
     task.current_stage = None
     task.stages = (
@@ -643,7 +643,7 @@ class TestTaskStatsCommand:
         mock_task.priority = 2
         mock_task.task_type = "feature"
         mock_task.claimed_by_session_id = None
-        mock_task.assignee = None
+        mock_task.claimed_by_session_id = None
 
         mock_manager = MagicMock()
         mock_manager.list_tasks.return_value = [mock_task]
@@ -814,7 +814,7 @@ class TestShowTaskCommand:
     ) -> None:
         """Test showing a task with labels."""
         mock_task.labels = ["bug", "priority"]
-        mock_task.assignee = "john"
+        mock_task.claimed_by_session_id = "john"
         mock_resolve.return_value = mock_task
         mock_get_manager.return_value = MagicMock()
 
@@ -905,11 +905,14 @@ class TestUpdateTaskCommand:
         assert result.exit_code != 0
         assert "No such option: --status" in result.output
 
-    def test_update_task_rejects_assignee_option(self, runner: CliRunner) -> None:
-        result = runner.invoke(cli, ["tasks", "update", "gt-abc123", "--assignee", "alice"])
+    def test_update_task_rejects_claimed_session_option(self, runner: CliRunner) -> None:
+        result = runner.invoke(
+            cli,
+            ["tasks", "update", "gt-abc123", "--claimed-by-session-id", "alice"],
+        )
 
         assert result.exit_code != 0
-        assert "No such option: --assignee" in result.output
+        assert "No such option: --claimed-by-session-id" in result.output
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
@@ -1963,7 +1966,7 @@ class TestFormatTaskList:
         task.task_type = "task"
         task.project_id = project_id
         task.parent_task_id = None
-        task.assignee = owner
+        task.claimed_by_session_id = owner
         task.claimed_by_session_id = owner
         task.current_stage = None
         task.stages = (

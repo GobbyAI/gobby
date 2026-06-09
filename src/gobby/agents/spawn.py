@@ -1,8 +1,7 @@
 """Terminal spawning for agent execution.
 
 This module provides PreparedSpawn helpers for spawning CLI agents.
-The actual terminal spawning is handled by :class:`TmuxSpawner`
-(re-exported here for backward compatibility).
+The actual terminal spawning is handled by :class:`TmuxSpawner`.
 
 Implementation is split across submodules:
 - spawners/prompt_manager.py: Prompt file creation and cleanup
@@ -27,10 +26,6 @@ from gobby.agents.spawners import (
 )
 from gobby.agents.tmux.spawner import TmuxSpawner
 
-# Re-export TmuxSpawner under the old name for callers that still
-# reference ``TerminalSpawner`` in patch targets or imports.
-TerminalSpawner = TmuxSpawner
-
 __all__ = [
     # Result dataclasses
     "SpawnResult",
@@ -38,7 +33,6 @@ __all__ = [
     "TerminalSpawnerBase",
     # Spawner (tmux-only)
     "TmuxSpawner",
-    "TerminalSpawner",  # backward compat alias
     # Helpers
     "PreparedSpawn",
     "prepare_terminal_spawn",

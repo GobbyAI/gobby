@@ -25,7 +25,6 @@ logger = logging.getLogger(__name__)
 
 AUTOMATION_ENABLED_KEY = "system_loops.automation.enabled"
 AUTOMATION_INTERVAL_KEY = "system_loops.automation.interval_seconds"
-LEGACY_AUTOMATION_CRON_JOB_NAMES = ("gobby:dispatcher", "gobby:pipeline-heartbeat")
 DEFAULT_DIRECT_TICK_BURST = 3
 AUTOMATION_TICK_TIMEOUT_SECONDS = 120.0
 PROJECT_DISPATCH_TIMEOUT_SECONDS = 120.0
@@ -86,35 +85,6 @@ class PipelineHeartbeatService(Protocol):
     async def count_running_executions(self) -> int: ...
 
     async def count_stale_task_candidates(self) -> int: ...
-
-
-def is_legacy_automation_cron_name(name: str) -> bool:
-    """Return whether a cron row belongs to the removed automation mechanism."""
-    return name in LEGACY_AUTOMATION_CRON_JOB_NAMES
-
-
-def remove_legacy_automation_cron_rows(db: HubDatabase) -> int:
-    """Delete removed dispatcher and pipeline-heartbeat system cron rows."""
-    placeholders = ", ".join("%s" for _ in LEGACY_AUTOMATION_CRON_JOB_NAMES)
-    rows = db.fetchall(
-        f"SELECT id FROM cron_jobs WHERE name IN ({placeholders})",  # nosec B608
-        LEGACY_AUTOMATION_CRON_JOB_NAMES,
-    )
-    job_ids = [str(row["id"]) for row in rows]
-    if not job_ids:
-        return 0
-
-    job_placeholders = ", ".join("%s" for _ in job_ids)
-    with db.transaction() as conn:
-        conn.execute(
-            f"DELETE FROM cron_runs WHERE cron_job_id IN ({job_placeholders})",  # nosec B608
-            tuple(job_ids),
-        )
-        cursor = conn.execute(
-            f"DELETE FROM cron_jobs WHERE id IN ({job_placeholders})",  # nosec B608
-            tuple(job_ids),
-        )
-    return int(cursor.rowcount or 0)
 
 
 class SystemAutomationLoop:

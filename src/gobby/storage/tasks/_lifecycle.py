@@ -88,7 +88,7 @@ def reopen_task(
     """Reopen a task to the ready state.
 
     Works from any non-ready state (in_progress, closed, needs_review, escalated, etc.).
-    Clears closed fields, assignee, and resets validation_fail_count.
+    Clears ownership, closed fields, and resets validation_fail_count.
 
     Args:
         db: Database protocol instance

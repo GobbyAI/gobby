@@ -8,13 +8,13 @@ from typing import Any
 
 import pytest
 
-from gobby.storage.tasks import LocalTaskManager, _crud, _updates
+from gobby.storage.tasks import LocalTaskManager, _creation, _updates
 
 pytestmark = pytest.mark.unit
 
 
 def test_create_task_no_status_param() -> None:
-    signature = inspect.signature(_crud.create_task)
+    signature = inspect.signature(_creation.create_task)
 
     assert "status" not in signature.parameters
     assert "lifecycle" not in signature.parameters
@@ -71,7 +71,7 @@ def test_update_task_uses_postgres_column_introspection(monkeypatch: pytest.Monk
         lambda db, task_id: SimpleNamespace(closed_at=None, escalated_at=None),
     )
 
-    changed_parent = _crud.update_task(db, "task-1", validation_fail_count=1)
+    changed_parent = _updates.update_task(db, "task-1", validation_fail_count=1)
 
     assert changed_parent is False
     column_sql, column_params = db.fetchall_calls[0]

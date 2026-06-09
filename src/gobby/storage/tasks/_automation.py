@@ -108,7 +108,6 @@ def sweep_stale_claims(
             f"""
             UPDATE tasks
                SET claimed_by_session_id = NULL,
-                   assignee = NULL,
                    updated_at = %s
              WHERE allow_automation IS TRUE
                AND closed_at IS NULL

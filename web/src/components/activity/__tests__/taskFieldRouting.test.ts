@@ -18,9 +18,9 @@ describe("taskFieldRouting — endpoint family classification (#14771 / D4)", ()
     }
   });
 
-  it("never routes assignee through patch — the PATCH-400 guarantee", () => {
-    expect(classifyEditableField("assignee")).toBe("assignee");
-    expect(isPatchEditableField("assignee")).toBe(false);
+  it("never routes unknown fields through patch — the PATCH-400 guarantee", () => {
+    expect(classifyEditableField("unknown_owner")).toBeNull();
+    expect(isPatchEditableField("unknown_owner")).toBe(false);
   });
 
   it("routes state and stage to the stage family", () => {

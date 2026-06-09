@@ -36,7 +36,7 @@ from gobby.config.build import Isolation
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, AgentRun, LocalAgentRunManager
 from gobby.storage.build_history import best_effort_record_event, best_effort_record_run
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.tasks import LocalTaskManager, StageManifestSpec, StageState, Task
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._stage_manifest import derive_child_manifest_specs
 from gobby.storage.tasks._transitions import reset_current_non_ready_stage
@@ -740,25 +740,9 @@ def _reset_restart_stage_manifests(
     tasks: list[Task],
     opts: BuildOptions | None,
 ) -> int:
-    if opts is not None:
-        return _reset_restart_stage_manifests_from_options(db, root, tasks, opts)
-    return _reset_restart_stage_manifests_legacy(db, tasks)
-
-
-def _reset_restart_stage_manifests_legacy(db: HubDatabase, tasks: list[Task]) -> int:
-    task_manager = LocalTaskManager(db)
-    reset = 0
-    for task in tasks:
-        if task.closed_at is not None:
-            continue
-        rows = task_manager.stage_states.list_for_task(task.id)
-        if not rows:
-            continue
-        specs = _restart_stage_specs(db, task, rows)
-        db.execute("DELETE FROM task_stage_states WHERE task_id = %s", (task.id,))
-        task_manager.stage_states.initialize_manifest(task.id, specs, by_session_id=None)
-        reset += 1
-    return reset
+    if opts is None:
+        return 0
+    return _reset_restart_stage_manifests_from_options(db, root, tasks, opts)
 
 
 def _reset_restart_stage_manifests_from_options(
@@ -849,53 +833,8 @@ def _seed_restart_plan_file_stage_state(
         )
 
 
-def _restart_stage_specs(
-    db: HubDatabase,
-    task: Task,
-    rows: list[StageState],
-) -> list[StageManifestSpec]:
-    by_name = {row.stage_name: row for row in rows}
-    if _task_uses_isolated_workspace(task):
-        if task.task_type == "epic" and _has_children(db, task.id):
-            stage_names = ["development", "holistic_qa", "merge"]
-        else:
-            stage_names = [_primary_stage_for_restart(task), "merge"]
-    else:
-        stage_names = [row.stage_name for row in sorted(rows, key=lambda item: item.position)]
-
-    specs: list[StageManifestSpec] = []
-    for position, stage_name in enumerate(stage_names):
-        source = by_name.get(stage_name)
-        specs.append(
-            StageManifestSpec(
-                stage_name=stage_name,
-                position=position,
-                max_work_attempts=getattr(source, "max_work_attempts", None),
-                max_review_rounds=getattr(source, "max_review_rounds", None),
-            )
-        )
-    return specs
-
-
-def _task_uses_isolated_workspace(task: Task) -> bool:
-    isolation = getattr(task.isolation, "value", task.isolation)
-    return isolation in {"worktree", "clone"}
-
-
 def _has_children(db: HubDatabase, task_id: str) -> bool:
     return bool(db.fetchone("SELECT 1 FROM tasks WHERE parent_task_id = %s LIMIT 1", (task_id,)))
-
-
-def _primary_stage_for_restart(task: Task) -> str:
-    return {
-        "code": "development",
-        "config": "development",
-        "docs": "development",
-        "refactor": "development",
-        "test": "development",
-        "research": "research",
-        "planning": "planning",
-    }.get(task.category or "", "development")
 
 
 def _clean_blockers(

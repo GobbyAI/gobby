@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from gobby.storage.tasks._crud import list_automation_candidates, sweep_stale_claims
+from gobby.storage.tasks._automation import list_automation_candidates, sweep_stale_claims
 from gobby.storage.tasks._models import Isolation
 from tests.storage.tasks._stage_test_helpers import (
     create_task,

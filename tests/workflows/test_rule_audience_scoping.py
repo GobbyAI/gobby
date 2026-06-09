@@ -11,7 +11,7 @@ import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
+from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
 
 pytestmark = pytest.mark.unit
@@ -60,7 +60,7 @@ async def test_autonomous_audience_rules_skip_interactive_sessions(
     manager.create(
         name="autonomous-only",
         definition_json=RuleDefinitionBody(
-            event=RuleEvent.BEFORE_TOOL,
+            event=RuleTriggerEvent.BEFORE_TOOL,
             audience="autonomous",
             effects=[RuleEffect(type="block", tools=["Bash"], reason="autonomous only")],
         ).model_dump_json(),

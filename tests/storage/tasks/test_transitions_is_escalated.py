@@ -48,20 +48,17 @@ def test_de_escalate_releases_stale_claim(temp_db, sample_project, session_manag
     temp_db.execute(
         """
         UPDATE tasks
-           SET claimed_by_session_id = %s,
-               assignee = %s
+           SET claimed_by_session_id = %s
          WHERE id = %s
         """,
-        (session.id, session.id, task.id),
+        (session.id, task.id),
     )
 
     de_escalated = manager.de_escalate_task(task.id, reason="operator cleared")
     row = temp_db.fetchone(
-        "SELECT claimed_by_session_id, assignee FROM tasks WHERE id = %s",
+        "SELECT claimed_by_session_id FROM tasks WHERE id = %s",
         (task.id,),
     )
 
     assert row["claimed_by_session_id"] is None
-    assert row["assignee"] is None
     assert de_escalated.claimed_by_session_id is None
-    assert de_escalated.assignee is None

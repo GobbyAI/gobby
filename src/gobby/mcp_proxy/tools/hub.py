@@ -41,7 +41,7 @@ def _task_state_from_row(row: dict[str, Any]) -> dict[str, Any]:
     escalated_at = row["escalated_at"]
     is_closed = bool(closed_at)
     is_escalated = not is_closed and bool(escalated_at or row["is_escalated"])
-    owner_session_id = row["claimed_by_session_id"] or row["assignee"]
+    owner_session_id = row["claimed_by_session_id"]
     current_stage = None
     if row["current_stage_name"]:
         current_stage = {
@@ -224,7 +224,7 @@ def create_hub_registry(
                 return hub_db.fetchall(
                     f"""
                 SELECT t.id, t.project_id, t.title, t.task_type, t.priority,
-                       t.created_at, t.updated_at, t.assignee, t.claimed_by_session_id,
+                       t.created_at, t.updated_at, t.claimed_by_session_id,
                        t.closed_at, t.closed_reason, t.closed_in_session_id,
                        t.closed_commit_sha, t.escalated_at, t.escalation_reason,
                        COALESCE(t.is_escalated, false) as is_escalated,

@@ -643,8 +643,7 @@ class ACPClient:
         """Normalize a JSON-RPC notification to a StreamEvent.
 
         ACP streams send notifications with a "method" field and "params"
-        payload. Also handles legacy raw-event format (with "type" field) for
-        compatibility. Subclasses may override for CLI-specific shapes.
+        payload. Subclasses may override for CLI-specific shapes.
 
         Args:
             raw: Parsed JSON dict from the ACP stream.
@@ -733,59 +732,8 @@ class ACPClient:
                 },
             )
 
-        # Legacy raw-event format (type field instead of method)
-        event_type = raw.get("type", "")
-        if event_type:
-            return cls._normalize_legacy_event(raw)
-
         # Unknown notification — pass through
         return StreamEvent(event_type=method or "unknown", data=params or raw)
-
-    @classmethod
-    def _normalize_legacy_event(cls, raw: dict[str, Any]) -> StreamEvent:
-        """Normalize a legacy raw-event format (type-based) to StreamEvent.
-
-        Kept for backward compatibility with older ACP CLI versions.
-        """
-        event_type = raw.get("type", "unknown")
-
-        if event_type == "init":
-            return StreamEvent(
-                event_type="init",
-                data={k: v for k, v in raw.items() if k != "type"},
-            )
-
-        if event_type == "message":
-            role = raw.get("role", "")
-            is_delta = raw.get("delta", False)
-            content = raw.get("content", "")
-
-            if role == "assistant" and is_delta:
-                return StreamEvent(
-                    event_type="content_delta",
-                    data={"content": content, "role": role},
-                )
-            return StreamEvent(
-                event_type="message",
-                data={k: v for k, v in raw.items() if k != "type"},
-            )
-
-        if event_type == "result":
-            return StreamEvent(
-                event_type="result",
-                data={k: v for k, v in raw.items() if k != "type"},
-            )
-
-        if event_type == "error":
-            return StreamEvent(
-                event_type="error",
-                data={
-                    "message": raw.get("message", raw.get("error", "Unknown error")),
-                    "code": raw.get("code"),
-                },
-            )
-
-        return StreamEvent(event_type=event_type, data=raw)
 
     @classmethod
     def _extract_text_content(cls, content: Any) -> str:

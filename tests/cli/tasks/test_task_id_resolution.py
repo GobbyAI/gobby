@@ -42,7 +42,7 @@ def mock_task_with_uuid():
     task.updated_at = "2024-01-01T00:00:00Z"
     task.project_id = "proj-123"
     task.parent_task_id = None
-    task.assignee = None
+    task.claimed_by_session_id = None
     task.labels = None
     task.to_dict.return_value = {
         "id": task.id,

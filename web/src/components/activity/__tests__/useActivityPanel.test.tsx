@@ -8,10 +8,8 @@ import {
   useActivityPanel,
 } from '../useActivityPanel'
 
-const LEGACY_TAB_KEY = 'gobby-activity-panel-tab'
 const TAB_KEY = 'gobby-activity-panel-tab-v2'
 const LAYOUT_KEY = 'gobby-activity-panel-layout'
-const LEGACY_PINNED_KEY = 'gobby-activity-panel-pinned'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -38,43 +36,13 @@ describe('layout reducers', () => {
   })
 })
 
-describe('loadLayoutMode migration', () => {
+describe('loadLayoutMode', () => {
   beforeEach(() => {
     localStorage.clear()
   })
 
-  it('migrates the legacy pinned=true boolean to split and rewrites the key', () => {
-    localStorage.setItem(LEGACY_PINNED_KEY, 'true')
-
-    expect(loadLayoutMode()).toBe('split')
-    expect(localStorage.getItem(LAYOUT_KEY)).toBe('split')
-    expect(localStorage.getItem(LEGACY_PINNED_KEY)).toBeNull()
-  })
-
-  it('migrates the legacy pinned=false boolean to chat', () => {
-    localStorage.setItem(LEGACY_PINNED_KEY, 'false')
-
-    expect(loadLayoutMode()).toBe('chat')
-    expect(localStorage.getItem(LAYOUT_KEY)).toBe('chat')
-    expect(localStorage.getItem(LEGACY_PINNED_KEY)).toBeNull()
-  })
-
-  it('removes the legacy pinned key even when writing the migrated key fails', () => {
-    localStorage.setItem(LEGACY_PINNED_KEY, 'true')
-    const originalSetItem = Storage.prototype.setItem
-    const setItem = vi.spyOn(Storage.prototype, 'setItem')
-    setItem.mockImplementation((key: string, value: string) => {
-      if (key === LAYOUT_KEY) throw new DOMException('denied', 'QuotaExceededError')
-      return originalSetItem.call(localStorage, key, value)
-    })
-
-    expect(loadLayoutMode()).toBe('split')
-    expect(localStorage.getItem(LEGACY_PINNED_KEY)).toBeNull()
-  })
-
-  it('honors a stored layout mode over the legacy key', () => {
+  it('honors a stored layout mode', () => {
     localStorage.setItem(LAYOUT_KEY, 'panel')
-    localStorage.setItem(LEGACY_PINNED_KEY, 'false')
 
     expect(loadLayoutMode()).toBe('panel')
   })
@@ -83,12 +51,6 @@ describe('loadLayoutMode migration', () => {
     expect(loadLayoutMode()).toBe('split')
   })
 
-  it('is idempotent: a second read returns the stored value with no legacy key', () => {
-    localStorage.setItem(LEGACY_PINNED_KEY, 'true')
-    loadLayoutMode()
-    expect(loadLayoutMode()).toBe('split')
-    expect(localStorage.getItem(LEGACY_PINNED_KEY)).toBeNull()
-  })
 })
 
 describe('useActivityPanel — desktop', () => {
@@ -263,23 +225,6 @@ describe('useActivityPanel — mobile', () => {
 describe('useActivityPanel — tab persistence', () => {
   beforeEach(() => {
     localStorage.clear()
-  })
-
-  it('migrates the legacy artifacts tab to changes', () => {
-    localStorage.setItem(LEGACY_TAB_KEY, 'artifacts')
-
-    const { result } = renderHook(() => useActivityPanel(false))
-
-    expect(result.current.activeTab).toBe('changes')
-    expect(localStorage.getItem(LEGACY_TAB_KEY)).toBeNull()
-  })
-
-  it('migrates a stored v2 artifacts tab to changes after removal', () => {
-    localStorage.setItem(TAB_KEY, 'artifacts')
-
-    const { result } = renderHook(() => useActivityPanel(false))
-
-    expect(result.current.activeTab).toBe('changes')
   })
 
   it('keeps the MCP tab as a persisted activity tab', () => {

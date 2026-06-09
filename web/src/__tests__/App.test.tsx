@@ -646,30 +646,6 @@ describe("App wiring", () => {
     });
   });
 
-  it("routes the legacy #mcp hash to Chat with the MCP activity tab requested", async () => {
-    window.location.hash = "#mcp";
-
-    await act(async () => {
-      render(<App />);
-    });
-
-    await waitFor(() => {
-      expect(chatPagePropsSpy).toHaveBeenCalled();
-    });
-    const props = chatPagePropsSpy.mock.calls[
-      chatPagePropsSpy.mock.calls.length - 1
-    ]?.[0] as {
-      requestedActivityTab?: string | null;
-      mcp?: unknown;
-    };
-
-    expect(props.requestedActivityTab).toBe("mcp");
-    expect(props.mcp).toBeTruthy();
-    await waitFor(() => {
-      expect(window.location.hash).toBe("#chat");
-    });
-  });
-
   it("resets the backend-facing chat mode on New Chat so a fresh session does not inherit the prior mode (#15703)", async () => {
     const sendMode = vi.fn();
     const startNewChat = vi.fn();

@@ -4,7 +4,7 @@ import pytest
 
 from gobby.build.service import BuildOptions, build
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.storage.tasks._crud import list_automation_candidates
+from gobby.storage.tasks._automation import list_automation_candidates
 
 pytestmark = pytest.mark.unit
 

@@ -261,44 +261,4 @@ describeLive("setup wizard live Docker integration", () => {
     240000,
   );
 
-  it("migrates legacy Neo4j setup state without crashing", () => {
-    writeFileSync(
-      join(gobbyHome, "setup_state.json"),
-      JSON.stringify({
-        version: 2,
-        started_at: "2026-05-22T00:00:00.000Z",
-        completed_at: null,
-        completed_step_id: "services",
-        neo4j_installed: true,
-        neo4j_password_set: false,
-      }),
-    );
-
-    const result = run(
-      "npm",
-      [
-        "--prefix",
-        "web",
-        "exec",
-        "tsx",
-        "--",
-        "--eval",
-        "import { loadState } from './web/src/setup/utils/state.ts'; loadState();",
-      ],
-      liveEnv,
-      30000,
-    );
-    expect(result.status, result.stderr || result.stdout).toBe(0);
-
-    const migrated = JSON.parse(
-      readFileSync(join(gobbyHome, "setup_state.json"), "utf-8"),
-    ) as Record<string, unknown>;
-    expect(migrated).toMatchObject({
-      version: 3,
-      falkordb_installed: false,
-      falkordb_password_set: false,
-    });
-    expect(migrated).not.toHaveProperty("neo4j_installed");
-    expect(migrated).not.toHaveProperty("neo4j_password_set");
-  });
 });

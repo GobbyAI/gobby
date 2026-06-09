@@ -21,7 +21,7 @@ from gobby.sessions.transcripts.base import ParsedToolEvent
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
+from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.observers import detect_mcp_call
 
@@ -30,7 +30,7 @@ pytestmark = pytest.mark.integration
 
 # Mirrors the bundled task-creation schema gate.
 _REQUIRE_TASK_CREATION_ON_SCHEMA = RuleDefinitionBody(
-    event=RuleEvent.BEFORE_TOOL,
+    event=RuleTriggerEvent.BEFORE_TOOL,
     when=(
         "(event.data.get('mcp_tool') == 'get_tool_schema'\n"
         " or event.data.get('tool_name') in ('get_tool_schema', "

@@ -34,7 +34,6 @@ from gobby.config.app import (
     export_config_to_yaml,
     load_config,
     load_yaml,
-    save_config,
 )
 from gobby.config.indexing import IndexingConfig
 
@@ -46,5 +45,4 @@ __all__ = [
     "export_config_to_yaml",
     "load_config",
     "load_yaml",
-    "save_config",  # deprecated alias
 ]

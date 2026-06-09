@@ -171,14 +171,10 @@ export function extractAgentEditWorkflowState(item: AgentDefInfo): AgentEditWork
     | { include?: string[]; exclude?: string[] }
     | undefined
 
-  let skills: string[]
-  if (skillSelectors?.include && skillSelectors.include.length > 0) {
-    skills = skillSelectors.include.filter((skill) => skill !== '*')
-  } else if (d.skill_profile) {
-    skills = Object.keys(d.skill_profile)
-  } else {
-    skills = []
-  }
+  const skills =
+    skillSelectors?.include && skillSelectors.include.length > 0
+      ? skillSelectors.include.filter((skill) => skill !== '*')
+      : []
 
   return {
     steps: d.steps || [],
@@ -221,9 +217,6 @@ export function agentDefToYaml(d: AgentDefInfo['definition']): string {
     obj.default_variables = d.default_variables
   }
   if (d.sandbox && Object.keys(d.sandbox).length > 0) obj.sandbox = d.sandbox
-  if (d.skill_profile && Object.keys(d.skill_profile).length > 0) {
-    obj.skill_profile = d.skill_profile
-  }
   if (d.steps && d.steps.length > 0) obj.steps = d.steps
   if (d.step_variables && Object.keys(d.step_variables).length > 0) {
     obj.step_variables = d.step_variables

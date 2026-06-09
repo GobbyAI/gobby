@@ -3,7 +3,7 @@
 Creates tmux sessions on Gobby's isolated socket (``-L gobby``) via
 :class:`TmuxSessionManager`.  Also provides :meth:`spawn_agent` which
 builds the CLI command, environment variables, and prompt handling
-previously owned by the now-removed ``TerminalSpawner`` orchestrator.
+previously owned by the terminal orchestration layer.
 """
 
 from __future__ import annotations
@@ -219,7 +219,7 @@ class TmuxSpawner(TerminalSpawnerBase):
         return f"tmux attach -t {session_name}"
 
     # ------------------------------------------------------------------
-    # spawn_agent  (moved from the former TerminalSpawner orchestrator)
+# spawn_agent terminal orchestration
     # ------------------------------------------------------------------
 
     def spawn_agent(

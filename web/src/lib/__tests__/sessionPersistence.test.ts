@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createMockLocalStorage, type MockLocalStorageInstance } from '../../test/mocks/localStorage'
 import {
-  CONVERSATION_ID_STORAGE_KEY,
   DB_SESSION_ID_STORAGE_KEY,
   FRESH_CHAT_DRAFT_STORAGE_KEY,
   REASONING_PREFERENCES_STORAGE_KEY,
@@ -31,16 +30,9 @@ describe('sessionPersistence', () => {
   })
 
   it('loads the db session id as the preferred conversation id', () => {
-    localStorage.setItem(CONVERSATION_ID_STORAGE_KEY, 'legacy-conversation')
     localStorage.setItem(DB_SESSION_ID_STORAGE_KEY, 'db-session')
 
     expect(loadPersistedConversationId()).toBe('db-session')
-  })
-
-  it('falls back to the legacy conversation id', () => {
-    localStorage.setItem(CONVERSATION_ID_STORAGE_KEY, 'legacy-conversation')
-
-    expect(loadPersistedConversationId()).toBe('legacy-conversation')
   })
 
   it('loads the persisted db session id directly', () => {

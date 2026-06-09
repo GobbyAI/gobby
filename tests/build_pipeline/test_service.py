@@ -1034,7 +1034,7 @@ async def test_build_persists_stage_caps_on_manifest_rows(temp_db, tmp_path: Pat
     assert rows["merge"].max_work_attempts == 2
     assert rows["holistic_qa"].max_review_rounds == 5
     assert rows["pr"].max_review_rounds == 7
-    assert result.stage_manifest is not None
+    assert result.manifest is not None
 
 
 @pytest.mark.asyncio
@@ -2181,7 +2181,7 @@ async def test_build_task_ref_removes_skipped_pr_from_progressed_child_epic(
     temp_db.execute(
         """
         UPDATE tasks
-           SET assignee = %s, claimed_by_session_id = %s
+           SET claimed_by_session_id = %s, claimed_by_session_id = %s
          WHERE id = %s
         """,
         ("reviewer-session", "reviewer-session", child.id),
@@ -2211,7 +2211,7 @@ async def test_build_task_ref_removes_skipped_pr_from_progressed_child_epic(
     assert task_manager.stage_states.current_stage(child.id).stage_name == "merge"
     updated_child = task_manager.get_task(child.id)
     assert updated_child.claimed_by_session_id is None
-    assert updated_child.assignee is None
+    assert updated_child.claimed_by_session_id is None
 
 
 @pytest.mark.asyncio

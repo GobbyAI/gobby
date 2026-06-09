@@ -13,9 +13,9 @@ from gobby.config.app import (
     DaemonConfig,
     apply_cli_overrides,
     expand_env_vars,
+    export_config_to_yaml,
     load_config,
     load_yaml,
-    save_config,
 )
 from gobby.config.bin_freshness import BinFreshnessConfig
 from gobby.config.bootstrap import BootstrapConfigError
@@ -817,41 +817,6 @@ class TestLoadConfig:
             runtime_embedding_key("provider"),
         ]
 
-    def test_load_config_drops_stale_neo4j_db_keys(
-        self, temp_dir: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """Legacy databases.neo4j.* config_store keys do not block FalkorDB config."""
-
-        class DummyConfigStore:
-            def __init__(self) -> None:
-                self.deleted: list[str] = []
-
-            def get_all(self) -> dict[str, object]:
-                return {
-                    "databases.neo4j.url": "http://localhost:8474",
-                    "databases.neo4j.password": "$secret:password",
-                    "databases.falkordb.password": "falkor-secret",
-                }
-
-            def delete(self, key: str) -> bool:
-                self.deleted.append(key)
-                return True
-
-        store = DummyConfigStore()
-        caplog.set_level("WARNING", logger="gobby.config.app")
-
-        config = load_config(
-            config_file=str(temp_dir / "bootstrap.yaml"),
-            config_store=store,
-        )
-
-        assert config.databases.falkordb.password == "falkor-secret"
-        assert store.deleted == ["databases.neo4j.password", "databases.neo4j.url"]
-        assert any(
-            "Ignoring stale Neo4j config_store keys after FalkorDB migration" in record.getMessage()
-            for record in caplog.records
-        )
-
     def test_load_config_migrates_defaults_seeded_ui_mode_to_auto(self, temp_dir: Path) -> None:
         """Only defaults-sourced legacy ui.mode=production rows migrate to auto."""
 
@@ -1080,12 +1045,12 @@ class TestBootstrapConfig:
 
 @pytest.mark.no_config_protection
 class TestSaveConfig:
-    """Tests for save_config function."""
+    """Tests for export_config_to_yaml function."""
 
     def test_saves_config(self, temp_dir: Path, default_config: DaemonConfig) -> None:
         """Test saving config to file."""
         config_file = temp_dir / "saved.yaml"
-        save_config(default_config, str(config_file))
+        export_config_to_yaml(default_config, str(config_file))
 
         assert config_file.exists()
         content = yaml.safe_load(config_file.read_text())
@@ -1094,7 +1059,7 @@ class TestSaveConfig:
     def test_file_permissions(self, temp_dir: Path, default_config: DaemonConfig) -> None:
         """Test saved config has restrictive permissions."""
         config_file = temp_dir / "secure.yaml"
-        save_config(default_config, str(config_file))
+        export_config_to_yaml(default_config, str(config_file))
 
         # Check permissions (0o600 = owner read/write only)
         mode = config_file.stat().st_mode & 0o777
@@ -1103,11 +1068,11 @@ class TestSaveConfig:
     def test_creates_parent_directory(self, temp_dir: Path, default_config: DaemonConfig) -> None:
         """Test creating parent directory when saving."""
         config_file = temp_dir / "nested" / "dir" / "config.yaml"
-        save_config(default_config, str(config_file))
+        export_config_to_yaml(default_config, str(config_file))
 
         assert config_file.exists()
 
-    def test_save_config_with_none_path_uses_default(
+def test_export_config_to_yaml_with_none_path_uses_default(
         self, temp_dir: Path, default_config: DaemonConfig, monkeypatch
     ) -> None:
         """Test saving config with config_file=None uses default path."""
@@ -1124,7 +1089,7 @@ class TestSaveConfig:
 
         monkeypatch.setattr(Path, "expanduser", mock_expanduser)
 
-        save_config(default_config, config_file=None)
+        export_config_to_yaml(default_config, config_file=None)
 
         # Check the file was saved to the mocked default path
         expected_path = temp_dir / ".gobby" / "config.yaml"
@@ -1133,34 +1098,34 @@ class TestSaveConfig:
 
 @pytest.mark.no_config_protection
 class TestSaveConfigTestGuard:
-    """Tests for save_config GOBBY_TEST_PROTECT guard."""
+    """Tests for export_config_to_yaml GOBBY_TEST_PROTECT guard."""
 
     def test_raises_when_test_protect_set_and_no_path(
         self, default_config: DaemonConfig, monkeypatch
     ) -> None:
-        """save_config raises RuntimeError when GOBBY_TEST_PROTECT=1 and config_file is None."""
+        """export_config_to_yaml raises RuntimeError when GOBBY_TEST_PROTECT=1 and config_file is None."""
         monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
 
         with pytest.raises(
             RuntimeError,
             match="export_config_to_yaml.*would write to production path.*during tests",
         ):
-            save_config(default_config, config_file=None)
+            export_config_to_yaml(default_config, config_file=None)
 
     def test_no_error_with_explicit_path(
         self, temp_dir: Path, default_config: DaemonConfig, monkeypatch
     ) -> None:
-        """save_config works with explicit path even when GOBBY_TEST_PROTECT=1."""
+        """export_config_to_yaml works with explicit path even when GOBBY_TEST_PROTECT=1."""
         monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
 
         config_file = temp_dir / "safe.yaml"
-        save_config(default_config, str(config_file))
+        export_config_to_yaml(default_config, str(config_file))
         assert config_file.exists()
 
     def test_no_error_without_test_protect(
         self, temp_dir: Path, default_config: DaemonConfig, monkeypatch
     ) -> None:
-        """save_config works normally when GOBBY_TEST_PROTECT is not set."""
+        """export_config_to_yaml works normally when GOBBY_TEST_PROTECT is not set."""
         monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
 
         # Redirect expanduser so we don't touch real config
@@ -1174,7 +1139,7 @@ class TestSaveConfigTestGuard:
 
         monkeypatch.setattr(Path, "expanduser", mock_expanduser)
 
-        save_config(default_config, config_file=None)
+        export_config_to_yaml(default_config, config_file=None)
         assert (temp_dir / ".gobby" / "config.yaml").exists()
 
 
@@ -1637,7 +1602,7 @@ class TestDaemonConfigComposition:
 
         # Export to YAML
         config_file = temp_dir / "roundtrip.yaml"
-        save_config(config, str(config_file))
+        export_config_to_yaml(config, str(config_file))
 
         # Verify YAML content is valid and preserves values
         raw = yaml.safe_load(config_file.read_text())

@@ -17,7 +17,6 @@ class TaskDecompositionMixin:
         created_in_session_id: str | None = None,
         priority: int = 2,
         task_type: str = "task",
-        assignee: str | None = None,
         labels: list[str] | None = None,
         category: str | None = None,
         validation_criteria: str | None = None,
@@ -36,7 +35,6 @@ class TaskDecompositionMixin:
             created_in_session_id: Session that requested the child task.
             priority: Task priority, where 1 is highest.
             task_type: Task type such as ``task``, ``bug``, or ``feature``.
-            assignee: Optional assignee identifier.
             labels: Optional task labels.
             category: Optional validation category.
             validation_criteria: Observable acceptance criteria for code tasks.
@@ -68,7 +66,6 @@ class TaskDecompositionMixin:
             created_in_session_id=created_in_session_id,
             priority=priority,
             task_type=task_type,
-            assignee=assignee,
             labels=labels,
             category=category,
             validation_criteria=validation_criteria,

@@ -189,7 +189,7 @@ class TestSpawnAgentDedup:
         mock_task.id = "task-uuid-14084"
         mock_task.additional_skills = None
         mock_task.claimed_by_session_id = None
-        mock_task.assignee = None
+        mock_task.claimed_by_session_id = None
         mock_task.stages = []
         mock_task.closed_at = None
         claimed_task = MagicMock()

@@ -2,9 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ActivityTab } from './ActivityPanelTabs'
 
 const STORAGE_KEY_LAYOUT = 'gobby-activity-panel-layout'
-const LEGACY_STORAGE_KEY_PINNED = 'gobby-activity-panel-pinned'
 const STORAGE_KEY_WIDTH = 'gobby-activity-panel-width'
-const LEGACY_STORAGE_KEY_TAB = 'gobby-activity-panel-tab'
 const STORAGE_KEY_TAB = 'gobby-activity-panel-tab-v2'
 
 const VALID_TABS: ActivityTab[] = [
@@ -53,9 +51,6 @@ function reduceMobileToggle(view: MobileView): MobileView {
 }
 
 function normalizeStoredTab(value: string | null): ActivityTab | null {
-  // The Artifacts and A2UI Canvas tabs were removed; any stored value (legacy
-  // v1 or v2) lands on Changes so existing users never resolve to a missing tab.
-  if (value === 'artifacts' || value === 'canvas') return 'changes'
   if (value && VALID_TABS.includes(value as ActivityTab)) return value as ActivityTab
   return null
 }
@@ -64,46 +59,17 @@ function loadActiveTab(): ActivityTab {
   try {
     const stored = normalizeStoredTab(localStorage.getItem(STORAGE_KEY_TAB))
     if (stored) return stored
-
-    const legacy = normalizeStoredTab(localStorage.getItem(LEGACY_STORAGE_KEY_TAB))
-    if (legacy) {
-      localStorage.removeItem(LEGACY_STORAGE_KEY_TAB)
-      return legacy
-    }
   } catch {
     /* ignore */
   }
   return 'sessions'
 }
 
-/**
- * Resolve the persisted desktop layout mode, migrating the legacy
- * `gobby-activity-panel-pinned` boolean on first read:
- * `true` -> `split`, `false` -> `chat`. Idempotent: once the new key is
- * written the legacy key is removed and never consulted again.
- */
 export function loadLayoutMode(): LayoutMode {
   try {
     const stored = localStorage.getItem(STORAGE_KEY_LAYOUT)
     if (stored && LAYOUT_MODES.includes(stored as LayoutMode)) {
       return stored as LayoutMode
-    }
-
-    const legacy = localStorage.getItem(LEGACY_STORAGE_KEY_PINNED)
-    if (legacy !== null) {
-      const migrated: LayoutMode = legacy === 'true' ? 'split' : 'chat'
-      try {
-        localStorage.setItem(STORAGE_KEY_LAYOUT, migrated)
-      } catch {
-        /* ignore */
-      } finally {
-        try {
-          localStorage.removeItem(LEGACY_STORAGE_KEY_PINNED)
-        } catch {
-          /* ignore */
-        }
-      }
-      return migrated
     }
   } catch {
     /* ignore */

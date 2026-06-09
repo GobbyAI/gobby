@@ -179,10 +179,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
         from gobby.scheduler.executor import CronExecutor
         from gobby.scheduler.scheduler import CronScheduler
         from gobby.storage.cron import CronJobStorage
-        from gobby.system_automation import (
-            SystemAutomationLoop,
-            remove_legacy_automation_cron_rows,
-        )
+        from gobby.system_automation import SystemAutomationLoop
 
         runner.cron_storage = CronJobStorage(runner.database)
         cron_executor = CronExecutor(
@@ -191,10 +188,6 @@ def init_orchestration(runner: GobbyRunner) -> None:
             pipeline_executor=runner.pipeline_executor,
             services=runner,
         )
-        removed_automation_jobs = remove_legacy_automation_cron_rows(runner.database)
-        if removed_automation_jobs:
-            logger.info("Removed %d legacy automation cron row(s)", removed_automation_jobs)
-
         pipeline_heartbeat = None
         try:
             from gobby.workflows.pipeline_heartbeat import PipelineHeartbeat

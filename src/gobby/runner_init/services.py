@@ -18,7 +18,7 @@ from gobby.sessions.processor import SessionMessageProcessor
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.worktrees import LocalWorktreeManager
-from gobby.sync.memories import MemorySyncManager
+from gobby.sync.memories import MemoryBackupManager
 from gobby.sync.tasks import TaskSyncManager
 from gobby.tasks.validation import TaskValidator
 
@@ -196,15 +196,15 @@ def _init_sync_managers(runner: GobbyRunner) -> None:
     if hasattr(runner.config, "memory_sync") and runner.config.memory_sync.enabled:
         if runner.memory_manager:
             try:
-                runner.memory_sync_manager = MemorySyncManager(
+                runner.memory_sync_manager = MemoryBackupManager(
                     db=runner.database,
                     memory_manager=runner.memory_manager,
                     config=runner.config.memory_sync,
                 )
-                logger.debug("MemorySyncManager initialized (backup/export only)")
+                logger.debug("MemoryBackupManager initialized (backup/export only)")
 
             except Exception as e:
-                logger.error(f"Failed to initialize MemorySyncManager: {e}")
+                logger.error(f"Failed to initialize MemoryBackupManager: {e}")
 
 
 def _init_message_processor(runner: GobbyRunner) -> None:

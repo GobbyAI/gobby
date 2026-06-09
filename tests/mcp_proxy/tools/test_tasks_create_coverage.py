@@ -562,11 +562,11 @@ class TestCreateTaskTool:
             mock_task.id = "550e8400-e29b-41d4-a716-446655440020"
             mock_task.seq_num = 100
             mock_task.status = "open"
-            mock_task.assignee = None
+            mock_task.claimed_by_session_id = None
             mock_task.to_dict.return_value = {
                 "id": "550e8400-e29b-41d4-a716-446655440020",
                 "status": "open",
-                "assignee": None,
+                "claimed_by_session_id": None,
             }
             mock_task_manager.create_task_with_decomposition.return_value = {
                 "task": {"id": "550e8400-e29b-41d4-a716-446655440020"},
@@ -620,11 +620,11 @@ class TestCreateTaskTool:
             mock_task.id = "550e8400-e29b-41d4-a716-446655440021"
             mock_task.seq_num = 101
             mock_task.status = "in_progress"
-            mock_task.assignee = "test-session"
+            mock_task.claimed_by_session_id = "test-session"
             mock_task.to_dict.return_value = {
                 "id": "550e8400-e29b-41d4-a716-446655440021",
                 "status": "in_progress",
-                "assignee": "test-session",
+                "claimed_by_session_id": "test-session",
             }
             mock_task_manager.create_task_with_decomposition.return_value = {
                 "task": {"id": "550e8400-e29b-41d4-a716-446655440021"},
@@ -694,7 +694,7 @@ class TestCreateTaskTool:
             mock_task.id = "550e8400-e29b-41d4-a716-446655440021"
             mock_task.seq_num = 101
             mock_task.status = "in_progress"
-            mock_task.assignee = "test-session"
+            mock_task.claimed_by_session_id = "test-session"
             mock_task_manager.create_task_with_decomposition.return_value = {
                 "task": {"id": "550e8400-e29b-41d4-a716-446655440021"},
             }
@@ -883,7 +883,7 @@ class TestCreateTaskCrossProjectClaimBlocking:
             mock_task.id = "550e8400-e29b-41d4-a716-446655440099"
             mock_task.seq_num = 500
             mock_task.status = "in_progress"
-            mock_task.assignee = "test-session"
+            mock_task.claimed_by_session_id = "test-session"
             mock_task_manager.create_task_with_decomposition.return_value = {
                 "task": {"id": mock_task.id},
             }

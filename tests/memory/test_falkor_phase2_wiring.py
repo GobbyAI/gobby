@@ -128,7 +128,7 @@ def test_runner_memory_stack_uses_canonical_falkordb_enablement_and_kwargs() -> 
                 falkordb=SimpleNamespace(
                     host="127.0.0.1",
                     port=16379,
-                    requirepass="secret",
+                    password="secret",
                     graph_name="gobby_kg",
                     graph_search=True,
                     graph_min_score=0.45,

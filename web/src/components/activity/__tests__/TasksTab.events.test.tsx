@@ -263,7 +263,6 @@ describe("TasksTab — events and row actions", () => {
     mockFetch.mockJsonResponse("/api/tasks/task-review/claim", {
       task: {
         ...taskList[0],
-        assignee: "main-chat-1",
       },
     });
 
@@ -465,7 +464,6 @@ describe("TasksTab — events and row actions", () => {
     const claimedTask = {
       ...taskList[0],
       claimed_by_session_id: "main-chat-1",
-      assignee: "main-chat-1",
       state: taskStatePayload("review_approved", {
         is_claimed: true,
         owner_session_id: "main-chat-1",
@@ -497,7 +495,6 @@ describe("TasksTab — events and row actions", () => {
       task: {
         ...claimedTask,
         claimed_by_session_id: null,
-        assignee: null,
         state: taskStatePayload("review_approved", { is_claimed: false }),
       },
     });

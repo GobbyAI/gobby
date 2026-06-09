@@ -71,14 +71,8 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
     def __init__(
         self,
         db: "HubDatabase | None" = None,
-        # Legacy parameters kept for backward compatibility with tests
-        workflow_dirs: list[Path] | None = None,
-        bundled_dir: Path | None = None,
     ):
-        # Legacy directory fields — unused at runtime but kept so tests that
-        # pass workflow_dirs= still instantiate without errors.
-        self.global_dirs = workflow_dirs or [Path.home() / ".gobby" / "workflows"]
-        self._bundled_dir = bundled_dir
+        self.global_dirs = [Path.home() / ".gobby" / "workflows"]
         self._cache: dict[str, _CachedEntry] = {}
         # Cache for discovered workflows per project path
         self._discovery_cache: dict[str, _CachedDiscovery] = {}

@@ -202,12 +202,9 @@ export default function App() {
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const initialHash = window.location.hash.slice(1);
-  const initialActivityTab: ActivityTab | null =
-    initialHash === "mcp" ? "mcp" : null;
   const [activityTabRequest, setActivityTabRequest] =
-    useState<ActivityTab | null>(initialActivityTab);
+    useState<ActivityTab | null>(null);
   const [activeTab, setActiveTab] = useState<string>(() => {
-    if (initialActivityTab) return "chat";
     return APP_VALID_TABS.has(initialHash) ? initialHash : "chat";
   });
 

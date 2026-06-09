@@ -273,23 +273,23 @@ class TestRuleEffect:
 
 class TestRuleDefinitionBody:
     def test_minimal_block_rule(self) -> None:
-        from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
+        from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 
         body = RuleDefinitionBody(
-            event=RuleEvent.BEFORE_TOOL,
+            event=RuleTriggerEvent.BEFORE_TOOL,
             effects=[RuleEffect(type="block", reason="Not allowed", tools=["Edit"])],
         )
-        assert body.event == RuleEvent.BEFORE_TOOL
+        assert body.event == RuleTriggerEvent.BEFORE_TOOL
         assert body.effects[0].type == "block"
         assert body.when is None
         assert body.match is None
         assert body.group is None
 
     def test_full_rule(self) -> None:
-        from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
+        from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 
         body = RuleDefinitionBody(
-            event=RuleEvent.BEFORE_TOOL,
+            event=RuleTriggerEvent.BEFORE_TOOL,
             when="variables.get('require_task_before_edit') and not task_claimed",
             match={"tool": "Edit"},
             effects=[
@@ -301,29 +301,29 @@ class TestRuleDefinitionBody:
             ],
             group="task-enforcement",
         )
-        assert body.event == RuleEvent.BEFORE_TOOL
+        assert body.event == RuleTriggerEvent.BEFORE_TOOL
         assert body.when is not None
         assert body.match == {"tool": "Edit"}
         assert body.effects[0].reason == "Claim a task first"
         assert body.group == "task-enforcement"
 
     def test_set_variable_rule(self) -> None:
-        from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
+        from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 
         body = RuleDefinitionBody(
-            event=RuleEvent.AFTER_TOOL,
+            event=RuleTriggerEvent.AFTER_TOOL,
             when="event.data.get('mcp_tool') == 'claim_task'",
             effects=[RuleEffect(type="set_variable", variable="task_claimed", value=True)],
             group="task-enforcement",
         )
-        assert body.event == RuleEvent.AFTER_TOOL
+        assert body.event == RuleTriggerEvent.AFTER_TOOL
         assert body.effects[0].variable == "task_claimed"
 
     def test_inject_context_rule(self) -> None:
-        from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
+        from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 
         body = RuleDefinitionBody(
-            event=RuleEvent.SESSION_START,
+            event=RuleTriggerEvent.SESSION_START,
             when="variables.get('session_task')",
             effects=[
                 RuleEffect(
@@ -333,14 +333,14 @@ class TestRuleDefinitionBody:
             ],
             group="auto-task",
         )
-        assert body.event == RuleEvent.SESSION_START
+        assert body.event == RuleTriggerEvent.SESSION_START
         assert body.effects[0].template is not None
 
     def test_mcp_call_rule(self) -> None:
-        from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
+        from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 
         body = RuleDefinitionBody(
-            event=RuleEvent.SESSION_START,
+            event=RuleTriggerEvent.SESSION_START,
             effects=[
                 RuleEffect(
                     type="mcp_call",
@@ -350,14 +350,14 @@ class TestRuleDefinitionBody:
             ],
             group="memory-lifecycle",
         )
-        assert body.event == RuleEvent.SESSION_START
+        assert body.event == RuleTriggerEvent.SESSION_START
         assert body.effects[0].server == "gobby-memory"
 
     def test_stop_event_rule(self) -> None:
-        from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
+        from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 
         body = RuleDefinitionBody(
-            event=RuleEvent.STOP,
+            event=RuleTriggerEvent.STOP,
             when="variables.get('_tool_block_pending')",
             effects=[
                 RuleEffect(
@@ -367,13 +367,13 @@ class TestRuleDefinitionBody:
             ],
             group="stop-gates",
         )
-        assert body.event == RuleEvent.STOP
+        assert body.event == RuleTriggerEvent.STOP
 
     def test_pre_compact_event_rule(self) -> None:
-        from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
+        from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 
         body = RuleDefinitionBody(
-            event=RuleEvent.PRE_COMPACT,
+            event=RuleTriggerEvent.PRE_COMPACT,
             effects=[
                 RuleEffect(
                     type="mcp_call",
@@ -383,24 +383,24 @@ class TestRuleDefinitionBody:
             ],
             group="context-handoff",
         )
-        assert body.event == RuleEvent.PRE_COMPACT
+        assert body.event == RuleTriggerEvent.PRE_COMPACT
 
     def test_event_from_string(self) -> None:
         """RuleDefinitionBody should accept event as string."""
-        from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
+        from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 
         body = RuleDefinitionBody(
             event="before_tool",
             effects=[RuleEffect(type="block", reason="test")],
         )
-        assert body.event == RuleEvent.BEFORE_TOOL
+        assert body.event == RuleTriggerEvent.BEFORE_TOOL
 
     def test_serialization_roundtrip(self) -> None:
         """RuleDefinitionBody should serialize to/from JSON (for definition_json storage)."""
-        from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
+        from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 
         body = RuleDefinitionBody(
-            event=RuleEvent.BEFORE_TOOL,
+            event=RuleTriggerEvent.BEFORE_TOOL,
             when="not task_claimed",
             match={"tool": "Edit"},
             effects=[
@@ -430,10 +430,10 @@ class TestRuleDefinitionBody:
 
     def test_model_dump_mode_json(self) -> None:
         """model_dump(mode='json') should produce JSON-serializable output."""
-        from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
+        from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 
         body = RuleDefinitionBody(
-            event=RuleEvent.STOP,
+            event=RuleTriggerEvent.STOP,
             effects=[RuleEffect(type="set_variable", variable="stop_attempts", value=0)],
         )
         data = body.model_dump(mode="json")
@@ -478,7 +478,7 @@ class TestRuleDefinitionBody:
             RuleDefinitionBody(effects=[RuleEffect(type="block")])
 
     def test_effects_required(self) -> None:
-        from gobby.workflows.definitions import RuleDefinitionBody, RuleEvent
+        from gobby.workflows.definitions import RuleDefinitionBody, RuleTriggerEvent
 
         with pytest.raises(ValidationError):
-            RuleDefinitionBody(event=RuleEvent.BEFORE_TOOL)
+            RuleDefinitionBody(event=RuleTriggerEvent.BEFORE_TOOL)

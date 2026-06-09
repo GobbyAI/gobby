@@ -582,13 +582,6 @@ class TestHubs:
         assert response.status_code == 500
 
 
-class TestInstallAllTemplates:
-    def test_install_all_templates_returns_410(self, client: TestClient) -> None:
-        """Legacy endpoint returns 410 Gone."""
-        response = client.post("/api/skills/install-all-templates")
-        assert response.status_code == 410
-
-
 class TestGetSkill:
     def test_get_skill(self, client: TestClient, skill_manager) -> None:
         skill_mock = MagicMock()
@@ -644,13 +637,6 @@ class TestDeleteSkill:
         skill_manager.delete_skill.side_effect = Exception("err")
         response = client.delete("/api/skills/1")
         assert response.status_code == 500
-
-
-class TestInstallFromTemplate:
-    def test_install_from_template_returns_410(self, client: TestClient) -> None:
-        """Legacy endpoint returns 410 Gone."""
-        response = client.post("/api/skills/1/install")
-        assert response.status_code == 410
 
 
 class TestMoveToProject:

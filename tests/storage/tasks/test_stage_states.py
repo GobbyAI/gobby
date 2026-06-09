@@ -415,8 +415,7 @@ def _closed_leaf_for_holistic_failure(temp_db, sample_project, parent_id: str, t
            SET closed_at = '2026-05-07T00:00:00+00:00',
                closed_reason = 'manifest_exhausted',
                closed_commit_sha = 'abc123',
-               claimed_by_session_id = NULL,
-               assignee = NULL
+               claimed_by_session_id = NULL
          WHERE id = %s
         """,
         (leaf.id,),
@@ -739,7 +738,7 @@ def test_move_to_stage_same_ready_stage_is_state_idempotent(
     set_stage_state(temp_db, task.id, "development", "done", work_attempt_count=1)
     before_events = lifecycle_events(temp_db, task.id)
 
-    manager.move_to_stage(task.id, "pr", by_session_id="operator")
+    manager.move_to_stage(task.id, "pr", by_session_id="operator", force=True)
 
     assert [(row["stage_name"], row["state"]) for row in stage_rows(temp_db, task.id)] == [
         ("development", "done"),
@@ -753,6 +752,12 @@ def test_move_to_stage_reopens_closed_task_and_clears_reset_metadata(
     temp_db,
     sample_project,
 ) -> None:
+    stale_owner = SessionManager(temp_db).register(
+        external_id="stale-owner-ext",
+        machine_id="test-machine",
+        source="codex",
+        project_id=sample_project["id"],
+    )
     task, manager = make_task_with_manifest(
         temp_db,
         sample_project,
@@ -783,16 +788,15 @@ def test_move_to_stage_reopens_closed_task_and_clears_reset_metadata(
                escalated_at = '2026-05-04T00:00:00+00:00',
                escalation_reason = 'stale escalation',
                is_escalated = TRUE,
-               assignee = 'stale-agent',
-               claimed_by_session_id = NULL,
+               claimed_by_session_id = %s,
                validation_fail_count = 4,
                dispatch_failure_count = 3
          WHERE id = %s
         """,
-        (task.id,),
+        (stale_owner.id, task.id),
     )
 
-    manager.move_to_stage(task.id, "pr", by_session_id="operator")
+    manager.move_to_stage(task.id, "pr", by_session_id="operator", force=True)
 
     reopened = task_row(temp_db, task.id)
     assert reopened["closed_at"] is None
@@ -801,7 +805,7 @@ def test_move_to_stage_reopens_closed_task_and_clears_reset_metadata(
     assert reopened["escalated_at"] is None
     assert reopened["escalation_reason"] is None
     assert reopened["is_escalated"] is False
-    assert reopened["assignee"] is None
+    assert reopened["claimed_by_session_id"] is None
     assert reopened["validation_fail_count"] == 0
     assert reopened["dispatch_failure_count"] == 0
     assert stage_row(temp_db, task.id, "development")["state"] == "done"

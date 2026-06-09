@@ -12,7 +12,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
+from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.engine.effects import _is_empty_inject_payload
 from gobby.workflows.state_manager import SessionVariableManager
@@ -91,7 +91,7 @@ def _insert_rule(
         name=name,
         workflow_type="rule",
         definition_json=RuleDefinitionBody(
-            event=RuleEvent.BEFORE_TOOL,
+            event=RuleTriggerEvent.BEFORE_TOOL,
             effects=[effect],
         ).model_dump_json(),
         priority=10,

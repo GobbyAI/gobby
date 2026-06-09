@@ -102,12 +102,12 @@ class TestLocalTaskManager:
     ) -> None:
         task = task_manager.create_task(project_id=project_id, title="Original Title")
 
-        with pytest.raises(ValueError, match="Blocked fields: status, assignee"):
+        with pytest.raises(ValueError, match="Blocked fields: status, claimed_by_session_id"):
             task_manager.update_task(
                 task.id,
                 title="New Title",
                 status="in_progress",
-                assignee="sess-123",
+                claimed_by_session_id="sess-123",
             )
 
     def test_reconcile_task_state_preserves_owner_without_stage_mutation(
@@ -130,7 +130,7 @@ class TestLocalTaskManager:
 
         assert updated.title == "From Linear"
         _assert_stage_state(updated, "in_progress")
-        assert updated.assignee == session.id
+        assert updated.claimed_by_session_id == session.id
         assert updated.claimed_by_session_id == session.id
 
     def test_state_projects_from_current_stage_rows(self, task_manager, project_id) -> None:
@@ -853,7 +853,7 @@ class TestLocalTaskManager:
 
         assert not is_task_closed(reopened)
         _assert_stage_state(reopened, "ready")
-        assert reopened.assignee is None
+        assert reopened.claimed_by_session_id is None
         assert reopened.claimed_by_session_id is None
         assert reopened.validation_fail_count == 0
         assert reopened.dispatch_failure_count == 0
@@ -869,12 +869,12 @@ class TestLocalTaskManager:
         assert not reopened.is_escalated
         assert reopened.escalated_at is None
         _assert_stage_state(reopened, "ready")
-        assert reopened.assignee is None
+        assert reopened.claimed_by_session_id is None
 
     def test_claim_task_sets_canonical_owner(
         self, task_manager, project_id, session_manager
     ) -> None:
-        """Claiming should dual-write canonical ownership and legacy assignee."""
+        """Claiming should dual-write canonical ownership and legacy claimed_by_session_id."""
         session = session_manager.register(
             external_id="claim-ext",
             machine_id="test-machine",
@@ -886,7 +886,7 @@ class TestLocalTaskManager:
         claimed = task_manager.claim_task(task.id, session.id)
 
         _assert_stage_state(claimed, "ready")
-        assert claimed.assignee == session.id
+        assert claimed.claimed_by_session_id == session.id
         assert claimed.claimed_by_session_id == session.id
 
     def test_claim_task_preserves_review_status(
@@ -906,7 +906,7 @@ class TestLocalTaskManager:
         claimed = task_manager.claim_task(task.id, session.id)
 
         _assert_stage_state(claimed, "needs_review")
-        assert claimed.assignee == session.id
+        assert claimed.claimed_by_session_id == session.id
         assert claimed.claimed_by_session_id == session.id
 
     def test_release_task_claim_clears_canonical_owner(
@@ -925,7 +925,7 @@ class TestLocalTaskManager:
         released = task_manager.release_task_claim(task.id)
 
         _assert_stage_state(released, "ready")
-        assert released.assignee is None
+        assert released.claimed_by_session_id is None
         assert released.claimed_by_session_id is None
 
     def test_submit_for_review_clears_canonical_owner(
@@ -945,7 +945,7 @@ class TestLocalTaskManager:
         reviewed = task_manager.submit_for_review(task.id, review_notes="Ready for QA")
 
         _assert_stage_state(reviewed, "needs_review")
-        assert reviewed.assignee is None
+        assert reviewed.claimed_by_session_id is None
         assert reviewed.claimed_by_session_id is None
 
     def test_approve_review_clears_canonical_owner(
@@ -969,7 +969,7 @@ class TestLocalTaskManager:
         )
 
         _assert_stage_state(approved, "review_approved")
-        assert approved.assignee is None
+        assert approved.claimed_by_session_id is None
         assert approved.claimed_by_session_id is None
 
     def test_reject_review_reopens_and_clears_canonical_owner(
@@ -998,7 +998,7 @@ class TestLocalTaskManager:
         )
 
         _assert_stage_state(rejected, "ready")
-        assert rejected.assignee is None
+        assert rejected.claimed_by_session_id is None
         assert rejected.claimed_by_session_id is None
         assert "## Adversary Findings — Round 1" in (rejected.description or "")
         assert not any(label.startswith("planning-round:") for label in rejected.labels or [])
@@ -1121,7 +1121,7 @@ class TestLocalTaskManager:
 
         assert escalated.is_escalated
         assert escalated.escalated_at is not None
-        assert escalated.assignee is None
+        assert escalated.claimed_by_session_id is None
         assert escalated.claimed_by_session_id is None
 
     def test_deleting_session_clears_canonical_owner(
@@ -1387,16 +1387,6 @@ class TestLocalTaskManager:
         for t in tasks:
             assert "urgent" in t.labels
 
-    def test_list_tasks_with_assignee_filter(self, task_manager, project_id) -> None:
-        """Test filtering tasks by assignee."""
-        task_manager.create_task(project_id, "Task 1", assignee="alice")
-        task_manager.create_task(project_id, "Task 2", assignee="bob")
-
-        tasks = task_manager.list_tasks(project_id=project_id, assignee="alice")
-
-        assert len(tasks) == 1
-        assert tasks[0].assignee == "alice"
-
     def test_list_tasks_with_task_type_filter(self, task_manager, project_id) -> None:
         """Test filtering tasks by type."""
         task_manager.create_task(project_id, "Bug 1", task_type="bug")
@@ -1422,16 +1412,6 @@ class TestLocalTaskManager:
 
         assert len(tasks) == 1
         assert tasks[0].task_type == "bug"
-
-    def test_list_ready_tasks_with_assignee_filter(self, task_manager, project_id) -> None:
-        """Test filtering ready tasks by assignee."""
-        task_manager.create_task(project_id, "Task 1", assignee="alice")
-        task_manager.create_task(project_id, "Task 2", assignee="bob")
-
-        tasks = task_manager.list_ready_tasks(project_id=project_id, assignee="alice")
-
-        assert len(tasks) == 1
-        assert tasks[0].assignee == "alice"
 
     def test_list_ready_tasks_with_priority_filter(self, task_manager, project_id) -> None:
         """Test filtering ready tasks by priority."""
@@ -1594,8 +1574,14 @@ class TestLocalTaskManager:
     # Task.to_brief Tests
     # =========================================================================
 
-    def test_task_to_brief(self, task_manager, project_id) -> None:
+    def test_task_to_brief(self, task_manager, project_id, session_manager) -> None:
         """Test Task.to_brief returns minimal fields."""
+        session = session_manager.register(
+            external_id="brief-owner-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
         task = task_manager.create_task(
             project_id,
             "Full Task",
@@ -1603,7 +1589,7 @@ class TestLocalTaskManager:
             priority=1,
             task_type="bug",
             labels=["urgent"],
-            assignee="alice",
+            claimed_by_session_id=session.id,
         )
 
         brief = task.to_brief()
@@ -1701,7 +1687,7 @@ class TestLocalTaskManager:
             created_in_session_id=session.id,
             priority=1,
             task_type="feature",
-            assignee="developer",
+            claimed_by_session_id=session.id,
             labels=["important"],
             category="Unit tests",
             validation_criteria="All tests pass",
@@ -1712,7 +1698,7 @@ class TestLocalTaskManager:
         assert task.created_in_session_id == session.id
         assert task.priority == 1
         assert task.task_type == "feature"
-        assert task.assignee == "developer"
+        assert task.claimed_by_session_id == session.id
         assert task.labels == ["important"]
         assert task.category == "Unit tests"
         assert task.validation_criteria == "All tests pass"
@@ -1728,7 +1714,7 @@ class TestConcurrentTaskCreation:
         """Multiple threads creating tasks simultaneously must all get unique seq_nums."""
         import concurrent.futures
 
-        from gobby.storage.tasks._crud import create_task
+        from gobby.storage.tasks._creation import create_task
 
         num_tasks = 10
 

@@ -236,8 +236,7 @@ class TestUpdateTaskTool:
                 "description": "New Description",
                 # "status" is blocked for all values - must use lifecycle tools
                 "priority": 1,
-                # "assignee" is blocked - must use claim_task
-                "labels": ["urgent"],
+                    "labels": ["urgent"],
                 "validation_criteria": "Must pass",
                 "parent_task_id": "550e8400-e29b-41d4-a716-446655440010",
                 "category": "automated",
@@ -421,74 +420,8 @@ class TestUpdateTaskTool:
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_update_task_blocks_open_status(self, mock_task_manager, mock_sync_manager):
-        """Test update_task blocks 'open' status changes."""
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
-
-        result = await registry.call(
-            "update_task",
-            {"task_id": "550e8400-e29b-41d4-a716-446655440000", "status": "open"},
-        )
-
-        assert "error" in result
-        assert "Cannot set status to 'open'" in result["error"]
-        assert "reopen_task" in result["error"]
-        mock_task_manager.update_task.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_update_task_blocks_review_status(self, mock_task_manager, mock_sync_manager):
-        """Test update_task blocks 'review' status changes."""
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
-
-        result = await registry.call(
-            "update_task",
-            {"task_id": "550e8400-e29b-41d4-a716-446655440000", "status": "review"},
-        )
-
-        assert "error" in result
-        assert "Cannot set status to 'needs_review'" in result["error"]
-        assert "submit_for_review" in result["error"]
-        mock_task_manager.update_task.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_update_task_blocks_needs_review_status(
-        self, mock_task_manager, mock_sync_manager
-    ):
-        """Test update_task blocks 'needs_review' status changes."""
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
-
-        result = await registry.call(
-            "update_task",
-            {"task_id": "550e8400-e29b-41d4-a716-446655440000", "status": "needs_review"},
-        )
-
-        assert "error" in result
-        assert "Cannot set status to 'needs_review'" in result["error"]
-        assert "submit_for_review" in result["error"]
-        mock_task_manager.update_task.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_update_task_blocks_escalated_status(self, mock_task_manager, mock_sync_manager):
-        """Test update_task blocks 'escalated' status changes."""
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
-
-        result = await registry.call(
-            "update_task",
-            {"task_id": "550e8400-e29b-41d4-a716-446655440000", "status": "escalated"},
-        )
-
-        assert "error" in result
-        assert "Cannot set status to 'escalated'" in result["error"]
-        assert "escalate_task" in result["error"]
-        mock_task_manager.update_task.assert_not_called()
-
-    @pytest.mark.asyncio
     async def test_update_task_partial_update(self, mock_task_manager, mock_sync_manager):
-        """Test update_task only includes provided fields.
-
-        Note: status='closed' is blocked (must use close_task),
-        and status='in_progress' is blocked (must use claim_task).
-        """
+        """Test update_task only includes provided metadata fields."""
         registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
         updated_task = MagicMock()
@@ -715,7 +648,6 @@ class TestListTasksTool:
                     "current_stage_state": "ready",
                     "priority": 1,
                     "task_type": "bug",
-                    "assignee": "dev",
                     "label": "urgent",
                     "parent_task_id": "550e8400-e29b-41d4-a716-446655440010",
                     "title_like": "feature",
@@ -727,7 +659,6 @@ class TestListTasksTool:
                 current_stage_state="ready",
                 priority=1,
                 task_type="bug",
-                assignee="dev",
                 label="urgent",
                 parent_task_id="550e8400-e29b-41d4-a716-446655440010",
                 title_like="feature",

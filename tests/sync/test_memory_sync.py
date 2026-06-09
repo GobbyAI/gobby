@@ -6,7 +6,7 @@ import pytest
 
 from gobby.config.persistence import MemoryBackupConfig
 from gobby.storage.memories import Memory
-from gobby.sync.memories import MemorySyncManager
+from gobby.sync.memories import MemoryBackupManager
 
 pytestmark = pytest.mark.unit
 
@@ -51,7 +51,7 @@ def sync_config():
 
 @pytest.fixture
 def sync_manager(mock_db, mock_memory_manager, sync_config):
-    return MemorySyncManager(mock_db, mock_memory_manager, sync_config)
+    return MemoryBackupManager(mock_db, mock_memory_manager, sync_config)
 
 
 @pytest.mark.asyncio
@@ -168,7 +168,7 @@ async def test_get_export_path_no_context_path(sync_manager):
 async def test_import_from_files_disabled(mock_db, mock_memory_manager):
     """Test import_from_files returns 0 when disabled."""
     config = MemoryBackupConfig(enabled=False)
-    sync_manager = MemorySyncManager(mock_db, mock_memory_manager, config)
+    sync_manager = MemoryBackupManager(mock_db, mock_memory_manager, config)
 
     count = await sync_manager.import_from_files()
 
@@ -179,7 +179,7 @@ async def test_import_from_files_disabled(mock_db, mock_memory_manager):
 async def test_import_from_files_no_memory_manager(mock_db):
     """Test import_from_files returns 0 when no memory manager."""
     config = MemoryBackupConfig(enabled=True)
-    sync_manager = MemorySyncManager(mock_db, None, config)
+    sync_manager = MemoryBackupManager(mock_db, None, config)
 
     count = await sync_manager.import_from_files()
 
@@ -311,7 +311,7 @@ def test_export_sync(sync_manager, tmp_path) -> None:
 def test_export_sync_disabled(mock_db, mock_memory_manager) -> None:
     """Test export_sync returns 0 when disabled."""
     config = MemoryBackupConfig(enabled=False)
-    sync_manager = MemorySyncManager(mock_db, mock_memory_manager, config)
+    sync_manager = MemoryBackupManager(mock_db, mock_memory_manager, config)
 
     count = sync_manager.export_sync()
 
@@ -321,7 +321,7 @@ def test_export_sync_disabled(mock_db, mock_memory_manager) -> None:
 def test_export_sync_no_memory_manager(mock_db) -> None:
     """Test export_sync returns 0 when no memory manager."""
     config = MemoryBackupConfig(enabled=True)
-    sync_manager = MemorySyncManager(mock_db, None, config)
+    sync_manager = MemoryBackupManager(mock_db, None, config)
 
     count = sync_manager.export_sync()
 
@@ -342,7 +342,7 @@ def test_export_sync_error(sync_manager, caplog) -> None:
 async def test_export_to_files_disabled(mock_db, mock_memory_manager):
     """Test export_to_files returns 0 when disabled."""
     config = MemoryBackupConfig(enabled=False)
-    sync_manager = MemorySyncManager(mock_db, mock_memory_manager, config)
+    sync_manager = MemoryBackupManager(mock_db, mock_memory_manager, config)
 
     count = await sync_manager.export_to_files()
 
@@ -353,7 +353,7 @@ async def test_export_to_files_disabled(mock_db, mock_memory_manager):
 async def test_export_to_files_no_memory_manager(mock_db):
     """Test export_to_files returns 0 when no memory manager."""
     config = MemoryBackupConfig(enabled=True)
-    sync_manager = MemorySyncManager(mock_db, None, config)
+    sync_manager = MemoryBackupManager(mock_db, None, config)
 
     count = await sync_manager.export_to_files()
 
@@ -417,7 +417,7 @@ async def test_export_skips_ephemeral_implementation_notes(sync_manager, tmp_pat
 def test_import_memories_sync_no_manager(mock_db, tmp_path) -> None:
     """Test _import_memories_sync returns 0 when no manager."""
     config = MemoryBackupConfig(enabled=True)
-    sync_manager = MemorySyncManager(mock_db, None, config)
+    sync_manager = MemoryBackupManager(mock_db, None, config)
 
     count = sync_manager._import_memories_sync(tmp_path / "test.jsonl")
 
@@ -427,7 +427,7 @@ def test_import_memories_sync_no_manager(mock_db, tmp_path) -> None:
 def test_export_memories_sync_no_manager(mock_db, tmp_path) -> None:
     """Test _export_memories_sync returns 0 when no manager."""
     config = MemoryBackupConfig(enabled=True)
-    sync_manager = MemorySyncManager(mock_db, None, config)
+    sync_manager = MemoryBackupManager(mock_db, None, config)
 
     count = sync_manager._export_memories_sync(tmp_path / "test.jsonl")
 
@@ -484,7 +484,7 @@ class TestBackupManagerRename:
     def test_backup_sync_disabled(self, mock_db, mock_memory_manager) -> None:
         """Test backup_sync returns 0 when disabled."""
         config = MemoryBackupConfig(enabled=False)
-        manager = MemorySyncManager(mock_db, mock_memory_manager, config)
+        manager = MemoryBackupManager(mock_db, mock_memory_manager, config)
 
         count = manager.backup_sync()
 
@@ -493,7 +493,7 @@ class TestBackupManagerRename:
     def test_backup_sync_no_memory_manager(self, mock_db) -> None:
         """Test backup_sync returns 0 when no memory manager."""
         config = MemoryBackupConfig(enabled=True)
-        manager = MemorySyncManager(mock_db, None, config)
+        manager = MemoryBackupManager(mock_db, None, config)
 
         count = manager.backup_sync()
 
@@ -538,7 +538,7 @@ class TestExportMerge:
             ]
         )
         config = MemoryBackupConfig(enabled=True, export_debounce=0.1)
-        return MemorySyncManager(mock_db, mm, config)
+        return MemoryBackupManager(mock_db, mm, config)
 
     def test_export_merges_with_existing_file(self, manager_with_memories, tmp_path) -> None:
         """File has A, B (old). DB has B, C. Result: A (file), B (DB version), C (DB)."""
@@ -633,7 +633,7 @@ class TestExportMerge:
         mm = MagicMock()
         mm.list_memories = MagicMock(return_value=[])
         config = MemoryBackupConfig(enabled=True, export_debounce=0.1)
-        manager = MemorySyncManager(mock_db, mm, config)
+        manager = MemoryBackupManager(mock_db, mm, config)
 
         mem_file = tmp_path / "memories.jsonl"
         file_records = [

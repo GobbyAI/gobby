@@ -250,7 +250,8 @@ class TestInstallCodex:
         # Verify $HOOKS_DIR was substituted
         hooks_str = hooks_path.read_text()
         assert "$HOOKS_DIR" not in hooks_str
-        assert "--gobby-owned" in hooks_str
+        assert "hook_dispatcher.py" in hooks_str
+        assert "--cli=codex" in hooks_str
 
         # Verify config.toml has feature flag
         config_path = mock_home / ".codex" / "config.toml"
@@ -274,59 +275,6 @@ class TestInstallCodex:
 
         assert result["success"] is True
         assert set(result["hooks_installed"]) == EXPECTED_HOOK_EVENT_SET
-
-    def test_install_migrates_from_notify(
-        self,
-        mock_home: Path,
-        mock_install_dir: Path,
-        mock_shared_content,
-        mock_mcp_configure,
-    ) -> None:
-        """Test that legacy notify line is removed during install."""
-        from gobby.cli.installers.codex import install_codex
-
-        # Create existing config with notify
-        codex_dir = mock_home / ".codex"
-        codex_dir.mkdir(parents=True)
-        config_path = codex_dir / "config.toml"
-        config_path.write_text('model = "gpt-4"\nnotify = ["python3", "/old/path"]\n')
-
-        result = install_codex(mock_home)
-
-        assert result["success"] is True
-        assert result["config_updated"] is True
-
-        # Verify notify removed, feature flag added, model preserved
-        config_data = _load_toml_file(config_path)
-        assert "notify" not in config_data
-        _assert_stable_hooks_feature(config_data)
-        assert config_data["model"] == "gpt-4"
-
-        # Verify backup created
-        backup_path = config_path.with_suffix(".toml.bak")
-        assert backup_path.exists()
-
-    def test_install_cleans_old_notify_script(
-        self,
-        mock_home: Path,
-        mock_install_dir: Path,
-        mock_shared_content,
-        mock_mcp_configure,
-    ) -> None:
-        """Test that old notify script at ~/.gobby/hooks/codex/ is cleaned up."""
-        from gobby.cli.installers.codex import install_codex
-
-        # Create legacy notify script
-        old_dir = mock_home / ".gobby" / "hooks" / "codex"
-        old_dir.mkdir(parents=True)
-        old_script = old_dir / "hook_dispatcher.py"
-        old_script.write_text("# old notify script")
-
-        result = install_codex(mock_home)
-
-        assert result["success"] is True
-        assert not old_script.exists()
-        assert not old_dir.exists()  # Empty dir removed
 
     def test_install_existing_config_with_feature_flag(
         self,
@@ -677,13 +625,6 @@ class TestInstallCodex:
         assert config["mcp_servers"]["gobby"]["command"] == "gobby"
         assert list(config["mcp_servers"]["gobby"]["args"]) == ["mcp-server"]
 
-    def test_backward_compat_alias(self) -> None:
-        """Test that install_codex_notify is an alias for install_codex."""
-        from gobby.cli.installers.codex import install_codex, install_codex_notify
-
-        assert install_codex_notify is install_codex
-
-
 class TestUninstallCodex:
     """Tests for uninstall_codex function."""
 
@@ -820,44 +761,6 @@ trusted_hash = "sha256:user-tool"
             {"type": "command", "command": "echo user session hook"}
         ]
 
-    def test_uninstall_cleans_legacy_notify_script(self, mock_home: Path, mock_mcp_remove) -> None:
-        """Test that legacy notify script is cleaned up during uninstall."""
-        from gobby.cli.installers.codex import uninstall_codex
-
-        # Set up legacy notify script
-        old_dir = mock_home / ".gobby" / "hooks" / "codex"
-        old_dir.mkdir(parents=True)
-        old_script = old_dir / "hook_dispatcher.py"
-        old_script.write_text("# old notify")
-
-        result = uninstall_codex()
-
-        assert result["success"] is True
-        assert not old_script.exists()
-        assert str(old_script) in result["files_removed"]
-
-    def test_uninstall_removes_legacy_notify_from_config(
-        self, mock_home: Path, mock_mcp_remove
-    ) -> None:
-        """Test that legacy notify line is also removed from config.toml."""
-        from gobby.cli.installers.codex import uninstall_codex
-
-        codex_dir = mock_home / ".codex"
-        codex_dir.mkdir(parents=True)
-        config_path = codex_dir / "config.toml"
-        config_path.write_text(
-            'notify = ["python3", "/path"]\nfeatures.hooks = true\nfeatures.codex_hooks = true\n'
-        )
-
-        result = uninstall_codex()
-
-        assert result["success"] is True
-        config_data = _load_toml_file(config_path)
-        assert "notify" not in config_data
-        features = config_data.get("features")
-        assert not isinstance(features, dict) or "hooks" not in features
-        assert not isinstance(features, dict) or "codex_hooks" not in features
-
     def test_uninstall_no_hooks_json(self, mock_home: Path, mock_mcp_remove) -> None:
         """Test uninstallation when hooks.json doesn't exist."""
         from gobby.cli.installers.codex import uninstall_codex
@@ -915,13 +818,6 @@ trusted_hash = "sha256:user-tool"
 
         assert result["success"] is True
         assert result["mcp_removed"] is False
-
-    def test_backward_compat_alias(self) -> None:
-        """Test that uninstall_codex_notify is an alias for uninstall_codex."""
-        from gobby.cli.installers.codex import uninstall_codex, uninstall_codex_notify
-
-        assert uninstall_codex_notify is uninstall_codex
-
 
 class TestHooksTemplateFormat:
     """Tests for hooks.json format and content."""
@@ -1000,7 +896,8 @@ class TestHooksTemplateFormat:
         hooks_content = hooks_path.read_text()
 
         assert "$HOOKS_DIR" not in hooks_content
-        assert "--gobby-owned" in hooks_content
+        assert "hook_dispatcher.py" in hooks_content
+        assert "--cli=codex" in hooks_content
 
     def test_hooks_use_codex_cli_flag(
         self,
@@ -1114,9 +1011,9 @@ debug = true
         assert result["success"] is True
         new_config = _load_toml_file(config_path)
         assert new_config["model"] == "gpt-4"
+        assert list(new_config["notify"]) == ["old", "command"]
         assert new_config["temperature"] == 0.7
         assert new_config["advanced"]["debug"] is True
-        assert "notify" not in new_config
         _assert_stable_hooks_feature(new_config)
         assert "# Comment at top" in config_path.read_text()
 

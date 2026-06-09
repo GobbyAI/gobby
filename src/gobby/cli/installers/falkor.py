@@ -27,12 +27,6 @@ DEFAULT_FALKORDB_PORT = 16379
 DEFAULT_FALKORDB_BROWSER_URL = "http://localhost:13000"
 DEFAULT_FALKORDB_PASSWORD = "gobbyfalkor"
 FALKORDB_DATA_VOLUME = "gobby_falkordb_data"
-_LEGACY_NEO4J_CONFIG_KEYS = (
-    "databases.neo4j.url",
-    "databases.neo4j.auth",
-    "databases.neo4j.database",
-    "databases.neo4j.password",
-)
 
 
 @dataclass(frozen=True)
@@ -341,7 +335,6 @@ def _update_config(*, host: str, port: int, password: str, gobby_home: Path) -> 
         store = ConfigStore(db)
         secret_store = SecretStore(db)
         with db.transaction():
-            _clear_legacy_neo4j_config(store)
             store.set("databases.falkordb.host", host, source="install")
             store.set("databases.falkordb.port", port, source="install")
             store.set_secret(
@@ -363,19 +356,12 @@ def _clear_config(*, gobby_home: Path) -> None:
         store = ConfigStore(db)
         secret_store = SecretStore(db)
         store.clear_secret("databases.falkordb.password", secret_store)
-        _clear_legacy_neo4j_config(store)
         for key in ("databases.falkordb.host", "databases.falkordb.port"):
             store.delete(key)
     except Exception as exc:
         logger.warning("Failed to clear FalkorDB config: %s", exc)
     finally:
         db.close()
-
-
-def _clear_legacy_neo4j_config(store: Any) -> None:
-    """Drop legacy config_store keys owned by the old Neo4j backend."""
-    for key in _LEGACY_NEO4J_CONFIG_KEYS:
-        store.delete(key)
 
 
 def _write_bootstrap_password(password: str, gobby_home: Path) -> bool:

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import type { CanonicalTaskState, TaskCompatProjection } from '../../lib/taskState'
+import type { CanonicalTaskState } from '../../lib/taskState'
 import { getCanonicalTaskState, getTaskDisplayState } from '../../lib/taskState'
 import { getCategoryColorVar } from './categoryColors'
 import { Heading } from '../shared/Heading'
@@ -31,11 +31,9 @@ interface TaskData {
   title: string
   status: string
   state?: CanonicalTaskState | null
-  compat?: TaskCompatProjection | null
   priority: number
   type: string
   category: string | null
-  assignee: string | null
   agent_name: string | null
   created_at: string
   updated_at: string

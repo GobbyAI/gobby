@@ -505,16 +505,6 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             logger.error(f"Failed to install from hub: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
 
-    @router.post("/install-all-templates")
-    async def install_all_templates(
-        project_id: str | None = Query(None, description="Project scope"),
-    ) -> dict[str, Any]:
-        """Legacy endpoint — template rows no longer exist."""
-        raise HTTPException(
-            status_code=410,
-            detail="Template installation is no longer needed. Skills are installed directly during sync.",
-        )
-
     @router.get("/{skill_id}")
     def get_skill(skill_id: str) -> Any:
         """Get a specific skill by ID."""
@@ -567,14 +557,6 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
         except Exception as e:
             logger.error(f"Failed to delete skill {skill_id}: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
-
-    @router.post("/{skill_id}/install", response_model=None)
-    async def install_from_template(skill_id: str) -> None:
-        """Legacy endpoint — template rows no longer exist."""
-        raise HTTPException(
-            status_code=410,
-            detail="Template installation is no longer needed. Skills are installed directly during sync.",
-        )
 
     @router.post("/{skill_id}/move-to-project")
     async def move_to_project(

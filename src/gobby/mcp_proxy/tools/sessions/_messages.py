@@ -21,7 +21,6 @@ MAX_SEARCH_SESSIONS: int = 100
 
 def register_message_tools(
     registry: InternalToolRegistry,
-    message_manager: object | None = None,  # Deprecated, ignored
     session_manager: SessionManager | None = None,
     transcript_reader: TranscriptReader | None = None,
 ) -> None:
@@ -30,7 +29,6 @@ def register_message_tools(
 
     Args:
         registry: The InternalToolRegistry to register tools with
-        message_manager: Deprecated, ignored
         session_manager: SessionManager for resolving session references
         transcript_reader: Optional TranscriptReader for JSONL + gzip fallback reads
     """

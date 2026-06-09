@@ -3,7 +3,7 @@
 Tests cover:
 1. CodexAppServerClient - subprocess and JSON-RPC management
 2. CodexAdapter - event translation from app-server
-3. CodexNotifyAdapter - notify hook handling
+3. CodexHooksAdapter - hooks.json handling
 4. Data types and utilities
 """
 
@@ -22,7 +22,7 @@ import pytest
 from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter, _get_daemon_machine_id
 from gobby.adapters.codex_impl.client import CodexAppServerClient
-from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter, CodexNotifyAdapter
+from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.adapters.codex_impl.types import (
     CodexConnectionState,
     CodexItem,
@@ -1863,7 +1863,7 @@ class TestCodexAdapterSyncExistingSessions:
 
 
 # =============================================================================
-# CodexNotifyAdapter Tests
+# CodexHooksAdapter Tests
 # =============================================================================
 
 
@@ -1887,13 +1887,6 @@ class TestCodexHooksAdapterInit:
         adapter = CodexHooksAdapter(hook_manager=mock_hook_manager)
 
         assert adapter._hook_manager is mock_hook_manager
-
-    def test_backward_compat_alias(self) -> None:
-        """CodexNotifyAdapter is an alias for CodexHooksAdapter."""
-        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
-
-        assert CodexNotifyAdapter is CodexHooksAdapter
-
 
 class TestCodexHooksAdapterTranslateToHookEvent:
     """Tests for translate_to_hook_event method."""

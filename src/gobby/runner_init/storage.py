@@ -14,7 +14,6 @@ from gobby.runner_init.helpers import (
     _ensure_headless_settings,
     init_hub_database,
 )
-from gobby.runner_init.stale_config import check_stale_neo4j_config
 from gobby.shutdown_intent import ShutdownIntent
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.session_tasks import SessionTaskManager
@@ -87,7 +86,6 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
 
     runner.secret_store = SecretStore(runner.database)
     runner.config_store = ConfigStore(runner.database)
-    check_stale_neo4j_config(runner.database)
     runner.config = load_config(
         config_file=runner._config_file,
         secret_resolver=runner.secret_store.get,

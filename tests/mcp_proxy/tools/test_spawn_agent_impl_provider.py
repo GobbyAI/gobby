@@ -337,28 +337,28 @@ class TestProviderResolution:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Spawn-level auto-claim (assignee tracking for non-open tasks)
+# Spawn-level auto-claim (claimed_by_session_id tracking for non-open tasks)
 # ═══════════════════════════════════════════════════════════════════════
 
 
-class TestSpawnAutoClaimAssignee:
-    """spawn_agent_impl should always set assignee, regardless of task status.
+class TestSpawnAutoClaimOwner:
+    """spawn_agent_impl should always set claimed_by_session_id, regardless of task status.
 
     Status transition (open → in_progress) only happens for open tasks.
     For non-open tasks (needs_review, review_approved, etc.), only the
-    assignee is set — the status is preserved.
+    claimed_by_session_id is set — the status is preserved.
     """
 
     @pytest.mark.asyncio
-    async def test_open_task_gets_status_and_assignee(self) -> None:
-        """Open task: both status→in_progress and assignee are set."""
+    async def test_open_task_gets_status_and_claimed_session(self) -> None:
+        """Open task: both status→in_progress and claimed_by_session_id are set."""
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         runner = _make_runner()
         task_manager = MagicMock()
         mock_task = MagicMock()
         mock_task.status = "open"
-        mock_task.assignee = None
+        mock_task.claimed_by_session_id = None
         mock_task.seq_num = 42
         task_manager.get_task.return_value = mock_task
 
@@ -407,15 +407,15 @@ class TestSpawnAutoClaimAssignee:
         assert task_manager.claim_task.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_non_open_task_gets_assignee_without_status_change(self) -> None:
-        """Non-open task (e.g. needs_review): assignee set, status preserved."""
+    async def test_non_open_task_gets_claimed_session_without_status_change(self) -> None:
+        """Non-open task (e.g. needs_review): claimed_by_session_id set, status preserved."""
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         runner = _make_runner()
         task_manager = MagicMock()
         mock_task = MagicMock()
         mock_task.status = "needs_review"
-        mock_task.assignee = None
+        mock_task.claimed_by_session_id = None
         mock_task.seq_num = 99
         task_manager.get_task.return_value = mock_task
 
@@ -464,17 +464,17 @@ class TestSpawnAutoClaimAssignee:
         assert task_manager.claim_task.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_review_approved_task_gets_assignee_without_status_change(
+    async def test_review_approved_task_gets_claimed_session_without_status_change(
         self,
     ) -> None:
-        """review_approved task: assignee set, status preserved."""
+        """review_approved task: claimed_by_session_id set, status preserved."""
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         runner = _make_runner()
         task_manager = MagicMock()
         mock_task = MagicMock()
         mock_task.status = "review_approved"
-        mock_task.assignee = None
+        mock_task.claimed_by_session_id = None
         mock_task.seq_num = 200
         task_manager.get_task.return_value = mock_task
 
@@ -531,7 +531,7 @@ class TestSpawnAutoClaimAssignee:
         task_manager = MagicMock()
         mock_task = MagicMock()
         mock_task.status = "needs_review"
-        mock_task.assignee = "other-session"
+        mock_task.claimed_by_session_id = "other-session"
         mock_task.seq_num = 201
         task_manager.get_task.return_value = mock_task
 

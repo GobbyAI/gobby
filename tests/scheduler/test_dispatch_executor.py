@@ -199,7 +199,7 @@ async def test_disabled_dispatcher_tick_reports_hard_stop(temp_db) -> None:
 
 
 @pytest.mark.asyncio
-async def test_legacy_dispatch_tick_handler_is_skipped_when_row_survives(temp_db) -> None:
+async def test_unknown_dispatch_tick_handler_fails_when_row_survives(temp_db) -> None:
     _seed_project(temp_db)
     storage = CronJobStorage(temp_db)
     job = storage.create_job(
@@ -215,5 +215,5 @@ async def test_legacy_dispatch_tick_handler_is_skipped_when_row_survives(temp_db
 
     result = await CronExecutor(storage).execute(job, run)
 
-    assert result.status == "completed"
-    assert "Skipped removed legacy automation cron job" in (result.output or "")
+    assert result.status == "failed"
+    assert "No handler registered: 'dispatch.tick'" in (result.error or "")

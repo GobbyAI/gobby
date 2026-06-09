@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 # Markers for identifying Gobby hook sections
 GOBBY_HOOK_START = "# >>> GOBBY HOOK START >>>"
 GOBBY_HOOK_END = "# <<< GOBBY HOOK END <<<"
-LEGACY_IMPORT_HOOKS = ("post-merge", "post-checkout")
 
 # Hook script templates - these get wrapped with markers
 HOOK_TEMPLATES = {
@@ -282,68 +281,6 @@ def _remove_gobby_section(content: str) -> str:
     return _clean_hook_content("\n".join(result))
 
 
-def _remove_legacy_import_section(content: str) -> tuple[str, bool]:
-    """Remove old Gobby-managed JSONL import blocks from a hook."""
-    lines = content.split("\n")
-    result: list[str] = []
-    section: list[str] = []
-    in_gobby_section = False
-    removed = False
-
-    for line in lines:
-        if GOBBY_HOOK_START in line and not in_gobby_section:
-            in_gobby_section = True
-            section = [line]
-            continue
-
-        if in_gobby_section:
-            section.append(line)
-            if GOBBY_HOOK_END in line:
-                section_text = "\n".join(section)
-                if "gobby tasks sync --import" in section_text:
-                    removed = True
-                else:
-                    result.extend(section)
-                in_gobby_section = False
-                section = []
-            continue
-
-        result.append(line)
-
-    if in_gobby_section:
-        result.extend(section)
-
-    return _clean_hook_content("\n".join(result)), removed
-
-
-def _cleanup_legacy_import_hooks(hooks_dir: Path, result: dict[str, Any]) -> None:
-    """Remove legacy post-merge/post-checkout import blocks from existing hooks."""
-    for hook_name in LEGACY_IMPORT_HOOKS:
-        hook_path = hooks_dir / hook_name
-        if not hook_path.exists():
-            continue
-
-        try:
-            content = hook_path.read_text()
-            new_content, removed = _remove_legacy_import_section(content)
-            if not removed:
-                continue
-
-            backup_path = _backup_hook(hook_path, hooks_dir)
-            if new_content.strip():
-                hook_path.write_text(new_content)
-            else:
-                hook_path.unlink()
-        except Exception as exc:
-            logger.error("Failed to clean up legacy Gobby import hook %s: %s", hook_name, exc)
-            continue
-
-        if backup_path:
-            result["backups"].append(backup_path)
-        result["removed_legacy_imports"].append(hook_name)
-        logger.info(f"Removed legacy Gobby JSONL import hook from {hook_name}")
-
-
 def _check_precommit_installed() -> bool:
     """Check if pre-commit framework is installed and configured."""
     return shutil.which("pre-commit") is not None
@@ -378,7 +315,6 @@ def install_git_hooks(
         - installed: list of installed hook names
         - skipped: list of skipped hooks with reasons
         - backups: list of backup file paths
-        - removed_legacy_imports: list of old JSONL import hooks cleaned up
         - precommit_installed: bool if pre-commit was set up
         - error: error message if failed
     """
@@ -387,7 +323,6 @@ def install_git_hooks(
         "installed": [],
         "skipped": [],
         "backups": [],
-        "removed_legacy_imports": [],
         "precommit_installed": False,
         "error": None,
     }
@@ -398,8 +333,6 @@ def install_git_hooks(
         return result
 
     hooks_dir.mkdir(parents=True, exist_ok=True)
-
-    _cleanup_legacy_import_hooks(hooks_dir, result)
 
     # Install each hook
     for hook_name, gobby_script in HOOK_TEMPLATES.items():

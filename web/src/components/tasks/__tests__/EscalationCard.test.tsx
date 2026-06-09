@@ -18,7 +18,6 @@ const SAMPLE_TASK: GobbyTaskDetail = {
   seq_num: 100,
   path_cache: '100',
   requires_user_review: false,
-  assignee: 'session-1',
   agent_name: null,
   sequence_order: null,
   start_date: null,

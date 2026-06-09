@@ -147,7 +147,7 @@ def create_memory_registry(
     Args:
         memory_manager: MemoryManager instance
         llm_service: LLM service for AI-powered extraction (optional)
-        memory_sync_manager: MemorySyncManager for sync import/export (optional)
+        memory_sync_manager: MemoryBackupManager for sync import/export (optional)
         session_manager: SessionManager for session lookups (optional)
         config: DaemonConfig carrying digest feature routing config (optional)
 

@@ -879,26 +879,6 @@ class TestNormalizeNotification:
         assert event.event_type == "thinking_delta"
         assert event.data["content"] == "thinking"
 
-    def test_legacy_type_based_init(self) -> None:
-        """Legacy format with 'type' field instead of 'method'."""
-        event = GeminiACPClient._normalize_notification({"type": "init", "session_id": "abc"})
-        assert event.event_type == "init"
-        assert event.data["session_id"] == "abc"
-
-    def test_legacy_type_based_content_delta(self) -> None:
-        event = GeminiACPClient._normalize_notification(
-            {"type": "message", "role": "assistant", "delta": True, "content": "hi"}
-        )
-        assert event.event_type == "content_delta"
-        assert event.data["content"] == "hi"
-
-    def test_legacy_type_based_error(self) -> None:
-        event = GeminiACPClient._normalize_notification(
-            {"type": "error", "message": "bad request", "code": 400}
-        )
-        assert event.event_type == "error"
-        assert event.data["message"] == "bad request"
-
     def test_unknown_notification_passes_through(self) -> None:
         event = GeminiACPClient._normalize_notification(
             {"method": "custom/event", "params": {"foo": "bar"}}

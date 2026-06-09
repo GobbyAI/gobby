@@ -88,14 +88,14 @@ def _get_prior_claim(ctx: RegistryContext, task_id: str) -> str | None:
 def _release_prior_claim(
     ctx: RegistryContext,
     task_id: str,
-    prior_assignee: str | None,
+    prior_owner_session_id: str | None,
     *,
     action: str,
 ) -> None:
-    if not prior_assignee:
+    if not prior_owner_session_id:
         return
     ctx.task_manager.release_task_claim(task_id)
-    _clear_prior_claim_session_variables(ctx, task_id, prior_assignee, action=action)
+    _clear_prior_claim_session_variables(ctx, task_id, prior_owner_session_id, action=action)
 
 
 def _delivery_campaign(delivery: TaskDeliveryStateManager, task_id: str) -> dict[str, Any]:
@@ -276,7 +276,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
         """Complete a stage according to its review policy."""
         resolved_id = _resolve_task(ctx, task_id)
         resolved_session_id = _session_id(ctx)
-        prior_assignee = _get_prior_claim(ctx, resolved_id)
+        prior_owner_session_id = _get_prior_claim(ctx, resolved_id)
         if resolved_session_id:
             _release_current_agent_dispatch_mutex(
                 ctx,
@@ -291,7 +291,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             artifact_updates=artifact_updates,
             validation_override_reason=validation_override_reason,
         )
-        _release_prior_claim(ctx, resolved_id, prior_assignee, action="complete_stage")
+        _release_prior_claim(ctx, resolved_id, prior_owner_session_id, action="complete_stage")
         return _operation_response(resolved_id, stage)
 
     _register_stage_tool(
@@ -319,7 +319,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
         """Return a failed in-progress stage to ready or escalate after caps."""
         resolved_id = _resolve_task(ctx, task_id)
         resolved_session_id = _session_id(ctx)
-        prior_assignee = _get_prior_claim(ctx, resolved_id)
+        prior_owner_session_id = _get_prior_claim(ctx, resolved_id)
         if resolved_session_id:
             _release_current_agent_dispatch_mutex(
                 ctx,
@@ -339,7 +339,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             by_session_id=resolved_session_id,
             cited_subtasks=cited_ids,
         )
-        _release_prior_claim(ctx, resolved_id, prior_assignee, action="fail_stage")
+        _release_prior_claim(ctx, resolved_id, prior_owner_session_id, action="fail_stage")
         return _operation_response(resolved_id, stage)
 
     _register_stage_tool(

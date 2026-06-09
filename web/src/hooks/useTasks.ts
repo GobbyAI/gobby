@@ -8,7 +8,7 @@ import type {
   StageStateView,
 } from '../lib/stageActions'
 import { optimisticMoveTaskToStage } from '../lib/stageActions'
-import type { CanonicalTaskState, OwnerSessionRef, TaskCompatProjection } from '../lib/taskState'
+import type { CanonicalTaskState, OwnerSessionRef } from '../lib/taskState'
 import { countTasksByState, matchesTaskStateFilter } from '../lib/taskState'
 import {
   isRawTaskPayload,
@@ -37,7 +37,6 @@ export interface GobbyTask extends LifecycleTask {
   title: string
   status: string
   state?: CanonicalTaskState | null
-  compat?: TaskCompatProjection | null
   priority: number
   task_type: string
   parent_task_id: string | null
@@ -46,7 +45,6 @@ export interface GobbyTask extends LifecycleTask {
   seq_num: number | null
   path_cache: string | null
   requires_user_review?: boolean
-  assignee: string | null
   agent_name: string | null
   sequence_order: number | null
   start_date: string | null
@@ -85,7 +83,6 @@ export type BuildState = 'never_started' | 'running' | 'paused'
 
 export interface GobbyTaskDetail extends GobbyTask {
   description: string | null
-  assignee: string | null
   labels: string[] | null
   category: string | null
   validation_status: string | null
@@ -119,7 +116,6 @@ export interface TaskFilters {
   status: string | null
   priority: number | null
   taskType: string | null
-  assignee: string | null
   label: string | null
   parentTaskId: string | null
   stage: string | null
@@ -160,7 +156,6 @@ interface CreateTaskParams {
   labels?: string[]
   category?: string
   validation_criteria?: string
-  assignee?: string
 }
 
 interface UpdateTaskParams {
@@ -209,7 +204,6 @@ function buildTaskListParams(filters: TaskFilters, offset: number, limit: number
   params.set('include_stages', '1')
   setQueryParam(params, 'priority', filters.priority)
   setQueryParam(params, 'task_type', filters.taskType)
-  setQueryParam(params, 'assignee', filters.assignee)
   setQueryParam(params, 'label', filters.label)
   setQueryParam(params, 'parent_task_id', filters.parentTaskId)
   setQueryParam(params, 'stage', filters.stage)
@@ -343,7 +337,6 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
     status: null,
     priority: null,
     taskType: null,
-    assignee: null,
     label: null,
     parentTaskId: null,
     stage: null,

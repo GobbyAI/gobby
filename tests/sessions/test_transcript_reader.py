@@ -16,7 +16,7 @@ from gobby.sessions.transcript_io import TranscriptTooLargeError
 from gobby.sessions.transcript_paths import _find_transcript_on_disk, _is_recent_file
 from gobby.sessions.transcript_reader import (
     TranscriptReader,
-    _collect_legacy_from_file,
+    _collect_flat_from_file,
     _filter_messages,
     clear_archive_cache,
 )
@@ -992,7 +992,7 @@ class TestTranscriptReaderWindowed:
         reader, transcript_path = _codex_reader_with_roles(tmp_path, 260)
         offset = 137
         limit = 9
-        expected = _collect_legacy_from_file(
+        expected = _collect_flat_from_file(
             str(transcript_path), "codex", "sess-1", offset + limit, None
         )[offset : offset + limit]
 
@@ -1005,7 +1005,7 @@ class TestTranscriptReaderWindowed:
         reader, transcript_path = _codex_reader_with_roles(tmp_path, 260)
         offset = 31
         limit = 7
-        expected = _collect_legacy_from_file(
+        expected = _collect_flat_from_file(
             str(transcript_path), "codex", "sess-1", offset + limit, "assistant"
         )[offset : offset + limit]
 
@@ -1042,7 +1042,7 @@ class TestTranscriptReaderWindowed:
             raise AssertionError("windowed flat read should not use prefix streaming fallback")
 
         monkeypatch.setattr(reader_module, "_iter_jsonl_raw_lines_from", capture_start)
-        monkeypatch.setattr(reader_module, "_collect_legacy_from_file", fail_streaming_fallback)
+        monkeypatch.setattr(reader_module, "_collect_flat_from_file", fail_streaming_fallback)
 
         result = await reader.get_messages("sess-1", limit=3, offset=300)
 

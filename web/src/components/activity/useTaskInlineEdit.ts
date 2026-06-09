@@ -13,9 +13,8 @@ import type { PatchTaskFields } from "./TasksTabActions";
  *
  * The hook owns no task store. The host (TasksTab) injects its own
  * optimistic-apply, rollback, and PATCH transport, so there is no second
- * store and no extra fetch. Only PATCH-family fields ever reach `patchTask`
- * (assignee/state/stage/terminal route elsewhere — see taskFieldRouting),
- * so the PATCH-400-on-assignee path is structurally unreachable from here.
+ * store and no extra fetch. Only PATCH-family fields ever reach `patchTask`;
+ * state/stage/terminal actions route elsewhere.
  */
 
 export type PatchFieldValue = string | number | string[];

@@ -19,7 +19,6 @@ from gobby.workflows.definitions import (
     AgentWorkflows,
     RuleDefinitionBody,
     RuleEffect,
-    RuleEvent,
     RuleTriggerEvent,
 )
 from gobby.workflows.engine.core import RuleEngine
@@ -131,7 +130,7 @@ class TestRuleEngineLoadRules:
             manager,
             "before-tool-rule",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason="blocked")],
             ),
         )
@@ -139,7 +138,7 @@ class TestRuleEngineLoadRules:
             manager,
             "after-tool-rule",
             RuleDefinitionBody(
-                event=RuleEvent.AFTER_TOOL,
+                event=RuleTriggerEvent.AFTER_TOOL,
                 effects=[RuleEffect(type="set_variable", variable="x", value=True)],
             ),
         )
@@ -157,7 +156,7 @@ class TestRuleEngineLoadRules:
             manager,
             "disabled-rule",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason="should not fire")],
             ),
             enabled=False,
@@ -178,7 +177,7 @@ class TestBlockEffect:
             manager,
             "block-edit",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason="No editing allowed", tools=["Edit"])],
             ),
         )
@@ -196,7 +195,7 @@ class TestBlockEffect:
             manager,
             "block-edit-only",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason="No editing", tools=["Edit"])],
             ),
         )
@@ -214,7 +213,7 @@ class TestBlockEffect:
             manager,
             "high-priority-block",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason="First block")],
             ),
             priority=10,
@@ -223,7 +222,7 @@ class TestBlockEffect:
             manager,
             "low-priority-block",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason="Second block")],
             ),
             priority=20,
@@ -244,7 +243,7 @@ class TestSetVariableEffect:
             manager,
             "set-claimed",
             RuleDefinitionBody(
-                event=RuleEvent.AFTER_TOOL,
+                event=RuleTriggerEvent.AFTER_TOOL,
                 effects=[RuleEffect(type="set_variable", variable="task_claimed", value=True)],
             ),
         )
@@ -265,7 +264,7 @@ class TestSetVariableEffect:
             manager,
             "increment-counter",
             RuleDefinitionBody(
-                event=RuleEvent.STOP,
+                event=RuleTriggerEvent.STOP,
                 effects=[
                     RuleEffect(
                         type="set_variable",
@@ -293,7 +292,7 @@ class TestSetVariableEffect:
             manager,
             "increment-via-jinja",
             RuleDefinitionBody(
-                event=RuleEvent.STOP,
+                event=RuleTriggerEvent.STOP,
                 effects=[
                     RuleEffect(
                         type="set_variable",
@@ -323,7 +322,7 @@ class TestInjectContextEffect:
             manager,
             "inject-task-context",
             RuleDefinitionBody(
-                event=RuleEvent.SESSION_START,
+                event=RuleTriggerEvent.SESSION_START,
                 effects=[
                     RuleEffect(
                         type="inject_context",
@@ -348,7 +347,7 @@ class TestInjectContextEffect:
             manager,
             "inject-a",
             RuleDefinitionBody(
-                event=RuleEvent.SESSION_START,
+                event=RuleTriggerEvent.SESSION_START,
                 effects=[RuleEffect(type="inject_context", template="Context A.")],
             ),
             priority=10,
@@ -357,7 +356,7 @@ class TestInjectContextEffect:
             manager,
             "inject-b",
             RuleDefinitionBody(
-                event=RuleEvent.SESSION_START,
+                event=RuleTriggerEvent.SESSION_START,
                 effects=[RuleEffect(type="inject_context", template="Context B.")],
             ),
             priority=20,
@@ -381,7 +380,7 @@ class TestWhenConditions:
             manager,
             "conditional-block",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 when="variables.get('require_uv')",
                 effects=[RuleEffect(type="block", reason="Use uv")],
             ),
@@ -400,7 +399,7 @@ class TestWhenConditions:
             manager,
             "conditional-block",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 when="variables.get('require_uv')",
                 effects=[RuleEffect(type="block", reason="Use uv")],
             ),
@@ -419,7 +418,7 @@ class TestWhenConditions:
             manager,
             "unconditional-set",
             RuleDefinitionBody(
-                event=RuleEvent.STOP,
+                event=RuleTriggerEvent.STOP,
                 effects=[RuleEffect(type="set_variable", variable="stop_attempts", value=0)],
             ),
         )
@@ -445,7 +444,7 @@ class TestPriorityOrdering:
             manager,
             "set-x-to-1",
             RuleDefinitionBody(
-                event=RuleEvent.AFTER_TOOL,
+                event=RuleTriggerEvent.AFTER_TOOL,
                 effects=[RuleEffect(type="set_variable", variable="x", value=1)],
             ),
             priority=20,
@@ -454,7 +453,7 @@ class TestPriorityOrdering:
             manager,
             "set-x-to-2",
             RuleDefinitionBody(
-                event=RuleEvent.AFTER_TOOL,
+                event=RuleTriggerEvent.AFTER_TOOL,
                 effects=[RuleEffect(type="set_variable", variable="x", value=2)],
             ),
             priority=10,
@@ -480,7 +479,7 @@ class TestSessionOverrides:
             manager,
             "block-rule",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason="Blocked!")],
             ),
         )
@@ -508,7 +507,7 @@ class TestSessionOverrides:
             manager,
             "block-rule",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason="Blocked!")],
             ),
         )
@@ -538,7 +537,7 @@ class TestObserveEffect:
             manager,
             "observe-tool-use",
             RuleDefinitionBody(
-                event=RuleEvent.AFTER_TOOL,
+                event=RuleTriggerEvent.AFTER_TOOL,
                 effects=[
                     RuleEffect(
                         type="observe",
@@ -570,7 +569,7 @@ class TestObserveEffect:
             manager,
             "observe-a",
             RuleDefinitionBody(
-                event=RuleEvent.AFTER_TOOL,
+                event=RuleTriggerEvent.AFTER_TOOL,
                 effects=[RuleEffect(type="observe", category="a", message="first")],
             ),
             priority=10,
@@ -579,7 +578,7 @@ class TestObserveEffect:
             manager,
             "observe-b",
             RuleDefinitionBody(
-                event=RuleEvent.AFTER_TOOL,
+                event=RuleTriggerEvent.AFTER_TOOL,
                 effects=[RuleEffect(type="observe", category="b", message="second")],
             ),
             priority=20,
@@ -604,7 +603,7 @@ class TestObserveEffect:
             manager,
             "observe-no-cat",
             RuleDefinitionBody(
-                event=RuleEvent.AFTER_TOOL,
+                event=RuleTriggerEvent.AFTER_TOOL,
                 effects=[RuleEffect(type="observe", message="no category")],
             ),
         )
@@ -626,7 +625,7 @@ class TestObserveEffect:
             manager,
             "observe-template",
             RuleDefinitionBody(
-                event=RuleEvent.AFTER_TOOL,
+                event=RuleTriggerEvent.AFTER_TOOL,
                 effects=[
                     RuleEffect(
                         type="observe",
@@ -656,7 +655,7 @@ class TestMcpCallEffect:
             manager,
             "memory-recall",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_AGENT,
+                event=RuleTriggerEvent.BEFORE_AGENT,
                 effects=[
                     RuleEffect(
                         type="mcp_call",
@@ -689,7 +688,7 @@ class TestVariableRebuild:
             manager,
             "set-flag",
             RuleDefinitionBody(
-                event=RuleEvent.STOP,
+                event=RuleTriggerEvent.STOP,
                 effects=[RuleEffect(type="set_variable", variable="flag", value=True)],
             ),
             priority=10,
@@ -699,7 +698,7 @@ class TestVariableRebuild:
             manager,
             "conditional-block",
             RuleDefinitionBody(
-                event=RuleEvent.STOP,
+                event=RuleTriggerEvent.STOP,
                 when="variables.get('flag')",
                 effects=[RuleEffect(type="block", reason="Flag was set")],
             ),
@@ -825,7 +824,7 @@ class TestMcpCallToolUnwrapping:
             manager,
             "require-commit-before-close",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 when="not tool_input.get('commit_sha')",
                 effects=[
                     RuleEffect(
@@ -881,7 +880,7 @@ class TestToggleRuleRejectsTemplate:
         manager.create(
             name="installed-rule",
             definition_json=RuleDefinitionBody(
-                event=RuleEvent.STOP,
+                event=RuleTriggerEvent.STOP,
                 effects=[RuleEffect(type="block", reason="installed")],
             ).model_dump_json(),
             workflow_type="rule",
@@ -907,7 +906,7 @@ class TestMultipleEffects:
             manager,
             "block-and-set",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[
                     RuleEffect(type="set_variable", variable="was_blocked", value=True),
                     RuleEffect(type="block", reason="Blocked with side-effect"),
@@ -935,7 +934,7 @@ class TestMultipleEffects:
             manager,
             "set-and-inject",
             RuleDefinitionBody(
-                event=RuleEvent.SESSION_START,
+                event=RuleTriggerEvent.SESSION_START,
                 effects=[
                     RuleEffect(type="set_variable", variable="initialized", value=True),
                     RuleEffect(type="inject_context", template="Welcome to the session."),
@@ -962,7 +961,7 @@ class TestMultipleEffects:
             manager,
             "conditional-effects",
             RuleDefinitionBody(
-                event=RuleEvent.SESSION_START,
+                event=RuleTriggerEvent.SESSION_START,
                 effects=[
                     RuleEffect(
                         type="set_variable",
@@ -997,7 +996,7 @@ class TestMultipleEffects:
             manager,
             "conditional-effects",
             RuleDefinitionBody(
-                event=RuleEvent.SESSION_START,
+                event=RuleTriggerEvent.SESSION_START,
                 effects=[
                     RuleEffect(
                         type="set_variable",
@@ -1027,7 +1026,7 @@ class TestMultipleEffects:
         import pydantic
 
         with pytest.raises(pydantic.ValidationError, match="required and must be non-empty"):
-            RuleDefinitionBody(event=RuleEvent.STOP)
+            RuleDefinitionBody(event=RuleTriggerEvent.STOP)
 
     def test_validation_multiple_block_effects_error(self) -> None:
         """Multiple block effects in effects list should raise ValidationError."""
@@ -1035,7 +1034,7 @@ class TestMultipleEffects:
 
         with pytest.raises(pydantic.ValidationError, match="one.*block"):
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[
                     RuleEffect(type="block", reason="first"),
                     RuleEffect(type="block", reason="second"),
@@ -1052,7 +1051,7 @@ class TestMultipleEffects:
             manager,
             "multi-mcp",
             RuleDefinitionBody(
-                event=RuleEvent.PRE_COMPACT,
+                event=RuleTriggerEvent.PRE_COMPACT,
                 effects=[
                     RuleEffect(type="mcp_call", server="gobby-tasks", tool="sync_export"),
                     RuleEffect(type="mcp_call", server="gobby-memory", tool="sync_export"),
@@ -1084,7 +1083,7 @@ class TestBeforeToolBlockTracking:
             manager,
             "block-edit",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason="No editing", tools=["Edit"])],
             ),
         )
@@ -1111,7 +1110,7 @@ class TestBeforeToolBlockTracking:
             manager,
             "block-stop",
             RuleDefinitionBody(
-                event=RuleEvent.STOP,
+                event=RuleTriggerEvent.STOP,
                 effects=[RuleEffect(type="block", reason="Cannot stop yet")],
             ),
         )
@@ -1133,7 +1132,7 @@ class TestBeforeToolBlockTracking:
             manager,
             "multi-with-block",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[
                     RuleEffect(type="set_variable", variable="x", value=42),
                     RuleEffect(type="block", reason="Blocked"),
@@ -1203,7 +1202,7 @@ class TestConsecutiveToolBlocks:
             manager,
             "block-edit",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason="No editing", tools=["Edit"])],
             ),
         )
@@ -1226,7 +1225,7 @@ class TestConsecutiveToolBlocks:
             manager,
             "block-edit-with-side-effect",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[
                     RuleEffect(type="set_variable", variable="rule_ran", value=True),
                     RuleEffect(type="block", reason="No editing", tools=["Edit"]),
@@ -1325,7 +1324,7 @@ class TestConsecutiveToolBlocks:
             manager,
             "block-edit",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason="No editing", tools=["Edit"])],
             ),
         )
@@ -1385,7 +1384,7 @@ class TestOverrideCollectsMcpCalls:
             manager,
             "digest-on-response",
             RuleDefinitionBody(
-                event=RuleEvent.STOP,
+                event=RuleTriggerEvent.STOP,
                 effects=[
                     RuleEffect(
                         type="mcp_call",
@@ -1423,7 +1422,7 @@ class TestOverrideCollectsMcpCalls:
             manager,
             "digest-on-response",
             RuleDefinitionBody(
-                event=RuleEvent.STOP,
+                event=RuleTriggerEvent.STOP,
                 effects=[
                     RuleEffect(
                         type="mcp_call",
@@ -1459,7 +1458,7 @@ class TestOverrideCollectsMcpCalls:
             manager,
             "harmless-rule",
             RuleDefinitionBody(
-                event=RuleEvent.STOP,
+                event=RuleTriggerEvent.STOP,
                 effects=[RuleEffect(type="set_variable", variable="ran", value=True)],
             ),
         )
@@ -1482,7 +1481,7 @@ class TestOverrideCollectsMcpCalls:
             manager,
             "block-stop",
             RuleDefinitionBody(
-                event=RuleEvent.STOP,
+                event=RuleTriggerEvent.STOP,
                 effects=[RuleEffect(type="block", reason="Cannot stop yet")],
             ),
         )
@@ -1508,7 +1507,7 @@ class TestMcpCallTemplateRendering:
             manager,
             "pipeline-auto-run",
             RuleDefinitionBody(
-                event=RuleEvent.SESSION_START,
+                event=RuleTriggerEvent.SESSION_START,
                 when="variables.get('_assigned_pipeline')",
                 effects=[
                     RuleEffect(
@@ -1546,7 +1545,7 @@ class TestMcpCallTemplateRendering:
             manager,
             "static-mcp-call",
             RuleDefinitionBody(
-                event=RuleEvent.SESSION_START,
+                event=RuleTriggerEvent.SESSION_START,
                 effects=[
                     RuleEffect(
                         type="mcp_call",
@@ -1864,7 +1863,7 @@ class TestEditWritePending:
             manager,
             "block-edit-rule",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 tools=["Edit"],
                 effects=[RuleEffect(type="block", reason="No task claimed")],
             ),
@@ -1939,7 +1938,7 @@ class TestInlineMcpCallDispatch:
             manager,
             "inject-skill",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[
                     RuleEffect(
                         type="mcp_call",
@@ -1985,7 +1984,7 @@ class TestInlineMcpCallDispatch:
             manager,
             "inject-skill-fail",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[
                     RuleEffect(
                         type="mcp_call",
@@ -2025,7 +2024,7 @@ class TestInlineMcpCallDispatch:
             manager,
             "inject-skill-exc",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[
                     RuleEffect(
                         type="mcp_call",
@@ -2063,7 +2062,7 @@ class TestInlineMcpCallDispatch:
             manager,
             "background-call",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[
                     RuleEffect(
                         type="mcp_call",
@@ -2099,7 +2098,7 @@ class TestInlineMcpCallDispatch:
             manager,
             "inject-no-dispatcher",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[
                     RuleEffect(
                         type="mcp_call",
@@ -2129,7 +2128,7 @@ class TestInlineMcpCallDispatch:
             manager,
             "bg-inject",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[
                     RuleEffect(
                         type="mcp_call",
@@ -2381,7 +2380,7 @@ class TestEnforcementToggle:
             manager,
             "should-block",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason="blocked")],
             ),
         )
@@ -2507,7 +2506,7 @@ class TestTurnEndResolution:
             manager,
             "raw-stop-only",
             RuleDefinitionBody(
-                event=RuleEvent.STOP,
+                event=RuleTriggerEvent.STOP,
                 effects=[RuleEffect(type="set_variable", variable="raw_stop", value=True)],
             ),
         )
@@ -2551,7 +2550,7 @@ class TestLiveActiveRuleSelection:
             manager,
             "new-default-rule",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="set_variable", variable="matched", value=True)],
             ),
             tags=["default"],
@@ -2578,7 +2577,7 @@ class TestLiveActiveRuleSelection:
             manager,
             "default-only-rule",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="set_variable", variable="default_matched", value=True)],
             ),
             tags=["default"],
@@ -2587,7 +2586,7 @@ class TestLiveActiveRuleSelection:
             manager,
             "worker-safety-rule",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="set_variable", variable="worker_matched", value=True)],
             ),
             tags=["worker-safety"],
@@ -2617,7 +2616,7 @@ class TestLiveActiveRuleSelection:
             manager,
             "global-rule",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="set_variable", variable="global_matched", value=True)],
             ),
             tags=["global"],
@@ -2626,7 +2625,7 @@ class TestLiveActiveRuleSelection:
             manager,
             "project-rule",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="set_variable", variable="project_matched", value=True)],
             ),
             tags=["project"],
@@ -2653,7 +2652,7 @@ class TestLiveActiveRuleSelection:
             manager,
             "global-rule",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="set_variable", variable="global_matched", value=True)],
             ),
             tags=["global"],
@@ -2680,7 +2679,7 @@ class TestLiveActiveRuleSelection:
             manager,
             "old-rule",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="set_variable", variable="old_matched", value=True)],
             ),
             tags=["old"],
@@ -2689,7 +2688,7 @@ class TestLiveActiveRuleSelection:
             manager,
             "new-rule",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="set_variable", variable="new_matched", value=True)],
             ),
             tags=["new"],
@@ -2727,7 +2726,7 @@ class TestLiveActiveRuleSelection:
             manager,
             "allowed-by-fallback",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="set_variable", variable="allowed", value=True)],
             ),
         )
@@ -2735,7 +2734,7 @@ class TestLiveActiveRuleSelection:
             manager,
             "blocked-by-fallback",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="set_variable", variable="blocked", value=True)],
             ),
         )
@@ -2767,7 +2766,7 @@ class TestLiveActiveRuleSelection:
             manager,
             "allowed-by-fallback",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="set_variable", variable="allowed", value=True)],
             ),
         )
@@ -2775,7 +2774,7 @@ class TestLiveActiveRuleSelection:
             manager,
             "blocked-by-fallback",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="set_variable", variable="blocked", value=True)],
             ),
         )
@@ -2805,7 +2804,7 @@ class TestAgentScope:
             manager,
             "wildcard-scope",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 agent_scope=["*"],
                 effects=[RuleEffect(type="set_variable", variable="matched", value=True)],
             ),
@@ -2826,7 +2825,7 @@ class TestAgentScope:
             manager,
             "scoped-rule",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 agent_scope=["researcher"],
                 effects=[RuleEffect(type="set_variable", variable="matched", value=True)],
             ),
@@ -2851,7 +2850,7 @@ class TestObserveEffectExtended:
             manager,
             "observer-rule",
             RuleDefinitionBody(
-                event=RuleEvent.AFTER_TOOL,
+                event=RuleTriggerEvent.AFTER_TOOL,
                 effects=[
                     RuleEffect(
                         type="observe",
@@ -2886,7 +2885,7 @@ class TestConsecutiveBlockDifferentTool:
             manager,
             "block-all",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason="All blocked")],
             ),
         )
@@ -2926,7 +2925,7 @@ class TestSessionOverridesExtended:
             manager,
             "block-everything",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason="blocked")],
             ),
         )
@@ -2973,7 +2972,7 @@ class TestLoadSkillEffect:
             manager,
             "load-plan-skill",
             RuleDefinitionBody(
-                event=RuleEvent.AFTER_TOOL,
+                event=RuleTriggerEvent.AFTER_TOOL,
                 effects=[RuleEffect(type="load_skill", skill="plan")],
             ),
         )
@@ -2997,7 +2996,7 @@ class TestLoadSkillEffect:
             manager,
             "load-missing-skill",
             RuleDefinitionBody(
-                event=RuleEvent.AFTER_TOOL,
+                event=RuleTriggerEvent.AFTER_TOOL,
                 effects=[RuleEffect(type="load_skill", skill="nonexistent")],
             ),
         )
@@ -3020,7 +3019,7 @@ class TestLoadSkillEffect:
             manager,
             "load-no-manager",
             RuleDefinitionBody(
-                event=RuleEvent.AFTER_TOOL,
+                event=RuleTriggerEvent.AFTER_TOOL,
                 effects=[RuleEffect(type="load_skill", skill="plan")],
             ),
         )
@@ -3042,7 +3041,7 @@ class TestLoadSkillEffect:
             manager,
             "load-conditional",
             RuleDefinitionBody(
-                event=RuleEvent.AFTER_TOOL,
+                event=RuleTriggerEvent.AFTER_TOOL,
                 effects=[
                     RuleEffect(
                         type="load_skill",
@@ -3071,7 +3070,7 @@ class TestLoadSkillEffect:
             manager,
             "plan-mode-entry",
             RuleDefinitionBody(
-                event=RuleEvent.AFTER_TOOL,
+                event=RuleTriggerEvent.AFTER_TOOL,
                 when="event.data.get('tool_name') == 'EnterPlanMode'",
                 effects=[
                     RuleEffect(type="set_variable", variable="plan_mode", value=True),
@@ -3114,7 +3113,7 @@ class TestVerboseOnceBlockReason:
             manager,
             "require-code-index-skill",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason=self._full_reason())],
             ),
         )
@@ -3139,7 +3138,7 @@ class TestVerboseOnceBlockReason:
             manager,
             "require-code-index-skill",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason=self._full_reason())],
             ),
         )
@@ -3163,7 +3162,7 @@ class TestVerboseOnceBlockReason:
             manager,
             "require-claimed-task-required-skills",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 when="first_unloaded_claimed_task_required_skill() != ''",
                 effects=[
                     RuleEffect(
@@ -3209,7 +3208,7 @@ class TestVerboseOnceBlockReason:
             manager,
             "require-code-index-skill",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 when="event.data.get('tool_name') == 'Read'",
                 effects=[RuleEffect(type="block", reason=self._full_reason())],
             ),
@@ -3218,7 +3217,7 @@ class TestVerboseOnceBlockReason:
             manager,
             "require-uv",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 when="event.data.get('tool_name') == 'Bash'",
                 effects=[
                     RuleEffect(
@@ -3259,7 +3258,7 @@ class TestVerboseOnceBlockReason:
             manager,
             "require-code-index-skill",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason=self._full_reason())],
             ),
         )

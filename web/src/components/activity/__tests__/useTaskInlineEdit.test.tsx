@@ -20,7 +20,6 @@ function makeTask(overrides: Partial<GobbyTask> = {}): GobbyTask {
     title: "Original title",
     status: "open",
     state: null,
-    compat: null,
     priority: 2,
     task_type: "task",
     parent_task_id: null,
@@ -29,7 +28,6 @@ function makeTask(overrides: Partial<GobbyTask> = {}): GobbyTask {
     seq_num: 14771,
     path_cache: null,
     requires_user_review: false,
-    assignee: null,
     agent_name: null,
     sequence_order: null,
     start_date: null,
@@ -140,7 +138,7 @@ describe("useTaskInlineEdit — optimistic + rollback (#14771 / D4)", () => {
     expect(applyRawTaskUpdate).not.toHaveBeenCalled();
   });
 
-  it("never PATCHes a non-patch field (assignee guard)", async () => {
+  it("never PATCHes a non-patch field", async () => {
     const patchTask = vi.fn<PatchFn>();
     const { result } = renderHook(() =>
       useTaskInlineEdit({ patchTask, applyRawTaskUpdate, rollback }),
@@ -149,8 +147,8 @@ describe("useTaskInlineEdit — optimistic + rollback (#14771 / D4)", () => {
     await act(async () => {
       await result.current.commitField({
         task: makeTask(),
-        // @ts-expect-error — assignee is intentionally not a PatchEditableField
-        field: "assignee",
+        // @ts-expect-error — unknown_owner is intentionally not a PatchEditableField
+        field: "unknown_owner",
         value: "session-9",
       });
     });

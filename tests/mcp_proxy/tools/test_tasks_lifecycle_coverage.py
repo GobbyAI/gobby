@@ -759,7 +759,7 @@ class TestSessionVariableMirroring:
             mock_task.seq_num = 200
             mock_task.project_id = "proj-1"
             mock_task.status = "open"
-            mock_task.assignee = None
+            mock_task.claimed_by_session_id = None
             mock_task_manager.get_task.return_value = mock_task
             mock_task_manager.update_task.return_value = mock_task
 
@@ -877,7 +877,7 @@ class TestSessionVariableMirroring:
             mock_task.id = task_uuid
             mock_task.seq_num = 300
             mock_task.status = "in_progress"
-            mock_task.assignee = "test-session"
+            mock_task.claimed_by_session_id = "test-session"
             mock_task_manager.create_task_with_decomposition.return_value = {
                 "task": {"id": task_uuid},
             }

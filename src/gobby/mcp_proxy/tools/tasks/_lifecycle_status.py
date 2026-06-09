@@ -38,24 +38,24 @@ def _lifecycle_value_error(message: str) -> dict[str, Any]:
 def _clear_prior_claim_session_variables(
     ctx: RegistryContext,
     task_id: str,
-    prior_assignee: str | None,
+    prior_owner_session_id: str | None,
     *,
     action: str,
 ) -> None:
     """Best-effort removal of a task from the prior owner's claimed task state."""
-    if not prior_assignee:
+    if not prior_owner_session_id:
         return
 
     try:
         from gobby.workflows.task_claim_state import remove_claimed_task
 
-        session_vars = ctx.session_var_manager.get_variables(prior_assignee)
+        session_vars = ctx.session_var_manager.get_variables(prior_owner_session_id)
         merge_dict = remove_claimed_task(session_vars, task_id)
-        ctx.session_var_manager.merge_variables(prior_assignee, merge_dict)
+        ctx.session_var_manager.merge_variables(prior_owner_session_id, merge_dict)
         logger.debug(
             "Removed task %s from claimed_tasks for session %s on %s",
             task_id,
-            prior_assignee,
+            prior_owner_session_id,
             action,
         )
     except Exception as e:
@@ -79,9 +79,9 @@ def register_reopen_task(registry: InternalToolRegistry, ctx: RegistryContext) -
         except (TaskNotFoundError, ValueError) as e:
             return {"error": str(e)}
 
-        # Capture assignee before reopen clears it (needed for session variable cleanup)
+        # Capture owner before reopen clears it for session variable cleanup.
         task = ctx.task_manager.get_task(resolved_id)
-        prior_assignee = get_claimed_session_id(task) if task else None
+        prior_owner_session_id = get_claimed_session_id(task) if task else None
 
         try:
             ctx.task_manager.reopen_task(resolved_id, reason=reason)
@@ -89,14 +89,18 @@ def register_reopen_task(registry: InternalToolRegistry, ctx: RegistryContext) -
             _clear_prior_claim_session_variables(
                 ctx,
                 resolved_id,
-                prior_assignee,
+                prior_owner_session_id,
                 action="reopen",
             )
 
             # Update session-task link to reflect reopen
-            if prior_assignee:
+            if prior_owner_session_id:
                 try:
-                    ctx.session_task_manager.link_task(prior_assignee, resolved_id, "reopened")
+                    ctx.session_task_manager.link_task(
+                        prior_owner_session_id,
+                        resolved_id,
+                        "reopened",
+                    )
                 except Exception as e:
                     logger.debug(f"Best-effort session link update on reopen failed: {e}")
 
@@ -164,7 +168,7 @@ def register_escalate_task(registry: InternalToolRegistry, ctx: RegistryContext)
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
-        prior_assignee = get_claimed_session_id(task)
+        prior_owner_session_id = get_claimed_session_id(task)
 
         projected_state = projected_task_state(task)
         if projected_state in {"escalated", "closed"}:
@@ -181,7 +185,7 @@ def register_escalate_task(registry: InternalToolRegistry, ctx: RegistryContext)
         _clear_prior_claim_session_variables(
             ctx,
             resolved_id,
-            prior_assignee,
+            prior_owner_session_id,
             action="escalate",
         )
 

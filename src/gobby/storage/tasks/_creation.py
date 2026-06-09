@@ -10,13 +10,11 @@ from psycopg.errors import UniqueViolation
 from gobby.storage.hub.protocol import HubDatabase, TaskSeqAllocation, Transaction
 from gobby.storage.tasks._id import generate_task_id
 from gobby.storage.tasks._models import (
-    UNSET,
     SeqNumCollisionError,
     TaskIDCollisionError,
     validate_implementation_domain,
     validate_task_type,
 )
-from gobby.storage.tasks._ownership import _derive_claimed_by_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +28,6 @@ def create_task(
     created_in_session_id: str | None = None,
     priority: int = 2,
     task_type: str = "task",
-    assignee: str | None = None,
     claimed_by_session_id: str | None = None,
     labels: list[str] | None = None,
     category: str | None = None,
@@ -59,7 +56,6 @@ def create_task(
             created_in_session_id=created_in_session_id,
             priority=priority,
             task_type=task_type,
-            assignee=assignee,
             claimed_by_session_id=claimed_by_session_id,
             labels=labels,
             category=category,
@@ -86,7 +82,6 @@ def _create_task_in_transaction(
     created_in_session_id: str | None = None,
     priority: int = 2,
     task_type: str = "task",
-    assignee: str | None = None,
     claimed_by_session_id: str | None = None,
     labels: list[str] | None = None,
     category: str | None = None,
@@ -113,13 +108,6 @@ def _create_task_in_transaction(
     task_type = validate_task_type(task_type)
     implementation_domain = validate_implementation_domain(implementation_domain)
     validation_status = "pending" if validation_criteria else None
-    canonical_owner = _derive_claimed_by_session_id(
-        db,
-        assignee=assignee,
-        claimed_by_session_id=claimed_by_session_id,
-    )
-    if canonical_owner is UNSET:
-        canonical_owner = None
 
     for attempt in range(max_retries + 1):
         savepoint = conn.savepoint(f"task_create_attempt_{attempt}")
@@ -137,14 +125,14 @@ def _create_task_in_transaction(
                 INSERT INTO tasks (
                     id, project_id, title, description, parent_task_id,
                     created_in_session_id, claimed_by_session_id,
-                    priority, task_type, assignee,
+                    priority, task_type,
                     labels, created_at, updated_at,
                     validation_status, category,
                     validation_criteria, validation_fail_count,
                     assigned_agent, implementation_domain, additional_skills,
                     github_issue_number, github_pr_number, github_repo,
                     linear_issue_id, linear_team_id, seq_num
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     task_id,
@@ -153,10 +141,9 @@ def _create_task_in_transaction(
                     description,
                     parent_task_id,
                     created_in_session_id,
-                    canonical_owner,
+                    claimed_by_session_id,
                     priority,
                     task_type,
-                    assignee,
                     labels_json,
                     now,
                     now,

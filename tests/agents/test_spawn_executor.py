@@ -259,7 +259,7 @@ class TestExecuteSpawn:
 
     @pytest.mark.asyncio
     async def test_terminal_mode_calls_terminal_spawner(self):
-        """Test that terminal mode dispatches to TerminalSpawner."""
+        """Test that terminal mode dispatches to TmuxSpawner."""
         mock_session_manager = MagicMock()
         request = SpawnRequest(
             prompt="Test",
@@ -902,7 +902,7 @@ class TestExecuteSpawnSandbox:
 
     @pytest.mark.asyncio
     async def test_terminal_spawn_passes_sandbox_config_to_spawner(self) -> None:
-        """Test that sandbox_config is resolved and passed to TerminalSpawner."""
+        """Test that sandbox_config is resolved and passed to TmuxSpawner."""
         sandbox_config = SandboxConfig(enabled=True, mode="permissive")
         mock_session_manager = MagicMock()
         request = SpawnRequest(

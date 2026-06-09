@@ -99,8 +99,7 @@ def _derive_agent_type(depth: int, workflow_name: str | None) -> str:
 class SkillProfile:
     """Agent definition skill override profile.
 
-    Loaded from agent YAML `skill_profile` key. Allows agents to
-    include/exclude specific skills and override default format.
+    Allows callers to include/exclude specific skills and override default format.
     """
 
     audience: str | None = None

@@ -54,7 +54,6 @@ function agentDefinition(overrides: Partial<AgentDefInfo['definition']> = {}): A
       max_turns: 4,
       default_workflow: null,
       sandbox: null,
-      skill_profile: null,
       workflows: null,
       lifecycle_variables: {},
       default_variables: {},
@@ -133,15 +132,14 @@ describe('AgentsTab payload helpers', () => {
     expect(body.blocked_mcp_tools).toEqual(['gobby-tasks.close_task'])
   })
 
-  it('extracts skill selectors with legacy skill_profile fallback', () => {
-    expect(extractAgentEditWorkflowState(agentDefinition({
-      workflows: { skill_selectors: { include: ['*', 'code-review'] } },
-      skill_profile: { legacy: {} },
-    })).skills).toEqual(['code-review'])
+  it('extracts skill selectors from workflow selectors', () => {
+    expect(
+      extractAgentEditWorkflowState(agentDefinition({
+        workflows: { skill_selectors: { include: ['*', 'code-review'] } },
+      })).skills,
+    ).toEqual(['code-review'])
 
-    expect(extractAgentEditWorkflowState(agentDefinition({
-      skill_profile: { legacy: {}, docs: {} },
-    })).skills).toEqual(['legacy', 'docs'])
+    expect(extractAgentEditWorkflowState(agentDefinition()).skills).toEqual([])
   })
 
   it('extracts edit workflow state including blocked tools', () => {

@@ -109,17 +109,14 @@ def _build_rendered_row(
 
     ``session_ref_map`` is an optional pre-resolved ``owner_session_id -> '#N'``
     lookup produced by :func:`_resolve_session_refs`. When provided, the row's
-    session column is populated from the map; otherwise it's left unresolved
-    (the caller can suppress or fall back to an assignee prefix).
+    session column is populated from the map; otherwise it's left unresolved.
     """
     is_muted = muted or not is_primary
     state = serialize_task_state(task)
     is_claimed = state["is_claimed"] or (
         claimed_task_ids is not None and task.id in claimed_task_ids
     )
-    owner_session_id = state["owner_session_id"] or (
-        getattr(task, "assignee", None) if is_claimed else None
-    )
+    owner_session_id = state["owner_session_id"] if is_claimed else None
     current_stage = state["current_stage"]
     stage_state = current_stage["state"] if current_stage else "ready"
     blocked = state["is_blocked"]

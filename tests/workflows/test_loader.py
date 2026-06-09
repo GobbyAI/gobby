@@ -63,16 +63,10 @@ class TestWorkflowLoader:
     """Tests for WorkflowLoader basic functionality."""
 
     def test_init_default_dirs(self) -> None:
-        """Test default workflow directory initialization (legacy param)."""
+        """Test default workflow directory initialization."""
         loader = WorkflowLoader()
         assert len(loader.global_dirs) == 1
         assert loader.global_dirs[0] == Path.home() / ".gobby" / "workflows"
-
-    def test_init_custom_dirs(self) -> None:
-        """Test custom workflow directories initialization (legacy param)."""
-        custom_dirs = [Path("/custom/path1"), Path("/custom/path2")]
-        loader = WorkflowLoader(workflow_dirs=custom_dirs)
-        assert loader.global_dirs == custom_dirs
 
     def test_init_accepts_db_param(self, db: HubDatabase) -> None:
         """Test that WorkflowLoader accepts a db parameter."""

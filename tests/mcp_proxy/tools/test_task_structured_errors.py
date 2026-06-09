@@ -20,7 +20,7 @@ def _make_task(
     *,
     task_id: str = "550e8400-e29b-41d4-a716-446655440000",
     status: str = "open",
-    assignee: str | None = None,
+    claimed_by_session_id: str | None = None,
 ) -> Task:
     stage_state = {
         "open": "ready",
@@ -36,7 +36,7 @@ def _make_task(
         created_at="2024-01-01T00:00:00Z",
         updated_at="2024-01-01T00:00:00Z",
         closed_at="2024-01-02T00:00:00Z" if status == "closed" else None,
-        assignee=assignee,
+        claimed_by_session_id=claimed_by_session_id,
         escalated_at="2024-01-02T00:00:00Z" if status == "escalated" else None,
         is_escalated=status == "escalated",
         seq_num=42,
@@ -98,7 +98,7 @@ async def test_claim_task_conflict_returns_claim_conflict(
     mock_task_manager: MagicMock,
     mock_sync_manager: MagicMock,
 ) -> None:
-    task = _make_task(status="in_progress", assignee="other-session")
+    task = _make_task(status="in_progress", claimed_by_session_id="other-session")
     mock_task_manager.get_task.return_value = task
     registry = _create_registry(mock_task_manager, mock_sync_manager)
 

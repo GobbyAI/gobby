@@ -216,7 +216,6 @@ class LocalTaskManager(TaskDecompositionMixin):
         created_in_session_id: str | None = None,
         priority: int = 2,
         task_type: str = "task",
-        assignee: str | None = None,
         claimed_by_session_id: str | None = None,
         labels: list[str] | None = None,
         category: str | None = None,
@@ -241,7 +240,6 @@ class LocalTaskManager(TaskDecompositionMixin):
             created_in_session_id=created_in_session_id,
             priority=priority,
             task_type=task_type,
-            assignee=assignee,
             claimed_by_session_id=claimed_by_session_id,
             labels=labels,
             category=category,
@@ -337,7 +335,6 @@ class LocalTaskManager(TaskDecompositionMixin):
         description: MaybeUnset[str | None] = UNSET,
         priority: MaybeUnset[int | None] = UNSET,
         task_type: MaybeUnset[str | None] = UNSET,
-        assignee: MaybeUnset[str | None] = UNSET,
         claimed_by_session_id: MaybeUnset[str | None] = UNSET,
         labels: MaybeUnset[list[str] | None] = UNSET,
         parent_task_id: MaybeUnset[str | None] = UNSET,
@@ -382,7 +379,6 @@ class LocalTaskManager(TaskDecompositionMixin):
             description=description,
             priority=priority,
             task_type=task_type,
-            assignee=assignee,
             claimed_by_session_id=claimed_by_session_id,
             labels=labels,
             parent_task_id=parent_task_id,
@@ -575,7 +571,7 @@ class LocalTaskManager(TaskDecompositionMixin):
     ) -> Task:
         """Reopen a task to the ready state.
 
-        Works from any non-ready state. Clears assignee, closed fields,
+        Works from any non-ready state. Clears ownership, closed fields,
         and resets validation_fail_count.
 
         Args:
@@ -738,7 +734,6 @@ class LocalTaskManager(TaskDecompositionMixin):
         project_id: str | None = None,
         current_stage_state: str | list[str] | None = None,
         priority: int | None = None,
-        assignee: str | None = None,
         claimed_by_session_id: str | None = None,
         claimed: bool | None = None,
         closed: bool | None = None,
@@ -765,7 +760,6 @@ class LocalTaskManager(TaskDecompositionMixin):
             project_id=project_id,
             current_stage_state=current_stage_state,
             priority=priority,
-            assignee=assignee,
             claimed_by_session_id=claimed_by_session_id,
             claimed=claimed,
             closed=closed,
@@ -784,7 +778,6 @@ class LocalTaskManager(TaskDecompositionMixin):
         project_id: str | None = None,
         priority: int | None = None,
         task_type: str | None = None,
-        assignee: str | None = None,
         parent_task_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
@@ -807,7 +800,6 @@ class LocalTaskManager(TaskDecompositionMixin):
             project_id=project_id,
             priority=priority,
             task_type=task_type,
-            assignee=assignee,
             parent_task_id=parent_task_id,
             limit=limit,
             offset=offset,

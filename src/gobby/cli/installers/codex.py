@@ -153,27 +153,6 @@ def _dump_toml_config(config_path: Path, config: TOMLDocument) -> None:
     config_path.write_text(tomlkit.dumps(config), encoding="utf-8")
 
 
-def _migrate_from_notify(config: TOMLDocument, hooks_dir: Path) -> None:
-    """Remove legacy notify config and clean up old notify script."""
-    _remove_toml_key(config, "notify")
-
-    # Clean up old installed notify script
-    old_notify = hooks_dir / "codex" / "hook_dispatcher.py"
-    if old_notify.exists():
-        old_notify.unlink()
-    old_notify_dir = hooks_dir / "codex"
-    if old_notify_dir.exists():
-        try:
-            is_empty = not any(old_notify_dir.iterdir())
-        except OSError:
-            is_empty = False
-        if is_empty:
-            try:
-                old_notify_dir.rmdir()
-            except OSError:
-                pass
-
-
 def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     """Atomically write JSON to a file in its parent directory."""
     fd, temp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp", prefix=f"{path.stem}_")
@@ -450,10 +429,24 @@ def _install_hooks_json(
 def _is_gobby_hook(hook_entry: Any) -> bool:
     """Check if a hooks.json entry was installed by Gobby.
 
-    Inspects the entry's command/args for the ``--gobby-owned`` marker
-    rather than doing a broad string search on the JSON serialization.
+    Inspects the entry's command/args for either the template marker or the
+    installed dispatcher command shape.
     """
-    return config_contains_gobby_hook(hook_entry)
+    return config_contains_gobby_hook(hook_entry) or _is_codex_dispatcher_hook(hook_entry)
+
+
+def _is_codex_dispatcher_hook(hook_entry: Any) -> bool:
+    if not isinstance(hook_entry, dict):
+        return False
+    for field in ("command", "cmd", "script"):
+        command = hook_entry.get(field)
+        if (
+            isinstance(command, str)
+            and ".gobby/hooks/hook_dispatcher.py" in command
+            and "--cli=codex" in command
+        ):
+            return True
+    return False
 
 
 def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]:
@@ -532,9 +525,6 @@ def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]
             parsed_config = _load_toml_config(existing_config)
         updated_config: TOMLDocument = deepcopy(parsed_config)
 
-        # Migrate from legacy notify mechanism
-        _migrate_from_notify(updated_config, hooks_dir)
-
         # Enable stable hooks and remove the deprecated codex_hooks flag.
         _remove_toml_key(updated_config, "features.codex_hooks")
         _set_toml_value(updated_config, "features.hooks", True)
@@ -596,7 +586,6 @@ def uninstall_codex(project_path: Path | None = None) -> dict[str, Any]:
     }
 
     codex_home = Path.home() / ".codex"
-    hooks_dir = _get_hooks_dir()
 
     # 1. Remove gobby hooks from ~/.codex/hooks.json
     hooks_file = codex_home / "hooks.json"
@@ -638,19 +627,7 @@ def uninstall_codex(project_path: Path | None = None) -> dict[str, Any]:
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"Could not clean hooks.json: {e}")
 
-    # 2. Clean up legacy notify script if still present
-    old_notify = hooks_dir / "codex" / "hook_dispatcher.py"
-    if old_notify.exists():
-        old_notify.unlink()
-        result["files_removed"].append(str(old_notify))
-    old_notify_dir = hooks_dir / "codex"
-    if old_notify_dir.exists() and not any(old_notify_dir.iterdir()):
-        try:
-            old_notify_dir.rmdir()
-        except OSError:
-            pass
-
-    # 3. Update config.toml: remove hook feature flags, Gobby trust state, and legacy notify
+    # 2. Update config.toml: remove hook feature flags and Gobby trust state
     codex_config_path = codex_home / "config.toml"
     try:
         if codex_config_path.exists():
@@ -662,9 +639,6 @@ def uninstall_codex(project_path: Path | None = None) -> dict[str, Any]:
             _remove_toml_key(updated, "features.hooks")
             _remove_toml_key(updated, "features.codex_hooks")
             _remove_codex_hook_trust_state(updated, gobby_hook_state_keys)
-
-            # Remove legacy notify if still present
-            _remove_toml_key(updated, "notify")
 
             if updated != existing:
                 backup_path = codex_config_path.with_suffix(".toml.bak")
@@ -681,8 +655,3 @@ def uninstall_codex(project_path: Path | None = None) -> dict[str, Any]:
 
     result["success"] = True
     return result
-
-
-# Backward-compatible aliases
-install_codex_notify = install_codex
-uninstall_codex_notify = uninstall_codex

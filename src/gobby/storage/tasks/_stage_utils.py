@@ -79,7 +79,6 @@ def _close_task_in_txn(
                escalated_at = NULL,
                escalation_reason = NULL,
                is_escalated = FALSE,
-               assignee = NULL,
                claimed_by_session_id = NULL,
                updated_at = %s
          WHERE id = %s
@@ -199,7 +198,6 @@ def _cascade_close_descendants(
                closed_reason = 'merged',
                closed_in_session_id = %s,
                closed_commit_sha = %s,
-               assignee = NULL,
                claimed_by_session_id = NULL,
                updated_at = %s
          WHERE id IN (SELECT id FROM subtree)

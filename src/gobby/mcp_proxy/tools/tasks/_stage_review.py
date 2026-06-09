@@ -256,7 +256,7 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
-        prior_assignee = get_claimed_session_id(task)
+        prior_owner_session_id = get_claimed_session_id(task)
         _auto_link_session_commits(
             ctx,
             task_id=resolved_id,
@@ -284,7 +284,7 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         _clear_prior_claim_session_variables(
             ctx,
             resolved_id,
-            prior_assignee,
+            prior_owner_session_id,
             action="submit_for_review",
         )
         notify_parent_on_task_state_change(
@@ -343,7 +343,7 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
-        prior_assignee = get_claimed_session_id(task)
+        prior_owner_session_id = get_claimed_session_id(task)
         _auto_link_session_commits(
             ctx,
             task_id=resolved_id,
@@ -371,7 +371,7 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         _clear_prior_claim_session_variables(
             ctx,
             resolved_id,
-            prior_assignee,
+            prior_owner_session_id,
             action="approve_review",
         )
         notify_parent_on_task_state_change(
@@ -449,7 +449,7 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
-        prior_assignee = get_claimed_session_id(task)
+        prior_owner_session_id = get_claimed_session_id(task)
         _auto_link_session_commits(
             ctx,
             task_id=resolved_id,
@@ -478,7 +478,7 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         _clear_prior_claim_session_variables(
             ctx,
             resolved_id,
-            prior_assignee,
+            prior_owner_session_id,
             action="reject_review",
         )
         notify_parent_on_task_state_change(

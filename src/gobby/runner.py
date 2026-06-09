@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from gobby.storage.spans import SpanStorage
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
-    from gobby.sync.memories import MemorySyncManager
+    from gobby.sync.memories import MemoryBackupManager
     from gobby.sync.tasks import TaskSyncManager
     from gobby.tasks.validation import TaskValidator
     from gobby.wiki.watcher import WikiWatcher
@@ -138,7 +138,7 @@ class GobbyRunner:
     metrics_manager: ToolMetricsManager
     mcp_proxy: MCPClientManager
     task_sync_manager: TaskSyncManager
-    memory_sync_manager: MemorySyncManager | None
+    memory_sync_manager: MemoryBackupManager | None
     message_processor: SessionMessageProcessor | None
     task_validator: TaskValidator | None
     worktree_storage: LocalWorktreeManager

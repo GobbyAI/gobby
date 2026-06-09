@@ -17,7 +17,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
+from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
 
 pytestmark = pytest.mark.unit
@@ -80,7 +80,7 @@ class TestAgentScopeFiltering:
             manager,
             "global-block",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", tools=["Write"], reason="Global block")],
             ),
             priority=10,
@@ -101,7 +101,7 @@ class TestAgentScopeFiltering:
             manager,
             "global-block",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", tools=["Write"], reason="Global block")],
             ),
             priority=10,
@@ -123,7 +123,7 @@ class TestAgentScopeFiltering:
             manager,
             "dev-only-block",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 agent_scope=["developer"],
                 effects=[RuleEffect(type="block", tools=["Write"], reason="Dev block")],
             ),
@@ -147,7 +147,7 @@ class TestAgentScopeFiltering:
             manager,
             "dev-only-block",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 agent_scope=["developer"],
                 effects=[RuleEffect(type="block", tools=["Write"], reason="Dev block")],
             ),
@@ -170,7 +170,7 @@ class TestAgentScopeFiltering:
             manager,
             "dev-only-block",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 agent_scope=["developer"],
                 effects=[RuleEffect(type="block", tools=["Write"], reason="Dev block")],
             ),
@@ -192,7 +192,7 @@ class TestAgentScopeFiltering:
             manager,
             "dev-qa-block",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 agent_scope=["developer", "qa"],
                 effects=[RuleEffect(type="block", tools=["Write"], reason="Shared block")],
             ),
@@ -235,7 +235,7 @@ class TestDeveloperAgentRules:
             manager,
             "no-coderabbit",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 agent_scope=["developer"],
                 effects=[
                     RuleEffect(
@@ -272,7 +272,7 @@ class TestDeveloperAgentRules:
             manager,
             "no-coderabbit",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 agent_scope=["developer"],
                 effects=[
                     RuleEffect(
@@ -308,7 +308,7 @@ class TestDeveloperAgentRules:
             manager,
             "require-tests-pass",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 agent_scope=["developer"],
                 effects=[
                     RuleEffect(
@@ -350,7 +350,7 @@ class TestQAAgentRules:
             manager,
             "qa-no-code-writing",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 agent_scope=["qa"],
                 effects=[
                     RuleEffect(
@@ -379,7 +379,7 @@ class TestQAAgentRules:
             manager,
             "qa-no-code-writing",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 agent_scope=["qa"],
                 effects=[
                     RuleEffect(
@@ -417,7 +417,7 @@ class TestCoordinatorAgentRules:
             manager,
             "coordinator-no-code-writing",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 agent_scope=["coordinator"],
                 effects=[
                     RuleEffect(
@@ -446,7 +446,7 @@ class TestCoordinatorAgentRules:
             manager,
             "coordinator-no-code-writing",
             RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
+                event=RuleTriggerEvent.BEFORE_TOOL,
                 agent_scope=["coordinator"],
                 effects=[
                     RuleEffect(

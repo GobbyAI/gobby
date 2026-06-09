@@ -765,36 +765,6 @@ class TestListDefinitionsSourceFilter:
 
 
 # ---------------------------------------------------------------------------
-# POST /api/agents/definitions/{name}/install
-# ---------------------------------------------------------------------------
-
-
-class TestInstallFromTemplate:
-    """Legacy install endpoint now returns 410 Gone for all requests."""
-
-    def test_install_from_template(
-        self, client: TestClient, agent_manager: LocalWorkflowDefinitionManager
-    ) -> None:
-        """Install endpoint returns 410 — template installation is legacy."""
-        _create_agent_row(agent_manager, "tmpl-worker", source="template")
-        response = client.post("/api/agents/definitions/tmpl-worker/install")
-        assert response.status_code == 410
-
-    def test_install_template_not_found(self, client: TestClient) -> None:
-        """Install endpoint returns 410 even for nonexistent templates."""
-        response = client.post("/api/agents/definitions/nonexistent/install")
-        assert response.status_code == 410
-
-    def test_install_from_non_template_not_found(
-        self, client: TestClient, agent_manager: LocalWorkflowDefinitionManager
-    ) -> None:
-        """Install endpoint returns 410 regardless of source."""
-        _create_agent_row(agent_manager, "installed-worker", source="installed")
-        response = client.post("/api/agents/definitions/installed-worker/install")
-        assert response.status_code == 410
-
-
-# ---------------------------------------------------------------------------
 # PUT /api/agents/definitions/{id} — nested field updates
 # ---------------------------------------------------------------------------
 

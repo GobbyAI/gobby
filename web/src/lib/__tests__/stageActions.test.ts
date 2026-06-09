@@ -176,7 +176,6 @@ describe('stageActions shared helper contract', () => {
         id: 'task-1',
         title: 'Build task',
         task_type: 'feature',
-        assignee: 'agent-1',
         claimed_by_session_id: 'session-1',
         owner_session_ref: { session_id: 'session-1', ref: '#9', source: 'codex' },
         closed_at: '2026-05-01T00:00:00Z',
@@ -222,7 +221,6 @@ describe('stageActions shared helper contract', () => {
     )
 
     expect(moved).toMatchObject({
-      assignee: null,
       claimed_by_session_id: null,
       owner_session_ref: null,
       closed_at: null,

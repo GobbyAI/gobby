@@ -124,9 +124,6 @@ def get_claimed_session_id(task: Any) -> str | None:
     claimed_by_session_id = _read_field(task, "claimed_by_session_id")
     if isinstance(claimed_by_session_id, str) and claimed_by_session_id:
         return claimed_by_session_id
-    assignee = _read_field(task, "assignee")
-    if isinstance(assignee, str) and assignee:
-        return assignee
     return None
 
 

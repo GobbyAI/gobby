@@ -16,7 +16,7 @@ from typing import Any, cast
 
 import psycopg
 
-from gobby.config.mcp import DEFAULT_MCP_CONFIG_PATH, migrate_legacy_mcp_config
+from gobby.config.mcp import DEFAULT_MCP_CONFIG_PATH
 from gobby.mcp_proxy.bundled import DEFAULT_EXTERNAL_MCP_SERVERS
 
 logger = logging.getLogger(__name__)
@@ -833,7 +833,6 @@ def install_default_mcp_servers() -> dict[str, Any]:
         "error": None,
     }
 
-    migrate_legacy_mcp_config()
     mcp_config_path = Path(DEFAULT_MCP_CONFIG_PATH).expanduser()
 
     # Ensure parent directory exists

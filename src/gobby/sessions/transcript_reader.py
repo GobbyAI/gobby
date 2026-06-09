@@ -5,8 +5,8 @@ gzip archives for expired sessions. Supports JSONL and native JSON transcripts.
 
 Rendered reads are **windowed** through a cached per-session boundary index
 (:mod:`gobby.sessions.transcript_index`) so daemon RAM stays bounded on very
-large sessions. Legacy flat reads stream the source with an early stop at
-``offset + limit`` instead of materializing the whole file.
+large sessions. Flat reads stream the source with an early stop at ``offset +
+limit`` instead of materializing the whole file.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ import asyncio
 import json
 import logging
 import os
-import warnings
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -41,7 +40,7 @@ from gobby.sessions.transcript_io import (
     clear_archive_cache,
 )
 from gobby.sessions.transcript_limits import (
-    LEGACY_LIMIT_MAX,
+    FLAT_ROW_LIMIT_MAX,
     NATIVE_JSON_MAX_BYTES,
     RENDERED_LIMIT_MAX,
 )
@@ -122,20 +121,12 @@ class TranscriptReader:
         self,
         session_manager: SessionManager,
         archive_dir: str | None = None,
-        # Deprecated: kept for backwards-compat callers, ignored
-        message_manager: object | None = None,
     ):
-        if message_manager is not None:
-            warnings.warn(
-                "message_manager is deprecated and ignored",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         self._session_manager = session_manager
         self._archive_dir = archive_dir
 
     # ------------------------------------------------------------------ #
-    # Legacy flat messages (streaming, limit-capped)
+    # Flat messages (streaming, limit-capped)
     # ------------------------------------------------------------------ #
 
     async def get_messages(
@@ -148,14 +139,13 @@ class TranscriptReader:
         """Get flat per-message rows, streaming the source with an early stop.
 
         Reads at most ``offset + limit`` matching rows before stopping, so a
-        large transcript never fully materializes. ``format=legacy`` callers
-        clamp ``limit`` upstream.
+        large transcript never fully materializes.
         """
         session = self._session_manager.get(session_id)
         if not session:
             return []
 
-        limit = min(max(0, int(limit)), LEGACY_LIMIT_MAX)
+        limit = min(max(0, int(limit)), FLAT_ROW_LIMIT_MAX)
         offset = max(0, int(offset))
         if limit == 0:
             return []
@@ -165,7 +155,7 @@ class TranscriptReader:
         if path and os.path.isfile(path):
             if _is_json_session_file(path):
                 try:
-                    return await self._legacy_native(session_id, offset, limit, role)
+                    return await self._flat_native(session_id, offset, limit, role)
                 except TranscriptTooLargeError as e:
                     logger.warning("Skipping oversized native transcript for %s: %s", session_id, e)
                     return []
@@ -182,7 +172,7 @@ class TranscriptReader:
                 size=st.st_size,
             )
             dicts = await asyncio.to_thread(
-                _collect_legacy_from_file_windowed,
+                _collect_flat_from_file_windowed,
                 path,
                 source,
                 session_id,
@@ -202,7 +192,7 @@ class TranscriptReader:
                     )
                     source = self._archive_source(session, sample, session_id)
                     dicts = await asyncio.to_thread(
-                        _collect_legacy_from_archive,
+                        _collect_flat_from_archive,
                         str(archive_path),
                         source,
                         session_id,
@@ -216,7 +206,7 @@ class TranscriptReader:
 
         return []
 
-    async def _legacy_native(
+    async def _flat_native(
         self, session_id: str, offset: int, limit: int, role: str | None
     ) -> list[dict[str, Any]]:
         """Flat-row read for native JSON (small; rendered whole then sliced)."""
@@ -588,7 +578,7 @@ def _read_archive_sample(path: str, max_lines: int) -> list[str]:
     return out
 
 
-def _collect_legacy_from_file(
+def _collect_flat_from_file(
     path: str, source: str, session_id: str, cap: int, role: str | None
 ) -> list[dict[str, Any]]:
     """Stream a live JSONL file into flat rows, stopping at ``cap`` matches."""
@@ -597,7 +587,7 @@ def _collect_legacy_from_file(
         RawLine(byte_offset=None, raw_line_no=i, text=text)
         for i, text in enumerate(_iter_jsonl_lines(path))
     )
-    return _collect_legacy_dicts(
+    return _collect_flat_dicts(
         parser, raws, source=source, session_id=session_id, cap=cap, role=role
     )
 
@@ -621,7 +611,7 @@ def _iter_jsonl_raw_lines_from(
             line_no += 1
 
 
-def _collect_legacy_from_file_windowed(
+def _collect_flat_from_file_windowed(
     path: str,
     source: str,
     session_id: str,
@@ -634,7 +624,7 @@ def _collect_legacy_from_file_windowed(
     boundary = index.parsed_boundary_for_offset(offset, role)
     if boundary is None or boundary.byte_start is None:
         cap = offset + limit
-        return _collect_legacy_from_file(path, source, session_id, cap, role)[
+        return _collect_flat_from_file(path, source, session_id, cap, role)[
             offset : offset + limit
         ]
 
@@ -662,7 +652,7 @@ def _collect_legacy_from_file_windowed(
     return out
 
 
-def _collect_legacy_from_archive(
+def _collect_flat_from_archive(
     path: str, source: str, session_id: str, cap: int, role: str | None
 ) -> list[dict[str, Any]]:
     """Stream a gzip archive into flat rows, stopping at ``cap`` matches."""
@@ -671,12 +661,12 @@ def _collect_legacy_from_archive(
         RawLine(byte_offset=None, raw_line_no=i, text=text)
         for i, text in enumerate(_iter_archive_lines(path))
     )
-    return _collect_legacy_dicts(
+    return _collect_flat_dicts(
         parser, raws, source=source, session_id=session_id, cap=cap, role=role
     )
 
 
-def _collect_legacy_dicts(
+def _collect_flat_dicts(
     parser: Any,
     raws: Any,
     *,

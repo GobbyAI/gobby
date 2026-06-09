@@ -65,7 +65,9 @@ def def_manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
 
 @pytest.fixture
 def loader(tmp_path) -> WorkflowLoader:
-    return WorkflowLoader(workflow_dirs=[tmp_path / "workflows"])
+    loader = WorkflowLoader()
+    loader.global_dirs = [tmp_path / "workflows"]
+    return loader
 
 
 # =============================================================================

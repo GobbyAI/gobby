@@ -432,10 +432,6 @@ def _run_git_hooks_install(
             click.echo("Skipped:")
             for hook in result["skipped"]:
                 click.echo(f"  - {hook}")
-        if result.get("removed_legacy_imports"):
-            click.echo("Removed legacy import hooks:")
-            for hook in result["removed_legacy_imports"]:
-                click.echo(f"  - {hook}")
         if not result.get("installed") and not result.get("skipped"):
             click.echo("No hooks to install")
     else:

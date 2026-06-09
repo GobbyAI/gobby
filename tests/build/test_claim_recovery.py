@@ -87,7 +87,7 @@ async def test_kick_releases_claimed_needs_review_clean_workspace(
     from gobby.build import claim_recovery
     from gobby.build.dispatch_tick import kick_dispatcher_tick
     from gobby.dispatch.dispatcher import HeartbeatResult
-    from gobby.storage.tasks._crud import list_automation_candidates
+    from gobby.storage.tasks._automation import list_automation_candidates
 
     task = _claimed_review_task(
         temp_db,

@@ -6,7 +6,7 @@ import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import _automation
-from gobby.storage.tasks._crud import list_automation_candidates
+from gobby.storage.tasks._automation import list_automation_candidates
 from gobby.storage.tasks._models import Isolation
 from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES
 from tests.storage.tasks._stage_test_helpers import (

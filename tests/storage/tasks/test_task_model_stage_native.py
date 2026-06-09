@@ -24,7 +24,7 @@ def test_task_from_row_does_not_require_legacy_status_column() -> None:
             "updated_at": "2026-05-21T00:00:00+00:00",
             "description": None,
             "parent_task_id": None,
-            "assignee": None,
+            "claimed_by_session_id": None,
             "labels": "[]",
             "closed_reason": None,
         }

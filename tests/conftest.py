@@ -308,7 +308,7 @@ def mock_daemon_config() -> "MagicMock":
         str(temp_root / "gobby_test_client_error.log"),
     )
     config.ui.enabled = False
-    config.databases.falkordb.requirepass = None
+    config.databases.falkordb.password = None
     return config
 
 
@@ -410,15 +410,15 @@ def protect_production_resources(
         # they have a reference to the OLD function object.
         # We must find ALL references to the old function and patch them too.
 
-        # Capture the REAL save_config to find rogue references
+        # Capture the REAL export_config_to_yaml to find rogue references
         try:
-            _real_save_config: Any = app.save_config
+            _real_export_config_to_yaml: Any = app.export_config_to_yaml
         except AttributeError:
-            _real_save_config = None
+            _real_export_config_to_yaml = None
 
-        def safe_save_config(config: Any, config_file: str | None = None) -> None:
-            """Redirect save_config to safe temp path during tests."""
-            assert _real_save_config is not None
+        def safe_export_config_to_yaml(config: Any, config_file: str | None = None) -> None:
+            """Redirect config export to safe temp path during tests."""
+            assert _real_export_config_to_yaml is not None
             if config_file is None:
                 config_file = str(safe_config_file)
             else:
@@ -430,16 +430,19 @@ def protect_production_resources(
                         config_file = str(safe_config_file)
                 except (ValueError, OSError):
                     pass
-            _real_save_config(config, config_file=config_file)
+            _real_export_config_to_yaml(config, config_file=config_file)
 
         # 1. Standard patch for the definitions (covers future imports)
         p = patch("gobby.config.app.load_config", side_effect=safe_load_config)
         p.start()
-        if _real_save_config is not None:
-            p_save = patch("gobby.config.app.save_config", side_effect=safe_save_config)
-            p_save.start()
+        if _real_export_config_to_yaml is not None:
+            p_export = patch(
+                "gobby.config.app.export_config_to_yaml",
+                side_effect=safe_export_config_to_yaml,
+            )
+            p_export.start()
 
-        # 2. Patch known top-level importers of load_config / save_config.
+        # 2. Patch known top-level importers of load_config / export_config_to_yaml.
         #
         # Only modules with a top-level `from gobby.config.app import load_config`
         # hold a direct reference that patch() on the definition module won't reach.
@@ -447,12 +450,12 @@ def protect_production_resources(
         #
         # To update this list: grep for top-level `from gobby.config.app import load_config`
         # in src/ (exclude lines inside function bodies).  Also include gobby.config since
-        # its __init__.py re-exports both load_config and save_config.
+        # its __init__.py re-exports app-level config helpers.
         patched_modules = []
         import sys
 
         _KNOWN_CONFIG_IMPORTERS = [
-            "gobby.config",  # __init__.py re-exports load_config and save_config
+            "gobby.config",  # __init__.py re-exports app-level config helpers
             "gobby.cli",  # cli/__init__.py
             "gobby.cli.utils",
             "gobby.cli.tasks._utils",
@@ -463,8 +466,11 @@ def protect_production_resources(
         rogue_replacements: dict[int, tuple[Any, Any]] = {}
         if _real_load_config:
             rogue_replacements[id(_real_load_config)] = (safe_load_config, _real_load_config)
-        if _real_save_config:
-            rogue_replacements[id(_real_save_config)] = (safe_save_config, _real_save_config)
+        if _real_export_config_to_yaml:
+            rogue_replacements[id(_real_export_config_to_yaml)] = (
+                safe_export_config_to_yaml,
+                _real_export_config_to_yaml,
+            )
 
         if rogue_replacements:
             for mod_name in _KNOWN_CONFIG_IMPORTERS:
@@ -487,8 +493,8 @@ def protect_production_resources(
 
         # Restore everything
         p.stop()
-        if _real_save_config is not None:
-            p_save.stop()
+        if _real_export_config_to_yaml is not None:
+            p_export.stop()
         for mod, updates in patched_modules:
             for attr_name, (_safe_fn, real_fn) in updates.items():
                 if real_fn is not None:

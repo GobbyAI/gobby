@@ -50,12 +50,11 @@ class TestListReadyTasks:
         registry = create_readiness_registry(task_manager=task_manager)
         list_ready = registry.get_tool("list_ready_tasks")
 
-        list_ready(priority=1, task_type="bug", assignee="dev1", limit=5)
+        list_ready(priority=1, task_type="bug", limit=5)
 
         task_manager.list_ready_tasks.assert_called_once_with(
             priority=1,
             task_type="bug",
-            assignee="dev1",
             parent_task_id=None,
             limit=5,
             project_id="test-project-id",

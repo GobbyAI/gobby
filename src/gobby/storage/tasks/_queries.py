@@ -119,7 +119,6 @@ def list_tasks(
     project_id: str | None = None,
     current_stage_state: str | list[str] | None = None,
     priority: int | None = None,
-    assignee: str | None = None,
     claimed_by_session_id: str | None = None,
     claimed: bool | None = None,
     closed: bool | None = None,
@@ -139,7 +138,6 @@ def list_tasks(
         project_id: Filter by project
         current_stage_state: Filter by the task's current stage state.
         priority: Filter by priority
-        assignee: Filter by assignee
         claimed_by_session_id: Filter by canonical owning session
         claimed: Filter by whether canonical ownership exists
         closed: Filter by canonical closed state
@@ -173,9 +171,6 @@ def list_tasks(
     if priority:
         query += " AND priority = %s"
         params.append(priority)
-    if assignee:
-        query += " AND assignee = %s"
-        params.append(assignee)
     if claimed_by_session_id:
         query += " AND claimed_by_session_id = %s"
         params.append(claimed_by_session_id)
@@ -232,7 +227,6 @@ def list_ready_tasks(
     project_id: str | None = None,
     priority: int | None = None,
     task_type: str | None = None,
-    assignee: str | None = None,
     parent_task_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
@@ -300,9 +294,6 @@ def list_ready_tasks(
     if task_type:
         query += " AND t.task_type = %s"
         params.append(task_type)
-    if assignee:
-        query += " AND t.assignee = %s"
-        params.append(assignee)
     if parent_task_id:
         query += " AND t.parent_task_id = %s"
         params.append(parent_task_id)

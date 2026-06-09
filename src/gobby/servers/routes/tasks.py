@@ -8,7 +8,7 @@ import logging
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from gobby.build.lifecycle import derive_build_state
@@ -66,7 +66,6 @@ class TaskCreateRequest(BaseModel):
         default=None,
         description="Required for code tasks; routes implementation to the matching developer.",
     )
-    assignee: str | None = Field(default=None, description="Assignee session ID")
     project_id: str | None = Field(
         default=None, description="Project ID (resolved from cwd if omitted)"
     )
@@ -89,10 +88,6 @@ class TaskUpdateRequest(BaseModel):
         default=None,
         description="New task type",
         json_schema_extra=_enum_schema(TASK_TYPE_CHOICES),
-    )
-    assignee: str | None = Field(
-        default=None,
-        description="Compatibility field only. Use /claim or /release-claim endpoints instead.",
     )
     labels: list[str] | None = Field(default=None, description="New labels")
     parent_task_id: str | None = Field(default=None, description="New parent task ID")
@@ -236,10 +231,10 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         """Attach a friendly ``owner_session_ref`` to each serialized task.
 
         ``state.owner_session_id`` is authoritative because it mirrors the
-        canonical task state. Older serialized rows may only expose the legacy
-        top-level ``claimed_by_session_id``, which is used as a fallback. The
-        winning UUID is converted through ``_owner_session_ref``; unowned tasks
-        or non-string owner values receive ``None``.
+        canonical task state. Serialized task rows also expose top-level
+        ``claimed_by_session_id`` for compact consumers, so use it as a fallback.
+        The winning UUID is converted through ``_owner_session_ref``; unowned
+        tasks or non-string owner values receive ``None``.
         """
         for item in task_dicts:
             raw_state = item.get("state")
@@ -288,7 +283,6 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
 
     @router.get("")
     async def list_tasks(
-        request: Request,
         project_id: str | None = Query(None, description="Filter by project ID"),
         current_stage_state: (
             Literal["ready", "in_progress", "needs_review", "review_approved"] | None
@@ -297,7 +291,6 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         closed: bool | None = Query(None, description="Filter by canonical closed state"),
         priority: int | None = Query(None, description="Filter by priority"),
         task_type: str | None = Query(None, description="Filter by task type"),
-        assignee: str | None = Query(None, description="Filter by assignee"),
         label: str | None = Query(None, description="Filter by label"),
         parent_task_id: str | None = Query(None, description="Filter by parent task ID"),
         search: str | None = Query(None, description="Search by title"),
@@ -316,13 +309,6 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, Any]:
         """List tasks with optional filters and state distribution stats."""
         try:
-            legacy_stage_key = "lifecycle_" + "stage"
-            unsupported_filters = {"status", legacy_stage_key} & set(request.query_params)
-            if unsupported_filters:
-                names = ", ".join(sorted(unsupported_filters))
-                raise ValueError(
-                    f"Unsupported legacy task filter(s): {names}. Use current_stage_state."
-                )
             resolved_project = _resolve_project(project_id)
             stage_task_ids: set[str] | None = None
             stage_filters = _normalize_stage_filters(stage)
@@ -342,7 +328,6 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 current_stage_state=current_stage_state,
                 priority=priority,
                 task_type=task_type,
-                assignee=assignee,
                 claimed=claimed,
                 closed=closed,
                 label=label,
@@ -401,7 +386,6 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 category=request_data.category,
                 validation_criteria=request_data.validation_criteria,
                 implementation_domain=request_data.implementation_domain,
-                assignee=request_data.assignee,
             )
             result = task.to_dict()
             await _broadcast_task("task_created", result)
@@ -438,34 +422,12 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 raise HTTPException(status_code=404, detail=str(e)) from e
             resolved_id = task.id
 
-            legacy_stage_key = "lifecycle_" + "stage"
             extra_fields = set(request_data.model_extra or {})
-            legacy_fields = {"status", "lifecycle", legacy_stage_key} & extra_fields
-            if legacy_fields:
-                names = ", ".join(sorted(legacy_fields))
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"Unsupported legacy task field(s): {names}. Use stage-specific task "
-                        "endpoints instead."
-                    ),
-                )
             if extra_fields:
                 names = ", ".join(sorted(extra_fields))
                 raise HTTPException(
                     status_code=400,
                     detail=f"Unsupported task field(s): {names}.",
-                )
-
-            blocked_fields = request_data.model_fields_set & {"assignee"}
-            if blocked_fields:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "Use dedicated task endpoints instead of PATCH for ownership changes: "
-                        "/claim, /release-claim, /escalate, /de-escalate, /close, /reopen, "
-                        "or the stage PATCH route."
-                    ),
                 )
 
             # Build kwargs only for fields that were explicitly set

@@ -44,21 +44,6 @@ function createDefaultState(): SetupState {
   };
 }
 
-/** Step ID map for migrating v1 (numeric) state to v2 (string IDs). */
-const V1_STEP_MAP: Record<number, string> = {
-  1: "welcome",
-  2: "about-you",
-  3: "syscheck",
-  4: "config",
-  5: "firewall",
-  6: "tailscale",
-  7: "projects",
-  8: "hooks",
-  9: "services",
-  10: "personal",
-  11: "launch",
-};
-
 export function getGobbyHome(): string {
   return process.env.GOBBY_HOME || join(homedir(), ".gobby");
 }
@@ -67,57 +52,11 @@ function statePath(): string {
   return join(getGobbyHome(), "setup_state.json");
 }
 
-type PersistedSetupState = Partial<SetupState> & {
-  completed_step?: unknown;
-  neo4j_installed?: unknown;
-  neo4j_password_set?: unknown;
-};
-
-function migrateState(raw: PersistedSetupState): { state: SetupState; migrated: boolean } {
-  let migrated = false;
-
-  // Migrate v1 numeric completed_step -> v2 string completed_step_id.
-  if (raw.version === 1 && typeof raw.completed_step === "number") {
-    raw.completed_step_id = V1_STEP_MAP[raw.completed_step] || null;
-    delete raw.completed_step;
-    migrated = true;
-  }
-
-  if ("neo4j_installed" in raw) {
-    raw.falkordb_installed = false;
-    delete raw.neo4j_installed;
-    migrated = true;
-  }
-
-  if ("neo4j_password_set" in raw) {
-    raw.falkordb_password_set = false;
-    delete raw.neo4j_password_set;
-    migrated = true;
-  }
-
-  if (raw.version !== 3) {
-    raw.version = 3;
-    migrated = true;
-  }
-
-  return { state: { ...createDefaultState(), ...raw }, migrated };
-}
-
 export function loadState(): SetupState {
   try {
     const raw = readFileSync(statePath(), "utf-8");
     const parsed = JSON.parse(raw);
-    const { state, migrated } = migrateState(parsed);
-
-    if (migrated) {
-      try {
-        saveState(state);
-      } catch {
-        /* Migration persistence is best-effort; callers can still use migrated state. */
-      }
-    }
-
-    return state;
+    return { ...createDefaultState(), ...parsed };
   } catch {
     return createDefaultState();
   }

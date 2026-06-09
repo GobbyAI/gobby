@@ -193,7 +193,7 @@ class TestGetConfigValues:
 
 class TestSaveConfigValues:
     def test_save_valid_values(self, client: TestClient) -> None:
-        """Valid partial update succeeds (save_config is patched by conftest)."""
+        """Valid partial update succeeds with config export patched by conftest."""
         response = client.put(
             "/api/config/values",
             json={"values": {"daemon_port": 9999}},
@@ -1420,8 +1420,8 @@ class TestExportImport:
             },
         )
 
-        assert response.status_code == 422
-        assert response.json()["detail"] == "FalkorDB password must be a string"
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Invalid imported configuration"
         assert ConfigStore(postgres_db).get(FALKOR_PASSWORD_KEY) is None
 
     def test_import_falkordb_secret_reference_preserves_secret_row(

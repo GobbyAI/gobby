@@ -9,8 +9,7 @@ MemoryBackendProtocol. This module handles:
 - On-demand backup via CLI, pre-push hook, and MCP export
 
 Classes:
-    MemoryBackupManager: Main backup manager (formerly MemorySyncManager)
-    MemorySyncManager: Backward-compatible alias for MemoryBackupManager
+    MemoryBackupManager: Main backup manager.
 """
 
 import asyncio
@@ -28,7 +27,6 @@ from typing import Any
 
 __all__ = [
     "MemoryBackupManager",
-    "MemorySyncManager",  # Backward compatibility alias
 ]
 
 from gobby.config.persistence import MemoryBackupConfig
@@ -649,7 +647,3 @@ class MemoryBackupManager:
         except Exception as e:
             logger.error(f"Failed to export memories: {e}", exc_info=True)
             return 0
-
-
-# Backward compatibility alias
-MemorySyncManager = MemoryBackupManager

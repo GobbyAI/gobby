@@ -18,7 +18,6 @@ from gobby.storage.tasks._models import (
     TaskAlreadyEscalatedError,
     TaskClosedError,
 )
-from gobby.storage.tasks._ownership import _session_exists
 from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._stage_states import (
     StageStatesManager,
@@ -126,13 +125,9 @@ def reset_current_non_ready_stage(
     return True
 
 
-def get_effective_claim_owner(task: Task, db: HubDatabase) -> str | None:
-    """Return the canonical owning session for a task during the migration."""
-    if task.claimed_by_session_id:
-        return task.claimed_by_session_id
-    if task.assignee and _session_exists(db, task.assignee):
-        return task.assignee
-    return None
+def get_effective_claim_owner(task: Task) -> str | None:
+    """Return the owning session for a task."""
+    return task.claimed_by_session_id
 
 
 def claim_task(
@@ -144,7 +139,7 @@ def claim_task(
 ) -> Task:
     """Claim a task for a session."""
     task = get_task(db, task_id)
-    current_owner = get_effective_claim_owner(task, db)
+    current_owner = get_effective_claim_owner(task)
 
     if is_task_closed(task):
         raise TaskClosedError(f"Cannot claim task {task_id}: task is closed")
@@ -154,7 +149,6 @@ def claim_task(
     update_task(
         db,
         task_id,
-        assignee=session_id,
         claimed_by_session_id=session_id,
     )
     return get_task(db, task_id)
@@ -177,7 +171,6 @@ def release_task_claim(
         db,
         task_id,
         description=description,
-        assignee=None,
         claimed_by_session_id=None,
         validation_fail_count=validation_fail_count,
         dispatch_failure_count=dispatch_failure_count,
@@ -206,7 +199,7 @@ def reopen_task(
 
     current_stage = _current_stage_row(db, task_id)
     current_stage_ready = current_stage is None or current_stage["state"] == "ready"
-    has_ownership_metadata = bool(task.claimed_by_session_id or task.assignee)
+    has_ownership_metadata = bool(task.claimed_by_session_id)
     if (
         not is_task_closed(task)
         and not task.is_escalated
@@ -224,7 +217,6 @@ def reopen_task(
         db,
         task_id,
         description=description if reason else UNSET,
-        assignee=None,
         claimed_by_session_id=None,
         closed_reason=None,
         closed_at=None,
@@ -506,7 +498,6 @@ def submit_for_review(
         task_id,
         description=description,
         labels=labels,
-        assignee=None,
         claimed_by_session_id=None,
     )
     return get_task(db, task_id)
@@ -542,7 +533,6 @@ def approve_review(
         db,
         task_id,
         description=description,
-        assignee=None,
         claimed_by_session_id=None,
     )
     return get_task(db, task_id)
@@ -615,7 +605,6 @@ def reject_review(
         db,
         task_id,
         description=description,
-        assignee=None,
         claimed_by_session_id=None,
     )
     return get_task(db, task_id)

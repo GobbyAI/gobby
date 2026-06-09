@@ -51,12 +51,7 @@ export interface CanonicalTaskState {
   escalation_reason: string | null
 }
 
-export interface TaskCompatProjection {
-  assignee?: string | null
-}
-
 export interface TaskStateLike {
-  assignee?: string | null
   claimed_by_session_id?: string | null
   owner_session_ref?: OwnerSessionRef | null
   closed_at?: string | null
@@ -69,7 +64,6 @@ export interface TaskStateLike {
   current_stage?: StageStateView | null
   stages?: StageStateView[] | null
   state?: Partial<CanonicalTaskState> | null
-  compat?: TaskCompatProjection | null
 }
 
 export interface TaskStateBadgeToken {
@@ -157,11 +151,9 @@ function deriveCurrentStage(task: TaskStateLike): StageStateView | null {
 }
 
 export function getCanonicalTaskState(task: TaskStateLike): CanonicalTaskState {
-  const compatAssignee = task.compat?.assignee ?? task.assignee ?? null
   const ownerSessionId =
     task.state?.owner_session_id ??
     task.claimed_by_session_id ??
-    compatAssignee ??
     null
   const ownerSessionRef =
     task.state?.owner_session_ref ?? task.owner_session_ref ?? null

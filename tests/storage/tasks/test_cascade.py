@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from gobby.storage.tasks import LocalTaskManager
-from gobby.storage.tasks._crud import cascade_build_state_to_subtree
+from gobby.storage.tasks._build_cascade import cascade_build_state_to_subtree
 
 pytestmark = pytest.mark.unit
 

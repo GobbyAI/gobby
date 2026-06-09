@@ -158,12 +158,12 @@ class TestSpawnAgent:
         data = response.json()
         updated = task_manager.get_task(task.id)
         assert updated.claimed_by_session_id == data["conversation_id"]
-        assert updated.assignee == data["conversation_id"]
+        assert updated.claimed_by_session_id == data["conversation_id"]
 
     def test_spawn_web_chat_preserves_review_status(
         self, client: TestClient, task_manager: LocalTaskManager, test_project
     ) -> None:
-        """Web chat spawn on needs_review should set assignee without regressing status."""
+        """Web chat spawn on needs_review should set claimed_by_session_id without regressing status."""
         task = _create_task(task_manager, test_project.id, "Review task")
         _submit_for_development_review(task_manager, task.id)
 
@@ -180,7 +180,7 @@ class TestSpawnAgent:
         data = response.json()
         updated = task_manager.get_task(task.id)
         assert current_stage_state(updated) == "needs_review"
-        assert updated.assignee == data["conversation_id"]
+        assert updated.claimed_by_session_id == data["conversation_id"]
 
     def test_spawn_web_chat_does_not_steal_claimed_review_task(
         self,
@@ -212,7 +212,7 @@ class TestSpawnAgent:
         assert response.status_code == 200
         updated = task_manager.get_task(task.id)
         assert current_stage_state(updated) == "needs_review"
-        assert updated.assignee == existing_owner.id
+        assert updated.claimed_by_session_id == existing_owner.id
 
     def test_terminal_spawn_passes_daemon_config_for_sandbox_defaults(
         self,

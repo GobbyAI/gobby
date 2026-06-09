@@ -47,7 +47,6 @@ export interface AgentDefInfo {
     max_turns: number
     default_workflow: string | null
     sandbox: Record<string, unknown> | null
-    skill_profile: Record<string, unknown> | null
     workflows: {
       pipeline?: string
       rules?: string[]

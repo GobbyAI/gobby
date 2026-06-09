@@ -32,8 +32,7 @@ export function handlePlanPendingApproval(
   ctx: UseChatTransportParams,
 ) {
   const msgConvId = data.conversation_id as string | undefined;
-  // Only accept plans for the current conversation (or unscoped legacy events)
-  if (!msgConvId || msgConvId === ctx.conversationIdRef.current) {
+  if (msgConvId === ctx.conversationIdRef.current) {
     const planContent = data.plan_content as string | undefined;
     if (planContent) {
       const previousPlanContent = ctx.planContentRef.current;
@@ -60,8 +59,7 @@ export function handleModeChanged(
   ctx: UseChatTransportParams,
 ) {
   const msgConvId = data.conversation_id as string | undefined;
-  // Only apply mode changes for the CURRENT conversation
-  if (!msgConvId || msgConvId === ctx.conversationIdRef.current) {
+  if (msgConvId === ctx.conversationIdRef.current) {
     const rawMode = data.mode as string | undefined;
     const newMode = rawMode ? normalizeChatMode(rawMode) : undefined;
     const reason = data.reason as string | undefined;

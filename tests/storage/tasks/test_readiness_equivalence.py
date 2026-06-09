@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import pytest
 
 from gobby.storage.tasks import LocalTaskManager
-from gobby.storage.tasks._crud import update_task
+from gobby.storage.tasks._updates import update_task
 from tests.storage.tasks._stage_test_helpers import (
     create_task,
     initialize_manifest,

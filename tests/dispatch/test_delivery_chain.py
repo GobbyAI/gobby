@@ -8,8 +8,8 @@ import gobby.mcp_proxy.tools.tasks._stage_ops as stage_ops
 from gobby.dispatch import rules
 from gobby.dispatch.actions import AdvanceStageAction, SpawnAgentAction, StartStageAction
 from gobby.storage.tasks import LocalTaskManager
-from gobby.storage.tasks._crud import update_task
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.storage.tasks._updates import update_task
 from tests.storage.tasks._stage_test_helpers import (
     initialize_manifest,
     make_task_with_manifest,

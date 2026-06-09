@@ -177,7 +177,6 @@ class Task:
     closed_in_session_id: str | None = None
     closed_commit_sha: str | None = None
     closed_at: str | None = None
-    assignee: str | None = None
     labels: list[str] | None = None
     closed_reason: str | None = None
     validation_status: Literal["pending", "valid", "invalid"] | None = None
@@ -235,7 +234,6 @@ class Task:
         labels_json = row["labels"]
         labels = json.loads(labels_json) if labels_json else []
 
-        # Handle optional columns that might not exist yet if migration pending
         keys = row.keys()
         closed_at = row["closed_at"] if "closed_at" in keys else None
         escalated_at = row["escalated_at"] if "escalated_at" in keys else None
@@ -265,7 +263,6 @@ class Task:
             ),
             closed_commit_sha=row["closed_commit_sha"] if "closed_commit_sha" in keys else None,
             closed_at=closed_at,
-            assignee=row["assignee"],
             labels=labels,
             closed_reason=row["closed_reason"],
             validation_status=row["validation_status"] if "validation_status" in keys else None,
@@ -343,7 +340,6 @@ class Task:
             "closed_in_session_id": self.closed_in_session_id,
             "closed_commit_sha": self.closed_commit_sha,
             "closed_at": self.closed_at,
-            "assignee": self.assignee,
             "labels": self.labels,
             "closed_reason": self.closed_reason,
             "validation_status": self.validation_status,
@@ -374,7 +370,7 @@ class Task:
             "assigned_agent": self.assigned_agent,
             "implementation_domain": self.implementation_domain,
             "additional_skills": self.additional_skills,
-            "id": self.id,  # UUID at end for backwards compat
+            "id": self.id,
         }
 
     def to_brief(self) -> dict[str, Any]:
@@ -399,7 +395,6 @@ class Task:
             "updated_at": self.updated_at,
             "seq_num": self.seq_num,
             "path_cache": self.path_cache,
-            "assignee": self.assignee,
             "claimed_by_session_id": self.claimed_by_session_id,
             "category": self.category,
             "closed_at": self.closed_at,
@@ -421,5 +416,5 @@ class Task:
             "assigned_agent": self.assigned_agent,
             "implementation_domain": self.implementation_domain,
             "additional_skills": self.additional_skills,
-            "id": self.id,  # UUID at end for backwards compat
+            "id": self.id,
         }

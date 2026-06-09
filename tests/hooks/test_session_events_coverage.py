@@ -711,7 +711,7 @@ class TestSessionMoreCoverage:
             handler._session_manager.register_session.return_value = "new-sess-1"
             handler._task_manager.get_task.return_value = MagicMock(
                 status="needs_review",
-                assignee="parent-1",
+                claimed_by_session_id="parent-1",
             )
 
             handler.handle_session_start(event)

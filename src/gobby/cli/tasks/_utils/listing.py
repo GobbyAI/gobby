@@ -74,9 +74,7 @@ def format_task_list(
         is_claimed = state["is_claimed"] or (
             claimed_task_ids is not None and task.id in claimed_task_ids
         )
-        owner = state["owner_session_id"] or (
-            getattr(task, "assignee", None) if is_claimed else None
-        )
+        owner = state["owner_session_id"] if is_claimed else None
         if owner:
             session_ids.add(owner)
         if group_by == "project":

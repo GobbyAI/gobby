@@ -556,7 +556,7 @@ class TestClosedStateRoundTrip:
         _insert_session(sync_manager.db, "session-bbb", sample_project["id"])
         sync_manager.db.execute(
             """UPDATE tasks SET
-                assignee = 'session-uuid-123',
+                claimed_by_session_id = 'session-uuid-123',
                 created_in_session_id = 'session-aaa',
                 closed_in_session_id = 'session-bbb',
                 compacted_at = '2026-01-10T00:00:00+00:00',
@@ -597,11 +597,11 @@ class TestClosedStateRoundTrip:
 
         # Verify session-local fields were PRESERVED (not wiped to NULL)
         row = sync_manager.db.fetchone(
-            "SELECT assignee, created_in_session_id, closed_in_session_id, "
+            "SELECT claimed_by_session_id, created_in_session_id, closed_in_session_id, "
             "compacted_at FROM tasks WHERE id = %s",
             (task.id,),
         )
-        assert row["assignee"] == "session-uuid-123"
+        assert row["claimed_by_session_id"] == "session-uuid-123"
         assert row["created_in_session_id"] == "session-aaa"
         assert row["closed_in_session_id"] == "session-bbb"
         assert row["compacted_at"] == "2026-01-10T00:00:00+00:00"

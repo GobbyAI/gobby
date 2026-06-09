@@ -350,6 +350,4 @@ class CodexHooksAdapter(BaseAdapter):
         return self.translate_from_hook_response(hook_response, hook_type=hook_type)
 
 
-CodexNotifyAdapter = CodexHooksAdapter
-
-__all__ = ["CodexHooksAdapter", "CodexNotifyAdapter"]
+__all__ = ["CodexHooksAdapter"]

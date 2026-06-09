@@ -121,22 +121,22 @@ def test_codex_stop_hook_timeout_blocks_fail_safe(
         }
         adapter_cls.return_value = adapter
 
-    response = client.post(
-        "/api/hooks/execute",
-        json={
-            "schema_version": 1,
-            "enqueued_at": "2026-04-16T12:00:00Z",
-            "critical": True,
-            "hook_type": hook_type,
-            "source": "codex",
-            "input_data": {},
-        },
-    )
+        response = client.post(
+            "/api/hooks/execute",
+            json={
+                "schema_version": 1,
+                "enqueued_at": "2026-04-16T12:00:00Z",
+                "critical": True,
+                "hook_type": hook_type,
+                "source": "codex",
+                "input_data": {},
+            },
+        )
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "continue": False,
-        "decision": "block",
-        "reason": "timed out",
-    }
-    adapter.translate_from_hook_response.assert_called_once()
+        assert response.status_code == 200
+        assert response.json() == {
+            "continue": False,
+            "decision": "block",
+            "reason": "timed out",
+        }
+        adapter.translate_from_hook_response.assert_called_once()

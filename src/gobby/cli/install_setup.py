@@ -8,7 +8,6 @@ import logging
 import os
 import platform
 import re
-import shutil
 import subprocess
 import sys
 import tarfile
@@ -414,8 +413,6 @@ def _run_npm_install(label: str, package: str, project_path: Path) -> None:
         )
         if npm_result.returncode == 0:
             click.echo(f"Installed {label} ({package.removesuffix('@latest')})")
-            if package == "@playwright/cli@latest":
-                _remove_legacy_playwright_skill(project_path)
         else:
             click.echo(f"Warning: Failed to install {label}: {npm_result.stderr.strip()}")
     except FileNotFoundError:
@@ -424,17 +421,6 @@ def _run_npm_install(label: str, package: str, project_path: Path) -> None:
         click.echo(f"Warning: Failed to run npm for {label}: {e}")
     except subprocess.TimeoutExpired:
         click.echo(f"Warning: {label} install timed out")
-
-
-def _remove_legacy_playwright_skill(project_path: Path) -> None:
-    legacy_skills = project_path / ".claude" / "skills" / "playwright-cli"
-    if not legacy_skills.exists():
-        return
-    try:
-        shutil.rmtree(legacy_skills)
-        click.echo("Removed legacy .claude/skills/playwright-cli/ (now in gobby-skills)")
-    except OSError as e:
-        click.secho(f"Warning: Could not remove legacy {legacy_skills}: {e}", fg="yellow")
 
 
 def _run_managed_native_binary_installs() -> None:

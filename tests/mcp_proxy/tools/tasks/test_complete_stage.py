@@ -161,7 +161,7 @@ def test_complete_stage_releases_completed_agent_task_claim(
     assert result["stage"]["state"] == "done"
     assert refreshed is not None
     assert refreshed.claimed_by_session_id is None
-    assert refreshed.assignee is None
+    assert refreshed.claimed_by_session_id is None
     assert child_vars["task_claimed"] is False
     assert child_vars["claimed_tasks"] == {}
     assert stage_row(temp_db, task.id, "merge")["state"] == "ready"

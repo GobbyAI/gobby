@@ -58,7 +58,6 @@ def _task(
     description: str | None = None,
     labels: list[str] | None = None,
     seq_num: int | None = None,
-    assignee: str | None = None,
     claimed_by_session_id: str | None = None,
 ) -> Task:
     stage_state = {"open": "ready"}.get(status, status)
@@ -73,7 +72,6 @@ def _task(
         description=description,
         labels=labels,
         seq_num=seq_num,
-        assignee=assignee,
         claimed_by_session_id=claimed_by_session_id,
         stages=(
             {
@@ -113,7 +111,6 @@ def sample_task_in_progress():
         labels=["planning-round:0"],
         seq_num=42,
         claimed_by_session_id="session-abc",
-        assignee="session-abc",
     )
 
 
@@ -204,7 +201,6 @@ class TestMarkTaskReviewRejected:
             status="open",
             labels=["planning-round:1"],
             claimed_by_session_id=None,
-            assignee=None,
             description=sample_task_in_progress.description,
             seq_num=sample_task_in_progress.seq_num,
         )

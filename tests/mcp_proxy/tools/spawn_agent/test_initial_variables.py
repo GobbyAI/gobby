@@ -377,7 +377,7 @@ class TestSpawnAgentStepVariables:
             )
 
         assert result["success"] is True
-        assert task_manager.get_task(task.id).assignee == child.id
+        assert task_manager.get_task(task.id).claimed_by_session_id == child.id
 
         instance = WorkflowInstanceManager(db).get_instance(child.id, "plan-adversary-steps")
         assert instance is not None
@@ -498,7 +498,7 @@ class TestSpawnAgentStepVariables:
 
         assert result["success"] is True
         assert instance is not None
-        assert task_manager.get_task(task.id).assignee == instance.session_id
+        assert task_manager.get_task(task.id).claimed_by_session_id == instance.session_id
         assert instance.current_step == "load_required_skills"
         assert instance.variables["task_claimed"] is True
         assert instance.variables["required_skills"] == [

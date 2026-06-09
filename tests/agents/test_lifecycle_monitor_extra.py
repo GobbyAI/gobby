@@ -104,7 +104,7 @@ class TestRecoverTaskFromFailedAgent:
         assert mock_task_mgr.release_task_claim.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_recover_task_fallback_assignee(self) -> None:
+    async def test_recover_task_fallback_claimed_session(self) -> None:
         """Task recovered using child_session_id as fallback."""
         mock_run_mgr = MagicMock()
         mock_task_mgr = MagicMock()
@@ -162,7 +162,7 @@ class TestRecoverTaskFromFailedAgent:
 
     @pytest.mark.asyncio
     async def test_recover_task_releases_review_claim_without_status_change(self) -> None:
-        """Failed review agent should clear assignee without regressing status."""
+        """Failed review agent should clear claimed_by_session_id without regressing status."""
         mock_run_mgr = MagicMock()
         mock_task_mgr = MagicMock()
         mock_stall = MagicMock()
