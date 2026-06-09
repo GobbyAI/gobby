@@ -81,7 +81,11 @@ def _extract_grok_update(value: Any) -> dict[str, Any] | None:
 
 
 def _update_type(update: dict[str, Any]) -> str:
-    return str(update.get("sessionUpdate") or update.get("type") or "")
+    for key in ("sessionUpdate", "type"):
+        value = update.get(key)
+        if isinstance(value, str):
+            return value
+    return ""
 
 
 def _grok_hook_feedback_text(record: ParsedMessage, update: dict[str, Any]) -> str | None:

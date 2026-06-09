@@ -187,7 +187,7 @@ async def test_memory_dream_cron_handler_formats_valid_result(
 
 
 @pytest.mark.asyncio
-async def test_memory_dream_cron_handler_falls_back_for_non_int_mutations(
+async def test_memory_dream_cron_handler_coerces_string_mutations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cron_storage = _FakeCronStorage()
@@ -208,7 +208,35 @@ async def test_memory_dream_cron_handler_falls_back_for_non_int_mutations(
 
     message = await handler(SimpleNamespace())
 
+    assert message == "memory dream dream-1 completed: 2 mutation(s)"
+
+
+@pytest.mark.asyncio
+async def test_memory_dream_cron_handler_warns_for_invalid_mutations(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    cron_storage = _FakeCronStorage()
+    cron_executor = _FakeCronExecutor()
+
+    async def fake_run_memory_dream(**_kwargs: Any) -> dict[str, Any]:
+        return {"success": True, "run": {"id": "dream-1", "summary": {"mutations": "bad"}}}
+
+    caplog.set_level("WARNING", logger="gobby.memory.dream.cron")
+    monkeypatch.setattr("gobby.memory.dream.cron.run_memory_dream", fake_run_memory_dream)
+    register_memory_dream_cron(
+        cron_storage=cron_storage,
+        cron_executor=cron_executor,
+        memory_manager=MagicMock(),
+        dream_config=SimpleNamespace(enabled=True, schedule_cron="0 3 * * *"),
+        project_id="proj-1",
+    )
+    handler = cron_executor.handlers[MEMORY_DREAM_CRON_HANDLER]
+
+    message = await handler(SimpleNamespace())
+
     assert message == "memory dream dream-1 completed: 0 mutation(s)"
+    assert "Invalid memory dream mutation count: value='bad' type=str" in caplog.text
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections import defaultdict
 from pathlib import Path
@@ -229,11 +230,15 @@ async def _invoke_llm_compile(
             system_prompt=system_prompt,
             caller="tasks.expansion.compile",
         )
+        if not isinstance(result, dict):
+            raise ValueError(f"expected JSON object, got {type(result).__name__}")
         return cast(dict[str, Any], result)
-    except Exception as exc:
+    except (json.JSONDecodeError, ValueError) as exc:
         raise ValueError(
             f"Expansion compiler did not return valid JSON for {scope}: {exc!r}"
         ) from exc
+    except Exception as exc:
+        raise ValueError(f"Expansion compiler failed for {scope}: {exc!r}") from exc
 
 
 def _build_prompt_context(self: Any, run: ExpansionRun, task: Task) -> dict[str, Any]:

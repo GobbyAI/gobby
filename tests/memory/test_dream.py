@@ -91,6 +91,7 @@ async def test_stale_candidate_discovery_reviews_high_access_old_memory() -> Non
     assert result[0].access_count == 99
 
 
+@pytest.mark.asyncio
 async def test_stale_candidate_discovery_times_out_page_fetch() -> None:
     async def slow_list(*, limit: int | None, offset: int) -> list[Any]:
         pending: asyncio.Future[list[Any]] = asyncio.Future()
@@ -137,6 +138,7 @@ async def test_stale_candidate_discovery_ties_by_created_at() -> None:
     assert [candidate.id for candidate in result] == ["older", "newer"]
 
 
+@pytest.mark.asyncio
 async def test_stale_candidate_discovery_sorts_invalid_created_at_last() -> None:
     manager = MagicMock()
     valid = _memory("valid")
@@ -163,6 +165,7 @@ async def test_stale_candidate_discovery_sorts_invalid_created_at_last() -> None
     assert [candidate.id for candidate in result] == ["valid", "invalid"]
 
 
+@pytest.mark.asyncio
 async def test_build_raw_plan_logs_non_dict_actions(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -451,6 +454,7 @@ async def test_apply_dream_plan_dry_run_includes_planned_action_preview() -> Non
     ]
 
 
+@pytest.mark.asyncio
 async def test_merge_rolls_back_keeper_update_when_duplicate_delete_fails() -> None:
     db = _FakeDreamDB()
     db.memories = {
@@ -484,6 +488,7 @@ async def test_merge_rolls_back_keeper_update_when_duplicate_delete_fails() -> N
     assert db.memories["merge-drop"]["content"] == "old"
 
 
+@pytest.mark.asyncio
 async def test_supersede_deletes_created_replacement_when_original_delete_fails() -> None:
     db = _FakeDreamDB()
     db.memories = {"supersede-me": _row("supersede-me", "old")}
@@ -579,6 +584,7 @@ async def test_revert_dream_run_marks_revert_failed_and_continues_on_snapshot_er
     assert run["summary"]["errors"] == 1
 
 
+@pytest.mark.asyncio
 async def test_revert_dream_run_records_malformed_snapshot_without_key_error() -> None:
     db = _FakeDreamDB()
     store = MemoryDreamStore(db)

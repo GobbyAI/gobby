@@ -243,7 +243,6 @@ screenshots/
 reports/
 bandit_report.json
 coderabbit.md
-/task-*-build-journal.md
 ./*.txt
 ./*.log
 test-projects/

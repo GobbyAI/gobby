@@ -8,6 +8,7 @@ Tests cover:
 - Statistics retrieval
 """
 
+import inspect
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
@@ -15,7 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.config.persistence import MemoryConfig
-from gobby.memory.manager import MemoryManager
+from gobby.memory.manager import DEFAULT_LIST_LIMIT, MemoryManager
 from gobby.memory.protocol import MemoryBackendProtocol
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager, Memory
@@ -731,6 +732,11 @@ class TestAGetMemory:
 class TestAListMemories:
     """Tests for alist_memories."""
 
+    def test_alist_default_limit_signature(self) -> None:
+        """alist_memories exposes the default pagination limit."""
+        signature = inspect.signature(MemoryManager.alist_memories)
+        assert signature.parameters["limit"].default == DEFAULT_LIST_LIMIT
+
     @pytest.mark.asyncio
     async def test_alist_basic(self, memory_manager) -> None:
         """alist_memories returns memories."""
@@ -746,6 +752,14 @@ class TestAListMemories:
             await memory_manager.create_memory(content=f"AList limit {i}")
         result = await memory_manager.alist_memories(limit=3)
         assert len(result) == 3
+
+    @pytest.mark.asyncio
+    async def test_alist_with_none_limit_uses_default(self, memory_manager) -> None:
+        """alist_memories treats explicit None as the default limit."""
+        for i in range(DEFAULT_LIST_LIMIT + 1):
+            await memory_manager.create_memory(content=f"AList default {i}")
+        result = await memory_manager.alist_memories(limit=None)
+        assert len(result) == DEFAULT_LIST_LIMIT
 
     @pytest.mark.asyncio
     async def test_alist_with_zero_limit(self, memory_manager) -> None:

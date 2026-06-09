@@ -1,5 +1,3 @@
-from unittest.mock import MagicMock
-
 import pytest
 
 import gobby.agents.reasoning as reasoning
@@ -172,11 +170,70 @@ def test_get_provider_models_reuses_fallback_catalog(monkeypatch: pytest.MonkeyP
     assert created_for == [None]
 
 
+def test_new_fallback_catalog_supports_config_keyword(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = DaemonConfig()
+    created_for: list[DaemonConfig | None] = []
+
+    class FakeCatalog:
+        def __init__(self, *, config: DaemonConfig | None) -> None:
+            created_for.append(config)
+
+    monkeypatch.setattr("gobby.servers.provider_models.ProviderModelCatalog", FakeCatalog)
+
+    assert reasoning._new_fallback_catalog(config).__class__ is FakeCatalog
+    assert created_for == [config]
+
+
+def test_new_fallback_catalog_supports_no_arg_constructor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = 0
+
+    class FakeCatalog:
+        def __init__(self) -> None:
+            nonlocal created
+            created += 1
+
+    monkeypatch.setattr("gobby.servers.provider_models.ProviderModelCatalog", FakeCatalog)
+
+    assert reasoning._new_fallback_catalog(None).__class__ is FakeCatalog
+    assert created == 1
+
+
+def test_get_provider_models_reuses_fallback_catalog_for_equal_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_a = DaemonConfig()
+    config_b = DaemonConfig()
+    created_for: list[DaemonConfig | None] = []
+
+    class FakeCatalog:
+        def __init__(self, daemon_config: DaemonConfig | None) -> None:
+            created_for.append(daemon_config)
+
+        def get_provider_snapshot(self, provider: str) -> dict[str, object]:
+            return {"models": [{"value": provider}]}
+
+    monkeypatch.setattr(reasoning, "_fallback_catalog", None)
+    monkeypatch.setattr(reasoning, "_fallback_catalog_config", None)
+    monkeypatch.setattr("gobby.app_context.get_app_context", lambda: None)
+    monkeypatch.setattr("gobby.servers.provider_models.ProviderModelCatalog", FakeCatalog)
+
+    reasoning._get_provider_models("claude", config_a)
+    reasoning._get_provider_models("claude", config_b)
+
+    assert config_a == config_b
+    assert created_for == [config_a]
+    assert reasoning._fallback_catalog_config == config_b
+
+
 def test_get_provider_models_rebuilds_fallback_catalog_on_config_change(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config_a = MagicMock(spec=DaemonConfig)
-    config_b = MagicMock(spec=DaemonConfig)
+    config_a = DaemonConfig(daemon_port=60887)
+    config_b = DaemonConfig(daemon_port=60888)
     created_for: list[DaemonConfig | None] = []
 
     class FakeCatalog:

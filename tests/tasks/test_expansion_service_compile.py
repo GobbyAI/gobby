@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -252,6 +252,18 @@ async def test_invoke_llm_compile_wraps_value_error(service: ExpansionService) -
 
 
 @pytest.mark.asyncio
+async def test_invoke_llm_compile_wraps_non_object_result(service: ExpansionService) -> None:
+    service.llm_service.call_json_feature = AsyncMock(return_value=[])
+    service._render_prompt = MagicMock(return_value="prompt")
+    run = MagicMock(id="expand-1", provider=None, model=None)
+
+    with pytest.raises(ValueError, match="did not return valid JSON") as excinfo:
+        await service._invoke_llm_compile(run, {"task": {}})
+
+    assert "expected JSON object" in str(excinfo.value.__cause__)
+
+
+@pytest.mark.asyncio
 async def test_invoke_llm_compile_wraps_unexpected_provider_error(
     service: ExpansionService,
 ) -> None:
@@ -259,7 +271,7 @@ async def test_invoke_llm_compile_wraps_unexpected_provider_error(
     service._render_prompt = MagicMock(return_value="prompt")
     run = MagicMock(id="expand-1", provider=None, model=None)
 
-    with pytest.raises(ValueError, match="run=expand-1") as excinfo:
+    with pytest.raises(ValueError, match="Expansion compiler failed for run=expand-1") as excinfo:
         await service._invoke_llm_compile(run, {"task": {}})
 
     assert isinstance(excinfo.value.__cause__, RuntimeError)

@@ -127,6 +127,36 @@ def test_write_shutdown_intent_records_active_marker(tmp_path: Path) -> None:
     assert get_shutdown_source_path(tmp_path).exists()
 
 
+def test_write_shutdown_intent_cleans_partial_markers_on_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    source_path = get_shutdown_source_path(tmp_path)
+    active_path = get_active_shutdown_marker_path(tmp_path)
+    original_write_text = Path.write_text
+
+    def write_text_with_active_failure(
+        self: Path,
+        data: str,
+        *args: object,
+        **kwargs: object,
+    ) -> int:
+        if self == active_path:
+            raise OSError("active write failed")
+        return original_write_text(self, data, *args, **kwargs)
+
+    caplog.set_level("ERROR", logger="gobby.shutdown_intent")
+    monkeypatch.setattr(Path, "write_text", write_text_with_active_failure)
+
+    with pytest.raises(OSError, match="active write failed"):
+        write_shutdown_intent("cli_restart", "restart", home=tmp_path)
+
+    assert not source_path.exists()
+    assert not active_path.exists()
+    assert "Failed to write shutdown intent markers" in caplog.text
+
+
 def test_read_active_shutdown_intent_returns_none_after_consuming_marker(
     tmp_path: Path,
 ) -> None:

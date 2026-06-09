@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import errno
+import os
+import stat
 from collections.abc import Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.tasks import TaskNotFoundError
@@ -27,7 +30,7 @@ def resolve_task_repo_path(
     task: Task,
     project_path: str | None,
 ) -> str | None:
-    """Return a safe cwd for task-scoped Git operations."""
+    """Return a symlink-safe cwd validated for immediate task-scoped Git operations."""
     default_repo = _project_repo_path(project_manager, task.project_id)
     if not project_path:
         return default_repo
@@ -48,7 +51,7 @@ def resolve_project_repo_path(
     project_path: str | None,
     project_id: str | None = None,
 ) -> str | None:
-    """Return a safe cwd for project-scoped Git operations."""
+    """Return a symlink-safe cwd validated for immediate project-scoped Git operations."""
     default_repo = _project_repo_path(project_manager, project_id or _current_project_id())
     if not project_path:
         return default_repo
@@ -94,10 +97,7 @@ def _task_and_ancestors(task_manager: LocalTaskManager, task: Task) -> Iterable[
 
 
 def _artifact_roots(task_manager: LocalTaskManager, task_id: str) -> Iterable[str]:
-    try:
-        artifacts = task_manager.artifacts.get_artifacts(task_id)
-    except (AttributeError, TypeError, ValueError):
-        return
+    artifacts = task_manager.artifacts.get_artifacts(task_id)
     for value in (artifacts.worktree_path, artifacts.clone_path):
         if isinstance(value, str) and value:
             yield value
@@ -152,24 +152,101 @@ def _current_project_path() -> str | None:
 
 
 def _resolve_path(path: str) -> Path:
-    return Path(path).expanduser().resolve(strict=False)
+    expanded = Path(path).expanduser()
+    return Path(os.path.abspath(os.fspath(expanded)))
 
 
 def _resolve_existing_dir(path: str, *, label: str) -> Path:
     candidate = _resolve_path(path)
-    if not candidate.exists():
-        raise RepoPathValidationError(f"{label} does not exist: {candidate}")
-    if not candidate.is_dir():
-        raise RepoPathValidationError(f"{label} is not a directory: {candidate}")
+    _stat_existing_dir(candidate, label=label)
     return candidate
 
 
 def _is_under_any_root(candidate: Path, roots: Iterable[str]) -> bool:
+    try:
+        candidate_stat = _stat_existing_dir(candidate, label="project_path")
+    except RepoPathValidationError:
+        return False
+
     for root in roots:
-        resolved_root = _resolve_path(root)
         try:
-            candidate.relative_to(resolved_root)
-        except ValueError:
+            resolved_root = _resolve_existing_dir(root, label="registered repository")
+            root_stat = _stat_existing_dir(resolved_root, label="registered repository")
+        except RepoPathValidationError:
             continue
-        return True
+        if _is_same_or_descendant(candidate, candidate_stat, root_stat):
+            return True
     return False
+
+
+def _is_same_or_descendant(
+    candidate: Path,
+    candidate_stat: os.stat_result,
+    root_stat: os.stat_result,
+) -> bool:
+    current = candidate
+    current_stat = candidate_stat
+    while True:
+        if _same_inode(current_stat, root_stat):
+            return True
+        parent = current.parent
+        if parent == current:
+            return False
+        current = parent
+        try:
+            current_stat = _stat_existing_dir(current, label="project_path parent")
+        except RepoPathValidationError:
+            return False
+
+
+def _same_inode(left: os.stat_result, right: os.stat_result) -> bool:
+    return left.st_dev == right.st_dev and left.st_ino == right.st_ino
+
+
+def _stat_existing_dir(path: Path, *, label: str) -> os.stat_result:
+    fd = _open_dir_no_symlinks(path, label=label)
+    try:
+        return os.fstat(fd)
+    finally:
+        os.close(fd)
+
+
+def _open_dir_no_symlinks(path: Path, *, label: str) -> int:
+    if not path.is_absolute():
+        raise RepoPathValidationError(f"{label} must be an absolute path: {path}")
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    parts = path.parts
+    fd = os.open(parts[0], flags)
+    current = Path(parts[0])
+    try:
+        for part in parts[1:]:
+            current = current / part
+            try:
+                component_stat = os.stat(part, dir_fd=fd, follow_symlinks=False)
+            except OSError as exc:
+                _raise_path_error(exc, label=label, path=path)
+            if stat.S_ISLNK(component_stat.st_mode):
+                raise RepoPathValidationError(f"{label} contains symlink component: {current}")
+            if not stat.S_ISDIR(component_stat.st_mode):
+                raise RepoPathValidationError(f"{label} is not a directory: {path}")
+            try:
+                next_fd = os.open(part, flags | nofollow, dir_fd=fd)
+            except OSError as exc:
+                _raise_path_error(exc, label=label, path=path)
+            os.close(fd)
+            fd = next_fd
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
+
+
+def _raise_path_error(exc: OSError, *, label: str, path: Path) -> NoReturn:
+    if exc.errno == errno.ENOENT:
+        raise RepoPathValidationError(f"{label} does not exist: {path}") from exc
+    if exc.errno == errno.ENOTDIR:
+        raise RepoPathValidationError(f"{label} is not a directory: {path}") from exc
+    if exc.errno == errno.ELOOP:
+        raise RepoPathValidationError(f"{label} contains symlink component: {path}") from exc
+    raise RepoPathValidationError(f"{label} cannot be opened safely: {path}: {exc}") from exc

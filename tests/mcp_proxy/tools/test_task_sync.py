@@ -56,6 +56,24 @@ class TestLinkCommit:
         assert "error" in result
         assert "Task not found" in result["error"]
 
+    def test_link_commit_task_not_found_after_resolution(self, mock_sync_registry) -> None:
+        """Resolved missing tasks return structured errors before Git work."""
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+
+        task_manager = MagicMock()
+        task_manager.get_task.side_effect = [MagicMock(), None]
+
+        registry = create_commit_registry(
+            task_manager=task_manager,
+            sync_manager=MagicMock(),
+        )
+
+        link = registry.get_tool("link_commit")
+        result = link(task_id="task-uuid", commit_sha="abc123")
+
+        assert result == {"error": "Task task-uuid not found"}
+        task_manager.link_commit.assert_not_called()
+
     def test_link_commit_empty_commits_list(self, mock_sync_registry) -> None:
         """Test link_commit when task had no previous commits."""
         from gobby.mcp_proxy.tools.task_sync import create_commit_registry
@@ -193,6 +211,24 @@ class TestUnlinkCommit:
         assert "error" in result
         assert "Commit not linked" in result["error"]
 
+    def test_unlink_commit_task_not_found_after_resolution(self, mock_sync_registry) -> None:
+        """Resolved missing tasks return structured errors before Git work."""
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+
+        task_manager = MagicMock()
+        task_manager.get_task.side_effect = [MagicMock(), None]
+
+        registry = create_commit_registry(
+            task_manager=task_manager,
+            sync_manager=MagicMock(),
+        )
+
+        unlink = registry.get_tool("unlink_commit")
+        result = unlink(task_id="task-uuid", commit_sha="abc123")
+
+        assert result == {"error": "Task task-uuid not found"}
+        task_manager.unlink_commit.assert_not_called()
+
     def test_unlink_commit_uses_registered_project_path_override(
         self, mock_sync_registry, tmp_path: Path
     ) -> None:
@@ -298,6 +334,31 @@ class TestAutoLinkCommits:
         assert call_kwargs["task_id"] == "task-1"
         assert result["linked_tasks"] == ["task-1"]
 
+    def test_auto_link_commits_task_filter_not_found(self, mock_sync_registry) -> None:
+        """Filtered auto-link returns structured missing-task errors."""
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+
+        task_manager = MagicMock()
+        task_manager.get_task.side_effect = [MagicMock(), None]
+        mock_fn = MagicMock()
+
+        registry = create_commit_registry(
+            task_manager=task_manager,
+            sync_manager=MagicMock(),
+            auto_link_commits_fn=mock_fn,
+        )
+
+        auto_link = registry.get_tool("auto_link_commits")
+        result = auto_link(task_id="task-uuid")
+
+        assert result == {"error": "Task task-uuid not found"}
+        assert [call.args for call in task_manager.get_task.call_args_list] == [
+            ("task-uuid",),
+            ("task-uuid",),
+        ]
+        task_manager.resolve_task_reference.assert_not_called()
+        mock_fn.assert_not_called()
+
     def test_auto_link_commits_with_since(self, mock_sync_registry) -> None:
         """Test auto_link_commits with since parameter."""
         from gobby.mcp_proxy.tools.task_sync import create_commit_registry
@@ -376,9 +437,7 @@ class TestGetTaskDiff:
         task_manager.get_task.return_value = mock_task
 
         project_manager = MagicMock()
-        mock_project = MagicMock()
-        mock_project.repo_path = "/path/to/repo"
-        project_manager.get.return_value = mock_project
+        project_manager.get.return_value = None
 
         mock_diff_result = MagicMock()
         mock_diff_result.diff = "diff content"

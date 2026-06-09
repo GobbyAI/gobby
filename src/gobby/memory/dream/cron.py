@@ -70,7 +70,15 @@ def register_memory_dream_cron(
         if run_id is None:
             raise RuntimeError("memory dream completed without run_id")
         raw_mutations = summary.get("mutations", 0)
-        mutations = raw_mutations if isinstance(raw_mutations, int) else 0
+        try:
+            mutations = int(raw_mutations)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid memory dream mutation count: value=%r type=%s",
+                raw_mutations,
+                type(raw_mutations).__name__,
+            )
+            mutations = 0
         return f"memory dream {run_id} completed: {mutations} mutation(s)"
 
     cron_executor.register_handler(MEMORY_DREAM_CRON_HANDLER, _handler)

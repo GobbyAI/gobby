@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import inspect
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -77,7 +77,7 @@ def _get_provider_models(provider: str, daemon_config: DaemonConfig | None) -> l
     catalog = getattr(ctx, "provider_model_catalog", None) if ctx else None
     if catalog is None:
         with _fallback_catalog_lock:
-            if _fallback_catalog is None or _fallback_catalog_config is not daemon_config:
+            if _fallback_catalog is None or _fallback_catalog_config != daemon_config:
                 _fallback_catalog = _new_fallback_catalog(daemon_config)
                 _fallback_catalog_config = daemon_config
             catalog = _fallback_catalog
@@ -87,23 +87,22 @@ def _get_provider_models(provider: str, daemon_config: DaemonConfig | None) -> l
 
 
 def _new_fallback_catalog(daemon_config: DaemonConfig | None) -> ProviderModelCatalog:
+    """Instantiate the provider catalog across production and test constructor shapes."""
     from gobby.servers.provider_models import ProviderModelCatalog
 
     catalog_cls = cast(Any, ProviderModelCatalog)
-    signature = inspect.signature(catalog_cls)
-    parameters = signature.parameters
-    if "daemon_config" in parameters:
-        return cast(ProviderModelCatalog, catalog_cls(daemon_config))
-    if "config" in parameters:
-        return cast(ProviderModelCatalog, catalog_cls(config=daemon_config))
-    if any(
-        parameter.default is inspect.Parameter.empty
-        and parameter.kind
-        in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-        for parameter in parameters.values()
-    ):
-        return cast(ProviderModelCatalog, catalog_cls(daemon_config))
-    return cast(ProviderModelCatalog, catalog_cls())
+    last_error: TypeError | None = None
+    creators: tuple[Callable[[], Any], ...] = (
+        lambda: catalog_cls(daemon_config),
+        lambda: catalog_cls(config=daemon_config),
+        lambda: catalog_cls(),
+    )
+    for create in creators:
+        try:
+            return cast(ProviderModelCatalog, create())
+        except TypeError as exc:
+            last_error = exc
+    raise TypeError("ProviderModelCatalog could not be constructed") from last_error
 
 
 def _select_model_entries(

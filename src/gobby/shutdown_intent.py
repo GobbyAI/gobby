@@ -90,9 +90,26 @@ def write_shutdown_intent(
         "sender_pid": sender_pid or os.getpid(),
         "timestamp": time.time(),
     }
+    written: list[Path] = []
+    current_marker: Path | None = None
     for marker in (get_shutdown_source_path(home), get_shutdown_marker_path(home)):
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(json.dumps(data), encoding="utf-8")
+        try:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            current_marker = marker
+            marker.write_text(json.dumps(data), encoding="utf-8")
+            written.append(marker)
+            current_marker = None
+        except Exception:
+            cleanup_targets = [*written]
+            if current_marker is not None:
+                cleanup_targets.append(current_marker)
+            for target in cleanup_targets:
+                try:
+                    target.unlink(missing_ok=True)
+                except OSError:
+                    logger.exception("Failed to clean up partial shutdown marker: %s", target)
+            logger.exception("Failed to write shutdown intent markers")
+            raise
 
 
 def write_stop_intent(source: str, sender_pid: int | None = None) -> None:

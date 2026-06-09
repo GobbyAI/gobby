@@ -521,7 +521,6 @@ def create_handoff(
         llm_service = create_llm_service(config)
 
         with session_manager_context() as summary_manager:
-            _summary_db = open_runtime_hub_database(apply_migrations=False)
 
             async def _gen_summary() -> dict[str, Any]:
                 return await generate_session_summaries(
@@ -529,14 +528,11 @@ def create_handoff(
                     session_manager=summary_manager,
                     llm_service=llm_service,
                     session_summary_config=config.session_summary,
-                    db=_summary_db,
+                    db=summary_manager.db,
                     set_handoff_ready=False,
                 )
 
-            try:
-                summary_result = asyncio.run(_gen_summary())
-            finally:
-                _summary_db.close()
+            summary_result = asyncio.run(_gen_summary())
             if summary_result.get("success") and summary_result.get("full_length", 0) > 0:
                 updated = summary_manager.get(session.id)
                 if updated:

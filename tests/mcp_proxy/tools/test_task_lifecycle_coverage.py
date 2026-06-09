@@ -405,6 +405,7 @@ class TestCloseTask:
         assert result["error"].startswith("project_path does not exist:")
         mock_task_manager.link_commit.assert_not_called()
 
+    @pytest.mark.asyncio
     async def test_close_task_rejects_non_directory_project_path_before_git(
         self, mock_task_manager, mock_sync_manager, tmp_path
     ):
@@ -430,6 +431,7 @@ class TestCloseTask:
         assert result["error"].startswith("project_path is not a directory:")
         mock_task_manager.link_commit.assert_not_called()
 
+    @pytest.mark.asyncio
     async def test_close_task_valid_llm_result_closes_when_feedback_satisfies_criteria(
         self, mock_task_manager, mock_sync_manager
     ) -> None:

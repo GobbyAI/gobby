@@ -89,6 +89,8 @@ def create_commit_registry(
             return {"error": f"Invalid task_id: {e}"}
 
         task = task_manager.get_task(resolved_task_id)
+        if task is None:
+            return {"error": f"Task {task_id} not found"}
         try:
             repo_path = resolve_task_repo_path(
                 task_manager=task_manager,
@@ -150,6 +152,8 @@ def create_commit_registry(
             return {"error": f"Invalid task_id: {e}"}
 
         task = task_manager.get_task(resolved_task_id)
+        if task is None:
+            return {"error": f"Task {task_id} not found"}
         try:
             repo_path = resolve_task_repo_path(
                 task_manager=task_manager,
@@ -217,6 +221,8 @@ def create_commit_registry(
             except (TaskNotFoundError, ValueError) as e:
                 return {"error": f"Invalid task_id: {e}"}
             task = task_manager.get_task(resolved_task_id)
+            if task is None:
+                return {"error": f"Task {task_id} not found"}
             task_project_id = task.project_id
             try:
                 repo_path = resolve_task_repo_path(
