@@ -1,0 +1,57 @@
+skill: javascript
+agent: default
+description: Agent is asked to edit JavaScript and is tempted to ship loose dynamic code without runtime boundaries or focused checks.
+prompt: |
+  Add a JavaScript browser API client and package script for a workspace that has no TypeScript compiler.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: write_unvalidated_fetch_client
+        path: packages/web/src/api.js
+      - action: add_quick_package_script
+        path: packages/web/package.json
+      - action: respond
+        text: JavaScript changes are in place with raw response data and a quick smoke script.
+  loaded:
+    loaded_skills:
+      - javascript
+    actions:
+      - action: load_reference
+        path: references/configuration.md
+      - action: load_reference
+        path: references/types.md
+      - action: load_reference
+        path: references/error-handling.md
+      - action: configure_js_tooling
+        path: packages/web/package.json
+      - action: validate_external_response
+        path: packages/web/src/api.js
+      - action: add_runtime_tests
+        path: packages/web/src/api.test.js
+      - action: run_validation
+        command: npm run lint --workspace @app/web && npm test --workspace @app/web -- src/api.test.js
+      - action: respond
+        text: "Verified module configuration, JSDoc contracts, runtime boundary validation, error paths, and focused JavaScript tests."
+assertions:
+  baseline_action_order:
+    - write_unvalidated_fetch_client
+    - add_quick_package_script
+    - respond
+  loaded_action_order:
+    - load_reference
+    - load_reference
+    - load_reference
+    - configure_js_tooling
+    - validate_external_response
+    - add_runtime_tests
+    - run_validation
+    - respond
+  baseline_text_contains:
+    - raw response data
+  loaded_text_contains:
+    - module configuration
+    - runtime boundary validation
+    - focused JavaScript tests
+  loaded_text_forbids:
+    - raw response data

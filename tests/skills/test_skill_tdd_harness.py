@@ -145,3 +145,28 @@ def test_typescript_skill_loads_strict_reference_pattern() -> None:
     assert result.loaded.actions[1]["path"] == "references/types.md"
     assert result.loaded.actions[2]["path"] == "references/error-handling.md"
     assert result.has_behavioral_delta
+
+
+def test_javascript_skill_loads_strict_runtime_boundary_pattern() -> None:
+    """Verify JavaScript work loads references before runtime and config changes."""
+    result = run_recorded_skill_scenario(SCENARIOS / "javascript/strict-runtime-boundaries.yaml")
+
+    assert result.baseline.action_names == (
+        "write_unvalidated_fetch_client",
+        "add_quick_package_script",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "configure_js_tooling",
+        "validate_external_response",
+        "add_runtime_tests",
+        "run_validation",
+        "respond",
+    )
+    assert result.loaded.actions[0]["path"] == "references/configuration.md"
+    assert result.loaded.actions[1]["path"] == "references/types.md"
+    assert result.loaded.actions[2]["path"] == "references/error-handling.md"
+    assert result.has_behavioral_delta

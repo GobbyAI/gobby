@@ -57,6 +57,7 @@ def _sync_bundled(db):
 
 SKILL_DISCOVERY_RULES = {
     "discover-skill-hubs-on-turn-start",
+    "require-javascript-skill",
     "require-python-skill",
     "require-rust-skill",
     "require-typescript-skill",
@@ -540,6 +541,128 @@ class TestRequireRustSkillCondition:
 
     def test_skips_non_edit_write_tool(self) -> None:
         assert self._eval("/project/src/main.rs", canonical_tool_kind="read") is False
+
+    def test_skips_empty_file_path(self) -> None:
+        assert self._eval("") is False
+
+
+# --- require-javascript-skill structure ---
+
+
+class TestRequireJavaScriptSkillStructure:
+    """Verify require-javascript-skill rule structure."""
+
+    def test_is_before_tool_event(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-javascript-skill")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.when is not None
+        assert "not skill_loaded('javascript')" in body.when
+
+    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-javascript-skill")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert len(body.effects) == 1
+        assert body.effects[0].type == "block"
+        assert body.effects[0].reason == skill_fetch_directive("javascript")
+
+
+# --- require-javascript-skill condition evaluation ---
+
+
+class TestRequireJavaScriptSkillCondition:
+    """Test the require-javascript-skill condition evaluates correctly."""
+
+    CONDITION = (
+        "not skill_loaded('javascript') "
+        "and event.data.get('canonical_tool_kind') == 'write' "
+        "and ("
+        "event.data.get('canonical_file_path', '').endswith(('.js', '.jsx', '.mjs', '.cjs')) "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] == 'package.json' "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] == 'jsconfig.json' "
+        "or ("
+        "event.data.get('canonical_file_path', '').rpartition('/')[2].startswith('jsconfig.') "
+        "and event.data.get('canonical_file_path', '').rpartition('/')[2].endswith('.json')"
+        ")"
+        ")"
+    )
+
+    def _eval(
+        self,
+        file_path: str,
+        *,
+        canonical_tool_kind: str = "write",
+        loaded_skills: list[str] | None = None,
+        injected_skills: list[str] | None = None,
+    ) -> bool:
+        variables = {"loaded_skills": loaded_skills or []}
+        if injected_skills is not None:
+            variables["injected_skills"] = injected_skills
+        context = {
+            "variables": variables,
+            "event": SimpleNamespace(
+                data={
+                    "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_file_path": file_path,
+                }
+            ),
+            "tool_input": {},
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        return evaluator.evaluate(self.CONDITION)
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/src/main.js",
+            "/project/src/component.jsx",
+            "/project/src/entry.mjs",
+            "/project/scripts/build.cjs",
+            "/project/eslint.config.js",
+        ],
+    )
+    def test_matches_javascript_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/package.json",
+            "/project/jsconfig.json",
+            "/project/packages/web/jsconfig.browser.json",
+        ],
+    )
+    def test_matches_javascript_config_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/package-lock.json",
+            "/project/src/main.ts",
+            "/project/src/main.tsx",
+            "/project/tsconfig.json",
+            "/project/src/styles.css",
+            "/project/jsconfig.json5",
+        ],
+    )
+    def test_skips_non_javascript_targets(self, file_path: str) -> None:
+        assert self._eval(file_path) is False
+
+    def test_skips_when_already_loaded(self) -> None:
+        assert self._eval("/project/src/main.js", loaded_skills=["javascript"]) is False
+
+    def test_does_not_skip_when_legacy_injected(self) -> None:
+        assert self._eval("/project/src/main.js", injected_skills=["javascript"]) is True
+
+    def test_skips_non_edit_write_tool(self) -> None:
+        assert self._eval("/project/src/main.js", canonical_tool_kind="read") is False
 
     def test_skips_empty_file_path(self) -> None:
         assert self._eval("") is False
