@@ -101,6 +101,7 @@ def test_delete_session_success(mock_session_manager) -> None:
     assert result.exit_code == 0
     assert f"Deleted session: {MOCK_SESSION.id}" in result.output
     mock_session_manager.delete.assert_called_once_with(MOCK_SESSION.id)
+    mock_session_manager.db.close.assert_called_once_with()
 
 
 def test_session_stats(mock_session_manager) -> None:

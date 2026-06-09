@@ -78,6 +78,19 @@ class TestManagerCreation:
         mock_mgr_cls.assert_called_once()
         assert result == mock_mgr_cls.return_value
 
+    def test_session_manager_context_closes_on_error(self) -> None:
+        from gobby.cli.sessions import session_manager_context
+
+        manager = MagicMock()
+        with (
+            patch("gobby.cli.sessions.get_session_manager", return_value=manager),
+            pytest.raises(RuntimeError, match="boom"),
+        ):
+            with session_manager_context():
+                raise RuntimeError("boom")
+
+        manager.db.close.assert_called_once_with()
+
 
 # =============================================================================
 # list_sessions - edge cases
@@ -281,6 +294,7 @@ class TestDeleteFailure:
         mock_session_manager.delete.return_value = False
         result = runner.invoke(sessions, ["delete", "sess-abc123", "--yes"])
         assert "Failed to delete session" in result.output
+        mock_session_manager.db.close.assert_called_once_with()
 
 
 # =============================================================================

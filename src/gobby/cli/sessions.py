@@ -4,7 +4,8 @@ Session management CLI commands.
 
 import asyncio
 import json
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,16 @@ def get_session_manager() -> SessionManager:
     """Get initialized session manager."""
     db = open_runtime_hub_database(apply_migrations=False)
     return SessionManager(db)
+
+
+@contextmanager
+def session_manager_context() -> Iterator[SessionManager]:
+    """Yield a short-lived session manager and close its owned database."""
+    manager = get_session_manager()
+    try:
+        yield manager
+    finally:
+        manager.db.close()
 
 
 def _normalize_project_path(path: str) -> str:
@@ -99,16 +110,13 @@ def list_sessions(
 ) -> None:
     """List sessions with optional filtering."""
     project_id = resolve_project_ref(project_ref) if project_ref else None
-    manager = get_session_manager()
-    try:
+    with session_manager_context() as manager:
         sessions_list = manager.list(
             project_id=project_id,
             status=status,
             source=source,
             limit=limit,
         )
-    finally:
-        manager.db.close()
 
     if json_format:
         click.echo(json.dumps([s.to_dict() for s in sessions_list], indent=2, default=str))
@@ -157,8 +165,8 @@ def show_session(session_id: str, json_format: bool) -> None:
     except click.ClickException as e:
         raise SystemExit(1) from e
 
-    manager = get_session_manager()
-    session = manager.get(session_id)
+    with session_manager_context() as manager:
+        session = manager.get(session_id)
 
     if not session:
         click.echo(f"Session not found: {session_id}", err=True)
@@ -212,26 +220,28 @@ def show_messages(
     except click.ClickException as e:
         raise SystemExit(1) from e
 
-    session_manager = get_session_manager()
+    with session_manager_context() as session_manager:
+        # Resolve session ID
+        session = session_manager.get(session_id)
+        if not session:
+            click.echo(f"Session not found: {session_id}", err=True)
+            return
 
-    # Resolve session ID
-    session = session_manager.get(session_id)
-    if not session:
-        click.echo(f"Session not found: {session_id}", err=True)
-        return
+        # Fetch messages (live JSONL + gzip archive fallback)
+        from gobby.sessions.transcript_reader import TranscriptReader
 
-    # Fetch messages (live JSONL + gzip archive fallback)
-    from gobby.sessions.transcript_reader import TranscriptReader
-
-    reader = TranscriptReader(session_manager)
-    messages = asyncio.run(
-        reader.get_messages(
-            session_id=session.id,
-            limit=limit,
-            offset=offset,
-            role=role,
+        reader = TranscriptReader(session_manager)
+        messages = asyncio.run(
+            reader.get_messages(
+                session_id=session.id,
+                limit=limit,
+                offset=offset,
+                role=role,
+            )
         )
-    )
+        total = (
+            None if json_format or not messages else asyncio.run(reader.count_messages(session.id))
+        )
 
     if json_format:
         click.echo(json.dumps(messages, indent=2, default=str))
@@ -241,7 +251,6 @@ def show_messages(
         click.echo("No messages found.")
         return
 
-    total = asyncio.run(reader.count_messages(session.id))
     click.echo(f"Messages for session {session.id[:12]} ({len(messages)}/{total}):\n")
 
     for msg in messages:
@@ -267,13 +276,13 @@ def delete_session(session_id: str) -> None:
     except click.ClickException as e:
         raise SystemExit(1) from e
 
-    manager = get_session_manager()
-    session = manager.get(session_id)
-    if not session:
-        click.echo(f"Session not found: {session_id}", err=True)
-        return
+    with session_manager_context() as manager:
+        session = manager.get(session_id)
+        if not session:
+            click.echo(f"Session not found: {session_id}", err=True)
+            return
 
-    success = manager.delete(session.id)
+        success = manager.delete(session.id)
     if success:
         click.echo(f"Deleted session: {session.id}")
     else:
@@ -285,9 +294,9 @@ def delete_session(session_id: str) -> None:
 def session_stats(project_ref: str | None) -> None:
     """Show session statistics."""
     project_id = resolve_project_ref(project_ref) if project_ref else None
-    manager = get_session_manager()
 
-    sessions_list = manager.list(project_id=project_id, limit=10000)
+    with session_manager_context() as manager:
+        sessions_list = manager.list(project_id=project_id, limit=10000)
 
     if not sessions_list:
         click.echo("No sessions found.")
@@ -318,12 +327,9 @@ def session_stats(project_ref: str | None) -> None:
 @click.option("--apply", "apply_changes", is_flag=True, help="Write the new dense refs.")
 def renumber_sessions(project_ref: str, apply_changes: bool) -> None:
     """Compact per-project session refs."""
-    manager = get_session_manager()
-    try:
+    with session_manager_context() as manager:
         project_id = _resolve_project_ref_or_path(project_ref, manager)
         mapping = manager.renumber_project_sessions(project_id, dry_run=not apply_changes)
-    finally:
-        manager.db.close()
 
     mode = "Applied" if apply_changes else "Dry run"
     click.echo(f"{mode}: scanned {len(mapping)} session(s) for project {project_id}.")
@@ -395,28 +401,27 @@ def create_handoff(
     from gobby.sessions.analyzer import TranscriptAnalyzer
     from gobby.sessions.formatting import format_handoff_as_markdown
 
-    manager = get_session_manager()
-
     # Find session
-    if session_id:
-        try:
-            session_id = resolve_session_id(session_id)
-        except click.ClickException as e:
-            raise SystemExit(1) from e
-        session = manager.get(session_id)
-        if not session:
-            click.echo(f"Session not found: {session_id}", err=True)
-            return
-    else:
-        # Get most recent active session
-        try:
-            session_id = resolve_session_id(None)  # uses get_active_session_id internally
-        except click.ClickException as e:
-            raise SystemExit(1) from e
-        session = manager.get(session_id)
-        if not session:
-            click.echo(f"Session not found: {session_id}", err=True)
-            return
+    with session_manager_context() as manager:
+        if session_id:
+            try:
+                session_id = resolve_session_id(session_id)
+            except click.ClickException as e:
+                raise SystemExit(1) from e
+            session = manager.get(session_id)
+            if not session:
+                click.echo(f"Session not found: {session_id}", err=True)
+                return
+        else:
+            # Get most recent active session
+            try:
+                session_id = resolve_session_id(None)  # uses get_active_session_id internally
+            except click.ClickException as e:
+                raise SystemExit(1) from e
+            session = manager.get(session_id)
+            if not session:
+                click.echo(f"Session not found: {session_id}", err=True)
+                return
 
     # Check for transcript
     if not session.transcript_path:
@@ -514,26 +519,28 @@ def create_handoff(
 
         config = load_config()
         llm_service = create_llm_service(config)
-        _summary_db = open_runtime_hub_database(apply_migrations=False)
 
-        async def _gen_summary() -> dict[str, Any]:
-            return await generate_session_summaries(
-                session_id=session.id,
-                session_manager=manager,
-                llm_service=llm_service,
-                session_summary_config=config.session_summary,
-                db=_summary_db,
-                set_handoff_ready=False,
-            )
+        with session_manager_context() as summary_manager:
+            _summary_db = open_runtime_hub_database(apply_migrations=False)
 
-        try:
-            summary_result = asyncio.run(_gen_summary())
-        finally:
-            _summary_db.close()
-        if summary_result.get("success") and summary_result.get("full_length", 0) > 0:
-            updated = manager.get(session.id)
-            if updated:
-                full_markdown = updated.summary_markdown
+            async def _gen_summary() -> dict[str, Any]:
+                return await generate_session_summaries(
+                    session_id=session.id,
+                    session_manager=summary_manager,
+                    llm_service=llm_service,
+                    session_summary_config=config.session_summary,
+                    db=_summary_db,
+                    set_handoff_ready=False,
+                )
+
+            try:
+                summary_result = asyncio.run(_gen_summary())
+            finally:
+                _summary_db.close()
+            if summary_result.get("success") and summary_result.get("full_length", 0) > 0:
+                updated = summary_manager.get(session.id)
+                if updated:
+                    full_markdown = updated.summary_markdown
         if not full_markdown:
             click.echo(
                 f"Warning: LLM summary failed ({summary_result.get('full_error') or summary_result.get('error', 'unknown')}), using code-only fallback",
@@ -550,7 +557,8 @@ def create_handoff(
 
     # Save to database
     if save_to_db and full_markdown:
-        manager.update_summary(session.id, summary_markdown=full_markdown)
+        with session_manager_context() as manager:
+            manager.update_summary(session.id, summary_markdown=full_markdown)
         click.echo(f"Saved summary to database: {len(full_markdown)} chars")
 
     # Save to file
@@ -694,11 +702,8 @@ def backfill_context_windows(dry_run: bool) -> None:
     """
     from gobby.sessions.context_usage import backfill_session_context_windows
 
-    manager = get_session_manager()
-    try:
+    with session_manager_context() as manager:
         result = backfill_session_context_windows(manager.db, dry_run=dry_run)
-    finally:
-        manager.db.close()
 
     verb = "Would update" if dry_run else "Updated"
     click.echo(

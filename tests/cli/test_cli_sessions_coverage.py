@@ -164,6 +164,7 @@ def test_delete_session_success(mock_session_manager, mock_resolve_session) -> N
     assert result.exit_code == 0
     assert "Deleted session: sess-1" in result.output
     mock_session_manager.delete.assert_called_with("sess-1")
+    mock_session_manager.db.close.assert_called_once_with()
 
 
 def test_delete_session_not_found(mock_session_manager, mock_resolve_session) -> None:
@@ -174,6 +175,7 @@ def test_delete_session_not_found(mock_session_manager, mock_resolve_session) ->
 
     assert result.exit_code == 0
     assert "Session not found" in result.output
+    mock_session_manager.db.close.assert_called_once_with()
 
 
 def test_session_stats(mock_session_manager) -> None:
