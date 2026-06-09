@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import re
@@ -416,7 +417,7 @@ def _normalize_recall_findings(findings: list[dict[str, Any] | str]) -> list[dic
     normalized: list[dict[str, Any]] = []
     for index, finding in enumerate(findings):
         if isinstance(finding, dict):
-            normalized.append(finding.copy())
+            normalized.append(copy.deepcopy(finding))
             continue
         if isinstance(finding, str):
             normalized.append({"message": finding})

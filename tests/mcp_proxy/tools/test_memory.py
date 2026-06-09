@@ -717,6 +717,7 @@ class TestMemoryDreamTools:
         service.status.assert_awaited_once_with("dream-1")
         service.revert.assert_awaited_once_with("dream-1")
 
+    @pytest.mark.asyncio
     async def test_memory_dream_reuses_registered_service(
         self,
         mock_memory_manager: MagicMock,
@@ -746,6 +747,7 @@ class TestMemoryDreamTools:
         assert revert == {"success": True, "run_id": "dream-1"}
         service_factory.assert_called_once()
 
+    @pytest.mark.asyncio
     async def test_memory_dream_background_start_respects_task_cap(
         self,
         mock_memory_manager: MagicMock,

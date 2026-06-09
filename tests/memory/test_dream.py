@@ -462,7 +462,14 @@ async def test_merge_rolls_back_keeper_update_when_duplicate_delete_fails() -> N
         "merge-drop": _row("merge-drop", "old"),
     }
     manager = _FakeMemoryManager(db)
-    manager.delete_memory = AsyncMock(side_effect=OSError("delete failed"))
+
+    async def delete_memory(memory_id: str) -> bool:
+        if memory_id == "merge-drop":
+            await manager._delete(memory_id)
+            raise OSError("delete failed")
+        return await manager._delete(memory_id)
+
+    manager.delete_memory = AsyncMock(side_effect=delete_memory)
     store = MemoryDreamStore(db)
     run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
 
@@ -496,6 +503,7 @@ async def test_supersede_deletes_created_replacement_when_original_delete_fails(
 
     async def delete_memory(memory_id: str) -> bool:
         if memory_id == "supersede-me":
+            await manager._delete(memory_id)
             raise OSError("delete failed")
         return await manager._delete(memory_id)
 
@@ -515,7 +523,8 @@ async def test_supersede_deletes_created_replacement_when_original_delete_fails(
 
     assert summary["errors"] == 1
     assert summary["mutations"] == 0
-    assert db.memories == {"supersede-me": _row("supersede-me", "old")}
+    assert set(db.memories) == {"supersede-me"}
+    assert db.memories["supersede-me"]["content"] == "old"
 
 
 async def test_revert_dream_run_uses_newest_first_snapshots_without_reversal() -> None:

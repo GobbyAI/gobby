@@ -4,7 +4,11 @@ import logging
 
 import pytest
 
-from gobby.review_learning.service import ReviewLearningService, build_recall_queries
+from gobby.review_learning.service import (
+    ReviewLearningService,
+    _normalize_recall_findings,
+    build_recall_queries,
+)
 from tests.review_learning.conftest import FakeMemory
 
 pytestmark = pytest.mark.unit
@@ -35,6 +39,24 @@ def test_query_construction_includes_diagnostic_and_fix_terms() -> None:
     assert "SQL001" in query
     assert "psycopg" in query
     assert "change placeholders" in query
+
+
+def test_normalize_recall_findings_deep_copies_nested_data() -> None:
+    finding = {
+        "title": "Preserve caller data",
+        "query_hints": ["copy"],
+        "metadata": {"paths": ["src/gobby/review_learning/service.py"]},
+    }
+
+    normalized = _normalize_recall_findings([finding])
+    normalized[0]["query_hints"].append("mutated")
+    normalized[0]["metadata"]["paths"].append("tests/review_learning/test_recall_context.py")
+
+    assert finding == {
+        "title": "Preserve caller data",
+        "query_hints": ["copy"],
+        "metadata": {"paths": ["src/gobby/review_learning/service.py"]},
+    }
 
 
 @pytest.mark.asyncio

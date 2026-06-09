@@ -10,6 +10,8 @@ from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent
 
 TranscriptRecord = ParsedMessage | ParsedToolEvent
 
+MAX_TEXT_COLLECT_DEPTH = 50
+
 _SUCCESS_VALUES = frozenset(
     {"complete", "completed", "ok", "pass", "passed", "success", "successful", "succeeded"}
 )
@@ -138,8 +140,10 @@ def _hook_output_text(update: dict[str, Any]) -> str:
     return "\n".join(part for part in parts if part).strip()
 
 
-def _collect_text(value: Any, parts: list[str]) -> None:
+def _collect_text(value: Any, parts: list[str], depth: int = 0) -> None:
     if value is None:
+        return
+    if depth > MAX_TEXT_COLLECT_DEPTH:
         return
     if isinstance(value, str):
         text = value.strip()
@@ -153,11 +157,11 @@ def _collect_text(value: Any, parts: list[str]) -> None:
         return
     if isinstance(value, list):
         for item in value:
-            _collect_text(item, parts)
+            _collect_text(item, parts, depth + 1)
         return
     if isinstance(value, dict):
         for key in ("text", "output", "stdout", "stderr", "message", "error", "content"):
-            _collect_text(value.get(key), parts)
+            _collect_text(value.get(key), parts, depth + 1)
 
 
 def _first_text(*values: Any) -> str | None:

@@ -157,7 +157,9 @@ def test_parse_line_returns_first_expanded_block() -> None:
     assert record.content == "I should inspect the MCP server registry."
 
 
-def test_todo_state_metadata_is_ignored_without_unknown_warning(monkeypatch) -> None:
+def test_todo_state_metadata_is_ignored_without_unknown_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     parser = DroidTranscriptParser()
     calls: list[dict[str, Any]] = []
 

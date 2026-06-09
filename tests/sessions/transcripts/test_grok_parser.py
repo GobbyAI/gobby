@@ -113,7 +113,8 @@ def test_grok_successful_hook_execution_without_output_is_suppressed() -> None:
     )
 
     assert records == []
-    rendered = render_transcript([], session_id="grok-session", error_log=parser.error_log)
+    messages = [record for record in records if isinstance(record, ParsedMessage)]
+    rendered = render_transcript(messages, session_id="grok-session", error_log=parser.error_log)
     assert rendered == []
 
 
@@ -149,6 +150,34 @@ def test_grok_failed_hook_execution_renders_system_text_not_unknown() -> None:
     assert rendered[-1].role == "system"
     assert rendered[-1].content_blocks[0].type == "text"
     assert rendered[-1].content_blocks[0].content == "Policy blocked the command."
+
+
+def test_grok_hook_execution_ignores_content_beyond_collect_depth() -> None:
+    parser = GrokTranscriptParser(session_id="grok-session")
+    content: object = "deep output"
+    for _ in range(60):
+        content = {"content": content}
+    records = normalize_transcript_records(
+        parser.parse_lines(
+            [
+                _event(
+                    {
+                        "sessionUpdate": "hook_execution",
+                        "hookName": "PostToolUse",
+                        "status": "failed",
+                        "content": content,
+                    }
+                ),
+            ]
+        ),
+        "grok",
+    )
+    messages = [record for record in records if isinstance(record, ParsedMessage)]
+
+    rendered = render_transcript(messages, session_id="grok-session", error_log=parser.error_log)
+
+    assert rendered[-1].content_blocks[0].content == "PostToolUse hook execution: failed"
+    assert "deep output" not in rendered[-1].content_blocks[0].content
 
 
 def test_grok_usage_aggregates_nested_cache_details() -> None:

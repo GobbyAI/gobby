@@ -263,9 +263,9 @@ async def _merge(
 
         for duplicate_id in action.memory_ids[1:]:
             before_duplicate = await asyncio.to_thread(store.get_memory_row, duplicate_id)
-            deleted = await _delete(memory_manager, store, run_id, duplicate_id, "merge")
-            if deleted and before_duplicate is not None:
+            if before_duplicate is not None:
                 rollback_rows.append(before_duplicate)
+            deleted = await _delete(memory_manager, store, run_id, duplicate_id, "merge")
             mutations += deleted
         return mutations
     except Exception:
@@ -310,9 +310,9 @@ async def _supersede(
             )
             mutations += 1
         before_deleted = await asyncio.to_thread(store.get_memory_row, action.memory_id)
-        deleted = await _delete(memory_manager, store, run_id, action.memory_id, "supersede")
-        if deleted and before_deleted is not None:
+        if before_deleted is not None:
             deleted_rows.append(before_deleted)
+        deleted = await _delete(memory_manager, store, run_id, action.memory_id, "supersede")
         mutations += deleted
         return mutations
     except Exception:
