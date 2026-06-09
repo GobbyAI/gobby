@@ -92,7 +92,7 @@ def _new_fallback_catalog(daemon_config: DaemonConfig | None) -> ProviderModelCa
 
     last_error: TypeError | None = None
     creators: tuple[Callable[[], ProviderModelCatalog], ...] = (
-        lambda: ProviderModelCatalog(daemon_config),  # type: ignore[call-arg]
+        lambda: ProviderModelCatalog(daemon_config),  # type: ignore[misc,arg-type]
         lambda: ProviderModelCatalog(config=daemon_config),  # type: ignore[call-arg]
         lambda: ProviderModelCatalog(),
     )
@@ -101,9 +101,7 @@ def _new_fallback_catalog(daemon_config: DaemonConfig | None) -> ProviderModelCa
             return create()
         except TypeError as exc:
             last_error = exc
-    raise TypeError(
-        f"ProviderModelCatalog could not be constructed: {last_error}"
-    ) from last_error
+    raise TypeError(f"ProviderModelCatalog could not be constructed: {last_error}") from last_error
 
 
 def _select_model_entries(
