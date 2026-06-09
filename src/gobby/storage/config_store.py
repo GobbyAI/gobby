@@ -34,12 +34,15 @@ _SECRET_SUFFIXES = (
     "_secret",
     "_password",
     "password",
-    "requirepass",
     "_access_token",
     "_auth_token",
     "_secret_key",
     "_auth",
 )
+
+_CONFIG_SECRET_NAMES = {
+    "databases.falkordb.password": "falkordb_password",
+}
 _REMOVED_LLM_PROVIDERS_CONFIG_PREFIX = "llm_providers"
 
 
@@ -60,6 +63,8 @@ def config_key_to_secret_name(key: str) -> str:
 
     Uses the last segment of the dotted key as the natural secret name.
     """
+    if secret_name := _CONFIG_SECRET_NAMES.get(key):
+        return secret_name
     if secret_name := embedding_config_secret_name(key):
         return secret_name
     return key.rsplit(".", 1)[-1]

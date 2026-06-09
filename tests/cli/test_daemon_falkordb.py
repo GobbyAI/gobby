@@ -20,7 +20,7 @@ def _seed_falkordb_config(db: HubDatabase, password: str) -> None:
     secret_store = SecretStore(db)
     config_store.set("databases.qdrant.url", None, source="test")
     config_store.set_secret(
-        "databases.falkordb.requirepass",
+        "databases.falkordb.password",
         password,
         secret_store,
         source="test",
@@ -34,7 +34,7 @@ def test_load_config_resolves_falkordb_secret_with_secret_store_get(
     config_store = ConfigStore(postgres_db)
     secret_store = SecretStore(postgres_db)
     config_store.set_secret(
-        "databases.falkordb.requirepass",
+        "databases.falkordb.password",
         "plain-secret",
         secret_store,
         source="test",
@@ -42,7 +42,7 @@ def test_load_config_resolves_falkordb_secret_with_secret_store_get(
 
     config = load_config(config_store=config_store, secret_resolver=secret_store.get)
 
-    assert config.databases.falkordb.requirepass == "plain-secret"
+    assert config.databases.falkordb.password == "plain-secret"
 
 
 def test_services_start_uses_falkordb_config_store_password(

@@ -16,7 +16,7 @@ from gobby.storage.config_store import ConfigStore, config_key_to_secret_name, i
 from gobby.storage.secrets import VALID_CATEGORIES
 
 MASKED_SECRET = "********"
-FALKOR_REQUIREPASS_KEY = "databases.falkordb.requirepass"
+FALKOR_PASSWORD_KEY = "databases.falkordb.password"
 FALKOR_RESTART_HINT = (
     "Run `gobby restart` for the new FalkorDB password to take effect on the running container."
 )
@@ -35,12 +35,12 @@ def mask_secret_values(flat: dict[str, Any]) -> dict[str, Any]:
 
 
 def add_restart_hint(response: dict[str, Any], touched_keys: set[str]) -> None:
-    if FALKOR_REQUIREPASS_KEY in touched_keys:
+    if FALKOR_PASSWORD_KEY in touched_keys:
         response["restart_hint"] = FALKOR_RESTART_HINT
 
 
 def validate_falkordb_secret(key: str, value: Any) -> None:
-    if key == FALKOR_REQUIREPASS_KEY:
+    if key == FALKOR_PASSWORD_KEY:
         if not isinstance(value, str):
             raise ValueError("FalkorDB password must be a string")
         validate_falkordb_password(value)
@@ -49,7 +49,7 @@ def validate_falkordb_secret(key: str, value: Any) -> None:
 def falkordb_validation_response(error: ValueError) -> JSONResponse:
     return JSONResponse(
         status_code=422,
-        content={"detail": str(error), "key": FALKOR_REQUIREPASS_KEY},
+        content={"detail": str(error), "key": FALKOR_PASSWORD_KEY},
     )
 
 

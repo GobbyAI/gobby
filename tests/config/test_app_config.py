@@ -830,7 +830,7 @@ class TestLoadConfig:
                 return {
                     "databases.neo4j.url": "http://localhost:8474",
                     "databases.neo4j.password": "$secret:password",
-                    "databases.falkordb.requirepass": "falkor-secret",
+                    "databases.falkordb.password": "falkor-secret",
                 }
 
             def delete(self, key: str) -> bool:
@@ -845,7 +845,7 @@ class TestLoadConfig:
             config_store=store,
         )
 
-        assert config.databases.falkordb.requirepass == "falkor-secret"
+        assert config.databases.falkordb.password == "falkor-secret"
         assert store.deleted == ["databases.neo4j.password", "databases.neo4j.url"]
         assert any(
             "Ignoring stale Neo4j config_store keys after FalkorDB migration" in record.getMessage()

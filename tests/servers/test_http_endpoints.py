@@ -426,6 +426,17 @@ class TestCodeEndpoints:
         assert response.status_code == 404
 
 
+def _hook_envelope(**payload: Any) -> dict[str, Any]:
+    envelope = {
+        "schema_version": 1,
+        "enqueued_at": "2026-04-16T12:00:00Z",
+        "critical": False,
+        "input_data": {},
+    }
+    envelope.update(payload)
+    return envelope
+
+
 @pytest.mark.integration
 class TestHooksEndpoints:
     """Tests for hooks endpoints."""
@@ -437,7 +448,7 @@ class TestHooksEndpoints:
 
         response = client.post(
             "/api/hooks/execute",
-            json={"hook_type": "session-start", "source": "claude"},
+            json=_hook_envelope(hook_type="session-start", source="claude"),
         )
         assert response.status_code == 503
         assert "HookManager not initialized" in response.json()["detail"]
@@ -467,11 +478,7 @@ class TestHooksEndpoints:
             client = TestClient(server.app)
             response = client.post(
                 "/api/hooks/execute",
-                json={
-                    "hook_type": "session-start",
-                    "source": "claude",
-                    "input_data": {},
-                },
+                json=_hook_envelope(hook_type="session-start", source="claude"),
             )
 
             assert response.status_code == 200
@@ -506,11 +513,11 @@ class TestHooksEndpoints:
             client = TestClient(server.app)
             response = client.post(
                 "/api/hooks/execute",
-                json={
-                    "hook_type": "pre-tool-use",
-                    "source": "claude",
-                    "input_data": {"tool_name": "Read"},
-                },
+                json=_hook_envelope(
+                    hook_type="pre-tool-use",
+                    source="claude",
+                    input_data={"tool_name": "Read"},
+                ),
             )
 
             assert response.status_code == 200
@@ -548,11 +555,7 @@ class TestHooksEndpoints:
             client = TestClient(server.app)
             response = client.post(
                 "/api/hooks/execute",
-                json={
-                    "hook_type": "session-start",
-                    "source": "claude",
-                    "input_data": {},
-                },
+                json=_hook_envelope(hook_type="session-start", source="claude"),
             )
 
             assert response.status_code == 200

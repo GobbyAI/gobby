@@ -343,12 +343,12 @@ class TestFalkorConfigFields:
         config = FalkorConfig()
         assert config.port == 16379
 
-    def test_falkor_requirepass_defaults_to_none(self) -> None:
-        """requirepass defaults to None so unconfigured installs stay disabled."""
+    def test_falkor_password_defaults_to_none(self) -> None:
+        """password defaults to None so unconfigured installs stay disabled."""
         from gobby.config.persistence import FalkorConfig
 
         config = FalkorConfig()
-        assert config.requirepass is None
+        assert config.password is None
 
     @pytest.mark.parametrize(
         "password",
@@ -363,7 +363,7 @@ class TestFalkorConfigFields:
         from gobby.config.persistence import FalkorConfig, validate_falkordb_password
 
         assert validate_falkordb_password(password) == password
-        assert FalkorConfig(requirepass=password).requirepass == password
+        assert FalkorConfig(password=password).password == password
 
     @pytest.mark.parametrize(
         ("password", "message"),
@@ -385,7 +385,7 @@ class TestFalkorConfigFields:
         with pytest.raises(ValueError, match=message):
             validate_falkordb_password(password)
         with pytest.raises(ValidationError, match=message):
-            FalkorConfig(requirepass=password)
+            FalkorConfig(password=password)
 
     def test_falkor_graph_name_defaults_to_memory_graph(self) -> None:
         """graph_name defaults to the memory knowledge graph."""
@@ -413,12 +413,12 @@ class TestFalkorConfigFields:
         assert isinstance(config.falkordb, FalkorConfig)
         assert not hasattr(config, "neo4j")
 
-    def test_is_falkordb_enabled_requires_requirepass(self) -> None:
-        """Only a resolved requirepass value enables the graph backend."""
+    def test_is_falkordb_enabled_requires_password(self) -> None:
+        """Only a resolved password value enables the graph backend."""
         from gobby.config.persistence import DatabasesConfig, is_falkordb_enabled
 
         assert is_falkordb_enabled(DatabasesConfig()) is False
-        assert is_falkordb_enabled(DatabasesConfig(falkordb={"requirepass": "secret"})) is True
+        assert is_falkordb_enabled(DatabasesConfig(falkordb={"password": "secret"})) is True
 
     def test_neo4j_config_symbol_is_removed(self) -> None:
         """FalkorConfig replaces the exported Neo4jConfig symbol."""

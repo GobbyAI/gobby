@@ -38,7 +38,7 @@ from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
 
-FALKOR_REQUIREPASS_KEY = "databases.falkordb.requirepass"
+FALKOR_PASSWORD_KEY = "databases.falkordb.password"
 FALKOR_RESTART_HINT_FRAGMENT = "FalkorDB password"
 
 
@@ -105,7 +105,7 @@ def _config_store_row(db: Any, key: str) -> dict[str, object] | None:
     return dict(row) if row is not None else None
 
 
-def _secret_row(db: Any, name: str = "requirepass") -> dict[str, object] | None:
+def _secret_row(db: Any, name: str = "falkordb_password") -> dict[str, object] | None:
     row = db.fetchone(
         "SELECT id, name, encrypted_value, category, description, created_at, updated_at "
         "FROM secrets WHERE name = %s",
@@ -246,12 +246,12 @@ class TestSaveConfigValues:
         assert response.status_code == 400
         assert "detail" in response.json()
 
-    def test_save_falkordb_requirepass_encrypts_and_masks(
+    def test_save_falkordb_password_encrypts_and_masks(
         self, postgres_client: TestClient, postgres_db: Any, mock_machine_id: Any
     ) -> None:
         response = postgres_client.put(
             "/api/config/values",
-            json={"values": {"databases": {"falkordb": {"requirepass": "Valid-123"}}}},
+            json={"values": {"databases": {"falkordb": {"password": "Valid-123"}}}},
         )
 
         assert response.status_code == 200
@@ -261,16 +261,16 @@ class TestSaveConfigValues:
         assert FALKOR_RESTART_HINT_FRAGMENT in data["restart_hint"]
 
         store = ConfigStore(postgres_db)
-        assert store.get(FALKOR_REQUIREPASS_KEY) == "$secret:requirepass"
-        assert FALKOR_REQUIREPASS_KEY in store.get_secret_keys()
-        assert SecretStore(postgres_db).get("requirepass") == "Valid-123"
+        assert store.get(FALKOR_PASSWORD_KEY) == "$secret:falkordb_password"
+        assert FALKOR_PASSWORD_KEY in store.get_secret_keys()
+        assert SecretStore(postgres_db).get("falkordb_password") == "Valid-123"
 
         get_response = postgres_client.get("/api/config/values")
         payload = get_response.json()
-        assert payload["values"]["databases"]["falkordb"]["requirepass"] == "********"
-        assert FALKOR_REQUIREPASS_KEY in payload["secret_keys"]
+        assert payload["values"]["databases"]["falkordb"]["password"] == "********"
+        assert FALKOR_PASSWORD_KEY in payload["secret_keys"]
 
-    def test_save_falkordb_requirepass_invalid_returns_422_without_partial_write(
+    def test_save_falkordb_password_invalid_returns_422_without_partial_write(
         self, postgres_client: TestClient, postgres_db: Any
     ) -> None:
         response = postgres_client.put(
@@ -278,7 +278,7 @@ class TestSaveConfigValues:
             json={
                 "values": {
                     "daemon_port": 9999,
-                    "databases": {"falkordb": {"requirepass": "contains space"}},
+                    "databases": {"falkordb": {"password": "contains space"}},
                 }
             },
         )
@@ -287,12 +287,31 @@ class TestSaveConfigValues:
         body = response.json()
         assert body == {
             "detail": "FalkorDB password must not contain whitespace",
-            "key": FALKOR_REQUIREPASS_KEY,
+            "key": FALKOR_PASSWORD_KEY,
         }
 
         store = ConfigStore(postgres_db)
         assert store.get("daemon_port") is None
-        assert store.get(FALKOR_REQUIREPASS_KEY) is None
+        assert store.get(FALKOR_PASSWORD_KEY) is None
+
+    def test_save_falkordb_requirepass_is_rejected(
+        self, postgres_client: TestClient, postgres_db: Any
+    ) -> None:
+        response = postgres_client.put(
+            "/api/config/values",
+            json={
+                "values": {
+                    "daemon_port": 9999,
+                    "databases": {"falkordb": {"requirepass": "Valid-123"}},
+                }
+            },
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Invalid configuration values"
+        store = ConfigStore(postgres_db)
+        assert store.get("daemon_port") is None
+        assert store.get(FALKOR_PASSWORD_KEY) is None
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +351,7 @@ class TestValidateConfig:
     def test_masked_secret_placeholder_is_ignored(self, client: TestClient) -> None:
         response = client.post(
             "/api/config/values/validate",
-            json={"values": {"databases": {"falkordb": {"requirepass": MASKED_SECRET}}}},
+            json={"values": {"databases": {"falkordb": {"password": MASKED_SECRET}}}},
         )
         assert response.status_code == 200
         assert response.json()["valid"] is True
@@ -389,19 +408,19 @@ class TestGetTemplate:
         assert response.status_code == 200
         assert "9999" in response.json()["content"]
 
-    def test_masks_falkordb_requirepass_secret(
+    def test_masks_falkordb_password_secret(
         self, postgres_client: TestClient, postgres_db: Any, mock_machine_id: Any
     ) -> None:
         store = ConfigStore(postgres_db)
-        store.set_secret(FALKOR_REQUIREPASS_KEY, "Valid-123", SecretStore(postgres_db))
+        store.set_secret(FALKOR_PASSWORD_KEY, "Valid-123", SecretStore(postgres_db))
 
         response = postgres_client.get("/api/config/template")
 
         assert response.status_code == 200
         content = response.json()["content"]
         parsed = yaml.safe_load(content)
-        assert parsed["databases"]["falkordb"]["requirepass"] == "********"
-        assert "$secret:requirepass" not in content
+        assert parsed["databases"]["falkordb"]["password"] == "********"
+        assert "$secret:falkordb_password" not in content
         assert "Valid-123" not in content
 
 
@@ -594,14 +613,14 @@ class TestValidationDetectionPreview:
         assert store.get("ai.embeddings.dim") == 1024
         assert store.get("embeddings.model") is None
 
-    def test_save_template_falkordb_requirepass_encrypts(
+    def test_save_template_falkordb_password_encrypts(
         self, postgres_client: TestClient, postgres_db: Any, mock_machine_id: Any
     ) -> None:
         content = yaml.safe_dump(
             {
                 "databases": {
                     "falkordb": {
-                        "requirepass": "Valid-123",
+                        "password": "Valid-123",
                         "rrf_k": 77,
                     }
                 }
@@ -618,17 +637,17 @@ class TestValidationDetectionPreview:
         assert FALKOR_RESTART_HINT_FRAGMENT in data["restart_hint"]
 
         store = ConfigStore(postgres_db)
-        assert store.get(FALKOR_REQUIREPASS_KEY) == "$secret:requirepass"
+        assert store.get(FALKOR_PASSWORD_KEY) == "$secret:falkordb_password"
         assert store.get("databases.falkordb.rrf_k") == 77
-        assert SecretStore(postgres_db).get("requirepass") == "Valid-123"
+        assert SecretStore(postgres_db).get("falkordb_password") == "Valid-123"
 
-    def test_save_template_invalid_falkordb_requirepass_returns_422_without_writes(
+    def test_save_template_invalid_falkordb_password_returns_422_without_writes(
         self, postgres_client: TestClient, postgres_db: Any
     ) -> None:
         content = yaml.safe_dump(
             {
                 "daemon_port": 9999,
-                "databases": {"falkordb": {"requirepass": "contains space"}},
+                "databases": {"falkordb": {"password": "contains space"}},
             },
             sort_keys=False,
         )
@@ -638,21 +657,21 @@ class TestValidationDetectionPreview:
         assert response.status_code == 422
         assert response.json() == {
             "detail": "FalkorDB password must not contain whitespace",
-            "key": FALKOR_REQUIREPASS_KEY,
+            "key": FALKOR_PASSWORD_KEY,
         }
         store = ConfigStore(postgres_db)
         assert store.get("daemon_port") is None
-        assert store.get(FALKOR_REQUIREPASS_KEY) is None
+        assert store.get(FALKOR_PASSWORD_KEY) is None
 
-    def test_save_template_masked_falkordb_requirepass_is_noop(
+    def test_save_template_masked_falkordb_password_is_noop(
         self, postgres_client: TestClient, postgres_db: Any, mock_machine_id: Any
     ) -> None:
         store = ConfigStore(postgres_db)
-        store.set_secret(FALKOR_REQUIREPASS_KEY, "Valid-123", SecretStore(postgres_db))
-        before_config = _config_store_row(postgres_db, FALKOR_REQUIREPASS_KEY)
+        store.set_secret(FALKOR_PASSWORD_KEY, "Valid-123", SecretStore(postgres_db))
+        before_config = _config_store_row(postgres_db, FALKOR_PASSWORD_KEY)
         before_secret = _secret_row(postgres_db)
         content = yaml.safe_dump(
-            {"databases": {"falkordb": {"requirepass": "********"}}},
+            {"databases": {"falkordb": {"password": "********"}}},
             sort_keys=False,
         )
 
@@ -666,9 +685,9 @@ class TestValidationDetectionPreview:
         assert response.status_code == 200
         assert response.json()["requires_restart"] is False
         validator.assert_not_called()
-        assert _config_store_row(postgres_db, FALKOR_REQUIREPASS_KEY) == before_config
+        assert _config_store_row(postgres_db, FALKOR_PASSWORD_KEY) == before_config
         assert _secret_row(postgres_db) == before_secret
-        assert SecretStore(postgres_db).get("requirepass") == "Valid-123"
+        assert SecretStore(postgres_db).get("falkordb_password") == "Valid-123"
 
 
 # ---------------------------------------------------------------------------
@@ -1291,14 +1310,14 @@ class TestExportImport:
         assert "1 prompt override(s) restored" in data["summary"]
         assert data["requires_restart"] is True
 
-    def test_import_config_store_falkordb_requirepass_encrypts(
+    def test_import_config_store_falkordb_password_encrypts(
         self, postgres_client: TestClient, postgres_db: Any, mock_machine_id: Any
     ) -> None:
         response = postgres_client.post(
             "/api/config/import",
             json={
                 "config_store": {
-                    FALKOR_REQUIREPASS_KEY: "Valid-123",
+                    FALKOR_PASSWORD_KEY: "Valid-123",
                     "databases.falkordb.rrf_k": 77,
                 }
             },
@@ -1311,11 +1330,11 @@ class TestExportImport:
         assert FALKOR_RESTART_HINT_FRAGMENT in data["restart_hint"]
 
         store = ConfigStore(postgres_db)
-        assert store.get(FALKOR_REQUIREPASS_KEY) == "$secret:requirepass"
+        assert store.get(FALKOR_PASSWORD_KEY) == "$secret:falkordb_password"
         assert store.get("databases.falkordb.rrf_k") == 77
-        assert SecretStore(postgres_db).get("requirepass") == "Valid-123"
+        assert SecretStore(postgres_db).get("falkordb_password") == "Valid-123"
 
-    def test_import_config_store_invalid_falkordb_requirepass_raises_http_exception(
+    def test_import_config_store_invalid_falkordb_password_raises_http_exception(
         self, postgres_client: TestClient, postgres_db: Any
     ) -> None:
         response = postgres_client.post(
@@ -1323,7 +1342,7 @@ class TestExportImport:
             json={
                 "config_store": {
                     "daemon_port": 9999,
-                    FALKOR_REQUIREPASS_KEY: "contains space",
+                    FALKOR_PASSWORD_KEY: "contains space",
                 }
             },
         )
@@ -1332,10 +1351,38 @@ class TestExportImport:
         assert response.json()["detail"] == "FalkorDB password must not contain whitespace"
         store = ConfigStore(postgres_db)
         assert store.get("daemon_port") is None
-        assert store.get(FALKOR_REQUIREPASS_KEY) is None
+        assert store.get(FALKOR_PASSWORD_KEY) is None
 
-    def test_import_legacy_config_falkordb_requirepass_encrypts(
+    def test_import_config_falkordb_password_encrypts(
         self, postgres_client: TestClient, postgres_db: Any, mock_machine_id: Any
+    ) -> None:
+        response = postgres_client.post(
+            "/api/config/import",
+            json={
+                "config": {
+                    "databases": {
+                        "falkordb": {
+                            "password": "Valid-123",
+                            "rrf_k": 77,
+                        }
+                    }
+                }
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["requires_restart"] is True
+        assert FALKOR_RESTART_HINT_FRAGMENT in data["restart_hint"]
+
+        store = ConfigStore(postgres_db)
+        assert store.get(FALKOR_PASSWORD_KEY) == "$secret:falkordb_password"
+        assert store.get("databases.falkordb.rrf_k") == 77
+        assert SecretStore(postgres_db).get("falkordb_password") == "Valid-123"
+
+    def test_import_legacy_config_falkordb_requirepass_rejected(
+        self, postgres_client: TestClient, postgres_db: Any
     ) -> None:
         response = postgres_client.post(
             "/api/config/import",
@@ -1351,18 +1398,13 @@ class TestExportImport:
             },
         )
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-        assert data["requires_restart"] is True
-        assert FALKOR_RESTART_HINT_FRAGMENT in data["restart_hint"]
-
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Invalid imported configuration"
         store = ConfigStore(postgres_db)
-        assert store.get(FALKOR_REQUIREPASS_KEY) == "$secret:requirepass"
-        assert store.get("databases.falkordb.rrf_k") == 77
-        assert SecretStore(postgres_db).get("requirepass") == "Valid-123"
+        assert store.get(FALKOR_PASSWORD_KEY) is None
+        assert store.get("databases.falkordb.rrf_k") is None
 
-    def test_import_legacy_config_non_string_falkordb_requirepass_rejected(
+    def test_import_config_non_string_falkordb_password_rejected(
         self, postgres_client: TestClient, postgres_db: Any
     ) -> None:
         response = postgres_client.post(
@@ -1371,7 +1413,7 @@ class TestExportImport:
                 "config": {
                     "databases": {
                         "falkordb": {
-                            "requirepass": {"nested": "bad"},
+                            "password": {"nested": "bad"},
                         }
                     }
                 }
@@ -1380,13 +1422,13 @@ class TestExportImport:
 
         assert response.status_code == 422
         assert response.json()["detail"] == "FalkorDB password must be a string"
-        assert ConfigStore(postgres_db).get(FALKOR_REQUIREPASS_KEY) is None
+        assert ConfigStore(postgres_db).get(FALKOR_PASSWORD_KEY) is None
 
     def test_import_falkordb_secret_reference_preserves_secret_row(
         self, postgres_client: TestClient, postgres_db: Any, mock_machine_id: Any
     ) -> None:
         store = ConfigStore(postgres_db)
-        store.set_secret(FALKOR_REQUIREPASS_KEY, "Valid-123", SecretStore(postgres_db))
+        store.set_secret(FALKOR_PASSWORD_KEY, "Valid-123", SecretStore(postgres_db))
         before_secret = _secret_row(postgres_db)
 
         with patch(
@@ -1398,10 +1440,10 @@ class TestExportImport:
                 "/api/config/import",
                 json={
                     "config_store": {
-                        FALKOR_REQUIREPASS_KEY: "$secret:requirepass",
+                        FALKOR_PASSWORD_KEY: "$secret:falkordb_password",
                         "daemon_port": 9999,
                     },
-                    "config_secret_keys": [FALKOR_REQUIREPASS_KEY],
+                    "config_secret_keys": [FALKOR_PASSWORD_KEY],
                 },
             )
 
@@ -1412,15 +1454,15 @@ class TestExportImport:
         assert FALKOR_RESTART_HINT_FRAGMENT in data["restart_hint"]
         validator.assert_not_called()
         assert _secret_row(postgres_db) == before_secret
-        assert store.get(FALKOR_REQUIREPASS_KEY) == "$secret:requirepass"
-        assert FALKOR_REQUIREPASS_KEY in store.get_secret_keys()
+        assert store.get(FALKOR_PASSWORD_KEY) == "$secret:falkordb_password"
+        assert FALKOR_PASSWORD_KEY in store.get_secret_keys()
         assert store.get("daemon_port") == 9999
 
-    def test_export_then_import_preserves_requirepass_secret_row(
+    def test_export_then_import_preserves_password_secret_row(
         self, postgres_client: TestClient, postgres_db: Any, mock_machine_id: Any
     ) -> None:
         store = ConfigStore(postgres_db)
-        store.set_secret(FALKOR_REQUIREPASS_KEY, "Valid-123", SecretStore(postgres_db))
+        store.set_secret(FALKOR_PASSWORD_KEY, "Valid-123", SecretStore(postgres_db))
         before_secret = _secret_row(postgres_db)
 
         export_response = postgres_client.post("/api/config/export")
@@ -1443,7 +1485,7 @@ class TestExportImport:
         assert import_response.status_code == 200
         validator.assert_not_called()
         assert _secret_row(postgres_db) == before_secret
-        assert store.get(FALKOR_REQUIREPASS_KEY) == "$secret:requirepass"
+        assert store.get(FALKOR_PASSWORD_KEY) == "$secret:falkordb_password"
 
 
 # ---------------------------------------------------------------------------

@@ -28,7 +28,7 @@ def _service_config(
 ) -> SimpleNamespace:
     return SimpleNamespace(
         databases=DatabasesConfig(
-            falkordb={"requirepass": falkordb_password},
+            falkordb={"password": falkordb_password},
             qdrant={"url": qdrant_url},
         )
     )

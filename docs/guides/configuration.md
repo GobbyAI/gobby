@@ -237,7 +237,7 @@ databases:
   falkordb:
     host: 127.0.0.1
     port: 16379
-    requirepass: null
+    password: null
     graph_name: gobby_kg
     graph_search: true
     graph_min_score: 0.5

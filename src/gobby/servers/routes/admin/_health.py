@@ -119,7 +119,7 @@ async def _get_falkordb_memory_status(server: "HTTPServer") -> dict[str, Any]:
             db=getattr(services, "database", None),
             host=falkor_cfg.host,
             port=falkor_cfg.port,
-            password=falkor_cfg.requirepass,
+            password=falkor_cfg.password,
         )
         return {
             "configured": is_falkordb_enabled(daemon_config.databases),

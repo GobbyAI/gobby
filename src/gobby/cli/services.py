@@ -140,7 +140,7 @@ def _read_falkordb_connection_config(db: Any) -> tuple[str | None, int | None, s
 
     store = ConfigStore(db)
     host_value = store.get("databases.falkordb.host")
-    password_value = store.get("databases.falkordb.requirepass")
+    password_value = store.get("databases.falkordb.password")
     host = str(host_value) if host_value is not None else None
     port = _coerce_falkordb_port(store.get("databases.falkordb.port"))
     password = _resolve_falkordb_config_password(db, password_value)

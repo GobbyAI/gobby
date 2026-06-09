@@ -26,7 +26,6 @@ from gobby.prompts.models import parse_frontmatter
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import ImportConfigRequest
 from gobby.servers.routes.configuration_secrets import (
-    FALKOR_REQUIREPASS_KEY,
     add_restart_hint,
     mark_secret_keys,
     partition_config_entries,
@@ -101,25 +100,6 @@ def _validate_imported_secret_values(secret_values: dict[str, Any]) -> dict[str,
             raise ValueError(f"Secret '{key}' must be a string, got {type(value).__name__}")
         validated[key] = value
     return validated
-
-
-def _legacy_falkordb_requirepass(config: dict[str, Any]) -> tuple[bool, Any]:
-    """Return whether a legacy FalkorDB password was present and its raw value."""
-    if FALKOR_REQUIREPASS_KEY in config:
-        return True, config[FALKOR_REQUIREPASS_KEY]
-    databases = config.get("databases")
-    if not isinstance(databases, dict):
-        return False, None
-    falkordb = databases.get("falkordb")
-    if not isinstance(falkordb, dict) or "requirepass" not in falkordb:
-        return False, None
-    return True, falkordb["requirepass"]
-
-
-def _validate_legacy_imported_secrets(config: dict[str, Any]) -> None:
-    present, value = _legacy_falkordb_requirepass(config)
-    if present and value not in (None, ""):
-        validate_falkordb_secret(FALKOR_REQUIREPASS_KEY, value)
 
 
 def _prompt_export_key(record: Any) -> str:
@@ -386,11 +366,6 @@ def register_import_export_routes(
                 config_imported = True
 
             elif request.config:
-                try:
-                    _validate_legacy_imported_secrets(request.config)
-                except ValueError as e:
-                    raise HTTPException(status_code=422, detail=str(e)) from e
-
                 flat = flatten_config(request.config)
                 try:
                     for key, value in flat.items():

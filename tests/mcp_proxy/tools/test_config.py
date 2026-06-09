@@ -111,9 +111,9 @@ class TestGetConfig:
         mock_machine_id,
     ) -> None:
         with patch("gobby.utils.machine_id.get_machine_id", return_value=mock_machine_id):
-            SecretStore(temp_db).set("requirepass", "Valid-123")
+            SecretStore(temp_db).set("falkordb_password", "Valid-123")
 
-        config_state["config"] = DaemonConfig(databases={"falkordb": {"requirepass": "Valid-123"}})
+        config_state["config"] = DaemonConfig(databases={"falkordb": {"password": "Valid-123"}})
         registry = create_config_registry(
             config=config_state["config"],
             config_store=config_store,
@@ -121,7 +121,7 @@ class TestGetConfig:
             db=temp_db,
         )
 
-        result = registry.get_tool("get_config")(key="databases.falkordb.requirepass")
+        result = registry.get_tool("get_config")(key="databases.falkordb.password")
 
         assert result["success"] is True
         assert result["value"] == "********"
@@ -165,10 +165,10 @@ class TestGetConfigSection:
         mock_machine_id,
     ) -> None:
         with patch("gobby.utils.machine_id.get_machine_id", return_value=mock_machine_id):
-            SecretStore(temp_db).set("requirepass", "Valid-123")
+            SecretStore(temp_db).set("falkordb_password", "Valid-123")
 
         config_state["config"] = DaemonConfig(
-            databases={"falkordb": {"requirepass": "Valid-123", "rrf_k": 77}}
+            databases={"falkordb": {"password": "Valid-123", "rrf_k": 77}}
         )
         registry = create_config_registry(
             config=config_state["config"],
@@ -180,7 +180,7 @@ class TestGetConfigSection:
         result = registry.get_tool("get_config_section")(prefix="databases")
 
         assert result["success"] is True
-        assert result["section"]["falkordb"]["requirepass"] == "********"
+        assert result["section"]["falkordb"]["password"] == "********"
         assert result["section"]["falkordb"]["rrf_k"] == 77
 
 
@@ -251,7 +251,7 @@ class TestSetConfig:
         assert "Embedding" in result["error"]
         assert config_store.get(AI_EMBEDDING_MODEL_KEY) is None
 
-    def test_set_config_auto_detects_requirepass_secret(
+    def test_set_config_auto_detects_password_secret(
         self,
         config_registry_with_db: InternalToolRegistry,
         config_store: ConfigStore,
@@ -261,22 +261,22 @@ class TestSetConfig:
     ) -> None:
         with patch("gobby.utils.machine_id.get_machine_id", return_value=mock_machine_id):
             tool = config_registry_with_db.get_tool("set_config")
-            result = tool(key="databases.falkordb.requirepass", value="Valid-123")
+            result = tool(key="databases.falkordb.password", value="Valid-123")
 
             assert result["success"] is True
             assert result["stored_as"] == "encrypted_secret"
             assert "value" not in result
             assert result["requires_restart"] is True
             assert "FalkorDB password" in result["restart_hint"]
-            assert config_store.get("databases.falkordb.requirepass") == "$secret:requirepass"
-            assert SecretStore(temp_db).get("requirepass") == "Valid-123"
-            assert config_state["config"].databases.falkordb.requirepass == "Valid-123"
+            assert config_store.get("databases.falkordb.password") == "$secret:falkordb_password"
+            assert SecretStore(temp_db).get("falkordb_password") == "Valid-123"
+            assert config_state["config"].databases.falkordb.password == "Valid-123"
 
-            unchanged = tool(key="databases.falkordb.requirepass", value="Valid-123")
+            unchanged = tool(key="databases.falkordb.password", value="Valid-123")
             assert unchanged["success"] is True
             assert "requires_restart" not in unchanged
 
-    def test_set_config_validates_requirepass_before_persisting(
+    def test_set_config_validates_password_before_persisting(
         self,
         config_registry_with_db: InternalToolRegistry,
         config_store: ConfigStore,
@@ -285,12 +285,25 @@ class TestSetConfig:
     ) -> None:
         with patch("gobby.utils.machine_id.get_machine_id", return_value=mock_machine_id):
             tool = config_registry_with_db.get_tool("set_config")
-            result = tool(key="databases.falkordb.requirepass", value="contains space")
+            result = tool(key="databases.falkordb.password", value="contains space")
 
             assert result["success"] is False
             assert "must not contain whitespace" in result["error"]
-            assert config_store.get("databases.falkordb.requirepass") is None
-            assert SecretStore(temp_db).get("requirepass") is None
+            assert config_store.get("databases.falkordb.password") is None
+            assert SecretStore(temp_db).get("falkordb_password") is None
+
+    def test_set_config_rejects_removed_falkordb_requirepass_key(
+        self,
+        config_registry_with_db: InternalToolRegistry,
+        config_store: ConfigStore,
+    ) -> None:
+        tool = config_registry_with_db.get_tool("set_config")
+        result = tool(key="databases.falkordb.requirepass", value="Valid-123")
+
+        assert result["success"] is False
+        assert "requirepass" in result["error"]
+        assert config_store.get("databases.falkordb.requirepass") is None
+        assert config_store.get("databases.falkordb.password") is None
 
 
 class TestListConfigKeys:
@@ -500,8 +513,8 @@ class TestIsSecretKeyName:
     def test_password_suffix(self) -> None:
         assert is_secret_key_name("db.db_password") is True
 
-    def test_requirepass_suffix(self) -> None:
-        assert is_secret_key_name("databases.falkordb.requirepass") is True
+    def test_falkordb_password_suffix(self) -> None:
+        assert is_secret_key_name("databases.falkordb.password") is True
 
     def test_access_token_suffix(self) -> None:
         assert is_secret_key_name("oauth.user_access_token") is True
@@ -808,7 +821,7 @@ class TestSetConfigBatch:
         # Should not have persisted the invalid value
         assert config_store.get("daemon_port") is None
 
-    def test_batch_partitions_requirepass_secret_and_plain_entries(
+    def test_batch_partitions_password_secret_and_plain_entries(
         self,
         config_registry_with_db: InternalToolRegistry,
         config_store: ConfigStore,
@@ -821,7 +834,7 @@ class TestSetConfigBatch:
             result = tool(
                 entries=[
                     {"key": "databases.falkordb.rrf_k", "value": 77},
-                    {"key": "databases.falkordb.requirepass", "value": "Valid-123"},
+                    {"key": "databases.falkordb.password", "value": "Valid-123"},
                 ]
             )
 
@@ -829,11 +842,11 @@ class TestSetConfigBatch:
             assert result["requires_restart"] is True
             assert "FalkorDB password" in result["restart_hint"]
             assert config_store.get("databases.falkordb.rrf_k") == 77
-            assert config_store.get("databases.falkordb.requirepass") == "$secret:requirepass"
-            assert SecretStore(temp_db).get("requirepass") == "Valid-123"
-            assert config_state["config"].databases.falkordb.requirepass == "Valid-123"
+            assert config_store.get("databases.falkordb.password") == "$secret:falkordb_password"
+            assert SecretStore(temp_db).get("falkordb_password") == "Valid-123"
+            assert config_state["config"].databases.falkordb.password == "Valid-123"
 
-    def test_batch_invalid_requirepass_rolls_back_plain_entries(
+    def test_batch_invalid_password_rolls_back_plain_entries(
         self,
         config_registry_with_db: InternalToolRegistry,
         config_store: ConfigStore,
@@ -845,15 +858,15 @@ class TestSetConfigBatch:
             result = tool(
                 entries=[
                     {"key": "databases.falkordb.rrf_k", "value": 77},
-                    {"key": "databases.falkordb.requirepass", "value": "contains space"},
+                    {"key": "databases.falkordb.password", "value": "contains space"},
                 ]
             )
 
             assert result["success"] is False
             assert "must not contain whitespace" in result["error"]
             assert config_store.get("databases.falkordb.rrf_k") is None
-            assert config_store.get("databases.falkordb.requirepass") is None
-            assert SecretStore(temp_db).get("requirepass") is None
+            assert config_store.get("databases.falkordb.password") is None
+            assert SecretStore(temp_db).get("falkordb_password") is None
 
     def test_batch_mid_write_failure_rolls_back_secret_and_plain_legs(
         self,
@@ -870,7 +883,7 @@ class TestSetConfigBatch:
             tool = config_registry_with_db.get_tool("set_config_batch")
             result = tool(
                 entries=[
-                    {"key": "databases.falkordb.requirepass", "value": "Valid-123"},
+                    {"key": "databases.falkordb.password", "value": "Valid-123"},
                     {"key": "databases.falkordb.rrf_k", "value": 77},
                 ]
             )
@@ -878,9 +891,9 @@ class TestSetConfigBatch:
             assert result["success"] is False
             assert result["error"] == "Internal config error"
             set_secret.assert_called_once()
-            assert config_store.get("databases.falkordb.requirepass") is None
+            assert config_store.get("databases.falkordb.password") is None
             assert config_store.get("databases.falkordb.rrf_k") is None
-            assert SecretStore(temp_db).get("requirepass") is None
+            assert SecretStore(temp_db).get("falkordb_password") is None
 
 
 class TestDeleteConfig:
@@ -1026,7 +1039,7 @@ class TestDeleteConfig:
             assert secret_store.get(EMBEDDING_API_KEY_SECRET_NAME) is None
             assert config_state["config"].embeddings.api_key is None
 
-    def test_delete_config_marks_requirepass_restart_required(
+    def test_delete_config_marks_password_restart_required(
         self,
         config_registry_with_db,
         config_store: ConfigStore,
@@ -1037,17 +1050,15 @@ class TestDeleteConfig:
             set_tool = config_registry_with_db.get_tool("set_config")
             delete_tool = config_registry_with_db.get_tool("delete_config")
 
-            assert (
-                set_tool(key="databases.falkordb.requirepass", value="Valid-123")["success"] is True
-            )
+            assert set_tool(key="databases.falkordb.password", value="Valid-123")["success"] is True
 
-            result = delete_tool(key="databases.falkordb.requirepass")
+            result = delete_tool(key="databases.falkordb.password")
 
             assert result["success"] is True
             assert result["requires_restart"] is True
             assert "FalkorDB password" in result["restart_hint"]
-            assert "databases.falkordb.requirepass" not in config_store.list_keys()
-            assert SecretStore(temp_db).get("requirepass") is None
+            assert "databases.falkordb.password" not in config_store.list_keys()
+            assert SecretStore(temp_db).get("falkordb_password") is None
 
     def test_delete_config_requires_db_for_secrets(
         self,

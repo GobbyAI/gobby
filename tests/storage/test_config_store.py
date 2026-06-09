@@ -165,8 +165,8 @@ class TestConfigStore:
             store.set(AI_EMBEDDING_API_KEY_KEY, "$secret:openai_api_key")
 
     def test_set_many_rejects_cross_key_secret_reference(self, store: ConfigStore):
-        with pytest.raises(ValueError, match=r"Config key 'service\.requirepass'"):
-            store.set_many({"service.requirepass": "$secret:other_password"})
+        with pytest.raises(ValueError, match=r"Config key 'service\.password'"):
+            store.set_many({"service.password": "$secret:other_password"})
 
     def test_delete_existing(self, store: ConfigStore):
         store.set("key", "val")
@@ -231,7 +231,7 @@ class TestConfigStore:
                 self.kwargs = kwargs
 
         db = FakeDB()
-        ConfigStore(db).set_secret("service.requirepass", "secret", FakeSecretStore())
+        ConfigStore(db).set_secret("service.password", "secret", FakeSecretStore())
 
         sql, params = db.executed[-1]
         assert "VALUES (%s, %s, %s, %s, %s)" in sql
@@ -245,21 +245,21 @@ class TestConfigStore:
 
             def fetchall(self, sql, params=()):
                 self.calls.append((sql, params))
-                return [{"key": "service.requirepass"}]
+                return [{"key": "service.password"}]
 
         db = FakeDB()
-        assert ConfigStore(db).get_secret_keys() == ["service.requirepass"]
+        assert ConfigStore(db).get_secret_keys() == ["service.password"]
         assert db.calls == [
             ("SELECT key FROM config_store WHERE is_secret = %s ORDER BY key", (True,))
         ]
 
 
 class TestSecretKeyDetection:
-    def test_requirepass_is_a_secret_suffix(self) -> None:
-        assert "requirepass" in _SECRET_SUFFIXES
+    def test_password_is_a_secret_suffix(self) -> None:
+        assert "password" in _SECRET_SUFFIXES
 
     def test_bare_api_key_is_secret_key_name(self) -> None:
         assert is_secret_key_name(AI_EMBEDDING_API_KEY_KEY) is True
 
-    def test_falkordb_requirepass_is_secret_key_name(self) -> None:
-        assert is_secret_key_name("databases.falkordb.requirepass") is True
+    def test_falkordb_password_is_secret_key_name(self) -> None:
+        assert is_secret_key_name("databases.falkordb.password") is True

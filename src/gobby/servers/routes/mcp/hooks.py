@@ -158,41 +158,25 @@ MAX_PENDING_PER_SESSION = 3
 
 
 def _normalize_hook_request(payload: Any) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Normalize legacy flat hook payloads and schema-versioned envelopes.
-
-    The discriminator is explicit: if ``schema_version`` is present, treat the
-    request as an envelope. If it is absent, treat the request as the legacy
-    flat shape. Do not heuristically infer envelope mode from other fields.
-    """
+    """Normalize the current schema-versioned hook envelope."""
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="JSON object required")
 
-    # Explicit discriminator: schema_version present => envelope. Without it,
-    # keep the request on the legacy flat path even if extra envelope-like
-    # fields are present.
-    if "schema_version" in payload:
-        schema_version = payload.get("schema_version")
-        if schema_version != SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Unsupported schema_version: "
-                    f"{schema_version}. Supported: {SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION}"
-                ),
-            )
-        metadata = {
-            "request_shape": "envelope",
-            "schema_version": schema_version,
-            "critical": bool(payload.get("critical", False)),
-            "enqueued_at": payload.get("enqueued_at"),
-        }
-    else:
-        metadata = {
-            "request_shape": "flat",
-            "schema_version": None,
-            "critical": None,
-            "enqueued_at": None,
-        }
+    schema_version = payload.get("schema_version")
+    if schema_version != SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Unsupported schema_version: "
+                f"{schema_version}. Supported: {SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION}"
+            ),
+        )
+    metadata = {
+        "request_shape": "envelope",
+        "schema_version": schema_version,
+        "critical": bool(payload.get("critical", False)),
+        "enqueued_at": payload.get("enqueued_at"),
+    }
 
     normalized_payload = {
         "hook_type": payload.get("hook_type"),
@@ -486,10 +470,13 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
         Execute CLI hook via adapter pattern.
 
         Request body:
-            {
-                "hook_type": "session-start",
-                "input_data": {...},
-                "source": "claude"
+        {
+            "schema_version": 1,
+            "enqueued_at": "2026-04-16T12:00:00Z",
+            "critical": false,
+            "hook_type": "session-start",
+            "input_data": {...},
+            "source": "claude"
             }
 
         Returns:

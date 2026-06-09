@@ -84,7 +84,7 @@ def _resolve_falkordb_password(
         from gobby.storage.config_store import ConfigStore
         from gobby.storage.secrets import SecretStore
 
-        configured = ConfigStore(db).get("databases.falkordb.requirepass")
+        configured = ConfigStore(db).get("databases.falkordb.password")
         if isinstance(configured, str) and configured:
             if configured.startswith("$secret:"):
                 secret = SecretStore(db).get(configured.removeprefix("$secret:"))
@@ -345,7 +345,7 @@ def _update_config(*, host: str, port: int, password: str, gobby_home: Path) -> 
             store.set("databases.falkordb.host", host, source="install")
             store.set("databases.falkordb.port", port, source="install")
             store.set_secret(
-                "databases.falkordb.requirepass",
+                "databases.falkordb.password",
                 password,
                 secret_store,
                 source="install",
@@ -362,7 +362,7 @@ def _clear_config(*, gobby_home: Path) -> None:
 
         store = ConfigStore(db)
         secret_store = SecretStore(db)
-        store.clear_secret("databases.falkordb.requirepass", secret_store)
+        store.clear_secret("databases.falkordb.password", secret_store)
         _clear_legacy_neo4j_config(store)
         for key in ("databases.falkordb.host", "databases.falkordb.port"):
             store.delete(key)

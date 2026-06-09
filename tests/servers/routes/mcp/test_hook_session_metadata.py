@@ -30,7 +30,14 @@ def _post_claude_hook(temp_db: HubDatabase, payload: dict, headers: dict | None 
         adapter.handle_native.return_value = {"continue": True}
         adapter_cls.return_value = adapter
 
-        response = client.post("/api/hooks/execute", json=payload, headers=headers or {})
+        envelope = {
+            "schema_version": 1,
+            "enqueued_at": "2026-04-16T12:00:00Z",
+            "critical": False,
+            "input_data": {},
+            **payload,
+        }
+        response = client.post("/api/hooks/execute", json=envelope, headers=headers or {})
 
     assert response.status_code == 200
     return adapter.handle_native.call_args.args[0]
@@ -114,14 +121,17 @@ def test_codex_stop_hook_timeout_blocks_fail_safe(
         }
         adapter_cls.return_value = adapter
 
-        response = client.post(
-            "/api/hooks/execute",
-            json={
-                "hook_type": hook_type,
-                "source": "codex",
-                "input_data": {},
-            },
-        )
+    response = client.post(
+        "/api/hooks/execute",
+        json={
+            "schema_version": 1,
+            "enqueued_at": "2026-04-16T12:00:00Z",
+            "critical": True,
+            "hook_type": hook_type,
+            "source": "codex",
+            "input_data": {},
+        },
+    )
 
     assert response.status_code == 200
     assert response.json() == {

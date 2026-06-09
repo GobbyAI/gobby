@@ -148,7 +148,7 @@ class TestGobbyRunnerRun:
         mock_ws_server.start = AsyncMock()
 
         mock_config_with_websocket.databases.qdrant.url = ""
-        mock_config_with_websocket.databases.falkordb.requirepass = None
+        mock_config_with_websocket.databases.falkordb.password = None
         mock_config_with_websocket.embeddings.api_base = ""
         mock_config_with_websocket.ui.enabled = False
 
@@ -223,7 +223,7 @@ class TestInitSubsystems:
             config=SimpleNamespace(
                 databases=SimpleNamespace(
                     qdrant=SimpleNamespace(url=""),
-                    falkordb=SimpleNamespace(requirepass=None),
+                    falkordb=SimpleNamespace(password=None),
                 ),
                 embeddings=SimpleNamespace(
                     model="nomic-embed-text",
@@ -295,7 +295,7 @@ class TestInitSubsystems:
             config=SimpleNamespace(
                 databases=SimpleNamespace(
                     qdrant=SimpleNamespace(url="http://localhost:6333"),
-                    falkordb=SimpleNamespace(requirepass=None),
+                    falkordb=SimpleNamespace(password=None),
                 ),
                 embeddings=SimpleNamespace(model="", api_base="", api_key="", dim=768),
                 ui=SimpleNamespace(enabled=False, mode="prod", port=5173, host="localhost"),
@@ -348,7 +348,7 @@ class TestInitSubsystems:
                     falkordb=SimpleNamespace(
                         host="127.0.0.1",
                         port=16379,
-                        requirepass="secret",
+                        password="secret",
                     ),
                 )
             ),
@@ -389,7 +389,7 @@ class TestInitSubsystems:
             config=SimpleNamespace(
                 databases=SimpleNamespace(
                     qdrant=SimpleNamespace(url=""),
-                    falkordb=SimpleNamespace(requirepass=None),
+                    falkordb=SimpleNamespace(password=None),
                 ),
                 embeddings=SimpleNamespace(model="", api_base="", api_key="", dim=768),
                 ui=SimpleNamespace(enabled=False, mode="prod", port=5173, host="localhost"),

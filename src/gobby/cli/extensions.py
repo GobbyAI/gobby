@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import sys
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import click
@@ -93,6 +94,9 @@ def hooks_test(ctx: click.Context, hook_type: str, source: str, json_format: boo
 
     # Build test payload
     test_payload = {
+        "schema_version": 1,
+        "enqueued_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "critical": False,
         "hook_type": hook_type,
         "source": source,
         "input_data": {

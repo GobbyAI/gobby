@@ -327,7 +327,7 @@ class TestConfigModels:
         assert config.qdrant.port == 6333
         assert config.falkordb.host == "127.0.0.1"
         assert config.falkordb.port == 16379
-        assert config.falkordb.requirepass is None
+        assert config.falkordb.password is None
         assert config.falkordb.graph_name == "gobby_kg"
 
     def test_embeddings_config_defaults(self) -> None:

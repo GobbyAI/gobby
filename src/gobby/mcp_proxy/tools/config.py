@@ -18,6 +18,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import psycopg
+from pydantic import ValidationError
 
 from gobby.config.embedding_keys import (
     external_embedding_config_key_to_runtime_key,
@@ -43,7 +44,7 @@ logger = logging.getLogger(__name__)
 __all__ = ["create_config_registry"]
 
 _MASKED_SECRET = "********"
-_FALKOR_REQUIREPASS_KEY = "databases.falkordb.requirepass"
+_FALKOR_PASSWORD_KEY = "databases.falkordb.password"
 _FALKOR_RESTART_HINT = (
     "Run `gobby restart` for the new FalkorDB password to take effect on the running container."
 )
@@ -57,15 +58,15 @@ def _mask_secret_value(key: str, value: Any) -> Any:
 
 
 def _validate_falkordb_secret(key: str, value: Any) -> None:
-    if key != _FALKOR_REQUIREPASS_KEY:
+    if key != _FALKOR_PASSWORD_KEY:
         return
     from gobby.config.persistence import validate_falkordb_password
 
     validate_falkordb_password(str(value))
 
 
-def _falkor_requirepass_value(config: DaemonConfig) -> str | None:
-    value = config.databases.falkordb.requirepass
+def _falkor_password_value(config: DaemonConfig) -> str | None:
+    value = config.databases.falkordb.password
     return str(value) if value is not None else None
 
 
@@ -74,7 +75,7 @@ def _add_restart_metadata(
     before_config: DaemonConfig,
     after_config: DaemonConfig,
 ) -> None:
-    if _falkor_requirepass_value(before_config) != _falkor_requirepass_value(after_config):
+    if _falkor_password_value(before_config) != _falkor_password_value(after_config):
         result["requires_restart"] = True
         result["restart_hint"] = _FALKOR_RESTART_HINT
 
@@ -134,7 +135,7 @@ def create_config_registry(
         """Get a single config value by dotted key."""
         try:
             lookup_key = external_embedding_config_key_to_runtime_key(key)
-        except ValueError as e:
+        except (TypeError, ValueError, ValidationError) as e:
             return {"success": False, "error": str(e)}
         flat = _flat_config()
         if lookup_key in flat:
@@ -153,7 +154,7 @@ def create_config_registry(
         """Get a config section filtered by dotted-path prefix."""
         try:
             lookup_prefix = external_embedding_config_key_to_runtime_key(prefix)
-        except ValueError as e:
+        except (TypeError, ValueError, ValidationError) as e:
             return {"success": False, "error": str(e)}
         flat = _flat_config()
         # Filter keys matching the prefix (exact prefix + '.' boundary)

@@ -220,9 +220,7 @@ class TestAdminRoutes:
             "healthy": False,
             "url": "redis://127.0.0.1:16379",
         }
-        mock_server.services.config.databases = DatabasesConfig(
-            falkordb={"requirepass": "Valid-123"}
-        )
+        mock_server.services.config.databases = DatabasesConfig(falkordb={"password": "Valid-123"})
         mock_server.config = mock_server.services.config
         mock_server.memory_manager._falkor_client = None
         mock_server.memory_manager._kg_service = None

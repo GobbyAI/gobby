@@ -126,12 +126,12 @@ def test_falkor_port_defaults_to_redis_mapping() -> None:
     assert config.port == 16379
 
 
-def test_falkor_requirepass_defaults_to_none() -> None:
-    """FalkorConfig.requirepass should default to None until configured."""
+def test_falkor_password_defaults_to_none() -> None:
+    """FalkorConfig.password should default to None until configured."""
     from gobby.config.persistence import FalkorConfig
 
     config = FalkorConfig()
-    assert config.requirepass is None
+    assert config.password is None
 
 
 def test_databases_config_exposes_falkordb_field() -> None:
@@ -143,9 +143,9 @@ def test_databases_config_exposes_falkordb_field() -> None:
     assert not hasattr(config, "neo4j")
 
 
-def test_falkordb_requirepass_secret_name_is_unique() -> None:
-    """databases.falkordb.requirepass should derive the requirepass secret name."""
-    assert config_key_to_secret_name("databases.falkordb.requirepass") == "requirepass"
+def test_falkordb_password_secret_name_is_unique() -> None:
+    """databases.falkordb.password should use a non-colliding secret name."""
+    assert config_key_to_secret_name("databases.falkordb.password") == "falkordb_password"
 
 
 # ===========================================================================

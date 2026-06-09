@@ -121,7 +121,7 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
                 embed_fn=embed_fn,
                 falkordb_host=falkor_cfg.host if falkor_cfg else None,
                 falkordb_port=falkor_cfg.port if falkor_cfg else 16379,
-                falkordb_password=falkor_cfg.requirepass if falkor_cfg else None,
+                falkordb_password=falkor_cfg.password if falkor_cfg else None,
                 falkordb_graph_name=falkor_cfg.graph_name if falkor_cfg else "gobby_kg",
                 falkordb_graph_search=falkor_cfg.graph_search if falkor_cfg else True,
                 falkordb_graph_min_score=falkor_cfg.graph_min_score if falkor_cfg else 0.5,

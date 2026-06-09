@@ -360,7 +360,7 @@ class TestGobbyRunnerShutdown:
         mock_config.message_tracking.enabled = True
         mock_config.message_tracking.poll_interval = 5.0
         mock_config.databases.qdrant.url = ""
-        mock_config.databases.falkordb.requirepass = None
+        mock_config.databases.falkordb.password = None
         mock_config.embeddings.api_base = ""
         mock_config.ui.enabled = False
 
@@ -417,7 +417,7 @@ class TestGobbyRunnerShutdown:
     async def test_run_runs_startup_metrics_cleanup(self, mock_config) -> None:
         """Test that run performs startup metrics cleanup."""
         mock_config.databases.qdrant.url = ""
-        mock_config.databases.falkordb.requirepass = None
+        mock_config.databases.falkordb.password = None
         mock_config.embeddings.api_base = ""
         mock_config.ui.enabled = False
 

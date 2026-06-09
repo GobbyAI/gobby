@@ -563,6 +563,16 @@ class CLIEventSimulator:
         """Close the HTTP client."""
         self.client.close()
 
+    def _hook_envelope(self, **payload: Any) -> dict[str, Any]:
+        envelope = {
+            "schema_version": 1,
+            "enqueued_at": "2026-04-16T12:00:00Z",
+            "critical": False,
+            "input_data": {},
+        }
+        envelope.update(payload)
+        return envelope
+
     def register_session(
         self,
         external_id: str,
@@ -619,7 +629,7 @@ class CLIEventSimulator:
             "input_data": input_data,
         }
 
-        response = self.client.post("/api/hooks/execute", json=payload)
+        response = self.client.post("/api/hooks/execute", json=self._hook_envelope(**payload))
         response.raise_for_status()
         return response.json()
 
@@ -639,7 +649,7 @@ class CLIEventSimulator:
             },
         }
 
-        response = self.client.post("/api/hooks/execute", json=payload)
+        response = self.client.post("/api/hooks/execute", json=self._hook_envelope(**payload))
         response.raise_for_status()
         return response.json()
 
@@ -661,7 +671,7 @@ class CLIEventSimulator:
             },
         }
 
-        response = self.client.post("/api/hooks/execute", json=payload)
+        response = self.client.post("/api/hooks/execute", json=self._hook_envelope(**payload))
         response.raise_for_status()
         return response.json()
 
@@ -704,7 +714,7 @@ class CLIEventSimulator:
             "input_data": input_data,
         }
 
-        response = self.client.post("/api/hooks/execute", json=payload)
+        response = self.client.post("/api/hooks/execute", json=self._hook_envelope(**payload))
         response.raise_for_status()
         return response.json()
 

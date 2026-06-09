@@ -106,6 +106,17 @@ class TestStreamableHttpShutdown:
         assert session_manager.active_sessions() == {}
 
 
+def _hook_envelope(**payload: Any) -> dict[str, Any]:
+    envelope = {
+        "schema_version": 1,
+        "enqueued_at": "2026-04-16T12:00:00Z",
+        "critical": False,
+        "input_data": {},
+    }
+    envelope.update(payload)
+    return envelope
+
+
 class TestHooksEndpoint:
     """Tests for hooks execution endpoint."""
 
@@ -113,7 +124,7 @@ class TestHooksEndpoint:
         """Test hook execution with missing hook_type."""
         response = client.post(
             "/api/hooks/execute",
-            json={"source": "claude"},
+            json=_hook_envelope(source="claude"),
         )
 
         assert response.status_code == 400
@@ -123,7 +134,7 @@ class TestHooksEndpoint:
         """Test hook execution with missing source."""
         response = client.post(
             "/api/hooks/execute",
-            json={"hook_type": "session-start"},
+            json=_hook_envelope(hook_type="session-start"),
         )
 
         assert response.status_code == 400
@@ -133,10 +144,7 @@ class TestHooksEndpoint:
         """Test hook execution with unsupported source returns error."""
         response = client.post(
             "/api/hooks/execute",
-            json={
-                "hook_type": "session-start",
-                "source": "unsupported",
-            },
+            json=_hook_envelope(hook_type="session-start", source="unsupported"),
         )
 
         # In test mode, HookManager may not be initialized (503) or source is invalid (400)

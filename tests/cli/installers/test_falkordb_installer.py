@@ -202,7 +202,7 @@ class TestInstallFalkorDB:
         store = ConfigStore(hub_db)
         secret_store = SecretStore(hub_db)
         store.set_secret(
-            "databases.falkordb.requirepass",
+            "databases.falkordb.password",
             "reused",
             secret_store,
             source="test",
@@ -257,17 +257,17 @@ class TestInstallFalkorDB:
         store = ConfigStore(hub_db)
         assert store.get("databases.falkordb.host") == "127.0.0.1"
         assert store.get("databases.falkordb.port") == 16379
-        assert store.get("databases.falkordb.requirepass") == "$secret:requirepass"
+        assert store.get("databases.falkordb.password") == "$secret:falkordb_password"
         assert store.get("databases.neo4j.auth") is None
 
         row = hub_db.fetchone(
             "SELECT value, is_secret FROM config_store WHERE key = %s",
-            ("databases.falkordb.requirepass",),
+            ("databases.falkordb.password",),
         )
         assert row is not None
-        assert json.loads(row["value"]) == "$secret:requirepass"
+        assert json.loads(row["value"]) == "$secret:falkordb_password"
         assert row["is_secret"] is True
-        assert hub_db.fetchone("SELECT 1 FROM secrets WHERE name = %s", ("requirepass",))
+        assert hub_db.fetchone("SELECT 1 FROM secrets WHERE name = %s", ("falkordb_password",))
 
     def test_installer_does_not_write_bootstrap_when_config_store_update_fails(
         self,
@@ -393,7 +393,7 @@ class TestUninstallFalkorDB:
         store.set("databases.falkordb.host", "127.0.0.1", source="test")
         store.set("databases.falkordb.port", 16379, source="test")
         store.set("databases.falkordb.graph_name", "custom", source="test")
-        store.set_secret("databases.falkordb.requirepass", "secret", secret_store)
+        store.set_secret("databases.falkordb.password", "secret", secret_store)
 
         with patch("gobby.cli.installers.falkor.subprocess.run") as mock_run:
             with _patch_config_db(hub_db):
@@ -420,7 +420,7 @@ class TestUninstallFalkorDB:
 
         assert store.get("databases.falkordb.host") is None
         assert store.get("databases.falkordb.port") is None
-        assert store.get("databases.falkordb.requirepass") is None
+        assert store.get("databases.falkordb.password") is None
         assert store.get("databases.falkordb.graph_name") == "custom"
 
         bootstrap = yaml.safe_load((tmp_path / "bootstrap.yaml").read_text(encoding="utf-8"))

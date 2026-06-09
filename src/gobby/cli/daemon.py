@@ -94,7 +94,7 @@ def _services_start(gobby_home: Path) -> None:
 
         # Determine which profiles to start
         if is_falkordb_enabled(config.databases):
-            env["GOBBY_FALKORDB_PASSWORD"] = config.databases.falkordb.requirepass or ""
+            env["GOBBY_FALKORDB_PASSWORD"] = config.databases.falkordb.password or ""
             profiles.append("falkordb")
         if config.databases.qdrant.url:
             profiles.append("qdrant")

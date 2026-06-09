@@ -38,6 +38,9 @@ def test_execute_hook_dispatches_droid_adapter(session_storage: SessionManager) 
         response = client.post(
             "/api/hooks/execute",
             json={
+                "schema_version": 1,
+                "enqueued_at": "2026-04-16T12:00:00Z",
+                "critical": False,
                 "hook_type": "PreToolUse",
                 "source": "droid",
                 "input_data": {"session_id": "droid-123", "cwd": "/tmp"},
@@ -68,7 +71,14 @@ def test_execute_hook_unsupported_source_lists_droid(
     with TestClient(server.app) as client:
         response = client.post(
             "/api/hooks/execute",
-            json={"hook_type": "PreToolUse", "source": "unsupported", "input_data": {}},
+            json={
+                "schema_version": 1,
+                "enqueued_at": "2026-04-16T12:00:00Z",
+                "critical": False,
+                "hook_type": "PreToolUse",
+                "source": "unsupported",
+                "input_data": {},
+            },
         )
 
     assert response.status_code == 400

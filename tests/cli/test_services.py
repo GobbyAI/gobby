@@ -240,7 +240,7 @@ class TestGetFalkorDBStatus:
         store.set("databases.falkordb.host", "127.0.0.1")
         store.set("databases.falkordb.port", 16379)
         store.set_secret(
-            "databases.falkordb.requirepass",
+            "databases.falkordb.password",
             "secret",
             SecretStore(hub_db),
             source="test",

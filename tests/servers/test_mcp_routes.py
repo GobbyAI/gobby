@@ -59,6 +59,17 @@ def _mock_hook_manager() -> MagicMock:
     return manager
 
 
+def _hook_envelope(**payload: Any) -> dict[str, Any]:
+    envelope = {
+        "schema_version": 1,
+        "enqueued_at": "2026-04-16T12:00:00Z",
+        "critical": False,
+        "input_data": {},
+    }
+    envelope.update(payload)
+    return envelope
+
+
 @pytest.fixture
 def session_storage(temp_db: HubDatabase) -> SessionManager:
     """Create session storage."""
@@ -2539,7 +2550,7 @@ class TestHooksEndpoints:
         """Test execute hook with missing hook_type."""
         response = client.post(
             "/api/hooks/execute",
-            json={"source": "claude"},
+            json=_hook_envelope(source="claude"),
         )
         assert response.status_code == 400
         assert "hook_type" in response.json()["detail"]
@@ -2570,10 +2581,19 @@ class TestHooksEndpoints:
         """Test execute hook with missing source."""
         response = client.post(
             "/api/hooks/execute",
-            json={"hook_type": "session-start"},
+            json=_hook_envelope(hook_type="session-start"),
         )
         assert response.status_code == 400
         assert "source" in response.json()["detail"]
+
+    def test_execute_hook_rejects_flat_payload(self, client: TestClient) -> None:
+        """Flat ghook payloads are no longer accepted by the route."""
+        response = client.post(
+            "/api/hooks/execute",
+            json={"hook_type": "session-start", "source": "claude", "input_data": {}},
+        )
+        assert response.status_code == 400
+        assert "Unsupported schema_version: None" in response.json()["detail"]
 
     def test_execute_hook_unsupported_source(self, session_storage: SessionManager) -> None:
         """Test execute hook with unsupported source."""
@@ -2587,10 +2607,7 @@ class TestHooksEndpoints:
         with TestClient(server.app) as client:
             response = client.post(
                 "/api/hooks/execute",
-                json={
-                    "hook_type": "session-start",
-                    "source": "unsupported",
-                },
+                json=_hook_envelope(hook_type="session-start", source="unsupported"),
             )
 
         assert response.status_code == 400
@@ -2611,7 +2628,7 @@ class TestHooksEndpoints:
         with TestClient(server.app) as client:
             response = client.post(
                 "/api/hooks/execute",
-                json={"hook_type": "session-start", "source": "claude"},
+                json=_hook_envelope(hook_type="session-start", source="claude"),
             )
         assert response.status_code == 503
         assert "HookManager not initialized" in response.json()["detail"]
@@ -2636,11 +2653,7 @@ class TestHooksEndpoints:
 
             response = client.post(
                 "/api/hooks/execute",
-                json={
-                    "hook_type": "session-start",
-                    "source": "claude",
-                    "input_data": {},
-                },
+                json=_hook_envelope(hook_type="session-start", source="claude"),
             )
 
         assert response.status_code == 200
@@ -2666,15 +2679,12 @@ class TestHooksEndpoints:
 
             response = client.post(
                 "/api/hooks/execute",
-                json={
-                    "schema_version": 1,
-                    "enqueued_at": "2026-04-16T12:00:00Z",
-                    "critical": False,
-                    "hook_type": "session-start",
-                    "source": "claude",
-                    "input_data": {"session_id": "claude-envelope"},
-                    "headers": {"X-Gobby-Session-Id": "embedded-session"},
-                },
+                json=_hook_envelope(
+                    hook_type="session-start",
+                    source="claude",
+                    input_data={"session_id": "claude-envelope"},
+                    headers={"X-Gobby-Session-Id": "embedded-session"},
+                ),
             )
 
         assert response.status_code == 200
@@ -2705,10 +2715,7 @@ class TestHooksEndpoints:
 
             response = client.post(
                 "/api/hooks/execute",
-                json={
-                    "hook_type": "session-start",
-                    "source": "gemini",
-                },
+                json=_hook_envelope(hook_type="session-start", source="gemini"),
             )
 
         assert response.status_code == 200
@@ -2733,11 +2740,11 @@ class TestHooksEndpoints:
 
             response = client.post(
                 "/api/hooks/execute",
-                json={
-                    "hook_type": "PreToolUse",
-                    "source": "droid",
-                    "input_data": {"session_id": "droid-123", "cwd": "/tmp"},
-                },
+                json=_hook_envelope(
+                    hook_type="PreToolUse",
+                    source="droid",
+                    input_data={"session_id": "droid-123", "cwd": "/tmp"},
+                ),
             )
 
         assert response.status_code == 200
@@ -2766,11 +2773,11 @@ class TestHooksEndpoints:
         with TestClient(server.app) as client:
             response = client.post(
                 "/api/hooks/execute",
-                json={
-                    "hook_type": "PreToolUse",
-                    "source": "droid",
-                    "input_data": {"session_id": "droid-123", "tool_name": "Read"},
-                },
+                json=_hook_envelope(
+                    hook_type="PreToolUse",
+                    source="droid",
+                    input_data={"session_id": "droid-123", "tool_name": "Read"},
+                ),
             )
 
         assert response.status_code == 200
@@ -2820,11 +2827,11 @@ class TestHooksEndpoints:
             response = client.post(
                 "/api/hooks/execute",
                 headers={"X-Gobby-Session-Id": "sess-web-1"},
-                json={
-                    "hook_type": hook_type,
-                    "source": source,
-                    "input_data": {"tool_name": "Bash", "arguments": {"command": "pwd"}},
-                },
+                json=_hook_envelope(
+                    hook_type=hook_type,
+                    source=source,
+                    input_data={"tool_name": "Bash", "arguments": {"command": "pwd"}},
+                ),
             )
 
         assert response.status_code == 200
@@ -2863,14 +2870,14 @@ class TestHooksEndpoints:
                 response = client.post(
                     "/api/hooks/execute",
                     headers={"X-Gobby-Session-Id": "sess-web-1"},
-                    json={
-                        "hook_type": "pre-tool-use",
-                        "source": "claude",
-                        "input_data": {
+                    json=_hook_envelope(
+                        hook_type="pre-tool-use",
+                        source="claude",
+                        input_data={
                             "tool_name": "Bash",
                             "arguments": {"command": "pwd"},
                         },
-                    },
+                    ),
                 )
             finally:
                 server.app.state.server = app_state_server
@@ -2898,11 +2905,11 @@ class TestHooksEndpoints:
 
             response = client.post(
                 "/api/hooks/execute",
-                json={
-                    "hook_type": "SessionStart",
-                    "source": "codex",
-                    "input_data": {"session_id": "test-123", "cwd": "/tmp"},
-                },
+                json=_hook_envelope(
+                    hook_type="SessionStart",
+                    source="codex",
+                    input_data={"session_id": "test-123", "cwd": "/tmp"},
+                ),
             )
 
         assert response.status_code == 200
@@ -2941,11 +2948,11 @@ class TestHooksEndpoints:
 
             response = client.post(
                 "/api/hooks/execute",
-                json={
-                    "hook_type": "SessionStart",
-                    "source": "codex",
-                    "input_data": {"session_id": "test-123", "cwd": "/"},
-                },
+                json=_hook_envelope(
+                    hook_type="SessionStart",
+                    source="codex",
+                    input_data={"session_id": "test-123", "cwd": "/"},
+                ),
             )
 
         assert response.status_code == 200
@@ -2969,11 +2976,11 @@ class TestHooksEndpoints:
         with TestClient(server.app) as client:
             response = client.post(
                 "/api/hooks/execute",
-                json={
-                    "hook_type": "PreCompact",
-                    "source": "codex",
-                    "input_data": {"session_id": "test-compact", "cwd": "/tmp"},
-                },
+                json=_hook_envelope(
+                    hook_type="PreCompact",
+                    source="codex",
+                    input_data={"session_id": "test-compact", "cwd": "/tmp"},
+                ),
             )
 
         assert response.status_code == 200
@@ -3006,15 +3013,13 @@ class TestHooksEndpoints:
 
             response = client.post(
                 "/api/hooks/execute",
-                json={
-                    "schema_version": 1,
-                    "enqueued_at": "2026-04-16T12:00:00Z",
-                    "critical": True,
-                    "hook_type": "SessionStart",
-                    "source": "codex",
-                    "input_data": {"session_id": "test-envelope", "cwd": "/tmp"},
-                    "headers": {"X-Gobby-Session-Id": "embedded-codex"},
-                },
+                json=_hook_envelope(
+                    critical=True,
+                    hook_type="SessionStart",
+                    source="codex",
+                    input_data={"session_id": "test-envelope", "cwd": "/tmp"},
+                    headers={"X-Gobby-Session-Id": "embedded-codex"},
+                ),
             )
 
         assert response.status_code == 200
@@ -3039,12 +3044,11 @@ class TestHooksEndpoints:
         with TestClient(server.app) as client:
             response = client.post(
                 "/api/hooks/execute",
-                json={
-                    "schema_version": 99,
-                    "hook_type": "session-start",
-                    "source": "claude",
-                    "input_data": {},
-                },
+                json=_hook_envelope(
+                    schema_version=99,
+                    hook_type="session-start",
+                    source="claude",
+                ),
             )
 
         assert response.status_code == 400
@@ -3062,11 +3066,7 @@ class TestHooksEndpoints:
         with TestClient(server.app) as client:
             response = client.post(
                 "/api/hooks/execute",
-                json={
-                    "schema_version": 1,
-                    "hook_type": "session-start",
-                    "input_data": {},
-                },
+                json=_hook_envelope(hook_type="session-start"),
             )
 
         assert response.status_code == 400
@@ -3086,11 +3086,7 @@ class TestHooksEndpoints:
         with TestClient(server.app) as client:
             response = client.post(
                 "/api/hooks/execute",
-                json={
-                    "schema_version": 1,
-                    "source": "claude",
-                    "input_data": {},
-                },
+                json=_hook_envelope(source="claude"),
             )
 
         assert response.status_code == 400
@@ -3175,15 +3171,12 @@ class TestHooksEndpoints:
             response = client.post(
                 "/api/hooks/execute",
                 headers={"X-Gobby-Session-Id": "real-session"},
-                json={
-                    "schema_version": 1,
-                    "enqueued_at": "2026-04-16T12:00:00Z",
-                    "critical": False,
-                    "hook_type": "pre-tool-use",
-                    "source": "claude",
-                    "input_data": {"tool_name": "Bash", "arguments": {"command": "pwd"}},
-                    "headers": {"X-Gobby-Session-Id": "embedded-session"},
-                },
+                json=_hook_envelope(
+                    hook_type="pre-tool-use",
+                    source="claude",
+                    input_data={"tool_name": "Bash", "arguments": {"command": "pwd"}},
+                    headers={"X-Gobby-Session-Id": "embedded-session"},
+                ),
             )
 
         assert response.status_code == 200
@@ -3214,14 +3207,11 @@ class TestHooksEndpoints:
 
             response = client.post(
                 "/api/hooks/execute",
-                json={
-                    "schema_version": 1,
-                    "enqueued_at": "2026-04-16T12:34:56Z",
-                    "critical": False,
-                    "hook_type": "session-start",
-                    "source": "claude",
-                    "input_data": {},
-                },
+                json=_hook_envelope(
+                    enqueued_at="2026-04-16T12:34:56Z",
+                    hook_type="session-start",
+                    source="claude",
+                ),
             )
 
         assert response.status_code == 200
@@ -3264,11 +3254,11 @@ class TestHooksEndpoints:
 
             response = client.post(
                 "/api/hooks/execute",
-                json={
-                    "hook_type": "SessionStart",
-                    "source": "codex",
-                    "input_data": {"session_id": "test-456", "cwd": "/tmp"},
-                },
+                json=_hook_envelope(
+                    hook_type="SessionStart",
+                    source="codex",
+                    input_data={"session_id": "test-456", "cwd": "/tmp"},
+                ),
             )
 
         assert response.status_code == 200
@@ -3309,11 +3299,11 @@ class TestHooksEndpoints:
 
             response = client.post(
                 "/api/hooks/execute",
-                json={
-                    "hook_type": "Stop",
-                    "source": "codex",
-                    "input_data": {"session_id": "test-stop"},
-                },
+                json=_hook_envelope(
+                    hook_type="Stop",
+                    source="codex",
+                    input_data={"session_id": "test-stop"},
+                ),
             )
 
         assert response.status_code == 200

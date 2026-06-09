@@ -90,13 +90,17 @@ def _assert_falkordb_config(config: str, context: str) -> None:
     graph_name_const = 'const FALKORDB_GRAPH_NAME: &str = "gobby_code";' in config and re.search(
         r"graph_name:\s*FALKORDB_GRAPH_NAME\.to_string\(\)", config
     )
-    assert graph_name_literal or graph_name_const
+    graph_name_core_const = (
+        "pub const FALKORDB_GRAPH_NAME: &str = gobby_core::config::CODE_GRAPH_NAME;" in config
+        and re.search(r"graph_name:\s*FALKORDB_GRAPH_NAME\.to_string\(\)", config)
+    )
+    assert graph_name_literal or graph_name_const or graph_name_core_const
     _assert_contains_all(
         config,
         (
             "databases.falkordb.host",
             "databases.falkordb.port",
-            "databases.falkordb.requirepass",
+            "databases.falkordb.password",
             "GOBBY_FALKORDB_HOST",
             "GOBBY_FALKORDB_PORT",
             "GOBBY_FALKORDB_PASSWORD",
@@ -155,32 +159,44 @@ def test_phase7_config_tracks_falkordb_and_neo4j_cutover() -> None:
 
 def test_phase7_falkor_client_pins_core_graph_client_facade_contract() -> None:
     """The Falkor facade delegates connection details to gobby-core."""
-    falkor = _read("crates/gcode/src/falkor.rs")
+    falkor = _read("crates/gcore/src/falkor.rs")
+    connection = _read("crates/gcode/src/graph/code_graph/connection.rs")
 
-    client = _struct_body(falkor, "FalkorClient")
-    _assert_field(client, "client: GraphClient")
+    client = _struct_body(falkor, "GraphClient")
+    _assert_field(client, "graph: SyncGraph")
 
     _assert_contains_all(
         falkor,
         (
-            "use gobby_core::falkor::GraphClient",
-            "pub type Row = gobby_core::falkor::Row",
+            "pub type Row = HashMap<String, Value>",
+            "pub struct GraphClient",
+            "FalkorClientBuilder",
+            "FalkorConnectionInfo",
             "GraphClient::from_config",
-            "config.connection_config()",
-            "with_core_client",
-            "let mut client =",
-            "ctx.falkordb",
+            "with_graph_client",
+            "urlencoding::encode(password)",
         ),
     )
     _assert_matches(
         falkor,
         (
-            r"pub\s+type\s+Row\s*=\s*gobby_core::falkor::Row",
-            r"pub\s+fn\s+from_config\(config:\s*&FalkorConfig\)",
+            r"pub\s+type\s+Row\s*=\s*HashMap<String,\s*Value>",
+            r"pub\s+fn\s+from_config\(config:\s*&FalkorConfig,\s*graph_name:\s*&str\)",
             r"pub\s+fn\s+query\(\s*&mut\s+self,\s*cypher:\s*&str,\s*"
             r"params:\s*Option<HashMap<String,\s*String>>",
-            r"pub\s+fn\s+with_falkor<T>\(\s*ctx:\s*&Context,\s*default:\s*T,\s*"
-            r"f:\s*impl\s+FnOnce\(&mut\s+FalkorClient\)",
+            r"pub\s+fn\s+with_graph<T>\(\s*config:\s*Option<&FalkorConfig>,\s*"
+            r"graph_name:\s*&str,\s*default:\s*T,\s*"
+            r"f:\s*impl\s+FnOnce\(&mut\s+GraphClient\)",
+        ),
+    )
+    _assert_contains_all(
+        connection,
+        (
+            "use gobby_core::falkor::GraphClient",
+            "config.connection_config()",
+            "gobby_core::falkor::with_graph",
+            "ctx.falkordb",
+            "&config.graph_name",
         ),
     )
 
@@ -196,8 +212,9 @@ def test_phase7_cargo_dependencies_and_lockfile_track_falkordb_client() -> None:
     dependencies = cargo["dependencies"]
     assert "falkor" in dependencies["gobby-core"]["features"]
     assert dependencies["urlencoding"] == "2"
-    assert "base64" in dependencies
     assert "reqwest" in dependencies
+    gcore = _toml("crates/gcore/Cargo.toml")
+    assert "base64" in gcore["dependencies"]
 
     package_names = {package["name"] for package in lockfile["package"]}
     assert "gobby-core" in package_names
@@ -209,8 +226,6 @@ def test_phase7_cargo_dependencies_and_lockfile_track_falkordb_client() -> None:
 
 def test_phase7_ports_all_eight_read_queries_without_unbound_numeric_params() -> None:
     """Phase 7.3 ports every Rust graph read helper to FalkorDB query semantics."""
-    falkor = _read("crates/gcode/src/falkor.rs")
-    production = _without_rust_unit_tests(falkor)
     code_graph_facade = _read("crates/gcode/src/graph/code_graph.rs")
     graph_read = _without_rust_unit_tests(_read("crates/gcode/src/graph/code_graph/read.rs"))
     typed_query = _without_rust_unit_tests(_read("crates/gcode/src/graph/typed_query.rs"))
@@ -231,14 +246,13 @@ def test_phase7_ports_all_eight_read_queries_without_unbound_numeric_params() ->
             graph_read,
         ), f"missing public read helper {function}(ctx: &Context, ...)"
         assert function in code_graph_facade
-        assert f"crate::graph::code_graph::{function}" in production
 
     _assert_contains_all(
         code_graph_facade,
         (
             "mod read;",
             "pub use read::{",
-            "pub(crate) use read::{",
+            "pub(crate) use read::get_imports_query;",
         ),
     )
     _assert_contains_all(

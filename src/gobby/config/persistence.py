@@ -88,7 +88,7 @@ def _validate_optional_falkordb_password(value: str | None) -> str | None:
 class FalkorConfig(BaseModel):
     """FalkorDB graph database connection configuration."""
 
-    model_config = {"extra": "ignore"}
+    model_config = {"extra": "forbid"}
 
     host: str = Field(
         default="127.0.0.1",
@@ -101,16 +101,12 @@ class FalkorConfig(BaseModel):
             "avoid system Redis conflicts). 0.4.0 supports Docker only — see 3.1's mode decision."
         ),
     )
-    requirepass: str | None = Field(
+    password: str | None = Field(
         default=None,
         description=(
-            "FalkorDB password (Redis AUTH; named `requirepass` to match the Redis config "
-            "directive AND to avoid secret-name collision with `auth.password`). "
-            "`config_key_to_secret_name` derives the secret-store name from the LAST segment "
-            "of the dotted config key — `databases.falkordb.requirepass` resolves to secret "
-            "name `requirepass`, which is unique across the existing config namespace. Naming "
-            "this field `password` would resolve to secret name `password`, which collides "
-            "with the existing `auth.password` web-login secret. Must be provided when "
+            "FalkorDB password (Redis AUTH). `databases.falkordb.password` resolves to "
+            "secret-store name `falkordb_password` to avoid colliding with the web login "
+            "`auth.password` secret. Must be provided when "
             "FalkorDB is enabled. Supports ${ENV_VAR} pattern for env var expansion at load time."
         ),
     )
@@ -134,9 +130,9 @@ class FalkorConfig(BaseModel):
         description="RRF constant for merging Qdrant and graph results (higher = more uniform weighting)",
     )
 
-    @field_validator("requirepass")
+    @field_validator("password")
     @classmethod
-    def validate_requirepass(cls, value: str | None) -> str | None:
+    def validate_password(cls, value: str | None) -> str | None:
         return _validate_optional_falkordb_password(value)
 
     @field_validator("graph_min_score")
@@ -165,15 +161,15 @@ class DatabasesConfig(BaseModel):
 def is_falkordb_enabled(databases: DatabasesConfig) -> bool:
     """Whether the FalkorDB knowledge-graph backend is active.
 
-    Activation signal: the installer wrote `databases.falkordb.requirepass`
+    Activation signal: the installer wrote `databases.falkordb.password`
     into config_store and `load_config(config_store=..., secret_resolver=...)`
-    successfully resolved it. Default `FalkorConfig.requirepass = None` so the
+    successfully resolved it. Default `FalkorConfig.password = None` so the
     truthy check distinguishes installed-and-resolved from unconfigured.
 
     Pass a `DatabasesConfig` instance (e.g. `runner.config.databases`), NOT the
     top-level config — `config` has no top-level `falkordb` attribute.
     """
-    return bool(databases.falkordb.requirepass)
+    return bool(databases.falkordb.password)
 
 
 # ---------------------------------------------------------------------------

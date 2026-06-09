@@ -98,7 +98,7 @@ class TestDaemonDockerFlag:
         ):
             mock_config.return_value = MagicMock(
                 databases=MagicMock(
-                    falkordb=MagicMock(requirepass="password"),
+                    falkordb=MagicMock(password="password"),
                     qdrant=MagicMock(url=None),
                 ),
             )

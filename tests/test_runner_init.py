@@ -76,7 +76,7 @@ class TestGobbyRunnerInit:
                         api_key=None,
                         collection_prefix="test",
                     ),
-                    falkordb=SimpleNamespace(requirepass=None),
+                    falkordb=SimpleNamespace(password=None),
                 ),
             ),
             database=MagicMock(),
@@ -228,7 +228,7 @@ class TestStaleNeo4jConfigStartup:
         _set_config_value(temp_db, "mock.test.auth", "$secret:auth", is_secret=True)
         _set_config_value(temp_db, "databases.falkordb.host", "127.0.0.1")
         _set_config_value(temp_db, "databases.falkordb.port", 16379)
-        _set_config_value(temp_db, "databases.falkordb.requirepass", "safe-pass")
+        _set_config_value(temp_db, "databases.falkordb.password", "safe-pass")
         temp_db.execute(
             """
             INSERT INTO secrets (id, name, encrypted_value, category, description, created_at, updated_at)
