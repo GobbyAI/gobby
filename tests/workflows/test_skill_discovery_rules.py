@@ -60,6 +60,7 @@ SKILL_DISCOVERY_RULES = {
     "require-go-skill",
     "require-java-skill",
     "require-javascript-skill",
+    "require-php-skill",
     "require-python-skill",
     "require-rust-skill",
     "require-typescript-skill",
@@ -917,6 +918,143 @@ class TestRequireJavaSkillCondition:
 
     def test_skips_non_edit_write_tool(self) -> None:
         assert self._eval("/project/src/main/java/Main.java", canonical_tool_kind="read") is False
+
+    def test_skips_empty_file_path(self) -> None:
+        assert self._eval("") is False
+
+
+# --- require-php-skill structure ---
+
+
+class TestRequirePhpSkillStructure:
+    """Verify require-php-skill rule structure."""
+
+    def test_is_before_tool_event(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-php-skill")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.when is not None
+        assert "not skill_loaded('php')" in body.when
+
+    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-php-skill")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert len(body.effects) == 1
+        assert body.effects[0].type == "block"
+        assert body.effects[0].reason == skill_fetch_directive("php")
+
+
+# --- require-php-skill condition evaluation ---
+
+
+class TestRequirePhpSkillCondition:
+    """Test the require-php-skill condition evaluates correctly."""
+
+    CONDITION = (
+        "not skill_loaded('php') "
+        "and event.data.get('canonical_tool_kind') == 'write' "
+        "and ("
+        "event.data.get('canonical_file_path', '').endswith('.php') "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
+        "in ('composer.json', 'composer.lock', 'symfony.lock', 'phpunit.xml', "
+        "'phpunit.xml.dist', 'pest.php', 'phpstan.neon', 'phpstan.neon.dist', "
+        "'psalm.xml', 'psalm.xml.dist') "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
+        "in ('rector.php', 'ecs.php', 'pint.json', 'phpcs.xml', "
+        "'phpcs.xml.dist', 'infection.json', '.php-cs-fixer.php', "
+        "'.php-cs-fixer.dist.php')"
+        ")"
+    )
+
+    def _eval(
+        self,
+        file_path: str,
+        *,
+        canonical_tool_kind: str = "write",
+        loaded_skills: list[str] | None = None,
+        injected_skills: list[str] | None = None,
+    ) -> bool:
+        variables = {"loaded_skills": loaded_skills or []}
+        if injected_skills is not None:
+            variables["injected_skills"] = injected_skills
+        context = {
+            "variables": variables,
+            "event": SimpleNamespace(
+                data={
+                    "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_file_path": file_path,
+                }
+            ),
+            "tool_input": {},
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        return evaluator.evaluate(self.CONDITION)
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/src/Controller/AccountController.php",
+            "/project/tests/Account/AccountTest.php",
+            "/project/config/packages/security.php",
+            "/project/.php-cs-fixer.php",
+        ],
+    )
+    def test_matches_php_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/composer.json",
+            "/project/composer.lock",
+            "/project/symfony.lock",
+            "/project/phpunit.xml",
+            "/project/phpunit.xml.dist",
+            "/project/pest.php",
+            "/project/phpstan.neon",
+            "/project/phpstan.neon.dist",
+            "/project/psalm.xml",
+            "/project/psalm.xml.dist",
+            "/project/rector.php",
+            "/project/ecs.php",
+            "/project/pint.json",
+            "/project/phpcs.xml",
+            "/project/phpcs.xml.dist",
+            "/project/infection.json",
+            "/project/.php-cs-fixer.dist.php",
+        ],
+    )
+    def test_matches_php_config_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/package.json",
+            "/project/composer.json.bak",
+            "/project/phpstan.neon.bak",
+            "/project/src/Account.ts",
+            "/project/templates/account.twig",
+            "/project/config/services.yaml",
+        ],
+    )
+    def test_skips_non_php_targets(self, file_path: str) -> None:
+        assert self._eval(file_path) is False
+
+    def test_skips_when_already_loaded(self) -> None:
+        assert self._eval("/project/src/Controller/Main.php", loaded_skills=["php"]) is False
+
+    def test_does_not_skip_when_legacy_injected(self) -> None:
+        assert self._eval("/project/src/Controller/Main.php", injected_skills=["php"]) is True
+
+    def test_skips_non_edit_write_tool(self) -> None:
+        assert self._eval("/project/src/Controller/Main.php", canonical_tool_kind="read") is False
 
     def test_skips_empty_file_path(self) -> None:
         assert self._eval("") is False

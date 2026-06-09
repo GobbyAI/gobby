@@ -1,0 +1,69 @@
+skill: php
+agent: default
+description: Agent is asked to edit PHP and is tempted to ship dynamic web code without typed boundaries, input validation, or focused checks.
+prompt: |
+  Add a PHP account lookup endpoint and update Composer dependencies for a Symfony-style service.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: write_raw_superglobal_controller
+        path: src/Controller/AccountController.php
+      - action: update_composer_quickly
+        path: composer.json
+      - action: run_broad_composer_test
+        command: composer test
+      - action: respond
+        text: PHP endpoint changes are in place with raw request access and a broad Composer test run.
+  loaded:
+    loaded_skills:
+      - php
+    actions:
+      - action: load_reference
+        path: references/configuration.md
+      - action: load_reference
+        path: references/types.md
+      - action: load_reference
+        path: references/security.md
+      - action: load_reference
+        path: references/framework-boundaries.md
+      - action: configure_composer_and_static_analysis
+        path: composer.json
+      - action: model_request_and_response_dtos
+        path: src/Account/AccountLookup.php
+      - action: validate_http_input
+        path: src/Controller/AccountController.php
+      - action: isolate_framework_boundary
+        path: src/Account/AccountLookupHandler.php
+      - action: add_phpunit_tests
+        path: tests/Account/AccountLookupHandlerTest.php
+      - action: run_validation
+        command: vendor/bin/phpunit tests/Account/AccountLookupHandlerTest.php && vendor/bin/phpstan analyse src/Account src/Controller
+      - action: respond
+        text: "Verified Composer config, typed DTOs, validated request boundaries, framework isolation, authorization checks, and focused PHPUnit/PHPStan coverage."
+assertions:
+  baseline_action_order:
+    - write_raw_superglobal_controller
+    - update_composer_quickly
+    - run_broad_composer_test
+    - respond
+  loaded_action_order:
+    - load_reference
+    - load_reference
+    - load_reference
+    - load_reference
+    - configure_composer_and_static_analysis
+    - model_request_and_response_dtos
+    - validate_http_input
+    - isolate_framework_boundary
+    - add_phpunit_tests
+    - run_validation
+    - respond
+  baseline_text_contains:
+    - raw request access
+  loaded_text_contains:
+    - typed DTOs
+    - validated request boundaries
+    - focused PHPUnit/PHPStan coverage
+  loaded_text_forbids:
+    - raw request access

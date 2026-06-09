@@ -225,3 +225,33 @@ def test_java_skill_loads_strict_service_boundary_pattern() -> None:
     assert result.loaded.actions[2]["path"] == "references/error-handling.md"
     assert result.loaded.actions[3]["path"] == "references/framework-boundaries.md"
     assert result.has_behavioral_delta
+
+
+def test_php_skill_loads_strict_web_boundary_pattern() -> None:
+    """Verify PHP work loads references before web and Composer changes."""
+    result = run_recorded_skill_scenario(SCENARIOS / "php/strict-web-boundaries.yaml")
+
+    assert result.baseline.action_names == (
+        "write_raw_superglobal_controller",
+        "update_composer_quickly",
+        "run_broad_composer_test",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "configure_composer_and_static_analysis",
+        "model_request_and_response_dtos",
+        "validate_http_input",
+        "isolate_framework_boundary",
+        "add_phpunit_tests",
+        "run_validation",
+        "respond",
+    )
+    assert result.loaded.actions[0]["path"] == "references/configuration.md"
+    assert result.loaded.actions[1]["path"] == "references/types.md"
+    assert result.loaded.actions[2]["path"] == "references/security.md"
+    assert result.loaded.actions[3]["path"] == "references/framework-boundaries.md"
+    assert result.has_behavioral_delta
