@@ -74,6 +74,25 @@ def create_commit_registry(
     if task_manager is None:
         raise ValueError("task_manager is required for task ID resolution")
 
+    def _get_task_and_repo_path(
+        resolved_task_id: str,
+        task_id: str,
+        project_path: str | None,
+    ) -> tuple[Any, str | None] | dict[str, str]:
+        task = task_manager.get_task(resolved_task_id)
+        if task is None:
+            return {"error": f"Task {task_id} not found"}
+        try:
+            repo_path = resolve_task_repo_path(
+                task_manager=task_manager,
+                project_manager=project_manager,
+                task=task,
+                project_path=project_path,
+            )
+        except RepoPathValidationError as e:
+            return {"error": str(e)}
+        return task, repo_path
+
     # --- link_commit ---
 
     def link_commit(
@@ -88,18 +107,10 @@ def create_commit_registry(
         except (TaskNotFoundError, ValueError) as e:
             return {"error": f"Invalid task_id: {e}"}
 
-        task = task_manager.get_task(resolved_task_id)
-        if task is None:
-            return {"error": f"Task {task_id} not found"}
-        try:
-            repo_path = resolve_task_repo_path(
-                task_manager=task_manager,
-                project_manager=project_manager,
-                task=task,
-                project_path=project_path,
-            )
-        except RepoPathValidationError as e:
-            return {"error": str(e)}
+        task_and_repo_path = _get_task_and_repo_path(resolved_task_id, task_id, project_path)
+        if isinstance(task_and_repo_path, dict):
+            return task_and_repo_path
+        _, repo_path = task_and_repo_path
 
         try:
             task = task_manager.link_commit(resolved_task_id, commit_sha, cwd=repo_path)
@@ -151,18 +162,10 @@ def create_commit_registry(
         except (TaskNotFoundError, ValueError) as e:
             return {"error": f"Invalid task_id: {e}"}
 
-        task = task_manager.get_task(resolved_task_id)
-        if task is None:
-            return {"error": f"Task {task_id} not found"}
-        try:
-            repo_path = resolve_task_repo_path(
-                task_manager=task_manager,
-                project_manager=project_manager,
-                task=task,
-                project_path=project_path,
-            )
-        except RepoPathValidationError as e:
-            return {"error": str(e)}
+        task_and_repo_path = _get_task_and_repo_path(resolved_task_id, task_id, project_path)
+        if isinstance(task_and_repo_path, dict):
+            return task_and_repo_path
+        _, repo_path = task_and_repo_path
 
         try:
             task = task_manager.unlink_commit(resolved_task_id, commit_sha, cwd=repo_path)
@@ -220,19 +223,11 @@ def create_commit_registry(
                 resolved_task_id = resolve_task_id_for_mcp(task_manager, task_id)
             except (TaskNotFoundError, ValueError) as e:
                 return {"error": f"Invalid task_id: {e}"}
-            task = task_manager.get_task(resolved_task_id)
-            if task is None:
-                return {"error": f"Task {task_id} not found"}
+            task_and_repo_path = _get_task_and_repo_path(resolved_task_id, task_id, project_path)
+            if isinstance(task_and_repo_path, dict):
+                return task_and_repo_path
+            task, repo_path = task_and_repo_path
             task_project_id = task.project_id
-            try:
-                repo_path = resolve_task_repo_path(
-                    task_manager=task_manager,
-                    project_manager=project_manager,
-                    task=task,
-                    project_path=project_path,
-                )
-            except RepoPathValidationError as e:
-                return {"error": str(e)}
         else:
             try:
                 repo_path = resolve_project_repo_path(
@@ -304,22 +299,13 @@ def create_commit_registry(
         except (TaskNotFoundError, ValueError) as e:
             return {"error": f"Invalid task_id: {e}"}
 
-        task = task_manager.get_task(resolved_task_id)
-        if not task:
-            return {"error": f"Task {task_id} not found"}
+        task_and_repo_path = _get_task_and_repo_path(resolved_task_id, task_id, project_path)
+        if isinstance(task_and_repo_path, dict):
+            return task_and_repo_path
+        _, repo_path = task_and_repo_path
 
         if get_task_diff_fn is None:
             return {"error": "get_task_diff_fn not configured"}
-
-        try:
-            repo_path = resolve_task_repo_path(
-                task_manager=task_manager,
-                project_manager=project_manager,
-                task=task,
-                project_path=project_path,
-            )
-        except RepoPathValidationError as e:
-            return {"error": str(e)}
 
         result = get_task_diff_fn(
             task_id=resolved_task_id,

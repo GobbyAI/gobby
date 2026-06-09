@@ -225,8 +225,11 @@ def _merge_models(
 def create_provider_model_catalog(
     daemon_config: DaemonConfig | None = None,
 ) -> ProviderModelCatalog:
-    """Create the config-free provider model catalog from daemon-aware call sites."""
-    del daemon_config
+    """Create the provider model catalog.
+
+    ``daemon_config`` is accepted as a reserved daemon-aware extension point for callers that
+    already construct the catalog from daemon configuration paths.
+    """
     return ProviderModelCatalog()
 
 

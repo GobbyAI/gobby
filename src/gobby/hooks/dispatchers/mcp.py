@@ -246,14 +246,7 @@ def _render_project_memory(body_lines: list[str], omitted_count: int = 0) -> str
 
 
 def _project_memory_render_len(body_lines: list[str], omitted_count: int = 0) -> int:
-    if not body_lines:
-        return 0
-    line_count = 2 + len(body_lines) + (1 if omitted_count else 0)
-    total = len(PROJECT_MEMORY_OPEN_TAG) + len(PROJECT_MEMORY_CLOSE_TAG)
-    total += sum(len(line) for line in body_lines)
-    if omitted_count:
-        total += len(_project_memory_omitted_line(omitted_count))
-    return total + line_count - 1
+    return len(_render_project_memory(body_lines, omitted_count))
 
 
 def _project_memory_next_line_budget(
@@ -261,12 +254,7 @@ def _project_memory_next_line_budget(
     omitted_count: int,
     budget: int,
 ) -> int:
-    line_count = 3 + len(body_lines) + (1 if omitted_count else 0)
-    fixed_len = len(PROJECT_MEMORY_OPEN_TAG) + len(PROJECT_MEMORY_CLOSE_TAG)
-    fixed_len += sum(len(line) for line in body_lines)
-    if omitted_count:
-        fixed_len += len(_project_memory_omitted_line(omitted_count))
-    return budget - fixed_len - line_count + 1
+    return budget - _project_memory_render_len(body_lines + [""], omitted_count)
 
 
 def _fit_memory_line(content: str, suffix: str, max_len: int) -> str | None:

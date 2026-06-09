@@ -11,6 +11,9 @@ from gobby.hooks.dispatchers.mcp import (
     PROJECT_MEMORY_CONTEXT_BUDGET,
     PROJECT_MEMORY_OPEN_TAG,
     _format_project_memories,
+    _project_memory_next_line_budget,
+    _project_memory_render_len,
+    _render_project_memory,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
@@ -611,6 +614,23 @@ class TestFormatDiscoveryResult:
         )
 
         assert result == expected
+
+    def test_project_memory_length_helpers_match_actual_render(self) -> None:
+        """Keeps helper budget math tied to the project-memory renderer."""
+        cases = [
+            ([], 0),
+            (["- One memory."], 0),
+            (["- One memory.", "- Two memory."], 2),
+        ]
+        budget = 200
+
+        for body_lines, omitted_count in cases:
+            assert _project_memory_render_len(body_lines, omitted_count) == len(
+                _render_project_memory(body_lines, omitted_count)
+            )
+            assert _project_memory_next_line_budget(body_lines, omitted_count, budget) == (
+                budget - len(_render_project_memory(body_lines + [""], omitted_count))
+            )
 
     def test_format_project_memories_truncates_middle_memory_and_counts_omitted(
         self,

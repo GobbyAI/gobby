@@ -130,6 +130,14 @@ export function useChatActions(params: UseChatActionsParams) {
     wsRef,
   } = params;
 
+const isAttachedProxyTerminal = useCallback(
+  () =>
+    !!attachedSessionIdRef.current &&
+    sessionInteractionModeRef.current === "proxy" &&
+    attachedSessionMetaRef.current?.sessionType === "terminal",
+  [],
+);
+
 // Switch to an existing server-owned web-chat session by DB session ID.
 const switchConversation = useCallback(
   (id: string, options?: { preserveViewing?: boolean }) => {
@@ -891,10 +899,7 @@ const respondToApproval = useCallback(
 const approvePlan = useCallback((option?: ApprovalOption) => {
   if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
   const proxySessionId = attachedSessionIdRef.current;
-  const isProxyTerminal =
-    !!proxySessionId &&
-    sessionInteractionModeRef.current === "proxy" &&
-    attachedSessionMetaRef.current?.sessionType === "terminal";
+  const isProxyTerminal = isAttachedProxyTerminal();
   if (isProxyTerminal) {
     // Path B: drive the attached CLI's native plan menu via keystrokes; the
     // backend resolves (source, option_id) -> keystrokes for the tmux pane.
@@ -921,16 +926,13 @@ const approvePlan = useCallback((option?: ApprovalOption) => {
       ...(option?.id ? { option_id: option.id } : {}),
     }),
   );
-}, []);
+}, [isAttachedProxyTerminal]);
 
 // Request changes to the plan with feedback
 const requestPlanChanges = useCallback((feedback: string) => {
   if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
   const proxySessionId = attachedSessionIdRef.current;
-  const isProxyTerminal =
-    !!proxySessionId &&
-    sessionInteractionModeRef.current === "proxy" &&
-    attachedSessionMetaRef.current?.sessionType === "terminal";
+  const isProxyTerminal = isAttachedProxyTerminal();
   if (isProxyTerminal) {
     // Path B: select the CLI's native "keep planning" menu item via keystrokes.
     // Eagerly clear approval UI to prevent ghost flash when artifact panel closes
@@ -960,7 +962,7 @@ const requestPlanChanges = useCallback((feedback: string) => {
       feedback,
     }),
   );
-}, []);
+}, [isAttachedProxyTerminal]);
 
 
 
