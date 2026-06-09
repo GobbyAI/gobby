@@ -890,6 +890,27 @@ const respondToApproval = useCallback(
 // authoritative for clearing the approval UI.
 const approvePlan = useCallback((option?: ApprovalOption) => {
   if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+  const proxySessionId = attachedSessionIdRef.current;
+  const isProxyTerminal =
+    !!proxySessionId &&
+    sessionInteractionModeRef.current === "proxy" &&
+    attachedSessionMetaRef.current?.sessionType === "terminal";
+  if (isProxyTerminal) {
+    // Path B: drive the attached CLI's native plan menu via keystrokes; the
+    // backend resolves (source, option_id) -> keystrokes for the tmux pane.
+    wsRef.current.send(
+      JSON.stringify({
+        type: "plan_approval_response",
+        target_session_id: proxySessionId,
+        decision: "approve",
+        ...(option?.id ? { option_id: option.id } : {}),
+      }),
+    );
+    // No mode_changed comes back for a proxy plan card, so clear it eagerly.
+    setPlanPendingApproval(false);
+    planContentRef.current = null;
+    return;
+  }
   if (!conversationIdRef.current) return;
   if (!planContentRef.current) return;
   wsRef.current.send(
@@ -905,6 +926,26 @@ const approvePlan = useCallback((option?: ApprovalOption) => {
 // Request changes to the plan with feedback
 const requestPlanChanges = useCallback((feedback: string) => {
   if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+  const proxySessionId = attachedSessionIdRef.current;
+  const isProxyTerminal =
+    !!proxySessionId &&
+    sessionInteractionModeRef.current === "proxy" &&
+    attachedSessionMetaRef.current?.sessionType === "terminal";
+  if (isProxyTerminal) {
+    // Path B: select the CLI's native "keep planning" menu item via keystrokes.
+    // Eagerly clear approval UI to prevent ghost flash when artifact panel closes
+    setPlanPendingApproval(false);
+    planContentRef.current = null;
+    wsRef.current.send(
+      JSON.stringify({
+        type: "plan_approval_response",
+        target_session_id: proxySessionId,
+        decision: "request_changes",
+        feedback,
+      }),
+    );
+    return;
+  }
   if (!conversationIdRef.current) return;
   if (!planContentRef.current) return;
   pendingPlanFeedbackRef.current = feedback;

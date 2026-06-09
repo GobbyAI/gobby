@@ -12,10 +12,17 @@ from typing import TYPE_CHECKING, Any
 
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 
+from gobby.adapters.plan_keystrokes import (
+    DEFAULT_PLAN_KEYSTROKES,
+    dispatch_plan_keystrokes,
+    resolve_action_option_id,
+)
 from gobby.adapters.plan_options import get_plan_accept_option
 from gobby.servers.websocket.db import run_db
+from gobby.sessions.tmux_context import get_tmux_manager_for_context
 
 if TYPE_CHECKING:
+    from gobby.adapters.plan_keystrokes import PlanKeystrokeRegistry
     from gobby.adapters.plan_options import PlanAcceptOption
     from gobby.servers.websocket.session_control import SessionControlMixin
 
@@ -200,6 +207,129 @@ async def _continue_after_active_turn(
     return await _auto_continue_after_approval(mixin, websocket, conversation_id, option)
 
 
+async def handle_attached_plan_approval(
+    mixin: SessionControlMixin,
+    websocket: Any,
+    target_session_id: str,
+    data: dict[str, Any],
+    *,
+    registry: PlanKeystrokeRegistry = DEFAULT_PLAN_KEYSTROKES,
+) -> None:
+    """Drive a native plan menu for an attached (proxy-terminal) CLI session.
+
+    The caller is attached to a CLI running in a tmux pane (Path B): there is no
+    in-memory ChatSession whose plan gate we can release. The plan choice is a
+    native TUI menu, so approval/rejection is a keystroke sequence sent to the
+    pane. The sequence is resolved from the per-CLI registry keyed by
+    ``(session.source, option_id)``; ``option_id`` is a plan_options accept id for
+    approve, or the request-changes sentinel for reject.
+
+    Message format::
+
+        {
+            "type": "plan_approval_response",
+            "target_session_id": "db-uuid",
+            "decision": "approve" | "request_changes",
+            "option_id": "approve_yolo" | "approve_act"  # approve only
+        }
+    """
+    session_manager = getattr(mixin, "session_manager", None)
+    if session_manager is None:
+        await mixin._send_error(websocket, "Session manager not available")
+        return
+
+    try:
+        session = await run_db(mixin, session_manager.get, target_session_id)
+    except (LookupError, RuntimeError, ValueError) as exc:
+        logger.warning("Failed to look up target session %s: %s", target_session_id, exc)
+        session = None
+    if session is None:
+        await mixin._send_error(
+            websocket, f"Session not found: {target_session_id}", code="NOT_FOUND"
+        )
+        return
+    if getattr(session, "session_type", None) != "terminal":
+        await mixin._send_error(
+            websocket,
+            "plan_approval_response target_session_id only supports terminal sessions",
+            code="UNSUPPORTED_SESSION_TYPE",
+        )
+        return
+
+    ctx: dict[str, Any] = {}
+    if isinstance(getattr(session, "terminal_context", None), dict):
+        ctx = session.terminal_context
+    tmux_pane = ctx.get("tmux_pane")
+    if not tmux_pane and isinstance(getattr(session, "metadata", None), dict):
+        tmux_pane = session.metadata.get("terminal_tmux_pane")
+    if not isinstance(tmux_pane, str) or not tmux_pane:
+        await mixin._send_error(
+            websocket,
+            f"Session {target_session_id} has no tmux pane for plan approval",
+            code="NO_TERMINAL_TARGET",
+        )
+        return
+
+    source = getattr(session, "source", None)
+    decision = data.get("decision", "")
+    raw_option_id = data.get("option_id")
+    action_option_id = resolve_action_option_id(source, decision, raw_option_id)
+    if action_option_id is None:
+        await mixin._send_error(
+            websocket,
+            f"Unrecognized plan decision/option for {source!r}: "
+            f"decision={decision!r} option_id={raw_option_id!r}",
+            code="INVALID_PLAN_DECISION",
+        )
+        return
+
+    sequence = registry.resolve(source, action_option_id)
+    if sequence is None:
+        await mixin._send_error(
+            websocket,
+            f"No native plan keystrokes registered for source={source!r} "
+            f"option={action_option_id!r}",
+            code="PLAN_KEYSTROKES_UNMAPPED",
+        )
+        return
+
+    tmux = get_tmux_manager_for_context(ctx)
+    try:
+        dispatched = await dispatch_plan_keystrokes(tmux, tmux_pane, sequence)
+    except (OSError, RuntimeError, ValueError) as exc:
+        logger.warning(
+            "tmux plan keystroke dispatch failed for pane %s: %s",
+            tmux_pane,
+            exc,
+            exc_info=True,
+        )
+        dispatched = False
+    if not dispatched:
+        await mixin._send_error(
+            websocket, "Failed to send plan approval keystrokes to attached session"
+        )
+        return
+
+    await websocket.send(
+        json.dumps(
+            {
+                "type": "plan_approval_dispatched",
+                "target_session_id": target_session_id,
+                "decision": decision,
+                "option_id": action_option_id,
+                "ok": True,
+            }
+        )
+    )
+    logger.info(
+        "Plan %s dispatched to attached session %s (source=%s, option=%s)",
+        decision,
+        target_session_id[:8],
+        source,
+        action_option_id,
+    )
+
+
 async def handle_plan_approval_response(
     mixin: SessionControlMixin, websocket: Any, data: dict[str, Any]
 ) -> None:
@@ -225,6 +355,14 @@ async def handle_plan_approval_response(
     ``option_id`` falls back to the generic-approve default (``normal`` mode,
     auto-continue), so older clients stay compatible.
     """
+    # Path B: an attached proxy-terminal session (CLI in a tmux pane) has no
+    # in-memory ChatSession; its plan choice is a native TUI menu driven by
+    # keystrokes. Mirror the set_mode/set_agent target_session_id convention.
+    target_session_id: str | None = data.get("target_session_id")
+    if target_session_id:
+        await handle_attached_plan_approval(mixin, websocket, target_session_id, data)
+        return
+
     conversation_id_raw: str | None = data.get("conversation_id")
     decision = data.get("decision", "")
     option_id = data.get("option_id")

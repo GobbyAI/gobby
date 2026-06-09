@@ -523,6 +523,90 @@ describe("useChat proxy session messaging", () => {
     });
   });
 
+  it("routes plan approval to the attached terminal session via target_session_id", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      result.current.observeSession?.("sess-proxy", "proxy");
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-proxy",
+        external_id: "proxy-ext",
+        source: "codex",
+        title: "Proxy Session",
+        status: "active",
+        model: "gpt-5.4",
+        ref: "#300",
+        session_type: "terminal",
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    act(() => {
+      result.current.approvePlan({ id: "approve_yolo", label: "Approve (YOLO)" });
+    });
+
+    const sentMsg = JSON.parse(
+      ws.send.mock.calls[ws.send.mock.calls.length - 1][0],
+    );
+    expect(sentMsg).toEqual({
+      type: "plan_approval_response",
+      target_session_id: "sess-proxy",
+      decision: "approve",
+      option_id: "approve_yolo",
+    });
+    expect(sentMsg.conversation_id).toBeUndefined();
+  });
+
+  it("routes plan change requests to the attached terminal session", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      result.current.observeSession?.("sess-proxy", "proxy");
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-proxy",
+        external_id: "proxy-ext",
+        source: "codex",
+        title: "Proxy Session",
+        status: "active",
+        model: "gpt-5.4",
+        ref: "#300",
+        session_type: "terminal",
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    act(() => {
+      result.current.requestPlanChanges("tighten step 2");
+    });
+
+    const sentMsg = JSON.parse(
+      ws.send.mock.calls[ws.send.mock.calls.length - 1][0],
+    );
+    expect(sentMsg).toEqual({
+      type: "plan_approval_response",
+      target_session_id: "sess-proxy",
+      decision: "request_changes",
+      feedback: "tighten step 2",
+    });
+    expect(sentMsg.conversation_id).toBeUndefined();
+  });
+
   it("keeps attached voice transcriptions out of main chat streaming state", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());
