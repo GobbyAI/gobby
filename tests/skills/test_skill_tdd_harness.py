@@ -196,3 +196,32 @@ def test_go_skill_loads_strict_module_boundary_pattern() -> None:
     assert result.loaded.actions[1]["path"] == "references/types.md"
     assert result.loaded.actions[2]["path"] == "references/error-handling.md"
     assert result.has_behavioral_delta
+
+
+def test_java_skill_loads_strict_service_boundary_pattern() -> None:
+    """Verify Java work loads references before service and build changes."""
+    result = run_recorded_skill_scenario(SCENARIOS / "java/strict-service-boundaries.yaml")
+
+    assert result.baseline.action_names == (
+        "write_null_prone_service",
+        "run_broad_gradle_test",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "configure_java_toolchain",
+        "model_domain_types",
+        "validate_external_response",
+        "isolate_framework_boundary",
+        "add_junit_tests",
+        "run_validation",
+        "respond",
+    )
+    assert result.loaded.actions[0]["path"] == "references/configuration.md"
+    assert result.loaded.actions[1]["path"] == "references/types.md"
+    assert result.loaded.actions[2]["path"] == "references/error-handling.md"
+    assert result.loaded.actions[3]["path"] == "references/framework-boundaries.md"
+    assert result.has_behavioral_delta

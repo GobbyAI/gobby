@@ -58,6 +58,7 @@ def _sync_bundled(db):
 SKILL_DISCOVERY_RULES = {
     "discover-skill-hubs-on-turn-start",
     "require-go-skill",
+    "require-java-skill",
     "require-javascript-skill",
     "require-python-skill",
     "require-rust-skill",
@@ -786,6 +787,136 @@ class TestRequireGoSkillCondition:
 
     def test_skips_non_edit_write_tool(self) -> None:
         assert self._eval("/project/main.go", canonical_tool_kind="read") is False
+
+    def test_skips_empty_file_path(self) -> None:
+        assert self._eval("") is False
+
+
+# --- require-java-skill structure ---
+
+
+class TestRequireJavaSkillStructure:
+    """Verify require-java-skill rule structure."""
+
+    def test_is_before_tool_event(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-java-skill")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.when is not None
+        assert "not skill_loaded('java')" in body.when
+
+    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-java-skill")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert len(body.effects) == 1
+        assert body.effects[0].type == "block"
+        assert body.effects[0].reason == skill_fetch_directive("java")
+
+
+# --- require-java-skill condition evaluation ---
+
+
+class TestRequireJavaSkillCondition:
+    """Test the require-java-skill condition evaluates correctly."""
+
+    CONDITION = (
+        "not skill_loaded('java') "
+        "and event.data.get('canonical_tool_kind') == 'write' "
+        "and ("
+        "event.data.get('canonical_file_path', '').endswith('.java') "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
+        "in ('pom.xml', 'build.gradle', 'build.gradle.kts', 'settings.gradle', "
+        "'settings.gradle.kts', 'gradle.properties') "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
+        "in ('maven.config', 'jvm.config', 'checkstyle.xml', 'pmd.xml', "
+        "'spotbugs-exclude.xml', 'lombok.config')"
+        ")"
+    )
+
+    def _eval(
+        self,
+        file_path: str,
+        *,
+        canonical_tool_kind: str = "write",
+        loaded_skills: list[str] | None = None,
+        injected_skills: list[str] | None = None,
+    ) -> bool:
+        variables = {"loaded_skills": loaded_skills or []}
+        if injected_skills is not None:
+            variables["injected_skills"] = injected_skills
+        context = {
+            "variables": variables,
+            "event": SimpleNamespace(
+                data={
+                    "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_file_path": file_path,
+                }
+            ),
+            "tool_input": {},
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        return evaluator.evaluate(self.CONDITION)
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/src/main/java/com/acme/ProfileClient.java",
+            "/project/src/test/java/com/acme/ProfileClientTest.java",
+            "/project/module-info.java",
+        ],
+    )
+    def test_matches_java_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/pom.xml",
+            "/project/service/pom.xml",
+            "/project/build.gradle",
+            "/project/build.gradle.kts",
+            "/project/settings.gradle",
+            "/project/settings.gradle.kts",
+            "/project/gradle.properties",
+            "/project/.mvn/maven.config",
+            "/project/.mvn/jvm.config",
+            "/project/checkstyle.xml",
+            "/project/pmd.xml",
+            "/project/spotbugs-exclude.xml",
+            "/project/lombok.config",
+        ],
+    )
+    def test_matches_java_build_and_static_analysis_config_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/src/main/kotlin/com/acme/ProfileClient.kt",
+            "/project/src/main/groovy/com/acme/ProfileClient.groovy",
+            "/project/package.json",
+            "/project/build.gradle.bak",
+            "/project/application.yml",
+            "/project/gradle/libs.versions.toml",
+        ],
+    )
+    def test_skips_non_java_targets(self, file_path: str) -> None:
+        assert self._eval(file_path) is False
+
+    def test_skips_when_already_loaded(self) -> None:
+        assert self._eval("/project/src/main/java/Main.java", loaded_skills=["java"]) is False
+
+    def test_does_not_skip_when_legacy_injected(self) -> None:
+        assert self._eval("/project/src/main/java/Main.java", injected_skills=["java"]) is True
+
+    def test_skips_non_edit_write_tool(self) -> None:
+        assert self._eval("/project/src/main/java/Main.java", canonical_tool_kind="read") is False
 
     def test_skips_empty_file_path(self) -> None:
         assert self._eval("") is False

@@ -1,0 +1,66 @@
+skill: java
+agent: default
+description: Agent is asked to edit Java and is tempted to ship null-prone service code without build hygiene, boundary validation, or focused checks.
+prompt: |
+  Add a Java profile API client for a Spring service and update the Gradle build so the client can be tested.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: write_null_prone_service
+        path: src/main/java/com/acme/profile/ProfileClient.java
+      - action: run_broad_gradle_test
+        command: ./gradlew test
+      - action: respond
+        text: Java client changes are in place with raw response maps and a broad Gradle test run.
+  loaded:
+    loaded_skills:
+      - java
+    actions:
+      - action: load_reference
+        path: references/configuration.md
+      - action: load_reference
+        path: references/types.md
+      - action: load_reference
+        path: references/error-handling.md
+      - action: load_reference
+        path: references/framework-boundaries.md
+      - action: configure_java_toolchain
+        path: build.gradle.kts
+      - action: model_domain_types
+        path: src/main/java/com/acme/profile/Profile.java
+      - action: validate_external_response
+        path: src/main/java/com/acme/profile/ProfileClient.java
+      - action: isolate_framework_boundary
+        path: src/main/java/com/acme/profile/ProfileConfiguration.java
+      - action: add_junit_tests
+        path: src/test/java/com/acme/profile/ProfileClientTest.java
+      - action: run_validation
+        command: ./gradlew test --tests com.acme.profile.ProfileClientTest
+      - action: respond
+        text: "Verified Java toolchain config, null-safe domain contracts, resource-safe error handling, Spring boundary isolation, and focused JUnit tests."
+assertions:
+  baseline_action_order:
+    - write_null_prone_service
+    - run_broad_gradle_test
+    - respond
+  loaded_action_order:
+    - load_reference
+    - load_reference
+    - load_reference
+    - load_reference
+    - configure_java_toolchain
+    - model_domain_types
+    - validate_external_response
+    - isolate_framework_boundary
+    - add_junit_tests
+    - run_validation
+    - respond
+  baseline_text_contains:
+    - raw response maps
+  loaded_text_contains:
+    - null-safe domain contracts
+    - Spring boundary isolation
+    - focused JUnit tests
+  loaded_text_forbids:
+    - raw response maps
