@@ -1222,3 +1222,4 @@ async def test_get_worktree_by_task_downgrades_stale_merged_status(
     assert result["worktree"]["status"] == WorktreeStatus.ACTIVE.value
     assert result["worktree"]["stored_status"] == WorktreeStatus.MERGED.value
     assert result["worktree"]["git_merge_state"]["git_merged"] is False
+    mock_worktree_storage.get_by_task.assert_called_once_with("task-1")

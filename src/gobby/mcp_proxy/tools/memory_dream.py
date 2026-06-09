@@ -104,10 +104,20 @@ def register_memory_dream_tools(
         if not started.get("success"):
             return started
         run_id = str(started["run_id"])
-        task = asyncio.create_task(
-            service.execute_run(run_id, options),
-            name=f"memory-dream:{run_id}",
-        )
+        run_coro = service.execute_run(run_id, options)
+        try:
+            task = asyncio.create_task(
+                run_coro,
+                name=f"memory-dream:{run_id}",
+            )
+        except Exception as exc:
+            run_coro.close()
+            error = f"Failed to schedule background memory dream: {exc}"
+            try:
+                service.record_run_failure(run_id, error)
+            except Exception:
+                logger.exception("Failed to record memory dream scheduling failure")
+            return {"success": False, "run_id": run_id, "status": "failed", "error": error}
         _BACKGROUND_DREAM_TASKS.add(task)
         task.add_done_callback(lambda completed: _handle_background_task(completed, run_id))
         return {"success": True, "run_id": run_id, "status": "started"}

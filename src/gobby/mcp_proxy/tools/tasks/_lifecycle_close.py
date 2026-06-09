@@ -64,7 +64,8 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             override_justification: Why agent bypassed validation (stored for audit).
             commit_sha: Git commit SHA to link before closing. Convenience for link + close in one call.
             project_path: Repository path that contains the commit. Optional; defaults to the
-                task project's repository.
+                task project's repository. Absolute paths are allowed when they resolve to an
+                accessible task/project/worktree/clone repository directory.
 
         Returns:
             Closed task or error with validation feedback
@@ -485,7 +486,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 },
                 "project_path": {
                     "type": "string",
-                    "description": "Repository path that contains the commit. Optional; defaults to the current task project repository.",
+                    "description": "Accessible repository/workspace directory that contains the commit. Optional; defaults to the current task project repository. Absolute paths are allowed when they resolve to a registered task/project/worktree/clone repository directory.",
                     "default": None,
                 },
             },

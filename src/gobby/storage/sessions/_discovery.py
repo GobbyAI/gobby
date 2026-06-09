@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, Protocol
 
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.session_models import Session
 from gobby.storage.sql_dialect import newer_than_now_expr
 
@@ -97,14 +98,15 @@ class _DiscoveryMixin:
         Returns:
             Session if found, None otherwise.
         """
+        storage_project_id = project_id or PERSONAL_PROJECT_ID
         query = """
             SELECT * FROM sessions
             WHERE external_id = %s
               AND machine_id = %s
-              AND ((project_id = %s) OR (project_id IS NULL AND %s::text IS NULL))
+              AND project_id = %s
               AND source = %s
         """
-        params: list[str | None] = [external_id, machine_id, project_id, project_id, source]
+        params: list[str | None] = [external_id, machine_id, storage_project_id, source]
         if session_type is not None:
             query += " AND session_type = %s"
             params.append(session_type)
@@ -182,13 +184,14 @@ class _DiscoveryMixin:
         session_type: str | None = None,
     ) -> list[Session]:
         """Find all sessions sharing an external_id across sources within one project."""
+        storage_project_id = project_id or PERSONAL_PROJECT_ID
         query = """
             SELECT * FROM sessions
             WHERE external_id = %s
               AND machine_id = %s
-              AND ((project_id = %s) OR (project_id IS NULL AND %s::text IS NULL))
+              AND project_id = %s
         """
-        params: list[str | None] = [external_id, machine_id, project_id, project_id]
+        params: list[str | None] = [external_id, machine_id, storage_project_id]
         if session_type is not None:
             query += " AND session_type = %s"
             params.append(session_type)

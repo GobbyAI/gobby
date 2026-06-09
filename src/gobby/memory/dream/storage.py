@@ -65,7 +65,12 @@ class MemoryDreamStore:
                 project_id TEXT,
                 status TEXT NOT NULL DEFAULT 'started'
                     CONSTRAINT memory_dream_runs_status_check
-                    CHECK (status IN ('started', 'running', 'completed', 'failed', 'reverted')),
+                    CHECK (
+                        status IN (
+                            'started', 'running', 'completed', 'failed', 'reverted',
+                            'revert_failed'
+                        )
+                    ),
                 dry_run BOOLEAN NOT NULL DEFAULT FALSE,
                 options JSONB NOT NULL DEFAULT '{}'::jsonb,
                 plan JSONB,
@@ -132,11 +137,17 @@ class MemoryDreamStore:
                       FROM pg_constraint
                      WHERE conname = 'memory_dream_runs_status_check'
                        AND conrelid = 'memory_dream_runs'::regclass
+                       AND pg_get_constraintdef(oid) LIKE '%revert_failed%'
                 ) THEN
+                    ALTER TABLE memory_dream_runs
+                        DROP CONSTRAINT IF EXISTS memory_dream_runs_status_check;
                     ALTER TABLE memory_dream_runs
                         ADD CONSTRAINT memory_dream_runs_status_check
                         CHECK (
-                            status IN ('started', 'running', 'completed', 'failed', 'reverted')
+                            status IN (
+                                'started', 'running', 'completed', 'failed', 'reverted',
+                                'revert_failed'
+                            )
                         );
                 END IF;
             END $$;

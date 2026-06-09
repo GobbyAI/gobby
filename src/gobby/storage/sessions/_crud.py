@@ -14,6 +14,7 @@ from gobby.storage.hub.protocol import (
     SessionSeqMutation,
     WebChatSessionBootstrap,
 )
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.session_models import Session
 
 from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
@@ -111,6 +112,7 @@ class _SessionCRUDMixin:
         """
         now = datetime.now(UTC).isoformat()
         terminal_context_json = json.dumps(terminal_context) if terminal_context else None
+        storage_project_id = project_id or PERSONAL_PROJECT_ID
 
         if parent_session_id == SYSTEM_SESSION_ID:
             ensure_system_session(self.db)
@@ -119,7 +121,7 @@ class _SessionCRUDMixin:
             external_id=external_id,
             machine_id=machine_id,
             source=source,
-            project_id=project_id,
+            project_id=storage_project_id,
             session_type=session_type,
         )
 
@@ -192,11 +194,10 @@ class _SessionCRUDMixin:
                     parent_session_id=parent_session_id,
                     context="session registration",
                 )
-                if project_id:
-                    conn.acquire_additional_lock(SessionSeqMutation(project_id=project_id))
+                conn.acquire_additional_lock(SessionSeqMutation(project_id=storage_project_id))
                 max_seq_row = conn.execute(
                     "SELECT MAX(seq_num) as max_seq FROM sessions WHERE project_id = %s",
-                    (project_id,),
+                    (storage_project_id,),
                 ).fetchone()
                 next_seq_num = ((max_seq_row["max_seq"] if max_seq_row else None) or 0) + 1
                 savepoint = (
@@ -223,7 +224,7 @@ class _SessionCRUDMixin:
                             external_id,
                             machine_id,
                             source,
-                            project_id,
+                            storage_project_id,
                             title,
                             transcript_path,
                             git_branch,

@@ -655,6 +655,41 @@ class TestMemoryDreamTools:
         assert any("memory-dream:dream-1" in message for message in messages)
 
     @pytest.mark.asyncio
+    async def test_memory_dream_background_create_task_failure_marks_run_failed(
+        self,
+        mock_memory_manager: MagicMock,
+        mock_llm_service: MagicMock,
+    ) -> None:
+        config = SimpleNamespace(memory=SimpleNamespace(dream=SimpleNamespace()))
+        service = MagicMock()
+        service.start_async = AsyncMock(return_value={"success": True, "run_id": "dream-1"})
+        service.execute_run = AsyncMock(return_value={"success": True})
+        service.record_run_failure = MagicMock(return_value={"status": "failed"})
+        registry = create_memory_registry(
+            mock_memory_manager,
+            llm_service=mock_llm_service,
+            config=config,
+        )
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.memory_dream.MemoryDreamService",
+                return_value=service,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.memory_dream.asyncio.create_task",
+                side_effect=RuntimeError("scheduler unavailable"),
+            ),
+        ):
+            result = await registry.call("memory_dream", {"wait": False})
+
+        assert result["success"] is False
+        assert result["run_id"] == "dream-1"
+        assert result["status"] == "failed"
+        assert "scheduler unavailable" in result["error"]
+        service.record_run_failure.assert_called_once()
+        assert memory_dream_tools.get_background_tasks() == ()
+
     async def test_memory_dream_status_and_revert(
         self,
         mock_memory_manager: MagicMock,

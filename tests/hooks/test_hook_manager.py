@@ -573,6 +573,12 @@ class TestFormatDiscoveryResult:
 
         assert result == expected
 
+    def test_format_project_memories_returns_empty_when_body_cannot_fit(self) -> None:
+        """Avoids wrapper-only project memory when no body line fits the budget."""
+        result = _format_project_memories([{"content": "A"}], budget=1)
+
+        assert result == ""
+
     def test_format_project_memories_includes_all_memories_within_budget(self) -> None:
         """Includes every valid memory when the rendered output fits."""
         first_suffix = format_memory_metadata_suffix("mem-1", score=0.91, via="semantic")

@@ -396,6 +396,105 @@ async def test_apply_and_revert_delete_refresh_merge_and_supersede() -> None:
 
 
 @pytest.mark.asyncio
+async def test_apply_dream_plan_dry_run_includes_planned_action_preview() -> None:
+    db = _FakeDreamDB()
+    manager = _FakeMemoryManager(db)
+    store = MemoryDreamStore(db)
+    run_id = store.create_run(project_id="proj-1", dry_run=True, options={})
+
+    summary = await apply_dream_plan(
+        memory_manager=manager,
+        store=store,
+        run_id=run_id,
+        actions=[DreamAction(action="refresh", memory_id="memory-1", content="new")],
+        candidates=[_candidate("memory-1")],
+        dry_run=True,
+        reconcile_after_apply=False,
+    )
+
+    assert summary["mutations"] == 0
+    assert summary["snapshots"] == 0
+    assert summary["planned_actions"] == [
+        {
+            "action": {
+                "action": "refresh",
+                "memory_id": "memory-1",
+                "memory_ids": [],
+                "content": "new",
+                "target_id": None,
+                "memory_type": None,
+                "tags": None,
+                "reason": "",
+                "confidence": 0.0,
+            },
+            "affected_ids": ["memory-1"],
+            "candidates": [_candidate("memory-1").to_prompt_dict()],
+        }
+    ]
+
+
+async def test_merge_rolls_back_keeper_update_when_duplicate_delete_fails() -> None:
+    db = _FakeDreamDB()
+    db.memories = {
+        "merge-keep": _row("merge-keep", "old"),
+        "merge-drop": _row("merge-drop", "old"),
+    }
+    manager = _FakeMemoryManager(db)
+    manager.delete_memory = AsyncMock(side_effect=OSError("delete failed"))
+    store = MemoryDreamStore(db)
+    run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
+
+    summary = await apply_dream_plan(
+        memory_manager=manager,
+        store=store,
+        run_id=run_id,
+        actions=[
+            DreamAction(
+                action="merge",
+                memory_ids=["merge-keep", "merge-drop"],
+                content="merged",
+            )
+        ],
+        candidates=[],
+        dry_run=False,
+        reconcile_after_apply=False,
+    )
+
+    assert summary["errors"] == 1
+    assert summary["mutations"] == 0
+    assert db.memories["merge-keep"]["content"] == "old"
+    assert db.memories["merge-drop"]["content"] == "old"
+
+
+async def test_supersede_deletes_created_replacement_when_original_delete_fails() -> None:
+    db = _FakeDreamDB()
+    db.memories = {"supersede-me": _row("supersede-me", "old")}
+    manager = _FakeMemoryManager(db)
+
+    async def delete_memory(memory_id: str) -> bool:
+        if memory_id == "supersede-me":
+            raise OSError("delete failed")
+        return await manager._delete(memory_id)
+
+    manager.delete_memory = AsyncMock(side_effect=delete_memory)
+    store = MemoryDreamStore(db)
+    run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
+
+    summary = await apply_dream_plan(
+        memory_manager=manager,
+        store=store,
+        run_id=run_id,
+        actions=[DreamAction(action="supersede", memory_id="supersede-me", content="new")],
+        candidates=[_candidate("supersede-me")],
+        dry_run=False,
+        reconcile_after_apply=False,
+    )
+
+    assert summary["errors"] == 1
+    assert summary["mutations"] == 0
+    assert db.memories == {"supersede-me": _row("supersede-me", "old")}
+
+
 async def test_revert_dream_run_uses_newest_first_snapshots_without_reversal() -> None:
     db = _FakeDreamDB()
     db.memories = {"memory-1": _row("memory-1", "v3")}
@@ -423,6 +522,67 @@ async def test_revert_dream_run_uses_newest_first_snapshots_without_reversal() -
 
 
 @pytest.mark.asyncio
+async def test_revert_dream_run_marks_revert_failed_and_continues_on_snapshot_error() -> None:
+    db = _FakeDreamDB()
+    db.memories = {"good": _row("good", "new")}
+    store = MemoryDreamStore(db)
+    run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
+    db.snapshots = [
+        {
+            "id": 1,
+            "run_id": run_id,
+            "memory_id": "bad",
+            "action": "refresh",
+            "before_data": {"id": "bad"},
+            "after_data": None,
+            "applied": True,
+        },
+        {
+            "id": 2,
+            "run_id": run_id,
+            "memory_id": "good",
+            "action": "refresh",
+            "before_data": _row("good", "old"),
+            "after_data": _row("good", "new"),
+            "applied": True,
+        },
+    ]
+
+    result = await revert_dream_run(store=store, run_id=run_id)
+
+    assert result["success"] is False
+    assert result["status"] == "revert_failed"
+    assert result["restored"] == 1
+    assert result["errors"] == 1
+    assert db.memories["good"]["content"] == "old"
+    assert db.runs[run_id]["status"] == "revert_failed"
+    run = store.get_run(run_id)
+    assert run is not None
+    assert run["summary"]["errors"] == 1
+
+
+async def test_revert_dream_run_records_malformed_snapshot_without_key_error() -> None:
+    db = _FakeDreamDB()
+    store = MemoryDreamStore(db)
+    run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
+    db.snapshots = [
+        {
+            "id": 1,
+            "run_id": run_id,
+            "action": "delete",
+            "before_data": None,
+            "after_data": _row("created-1", "new"),
+            "applied": True,
+        }
+    ]
+
+    result = await revert_dream_run(store=store, run_id=run_id)
+
+    assert result["success"] is False
+    assert result["status"] == "revert_failed"
+    assert result["error_details"] == [{"snapshot_id": 1, "error": "snapshot missing memory_id"}]
+
+
 async def test_memory_dream_service_revert_uses_reconcile_after_revert_config() -> None:
     db = _FakeDreamDB()
     manager = _FakeMemoryManager(db)

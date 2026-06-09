@@ -93,7 +93,12 @@ class MemoryDreamService:
     def record_run_failure(self, run_id: str, error: str) -> dict[str, Any] | None:
         """Persist a failed status unless the run already reached a terminal state."""
         run = self.store.get_run(run_id)
-        if run is None or run.get("status") in {"completed", "failed", "reverted"}:
+        if run is None or run.get("status") in {
+            "completed",
+            "failed",
+            "reverted",
+            "revert_failed",
+        }:
             return run
         return self.store.update_run(
             run_id,

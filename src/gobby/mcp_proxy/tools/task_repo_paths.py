@@ -32,7 +32,7 @@ def resolve_task_repo_path(
     if not project_path:
         return default_repo
 
-    candidate = _resolve_path(project_path)
+    candidate = _resolve_existing_dir(project_path, label="project_path")
     roots = list(_task_allowed_roots(task_manager, project_manager, task))
     if _is_under_any_root(candidate, roots):
         return str(candidate)
@@ -53,7 +53,7 @@ def resolve_project_repo_path(
     if not project_path:
         return default_repo
 
-    candidate = _resolve_path(project_path)
+    candidate = _resolve_existing_dir(project_path, label="project_path")
     roots = list(_registered_project_roots(project_manager))
     context_path = _current_project_path()
     if context_path:
@@ -136,7 +136,7 @@ def _project_repo_path(
     repo_path = getattr(project, "repo_path", None) if project else None
     if not isinstance(repo_path, str) or not repo_path:
         return None
-    return str(_resolve_path(repo_path))
+    return str(_resolve_existing_dir(repo_path, label="task project repository"))
 
 
 def _current_project_id() -> str | None:
@@ -153,6 +153,15 @@ def _current_project_path() -> str | None:
 
 def _resolve_path(path: str) -> Path:
     return Path(path).expanduser().resolve(strict=False)
+
+
+def _resolve_existing_dir(path: str, *, label: str) -> Path:
+    candidate = _resolve_path(path)
+    if not candidate.exists():
+        raise RepoPathValidationError(f"{label} does not exist: {candidate}")
+    if not candidate.is_dir():
+        raise RepoPathValidationError(f"{label} is not a directory: {candidate}")
+    return candidate
 
 
 def _is_under_any_root(candidate: Path, roots: Iterable[str]) -> bool:

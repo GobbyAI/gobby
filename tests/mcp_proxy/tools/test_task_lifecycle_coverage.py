@@ -335,9 +335,11 @@ class TestCloseTask:
 
     @pytest.mark.asyncio
     async def test_close_task_uses_project_path_override_for_commit_checks(
-        self, mock_task_manager, mock_sync_manager
+        self, mock_task_manager, mock_sync_manager, tmp_path
     ):
         """Cross-repo close_task calls must use a registered repo path."""
+        repo_path = tmp_path / "external" / "repo"
+        repo_path.mkdir(parents=True)
         task = _make_task(commits=["abc1234"])
         mock_task_manager.get_task.return_value = task
         mock_task_manager.link_commit.return_value = task
@@ -354,7 +356,7 @@ class TestCloseTask:
                 side_effect=lambda sha, cwd=None: sha,
             ) as mock_norm,
         ):
-            MockPM.return_value.get.return_value = MagicMock(repo_path="/external/repo")
+            MockPM.return_value.get.return_value = MagicMock(repo_path=str(repo_path))
             registry = _create_registry(mock_task_manager, mock_sync_manager)
             mock_vcr.return_value = MagicMock(can_close=True)
             await registry.call(
@@ -363,22 +365,71 @@ class TestCloseTask:
                     "task_id": task.id,
                     "changes_summary": "done",
                     "commit_sha": "abc1234",
-                    "project_path": "/external/repo",
+                    "project_path": str(repo_path),
                 },
             )
 
+        expected_cwd = str(repo_path.resolve())
         mock_task_manager.link_commit.assert_called_with(
             task.id,
             "abc1234",
-            cwd="/external/repo",
+            cwd=expected_cwd,
         )
-        mock_norm.assert_called_with("abc1234", cwd="/external/repo")
-        mock_vcr.assert_called_with(task, "completed", "/external/repo")
+        mock_norm.assert_called_with("abc1234", cwd=expected_cwd)
+        mock_vcr.assert_called_with(task, "completed", expected_cwd)
         close_call = mock_task_manager.close_task.call_args
         assert close_call is not None
         assert close_call.kwargs["closed_commit_sha"] == "abc1234"
 
     @pytest.mark.asyncio
+    async def test_close_task_rejects_missing_project_path_before_git(
+        self, mock_task_manager, mock_sync_manager, tmp_path
+    ):
+        task = _make_task(commits=["abc1234"])
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.list_tasks.return_value = []
+
+        with patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockPM:
+            MockPM.return_value.get.return_value = MagicMock(repo_path=str(tmp_path))
+            registry = _create_registry(mock_task_manager, mock_sync_manager)
+            result = await registry.call(
+                "close_task",
+                {
+                    "task_id": task.id,
+                    "changes_summary": "done",
+                    "commit_sha": "abc1234",
+                    "project_path": str(tmp_path / "missing"),
+                },
+            )
+
+        assert result["error"].startswith("project_path does not exist:")
+        mock_task_manager.link_commit.assert_not_called()
+
+    async def test_close_task_rejects_non_directory_project_path_before_git(
+        self, mock_task_manager, mock_sync_manager, tmp_path
+    ):
+        task = _make_task(commits=["abc1234"])
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.list_tasks.return_value = []
+        project_path = tmp_path / "not-a-directory"
+        project_path.write_text("not a repo")
+
+        with patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockPM:
+            MockPM.return_value.get.return_value = MagicMock(repo_path=str(tmp_path))
+            registry = _create_registry(mock_task_manager, mock_sync_manager)
+            result = await registry.call(
+                "close_task",
+                {
+                    "task_id": task.id,
+                    "changes_summary": "done",
+                    "commit_sha": "abc1234",
+                    "project_path": str(project_path),
+                },
+            )
+
+        assert result["error"].startswith("project_path is not a directory:")
+        mock_task_manager.link_commit.assert_not_called()
+
     async def test_close_task_valid_llm_result_closes_when_feedback_satisfies_criteria(
         self, mock_task_manager, mock_sync_manager
     ) -> None:

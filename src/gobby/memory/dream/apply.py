@@ -31,7 +31,10 @@ async def apply_dream_plan(
     summary = _empty_summary(dry_run)
     for action in actions:
         summary["actions"][action.action] = summary["actions"].get(action.action, 0) + 1
-        if dry_run or action.action in {"keep", "review"}:
+        if dry_run:
+            summary["planned_actions"].append(_planned_action_preview(action, candidate_map))
+            continue
+        if action.action in {"keep", "review"}:
             continue
         try:
             mutations = await _apply_action(
@@ -77,20 +80,67 @@ async def revert_dream_run(
 
     restored = 0
     deleted = 0
+    failures: list[dict[str, Any]] = []
     snapshots = await asyncio.to_thread(store.list_snapshots, run_id)
     for snapshot in snapshots:
-        before = snapshot.get("before_data")
-        after = snapshot.get("after_data")
-        memory_id = str(snapshot["memory_id"])
-        if before is None and after is not None:
-            await asyncio.to_thread(store.delete_memory_row, memory_id)
-            deleted += 1
+        memory_id_value = snapshot.get("memory_id")
+        if not memory_id_value:
+            failures.append(
+                {
+                    "snapshot_id": snapshot.get("id"),
+                    "error": "snapshot missing memory_id",
+                }
+            )
             continue
-        if isinstance(before, dict):
-            await asyncio.to_thread(store.restore_memory_row, before)
-            restored += 1
+        memory_id = str(memory_id_value)
+        try:
+            before = snapshot.get("before_data")
+            after = snapshot.get("after_data")
+            if before is None and after is not None:
+                await asyncio.to_thread(store.delete_memory_row, memory_id)
+                deleted += 1
+                continue
+            if isinstance(before, dict):
+                await asyncio.to_thread(store.restore_memory_row, before)
+                restored += 1
+        except Exception as exc:
+            failures.append(
+                {
+                    "snapshot_id": snapshot.get("id"),
+                    "memory_id": memory_id,
+                    "error": str(exc),
+                }
+            )
+            logger.warning("Memory dream snapshot revert failed: %s", exc)
 
     completed_ts = _now()
+    if failures:
+        summary = {
+            "restored": restored,
+            "deleted_created_memories": deleted,
+            "errors": len(failures),
+            "error_details": failures,
+        }
+        error = f"Failed to revert {len(failures)} memory dream snapshot(s)"
+        await asyncio.to_thread(
+            store.update_run,
+            run_id,
+            status="revert_failed",
+            completed_at=completed_ts,
+            summary=summary,
+            error=error,
+        )
+        return {
+            "success": False,
+            "run_id": run_id,
+            "status": "revert_failed",
+            "restored": restored,
+            "deleted_created_memories": deleted,
+            "errors": len(failures),
+            "error_details": failures,
+            "error": error,
+        }
+
     await asyncio.to_thread(
         store.update_run,
         run_id,
@@ -190,27 +240,37 @@ async def _merge(
         return 0
     keeper_id = action.memory_ids[0]
     mutations = 0
+    rollback_rows: list[dict[str, Any]] = []
     before_keeper = await asyncio.to_thread(store.get_memory_row, keeper_id)
-    if before_keeper is not None and before_keeper.get("content") != action.content:
-        snapshot_id = await asyncio.to_thread(
-            store.insert_snapshot,
-            run_id=run_id,
-            memory_id=keeper_id,
-            action="merge",
-            before_data=before_keeper,
-        )
-        await memory_manager.update_memory(
-            memory_id=keeper_id,
-            content=action.content,
-            tags=action.tags,
-        )
-        after_keeper = await asyncio.to_thread(store.get_memory_row, keeper_id)
-        await asyncio.to_thread(store.complete_snapshot, snapshot_id, after_data=after_keeper)
-        mutations += 1
+    try:
+        if before_keeper is not None and before_keeper.get("content") != action.content:
+            snapshot_id = await asyncio.to_thread(
+                store.insert_snapshot,
+                run_id=run_id,
+                memory_id=keeper_id,
+                action="merge",
+                before_data=before_keeper,
+            )
+            await memory_manager.update_memory(
+                memory_id=keeper_id,
+                content=action.content,
+                tags=action.tags,
+            )
+            after_keeper = await asyncio.to_thread(store.get_memory_row, keeper_id)
+            await asyncio.to_thread(store.complete_snapshot, snapshot_id, after_data=after_keeper)
+            rollback_rows.append(before_keeper)
+            mutations += 1
 
-    for duplicate_id in action.memory_ids[1:]:
-        mutations += await _delete(memory_manager, store, run_id, duplicate_id, "merge")
-    return mutations
+        for duplicate_id in action.memory_ids[1:]:
+            before_duplicate = await asyncio.to_thread(store.get_memory_row, duplicate_id)
+            deleted = await _delete(memory_manager, store, run_id, duplicate_id, "merge")
+            if deleted and before_duplicate is not None:
+                rollback_rows.append(before_duplicate)
+            mutations += deleted
+        return mutations
+    except Exception:
+        await _restore_rows_for_failed_action(store, rollback_rows)
+        raise
 
 
 async def _supersede(
@@ -224,29 +284,45 @@ async def _supersede(
         raise ValueError("supersede action requires memory_id")
     mutations = 0
     target_exists = False
+    created_id: str | None = None
+    deleted_rows: list[dict[str, Any]] = []
     if action.target_id:
         target_exists = await asyncio.to_thread(store.get_memory_row, action.target_id) is not None
-    if action.content and not target_exists:
-        candidate = candidate_map.get(action.memory_id)
-        created = await memory_manager.create_memory(
-            content=action.content,
-            memory_type=action.memory_type or (candidate.memory_type if candidate else "fact"),
-            project_id=candidate.project_id if candidate else None,
-            source_type="agent",
-            tags=action.tags or (candidate.tags if candidate else None),
-        )
-        after = await asyncio.to_thread(store.get_memory_row, created.id)
-        await asyncio.to_thread(
-            store.record_applied_snapshot,
-            run_id=run_id,
-            memory_id=created.id,
-            action="supersede",
-            before_data=None,
-            after_data=after,
-        )
-        mutations += 1
-    mutations += await _delete(memory_manager, store, run_id, action.memory_id, "supersede")
-    return mutations
+    try:
+        if action.content and not target_exists:
+            candidate = candidate_map.get(action.memory_id)
+            created = await memory_manager.create_memory(
+                content=action.content,
+                memory_type=action.memory_type or (candidate.memory_type if candidate else "fact"),
+                project_id=candidate.project_id if candidate else None,
+                source_type="agent",
+                tags=action.tags or (candidate.tags if candidate else None),
+            )
+            created_id = str(created.id)
+            after = await asyncio.to_thread(store.get_memory_row, created_id)
+            await asyncio.to_thread(
+                store.record_applied_snapshot,
+                run_id=run_id,
+                memory_id=created_id,
+                action="supersede",
+                before_data=None,
+                after_data=after,
+            )
+            mutations += 1
+        before_deleted = await asyncio.to_thread(store.get_memory_row, action.memory_id)
+        deleted = await _delete(memory_manager, store, run_id, action.memory_id, "supersede")
+        if deleted and before_deleted is not None:
+            deleted_rows.append(before_deleted)
+        mutations += deleted
+        return mutations
+    except Exception:
+        if created_id is not None:
+            try:
+                await memory_manager.delete_memory(created_id)
+            except Exception as exc:
+                logger.warning("Memory dream supersede rollback delete failed: %s", exc)
+        await _restore_rows_for_failed_action(store, deleted_rows)
+        raise
 
 
 async def _reconcile(memory_manager: MemoryDreamManagerProtocol, summary: dict[str, Any]) -> None:
@@ -258,7 +334,7 @@ async def _reconcile(memory_manager: MemoryDreamManagerProtocol, summary: dict[s
 
 
 def _empty_summary(dry_run: bool) -> dict[str, Any]:
-    return {
+    summary: dict[str, Any] = {
         "dry_run": dry_run,
         "actions": {},
         "mutations": 0,
@@ -266,6 +342,37 @@ def _empty_summary(dry_run: bool) -> dict[str, Any]:
         "errors": 0,
         "error_details": [],
     }
+    if dry_run:
+        summary["planned_actions"] = []
+    return summary
+
+
+def _planned_action_preview(
+    action: DreamAction,
+    candidate_map: dict[str, DreamCandidate],
+) -> dict[str, Any]:
+    affected_ids = sorted(action.affected_ids())
+    candidates = [
+        candidate_map[memory_id].to_prompt_dict()
+        for memory_id in affected_ids
+        if memory_id in candidate_map
+    ]
+    return {
+        "action": action.to_dict(),
+        "affected_ids": affected_ids,
+        "candidates": candidates,
+    }
+
+
+async def _restore_rows_for_failed_action(
+    store: MemoryDreamStore,
+    rows: list[dict[str, Any]],
+) -> None:
+    for row in reversed(rows):
+        try:
+            await asyncio.to_thread(store.restore_memory_row, row)
+        except Exception as exc:
+            logger.warning("Memory dream action rollback restore failed: %s", exc)
 
 
 def _now() -> str:

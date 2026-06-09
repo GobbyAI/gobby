@@ -428,10 +428,11 @@ def kill_all_gobby_daemons() -> int:
 
                 # Try graceful shutdown first (SIGTERM)
                 from gobby.runner_maintenance import write_shutdown_source
+                from gobby.shutdown_intent import ShutdownIntent
 
                 try:
                     try:
-                        write_shutdown_source("cli_kill_all")
+                        write_shutdown_source("cli_kill_all", intent=ShutdownIntent.STOP)
                     except Exception as e:
                         logger.warning(f"Failed to write shutdown source: {e}")
                     proc.send_signal(signal.SIGTERM)

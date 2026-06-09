@@ -48,6 +48,40 @@ def test_register_assigns_unique_seq_nums_under_concurrency(
     assert sorted(seq_nums) == [1, 2, 3, 4]
 
 
+def test_register_assigns_unique_projectless_seq_nums_under_concurrency(
+    temp_db: HubDatabase,
+) -> None:
+    barrier = threading.Barrier(4)
+    seq_nums: list[int] = []
+    errors: list[BaseException] = []
+    lock = threading.Lock()
+
+    def _register(index: int) -> None:
+        manager = SessionManager(temp_db)
+        try:
+            barrier.wait(timeout=5)
+            session = manager.register(
+                external_id=f"projectless-{index}",
+                machine_id="machine-1",
+                source="claude",
+                project_id=None,
+            )
+            with lock:
+                seq_nums.append(session.seq_num)
+        except BaseException as exc:  # pragma: no cover - asserted below
+            with lock:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=_register, args=(i,)) for i in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert sorted(seq_nums) == [1, 2, 3, 4]
+
+
 def test_create_web_chat_session_rolls_back_when_follow_up_update_fails(
     session_manager: SessionManager,
     sample_project: dict[str, str],
