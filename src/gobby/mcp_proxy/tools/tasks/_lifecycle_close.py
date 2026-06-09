@@ -23,6 +23,9 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
 )
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
+from gobby.mcp_proxy.tools.tasks._verification_evidence_context import (
+    format_verification_evidence_context,
+)
 from gobby.plans.bootstrap_ledger import BootstrapLedgerMismatchError
 from gobby.storage.session_models import Session
 from gobby.storage.tasks import TaskNotFoundError
@@ -514,21 +517,13 @@ def _append_verification_evidence_context(
     if not isinstance(evidence_items, list):
         return validation_context
 
-    lines: list[str] = []
-    for item in evidence_items[-CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT:]:
-        if not isinstance(item, dict) or item.get("success") is not True:
-            continue
-        command = item.get("command")
-        if not isinstance(command, str) or not command.strip():
-            continue
-        matcher = item.get("matcher_id")
-        matcher_text = f" [{matcher}]" if isinstance(matcher, str) and matcher else ""
-        lines.append(f"- {command}{matcher_text}")
-
-    if not lines:
+    evidence_text = format_verification_evidence_context(
+        evidence_items,
+        limit=CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT,
+    )
+    if not evidence_text:
         return validation_context
 
-    evidence_text = "Successful verification evidence:\n" + "\n".join(lines)
     if validation_context:
         return f"{validation_context}\n\n{evidence_text}"
     return evidence_text

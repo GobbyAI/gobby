@@ -16,7 +16,9 @@ Default coding standards for Python. **Repo conventions and configured tooling t
 
 Run the repo's configured lint, type-check, and test commands before finishing. If none are configured, use:
 
-- **Format + lint**: `ruff format . && ruff check . --fix`
+- **Format fix**: `uv run ruff format <files>`
+- **Format verification**: `uv run ruff format --check <files>`
+- **Lint verification**: `uv run ruff check <files>`
 - **Type check**: `mypy --strict`
 - **Tests**: `pytest` targeting changed code, not the full suite
 - **Packages**: `uv` for dependency management

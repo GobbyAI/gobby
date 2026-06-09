@@ -61,11 +61,12 @@ Scope test runs to relevant files — do NOT run the full test suite unless
 explicitly asked.
 
 Successful validation commands such as `uv run pytest ...`,
-`uv run ruff check ...`, `uv run mypy ...`, and `npm test` are recorded
-automatically as `validation_command` evidence. A failed validation command
-blocks readiness until a later validation command succeeds. Manual evidence can
-satisfy readiness when no failed validation command is pending, but it cannot
-clear a failed validation command.
+`uv run ruff format --check ...`, `uv run ruff check ...`,
+`uv run mypy ...`, and `npm test` are recorded automatically as
+`validation_command` evidence. A failed validation command blocks readiness
+until a later validation command succeeds. Manual evidence can satisfy readiness
+when no failed validation command is pending, but it cannot clear a failed
+validation command.
 
 For manual review, PR state, or another non-command artifact, record evidence
 explicitly:
@@ -74,7 +75,10 @@ explicitly:
 call_tool("gobby-sessions", "record_verification_evidence", {
     "summary": "Read the diff and verified the touched lifecycle gates match the task",
     "evidence_type": "manual_diff_review",
-    "supports": "completion readiness for #N"
+    "supports": "completion readiness for #N",
+    "task_id": "#N",
+    "command": "manual diff review",
+    "scope": "touched lifecycle files"
 }, session_id="#2333")
 ```
 

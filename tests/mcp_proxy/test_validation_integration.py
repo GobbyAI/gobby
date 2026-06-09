@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -6,10 +7,60 @@ import pytest
 from gobby.mcp_proxy.tools.task_validation import create_validation_registry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.mcp_proxy.tools.tasks._lifecycle_close import CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT
+from gobby.mcp_proxy.tools.tasks._verification_evidence_context import (
+    format_verification_evidence_context,
+)
 from gobby.storage.tasks import LocalTaskManager, StageState, Task
 from gobby.tasks.validation import TaskValidator, ValidationResult
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.verification_evidence import VERIFICATION_EVIDENCE_VARIABLE
+
+
+def test_format_verification_evidence_context_includes_structured_successes() -> None:
+    context = format_verification_evidence_context(
+        [
+            {
+                "evidence_type": "validation_command",
+                "success": False,
+                "command": "uv run pytest tests/failing.py",
+                "matcher_id": "python-tests",
+            },
+            {
+                "evidence_type": "validation_command",
+                "success": True,
+                "command": "uv run pytest tests/tasks/test_validation.py -q",
+                "matcher_id": "python-tests",
+                "matcher_label": "Python tests",
+            },
+            {
+                "evidence_type": "manual_diff_review",
+                "success": True,
+                "summary": "Verified touched source line counts are below 1000",
+                "supports": "source line-count gate",
+                "scope": "src/gobby/mcp_proxy/tools/tasks",
+                "task_id": "#15763",
+            },
+        ],
+        limit=3,
+    )
+
+    assert context == (
+        "Successful verification evidence:\n"
+        "- command: uv run pytest tests/tasks/test_validation.py -q\n"
+        "  matcher_id: python-tests\n"
+        "  matcher_label: Python tests\n"
+        "- summary: Verified touched source line counts are below 1000\n"
+        "  supports: source line-count gate\n"
+        "  scope: src/gobby/mcp_proxy/tools/tasks\n"
+        "  task_id: #15763"
+    )
+
+
+@pytest.fixture
+def repo_path(tmp_path: Path) -> str:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    return str(repo)
 
 
 def _stage(task_id: str, state: str) -> StageState:
@@ -778,7 +829,7 @@ async def test_reset_validation_count(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_close_task_uses_commit_diff_when_commits_linked(
-    mock_task_manager, mock_task_validator
+    mock_task_manager, mock_task_validator, repo_path: str
 ):
     """Test that close_task uses commit-based diff when task has linked commits."""
     task = _task(
@@ -819,7 +870,7 @@ async def test_close_task_uses_commit_diff_when_commits_linked(
             has_uncommitted_changes=False,
             file_count=3,
         )
-        mock_pm.return_value.get.return_value = MagicMock(repo_path="/test/repo")
+        mock_pm.return_value.get.return_value = MagicMock(repo_path=repo_path)
 
         registry = create_task_registry(
             task_manager=mock_task_manager,
@@ -842,11 +893,12 @@ async def test_close_task_uses_commit_diff_when_commits_linked(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_close_task_includes_latest_thirty_verification_commands(
+async def test_close_task_includes_latest_thirty_verification_evidence(
     mock_task_manager: MagicMock,
     mock_task_validator: AsyncMock,
+    repo_path: str,
 ) -> None:
-    """close_task should pass a useful evidence window to LLM validation."""
+    """close_task should pass a useful structured evidence window to LLM validation."""
     task = _task(
         id="t1",
         title="Task with retained evidence",
@@ -870,10 +922,21 @@ async def test_close_task_includes_latest_thirty_verification_commands(
             "evidence_type": "validation_command",
             "success": True,
             "command": f"uv run pytest validation_suite_{index:03d}.py",
-            "matcher_id": "pytest",
+            "matcher_id": "python-tests",
+            "matcher_label": "Python tests",
         }
         for index in range(1, CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT + 2)
     ]
+    evidence.append(
+        {
+            "evidence_type": "manual_diff_review",
+            "success": True,
+            "summary": "Verified touched source line counts are below 1000",
+            "supports": "source line-count gate for #15763",
+            "scope": "src/gobby/mcp_proxy/tools/tasks",
+            "task_id": "#15763",
+        }
+    )
 
     from gobby.tasks.commits import TaskDiffResult
 
@@ -892,7 +955,7 @@ async def test_close_task_includes_latest_thirty_verification_commands(
             has_uncommitted_changes=False,
             file_count=1,
         )
-        mock_pm.return_value.get.return_value = MagicMock(repo_path="/test/repo")
+        mock_pm.return_value.get.return_value = MagicMock(repo_path=repo_path)
         mock_sm = MagicMock()
         mock_sm.resolve_session_reference.return_value = "sess-uuid"
         mock_sm.get.return_value = MagicMock(had_edits=True)
@@ -915,15 +978,22 @@ async def test_close_task_includes_latest_thirty_verification_commands(
     validator_call = mock_task_validator.validate_task.call_args
     changes_summary = validator_call.kwargs["changes_summary"]
     assert "Successful verification evidence:" in changes_summary
-    assert "uv run pytest validation_suite_001.py" not in changes_summary
-    for index in range(2, CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT + 2):
-        assert f"uv run pytest validation_suite_{index:03d}.py [pytest]" in changes_summary
+    assert "command: uv run pytest validation_suite_001.py" not in changes_summary
+    assert "command: uv run pytest validation_suite_002.py" not in changes_summary
+    for index in range(3, CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT + 2):
+        assert f"- command: uv run pytest validation_suite_{index:03d}.py" in changes_summary
+    assert "matcher_id: python-tests" in changes_summary
+    assert "matcher_label: Python tests" in changes_summary
+    assert "- summary: Verified touched source line counts are below 1000" in changes_summary
+    assert "supports: source line-count gate for #15763" in changes_summary
+    assert "scope: src/gobby/mcp_proxy/tools/tasks" in changes_summary
+    assert "task_id: #15763" in changes_summary
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_close_task_autolinks_claim_window_before_validation(
-    mock_task_manager, mock_task_validator
+    mock_task_manager, mock_task_validator, repo_path: str
 ):
     """close_task(commit_sha=last) validates the resolved linked task commit set."""
     task = _task(
@@ -947,14 +1017,14 @@ async def test_close_task_autolinks_claim_window_before_validation(
 
     def link_commit_side_effect(task_id, commit_sha, cwd=None):
         assert task_id == "t1"
-        assert cwd == "/test/repo"
+        assert cwd == repo_path
         task.commits.append(commit_sha)
         return task
 
     def autolink_side_effect(*args, **kwargs):
         assert kwargs["task_id"] == "t1"
         assert kwargs["since"] == "2026-05-01T00:00:00+00:00"
-        assert kwargs["cwd"] == "/test/repo"
+        assert kwargs["cwd"] == repo_path
         assert kwargs["project_id"] == "p1"
         task.commits.insert(1, "a2")
 
@@ -970,7 +1040,7 @@ async def test_close_task_autolinks_claim_window_before_validation(
         patch("gobby.tasks.commits.get_task_diff") as mock_diff,
         patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
     ):
-        mock_pm.return_value.get.return_value = MagicMock(repo_path="/test/repo")
+        mock_pm.return_value.get.return_value = MagicMock(repo_path=repo_path)
         mock_sm = MagicMock()
         mock_sm.resolve_session_reference.return_value = "sess-uuid"
         mock_sm.get.return_value = MagicMock(had_edits=True)
@@ -992,7 +1062,7 @@ async def test_close_task_autolinks_claim_window_before_validation(
         def diff_side_effect(task_id, task_manager, include_uncommitted, cwd):
             assert task.commits == ["a1", "a2", "a3"]
             assert include_uncommitted is False
-            assert cwd == "/test/repo"
+            assert cwd == repo_path
             return TaskDiffResult(
                 diff=(
                     "diff --git a/a1.py b/a1.py\n+task A1\n"
@@ -1035,7 +1105,7 @@ async def test_close_task_autolinks_claim_window_before_validation(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_close_task_skip_validation_with_evidence_stores_override(
-    mock_task_manager, mock_task_validator
+    mock_task_manager, mock_task_validator, repo_path: str
 ):
     task = _task(
         id="t1",
@@ -1062,7 +1132,7 @@ async def test_close_task_skip_validation_with_evidence_stores_override(
         patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
         patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
     ):
-        mock_pm.return_value.get.return_value = MagicMock(repo_path="/test/repo")
+        mock_pm.return_value.get.return_value = MagicMock(repo_path=repo_path)
         mock_sm = MagicMock()
         mock_sm.resolve_session_reference.return_value = "sess-uuid"
         mock_sm.get.return_value = MagicMock(had_edits=True)
@@ -1106,7 +1176,7 @@ async def test_close_task_skip_validation_with_evidence_stores_override(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_close_task_skip_validation_fails_without_evidence(
-    mock_task_manager, mock_task_validator
+    mock_task_manager, mock_task_validator, repo_path: str
 ):
     task = _task(
         id="t1",
@@ -1132,7 +1202,7 @@ async def test_close_task_skip_validation_fails_without_evidence(
         patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
         patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
     ):
-        mock_pm.return_value.get.return_value = MagicMock(repo_path="/test/repo")
+        mock_pm.return_value.get.return_value = MagicMock(repo_path=repo_path)
         mock_sm = MagicMock()
         mock_sm.resolve_session_reference.return_value = "sess-uuid"
         mock_sm.get.return_value = MagicMock(had_edits=True)
@@ -1163,7 +1233,9 @@ async def test_close_task_skip_validation_fails_without_evidence(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_close_task_skip_reason_bypasses_commit_check(mock_task_manager, mock_task_validator):
+async def test_close_task_skip_reason_bypasses_commit_check(
+    mock_task_manager, mock_task_validator, repo_path: str
+):
     """Test that close_task with skip reason (obsolete) bypasses commit check.
 
     When using a skip reason like 'obsolete', 'duplicate', 'already_implemented',
@@ -1201,7 +1273,7 @@ async def test_close_task_skip_reason_bypasses_commit_check(mock_task_manager, m
         patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
         patch("gobby.utils.git.run_git_command", side_effect=git_command_side_effect),
     ):
-        mock_pm.return_value.get.return_value = MagicMock(repo_path="/test/repo")
+        mock_pm.return_value.get.return_value = MagicMock(repo_path=repo_path)
 
         registry = create_task_registry(
             task_manager=mock_task_manager,
@@ -1234,7 +1306,7 @@ async def test_close_task_skip_reason_bypasses_commit_check(mock_task_manager, m
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_close_task_commit_diff_excludes_uncommitted_changes(
-    mock_task_manager, mock_task_validator
+    mock_task_manager, mock_task_validator, repo_path: str
 ):
     """Test that close_task excludes uncommitted changes (linked commits are the work)."""
     task = _task(
@@ -1271,7 +1343,7 @@ async def test_close_task_commit_diff_excludes_uncommitted_changes(
             has_uncommitted_changes=True,
             file_count=5,
         )
-        mock_pm.return_value.get.return_value = MagicMock(repo_path="/test/repo")
+        mock_pm.return_value.get.return_value = MagicMock(repo_path=repo_path)
 
         registry = create_task_registry(
             task_manager=mock_task_manager,
@@ -1291,7 +1363,7 @@ async def test_close_task_commit_diff_excludes_uncommitted_changes(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_close_task_with_commits_does_not_fallback_to_smart_context(
-    mock_task_manager, mock_task_validator
+    mock_task_manager, mock_task_validator, repo_path: str
 ):
     """Test that close_task with linked commits doesn't fall back to smart context.
 
@@ -1335,7 +1407,7 @@ async def test_close_task_with_commits_does_not_fallback_to_smart_context(
             file_count=0,
         )
         mock_smart_context.return_value = "Smart context as fallback for empty diff"
-        mock_pm.return_value.get.return_value = MagicMock(repo_path="/test/repo")
+        mock_pm.return_value.get.return_value = MagicMock(repo_path=repo_path)
 
         registry = create_task_registry(
             task_manager=mock_task_manager,
