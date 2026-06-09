@@ -263,10 +263,19 @@ pub fn delete_points_by_filter(
 
     let data: Value = resp.json()?;
     if let Some(result) = data.get("result") {
-        let operation_status = result
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("completed");
+        let Some(operation_status) = result.get("status").and_then(Value::as_str) else {
+            let operation_status = result
+                .get("status")
+                .map(Value::to_string)
+                .unwrap_or_else(|| "<missing>".to_string());
+            return Err(QdrantError::OperationStatus {
+                operation: "delete points",
+                operation_status,
+                collection: Some(collection.to_string()),
+                request: Some(format!("POST {request_path}")),
+            }
+            .into());
+        };
         if operation_status != "completed" {
             return Err(QdrantError::OperationStatus {
                 operation: "delete points",
@@ -910,18 +919,7 @@ mod tests {
     fn collection_lifecycle_ensures_schema_and_deletes_filtered_points() {
         let (schema_url, schema_handle) = spawn_qdrant_response(
             200,
-            json!({
-                "result": {
-                    "config": {
-                        "params": {
-                            "vectors": {
-                                "size": 3,
-                                "distance": "Cosine"
-                            }
-                        }
-                    }
-                }
-            }),
+            json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": "Cosine"}}}}}),
         );
         let config = QdrantConfig {
             url: Some(schema_url),
@@ -974,6 +972,21 @@ mod tests {
         ));
         assert!(request.contains("\"path\""));
         assert!(request.contains("\"notes/page.md\""));
+
+        for body in [
+            json!({"status": "ok", "result": {}}),
+            json!({"status": "ok", "result": {"status": 7}}),
+        ] {
+            let (delete_url, _delete_handle) = spawn_qdrant_response(200, body);
+            let config = QdrantConfig {
+                url: Some(delete_url),
+                api_key: None,
+            };
+            let error =
+                delete_points_by_filter(&config, "gwiki_project_project-1", json!({"must": []}))
+                    .expect_err("malformed delete operation status should fail");
+            assert!(error.downcast_ref::<QdrantError>().is_some());
+        }
     }
 
     fn spawn_qdrant_response(status: u16, body: Value) -> (String, RequestHandle) {

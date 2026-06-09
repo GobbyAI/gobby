@@ -462,8 +462,6 @@ mod tests {
 
     use super::*;
 
-    static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     #[test]
     fn librarian_detects_and_proposes_without_rewriting_pages() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -602,7 +600,6 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn librarian_requires_configured_postgres_index() {
-        let _guard = ENV_TEST_LOCK.lock().expect("env test lock");
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path();
         write_page(

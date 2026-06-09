@@ -27,8 +27,9 @@ impl WikiGraphFacts {
             }
 
             let citation_node = citation_node(source);
-            if node_ids.insert(citation_node.id.clone()) {
-                nodes.push(citation_node.clone());
+            let citation_node_id = citation_node.id.clone();
+            if node_ids.insert(citation_node_id.clone()) {
+                nodes.push(citation_node);
             }
 
             edges.trust.push(GraphExportEdge {
@@ -38,7 +39,7 @@ impl WikiGraphFacts {
                 raw_target: None,
             });
             edges.audit.push(GraphExportEdge {
-                source: citation_node.id,
+                source: citation_node_id,
                 target: source_node_id(&source.scope, &source.source_path),
                 kind: "cites",
                 raw_target: None,
@@ -148,6 +149,8 @@ pub fn render_graph_report(export: &GraphExport) -> String {
         .edges
         .links
         .iter()
+        .chain(export.edges.imports.iter())
+        .chain(export.edges.calls.iter())
         .chain(export.edges.trust.iter())
         .chain(export.edges.audit.iter())
     {
@@ -215,16 +218,28 @@ mod tests {
                 source_path: "raw/source.md".into(),
                 document_path: "wiki/shared.md".into(),
             }],
-            code_edges: vec![WikiGraphCodeEdge {
-                scope: project,
-                document_path: PathBuf::from("wiki/shared.md"),
-                source: "src/lib.rs:run".to_string(),
-                target: "src/main.rs:main".to_string(),
-                kind: "calls".to_string(),
-                direction: "outgoing".to_string(),
-                line: Some(1),
-                provenance: "test".to_string(),
-            }],
+            code_edges: vec![
+                WikiGraphCodeEdge {
+                    scope: project.clone(),
+                    document_path: PathBuf::from("wiki/shared.md"),
+                    source: "src/lib.rs".to_string(),
+                    target: "crate::main".to_string(),
+                    kind: "imports".to_string(),
+                    direction: "outgoing".to_string(),
+                    line: None,
+                    provenance: "test".to_string(),
+                },
+                WikiGraphCodeEdge {
+                    scope: project,
+                    document_path: PathBuf::from("wiki/shared.md"),
+                    source: "src/lib.rs:run".to_string(),
+                    target: "src/main.rs:main".to_string(),
+                    kind: "calls".to_string(),
+                    direction: "outgoing".to_string(),
+                    line: Some(1),
+                    provenance: "test".to_string(),
+                },
+            ],
         };
 
         let export = facts.export_graph(GraphExportOptions::available());
@@ -247,6 +262,10 @@ mod tests {
             "document:topic:project-1:wiki/shared.md"
         );
         assert_eq!(
+            export.edges.imports[0].source,
+            "code:project:project-1:src/lib.rs"
+        );
+        assert_eq!(
             export.edges.calls[0].source,
             "code:project:project-1:src/lib.rs:run"
         );
@@ -254,5 +273,14 @@ mod tests {
             export.edges.calls[0].target,
             "code:project:project-1:src/main.rs:main"
         );
+        let report = render_graph_report(&export);
+        assert!(
+            report.contains(
+                "code_project_project_1_src_lib_rs --> code_project_project_1_crate__main"
+            )
+        );
+        assert!(report.contains(
+            "code_project_project_1_src_lib_rs_run --> code_project_project_1_src_main_rs_main"
+        ));
     }
 }

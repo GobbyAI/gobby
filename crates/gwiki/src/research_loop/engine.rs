@@ -560,8 +560,8 @@ fn citation_matches_source(citation: &ResearchCodeCitation, source: &str) -> boo
         return false;
     }
     source_components == citation_components
-        || source_components.ends_with(&citation_components)
-        || source_components.last() == citation_components.last()
+        || (citation_components.len() >= 2 && source_components.ends_with(&citation_components))
+        || trailing_path_components_match(&source_components, &citation_components, 2)
 }
 
 fn path_components(value: &str) -> Vec<&str> {
@@ -569,6 +569,17 @@ fn path_components(value: &str) -> Vec<&str> {
         .split(['/', '\\'])
         .filter(|component| !component.is_empty() && *component != ".")
         .collect()
+}
+
+fn trailing_path_components_match(
+    source: &[&str],
+    citation: &[&str],
+    min_components: usize,
+) -> bool {
+    if source.len() < min_components || citation.len() < min_components {
+        return false;
+    }
+    source[source.len() - min_components..] == citation[citation.len() - min_components..]
 }
 
 fn dedup_code_citations(citations: Vec<ResearchCodeCitation>) -> Vec<ResearchCodeCitation> {
@@ -597,4 +608,34 @@ enum StepOutcome {
 enum NoteWriteResult {
     Written { progress: bool },
     Conflict,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn citation(file: &str) -> ResearchCodeCitation {
+        ResearchCodeCitation {
+            file: file.to_string(),
+            line: None,
+            symbol: None,
+            provenance: vec!["search".to_string()],
+        }
+    }
+
+    #[test]
+    fn citation_matching_requires_two_components_for_fuzzy_fallback() {
+        assert!(!citation_matches_source(
+            &citation("lib.rs"),
+            "other/src/lib.rs"
+        ));
+        assert!(citation_matches_source(
+            &citation("src/lib.rs"),
+            "other/src/lib.rs"
+        ));
+        assert!(citation_matches_source(
+            &citation("other/src/lib.rs"),
+            "src/lib.rs"
+        ));
+    }
 }

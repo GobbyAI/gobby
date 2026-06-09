@@ -20,6 +20,10 @@ use crate::{
     CommandOutcome, ReviewReportOptions, ScopeIdentity, ScopeSelection, WikiError, exports,
 };
 
+const DEGRADED_FALKORDB_UNAVAILABLE: &str = "falkordb_unavailable";
+const DEGRADED_GCODE_CODE_GRAPH_UNAVAILABLE: &str = "gcode_code_graph_unavailable";
+const DEGRADED_SHARED_CODE_GRAPH_UNAVAILABLE: &str = "shared_code_graph_unavailable";
+
 pub(crate) fn execute(
     selection: ScopeSelection,
     options: ReviewReportOptions,
@@ -63,7 +67,7 @@ pub(crate) fn execute(
         && matches!(resolved.search_scope, SearchScope::Project { .. })
         && !degraded_sources
             .iter()
-            .any(|source| source.contains("code_graph") || source.contains("falkordb"));
+            .any(|source| is_graph_blocking_degraded_source(source));
     let analytics_graph = graph_ready.then(|| analytics_graph_from_edges(&changes, &neighborhoods));
     let report = build_report_from_parts(ReportParts {
         scope: resolved.output_scope.clone(),
@@ -293,7 +297,7 @@ fn render_risky_shifts(markdown: &mut String, report: &ReviewReport) {
     if report
         .degraded_sources
         .iter()
-        .any(|source| source.contains("code_graph") || source.contains("falkordb"))
+        .any(|source| is_graph_blocking_degraded_source(source))
     {
         markdown.push_str("- graph/analytics unavailable; risky dependency shifts omitted\n");
         return;
@@ -322,12 +326,12 @@ fn graph_neighborhoods(
     degraded_sources: &mut Vec<String>,
 ) -> Result<Vec<CodeGraphEdge>, WikiError> {
     let SearchScope::Project { project_id } = scope else {
-        degraded_sources.push("shared_code_graph_unavailable".to_string());
+        degraded_sources.push(DEGRADED_SHARED_CODE_GRAPH_UNAVAILABLE.to_string());
         return Ok(Vec::new());
     };
     let Some(falkor) = falkor else {
-        degraded_sources.push("falkordb_unavailable".to_string());
-        degraded_sources.push("shared_code_graph_unavailable".to_string());
+        degraded_sources.push(DEGRADED_FALKORDB_UNAVAILABLE.to_string());
+        degraded_sources.push(DEGRADED_SHARED_CODE_GRAPH_UNAVAILABLE.to_string());
         return Ok(Vec::new());
     };
     let mut edges = Vec::new();
@@ -564,9 +568,10 @@ fn unique_edges(edges: Vec<CodeGraphEdge>) -> Vec<CodeGraphEdge> {
 
 fn degradation_source(degradation: &DegradationKind) -> String {
     match degradation {
-        DegradationKind::ServiceUnavailable { service, .. } => {
-            format!("{service}_unavailable")
+        DegradationKind::ServiceUnavailable { service, .. } if service == "gcode_code_graph" => {
+            DEGRADED_GCODE_CODE_GRAPH_UNAVAILABLE.to_string()
         }
+        DegradationKind::ServiceUnavailable { service, .. } => format!("{service}_unavailable"),
         DegradationKind::PartialSearch { unavailable, .. } => {
             format!("partial_search_missing_{}", unavailable.join("_"))
         }
@@ -574,6 +579,15 @@ fn degradation_source(degradation: &DegradationKind) -> String {
         DegradationKind::StaleIndex { .. } => "stale_index".to_string(),
         DegradationKind::SkippedArtifacts { .. } => "skipped_artifacts".to_string(),
     }
+}
+
+fn is_graph_blocking_degraded_source(source: &str) -> bool {
+    matches!(
+        source,
+        DEGRADED_FALKORDB_UNAVAILABLE
+            | DEGRADED_GCODE_CODE_GRAPH_UNAVAILABLE
+            | DEGRADED_SHARED_CODE_GRAPH_UNAVAILABLE
+    )
 }
 
 fn optional_falkor_config(conn: &mut postgres::Client) -> Result<Option<FalkorConfig>, WikiError> {

@@ -408,4 +408,36 @@ mod tests {
         assert_eq!(detect_language("src/app.ts"), Some("typescript"));
         assert_eq!(detect_language("src/app.tsx"), Some("typescript"));
     }
+
+    #[test]
+    fn tsx_paths_use_tsx_grammar() {
+        let language = get_ts_language_for_path("typescript", "src/app.tsx").unwrap();
+        assert!(parses_without_error(
+            language,
+            "export const View = () => <section data-id=\"x\" />;",
+        ));
+    }
+
+    #[test]
+    fn ts_paths_keep_typescript_grammar() {
+        let language = get_ts_language_for_path("typescript", "src/app.ts").unwrap();
+        assert!(parses_with_error(
+            language,
+            "export const View = () => <section />;"
+        ));
+    }
+
+    fn parses_without_error(language: Language, source: &str) -> bool {
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&language).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        !tree.root_node().has_error()
+    }
+
+    fn parses_with_error(language: Language, source: &str) -> bool {
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&language).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        tree.root_node().has_error()
+    }
 }

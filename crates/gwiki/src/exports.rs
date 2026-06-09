@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use crate::graph::{GraphExportOptions, WikiGraphFacts, render_graph_report};
@@ -146,24 +147,29 @@ pub fn export_graph_artifacts(
         source: error,
     })?;
     let report = render_graph_report(&export);
-    Ok(vec![
-        write_export(
-            root,
-            ExportRequest {
-                filename: "graph.json".to_string(),
-                kind: ExportKind::Graph,
-                contents: graph_json,
-            },
-        )?,
-        write_export(
-            root,
-            ExportRequest {
-                filename: "GRAPH_REPORT.md".to_string(),
-                kind: ExportKind::Report,
-                contents: report,
-            },
-        )?,
-    ])
+    let graph_artifact = write_export(
+        root,
+        ExportRequest {
+            filename: "graph.json".to_string(),
+            kind: ExportKind::Graph,
+            contents: graph_json,
+        },
+    )?;
+    let report_artifact = match write_export(
+        root,
+        ExportRequest {
+            filename: "GRAPH_REPORT.md".to_string(),
+            kind: ExportKind::Report,
+            contents: report,
+        },
+    ) {
+        Ok(artifact) => artifact,
+        Err(error) => {
+            let _ = fs::remove_file(&graph_artifact.path);
+            return Err(error);
+        }
+    };
+    Ok(vec![graph_artifact, report_artifact])
 }
 
 pub fn export_markdown_report(
@@ -440,5 +446,24 @@ mod tests {
         assert!(report.contains(
             "document_project_project_123_wiki_pages_overview_md --> document_project_project_123_code_src_lib_rs"
         ));
+    }
+
+    #[test]
+    fn graph_export_removes_json_when_report_write_fails() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let outputs = root.join("outputs");
+        fs::create_dir_all(&outputs).expect("outputs dir");
+        fs::create_dir(outputs.join("GRAPH_REPORT.md")).expect("blocking dir");
+
+        let error = export_graph_artifacts(
+            root,
+            &WikiGraphFacts::default(),
+            GraphExportOptions::available(),
+        )
+        .expect_err("report path directory should fail");
+
+        assert!(error.to_string().contains("GRAPH_REPORT.md"));
+        assert!(!outputs.join("graph.json").exists());
     }
 }

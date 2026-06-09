@@ -40,9 +40,19 @@ pub(crate) fn render_architecture_dependency_mermaid(
     if edges.is_empty() {
         return None;
     }
+    let seed_components = repo_mermaid_seed_modules(&edges);
+    let bounded_edges = bounded_component_edges(
+        &seed_components,
+        &edges,
+        MAX_MERMAID_HOPS,
+        MAX_MERMAID_EDGES,
+    );
+    if bounded_edges.is_empty() {
+        return None;
+    }
 
     let mut diagram = "```mermaid\ngraph LR\n".to_string();
-    for (source, target) in edges {
+    for (source, target) in bounded_edges {
         let _ = writeln!(
             diagram,
             "    {}[\"{}\"] --> {}[\"{}\"]",
@@ -54,6 +64,22 @@ pub(crate) fn render_architecture_dependency_mermaid(
     }
     diagram.push_str("```\n");
     Some(diagram)
+}
+
+fn repo_mermaid_seed_modules(edges: &BTreeSet<(String, String)>) -> BTreeSet<String> {
+    let top_level = edges
+        .iter()
+        .flat_map(|(source, target)| [source, target])
+        .filter(|module| parent_module(module).is_none())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if !top_level.is_empty() {
+        return top_level;
+    }
+    edges
+        .iter()
+        .flat_map(|(source, target)| [source.clone(), target.clone()])
+        .collect()
 }
 
 fn collect_import_module_edges(
@@ -343,7 +369,7 @@ pub(crate) fn build_repo_doc(
         prompts::REPO_SYSTEM,
     )
     .unwrap_or(fallback);
-    let summary = ground_text(&generated, &source_spans, &citation_list(&source_spans));
+    let summary = ground_text(&generated, &source_spans, &citation_markers(&source_spans));
 
     render_repo_doc(&summary, &top_modules, &root_files, &source_spans)
 }
@@ -356,26 +382,25 @@ pub(crate) fn render_repo_doc(
 ) -> String {
     let mut doc = frontmatter("Repository Overview", "code_repo", source_spans);
     doc.push_str("# Repository Overview\n\n");
-    write_section(&mut doc, "Overview", summary);
+    let summary = replace_citations_with_markers(summary, source_spans);
+    write_section(&mut doc, "Overview", &summary);
     if !modules.is_empty() {
         doc.push_str("## Modules\n\n");
         for module in modules {
-            let _ = writeln!(
-                doc,
-                "- {} - {}",
-                module_wikilink(&module.module),
-                module.summary
-            );
+            let summary = replace_citations_with_markers(&module.summary, source_spans);
+            let _ = writeln!(doc, "- {} - {}", module_wikilink(&module.module), summary);
         }
         doc.push('\n');
     }
     if !files.is_empty() {
         doc.push_str("## Files\n\n");
         for file in files {
-            let _ = writeln!(doc, "- {} - {}", file_wikilink(&file.path), file.summary);
+            let summary = replace_citations_with_markers(&file.summary, source_spans);
+            let _ = writeln!(doc, "- {} - {}", file_wikilink(&file.path), summary);
         }
         doc.push('\n');
     }
+    write_references(&mut doc, source_spans);
     doc
 }
 

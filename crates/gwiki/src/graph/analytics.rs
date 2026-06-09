@@ -122,11 +122,16 @@ fn insert_node(
     kind: impl Into<String>,
     weight: f64,
 ) {
-    nodes.entry(id.clone()).or_insert_with(|| AnalyticsNode {
-        id,
-        kind: kind.into(),
-        weight,
-    });
+    let kind = kind.into();
+    if let Some(existing) = nodes.get(&id) {
+        assert_eq!(existing.kind, kind, "duplicate graph node kind mismatch");
+        assert_eq!(
+            existing.weight, weight,
+            "duplicate graph node weight mismatch"
+        );
+        return;
+    }
+    nodes.insert(id.clone(), AnalyticsNode { id, kind, weight });
 }
 
 impl GraphExportAnalytics {

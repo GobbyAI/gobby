@@ -169,6 +169,45 @@ pub(crate) fn citation_list(spans: &[SourceSpan]) -> String {
         .join("\n")
 }
 
+pub(crate) fn citation_markers(spans: &[SourceSpan]) -> String {
+    citation_references(spans)
+        .into_iter()
+        .map(|(index, _)| format!("[{index}]"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub(crate) fn replace_citations_with_markers(text: &str, spans: &[SourceSpan]) -> String {
+    let mut marked = text.to_string();
+    for (index, citation) in citation_references(spans) {
+        marked = marked.replace(&citation, &format!("[{index}]"));
+    }
+    marked
+}
+
+pub(crate) fn write_references(doc: &mut String, spans: &[SourceSpan]) {
+    let references = citation_references(spans);
+    if references.is_empty() {
+        return;
+    }
+    doc.push_str("## References\n\n");
+    for (index, citation) in references {
+        let _ = writeln!(doc, "- [{index}] {citation}");
+    }
+    doc.push('\n');
+}
+
+fn citation_references(spans: &[SourceSpan]) -> Vec<(usize, String)> {
+    spans
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .enumerate()
+        .map(|(index, span)| (index + 1, span.citation()))
+        .collect()
+}
+
 pub(crate) fn ground_text(
     text: &str,
     valid_spans: &[SourceSpan],

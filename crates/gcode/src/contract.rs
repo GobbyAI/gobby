@@ -21,17 +21,13 @@ pub fn contract() -> CliContract {
         }),
         commands: vec![
             CommandContract {
-                name: "contract",
-                summary: "Emit this CLI contract.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![format_flag()],
                 json_output_keys: contract_keys(),
-                ..CommandContract::default()
+                ..CommandContract::new("contract", "Emit this CLI contract.")
             },
             CommandContract {
-                name: "index",
-                summary: "Index a directory or specific files into the code index.",
                 daemon_consumed: true,
                 positionals: vec![PositionalContract {
                     name: "PATH",
@@ -52,11 +48,12 @@ pub fn contract() -> CliContract {
                     "skipped_files",
                     "errors",
                 ],
-                ..CommandContract::default()
+                ..CommandContract::new(
+                    "index",
+                    "Index a directory or specific files into the code index.",
+                )
             },
             CommandContract {
-                name: "search",
-                summary: "Hybrid symbol and content search over the code index.",
                 daemon_consumed: true,
                 positionals: vec![
                     PositionalContract::required("QUERY"),
@@ -68,11 +65,12 @@ pub fn contract() -> CliContract {
                 ],
                 flags: search_flags(),
                 json_output_keys: search_keys(),
-                ..CommandContract::default()
+                ..CommandContract::new(
+                    "search",
+                    "Hybrid symbol and content search over the code index.",
+                )
             },
             CommandContract {
-                name: "search-symbol",
-                summary: "Exact-first symbol/name search with deterministic ranking.",
                 daemon_consumed: true,
                 positionals: vec![
                     PositionalContract::required("QUERY"),
@@ -88,11 +86,12 @@ pub fn contract() -> CliContract {
                     flags
                 },
                 json_output_keys: search_keys(),
-                ..CommandContract::default()
+                ..CommandContract::new(
+                    "search-symbol",
+                    "Exact-first symbol/name search with deterministic ranking.",
+                )
             },
             CommandContract {
-                name: "grep",
-                summary: "Indexed exact pattern search over code content chunks.",
                 daemon_consumed: true,
                 positionals: vec![
                     PositionalContract::required("PATTERN"),
@@ -104,29 +103,29 @@ pub fn contract() -> CliContract {
                 ],
                 flags: grep_flags(),
                 json_output_keys: grep_keys(),
-                ..CommandContract::default()
+                ..CommandContract::new(
+                    "grep",
+                    "Indexed exact pattern search over code content chunks.",
+                )
             },
             CommandContract {
-                name: "callers",
-                summary: "Find callers of a symbol UUID or name.",
                 daemon_consumed: true,
                 positionals: vec![PositionalContract::required("SYMBOL")],
                 flags: graph_read_flags(),
                 json_output_keys: graph_read_keys(),
-                ..CommandContract::default()
+                ..CommandContract::new("callers", "Find callers of a symbol UUID or name.")
             },
             CommandContract {
-                name: "usages",
-                summary: "Find incoming call usages of a symbol UUID or name.",
                 daemon_consumed: true,
                 positionals: vec![PositionalContract::required("SYMBOL")],
                 flags: graph_read_flags(),
                 json_output_keys: graph_read_keys(),
-                ..CommandContract::default()
+                ..CommandContract::new(
+                    "usages",
+                    "Find incoming call usages of a symbol UUID or name.",
+                )
             },
             CommandContract {
-                name: "codewiki",
-                summary: "Generate vault-ready hierarchical code documentation.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![
@@ -147,11 +146,12 @@ pub fn contract() -> CliContract {
                     "symbols",
                     "ai_enabled",
                 ],
-                ..CommandContract::default()
+                ..CommandContract::new(
+                    "codewiki",
+                    "Generate vault-ready hierarchical code documentation.",
+                )
             },
             CommandContract {
-                name: "graph sync-file",
-                summary: "Sync one indexed file into the code-index graph projection.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![
@@ -167,29 +167,32 @@ pub fn contract() -> CliContract {
                     "skipped",
                     "summary",
                 ],
-                ..CommandContract::default()
+                ..CommandContract::new(
+                    "graph sync-file",
+                    "Sync one indexed file into the code-index graph projection.",
+                )
             },
             CommandContract {
-                name: "graph overview",
-                summary: "Show an overview graph for the current project.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![FlagContract::value("--limit", "N"), format_flag()],
                 json_output_keys: graph_payload_keys(),
-                ..CommandContract::default()
+                ..CommandContract::new(
+                    "graph overview",
+                    "Show an overview graph for the current project.",
+                )
             },
             CommandContract {
-                name: "graph file",
-                summary: "Show graph nodes and links for one indexed file.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![FlagContract::value("--file", "FILE"), format_flag()],
                 json_output_keys: graph_payload_keys(),
-                ..CommandContract::default()
+                ..CommandContract::new(
+                    "graph file",
+                    "Show graph nodes and links for one indexed file.",
+                )
             },
             CommandContract {
-                name: "graph neighbors",
-                summary: "Show graph neighbors for one symbol ID.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![
@@ -198,11 +201,9 @@ pub fn contract() -> CliContract {
                     format_flag(),
                 ],
                 json_output_keys: graph_payload_keys(),
-                ..CommandContract::default()
+                ..CommandContract::new("graph neighbors", "Show graph neighbors for one symbol ID.")
             },
             CommandContract {
-                name: "graph blast-radius",
-                summary: "Show transitive graph impact for a symbol ID or file path.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![
@@ -213,11 +214,12 @@ pub fn contract() -> CliContract {
                     format_flag(),
                 ],
                 json_output_keys: graph_payload_keys(),
-                ..CommandContract::default()
+                ..CommandContract::new(
+                    "graph blast-radius",
+                    "Show transitive graph impact for a symbol ID or file path.",
+                )
             },
             CommandContract {
-                name: "graph clear",
-                summary: "Clear the current project's code-index graph projection.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![
@@ -225,16 +227,20 @@ pub fn contract() -> CliContract {
                     format_flag(),
                 ],
                 json_output_keys: graph_lifecycle_keys(),
-                ..CommandContract::default()
+                ..CommandContract::new(
+                    "graph clear",
+                    "Clear the current project's code-index graph projection.",
+                )
             },
             CommandContract {
-                name: "graph rebuild",
-                summary: "Rebuild the current project's code-index graph projection from PostgreSQL facts.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![format_flag()],
                 json_output_keys: graph_lifecycle_keys(),
-                ..CommandContract::default()
+                ..CommandContract::new(
+                    "graph rebuild",
+                    "Rebuild the current project's code-index graph projection from PostgreSQL facts.",
+                )
             },
         ],
         error_codes: vec![

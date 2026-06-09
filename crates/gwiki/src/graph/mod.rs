@@ -181,26 +181,26 @@ pub fn graph_write_statements(facts: &WikiGraphFacts) -> Vec<GraphStatement> {
             continue;
         }
         statements.push(match &link.target {
-			WikiGraphLinkTarget::Resolved(target_path) => {
-				if !documents.contains(&(link.scope.clone(), target_path.clone())) {
-					continue;
-				}
-				GraphStatement {
-					cypher: format!(
-						"MATCH (source:{} {{{}}}) MATCH (target:{} {{{}}}) MERGE (source)-[:{} {{{}: {}}}]->(target)",
-						label(WIKI_DOC_LABEL),
-						scoped_path_properties(&link.scope, &link.source_path),
-						label(WIKI_DOC_LABEL),
-						scoped_path_properties(&link.scope, target_path),
-						rel(WIKI_LINKS_TO_REL),
-						property("raw_target"),
-						string(&link.raw_target),
-					),
-				}
-			}
-			WikiGraphLinkTarget::Unresolved(target) => GraphStatement {
-				cypher: format!(
-					"MATCH (source:{} {{{}}}) MERGE (target:{} {{{}, {}: {}}}) MERGE (source)-[:{} {{{}: {}}}]->(target)",
+            WikiGraphLinkTarget::Resolved(target_path) => {
+                if !documents.contains(&(link.scope.clone(), target_path.clone())) {
+                    continue;
+                }
+                GraphStatement {
+                    cypher: format!(
+                        "MATCH (source:{} {{{}}}) MATCH (target:{} {{{}}}) MERGE (source)-[:{} {{{}: {}}}]->(target)",
+                        label(WIKI_DOC_LABEL),
+                        scoped_path_properties(&link.scope, &link.source_path),
+                        label(WIKI_DOC_LABEL),
+                        scoped_path_properties(&link.scope, target_path),
+                        rel(WIKI_LINKS_TO_REL),
+                        property("raw_target"),
+                        string(&link.raw_target),
+                    ),
+                }
+            }
+            WikiGraphLinkTarget::Unresolved(target) => GraphStatement {
+                cypher: format!(
+                    "MATCH (source:{} {{{}}}) MERGE (target:{} {{{}, {}: {}}}) MERGE (source)-[:{} {{{}: {}}}]->(target)",
                     label(WIKI_DOC_LABEL),
                     scoped_path_properties(&link.scope, &link.source_path),
                     label(WIKI_TARGET_LABEL),

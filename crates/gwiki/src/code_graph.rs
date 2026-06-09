@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 
 use gobby_core::config::FalkorConfig;
@@ -97,17 +97,22 @@ fn affected_pages_for_changes_with_edges(
         .filter_map(|symbol| normalized_source_id(symbol))
         .collect::<BTreeSet<_>>();
     let mut degradations = Vec::new();
+    let mut degradation_keys = HashSet::new();
 
     for file in &changes.files {
         let (edges, degradation) = edges_for(CodeGraphQuery::File(file))?;
-        if let Some(degradation) = degradation {
+        if let Some(degradation) = degradation
+            && degradation_keys.insert(degradation_key(&degradation))
+        {
             degradations.push(degradation);
         }
         add_edge_paths(&mut target_paths, edges);
     }
     for symbol in &changes.symbols {
         let (edges, degradation) = edges_for(CodeGraphQuery::Symbol(symbol))?;
-        if let Some(degradation) = degradation {
+        if let Some(degradation) = degradation
+            && degradation_keys.insert(degradation_key(&degradation))
+        {
             degradations.push(degradation);
         }
         add_edge_paths(&mut target_paths, edges);
@@ -173,7 +178,7 @@ fn query_edges(
     target: CodeGraphQuery<'_>,
 ) -> anyhow::Result<Vec<CodeGraphEdge>> {
     let rows = client.query(&graph_query(target), Some(query_params(project, target)))?;
-    Ok(rows.into_iter().map(edge_from_row).collect())
+    Ok(rows.into_iter().filter_map(edge_from_row).collect())
 }
 
 fn query_params(project: &str, target: CodeGraphQuery<'_>) -> HashMap<String, String> {
@@ -189,14 +194,52 @@ fn query_params(project: &str, target: CodeGraphQuery<'_>) -> HashMap<String, St
     params
 }
 
-fn edge_from_row(row: Row) -> CodeGraphEdge {
-    CodeGraphEdge {
-        edge: row_string(&row, "edge").unwrap_or_default(),
-        source: row_string(&row, "source").unwrap_or_default(),
-        target: row_string(&row, "target").unwrap_or_default(),
+fn edge_from_row(row: Row) -> Option<CodeGraphEdge> {
+    let edge = required_row_string(&row, "edge")?;
+    let source = required_row_string(&row, "source")?;
+    let target = required_row_string(&row, "target")?;
+    Some(CodeGraphEdge {
+        edge,
+        source,
+        target,
         detail: row_string(&row, "detail"),
         file_path: row_string(&row, "file_path"),
         line: row_i64(&row, "line"),
+    })
+}
+
+fn required_row_string(row: &Row, key: &str) -> Option<String> {
+    let value = row_string(row, key);
+    if value
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return value;
+    }
+    log::warn!("skipping malformed code graph row with missing or empty {key}");
+    None
+}
+
+fn degradation_key(degradation: &DegradationKind) -> String {
+    match degradation {
+        DegradationKind::ServiceUnavailable { service, state } => {
+            format!("service:{service}:{state:?}")
+        }
+        DegradationKind::PartialSearch {
+            available,
+            unavailable,
+        } => format!(
+            "partial-search:{}:{}",
+            available.join(","),
+            unavailable.join(",")
+        ),
+        DegradationKind::PartialData { component, message } => {
+            format!("partial-data:{component}:{message}")
+        }
+        DegradationKind::StaleIndex { paths } => format!("stale-index:{}", paths.join(",")),
+        DegradationKind::SkippedArtifacts { count, reason } => {
+            format!("skipped-artifacts:{count}:{reason}")
+        }
     }
 }
 
@@ -256,6 +299,20 @@ mod tests {
     #[test]
     fn code_graph_name_matches_gcode_projection() {
         assert_eq!(CODE_GRAPH_NAME, "gobby_code");
+    }
+
+    #[test]
+    fn malformed_graph_rows_are_skipped() {
+        let mut missing_source = Row::new();
+        missing_source.insert("edge".to_string(), Value::String("CALLS".to_string()));
+        missing_source.insert("target".to_string(), Value::String("callee".to_string()));
+        assert!(edge_from_row(missing_source).is_none());
+
+        let mut valid = Row::new();
+        valid.insert("edge".to_string(), Value::String("CALLS".to_string()));
+        valid.insert("source".to_string(), Value::String("caller".to_string()));
+        valid.insert("target".to_string(), Value::String("callee".to_string()));
+        assert_eq!(edge_from_row(valid).unwrap().source, "caller");
     }
 
     #[test]
@@ -406,6 +463,32 @@ mod tests {
             affected.pages[0].page_path,
             std::path::PathBuf::from("code/a.md")
         );
+        assert_eq!(affected.degradations.len(), 1);
+    }
+
+    #[test]
+    fn duplicate_degradations_are_deduped_after_all_queries_run() {
+        let provenance = crate::provenance::ProvenanceGraph::default();
+        let changes = CodeChangeSet {
+            files: vec!["src/a.rs".to_string()],
+            symbols: vec!["symbol-a".to_string()],
+        };
+        let mut calls = Vec::new();
+        let affected = affected_pages_for_changes_with_edges(&provenance, &changes, |query| {
+            calls.push(format!("{query:?}"));
+            Ok((
+                Vec::new(),
+                Some(DegradationKind::ServiceUnavailable {
+                    service: GRAPH_SERVICE.to_string(),
+                    state: ServiceState::Unreachable {
+                        message: "synthetic outage".to_string(),
+                    },
+                }),
+            ))
+        })
+        .expect("affected pages");
+
+        assert_eq!(calls.len(), 2);
         assert_eq!(affected.degradations.len(), 1);
     }
 }

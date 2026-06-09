@@ -514,4 +514,18 @@ mod tests {
         assert_eq!(links[0].target, "Real");
         assert_eq!(links[1].target, "guide.md");
     }
+
+    #[test]
+    fn inline_code_inside_fenced_blocks_is_excluded() {
+        let markdown = concat!(
+            "```md\n",
+            "`[[Inside inline code in fence]]`\n",
+            "```\n",
+            "[[Outside]]\n",
+        );
+        let links = extract_links(markdown, ["Outside"]);
+
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target, "Outside");
+    }
 }

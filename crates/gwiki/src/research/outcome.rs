@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use serde_json::Value;
 
@@ -60,11 +60,11 @@ pub(crate) fn outcome_code_citations(
             let Some(file) = value.get("file").and_then(Value::as_str) else {
                 continue;
             };
-            if file.trim().is_empty() {
+            let Some(file) = sanitize_code_path(file) else {
                 continue;
-            }
+            };
             citations.push(ResearchCodeCitation {
-                file: file.trim().to_string(),
+                file,
                 line: value
                     .get("line")
                     .and_then(Value::as_u64)
@@ -95,6 +95,7 @@ pub(crate) fn dedup_code_citations(
     citations: Vec<ResearchCodeCitation>,
 ) -> Vec<ResearchCodeCitation> {
     let mut indexes = HashMap::new();
+    let mut seen = HashSet::new();
     let mut deduped = Vec::new();
     for mut citation in citations {
         dedup_code_citation_provenance(&mut citation.provenance);
@@ -103,19 +104,39 @@ pub(crate) fn dedup_code_citations(
             citation.line,
             citation.symbol.clone(),
         );
-        if let Some(index) = indexes.get(&key).copied() {
+        if seen.insert(key.clone()) {
+            indexes.insert(key, deduped.len());
+            deduped.push(citation);
+        } else if let Some(index) = indexes.get(&key).copied() {
             let existing: &mut ResearchCodeCitation = &mut deduped[index];
             for provenance in citation.provenance.drain(..) {
                 if !existing.provenance.contains(&provenance) {
                     existing.provenance.push(provenance);
                 }
             }
-        } else {
-            indexes.insert(key, deduped.len());
-            deduped.push(citation);
         }
     }
     deduped
+}
+
+fn sanitize_code_path(path: &str) -> Option<String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        return None;
+    }
+    let mut has_normal_component = false;
+    for component in path.components() {
+        match component {
+            Component::Normal(_) => has_normal_component = true,
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    has_normal_component.then(|| trimmed.to_string())
 }
 
 fn dedup_code_citation_provenance(provenance: &mut Vec<String>) {
@@ -361,6 +382,24 @@ mod tests {
             dedup_code_citations(vec![citation, other.clone(), reranked]),
             vec![merged, other]
         );
+    }
+
+    #[test]
+    fn outcome_code_citations_rejects_unsafe_paths() {
+        let payload = serde_json::json!({
+            "code_citations": [
+                {"file": " src/lib.rs ", "line": 7, "symbol": "handler"},
+                {"file": ""},
+                {"file": "/tmp/lib.rs"},
+                {"file": "../src/lib.rs"},
+                {"file": "src/../lib.rs"}
+            ]
+        });
+
+        let citations = outcome_code_citations(&payload, "search");
+
+        assert_eq!(citations.len(), 1);
+        assert_eq!(citations[0].file, "src/lib.rs");
     }
 
     #[test]

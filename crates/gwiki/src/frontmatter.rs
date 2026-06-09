@@ -25,6 +25,7 @@ pub struct WikiFrontmatter {
     pub trust: Option<String>,
     pub freshness: Option<String>,
     pub indexed_at: Option<String>,
+    // Preserve legacy or tool-specific frontmatter keys across parse/serialize.
     pub unknown: BTreeMap<String, Value>,
 }
 

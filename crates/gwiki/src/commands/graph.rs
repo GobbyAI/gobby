@@ -1,5 +1,5 @@
 use gobby_core::ai_context::{AiConfigSource, AiContext};
-use gobby_core::config::{AiRouting, QdrantConfig, resolve_embedding_config};
+use gobby_core::config::{AiRouting, ConfigSource, QdrantConfig, resolve_embedding_config};
 use gobby_core::gobby_home;
 use serde_json::json;
 
@@ -68,10 +68,24 @@ fn degraded_optional_sources(conn: &mut postgres::Client) -> Result<Vec<String>,
     }
 
     let ai_context = AiContext::resolve(None, &mut source);
-    let has_embedding = match ai_context
-        .binding(gobby_core::config::AiCapability::Embed)
-        .routing
-    {
+    let has_embedding = has_embedding_capability(
+        ai_context
+            .binding(gobby_core::config::AiCapability::Embed)
+            .routing,
+        &mut source,
+    );
+    let has_qdrant = gobby_core::config::resolve_qdrant_config(&mut source)
+        .filter(qdrant_config_has_url)
+        .is_some();
+    if !has_embedding || !has_qdrant {
+        degraded.push("semantic_relations_unavailable".to_string());
+    }
+
+    Ok(degraded)
+}
+
+fn has_embedding_capability(routing: AiRouting, source: &mut impl ConfigSource) -> bool {
+    match routing {
         AiRouting::Off => false,
         AiRouting::Daemon => {
             #[cfg(feature = "ai")]
@@ -83,7 +97,7 @@ fn degraded_optional_sources(conn: &mut postgres::Client) -> Result<Vec<String>,
                 false
             }
         }
-        AiRouting::Direct => resolve_embedding_config(&mut source).is_some(),
+        AiRouting::Direct => resolve_embedding_config(source).is_some(),
         AiRouting::Auto => {
             #[cfg(feature = "ai")]
             {
@@ -91,18 +105,10 @@ fn degraded_optional_sources(conn: &mut postgres::Client) -> Result<Vec<String>,
             }
             #[cfg(not(feature = "ai"))]
             {
-                resolve_embedding_config(&mut source).is_some()
+                resolve_embedding_config(source).is_some()
             }
         }
-    };
-    let has_qdrant = gobby_core::config::resolve_qdrant_config(&mut source)
-        .filter(qdrant_config_has_url)
-        .is_some();
-    if !has_embedding || !has_qdrant {
-        degraded.push("semantic_relations_unavailable".to_string());
     }
-
-    Ok(degraded)
 }
 
 fn qdrant_config_has_url(config: &QdrantConfig) -> bool {

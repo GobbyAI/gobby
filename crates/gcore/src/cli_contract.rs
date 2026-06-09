@@ -11,7 +11,7 @@ pub struct CliContract {
     pub error_codes: Vec<&'static str>,
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct CommandContract {
     pub name: &'static str,
     pub summary: &'static str,
@@ -27,6 +27,28 @@ pub struct CommandContract {
     pub multimodal: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub degradation: Option<DegradationContract>,
+}
+
+impl CommandContract {
+    pub fn new(name: &'static str, summary: &'static str) -> Self {
+        assert!(!name.is_empty(), "command contract name must not be empty");
+        assert!(
+            !summary.is_empty(),
+            "command contract summary must not be empty"
+        );
+        Self {
+            name,
+            summary,
+            daemon_consumed: false,
+            positionals: Vec::new(),
+            flags: Vec::new(),
+            json_output_keys: Vec::new(),
+            hard_dependencies: Vec::new(),
+            optional_dependencies: Vec::new(),
+            multimodal: None,
+            degradation: None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]

@@ -22,6 +22,8 @@ const CODE_FALKORDB_GRAPH_NAME: &str = "gobby_code";
 const CODE_GRAPH_PROVENANCE: &str = "shared_code_graph";
 const CODE_CALL_EDGE_TRUNCATION_COMPONENT: &str = "code_call_edges";
 const CODE_IMPORT_EDGE_TRUNCATION_COMPONENT: &str = "code_import_edges";
+const CODE_TOTAL_EDGE_TRUNCATION_COMPONENT: &str = "code_edges";
+const MAX_TOTAL_CODE_EDGES: usize = 1000;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SharedCodeGraphTruncation {
@@ -117,38 +119,76 @@ pub(crate) fn load_code_graph_edges(
         .collect::<Vec<_>>();
     let mut edges = Vec::new();
     let mut truncated_components = BTreeSet::new();
+    let mut remaining_edges = MAX_TOTAL_CODE_EDGES;
     for (scope, document_path, file_path) in code_documents {
+        let Some(call_limit) = remaining_code_edge_limit(limits.call_edge_limit, remaining_edges)
+        else {
+            truncated_components.insert(truncation_component(
+                CODE_TOTAL_EDGE_TRUNCATION_COMPONENT,
+                MAX_TOTAL_CODE_EDGES,
+            ));
+            break;
+        };
         let call_edges = code_call_edges(
             &mut client,
             project_id,
             &scope,
             &document_path,
             &file_path,
-            limits.call_edge_limit,
+            call_limit,
         )?;
         if call_edges.truncated {
-            truncated_components.insert(truncation_component(
+            record_code_edge_truncation(
+                &mut truncated_components,
                 CODE_CALL_EDGE_TRUNCATION_COMPONENT,
                 limits.call_edge_limit,
-            ));
+                call_limit,
+            );
         }
+        remaining_edges = remaining_edges.saturating_sub(call_edges.edges.len());
         edges.extend(call_edges.edges);
+        if remaining_edges == 0 {
+            truncated_components.insert(truncation_component(
+                CODE_TOTAL_EDGE_TRUNCATION_COMPONENT,
+                MAX_TOTAL_CODE_EDGES,
+            ));
+            break;
+        }
 
+        let Some(import_limit) =
+            remaining_code_edge_limit(limits.import_edge_limit, remaining_edges)
+        else {
+            truncated_components.insert(truncation_component(
+                CODE_TOTAL_EDGE_TRUNCATION_COMPONENT,
+                MAX_TOTAL_CODE_EDGES,
+            ));
+            break;
+        };
         let import_edges = code_import_edges(
             &mut client,
             project_id,
             &scope,
             &document_path,
             &file_path,
-            limits.import_edge_limit,
+            import_limit,
         )?;
         if import_edges.truncated {
-            truncated_components.insert(truncation_component(
+            record_code_edge_truncation(
+                &mut truncated_components,
                 CODE_IMPORT_EDGE_TRUNCATION_COMPONENT,
                 limits.import_edge_limit,
-            ));
+                import_limit,
+            );
         }
+        remaining_edges = remaining_edges.saturating_sub(import_edges.edges.len());
         edges.extend(import_edges.edges);
+        if remaining_edges == 0 {
+            truncated_components.insert(truncation_component(
+                CODE_TOTAL_EDGE_TRUNCATION_COMPONENT,
+                MAX_TOTAL_CODE_EDGES,
+            ));
+            break;
+        }
     }
     Ok(SharedCodeGraphEdges {
         edges,
@@ -277,6 +317,24 @@ fn truncate_to_limit<T>(rows: &mut Vec<T>, limit: usize) -> bool {
         rows.truncate(limit);
     }
     truncated
+}
+
+fn remaining_code_edge_limit(configured_limit: usize, remaining_edges: usize) -> Option<usize> {
+    (remaining_edges > 0).then_some(configured_limit.min(remaining_edges))
+}
+
+fn record_code_edge_truncation(
+    components: &mut BTreeSet<String>,
+    component: &str,
+    configured_limit: usize,
+    query_limit: usize,
+) {
+    let (component, limit) = if query_limit < configured_limit {
+        (CODE_TOTAL_EDGE_TRUNCATION_COMPONENT, MAX_TOTAL_CODE_EDGES)
+    } else {
+        (component, configured_limit)
+    };
+    components.insert(truncation_component(component, limit));
 }
 
 fn truncation_component(component: &str, limit: usize) -> String {
@@ -610,14 +668,8 @@ fn is_external_target(target: &str) -> bool {
 
 fn scope_params(scope: &SearchScope) -> HashMap<String, String> {
     HashMap::from([
-        (
-            "scope_kind".to_string(),
-            gobby_core::falkor::escape_string(scope.scope_kind()),
-        ),
-        (
-            "scope_id".to_string(),
-            gobby_core::falkor::escape_string(scope.scope_value()),
-        ),
+        ("scope_kind".to_string(), scope.scope_kind().to_string()),
+        ("scope_id".to_string(), scope.scope_value().to_string()),
     ])
 }
 
@@ -730,13 +782,13 @@ mod tests {
     }
 
     #[test]
-    fn graph_scope_params_are_cypher_string_literals() {
+    fn graph_scope_params_are_raw_parameter_values() {
         let params = scope_params(&SearchScope::topic("rust'async"));
 
-        assert_eq!(params.get("scope_kind").map(String::as_str), Some("'topic'"));
+        assert_eq!(params.get("scope_kind").map(String::as_str), Some("topic"));
         assert_eq!(
             params.get("scope_id").map(String::as_str),
-            Some("'rust\\'async'")
+            Some("rust'async")
         );
     }
 
@@ -796,6 +848,28 @@ mod tests {
             truncation_component(CODE_IMPORT_EDGE_TRUNCATION_COMPONENT, 9),
             "code_import_edges>9"
         );
+    }
+
+    #[test]
+    fn code_edge_query_limit_respects_total_remaining_cap() {
+        assert_eq!(
+            remaining_code_edge_limit(200, MAX_TOTAL_CODE_EDGES),
+            Some(200)
+        );
+        assert_eq!(remaining_code_edge_limit(200, 17), Some(17));
+        assert_eq!(remaining_code_edge_limit(200, 0), None);
+
+        let mut components = BTreeSet::new();
+        record_code_edge_truncation(
+            &mut components,
+            CODE_CALL_EDGE_TRUNCATION_COMPONENT,
+            200,
+            17,
+        );
+        assert!(components.contains(&truncation_component(
+            CODE_TOTAL_EDGE_TRUNCATION_COMPONENT,
+            MAX_TOTAL_CODE_EDGES
+        )));
     }
 
     #[test]
