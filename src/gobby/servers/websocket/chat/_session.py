@@ -329,8 +329,17 @@ class ChatSessionMixin:
         if not effective_provider:
             effective_provider = _normalize_web_chat_provider(provider)
         if not effective_provider and daemon_cfg is not None:
+            # The chat provider/model were migrated into the standardized
+            # ``candidates`` list ("provider/model" labels) by #11523, so the
+            # legacy ``chat.provider`` attribute no longer exists (it is always
+            # None). Resolve the configured default from the first usable
+            # candidate, mirroring ChatSession._default_model.
             chat_cfg = getattr(daemon_cfg, "chat", None)
-            effective_provider = _normalize_web_chat_provider(getattr(chat_cfg, "provider", None))
+            for candidate in getattr(chat_cfg, "candidates", ()) or ():
+                normalized = _normalize_web_chat_provider(str(candidate).partition("/")[0])
+                if normalized:
+                    effective_provider = normalized
+                    break
 
         pending_agents = getattr(self, "_pending_agents", {})
         pending_agent = pending_agents.pop(session_key, None)
