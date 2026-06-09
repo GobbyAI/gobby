@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from gobby.ai import (
     AICapability,
@@ -25,12 +25,14 @@ from gobby.ai import (
     build_daemon_text_generation_service,
     build_daemon_vision_extract_service,
 )
+from gobby.config.feature_base import FeatureProfile
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 
 logger = logging.getLogger(__name__)
+DEFAULT_TEXT_GENERATE_PROFILE = FeatureProfile.LOW.value
 _VISION_TEMP_DIR_NAME = "gobby-vision"
 _VISION_TEMP_MAX_AGE_SECONDS = 24 * 60 * 60
 _VISION_TEMP_CLEANUP_INTERVAL_SECONDS = max(60.0, min(3600.0, _VISION_TEMP_MAX_AGE_SECONDS / 2))
@@ -44,10 +46,20 @@ class TextGeneratePayload(BaseModel):
     provider: str | None = None
     profile: str | None = None
     candidates: tuple[str, ...] = ()
-    system_prompt: str | None = None
+    system_prompt: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("system_prompt", "system"),
+    )
     model: str | None = None
     max_tokens: int | None = Field(default=None, gt=0)
     cwd: str | None = None
+
+    @property
+    def effective_profile(self) -> str | None:
+        """Default generic generation to the daemon's LOW feature profile."""
+        if self.provider or self.model or self.profile or self.candidates:
+            return self.profile
+        return DEFAULT_TEXT_GENERATE_PROFILE
 
 
 def create_llm_router(server: HTTPServer) -> APIRouter:
@@ -73,7 +85,7 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
                 TextGenerationRequest(
                     prompt=payload.prompt,
                     provider=payload.provider,
-                    profile=payload.profile,
+                    profile=payload.effective_profile,
                     candidates=payload.candidates,
                     system_prompt=payload.system_prompt,
                     model=payload.model,

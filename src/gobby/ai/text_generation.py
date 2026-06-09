@@ -335,17 +335,26 @@ class TextGenerationService:
     def _candidate_requests(
         self, request: TextGenerationRequest
     ) -> tuple[TextGenerationRequest, ...]:
-        candidates = request.candidates
-        if not candidates and request.profile:
-            candidates = default_candidates_for_profile(request.profile)
-        if not candidates:
-            return (request,)
-        return tuple(
-            replace(request, provider=provider, model=model)
-            for provider, model in (
-                _parse_candidate(normalize_feature_candidate(candidate)) for candidate in candidates
+        if request.candidates:
+            return tuple(
+                replace(request, provider=provider, model=model)
+                for provider, model in (
+                    _parse_candidate(normalize_feature_candidate(candidate))
+                    for candidate in request.candidates
+                )
             )
-        )
+        if request.provider or request.model:
+            return (request,)
+        if request.profile:
+            candidates = default_candidates_for_profile(request.profile)
+            return tuple(
+                replace(request, provider=provider, model=model)
+                for provider, model in (
+                    _parse_candidate(normalize_feature_candidate(candidate))
+                    for candidate in candidates
+                )
+            )
+        return (request,)
 
     def _profile_default_fallback_requests(
         self,

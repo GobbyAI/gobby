@@ -151,6 +151,120 @@ def test_generate_selects_acp_backed_provider(
     ]
 
 
+def test_generate_defaults_to_feature_low_and_accepts_system_alias(
+    client: TestClient,
+    server_with_llm: MagicMock,
+) -> None:
+    codex = _FakeTextAdapter()
+    local = _FakeTextAdapter()
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.3-codex-spark",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("Qwen3-Coder-30B-A3B-Instruct",),
+            ),
+        ]
+    )
+    service = TextGenerationService(registry, {"codex": codex, "local": local})
+
+    with patch(
+        "gobby.servers.routes.llm.build_daemon_text_generation_service",
+        return_value=service,
+    ) as build_service:
+        response = client.post(
+            "/api/llm/generate",
+            json={"prompt": "Summarize this", "system": "Be concise"},
+        )
+
+    assert response.status_code == 200
+    build_service.assert_called_once_with(server_with_llm.config)
+    assert response.json() == {
+        "text": "Generated text",
+        "capability": "text_generate",
+        "provider": "codex",
+        "model": "gpt-5.3-codex-spark",
+    }
+    assert codex.requests == [
+        TextGenerationRequest(
+            prompt="Summarize this",
+            provider="codex",
+            profile="feature_low",
+            model="gpt-5.3-codex-spark",
+            system_prompt="Be concise",
+            caller="llm-generate-route",
+        )
+    ]
+    assert local.requests == []
+
+
+def test_generate_explicit_candidates_bypass_default_profile_and_provider(
+    client: TestClient,
+) -> None:
+    codex = _FakeTextAdapter()
+    local = _FakeTextAdapter()
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.3-codex-spark",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("Qwen3-Coder-30B-A3B-Instruct",),
+            ),
+        ]
+    )
+    service = TextGenerationService(registry, {"codex": codex, "local": local})
+
+    with patch(
+        "gobby.servers.routes.llm.build_daemon_text_generation_service",
+        return_value=service,
+    ):
+        response = client.post(
+            "/api/llm/generate",
+            json={
+                "prompt": "Summarize this",
+                "provider": "codex",
+                "model": "gpt-5.3-codex-spark",
+                "candidates": ["local/Qwen3-Coder-30B-A3B-Instruct"],
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "text": "Generated text",
+        "capability": "text_generate",
+        "provider": "local",
+        "model": "Qwen3-Coder-30B-A3B-Instruct",
+    }
+    assert codex.requests == []
+    assert local.requests == [
+        TextGenerationRequest(
+            prompt="Summarize this",
+            provider="local",
+            candidates=("local/Qwen3-Coder-30B-A3B-Instruct",),
+            model="Qwen3-Coder-30B-A3B-Instruct",
+            caller="llm-generate-route",
+        )
+    ]
+
+
 def test_generate_includes_usage_when_available(
     client: TestClient,
     server_with_llm: MagicMock,

@@ -261,6 +261,47 @@ async def test_text_generation_service_falls_back_across_profile_candidates() ->
 
 
 @pytest.mark.asyncio
+async def test_text_generation_service_explicit_provider_model_bypasses_profile_defaults() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.3-codex-spark",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("qwen-local",),
+            ),
+        ]
+    )
+    codex = RecordingAdapter("codex")
+    local = RecordingAdapter("local")
+    service = TextGenerationService(registry, {"codex": codex, "local": local})
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="summarize",
+            profile="feature_low",
+            provider="local",
+            model="qwen-local",
+        )
+    )
+
+    assert result.text == "local:summarize"
+    assert result.provider == "local"
+    assert result.model == "qwen-local"
+    assert codex.requests == []
+    assert local.requests[0].profile == "feature_low"
+    assert local.requests[0].model == "qwen-local"
+
+
+@pytest.mark.asyncio
 async def test_text_generation_service_falls_back_to_profile_defaults_for_unavailable_override(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
