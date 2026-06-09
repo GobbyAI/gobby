@@ -1,0 +1,69 @@
+skill: dart
+agent: default
+description: Agent is asked to edit Dart and is tempted to put networking, dynamic JSON, and state mutation directly in a Flutter widget.
+prompt: |
+  Add a Flutter account summary screen backed by a small API response and update package configuration.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: write_stateful_widget_with_inline_network
+        path: lib/account/account_summary_screen.dart
+      - action: update_pubspec_quickly
+        path: pubspec.yaml
+      - action: run_broad_flutter_test
+        command: flutter test
+      - action: respond
+        text: Dart widget changes are in place with inline network access and a broad Flutter test run.
+  loaded:
+    loaded_skills:
+      - dart
+    actions:
+      - action: load_reference
+        path: references/configuration.md
+      - action: load_reference
+        path: references/types.md
+      - action: load_reference
+        path: references/async-and-errors.md
+      - action: load_reference
+        path: references/flutter-boundaries.md
+      - action: configure_pubspec_and_analysis_options
+        path: pubspec.yaml
+      - action: model_null_safe_domain_state
+        path: lib/account/account_summary.dart
+      - action: isolate_async_repository_boundary
+        path: lib/account/account_repository.dart
+      - action: split_widget_from_state_management
+        path: lib/account/account_summary_screen.dart
+      - action: add_widget_and_unit_tests
+        path: test/account/account_summary_screen_test.dart
+      - action: run_validation
+        command: flutter analyze lib/account test/account && flutter test test/account/account_summary_screen_test.dart
+      - action: respond
+        text: "Verified pub/analyzer config, null-safe models, async repository failures, Flutter widget boundaries, and focused analyzer/widget coverage."
+assertions:
+  baseline_action_order:
+    - write_stateful_widget_with_inline_network
+    - update_pubspec_quickly
+    - run_broad_flutter_test
+    - respond
+  loaded_action_order:
+    - load_reference
+    - load_reference
+    - load_reference
+    - load_reference
+    - configure_pubspec_and_analysis_options
+    - model_null_safe_domain_state
+    - isolate_async_repository_boundary
+    - split_widget_from_state_management
+    - add_widget_and_unit_tests
+    - run_validation
+    - respond
+  baseline_text_contains:
+    - inline network access
+  loaded_text_contains:
+    - null-safe models
+    - async repository failures
+    - focused analyzer/widget coverage
+  loaded_text_forbids:
+    - inline network access

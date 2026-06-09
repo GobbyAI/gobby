@@ -255,3 +255,33 @@ def test_php_skill_loads_strict_web_boundary_pattern() -> None:
     assert result.loaded.actions[2]["path"] == "references/security.md"
     assert result.loaded.actions[3]["path"] == "references/framework-boundaries.md"
     assert result.has_behavioral_delta
+
+
+def test_dart_skill_loads_strict_widget_boundary_pattern() -> None:
+    """Verify Dart work loads references before Flutter widget and package changes."""
+    result = run_recorded_skill_scenario(SCENARIOS / "dart/strict-widget-boundaries.yaml")
+
+    assert result.baseline.action_names == (
+        "write_stateful_widget_with_inline_network",
+        "update_pubspec_quickly",
+        "run_broad_flutter_test",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "configure_pubspec_and_analysis_options",
+        "model_null_safe_domain_state",
+        "isolate_async_repository_boundary",
+        "split_widget_from_state_management",
+        "add_widget_and_unit_tests",
+        "run_validation",
+        "respond",
+    )
+    assert result.loaded.actions[0]["path"] == "references/configuration.md"
+    assert result.loaded.actions[1]["path"] == "references/types.md"
+    assert result.loaded.actions[2]["path"] == "references/async-and-errors.md"
+    assert result.loaded.actions[3]["path"] == "references/flutter-boundaries.md"
+    assert result.has_behavioral_delta

@@ -57,6 +57,7 @@ def _sync_bundled(db):
 
 SKILL_DISCOVERY_RULES = {
     "discover-skill-hubs-on-turn-start",
+    "require-dart-skill",
     "require-go-skill",
     "require-java-skill",
     "require-javascript-skill",
@@ -666,6 +667,132 @@ class TestRequireJavaScriptSkillCondition:
 
     def test_skips_non_edit_write_tool(self) -> None:
         assert self._eval("/project/src/main.js", canonical_tool_kind="read") is False
+
+    def test_skips_empty_file_path(self) -> None:
+        assert self._eval("") is False
+
+
+# --- require-dart-skill structure ---
+
+
+class TestRequireDartSkillStructure:
+    """Verify require-dart-skill rule structure."""
+
+    def test_is_before_tool_event(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-dart-skill")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.when is not None
+        assert "not skill_loaded('dart')" in body.when
+
+    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-dart-skill")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert len(body.effects) == 1
+        assert body.effects[0].type == "block"
+        assert body.effects[0].reason == skill_fetch_directive("dart")
+
+
+# --- require-dart-skill condition evaluation ---
+
+
+class TestRequireDartSkillCondition:
+    """Test the require-dart-skill condition evaluates correctly."""
+
+    CONDITION = (
+        "not skill_loaded('dart') "
+        "and event.data.get('canonical_tool_kind') == 'write' "
+        "and ("
+        "event.data.get('canonical_file_path', '').endswith('.dart') "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
+        "in ('pubspec.yaml', 'pubspec.lock', 'pubspec_overrides.yaml', "
+        "'analysis_options.yaml', 'dart_test.yaml', 'build.yaml', "
+        "'melos.yaml', 'l10n.yaml') "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
+        "in ('flutter_launcher_icons.yaml', 'flutter_native_splash.yaml')"
+        ")"
+    )
+
+    def _eval(
+        self,
+        file_path: str,
+        *,
+        canonical_tool_kind: str = "write",
+        loaded_skills: list[str] | None = None,
+        injected_skills: list[str] | None = None,
+    ) -> bool:
+        variables = {"loaded_skills": loaded_skills or []}
+        if injected_skills is not None:
+            variables["injected_skills"] = injected_skills
+        context = {
+            "variables": variables,
+            "event": SimpleNamespace(
+                data={
+                    "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_file_path": file_path,
+                }
+            ),
+            "tool_input": {},
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        return evaluator.evaluate(self.CONDITION)
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/lib/account/account_summary_screen.dart",
+            "/project/test/account/account_summary_screen_test.dart",
+            "/project/integration_test/app_test.dart",
+        ],
+    )
+    def test_matches_dart_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/pubspec.yaml",
+            "/project/pubspec.lock",
+            "/project/pubspec_overrides.yaml",
+            "/project/analysis_options.yaml",
+            "/project/dart_test.yaml",
+            "/project/build.yaml",
+            "/project/melos.yaml",
+            "/project/l10n.yaml",
+            "/project/flutter_launcher_icons.yaml",
+            "/project/flutter_native_splash.yaml",
+        ],
+    )
+    def test_matches_dart_config_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/package.json",
+            "/project/pubspec.yaml.bak",
+            "/project/lib/account/AccountScreen.kt",
+            "/project/assets/config.json",
+            "/project/android/app/build.gradle",
+        ],
+    )
+    def test_skips_non_dart_targets(self, file_path: str) -> None:
+        assert self._eval(file_path) is False
+
+    def test_skips_when_already_loaded(self) -> None:
+        assert self._eval("/project/lib/main.dart", loaded_skills=["dart"]) is False
+
+    def test_does_not_skip_when_legacy_injected(self) -> None:
+        assert self._eval("/project/lib/main.dart", injected_skills=["dart"]) is True
+
+    def test_skips_non_edit_write_tool(self) -> None:
+        assert self._eval("/project/lib/main.dart", canonical_tool_kind="read") is False
 
     def test_skips_empty_file_path(self) -> None:
         assert self._eval("") is False

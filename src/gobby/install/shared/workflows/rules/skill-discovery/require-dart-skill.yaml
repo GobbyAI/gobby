@@ -1,0 +1,19 @@
+tags: [skill-discovery, context, gobby, default]
+
+rules:
+  require-dart-skill:
+    description: "Block first Dart write/edit until dart coding standards are loaded"
+    event: before_tool
+    enabled: true
+    priority: 30
+    when: >
+      not skill_loaded('dart')
+      and event.data.get('canonical_tool_kind') == 'write'
+      and (
+        event.data.get('canonical_file_path', '').endswith('.dart')
+        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('pubspec.yaml', 'pubspec.lock', 'pubspec_overrides.yaml', 'analysis_options.yaml', 'dart_test.yaml', 'build.yaml', 'melos.yaml', 'l10n.yaml')
+        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('flutter_launcher_icons.yaml', 'flutter_native_splash.yaml')
+      )
+    effects:
+      - type: block
+        reason: 'Call get_skill(name="dart") on gobby-skills through mcp__gobby__ progressive discovery: list_mcp_servers -> list_tools("gobby-skills") -> get_tool_schema("gobby-skills", "get_skill") -> call_tool("gobby-skills", "get_skill", {"name": "dart"}). Then continue.'
