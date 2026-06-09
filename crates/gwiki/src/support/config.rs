@@ -1,4 +1,6 @@
-use gobby_core::config::{EnvOnlySource, LayeredConfigSource, resolve_indexing_config};
+use gobby_core::config::{
+    ConfigSource, EnvOnlySource, LayeredConfigSource, resolve_indexing_config,
+};
 use gobby_core::provisioning::{StandaloneConfig, gcore_config_path};
 use postgres::Client;
 
@@ -6,6 +8,25 @@ use crate::indexer::IndexOptions;
 use crate::{WikiError, indexer};
 
 use super::search::PostgresConfigSource;
+
+pub(crate) const DEFAULT_SHARED_CODE_GRAPH_EDGE_LIMIT: usize = 200;
+const SHARED_CODE_CALL_EDGE_LIMIT_KEY: &str = "gwiki.shared_code.call_edge_limit";
+const SHARED_CODE_IMPORT_EDGE_LIMIT_KEY: &str = "gwiki.shared_code.import_edge_limit";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SharedCodeGraphLimits {
+    pub(crate) call_edge_limit: usize,
+    pub(crate) import_edge_limit: usize,
+}
+
+impl Default for SharedCodeGraphLimits {
+    fn default() -> Self {
+        Self {
+            call_edge_limit: DEFAULT_SHARED_CODE_GRAPH_EDGE_LIMIT,
+            import_edge_limit: DEFAULT_SHARED_CODE_GRAPH_EDGE_LIMIT,
+        }
+    }
+}
 
 pub(crate) fn local_index_options() -> Result<IndexOptions, WikiError> {
     let standalone = read_standalone_config()?;
@@ -18,6 +39,24 @@ pub(crate) fn index_options_from_conn(conn: &mut Client) -> Result<IndexOptions,
     let primary = PostgresConfigSource { conn };
     let mut source = LayeredConfigSource::new(Some(primary), standalone);
     resolve_index_options(&mut source)
+}
+
+#[cfg(test)]
+pub(crate) fn local_shared_code_graph_limits() -> Result<SharedCodeGraphLimits, WikiError> {
+    let standalone = read_standalone_config()?;
+    match standalone {
+        Some(mut source) => resolve_shared_code_graph_limits(&mut source),
+        None => Ok(SharedCodeGraphLimits::default()),
+    }
+}
+
+pub(crate) fn shared_code_graph_limits_from_conn(
+    conn: &mut Client,
+) -> Result<SharedCodeGraphLimits, WikiError> {
+    let standalone = read_standalone_config()?;
+    let primary = PostgresConfigSource { conn };
+    let mut source = LayeredConfigSource::new(Some(primary), standalone);
+    resolve_shared_code_graph_limits(&mut source)
 }
 
 fn read_standalone_config() -> Result<Option<StandaloneConfig>, WikiError> {
@@ -44,8 +83,35 @@ fn index_options_from_config(config: gobby_core::config::IndexingConfig) -> inde
     }
 }
 
+fn resolve_shared_code_graph_limits(
+    source: &mut impl ConfigSource,
+) -> Result<SharedCodeGraphLimits, WikiError> {
+    Ok(SharedCodeGraphLimits {
+        call_edge_limit: resolve_limit(source, SHARED_CODE_CALL_EDGE_LIMIT_KEY)?,
+        import_edge_limit: resolve_limit(source, SHARED_CODE_IMPORT_EDGE_LIMIT_KEY)?,
+    })
+}
+
+fn resolve_limit(source: &mut impl ConfigSource, key: &'static str) -> Result<usize, WikiError> {
+    let Some(raw) = source.config_value(key) else {
+        return Ok(DEFAULT_SHARED_CODE_GRAPH_EDGE_LIMIT);
+    };
+    let resolved = source
+        .resolve_value(&raw)
+        .map_err(|error| WikiError::Config {
+            detail: format!("failed to resolve {key}: {error}"),
+        })?;
+    resolved
+        .trim()
+        .parse::<usize>()
+        .map_err(|_| WikiError::Config {
+            detail: format!("invalid non-negative integer for {key}: `{resolved}`"),
+        })
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::path::Path;
     use std::sync::{Mutex, MutexGuard};
 
@@ -92,6 +158,102 @@ mod tests {
             std::fs::create_dir_all(parent).expect("create parent");
         }
         std::fs::write(path, contents).expect("write file");
+    }
+
+    #[derive(Default)]
+    struct TestSource {
+        values: BTreeMap<String, String>,
+    }
+
+    impl TestSource {
+        fn with(mut self, key: &str, value: &str) -> Self {
+            self.values.insert(key.to_string(), value.to_string());
+            self
+        }
+    }
+
+    impl gobby_core::config::ConfigSource for TestSource {
+        fn config_value(&mut self, key: &str) -> Option<String> {
+            self.values.get(key).cloned()
+        }
+
+        fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+            Ok(value.to_string())
+        }
+    }
+
+    #[test]
+    fn shared_code_graph_limits_default_to_200() {
+        let mut source = TestSource::default();
+
+        let limits = resolve_shared_code_graph_limits(&mut source).expect("limits");
+
+        assert_eq!(
+            limits,
+            SharedCodeGraphLimits {
+                call_edge_limit: 200,
+                import_edge_limit: 200,
+            }
+        );
+    }
+
+    #[test]
+    fn shared_code_graph_limits_use_config_source_over_standalone() {
+        let primary = TestSource::default()
+            .with(SHARED_CODE_CALL_EDGE_LIMIT_KEY, "11")
+            .with(SHARED_CODE_IMPORT_EDGE_LIMIT_KEY, "12");
+        let fallback = gobby_core::provisioning::StandaloneConfig::from_yaml_str(
+            "gwiki:\n  shared_code:\n    call_edge_limit: 21\n    import_edge_limit: 22\n",
+        )
+        .expect("standalone config");
+        let mut source = LayeredConfigSource::new(Some(primary), Some(fallback));
+
+        let limits = resolve_shared_code_graph_limits(&mut source).expect("limits");
+
+        assert_eq!(
+            limits,
+            SharedCodeGraphLimits {
+                call_edge_limit: 11,
+                import_edge_limit: 12,
+            }
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn local_shared_code_graph_limits_read_gcore_yaml() {
+        let home = tempfile::tempdir().expect("home");
+        write_file(
+            home.path(),
+            "gcore.yaml",
+            "gwiki:\n  shared_code:\n    call_edge_limit: 31\n    import_edge_limit: 32\n",
+        );
+        let _guard = EnvGuard::set_gobby_home(home.path());
+
+        let limits = local_shared_code_graph_limits().expect("limits");
+
+        assert_eq!(
+            limits,
+            SharedCodeGraphLimits {
+                call_edge_limit: 31,
+                import_edge_limit: 32,
+            }
+        );
+    }
+
+    #[test]
+    fn shared_code_graph_limits_reject_invalid_or_negative_values() {
+        let mut invalid = TestSource::default().with(SHARED_CODE_CALL_EDGE_LIMIT_KEY, "many");
+        let error = resolve_shared_code_graph_limits(&mut invalid).expect_err("invalid limit");
+        assert!(error.to_string().contains(SHARED_CODE_CALL_EDGE_LIMIT_KEY));
+
+        let mut negative = TestSource::default().with(SHARED_CODE_IMPORT_EDGE_LIMIT_KEY, "-1");
+        let error = resolve_shared_code_graph_limits(&mut negative).expect_err("negative limit");
+        assert!(
+            error
+                .to_string()
+                .contains(SHARED_CODE_IMPORT_EDGE_LIMIT_KEY)
+        );
     }
 
     #[test]

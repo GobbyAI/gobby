@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 
 use gobby_core::ai::{daemon, effective_route, text};
@@ -14,6 +14,7 @@ use crate::output::{
     AskSynthesisOutput, SearchOutput, SearchResultOutput,
 };
 use crate::search::SearchScope;
+use crate::support::config::shared_code_graph_limits_from_conn;
 use crate::support::env::database_url_for;
 use crate::support::scope::resolve_selection_context;
 use crate::support::search::PostgresConfigSource;
@@ -74,6 +75,8 @@ fn ask_output_from_search(search: SearchOutput) -> AskOutput {
         sources,
         code_edges: Vec::new(),
         code_citations,
+        truncated: false,
+        truncated_components: Vec::new(),
         gaps: Vec::new(),
         stale_candidates: Vec::new(),
         suggested_questions: Vec::new(),
@@ -130,12 +133,26 @@ fn enrich_with_attached_unified_graph_context(
     })?;
     let mut facts = crate::falkor_graph::load_wiki_graph_facts(&mut conn, &resolved.search_scope)?;
     let mut degraded_sources = Vec::new();
+    let mut truncated_components = Vec::new();
+    let limits = shared_code_graph_limits_from_conn(&mut conn)?;
     let falkor = optional_falkor_config(&mut conn)?;
     match (falkor, &resolved.search_scope) {
         (Some(falkor), SearchScope::Project { project_id }) => {
-            match crate::falkor_graph::load_code_graph_edges(&falkor, project_id, &facts.documents)
-            {
-                Ok(code_edges) => facts.code_edges = code_edges,
+            match crate::falkor_graph::load_code_graph_edges(
+                &falkor,
+                project_id,
+                &facts.documents,
+                limits,
+            ) {
+                Ok(code_graph) => {
+                    if code_graph.truncation.is_truncated() {
+                        degraded_sources.push(
+                            crate::falkor_graph::SHARED_CODE_GRAPH_TRUNCATED_SOURCE.to_string(),
+                        );
+                        truncated_components.extend(code_graph.truncation.components);
+                    }
+                    facts.code_edges = code_graph.edges;
+                }
                 Err(error) => {
                     log::warn!("failed to load shared code graph for gwiki ask: {error}");
                     degraded_sources.push("shared_code_graph_unavailable".to_string());
@@ -150,7 +167,7 @@ fn enrich_with_attached_unified_graph_context(
             degraded_sources.push("shared_code_graph_unavailable".to_string());
         }
     }
-    enrich_with_unified_graph_context(output, &facts, degraded_sources);
+    enrich_with_unified_graph_context(output, &facts, degraded_sources, truncated_components);
     Ok(())
 }
 
@@ -173,16 +190,25 @@ fn enrich_with_unified_graph_context(
     output: &mut AskOutput,
     facts: &WikiGraphFacts,
     degraded_sources: Vec<String>,
+    truncated_components: Vec<String>,
 ) {
     let options = if degraded_sources.is_empty() {
         GraphContextOptions::available()
     } else {
         GraphContextOptions::degraded(degraded_sources)
-    };
-    let pack = build_context_pack(facts, options);
-    for source in pack.degradation.degraded_sources {
-        mark_degraded_source(output, &source);
     }
+    .with_truncated_components(truncated_components);
+    let pack = build_context_pack(facts, options);
+    for source in &pack.degradation.degraded_sources {
+        mark_degraded_source(output, source);
+    }
+    if pack.degradation.truncated {
+        output.truncated = true;
+        for component in &pack.degradation.truncated_components {
+            push_unique(&mut output.truncated_components, component.clone());
+        }
+    }
+    let mut dedup = AskOutputDedup::from_output(output);
 
     let mut related_paths = output
         .related_pages
@@ -199,15 +225,15 @@ fn enrich_with_unified_graph_context(
             });
         }
         for citation in &neighborhood.citations {
-            push_unique(&mut output.sources, citation.clone());
+            dedup.push_source(output, citation.clone());
         }
         for edge in neighborhood.calls.iter().chain(neighborhood.imports.iter()) {
-            push_code_edge(output, code_edge_from_context(edge));
+            dedup.push_code_edge(output, code_edge_from_context(edge));
         }
         for citation in code_citations_from_context_edges(
             neighborhood.calls.iter().chain(neighborhood.imports.iter()),
         ) {
-            push_code_citation(output, citation);
+            dedup.push_code_citation(output, citation);
         }
     }
 }
@@ -265,27 +291,71 @@ fn code_citation_from_endpoint(
     Some(AskCodeCitationOutput { file, line, symbol })
 }
 
-fn push_code_edge(output: &mut AskOutput, edge: AskCodeEdgeOutput) {
-    if !output.code_edges.contains(&edge) {
-        output.code_edges.push(edge);
-    }
-}
-
-fn push_code_citation(output: &mut AskOutput, citation: AskCodeCitationOutput) {
-    if !output.code_citations.iter().any(|existing| {
-        existing.file == citation.file
-            && existing.line == citation.line
-            && existing.symbol == citation.symbol
-    }) {
-        push_unique(&mut output.sources, citation.file.clone());
-        output.code_citations.push(citation);
-    }
-}
-
 fn push_unique(values: &mut Vec<String>, value: String) {
     if !values.contains(&value) {
         values.push(value);
     }
+}
+
+struct AskOutputDedup {
+    sources: HashSet<String>,
+    code_edges: HashSet<CodeEdgeKey>,
+    code_citations: HashSet<CodeCitationKey>,
+}
+
+type CodeEdgeKey = (String, String, String, String, Option<usize>, String);
+type CodeCitationKey = (String, Option<usize>, Option<String>);
+
+impl AskOutputDedup {
+    fn from_output(output: &AskOutput) -> Self {
+        Self {
+            sources: output.sources.iter().cloned().collect(),
+            code_edges: output.code_edges.iter().map(code_edge_key).collect(),
+            code_citations: output
+                .code_citations
+                .iter()
+                .map(code_citation_key)
+                .collect(),
+        }
+    }
+
+    fn push_source(&mut self, output: &mut AskOutput, source: String) {
+        if self.sources.insert(source.clone()) {
+            output.sources.push(source);
+        }
+    }
+
+    fn push_code_edge(&mut self, output: &mut AskOutput, edge: AskCodeEdgeOutput) {
+        if self.code_edges.insert(code_edge_key(&edge)) {
+            output.code_edges.push(edge);
+        }
+    }
+
+    fn push_code_citation(&mut self, output: &mut AskOutput, citation: AskCodeCitationOutput) {
+        if self.code_citations.insert(code_citation_key(&citation)) {
+            self.push_source(output, citation.file.clone());
+            output.code_citations.push(citation);
+        }
+    }
+}
+
+fn code_edge_key(edge: &AskCodeEdgeOutput) -> CodeEdgeKey {
+    (
+        edge.source.clone(),
+        edge.target.clone(),
+        edge.kind.clone(),
+        edge.direction.clone(),
+        edge.line,
+        edge.provenance.clone(),
+    )
+}
+
+fn code_citation_key(citation: &AskCodeCitationOutput) -> CodeCitationKey {
+    (
+        citation.file.clone(),
+        citation.line,
+        citation.symbol.clone(),
+    )
 }
 
 fn is_code_result(hit: &SearchResultOutput) -> bool {
@@ -617,6 +687,8 @@ mod tests {
             output.degraded_sources,
             vec!["shared_code_graph_unavailable".to_string()]
         );
+        assert!(!output.truncated);
+        assert!(output.truncated_components.is_empty());
         assert_eq!(output.code_citations.len(), 1);
         assert_eq!(output.code_citations[0].file, "src/handler.rs");
         assert_eq!(output.code_citations[0].line, None);
@@ -691,13 +763,19 @@ mod tests {
         enrich_with_unified_graph_context(
             &mut output,
             &facts,
-            vec!["shared_code_graph_unavailable".to_string()],
+            vec![crate::falkor_graph::SHARED_CODE_GRAPH_TRUNCATED_SOURCE.to_string()],
+            vec!["code_call_edges>7".to_string()],
         );
 
         assert!(output.degraded);
         assert_eq!(
             output.degraded_sources,
-            vec!["shared_code_graph_unavailable".to_string()]
+            vec![crate::falkor_graph::SHARED_CODE_GRAPH_TRUNCATED_SOURCE.to_string()]
+        );
+        assert!(output.truncated);
+        assert_eq!(
+            output.truncated_components,
+            vec!["code_call_edges>7".to_string()]
         );
         assert!(output.related_pages.iter().any(|page| {
             page.path == Path::new("code/files/src/handler.rs.md")

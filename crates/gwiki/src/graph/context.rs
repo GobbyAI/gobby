@@ -7,6 +7,7 @@ use crate::search::SearchScope;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GraphContextOptions {
     pub degraded_sources: Vec<String>,
+    pub truncated_components: Vec<String>,
 }
 
 impl GraphContextOptions {
@@ -15,7 +16,15 @@ impl GraphContextOptions {
     }
 
     pub fn degraded(degraded_sources: Vec<String>) -> Self {
-        Self { degraded_sources }
+        Self {
+            degraded_sources,
+            truncated_components: Vec::new(),
+        }
+    }
+
+    pub fn with_truncated_components(mut self, truncated_components: Vec<String>) -> Self {
+        self.truncated_components = truncated_components;
+        self
     }
 }
 
@@ -39,6 +48,8 @@ pub struct GraphContextScope {
 pub struct GraphContextDegradation {
     pub degraded: bool,
     pub degraded_sources: Vec<String>,
+    pub truncated: bool,
+    pub truncated_components: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -104,7 +115,8 @@ pub fn build_context_pack(
         .map(|document| (document.path.clone(), document.title.clone()))
         .collect::<BTreeMap<_, _>>();
     let citations_by_doc = citations_by_document(facts);
-    let mut warnings = degradation_warnings(&options.degraded_sources);
+    let mut warnings =
+        degradation_warnings(&options.degraded_sources, &options.truncated_components);
     warnings.extend(stale_link_warnings(facts));
     warnings.extend(audit_warnings(&document_titles, &citations_by_doc));
 
@@ -128,8 +140,11 @@ pub fn build_context_pack(
         command: "graph-context",
         scope,
         degradation: GraphContextDegradation {
-            degraded: !options.degraded_sources.is_empty(),
+            degraded: !options.degraded_sources.is_empty()
+                || !options.truncated_components.is_empty(),
             degraded_sources: options.degraded_sources,
+            truncated: !options.truncated_components.is_empty(),
+            truncated_components: options.truncated_components,
         },
         warnings,
         recommendations: recommendations(facts, &citations_by_doc),
@@ -167,15 +182,33 @@ fn citations_by_document(facts: &WikiGraphFacts) -> BTreeMap<PathBuf, BTreeSet<S
     citations
 }
 
-fn degradation_warnings(degraded_sources: &[String]) -> Vec<GraphContextWarning> {
+fn degradation_warnings(
+    degraded_sources: &[String],
+    truncated_components: &[String],
+) -> Vec<GraphContextWarning> {
     degraded_sources
         .iter()
         .map(|source| GraphContextWarning {
             kind: "degradation",
-            message: format!("{source} is unavailable; graph-context returned wiki-only context"),
+            message: if source == crate::falkor_graph::SHARED_CODE_GRAPH_TRUNCATED_SOURCE {
+                capped_graph_warning(truncated_components)
+            } else {
+                format!("{source} is unavailable; graph-context returned wiki-only context")
+            },
             path: None,
         })
         .collect()
+}
+
+fn capped_graph_warning(truncated_components: &[String]) -> String {
+    if truncated_components.is_empty() {
+        return "shared code graph was capped; graph-context returned partial code context"
+            .to_string();
+    }
+    format!(
+        "shared code graph was capped at {}; graph-context returned partial code context",
+        truncated_components.join(", ")
+    )
 }
 
 fn stale_link_warnings(facts: &WikiGraphFacts) -> Vec<GraphContextWarning> {
@@ -400,6 +433,11 @@ mod tests {
             json["degradation"]["degraded_sources"],
             serde_json::json!(["falkordb_unavailable"])
         );
+        assert_eq!(json["degradation"]["truncated"], false);
+        assert_eq!(
+            json["degradation"]["truncated_components"],
+            serde_json::json!([])
+        );
         assert!(
             json["warnings"]
                 .as_array()
@@ -461,6 +499,61 @@ mod tests {
                 .iter()
                 .any(|recommendation| recommendation["path"] == "wiki/b.md")
         );
+    }
+
+    #[test]
+    fn graph_context_json_reports_truncated_shared_code_as_capped_data() {
+        let scope = SearchScope::project("project-1");
+        let facts = WikiGraphFacts {
+            documents: vec![doc(
+                scope.clone(),
+                "code/files/src/handler.rs.md",
+                Some("Handler"),
+            )],
+            links: Vec::new(),
+            sources: Vec::new(),
+            code_edges: vec![code_edge(
+                scope.clone(),
+                "code/files/src/handler.rs.md",
+                "src/handler.rs:handle",
+                "src/router.rs:route",
+                "calls",
+                "outgoing",
+                Some(42),
+            )],
+        };
+
+        let pack = super::build_context_pack(
+            &facts,
+            super::GraphContextOptions::degraded(vec![
+                crate::falkor_graph::SHARED_CODE_GRAPH_TRUNCATED_SOURCE.to_string(),
+            ])
+            .with_truncated_components(vec![
+                "code_call_edges>7".to_string(),
+                "code_import_edges>3".to_string(),
+            ]),
+        );
+        let json = serde_json::to_value(&pack).expect("serialize pack");
+
+        assert_eq!(json["degradation"]["degraded"], true);
+        assert_eq!(
+            json["degradation"]["degraded_sources"],
+            serde_json::json!(["shared_code_graph_truncated"])
+        );
+        assert_eq!(json["degradation"]["truncated"], true);
+        assert_eq!(
+            json["degradation"]["truncated_components"],
+            serde_json::json!(["code_call_edges>7", "code_import_edges>3"])
+        );
+        let warnings = json["warnings"].as_array().expect("warnings");
+        let warning = warnings
+            .iter()
+            .find(|warning| warning["kind"] == "degradation")
+            .expect("truncation warning");
+        let message = warning["message"].as_str().expect("warning message");
+        assert!(message.contains("capped"));
+        assert!(message.contains("partial code context"));
+        assert!(!message.contains("unavailable"));
     }
 
     #[test]

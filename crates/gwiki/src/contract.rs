@@ -19,26 +19,23 @@ pub fn contract() -> CliContract {
         }),
         commands: vec![
             CommandContract {
-                name: "contract",
-                summary: "Emit this CLI contract.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![format_flag()],
                 json_output_keys: contract_keys(),
-                ..CommandContract::default()
+                ..CommandContract::new("contract", "Emit this CLI contract.")
             },
             CommandContract {
-                name: "index",
-                summary: "Index markdown and source notes in the selected scope.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![],
                 json_output_keys: scoped_keys(vec!["status", "indexed_pages", "indexed_sources"]),
-                ..CommandContract::default()
+                ..CommandContract::new(
+                    "index",
+                    "Index markdown and source notes in the selected scope.",
+                )
             },
             CommandContract {
-                name: "search",
-                summary: "Search wiki documents in the selected scope.",
                 daemon_consumed: true,
                 positionals: vec![PositionalContract::required("QUERY")],
                 flags: vec![
@@ -56,11 +53,9 @@ pub fn contract() -> CliContract {
                     "summary",
                     "score",
                 ]),
-                ..CommandContract::default()
+                ..CommandContract::new("search", "Search wiki documents in the selected scope.")
             },
             CommandContract {
-                name: "ask",
-                summary: "Ask a question about wiki documents in the selected scope.",
                 daemon_consumed: true,
                 positionals: vec![PositionalContract::required("QUESTION")],
                 flags: vec![
@@ -78,6 +73,8 @@ pub fn contract() -> CliContract {
                     "sources",
                     "code_edges",
                     "code_citations",
+                    "truncated",
+                    "truncated_components",
                     "gaps",
                     "stale_candidates",
                     "suggested_questions",
@@ -95,12 +92,19 @@ pub fn contract() -> CliContract {
                 multimodal: Some("none"),
                 degradation: Some(DegradationContract {
                     output_shape: "model off emits an extractive citation-list answer; signal loss falls back to wiki-only grounding",
-                    metadata_keys: vec!["degraded", "degraded_sources[]"],
+                    metadata_keys: vec![
+                        "degraded",
+                        "degraded_sources[]",
+                        "truncated",
+                        "truncated_components[]",
+                    ],
                 }),
+                ..CommandContract::new(
+                    "ask",
+                    "Ask a question about wiki documents in the selected scope.",
+                )
             },
             CommandContract {
-                name: "read",
-                summary: "Read a wiki page or document in the selected scope.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![
@@ -114,11 +118,12 @@ pub fn contract() -> CliContract {
                     "frontmatter",
                     "citations",
                 ]),
-                ..CommandContract::default()
+                ..CommandContract::new(
+                    "read",
+                    "Read a wiki page or document in the selected scope.",
+                )
             },
             CommandContract {
-                name: "refresh",
-                summary: "Refresh URL-backed raw source records.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![
@@ -132,11 +137,9 @@ pub fn contract() -> CliContract {
                     "refreshed",
                     "failed",
                 ]),
-                ..CommandContract::default()
+                ..CommandContract::new("refresh", "Refresh URL-backed raw source records.")
             },
             CommandContract {
-                name: "ingest-file",
-                summary: "Capture a local source file into the wiki inbox.",
                 daemon_consumed: true,
                 positionals: vec![PositionalContract::required("PATH")],
                 flags: ingest_file_flags(),
@@ -148,11 +151,12 @@ pub fn contract() -> CliContract {
                     "changed_paths",
                     "citations",
                 ]),
-                ..CommandContract::default()
+                ..CommandContract::new(
+                    "ingest-file",
+                    "Capture a local source file into the wiki inbox.",
+                )
             },
             CommandContract {
-                name: "ingest-url",
-                summary: "Fetch URL sources into the wiki inbox.",
                 daemon_consumed: true,
                 positionals: vec![PositionalContract::repeatable("URL")],
                 flags: vec![],
@@ -167,20 +171,19 @@ pub fn contract() -> CliContract {
                     "url",
                     "status",
                 ]),
-                ..CommandContract::default()
+                ..CommandContract::new("ingest-url", "Fetch URL sources into the wiki inbox.")
             },
             CommandContract {
-                name: "collect",
-                summary: "Collect recognized inbox drops into raw storage.",
                 daemon_consumed: true,
                 positionals: vec![optional_positional("QUERY", false)],
                 flags: vec![],
                 json_output_keys: scoped_keys(vec!["results", "changed_paths", "status"]),
-                ..CommandContract::default()
+                ..CommandContract::new(
+                    "collect",
+                    "Collect recognized inbox drops into raw storage.",
+                )
             },
             CommandContract {
-                name: "research",
-                summary: "Run wiki research enrichment or deterministic audit checks.",
                 daemon_consumed: true,
                 positionals: vec![optional_positional("QUESTION", false)],
                 flags: vec![
@@ -224,10 +227,12 @@ pub fn contract() -> CliContract {
                     output_shape: "model off emits a retrieval-only research scaffold with candidate sources and citations but no synthesized notes; code graph/index off emits docs-only output",
                     metadata_keys: vec!["accepted_notes[].degradation", "report.degradation"],
                 }),
+                ..CommandContract::new(
+                    "research",
+                    "Run wiki research enrichment or deterministic audit checks.",
+                )
             },
             CommandContract {
-                name: "compile",
-                summary: "Compile accepted research notes into wiki articles.",
                 daemon_consumed: true,
                 positionals: vec![optional_positional("TOPIC", false)],
                 flags: vec![
@@ -249,29 +254,29 @@ pub fn contract() -> CliContract {
                     "page_writes",
                     "prompt",
                 ]),
-                ..CommandContract::default()
+                ..CommandContract::new(
+                    "compile",
+                    "Compile accepted research notes into wiki articles.",
+                )
             },
             CommandContract {
-                name: "audit",
-                summary: "Report claims that lack source support.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![],
                 json_output_keys: scoped_keys(vec!["findings", "changed_paths", "status"]),
-                ..CommandContract::default()
+                ..CommandContract::new("audit", "Report claims that lack source support.")
             },
             CommandContract {
-                name: "graph",
-                summary: "Export unified wiki graph artifacts under outputs.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![],
                 json_output_keys: scoped_keys(vec!["artifacts"]),
-                ..CommandContract::default()
+                ..CommandContract::new(
+                    "graph",
+                    "Export unified wiki graph artifacts under outputs.",
+                )
             },
             CommandContract {
-                name: "graph-context",
-                summary: "Build a compact wiki graph context pack.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![],
@@ -295,21 +300,20 @@ pub fn contract() -> CliContract {
                         "warnings[]",
                         "degradation.degraded",
                         "degradation.degraded_sources[]",
+                        "degradation.truncated",
+                        "degradation.truncated_components[]",
                     ],
                 }),
+                ..CommandContract::new("graph-context", "Build a compact wiki graph context pack.")
             },
             CommandContract {
-                name: "health",
-                summary: "Write wiki health snapshots under meta/health.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![],
                 json_output_keys: vec!["command", "root", "text_path", "json_path", "status"],
-                ..CommandContract::default()
+                ..CommandContract::new("health", "Write wiki health snapshots under meta/health.")
             },
             CommandContract {
-                name: "librarian",
-                summary: "Emit wiki upkeep proposals without rewriting canonical content.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![],
@@ -332,10 +336,12 @@ pub fn contract() -> CliContract {
                     output_shape: "each check skipped independently with a note",
                     metadata_keys: vec!["checks[].available"],
                 }),
+                ..CommandContract::new(
+                    "librarian",
+                    "Emit wiki upkeep proposals without rewriting canonical content.",
+                )
             },
             CommandContract {
-                name: "review-report",
-                summary: "Emit a review report for changed files, symbols, or a diff.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![
@@ -365,10 +371,12 @@ pub fn contract() -> CliContract {
                     output_shape: "report without risky-shift section",
                     metadata_keys: vec!["degraded", "degraded_sources[]"],
                 }),
+                ..CommandContract::new(
+                    "review-report",
+                    "Emit a review report for changed files, symbols, or a diff.",
+                )
             },
             CommandContract {
-                name: "citation-quality",
-                summary: "Emit source citation quality checks for wiki content.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![],
@@ -391,10 +399,12 @@ pub fn contract() -> CliContract {
                         "sections.confidence.available",
                     ],
                 }),
+                ..CommandContract::new(
+                    "citation-quality",
+                    "Emit source citation quality checks for wiki content.",
+                )
             },
             CommandContract {
-                name: "sources",
-                summary: "List raw source manifest entries in the selected scope.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![],
@@ -406,29 +416,26 @@ pub fn contract() -> CliContract {
                     "raw_path",
                     "source_path",
                 ]),
-                ..CommandContract::default()
+                ..CommandContract::new(
+                    "sources",
+                    "List raw source manifest entries in the selected scope.",
+                )
             },
             CommandContract {
-                name: "backlinks",
-                summary: "Show backlinks for a wiki page.",
                 daemon_consumed: true,
                 positionals: vec![PositionalContract::required("PAGE")],
                 flags: vec![],
                 json_output_keys: scoped_keys(vec!["page", "backlinks", "path", "title"]),
-                ..CommandContract::default()
+                ..CommandContract::new("backlinks", "Show backlinks for a wiki page.")
             },
             CommandContract {
-                name: "status",
-                summary: "Show shell readiness.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![],
                 json_output_keys: scoped_keys(vec!["status", "daemon_url", "runtime", "services"]),
-                ..CommandContract::default()
+                ..CommandContract::new("status", "Show shell readiness.")
             },
             CommandContract {
-                name: "trust",
-                summary: "Show search, graph, freshness, and audit trust status.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![],
@@ -446,11 +453,12 @@ pub fn contract() -> CliContract {
                     "graph_metrics",
                     "health_summary",
                 ]),
-                ..CommandContract::default()
+                ..CommandContract::new(
+                    "trust",
+                    "Show search, graph, freshness, and audit trust status.",
+                )
             },
             CommandContract {
-                name: "remove-source",
-                summary: "Remove a raw source, its manifest entry, and its raw asset.",
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![
@@ -465,7 +473,10 @@ pub fn contract() -> CliContract {
                     "removed_raw_asset",
                     "changed_paths",
                 ]),
-                ..CommandContract::default()
+                ..CommandContract::new(
+                    "remove-source",
+                    "Remove a raw source, its manifest entry, and its raw asset.",
+                )
             },
         ],
         error_codes: vec![

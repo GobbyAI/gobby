@@ -4,6 +4,7 @@ use gobby_core::gobby_home;
 
 use crate::graph::context::{GraphContextOptions, build_context_pack};
 use crate::search::SearchScope;
+use crate::support::config::shared_code_graph_limits_from_conn;
 use crate::support::env::database_url_for;
 use crate::support::scope::resolve_selection_context;
 use crate::support::search::PostgresConfigSource;
@@ -23,12 +24,26 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
 
     let falkor = optional_falkor_config(&mut conn)?;
     let mut degraded_sources = Vec::new();
+    let mut truncated_components = Vec::new();
+    let limits = shared_code_graph_limits_from_conn(&mut conn)?;
     let mut facts = crate::falkor_graph::load_wiki_graph_facts(&mut conn, &resolved.search_scope)?;
     match (falkor, &resolved.search_scope) {
         (Some(falkor), SearchScope::Project { project_id }) => {
-            match crate::falkor_graph::load_code_graph_edges(&falkor, project_id, &facts.documents)
-            {
-                Ok(code_edges) => facts.code_edges = code_edges,
+            match crate::falkor_graph::load_code_graph_edges(
+                &falkor,
+                project_id,
+                &facts.documents,
+                limits,
+            ) {
+                Ok(code_graph) => {
+                    if code_graph.truncation.is_truncated() {
+                        degraded_sources.push(
+                            crate::falkor_graph::SHARED_CODE_GRAPH_TRUNCATED_SOURCE.to_string(),
+                        );
+                        truncated_components.extend(code_graph.truncation.components);
+                    }
+                    facts.code_edges = code_graph.edges;
+                }
                 Err(error) => {
                     log::warn!("failed to load shared code graph for gwiki graph-context: {error}");
                     degraded_sources.push("shared_code_graph_unavailable".to_string());
@@ -47,7 +62,8 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
         GraphContextOptions::available()
     } else {
         GraphContextOptions::degraded(degraded_sources)
-    };
+    }
+    .with_truncated_components(truncated_components);
     let pack = build_context_pack(&facts, options);
     let text = format!(
         "Built graph context pack\nScope: {}\nNeighborhoods: {}\nWarnings: {}",

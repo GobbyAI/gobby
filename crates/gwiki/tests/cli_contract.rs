@@ -150,6 +150,8 @@ fn representative_ask_output() -> AskOutput {
             line: Some(102),
             symbol: Some("AskOutput".to_string()),
         }],
+        truncated: false,
+        truncated_components: Vec::new(),
         gaps: vec!["No daemon fixture covered this output shape.".to_string()],
         stale_candidates: vec!["wiki/old-contract-keys.md".to_string()],
         suggested_questions: vec!["Which commands publish json_output_keys?".to_string()],
@@ -202,7 +204,12 @@ fn parity_contract_tracks_code_grounding_and_dependency_classification() {
         ]),
         serde_json::json!({
             "output_shape": "model off emits an extractive citation-list answer; signal loss falls back to wiki-only grounding",
-            "metadata_keys": ["degraded", "degraded_sources[]"]
+            "metadata_keys": [
+                "degraded",
+                "degraded_sources[]",
+                "truncated",
+                "truncated_components[]"
+            ]
         }),
     );
     assert_eq!(
@@ -219,6 +226,8 @@ fn parity_contract_tracks_code_grounding_and_dependency_classification() {
             "sources",
             "code_edges",
             "code_citations",
+            "truncated",
+            "truncated_components",
             "gaps",
             "stale_candidates",
             "suggested_questions",
@@ -239,7 +248,9 @@ fn parity_contract_tracks_code_grounding_and_dependency_classification() {
             "metadata_keys": [
                 "warnings[]",
                 "degradation.degraded",
-                "degradation.degraded_sources[]"
+                "degradation.degraded_sources[]",
+                "degradation.truncated",
+                "degradation.truncated_components[]"
             ]
         }),
     );

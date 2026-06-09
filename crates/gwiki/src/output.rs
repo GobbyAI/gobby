@@ -111,6 +111,8 @@ pub struct AskOutput {
     pub sources: Vec<String>,
     pub code_edges: Vec<AskCodeEdgeOutput>,
     pub code_citations: Vec<AskCodeCitationOutput>,
+    pub truncated: bool,
+    pub truncated_components: Vec<String>,
     pub gaps: Vec<String>,
     pub stale_candidates: Vec<String>,
     pub suggested_questions: Vec<String>,

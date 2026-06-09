@@ -13,12 +13,43 @@ use crate::graph::{
     WikiGraphLinkTarget, WikiGraphSource, graph_write_statements,
 };
 use crate::search::{SearchError, SearchScope};
+use crate::support::config::SharedCodeGraphLimits;
 use crate::support::text::slugify;
 
 pub const FALKORDB_GRAPH_NAME: &str = "gobby_wiki";
-const DEFAULT_CODE_GRAPH_EDGE_LIMIT: usize = 200;
+pub(crate) const SHARED_CODE_GRAPH_TRUNCATED_SOURCE: &str = "shared_code_graph_truncated";
 const CODE_FALKORDB_GRAPH_NAME: &str = "gobby_code";
 const CODE_GRAPH_PROVENANCE: &str = "shared_code_graph";
+const CODE_CALL_EDGE_TRUNCATION_COMPONENT: &str = "code_call_edges";
+const CODE_IMPORT_EDGE_TRUNCATION_COMPONENT: &str = "code_import_edges";
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SharedCodeGraphTruncation {
+    pub(crate) components: Vec<String>,
+}
+
+impl SharedCodeGraphTruncation {
+    fn from_components(components: BTreeSet<String>) -> Self {
+        Self {
+            components: components.into_iter().collect(),
+        }
+    }
+
+    pub(crate) fn is_truncated(&self) -> bool {
+        !self.components.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SharedCodeGraphEdges {
+    pub(crate) edges: Vec<WikiGraphCodeEdge>,
+    pub(crate) truncation: SharedCodeGraphTruncation,
+}
+
+struct LimitedCodeGraphEdges {
+    edges: Vec<WikiGraphCodeEdge>,
+    truncated: bool,
+}
 
 pub(crate) struct GraphBoostData {
     pub documents: Vec<crate::search::graph_boost::GraphBoostDocument>,
@@ -74,7 +105,8 @@ pub(crate) fn load_code_graph_edges(
     config: &FalkorConfig,
     project_id: &str,
     documents: &[WikiGraphDocument],
-) -> anyhow::Result<Vec<WikiGraphCodeEdge>> {
+    limits: SharedCodeGraphLimits,
+) -> anyhow::Result<SharedCodeGraphEdges> {
     let mut client = GraphClient::from_config(config, CODE_FALKORDB_GRAPH_NAME)?;
     let code_documents = documents
         .iter()
@@ -84,26 +116,44 @@ pub(crate) fn load_code_graph_edges(
         })
         .collect::<Vec<_>>();
     let mut edges = Vec::new();
+    let mut truncated_components = BTreeSet::new();
     for (scope, document_path, file_path) in code_documents {
-        let edge_limit = DEFAULT_CODE_GRAPH_EDGE_LIMIT;
-        edges.extend(code_call_edges(
+        let call_edges = code_call_edges(
             &mut client,
             project_id,
             &scope,
             &document_path,
             &file_path,
-            edge_limit,
-        )?);
-        edges.extend(code_import_edges(
+            limits.call_edge_limit,
+        )?;
+        if call_edges.truncated {
+            truncated_components.insert(truncation_component(
+                CODE_CALL_EDGE_TRUNCATION_COMPONENT,
+                limits.call_edge_limit,
+            ));
+        }
+        edges.extend(call_edges.edges);
+
+        let import_edges = code_import_edges(
             &mut client,
             project_id,
             &scope,
             &document_path,
             &file_path,
-            edge_limit,
-        )?);
+            limits.import_edge_limit,
+        )?;
+        if import_edges.truncated {
+            truncated_components.insert(truncation_component(
+                CODE_IMPORT_EDGE_TRUNCATION_COMPONENT,
+                limits.import_edge_limit,
+            ));
+        }
+        edges.extend(import_edges.edges);
     }
-    Ok(edges)
+    Ok(SharedCodeGraphEdges {
+        edges,
+        truncation: SharedCodeGraphTruncation::from_components(truncated_components),
+    })
 }
 
 fn code_call_edges(
@@ -113,45 +163,49 @@ fn code_call_edges(
     document_path: &Path,
     file_path: &str,
     limit: usize,
-) -> anyhow::Result<Vec<WikiGraphCodeEdge>> {
-    let query = "\
+) -> anyhow::Result<LimitedCodeGraphEdges> {
+    let query = code_call_edges_query();
+    let mut rows = client.query(
+        query,
+        Some(code_edge_query_params(project_id, file_path, limit)?),
+    )?;
+    let truncated = truncate_to_limit(&mut rows, limit);
+    Ok(LimitedCodeGraphEdges {
+        edges: rows
+            .into_iter()
+            .map(|row| {
+                let source_file = optional_row_string(&row, "source_file_path")
+                    .unwrap_or_else(|| file_path.to_string());
+                let source_name = optional_row_string(&row, "source_name")
+                    .unwrap_or_else(|| "unknown".to_string());
+                let target_file = optional_row_string(&row, "target_file_path")
+                    .unwrap_or_else(|| "external".to_string());
+                let target_name = optional_row_string(&row, "target_name")
+                    .unwrap_or_else(|| "unknown".to_string());
+                let incoming = target_file == file_path && source_file != file_path;
+                WikiGraphCodeEdge {
+                    scope: scope.clone(),
+                    document_path: document_path.to_path_buf(),
+                    source: code_endpoint(&source_file, &source_name),
+                    target: code_endpoint(&target_file, &target_name),
+                    kind: if incoming { "callers" } else { "calls" }.to_string(),
+                    direction: if incoming { "incoming" } else { "outgoing" }.to_string(),
+                    line: optional_row_usize(&row, "line"),
+                    provenance: CODE_GRAPH_PROVENANCE.to_string(),
+                }
+            })
+            .collect(),
+        truncated,
+    })
+}
+
+fn code_call_edges_query() -> &'static str {
+    "\
         MATCH (source:CodeSymbol {project: $project})-[r:CALLS]->(target {project: $project}) \
         WHERE source.file_path = $path OR (target:CodeSymbol AND target.file_path = $path) \
         RETURN source.file_path AS source_file_path, source.name AS source_name, \
                target.file_path AS target_file_path, target.name AS target_name, r.line AS line \
-        LIMIT toInteger($limit)";
-    let rows = client.query(
-        query,
-        Some(HashMap::from([
-            ("project".to_string(), project_id.to_string()),
-            ("path".to_string(), file_path.to_string()),
-            ("limit".to_string(), limit.to_string()),
-        ])),
-    )?;
-    Ok(rows
-        .into_iter()
-        .map(|row| {
-            let source_file = optional_row_string(&row, "source_file_path")
-                .unwrap_or_else(|| file_path.to_string());
-            let source_name =
-                optional_row_string(&row, "source_name").unwrap_or_else(|| "unknown".to_string());
-            let target_file = optional_row_string(&row, "target_file_path")
-                .unwrap_or_else(|| "external".to_string());
-            let target_name =
-                optional_row_string(&row, "target_name").unwrap_or_else(|| "unknown".to_string());
-            let incoming = target_file == file_path && source_file != file_path;
-            WikiGraphCodeEdge {
-                scope: scope.clone(),
-                document_path: document_path.to_path_buf(),
-                source: code_endpoint(&source_file, &source_name),
-                target: code_endpoint(&target_file, &target_name),
-                kind: if incoming { "callers" } else { "calls" }.to_string(),
-                direction: if incoming { "incoming" } else { "outgoing" }.to_string(),
-                line: optional_row_usize(&row, "line"),
-                provenance: CODE_GRAPH_PROVENANCE.to_string(),
-            }
-        })
-        .collect())
+        LIMIT toInteger($limit)"
 }
 
 fn code_import_edges(
@@ -161,38 +215,72 @@ fn code_import_edges(
     document_path: &Path,
     file_path: &str,
     limit: usize,
-) -> anyhow::Result<Vec<WikiGraphCodeEdge>> {
-    let query = "\
+) -> anyhow::Result<LimitedCodeGraphEdges> {
+    let query = code_import_edges_query();
+    let mut rows = client.query(
+        query,
+        Some(code_edge_query_params(project_id, file_path, limit)?),
+    )?;
+    let truncated = truncate_to_limit(&mut rows, limit);
+    Ok(LimitedCodeGraphEdges {
+        edges: rows
+            .into_iter()
+            .map(|row| {
+                let source_file = optional_row_string(&row, "source_file_path")
+                    .unwrap_or_else(|| file_path.to_string());
+                let target_name = optional_row_string(&row, "target_name")
+                    .unwrap_or_else(|| "unknown".to_string());
+                WikiGraphCodeEdge {
+                    scope: scope.clone(),
+                    document_path: document_path.to_path_buf(),
+                    source: source_file,
+                    target: target_name,
+                    kind: "imports".to_string(),
+                    direction: "outgoing".to_string(),
+                    line: None,
+                    provenance: CODE_GRAPH_PROVENANCE.to_string(),
+                }
+            })
+            .collect(),
+        truncated,
+    })
+}
+
+fn code_import_edges_query() -> &'static str {
+    "\
         MATCH (file:CodeFile {path: $path, project: $project})-[r:IMPORTS]->(module:CodeModule {project: $project}) \
         RETURN file.path AS source_file_path, module.name AS target_name \
-        LIMIT toInteger($limit)";
-    let rows = client.query(
-        query,
-        Some(HashMap::from([
-            ("project".to_string(), project_id.to_string()),
-            ("path".to_string(), file_path.to_string()),
-            ("limit".to_string(), limit.to_string()),
-        ])),
-    )?;
-    Ok(rows
-        .into_iter()
-        .map(|row| {
-            let source_file = optional_row_string(&row, "source_file_path")
-                .unwrap_or_else(|| file_path.to_string());
-            let target_name =
-                optional_row_string(&row, "target_name").unwrap_or_else(|| "unknown".to_string());
-            WikiGraphCodeEdge {
-                scope: scope.clone(),
-                document_path: document_path.to_path_buf(),
-                source: source_file,
-                target: target_name,
-                kind: "imports".to_string(),
-                direction: "outgoing".to_string(),
-                line: None,
-                provenance: CODE_GRAPH_PROVENANCE.to_string(),
-            }
-        })
-        .collect())
+        LIMIT toInteger($limit)"
+}
+
+fn code_edge_query_params(
+    project_id: &str,
+    file_path: &str,
+    limit: usize,
+) -> anyhow::Result<HashMap<String, String>> {
+    Ok(HashMap::from([
+        ("project".to_string(), project_id.to_string()),
+        ("path".to_string(), file_path.to_string()),
+        ("limit".to_string(), sentinel_limit(limit)?.to_string()),
+    ]))
+}
+
+fn sentinel_limit(limit: usize) -> anyhow::Result<usize> {
+    limit
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("shared code graph edge limit is too large: {limit}"))
+}
+
+fn truncate_to_limit<T>(rows: &mut Vec<T>, limit: usize) -> bool {
+    let truncated = rows.len() > limit;
+    if truncated {
+        rows.truncate(limit);
+    }
+    truncated
+}
+
+fn truncation_component(component: &str, limit: usize) -> String {
+    format!("{component}>{limit}")
 }
 
 fn clear_scope(client: &mut GraphClient, scope: &SearchScope) -> anyhow::Result<()> {
@@ -645,10 +733,7 @@ mod tests {
     fn graph_scope_params_are_cypher_string_literals() {
         let params = scope_params(&SearchScope::topic("rust'async"));
 
-        assert_eq!(
-            params.get("scope_kind").map(String::as_str),
-            Some("'topic'")
-        );
+        assert_eq!(params.get("scope_kind").map(String::as_str), Some("'topic'"));
         assert_eq!(
             params.get("scope_id").map(String::as_str),
             Some("'rust\\'async'")
@@ -684,6 +769,48 @@ mod tests {
         assert_eq!(component, "gwiki_graph");
         assert!(message.contains("documents>10"));
         assert!(message.contains("links>20"));
+    }
+
+    #[test]
+    fn code_edge_query_params_use_sentinel_limit_and_parameterized_queries() {
+        let call_query = code_call_edges_query();
+        let import_query = code_import_edges_query();
+
+        assert!(call_query.contains("LIMIT toInteger($limit)"));
+        assert!(import_query.contains("LIMIT toInteger($limit)"));
+        assert!(!call_query.contains("LIMIT 200"));
+        assert!(!import_query.contains("LIMIT 200"));
+
+        let params = code_edge_query_params("project-1", "src/lib.rs", 7).expect("params");
+
+        assert_eq!(params.get("limit").map(String::as_str), Some("8"));
+    }
+
+    #[test]
+    fn truncation_components_name_capped_call_and_import_queries() {
+        assert_eq!(
+            truncation_component(CODE_CALL_EDGE_TRUNCATION_COMPONENT, 7),
+            "code_call_edges>7"
+        );
+        assert_eq!(
+            truncation_component(CODE_IMPORT_EDGE_TRUNCATION_COMPONENT, 9),
+            "code_import_edges>9"
+        );
+    }
+
+    #[test]
+    fn truncate_to_limit_handles_sentinel_rows_and_zero_limit() {
+        let mut rows = vec![1, 2, 3];
+        assert!(truncate_to_limit(&mut rows, 2));
+        assert_eq!(rows, vec![1, 2]);
+
+        let mut rows = vec![1];
+        assert!(truncate_to_limit(&mut rows, 0));
+        assert!(rows.is_empty());
+
+        let mut rows = vec![1, 2];
+        assert!(!truncate_to_limit(&mut rows, 2));
+        assert_eq!(rows, vec![1, 2]);
     }
 
     #[test]
