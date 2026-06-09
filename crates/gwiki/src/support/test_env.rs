@@ -36,7 +36,8 @@ impl EnvGuard {
     fn set_value(&mut self, key: &'static str, value: &OsStr) {
         self.capture_old_value(key);
         unsafe {
-            // SAFETY: EnvGuard holds ENV_TEST_LOCK until Drop restores the variable.
+            // SAFETY: EnvGuard serializes test mutations with ENV_TEST_LOCK until Drop restores the variable.
+            // It cannot prevent concurrent unsynchronized env reads outside this helper.
             std::env::set_var(key, value);
         }
     }
@@ -44,7 +45,8 @@ impl EnvGuard {
     fn unset_value(&mut self, key: &'static str) {
         self.capture_old_value(key);
         unsafe {
-            // SAFETY: EnvGuard holds ENV_TEST_LOCK until Drop restores the variable.
+            // SAFETY: EnvGuard serializes test mutations with ENV_TEST_LOCK until Drop restores the variable.
+            // It cannot prevent concurrent unsynchronized env reads outside this helper.
             std::env::remove_var(key);
         }
     }
@@ -61,7 +63,8 @@ impl Drop for EnvGuard {
     fn drop(&mut self) {
         for (key, old_value) in self.old_values.iter().rev() {
             unsafe {
-                // SAFETY: EnvGuard still holds ENV_TEST_LOCK while restoring variables.
+                // SAFETY: EnvGuard still serializes test mutations with ENV_TEST_LOCK while restoring variables.
+                // It cannot prevent concurrent unsynchronized env reads outside this helper.
                 match old_value {
                     Some(value) => std::env::set_var(*key, value),
                     None => std::env::remove_var(*key),

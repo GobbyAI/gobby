@@ -46,16 +46,28 @@ fn codewiki_verbose_progress_captures_generation_order() {
 
     let lines = progress.into_lines();
     assert!(lines.iter().all(|line| line.starts_with("codewiki: ")));
-    assert_before(&lines, "generating file docs for 2 files", "file 1/2 src/api.rs");
+    assert_before(
+        &lines,
+        "generating file docs for 2 files",
+        "file 1/2 src/api.rs",
+    );
     assert_before(&lines, "file 1/2 src/api.rs", "file 2/2 src/lib.rs");
     assert_before(&lines, "file 2/2 src/lib.rs", "symbol 1/3 Client");
     assert_before(&lines, "symbol 1/3 Client", "symbol 3/3 render");
     assert_before(&lines, "generating module docs", "module 1/1 src");
     assert_before(&lines, "module 1/1 src", "generating repo overview");
-    assert_before(&lines, "generating repo overview", "generating architecture docs");
+    assert_before(
+        &lines,
+        "generating repo overview",
+        "generating architecture docs",
+    );
     assert_before(&lines, "generating architecture docs", "subsystem 1/1 src");
     assert_before(&lines, "subsystem 1/1 src", "generating onboarding docs");
-    assert_before(&lines, "generating onboarding docs", "generating hotspots docs");
+    assert_before(
+        &lines,
+        "generating onboarding docs",
+        "generating hotspots docs",
+    );
     assert_before(&lines, "generating hotspots docs", "writing docs");
 }
 
@@ -67,9 +79,10 @@ fn codewiki_verbose_progress_silent_sink_emits_no_lines() {
     assert!(progress.into_lines().is_empty());
 
     let docs = generate_hierarchical_docs(&progress_input(), None);
-    assert!(docs
-        .iter()
-        .all(|(_, content)| !content.contains("codewiki:")));
+    assert!(
+        docs.iter()
+            .all(|(_, content)| !content.contains("codewiki:"))
+    );
 }
 
 #[test]

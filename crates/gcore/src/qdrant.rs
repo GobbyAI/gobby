@@ -13,9 +13,7 @@ const QDRANT_TIMEOUT: Duration = Duration::from_secs(5);
 pub use reqwest::StatusCode;
 
 mod naming;
-pub use naming::{
-    CollectionScope, collection_name, legacy_collection_name, resolve_collection_name,
-};
+pub use naming::{CollectionScope, collection_name};
 
 #[derive(Debug, thiserror::Error)]
 pub enum QdrantError {

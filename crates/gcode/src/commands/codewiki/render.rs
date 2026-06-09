@@ -341,6 +341,7 @@ pub(crate) fn build_repo_doc(
     files: &[FileDoc],
     modules: &[ModuleDoc],
     generate: &mut Option<&mut TextGenerator<'_>>,
+    progress: &mut CodewikiProgress,
 ) -> String {
     let top_modules = modules
         .iter()
@@ -376,6 +377,7 @@ pub(crate) fn build_repo_doc(
         .collect::<Vec<_>>();
     let fallback = structural_repo_summary(files.len(), modules.len());
     let source_spans = collect_link_spans(&root_files, &top_modules);
+    progress.emit("generating repo overview");
     let generated = maybe_generate(
         generate,
         &prompts::repo_prompt(&module_summaries, &file_summaries),

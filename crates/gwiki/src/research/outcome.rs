@@ -58,9 +58,11 @@ pub(crate) fn outcome_code_citations(
     if let Some(values) = payload.get("code_citations").and_then(Value::as_array) {
         for value in values {
             let Some(file) = value.get("file").and_then(Value::as_str) else {
+                log::debug!("skipping outcome code citation without string `file`: {value}");
                 continue;
             };
             let Some(file) = sanitize_code_path(file) else {
+                log::debug!("skipping outcome code citation with unsafe `file`: {file}");
                 continue;
             };
             citations.push(

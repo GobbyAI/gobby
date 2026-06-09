@@ -138,7 +138,7 @@ fn gcore_yaml_write_rejects_scalar_to_nested_mapping_collision() {
 #[test]
 fn gcore_yaml_rejects_excessive_nesting() {
     let mut yaml = String::new();
-    for depth in 0..65 {
+    for depth in 0..=64 {
         yaml.push_str(&"  ".repeat(depth));
         yaml.push_str(&format!("k{depth}:\n"));
     }

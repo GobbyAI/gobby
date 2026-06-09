@@ -111,12 +111,17 @@ pub(crate) struct OutputConfidence {
 pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
     crate::support::postgres::require_attached_index("gwiki citation-quality")?;
     let resolved = resolve_selection_context(&selection)?;
+    let ai_available = match text_generation_available() {
+        Ok(available) => available,
+        Err(error) => {
+            log::warn!(
+                "citation-quality could not resolve AI availability; continuing without AI diagnostics: {error}"
+            );
+            false
+        }
+    };
     // Report construction is vault-backed; the command only needs attached gwiki schema validation.
-    let report = build_report(
-        resolved.scope.root(),
-        resolved.output_scope,
-        text_generation_available()?,
-    )?;
+    let report = build_report(resolved.scope.root(), resolved.output_scope, ai_available)?;
     write_artifact(
         resolved.scope.root(),
         &report.artifact_path,
@@ -290,7 +295,10 @@ fn coverage_gap_section(
     for page in collect_pages(vault_root)? {
         for heading in page.parsed.headings {
             let section_id = section_id_for(&page.relative_path, &heading.title);
-            if provenance.links_for_section(&section_id).is_empty() {
+            if provenance
+                .links_for_page_section(&page.relative_path, &section_id)
+                .is_empty()
+            {
                 gaps.push(CoverageGap {
                     section: format!(
                         "{}#{}",
@@ -578,6 +586,11 @@ mod tests {
             "knowledge/topics/topic.md",
             "# Topic\n\n## Supported\nClaim with source [src-1].\n\n## Missing\nClaim without source.\n",
         );
+        write_page(
+            temp.path(),
+            "knowledge/topics/other.md",
+            "# Other\n\n## Supported\nSame heading, different page.\n",
+        );
         SourceManifest {
             entries: vec![source_record(
                 "src-1",
@@ -614,6 +627,11 @@ mod tests {
             report
                 .markdown
                 .contains("knowledge/topics/topic.md#missing")
+        );
+        assert!(
+            report
+                .markdown
+                .contains("knowledge/topics/other.md#supported")
         );
         assert!(report.markdown.contains("## Stale Source Warnings"));
         assert!(report.markdown.contains("src-1"));

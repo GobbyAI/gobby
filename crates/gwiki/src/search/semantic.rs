@@ -8,9 +8,7 @@ use gobby_core::ai::daemon;
 use gobby_core::ai_context::AiContext;
 use gobby_core::config::{EmbeddingConfig, QdrantConfig};
 use gobby_core::degradation::DegradationKind;
-use gobby_core::qdrant::{
-    CollectionScope, SearchHit, SearchRequest, collection_name, legacy_collection_name,
-};
+use gobby_core::qdrant::{CollectionScope, SearchHit, SearchRequest, collection_name};
 use serde_json::{Map, Value, json};
 
 use crate::search::{
@@ -65,14 +63,6 @@ pub enum SemanticEmbedding {
 }
 
 pub trait VectorSearchBackend {
-    fn collection_point_count(
-        &mut self,
-        _config: &QdrantConfig,
-        _collection: &str,
-    ) -> anyhow::Result<Option<u64>> {
-        Ok(None)
-    }
-
     fn search(
         &mut self,
         config: &QdrantConfig,
@@ -147,13 +137,7 @@ where
         limit: request.limit,
         filter: Some(filter),
     };
-    let hits = match search_collection_with_legacy_fallback(
-        vector_backend,
-        qdrant,
-        &request.scope,
-        &collection,
-        qdrant_request,
-    ) {
+    let hits = match vector_backend.search(qdrant, &collection, qdrant_request) {
         Ok(hits) => hits,
         Err(error) => {
             return Ok(qdrant_degradation(error));
@@ -182,41 +166,6 @@ fn semantic_embedding_query(config: &EmbeddingConfig, query: &str) -> String {
 
 pub fn collection_for_scope(scope: &SearchScope) -> String {
     collection_name("gwiki", qdrant_collection_scope(scope))
-}
-
-fn search_collection_with_legacy_fallback<V>(
-    vector_backend: &mut V,
-    qdrant: &QdrantConfig,
-    scope: &SearchScope,
-    collection: &str,
-    request: SearchRequest,
-) -> anyhow::Result<Vec<SearchHit>>
-where
-    V: VectorSearchBackend,
-{
-    let retry_request = SearchRequest {
-        vector: request.vector.clone(),
-        limit: request.limit,
-        filter: request.filter.clone(),
-    };
-    let hits = vector_backend.search(qdrant, collection, request)?;
-    if !hits.is_empty() || vector_backend.collection_point_count(qdrant, collection)? != Some(0) {
-        return Ok(hits);
-    }
-
-    let legacy_collection = legacy_collection_for_scope(scope);
-    if legacy_collection == collection {
-        return Ok(hits);
-    }
-    let legacy_hits = vector_backend.search(qdrant, &legacy_collection, retry_request)?;
-    log::warn!(
-        "gwiki semantic search used deprecated legacy Qdrant collection `{legacy_collection}` because `{collection}` is empty; reindex to populate the preferred collection"
-    );
-    Ok(legacy_hits)
-}
-
-fn legacy_collection_for_scope(scope: &SearchScope) -> String {
-    legacy_collection_name("gwiki", qdrant_collection_scope(scope))
 }
 
 fn qdrant_collection_scope(scope: &SearchScope) -> CollectionScope<'_> {
@@ -461,14 +410,6 @@ fn embed_daemon_query(context: &AiContext, query: &str) -> Result<Vec<f32>, Sear
 pub struct GobbyQdrantBackend;
 
 impl VectorSearchBackend for GobbyQdrantBackend {
-    fn collection_point_count(
-        &mut self,
-        config: &QdrantConfig,
-        collection: &str,
-    ) -> anyhow::Result<Option<u64>> {
-        gobby_core::qdrant::collection_point_count(config, collection)
-    }
-
     fn search(
         &mut self,
         config: &QdrantConfig,

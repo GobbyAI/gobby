@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
@@ -41,6 +41,8 @@ pub struct ProvenanceGraph {
     #[serde(default, skip)]
     section_index: BTreeMap<String, Vec<usize>>,
     #[serde(default, skip)]
+    page_section_index: BTreeMap<String, Vec<usize>>,
+    #[serde(default, skip)]
     source_index: BTreeMap<String, Vec<usize>>,
 }
 
@@ -49,6 +51,13 @@ impl ProvenanceGraph {
         let index = self.links.len();
         self.section_index
             .entry(link.section.section_id.clone())
+            .or_default()
+            .push(index);
+        self.page_section_index
+            .entry(page_section_key(
+                &link.section.page_path,
+                &link.section.section_id,
+            ))
             .or_default()
             .push(index);
         self.source_index
@@ -61,6 +70,19 @@ impl ProvenanceGraph {
     pub fn links_for_section(&self, section_id: &str) -> Vec<&ProvenanceLink> {
         self.section_index
             .get(section_id)
+            .into_iter()
+            .flatten()
+            .filter_map(|index| self.links.get(*index))
+            .collect()
+    }
+
+    pub fn links_for_page_section(
+        &self,
+        page_path: &Path,
+        section_id: &str,
+    ) -> Vec<&ProvenanceLink> {
+        self.page_section_index
+            .get(&page_section_key(page_path, section_id))
             .into_iter()
             .flatten()
             .filter_map(|index| self.links.get(*index))
@@ -122,10 +144,18 @@ impl ProvenanceGraph {
 
     fn rebuild_indexes(&mut self) {
         self.section_index.clear();
+        self.page_section_index.clear();
         self.source_index.clear();
         for (index, link) in self.links.iter().enumerate() {
             self.section_index
                 .entry(link.section.section_id.clone())
+                .or_default()
+                .push(index);
+            self.page_section_index
+                .entry(page_section_key(
+                    &link.section.page_path,
+                    &link.section.section_id,
+                ))
                 .or_default()
                 .push(index);
             self.source_index
@@ -134,6 +164,10 @@ impl ProvenanceGraph {
                 .push(index);
         }
     }
+}
+
+fn page_section_key(page_path: &Path, section_id: &str) -> String {
+    format!("{}#{section_id}", page_path.to_string_lossy())
 }
 
 fn write_provenance_json_durably(
@@ -217,6 +251,23 @@ mod tests {
         assert_eq!(section_links.len(), 1);
         assert_eq!(section_links[0].source, source);
         assert_eq!(section_links[0].section, section);
+        assert_eq!(
+            graph
+                .links_for_page_section(
+                    Path::new("knowledge/topics/provenance.md"),
+                    "durable-provenance"
+                )
+                .len(),
+            1
+        );
+        assert!(
+            graph
+                .links_for_page_section(
+                    Path::new("knowledge/topics/other.md"),
+                    "durable-provenance"
+                )
+                .is_empty()
+        );
         assert_eq!(
             graph.links_for_source("src-provenance")[0]
                 .section
