@@ -332,9 +332,7 @@ def _format_project_memories(
         break
 
     result = _render_project_memory(body_lines, omitted_count)
-    for _ in range(len(body_lines)):
-        if len(result) <= budget:
-            break
+    while body_lines and len(result) > budget:
         body_lines.pop()
         omitted_count += 1
         result = _render_project_memory(body_lines, omitted_count)

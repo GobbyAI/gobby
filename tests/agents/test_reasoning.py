@@ -202,6 +202,25 @@ def test_new_fallback_catalog_supports_no_arg_constructor(
     assert created == 1
 
 
+def test_new_fallback_catalog_chains_last_constructor_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeCatalog:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            raise TypeError("constructor failed")
+
+    monkeypatch.setattr("gobby.servers.provider_models.ProviderModelCatalog", FakeCatalog)
+
+    with pytest.raises(
+        TypeError,
+        match="ProviderModelCatalog could not be constructed: constructor failed",
+    ) as exc_info:
+        reasoning._new_fallback_catalog(None)
+
+    assert isinstance(exc_info.value.__cause__, TypeError)
+    assert str(exc_info.value.__cause__) == "constructor failed"
+
+
 def test_get_provider_models_reuses_fallback_catalog_for_equal_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

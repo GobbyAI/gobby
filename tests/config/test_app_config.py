@@ -544,6 +544,19 @@ class TestLoadConfig:
         config = load_config(config_file=str(config_file))
         assert config.daemon_port == 9000
 
+    def test_load_config_wraps_config_file_parse_failure(self, temp_dir: Path) -> None:
+        """Phase 2 config-file parse failures surface as contextual ValueError."""
+        config_file = temp_dir / "config.yaml"
+        config_file.write_text("memory: [\n")
+
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {}
+
+        with pytest.raises(ValueError, match="Failed to read config file") as exc_info:
+            load_config(config_file=str(config_file), config_store=DummyConfigStore())
+        assert isinstance(exc_info.value.__cause__, yaml.YAMLError)
+
     def test_load_config_rejects_removed_llm_providers_file_section(self, temp_dir: Path) -> None:
         """Legacy llm_providers file config now fails loudly."""
         config_file = temp_dir / "config.yaml"

@@ -241,6 +241,7 @@ async def _merge(
     keeper_id = action.memory_ids[0]
     mutations = 0
     rollback_rows: list[dict[str, Any]] = []
+    pending_snapshots: list[tuple[int, dict[str, Any] | None]] = []
     before_keeper = await asyncio.to_thread(store.get_memory_row, keeper_id)
     try:
         if before_keeper is not None and before_keeper.get("content") != action.content:
@@ -257,16 +258,30 @@ async def _merge(
                 tags=action.tags,
             )
             after_keeper = await asyncio.to_thread(store.get_memory_row, keeper_id)
-            await asyncio.to_thread(store.complete_snapshot, snapshot_id, after_data=after_keeper)
+            pending_snapshots.append((snapshot_id, after_keeper))
             rollback_rows.append(before_keeper)
             mutations += 1
 
         for duplicate_id in action.memory_ids[1:]:
             before_duplicate = await asyncio.to_thread(store.get_memory_row, duplicate_id)
-            if before_duplicate is not None:
-                rollback_rows.append(before_duplicate)
-            deleted = await _delete(memory_manager, store, run_id, duplicate_id, "merge")
-            mutations += deleted
+            if before_duplicate is None:
+                continue
+            snapshot_id = await asyncio.to_thread(
+                store.insert_snapshot,
+                run_id=run_id,
+                memory_id=duplicate_id,
+                action="merge",
+                before_data=before_duplicate,
+            )
+            rollback_rows.append(before_duplicate)
+            deleted = await memory_manager.delete_memory(duplicate_id)
+            if not deleted:
+                continue
+            pending_snapshots.append((snapshot_id, None))
+            mutations += 1
+
+        for snapshot_id, after_data in pending_snapshots:
+            await asyncio.to_thread(store.complete_snapshot, snapshot_id, after_data=after_data)
         return mutations
     except Exception:
         await _restore_rows_for_failed_action(store, rollback_rows)

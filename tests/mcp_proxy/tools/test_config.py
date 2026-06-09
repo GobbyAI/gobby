@@ -954,6 +954,11 @@ class TestDeleteConfig:
         delete_tool = registry.get_tool("delete_config")
 
         assert delete_tool(key="session_summary.candidates")["success"] is True
+        assert "session_summary.candidates" not in config_store.list_keys()
+        assert "session_summary.profile" in config_store.list_keys()
+        assert config_state["config"].session_summary.profile == FeatureProfile.MID
+        assert config_state["config"].session_summary.candidates == mid_candidates
+
         result = delete_tool(key="session_summary.profile")
 
         assert result["success"] is True

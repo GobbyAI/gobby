@@ -407,6 +407,10 @@ def create_config_registry(
             flat = dict(defaults_flat)
             for remaining_key in remaining_override_keys:
                 if remaining_key in current_flat:
+                    if remaining_key.endswith(".profile"):
+                        candidates_key = f"{remaining_key.rsplit('.', 1)[0]}.candidates"
+                        if candidates_key not in remaining_override_keys:
+                            flat.pop(candidates_key, None)
                     _remove_scalar_parent_keys(flat, remaining_key)
                     flat[remaining_key] = current_flat[remaining_key]
             new_config = DaemonConfigCls(**unflatten_config(flat))

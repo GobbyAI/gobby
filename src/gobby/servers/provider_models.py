@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.acp_client import ACPClient
 from gobby.agents.trust import authorize_model_discovery_trust
-from gobby.config.app import deep_merge
+from gobby.config.app import DaemonConfig, deep_merge
 from gobby.llm.context_windows import (
     CONTEXT_LENGTH_SOURCE_KEY,
     ContextLengthCandidate,
@@ -220,6 +220,14 @@ def _merge_models(
         merged.append(entry)
 
     return merged
+
+
+def create_provider_model_catalog(
+    daemon_config: DaemonConfig | None = None,
+) -> ProviderModelCatalog:
+    """Create the config-free provider model catalog from daemon-aware call sites."""
+    del daemon_config
+    return ProviderModelCatalog()
 
 
 class ProviderModelCatalog:

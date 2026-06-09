@@ -9,7 +9,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.servers.websocket.chat.backends.base import ProviderBackendHealth
-from gobby.servers.websocket.chat.backends.codex import CodexManagedChatSession
+from gobby.servers.websocket.chat.backends.codex import (
+    CodexManagedChatSession,
+    CodexWebChatBackend,
+)
 from gobby.servers.websocket.chat.backends.gemini import (
     GeminiManagedChatSession,
     GeminiWebChatBackend,
@@ -17,6 +20,13 @@ from gobby.servers.websocket.chat.backends.gemini import (
 from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
+
+
+def test_codex_backend_and_session_share_provider_id() -> None:
+    backend = CodexWebChatBackend(client=None)
+    session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+
+    assert session.provider == backend.provider == "codex"
 
 
 @pytest.mark.asyncio

@@ -549,7 +549,10 @@ class TestMemoryDreamCommand:
             )
 
         assert result.exit_code == 0
-        assert "Warning: failed to poll dream run dream-1" in result.output
+        assert (
+            "Warning: failed to poll dream run dream-1: Could not reach daemon: "
+            "temporarily unavailable"
+        ) in result.output
         assert "Status: completed" in result.output
         sleep.assert_called_once()
 

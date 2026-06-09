@@ -154,6 +154,7 @@ class TestAdminRoutes:
         mock_psutil.Process.return_value = mock_process
         mock_to_thread.return_value = 0.0
         write_shutdown_intent("cli_restart", ShutdownIntent.RESTART, sender_pid=123, home=tmp_path)
+        # Consume the active marker so status must fall back to the persisted source file.
         read_shutdown_intent(home=tmp_path)
 
         with patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path):

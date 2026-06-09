@@ -161,7 +161,10 @@ def _wait_for_completion(
                 timeout=min(_START_REQUEST_TIMEOUT_SECONDS, remaining),
             )
         except click.ClickException as exc:
-            click.echo(f"Warning: failed to poll dream run {run_id}: {exc.message}", err=True)
+            click.echo(
+                f"Warning: failed to poll dream run {run_id}: {exc.format_message()}",
+                err=True,
+            )
         else:
             status = _status(data)
             if status and status != last_status:

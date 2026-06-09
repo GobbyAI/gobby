@@ -9,9 +9,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.config.app import DaemonConfig
 from gobby.servers.provider_models import (
     ProviderModelCatalog,
     _model_discovery_cwd_path,
+    create_provider_model_catalog,
 )
 
 pytestmark = pytest.mark.unit
@@ -22,6 +24,14 @@ class TestProviderModelCatalog:
         """ProviderModelCatalog no longer accepts dead daemon config input."""
         with pytest.raises(TypeError, match="config"):
             ProviderModelCatalog(config=None, cache_path=temp_dir / "provider-model-catalog.json")
+
+    def test_factory_accepts_daemon_config_without_constructor_probe(self, temp_dir: Path) -> None:
+        """Factory is the daemon-aware entry point; the catalog itself stays config-free."""
+        with patch.dict("os.environ", {"GOBBY_HOME": str(temp_dir)}, clear=False):
+            catalog = create_provider_model_catalog(DaemonConfig())
+
+        assert isinstance(catalog, ProviderModelCatalog)
+        assert catalog.cache_path == temp_dir / "provider-model-catalog.json"
 
     @pytest.mark.asyncio
     async def test_probe_claude_model_records_canonical_id(self, temp_dir: Path) -> None:

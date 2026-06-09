@@ -59,6 +59,7 @@ from gobby.storage.config_store import ConfigStore
 
 logger = logging.getLogger(__name__)
 
+_CODEX_PROVIDER_ID = "codex"
 _CODEX_TRANSCRIPT_RETRY_ATTEMPTS = 5
 _CODEX_TRANSCRIPT_RETRY_DELAY_SECONDS = 0.1
 _CODEX_WEB_CHAT_APPROVAL_POLICY = "on-request"
@@ -95,7 +96,7 @@ class CodexManagedChatSession(
 ):
     """Web-chat session backed by the shared Codex app-server backend."""
 
-    provider: str = field(default="codex", init=False)
+    provider: str = field(default=_CODEX_PROVIDER_ID, init=False)
     chat_mode: str = field(default="plan")
     _thread_id: str | None = field(default=None, repr=False)
     _turn_id: str | None = field(default=None, repr=False)
@@ -259,7 +260,7 @@ class CodexManagedChatSession(
                     handle.seek(offset)
                     parser = CodexTranscriptParser(session_id=self._thread_id)
                     parsed = normalize_transcript_records(
-                        parser.parse_lines(handle.readlines()), "codex"
+                        parser.parse_lines(handle.readlines()), self.provider
                     )
             except OSError:
                 return ""
@@ -293,7 +294,7 @@ class CodexManagedChatSession(
                     handle.seek(offset)
                     parser = CodexTranscriptParser(session_id=self._thread_id)
                     return normalize_transcript_records(
-                        parser.parse_lines(handle.readlines()), "codex"
+                        parser.parse_lines(handle.readlines()), self.provider
                     )
             except OSError:
                 return []
@@ -310,7 +311,7 @@ class CodexManagedChatSession(
 class CodexWebChatBackend:
     """Shared daemon-owned Codex app-server backend."""
 
-    provider = "codex"
+    provider = _CODEX_PROVIDER_ID
 
     def __init__(
         self,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
@@ -90,19 +90,20 @@ def _new_fallback_catalog(daemon_config: DaemonConfig | None) -> ProviderModelCa
     """Instantiate the provider catalog across production and test constructor shapes."""
     from gobby.servers.provider_models import ProviderModelCatalog
 
-    catalog_cls = cast(Any, ProviderModelCatalog)
     last_error: TypeError | None = None
-    creators: tuple[Callable[[], Any], ...] = (
-        lambda: catalog_cls(daemon_config),
-        lambda: catalog_cls(config=daemon_config),
-        lambda: catalog_cls(),
+    creators: tuple[Callable[[], ProviderModelCatalog], ...] = (
+        lambda: ProviderModelCatalog(daemon_config),  # type: ignore[call-arg]
+        lambda: ProviderModelCatalog(config=daemon_config),  # type: ignore[call-arg]
+        lambda: ProviderModelCatalog(),
     )
     for create in creators:
         try:
-            return cast(ProviderModelCatalog, create())
+            return create()
         except TypeError as exc:
             last_error = exc
-    raise TypeError("ProviderModelCatalog could not be constructed") from last_error
+    raise TypeError(
+        f"ProviderModelCatalog could not be constructed: {last_error}"
+    ) from last_error
 
 
 def _select_model_entries(

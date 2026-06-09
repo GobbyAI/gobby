@@ -493,6 +493,8 @@ async def test_merge_rolls_back_keeper_update_when_duplicate_delete_fails() -> N
     assert summary["mutations"] == 0
     assert db.memories["merge-keep"]["content"] == "old"
     assert db.memories["merge-drop"]["content"] == "old"
+    assert store.list_snapshots(run_id) == []
+    assert [snapshot["applied"] for snapshot in db.snapshots] == [False, False]
 
 
 @pytest.mark.asyncio
