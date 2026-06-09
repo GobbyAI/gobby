@@ -1,6 +1,6 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -117,6 +117,12 @@ impl ResearchCodeCitation {
     ) -> Result<Self, String> {
         if file.trim().is_empty() {
             return Err("code citation file must be non-empty".to_string());
+        }
+        if Path::new(&file)
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+        {
+            return Err("code citation file must not contain '..' components".to_string());
         }
         if provenance.is_empty() {
             return Err("code citation provenance must be non-empty".to_string());
@@ -458,6 +464,21 @@ mod tests {
     }
 
     #[test]
+    fn research_code_citation_rejects_parent_path_components() {
+        let error =
+            ResearchCodeCitation::new("src/../secret.rs", None, None, vec!["search".to_string()])
+                .expect_err("parent path components are invalid");
+
+        assert!(matches!(
+            error,
+            WikiError::InvalidInput {
+                field: "code_citations",
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn research_code_citation_deserialization_rejects_empty_provenance() {
         let error = serde_json::from_value::<ResearchCodeCitation>(serde_json::json!({
             "file": "src/lib.rs",
@@ -466,6 +487,17 @@ mod tests {
         .expect_err("empty provenance is invalid");
 
         assert!(error.to_string().contains("provenance"));
+    }
+
+    #[test]
+    fn research_code_citation_deserialization_rejects_parent_path_components() {
+        let error = serde_json::from_value::<ResearchCodeCitation>(serde_json::json!({
+            "file": "../src/lib.rs",
+            "provenance": ["search"]
+        }))
+        .expect_err("parent path components are invalid");
+
+        assert!(error.to_string().contains(".."));
     }
 
     #[test]

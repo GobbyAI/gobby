@@ -57,7 +57,8 @@ fn ask_output_from_search(search: SearchOutput) -> AskOutput {
         .collect::<Vec<_>>();
     let sources = unique_sources(&search);
     let code_citations = code_citations_from_results(&search.results);
-    let degraded_sources = search.degradations.clone();
+    let degraded_sources = ordered_unique_strings(search.degradations.clone());
+    let warnings = ordered_unique_strings(search.degradations);
     let status = if search.results.is_empty() {
         "no_results"
     } else {
@@ -80,7 +81,7 @@ fn ask_output_from_search(search: SearchOutput) -> AskOutput {
         gaps: Vec::new(),
         stale_candidates: Vec::new(),
         suggested_questions: Vec::new(),
-        warnings: search.degradations,
+        warnings,
         ai: None,
         synthesis: None,
     }
@@ -122,7 +123,8 @@ fn enrich_with_attached_unified_graph_context(
     selection: &ScopeSelection,
 ) -> Result<(), WikiError> {
     let Some(database_url) = database_url_for("gwiki ask")? else {
-        mark_degraded_source(output, "shared_code_graph_unavailable");
+        let mut dedup = AskOutputDedup::from_output(output);
+        mark_degraded_source(output, &mut dedup, "shared_code_graph_unavailable");
         return Ok(());
     };
     let resolved = resolve_selection_context(selection)?;
@@ -159,7 +161,7 @@ fn enrich_with_attached_unified_graph_context(
                 }
             }
         }
-        (Some(_), SearchScope::Topic { .. }) => {
+        (Some(_), SearchScope::Global | SearchScope::Topic { .. }) => {
             degraded_sources.push("shared_code_graph_unavailable".to_string());
         }
         (None, _) => {
@@ -199,16 +201,16 @@ fn enrich_with_unified_graph_context(
     }
     .with_truncated_components(truncated_components);
     let pack = build_context_pack(facts, options);
+    let mut dedup = AskOutputDedup::from_output(output);
     for source in &pack.degradation.degraded_sources {
-        mark_degraded_source(output, source);
+        mark_degraded_source(output, &mut dedup, source);
     }
     if pack.degradation.truncated {
         output.truncated = true;
         for component in &pack.degradation.truncated_components {
-            push_unique(&mut output.truncated_components, component.clone());
+            dedup.push_truncated_component(output, component.clone());
         }
     }
-    let mut dedup = AskOutputDedup::from_output(output);
 
     let mut related_paths = output
         .related_pages
@@ -238,10 +240,9 @@ fn enrich_with_unified_graph_context(
     }
 }
 
-fn mark_degraded_source(output: &mut AskOutput, source: &str) {
+fn mark_degraded_source(output: &mut AskOutput, dedup: &mut AskOutputDedup, source: &str) {
     output.degraded = true;
-    push_unique(&mut output.degraded_sources, source.to_string());
-    push_unique(&mut output.warnings, source.to_string());
+    dedup.push_degraded_source(output, source.to_string());
 }
 
 fn code_citations_from_context_edges<'a>(
@@ -291,14 +292,11 @@ fn code_citation_from_endpoint(
     Some(AskCodeCitationOutput { file, line, symbol })
 }
 
-fn push_unique(values: &mut Vec<String>, value: String) {
-    if !values.contains(&value) {
-        values.push(value);
-    }
-}
-
 struct AskOutputDedup {
     sources: HashSet<String>,
+    degraded_sources: HashSet<String>,
+    truncated_components: HashSet<String>,
+    warnings: HashSet<String>,
     code_edges: HashSet<CodeEdgeKey>,
     code_citations: HashSet<CodeCitationKey>,
 }
@@ -310,6 +308,9 @@ impl AskOutputDedup {
     fn from_output(output: &AskOutput) -> Self {
         Self {
             sources: output.sources.iter().cloned().collect(),
+            degraded_sources: output.degraded_sources.iter().cloned().collect(),
+            truncated_components: output.truncated_components.iter().cloned().collect(),
+            warnings: output.warnings.iter().cloned().collect(),
             code_edges: output.code_edges.iter().map(code_edge_key).collect(),
             code_citations: output
                 .code_citations
@@ -325,6 +326,25 @@ impl AskOutputDedup {
         }
     }
 
+    fn push_degraded_source(&mut self, output: &mut AskOutput, source: String) {
+        if self.degraded_sources.insert(source.clone()) {
+            output.degraded_sources.push(source.clone());
+        }
+        self.push_warning(output, source);
+    }
+
+    fn push_truncated_component(&mut self, output: &mut AskOutput, component: String) {
+        if self.truncated_components.insert(component.clone()) {
+            output.truncated_components.push(component);
+        }
+    }
+
+    fn push_warning(&mut self, output: &mut AskOutput, warning: String) {
+        if self.warnings.insert(warning.clone()) {
+            output.warnings.push(warning);
+        }
+    }
+
     fn push_code_edge(&mut self, output: &mut AskOutput, edge: AskCodeEdgeOutput) {
         if self.code_edges.insert(code_edge_key(&edge)) {
             output.code_edges.push(edge);
@@ -337,6 +357,14 @@ impl AskOutputDedup {
             output.code_citations.push(citation);
         }
     }
+}
+
+fn ordered_unique_strings(values: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    values
+        .into_iter()
+        .filter(|value| seen.insert(value.clone()))
+        .collect()
 }
 
 fn code_edge_key(edge: &AskCodeEdgeOutput) -> CodeEdgeKey {
@@ -630,7 +658,10 @@ mod tests {
                 sources: vec!["bm25".to_string()],
                 explanations: Vec::new(),
             }],
-            vec!["semantic_unavailable".to_string()],
+            vec![
+                "semantic_unavailable".to_string(),
+                "semantic_unavailable".to_string(),
+            ],
         ));
 
         assert_eq!(output.command, "ask");
@@ -644,6 +675,10 @@ mod tests {
         );
         assert!(output.code_edges.is_empty());
         assert_eq!(output.warnings, vec!["semantic_unavailable".to_string()]);
+        assert_eq!(
+            output.degraded_sources,
+            vec!["semantic_unavailable".to_string()]
+        );
         assert!(output.gaps.is_empty());
         assert!(output.stale_candidates.is_empty());
         assert!(output.suggested_questions.is_empty());
@@ -763,8 +798,14 @@ mod tests {
         enrich_with_unified_graph_context(
             &mut output,
             &facts,
-            vec![crate::falkor_graph::SHARED_CODE_GRAPH_TRUNCATED_SOURCE.to_string()],
-            vec!["code_call_edges>7".to_string()],
+            vec![
+                crate::falkor_graph::SHARED_CODE_GRAPH_TRUNCATED_SOURCE.to_string(),
+                crate::falkor_graph::SHARED_CODE_GRAPH_TRUNCATED_SOURCE.to_string(),
+            ],
+            vec![
+                "code_call_edges>7".to_string(),
+                "code_call_edges>7".to_string(),
+            ],
         );
 
         assert!(output.degraded);

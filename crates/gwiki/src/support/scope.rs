@@ -67,6 +67,9 @@ pub(crate) fn search_scope_for_resolved(scope: &wiki_scope::ResolvedScope) -> se
 
 pub(crate) fn store_scope_for_search(scope: &search::SearchScope) -> store::WikiStoreScope {
     match scope {
+        search::SearchScope::Global => {
+            panic!("global search scope cannot be represented as a scoped wiki store")
+        }
         search::SearchScope::Project { project_id } => store::WikiStoreScope::project(project_id),
         search::SearchScope::Topic { topic } => store::WikiStoreScope::topic(topic),
     }

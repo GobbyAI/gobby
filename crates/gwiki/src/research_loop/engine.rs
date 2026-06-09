@@ -559,6 +559,8 @@ fn citation_matches_source(citation: &ResearchCodeCitation, source: &str) -> boo
     if citation_components.is_empty() || source_components.is_empty() {
         return false;
     }
+    // Suffix matches require at least two components so a bare file name cannot
+    // accidentally cite an unrelated path ending with the same file.
     source_components == citation_components
         || (citation_components.len() >= 2 && source_components.ends_with(&citation_components))
 }

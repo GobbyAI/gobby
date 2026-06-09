@@ -212,8 +212,58 @@ fn is_rust_entry_file(file: &str) -> bool {
 }
 
 fn is_public_api_symbol(symbol: &Symbol) -> bool {
-    symbol
-        .signature
-        .as_deref()
-        .is_some_and(|signature| signature.trim_start().starts_with("pub "))
+    symbol.signature.as_deref().is_some_and(|signature| {
+        let signature = signature.trim_start();
+        signature == "pub" || signature.starts_with("pub ")
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn symbol_with_signature(signature: &str) -> Symbol {
+        Symbol {
+            id: "symbol-1".to_string(),
+            project_id: "project-1".to_string(),
+            file_path: "src/lib.rs".to_string(),
+            name: "run".to_string(),
+            qualified_name: "crate::run".to_string(),
+            kind: "function".to_string(),
+            language: "rust".to_string(),
+            byte_start: 0,
+            byte_end: 0,
+            line_start: 1,
+            line_end: 1,
+            signature: Some(signature.to_string()),
+            docstring: None,
+            parent_symbol_id: None,
+            content_hash: String::new(),
+            summary: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn public_api_symbol_accepts_plain_public_visibility() {
+        assert!(is_public_api_symbol(&symbol_with_signature("pub")));
+        assert!(is_public_api_symbol(&symbol_with_signature("pub fn run()")));
+        assert!(is_public_api_symbol(&symbol_with_signature(
+            "    pub struct Runner;"
+        )));
+    }
+
+    #[test]
+    fn public_api_symbol_rejects_restricted_visibility() {
+        assert!(!is_public_api_symbol(&symbol_with_signature(
+            "pub(crate) fn run()"
+        )));
+        assert!(!is_public_api_symbol(&symbol_with_signature(
+            "pub(super) mod inner"
+        )));
+        assert!(!is_public_api_symbol(&symbol_with_signature(
+            "pub(in crate::internal) fn run()"
+        )));
+    }
 }

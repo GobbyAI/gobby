@@ -22,6 +22,7 @@ const CODE_GRAPH_PROVENANCE: &str = "shared_code_graph";
 const CODE_CALL_EDGE_TRUNCATION_COMPONENT: &str = "code_call_edges";
 const CODE_IMPORT_EDGE_TRUNCATION_COMPONENT: &str = "code_import_edges";
 const CODE_TOTAL_EDGE_TRUNCATION_COMPONENT: &str = "code_edges";
+/// Hard cap for shared code graph edges loaded into one wiki graph context pack.
 const MAX_TOTAL_CODE_EDGES: usize = 1000;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -343,13 +344,16 @@ fn truncation_component(component: &str, limit: usize) -> String {
 }
 
 fn clear_scope(client: &mut GraphClient, scope: &SearchScope) -> anyhow::Result<()> {
+    let Some(params) = scope_params(scope) else {
+        anyhow::bail!("global wiki graph scope cannot be cleared as a scoped projection");
+    };
     client.query(
         "MATCH (node)
          WHERE (node:WikiDoc OR node:WikiSource OR node:WikiTarget)
            AND node.scope_kind = $scope_kind
            AND node.scope_id = $scope_id
          DETACH DELETE node",
-        Some(scope_params(scope)),
+        Some(params),
     )?;
     Ok(())
 }
@@ -364,15 +368,16 @@ fn query_documents(
     scope: &SearchScope,
     limit: i64,
 ) -> Result<LimitedQuery<crate::search::graph_boost::GraphBoostDocument>, SearchError> {
-    let rows = query_limited(
-        client,
-        scope,
+    let query = if matches!(scope, SearchScope::Global) {
+        "MATCH (doc:WikiDoc)
+         RETURN doc.path AS path, doc.title AS title
+         ORDER BY path"
+    } else {
         "MATCH (doc:WikiDoc {scope_kind: $scope_kind, scope_id: $scope_id})
          RETURN doc.path AS path, doc.title AS title
-         ORDER BY path",
-        "document",
-        limit,
-    )?;
+         ORDER BY path"
+    };
+    let rows = query_limited(client, scope, query, "document", limit)?;
     let items = rows
         .items
         .into_iter()
@@ -395,17 +400,20 @@ fn query_links(
     scope: &SearchScope,
     limit: i64,
 ) -> Result<LimitedQuery<crate::search::graph_boost::GraphBoostLink>, SearchError> {
-    let rows = query_limited(
-        client,
-        scope,
+    let query = if matches!(scope, SearchScope::Global) {
+        "MATCH (source:WikiDoc)
+             -[:WIKI_LINKS_TO]->
+             (target:WikiDoc)
+         RETURN source.path AS path, target.path AS target_path
+         ORDER BY path, target_path"
+    } else {
         "MATCH (source:WikiDoc {scope_kind: $scope_kind, scope_id: $scope_id})
              -[:WIKI_LINKS_TO]->
              (target:WikiDoc {scope_kind: $scope_kind, scope_id: $scope_id})
          RETURN source.path AS path, target.path AS target_path
-         ORDER BY path, target_path",
-        "link",
-        limit,
-    )?;
+         ORDER BY path, target_path"
+    };
+    let rows = query_limited(client, scope, query, "link", limit)?;
     let items = rows
         .items
         .into_iter()
@@ -441,11 +449,9 @@ fn query_limited(
         .map_err(|_| SearchError::Backend(format!("invalid graph {component} limit {limit}")))?
         .saturating_add(1);
     let query = format!("{base_query}\nLIMIT {fetch_limit}");
-    let mut rows = client
-        .query(&query, Some(scope_params(scope)))
-        .map_err(|error| {
-            SearchError::Backend(format!("query FalkorDB wiki {component}s: {error}"))
-        })?;
+    let mut rows = client.query(&query, scope_params(scope)).map_err(|error| {
+        SearchError::Backend(format!("query FalkorDB wiki {component}s: {error}"))
+    })?;
     let capped = rows.len() == fetch_limit && fetch_limit > 0;
     if let Ok(limit) = usize::try_from(limit)
         && rows.len() > limit
@@ -667,11 +673,13 @@ fn is_external_target(target: &str) -> bool {
         || lower.contains("://")
 }
 
-fn scope_params(scope: &SearchScope) -> HashMap<String, String> {
-    HashMap::from([
-        ("scope_kind".to_string(), scope.scope_kind().to_string()),
-        ("scope_id".to_string(), scope.scope_value().to_string()),
-    ])
+fn scope_params(scope: &SearchScope) -> Option<HashMap<String, String>> {
+    scope.scope_filter().map(|(scope_kind, scope_id)| {
+        HashMap::from([
+            ("scope_kind".to_string(), scope_kind.to_string()),
+            ("scope_id".to_string(), scope_id.to_string()),
+        ])
+    })
 }
 
 fn row_string(row: &Row, key: &'static str) -> Result<String, SearchError> {
@@ -784,13 +792,18 @@ mod tests {
 
     #[test]
     fn graph_scope_params_are_raw_parameter_values() {
-        let params = scope_params(&SearchScope::topic("rust'async"));
+        let params = scope_params(&SearchScope::topic("rust'async")).expect("scoped params");
 
         assert_eq!(params.get("scope_kind").map(String::as_str), Some("topic"));
         assert_eq!(
             params.get("scope_id").map(String::as_str),
             Some("rust'async")
         );
+    }
+
+    #[test]
+    fn graph_scope_params_omit_global_scope_filters() {
+        assert!(scope_params(&SearchScope::global()).is_none());
     }
 
     #[test]

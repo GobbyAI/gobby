@@ -189,45 +189,45 @@ fn build_report(
 }
 
 fn load_benchmark_rows(conn: &mut Client, scope: &SearchScope) -> Result<BenchmarkRows, WikiError> {
-    let scope_kind = scope.scope_kind();
-    let scope_id = scope.scope_value();
-    let document_rows = conn
-        .query(
-            "SELECT path, body FROM gwiki_documents WHERE scope_kind = $1 AND scope_id = $2 ORDER BY path",
-            &[&scope_kind, &scope_id],
-        )
-        .map_err(postgres_error("query gwiki benchmark documents"))?
-        .into_iter()
-        .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
-        .collect::<Vec<_>>();
-    let chunk_rows = conn
-        .query(
-            "SELECT path, content FROM gwiki_chunks WHERE scope_kind = $1 AND scope_id = $2 ORDER BY path, chunk_index",
-            &[&scope_kind, &scope_id],
-        )
-        .map_err(postgres_error("query gwiki benchmark chunks"))?
-        .into_iter()
-        .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
-        .collect::<Vec<_>>();
+    let document_rows = query_scoped_or_global(
+        conn,
+        "SELECT path, body FROM gwiki_documents WHERE scope_kind = $1 AND scope_id = $2 ORDER BY path",
+        "SELECT path, body FROM gwiki_documents ORDER BY path",
+        scope,
+        "query gwiki benchmark documents",
+    )?
+    .into_iter()
+    .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
+    .collect::<Vec<_>>();
+    let chunk_rows = query_scoped_or_global(
+        conn,
+        "SELECT path, content FROM gwiki_chunks WHERE scope_kind = $1 AND scope_id = $2 ORDER BY path, chunk_index",
+        "SELECT path, content FROM gwiki_chunks ORDER BY path, chunk_index",
+        scope,
+        "query gwiki benchmark chunks",
+    )?
+    .into_iter()
+    .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
+    .collect::<Vec<_>>();
     let document_kinds = grouped_counts(
         conn,
         "SELECT source_kind, COUNT(*) FROM gwiki_documents WHERE scope_kind = $1 AND scope_id = $2 GROUP BY source_kind ORDER BY source_kind",
-        scope_kind,
-        scope_id,
+        "SELECT source_kind, COUNT(*) FROM gwiki_documents GROUP BY source_kind ORDER BY source_kind",
+        scope,
         "query gwiki benchmark document mix",
     )?;
     let source_kinds = grouped_counts(
         conn,
         "SELECT source_kind, COUNT(*) FROM gwiki_sources WHERE scope_kind = $1 AND scope_id = $2 GROUP BY source_kind ORDER BY source_kind",
-        scope_kind,
-        scope_id,
+        "SELECT source_kind, COUNT(*) FROM gwiki_sources GROUP BY source_kind ORDER BY source_kind",
+        scope,
         "query gwiki benchmark source mix",
     )?;
     let links = scalar_count(
         conn,
         "SELECT COUNT(*) FROM gwiki_links WHERE scope_kind = $1 AND scope_id = $2 AND link_kind IN ('wiki', 'mention')",
-        scope_kind,
-        scope_id,
+        "SELECT COUNT(*) FROM gwiki_links WHERE link_kind IN ('wiki', 'mention')",
+        scope,
         "query gwiki benchmark link count",
     )?;
 
@@ -244,15 +244,29 @@ fn load_benchmark_rows(conn: &mut Client, scope: &SearchScope) -> Result<Benchma
     })
 }
 
+fn query_scoped_or_global(
+    conn: &mut Client,
+    scoped_sql: &str,
+    global_sql: &str,
+    scope: &SearchScope,
+    action: &'static str,
+) -> Result<Vec<postgres::Row>, WikiError> {
+    if let Some((scope_kind, scope_id)) = scope.scope_filter() {
+        conn.query(scoped_sql, &[&scope_kind, &scope_id])
+            .map_err(postgres_error(action))
+    } else {
+        conn.query(global_sql, &[]).map_err(postgres_error(action))
+    }
+}
+
 fn grouped_counts(
     conn: &mut Client,
-    sql: &str,
-    scope_kind: &str,
-    scope_id: &str,
+    scoped_sql: &str,
+    global_sql: &str,
+    scope: &SearchScope,
     action: &'static str,
 ) -> Result<BTreeMap<String, u64>, WikiError> {
-    conn.query(sql, &[&scope_kind, &scope_id])
-        .map_err(postgres_error(action))?
+    query_scoped_or_global(conn, scoped_sql, global_sql, scope, action)?
         .into_iter()
         .map(|row| {
             let kind = row.get::<_, String>(0);
@@ -264,14 +278,18 @@ fn grouped_counts(
 
 fn scalar_count(
     conn: &mut Client,
-    sql: &str,
-    scope_kind: &str,
-    scope_id: &str,
+    scoped_sql: &str,
+    global_sql: &str,
+    scope: &SearchScope,
     action: &'static str,
 ) -> Result<u64, WikiError> {
-    let row = conn
-        .query_one(sql, &[&scope_kind, &scope_id])
-        .map_err(postgres_error(action))?;
+    let row = if let Some((scope_kind, scope_id)) = scope.scope_filter() {
+        conn.query_one(scoped_sql, &[&scope_kind, &scope_id])
+            .map_err(postgres_error(action))?
+    } else {
+        conn.query_one(global_sql, &[])
+            .map_err(postgres_error(action))?
+    };
     let count = row.get::<_, i64>(0);
     count_to_u64(count, action)
 }
@@ -552,22 +570,28 @@ fn model_provider_available(context: &AiContext) -> bool {
 fn query_graph_counts(config: &FalkorConfig, scope: &SearchScope) -> anyhow::Result<(u64, u64)> {
     let mut client = GraphClient::from_config(config, FALKORDB_GRAPH_NAME)?;
     let params = graph_scope_params(scope);
-    let doc_rows = client.query(
-        "MATCH (doc:WikiDoc {scope_kind: $scope_kind, scope_id: $scope_id}) RETURN count(doc) AS count",
-        Some(params.clone()),
-    )?;
-    let link_rows = client.query(
-        "MATCH (source:WikiDoc {scope_kind: $scope_kind, scope_id: $scope_id})-[rel:WIKI_LINKS_TO|MENTIONS_TARGET]->(target) WHERE (target:WikiDoc AND target.scope_kind = $scope_kind AND target.scope_id = $scope_id) OR (target:WikiTarget AND target.scope_kind = $scope_kind AND target.scope_id = $scope_id) RETURN count(rel) AS count",
-        Some(params),
-    )?;
+    let doc_query = if params.is_some() {
+        "MATCH (doc:WikiDoc {scope_kind: $scope_kind, scope_id: $scope_id}) RETURN count(doc) AS count"
+    } else {
+        "MATCH (doc:WikiDoc) RETURN count(doc) AS count"
+    };
+    let link_query = if params.is_some() {
+        "MATCH (source:WikiDoc {scope_kind: $scope_kind, scope_id: $scope_id})-[rel:WIKI_LINKS_TO|MENTIONS_TARGET]->(target) WHERE (target:WikiDoc AND target.scope_kind = $scope_kind AND target.scope_id = $scope_id) OR (target:WikiTarget AND target.scope_kind = $scope_kind AND target.scope_id = $scope_id) RETURN count(rel) AS count"
+    } else {
+        "MATCH (source:WikiDoc)-[rel:WIKI_LINKS_TO|MENTIONS_TARGET]->(target) WHERE target:WikiDoc OR target:WikiTarget RETURN count(rel) AS count"
+    };
+    let doc_rows = client.query(doc_query, params.clone())?;
+    let link_rows = client.query(link_query, params)?;
     Ok((falkor_count(&doc_rows)?, falkor_count(&link_rows)?))
 }
 
-fn graph_scope_params(scope: &SearchScope) -> HashMap<String, String> {
-    HashMap::from([
-        ("scope_kind".to_string(), scope.scope_kind().to_string()),
-        ("scope_id".to_string(), scope.scope_value().to_string()),
-    ])
+fn graph_scope_params(scope: &SearchScope) -> Option<HashMap<String, String>> {
+    scope.scope_filter().map(|(scope_kind, scope_id)| {
+        HashMap::from([
+            ("scope_kind".to_string(), scope_kind.to_string()),
+            ("scope_id".to_string(), scope_id.to_string()),
+        ])
+    })
 }
 
 fn falkor_count(rows: &[HashMap<String, Value>]) -> anyhow::Result<u64> {

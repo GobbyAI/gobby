@@ -12,11 +12,16 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum SearchScope {
+    Global,
     Project { project_id: String },
     Topic { topic: String },
 }
 
 impl SearchScope {
+    pub fn global() -> Self {
+        Self::Global
+    }
+
     pub fn project(project_id: impl Into<String>) -> Self {
         Self::Project {
             project_id: project_id.into(),
@@ -31,6 +36,7 @@ impl SearchScope {
 
     pub fn scope_kind(&self) -> &'static str {
         match self {
+            Self::Global => "global",
             Self::Project { .. } => "project",
             Self::Topic { .. } => "topic",
         }
@@ -38,8 +44,17 @@ impl SearchScope {
 
     pub fn scope_value(&self) -> &str {
         match self {
+            Self::Global => "",
             Self::Project { project_id } => project_id,
             Self::Topic { topic } => topic,
+        }
+    }
+
+    pub fn scope_filter(&self) -> Option<(&'static str, &str)> {
+        match self {
+            Self::Global => None,
+            Self::Project { project_id } => Some(("project", project_id)),
+            Self::Topic { topic } => Some(("topic", topic)),
         }
     }
 }

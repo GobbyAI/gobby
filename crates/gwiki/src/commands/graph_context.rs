@@ -50,7 +50,7 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
                 }
             }
         }
-        (Some(_), SearchScope::Topic { .. }) => {
+        (Some(_), SearchScope::Global | SearchScope::Topic { .. }) => {
             degraded_sources.push("shared_code_graph_unavailable".to_string());
         }
         (None, _) => {

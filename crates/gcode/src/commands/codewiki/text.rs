@@ -157,15 +157,14 @@ pub(crate) fn collect_link_spans(files: &[FileLink], modules: &[ModuleLink]) -> 
 }
 
 pub(crate) fn citation_list(spans: &[SourceSpan]) -> String {
-    wrap_citation_items(
-        spans
-            .iter()
-            .cloned()
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .map(|span| span.citation()),
-        FALLBACK_CITATION_LINE_WIDTH,
-    )
+    spans
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|span| span.citation())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn wrap_citation_items<I>(items: I, max_line_width: usize) -> String
@@ -379,12 +378,12 @@ mod tests {
     }
 
     #[test]
-    fn citation_list_wraps_fallback_citations_by_width() {
-        let spans = (0..8)
+    fn citation_list_emits_one_fallback_range_per_line() {
+        let spans = (0..3)
             .map(|index| {
                 span(
                     format!(
-                        "crates/gcode/src/generated/deep/module/path/with/long/components/file_{index}.rs"
+                        "crates/gcode/src/generated/deep/module/path/with/long/components/file_{index}.rs",
                     ),
                     index + 1,
                     index + 10,
@@ -394,15 +393,10 @@ mod tests {
 
         let citations = citation_list(&spans);
 
-        assert!(citations.lines().count() > 1, "{citations}");
-        assert!(
-            citations
-                .lines()
-                .all(|line| line.len() <= FALLBACK_CITATION_LINE_WIDTH),
-            "{citations}"
-        );
-        for span in spans {
-            assert!(citations.contains(&span.citation()));
+        let lines = citations.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), spans.len(), "{citations}");
+        for (line, span) in lines.iter().zip(spans) {
+            assert_eq!(*line, span.citation());
         }
     }
 

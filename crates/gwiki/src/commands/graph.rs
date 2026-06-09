@@ -89,6 +89,7 @@ fn degraded_optional_sources_from_config(source: &mut impl ConfigSource) -> Vec<
     degraded
 }
 
+/// Reports whether graph commands can attempt embedding-backed features.
 fn has_embedding_capability(routing: AiRouting, source: &mut impl ConfigSource) -> bool {
     match routing {
         AiRouting::Off => false,
@@ -151,7 +152,8 @@ mod tests {
             .and_unset("GOBBY_FALKORDB_PORT")
             .and_unset("GOBBY_FALKORDB_PASSWORD")
             .and_unset("GOBBY_QDRANT_URL")
-            .and_unset("GOBBY_QDRANT_API_KEY");
+            .and_unset("GOBBY_QDRANT_API_KEY")
+            .and_set("GWIKI_TEST_ENV_GUARD_AND_SET", "1");
         degraded_optional_sources_from_config(&mut source)
     }
 

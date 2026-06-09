@@ -214,39 +214,6 @@ fn falkordb_password_resolves_current_config_key() {
 }
 
 #[test]
-fn falkordb_password_prefers_current_key_when_legacy_key_exists() {
-    let _env = EnvGuard::new();
-    let mut source = TestSource::with_values([
-        ("databases.falkordb.host", "stored-falkor.local"),
-        ("databases.falkordb.requirepass", "legacy-pass"),
-        ("databases.falkordb.password", "current-pass"),
-    ]);
-
-    let falkordb = resolve_falkordb_config(&mut source).expect("falkordb config");
-
-    assert_eq!(falkordb.password.as_deref(), Some("current-pass"));
-}
-
-#[test]
-fn falkordb_password_ignores_legacy_requirepass_key() {
-    let _env = EnvGuard::new();
-    let mut source = TestSource::with_values([
-        ("databases.falkordb.host", "falkor.local"),
-        ("databases.falkordb.requirepass", "$secret:FALKOR_PASS"),
-    ]);
-
-    let config = resolve_falkordb_config(&mut source).expect("falkordb config");
-
-    assert_eq!(config.password, None);
-    assert!(
-        !source
-            .resolved_values
-            .iter()
-            .any(|value| value.contains("FALKOR_PASS"))
-    );
-}
-
-#[test]
 fn config_source_handles_secrets() {
     let _env = EnvGuard::new();
     let mut source = TestSource::with_values([

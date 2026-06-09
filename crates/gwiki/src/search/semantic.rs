@@ -88,6 +88,14 @@ where
             degradation: None,
         });
     }
+    if matches!(request.scope, SearchScope::Global) {
+        return Ok(degraded(
+            "qdrant",
+            gobby_core::degradation::ServiceState::Unreachable {
+                message: "global semantic search requires collection fan-out".to_string(),
+            },
+        ));
+    }
 
     let Some(embedding) = embedding else {
         return Err(required_service_error(
@@ -130,7 +138,14 @@ where
         }
     };
 
-    let collection = collection_for_scope(&request.scope);
+    let Some(collection) = collection_for_scope(&request.scope) else {
+        return Ok(degraded(
+            "qdrant",
+            gobby_core::degradation::ServiceState::Unreachable {
+                message: "global semantic search requires collection fan-out".to_string(),
+            },
+        ));
+    };
     let filter = payload_filter(&request.scope);
     let qdrant_request = SearchRequest {
         vector,
@@ -164,20 +179,28 @@ fn semantic_embedding_query(config: &EmbeddingConfig, query: &str) -> String {
     }
 }
 
-pub fn collection_for_scope(scope: &SearchScope) -> String {
-    collection_name("gwiki", qdrant_collection_scope(scope))
-        .expect("project and topic collection scopes are infallible")
+pub fn collection_for_scope(scope: &SearchScope) -> Option<String> {
+    qdrant_collection_scope(scope)
+        .map(|scope| collection_name("gwiki", scope).expect("project and topic scopes are valid"))
 }
 
-fn qdrant_collection_scope(scope: &SearchScope) -> CollectionScope<'_> {
+fn qdrant_collection_scope(scope: &SearchScope) -> Option<CollectionScope<'_>> {
     match scope {
-        SearchScope::Project { project_id } => CollectionScope::Project(project_id),
-        SearchScope::Topic { topic } => CollectionScope::Topic(topic),
+        SearchScope::Global => None,
+        SearchScope::Project { project_id } => Some(CollectionScope::Project(project_id)),
+        SearchScope::Topic { topic } => Some(CollectionScope::Topic(topic)),
     }
 }
 
 pub fn payload_filter(scope: &SearchScope) -> Value {
     let scoped_key = match scope {
+        SearchScope::Global => {
+            return json!({
+                "must": [
+                    {"key": "namespace", "match": {"value": "gwiki"}}
+                ]
+            });
+        }
         SearchScope::Project { .. } => "project_id",
         SearchScope::Topic { .. } => "topic",
     };
@@ -429,13 +452,15 @@ fn required_service_error(service: &str, detail: &str) -> SearchError {
 
 fn payload_matches_scope(payload: &Map<String, Value>, scope: &SearchScope) -> bool {
     payload_string(payload, "namespace").as_deref() == Some("gwiki")
-        && payload_string(payload, "scope_kind").as_deref() == Some(scope.scope_kind())
         && match scope {
+            SearchScope::Global => true,
             SearchScope::Project { project_id } => {
-                payload_string(payload, "project_id").as_deref() == Some(project_id.as_str())
+                payload_string(payload, "scope_kind").as_deref() == Some(scope.scope_kind())
+                    && payload_string(payload, "project_id").as_deref() == Some(project_id.as_str())
             }
             SearchScope::Topic { topic } => {
-                payload_string(payload, "topic").as_deref() == Some(topic.as_str())
+                payload_string(payload, "scope_kind").as_deref() == Some(scope.scope_kind())
+                    && payload_string(payload, "topic").as_deref() == Some(topic.as_str())
             }
         }
 }

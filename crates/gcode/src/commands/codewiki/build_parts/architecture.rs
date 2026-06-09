@@ -126,6 +126,7 @@ pub(super) fn module_dependency_edges(
         .collect()
 }
 
+/// Assigns deterministic topological ranks for module dependency ordering.
 pub(super) fn dependency_topology(
     module_names: &BTreeSet<String>,
     module_edges: &BTreeSet<(String, String)>,

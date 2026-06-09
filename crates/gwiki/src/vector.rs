@@ -78,7 +78,9 @@ pub(crate) trait WikiVectorEmbedder {
 
 pub(crate) trait WikiVectorStore {
     fn resolve_collection(&mut self, scope: &SearchScope) -> Result<String, WikiVectorError> {
-        Ok(collection_for_scope(scope))
+        collection_for_scope(scope).ok_or_else(|| {
+            WikiVectorError::InvalidData("global scope has no vector collection".to_string())
+        })
     }
 
     fn ensure_collection(
@@ -190,7 +192,7 @@ where
     })
 }
 
-pub(crate) fn collection_for_scope(scope: &SearchScope) -> String {
+pub(crate) fn collection_for_scope(scope: &SearchScope) -> Option<String> {
     crate::search::semantic::collection_for_scope(scope)
 }
 
@@ -215,6 +217,7 @@ fn payload_for_chunk(scope: &SearchScope, chunk: &WikiVectorChunk) -> Map<String
         Value::String(scope.scope_value().to_string()),
     );
     match scope {
+        SearchScope::Global => {}
         SearchScope::Project { project_id } => {
             payload.insert("project_id".to_string(), Value::String(project_id.clone()));
         }
@@ -421,7 +424,10 @@ mod tests {
     #[test]
     fn vector_collection_and_path_filter_match_scope_contract() {
         let project = SearchScope::project("project-1");
-        assert_eq!(collection_for_scope(&project), "gwiki_project_project-1");
+        assert_eq!(
+            collection_for_scope(&project).as_deref(),
+            Some("gwiki_project_project-1")
+        );
         assert_eq!(
             filter_value(
                 &delete_filter_for_path(&project, "notes/page.md"),
@@ -431,7 +437,10 @@ mod tests {
         );
 
         let topic = SearchScope::topic("rust-async");
-        assert_eq!(collection_for_scope(&topic), "gwiki_topic_rust-async");
+        assert_eq!(
+            collection_for_scope(&topic).as_deref(),
+            Some("gwiki_topic_rust-async")
+        );
         assert_eq!(
             filter_value(&delete_filter_for_path(&topic, "notes/page.md"), "topic"),
             Some("rust-async".to_string())

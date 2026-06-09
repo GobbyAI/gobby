@@ -108,6 +108,35 @@ fn semantic_search_requires_embedding_and_qdrant_config() {
 }
 
 #[test]
+fn semantic_search_global_scope_degrades_without_fake_collection() {
+    let mut embedder = FixedEmbedder::new(vec![0.1, 0.2, 0.3]);
+    let mut vector = RecordingVectorBackend::new(Vec::new());
+
+    let outcome = search_semantic(
+        SemanticSearchRequest {
+            query: "ownership".to_string(),
+            scope: SearchScope::global(),
+            limit: 5,
+        },
+        None,
+        None,
+        &mut embedder,
+        &mut vector,
+    )
+    .expect("global semantic search degrades");
+
+    assert!(outcome.hits.is_empty());
+    assert!(matches!(
+        outcome.degradation,
+        Some(DegradationKind::ServiceUnavailable {
+            service,
+            state: ServiceState::Unreachable { .. },
+        }) if service == "qdrant"
+    ));
+    assert_eq!(vector.collection, None);
+}
+
+#[test]
 fn semantic_search_degrades_configured_embedding_failure() {
     let embedding = EmbeddingConfig {
         api_base: "http://embeddings.local/v1".to_string(),

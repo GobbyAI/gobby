@@ -232,6 +232,7 @@ fn ai_project_id(scope: &ScopeIdentity) -> Option<String> {
 
 fn ai_project_id_for_search(scope: &SearchScope) -> Option<String> {
     match scope {
+        SearchScope::Global => None,
         SearchScope::Project { project_id } => Some(project_id.clone()),
         SearchScope::Topic { .. } => None,
     }

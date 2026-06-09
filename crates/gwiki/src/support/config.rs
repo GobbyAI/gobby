@@ -139,7 +139,8 @@ mod tests {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             let previous = std::env::var_os("GOBBY_HOME");
-            // SAFETY: ENV_LOCK serializes test-only process environment mutation.
+            // SAFETY: This test-only guard holds ENV_LOCK across the mutation and restores
+            // GOBBY_HOME on Drop, so support/config.rs tests do not race each other.
             unsafe { std::env::set_var("GOBBY_HOME", path) };
             Self {
                 _lock: lock,

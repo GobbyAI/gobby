@@ -59,6 +59,12 @@ enum BlameContributorsOutcome {
     Error(anyhow::Error),
 }
 
+enum WorkerRecv<T> {
+    Completed(T),
+    TimedOut,
+    Disconnected,
+}
+
 #[derive(Debug)]
 struct Codeowners {
     entries: Vec<CodeownersEntry>,
@@ -329,27 +335,40 @@ where
     let (sender, receiver) = mpsc::channel();
     let cancelled = Arc::new(AtomicBool::new(false));
     let worker_cancelled = Arc::clone(&cancelled);
-    thread::spawn(move || {
+    let handle = thread::spawn(move || {
         if worker_cancelled.load(Ordering::Relaxed) {
             return;
         }
         let _ = sender.send(work(worker_cancelled));
     });
-    recv_with_timeout(receiver, timeout, &cancelled)
+    match recv_with_timeout(receiver, timeout, &cancelled) {
+        WorkerRecv::Completed(value) => {
+            let _ = handle.join();
+            Some(value)
+        }
+        WorkerRecv::TimedOut => {
+            std::mem::forget(handle);
+            None
+        }
+        WorkerRecv::Disconnected => {
+            let _ = handle.join();
+            None
+        }
+    }
 }
 
 fn recv_with_timeout<T>(
     receiver: mpsc::Receiver<T>,
     timeout: Duration,
     cancelled: &AtomicBool,
-) -> Option<T> {
+) -> WorkerRecv<T> {
     match receiver.recv_timeout(timeout) {
-        Ok(value) => Some(value),
+        Ok(value) => WorkerRecv::Completed(value),
         Err(mpsc::RecvTimeoutError::Timeout) => {
             cancelled.store(true, Ordering::Relaxed);
-            None
+            WorkerRecv::TimedOut
         }
-        Err(mpsc::RecvTimeoutError::Disconnected) => None,
+        Err(mpsc::RecvTimeoutError::Disconnected) => WorkerRecv::Disconnected,
     }
 }
 
@@ -855,8 +874,15 @@ mod tests {
         let cancelled = AtomicBool::new(false);
         let result = recv_with_timeout(receiver, Duration::from_millis(1), &cancelled);
 
-        assert_eq!(result, None);
+        assert!(matches!(result, WorkerRecv::TimedOut));
         assert!(cancelled.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn codewiki_ownership_run_with_timeout_joins_completed_worker() {
+        let result = run_with_timeout(Duration::from_secs(1), |_| 42);
+
+        assert_eq!(result, Some(42));
     }
 
     fn modules<const N: usize>(items: [(&str, &str); N]) -> HashMap<String, String> {

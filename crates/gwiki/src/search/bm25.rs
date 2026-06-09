@@ -23,11 +23,17 @@ pub struct Bm25Sql {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Bm25SqlParams {
-    pub query: String,
-    pub scope_kind: String,
-    pub scope_value: String,
-    pub limit: i64,
+pub enum Bm25SqlParams {
+    Scoped {
+        query: String,
+        scope_kind: String,
+        scope_value: String,
+        limit: i64,
+    },
+    Global {
+        query: String,
+        limit: i64,
+    },
 }
 
 pub trait Bm25SearchBackend {
@@ -73,6 +79,21 @@ pub fn build_bm25_sql(query: &str, scope: &SearchScope, limit: usize) -> Option<
     let document_searchable_path_predicate = searchable_path_predicate("d.path");
     let chunk_score_expr = bm25_score_expr(&trusted_row_id("c.id"));
     let document_score_expr = bm25_score_expr(&trusted_row_id("d.id"));
+    let (chunk_scope_predicate, document_scope_predicate, limit_placeholder, params) =
+        match scope.scope_filter() {
+            Some((scope_kind, scope_value)) => (
+                "c.scope_kind = $2\n      AND c.scope_id = $3\n      AND ",
+                "d.scope_kind = $2\n      AND d.scope_id = $3\n      AND ",
+                "$4",
+                Bm25SqlParams::Scoped {
+                    query,
+                    scope_kind: scope_kind.to_string(),
+                    scope_value: scope_value.to_string(),
+                    limit,
+                },
+            ),
+            None => ("", "", "$2", Bm25SqlParams::Global { query, limit }),
+        };
     let sql = format!(
         r#"
 WITH hits AS (
@@ -102,9 +123,7 @@ WITH hits AS (
        AND d.scope_kind = c.scope_kind
        AND d.scope_id = c.scope_id
        AND d.path = c.path
-    WHERE c.scope_kind = $2
-      AND c.scope_id = $3
-      AND ({chunk_searchable_path_predicate})
+    WHERE {chunk_scope_predicate}({chunk_searchable_path_predicate})
       AND (c.path @@@ $1 OR c.content @@@ $1)
 
     UNION ALL
@@ -124,27 +143,17 @@ WITH hits AS (
         d.content_hash,
         {document_score_expr}::DOUBLE PRECISION AS score
     FROM gwiki_documents d
-    WHERE d.scope_kind = $2
-      AND d.scope_id = $3
-      AND ({document_searchable_path_predicate})
+    WHERE {document_scope_predicate}({document_searchable_path_predicate})
       AND (d.path @@@ $1 OR d.title @@@ $1 OR d.body @@@ $1)
 )
 SELECT *
 FROM hits
 ORDER BY score DESC, path ASC, id ASC
-LIMIT $4
+LIMIT {limit_placeholder}
 "#
     );
 
-    Some(Bm25Sql {
-        sql,
-        params: Bm25SqlParams {
-            query,
-            scope_kind: scope.scope_kind().to_string(),
-            scope_value: scope.scope_value().to_string(),
-            limit,
-        },
-    })
+    Some(Bm25Sql { sql, params })
 }
 
 fn trusted_row_id(row_id: &str) -> TrustedRowId {
@@ -191,18 +200,24 @@ impl Bm25SearchBackend for PostgresBm25Backend<'_> {
             return Ok(Vec::new());
         };
 
-        let rows = self
-            .conn
-            .query(
-                &query.sql,
-                &[
-                    &query.params.query,
-                    &query.params.scope_kind,
-                    &query.params.scope_value,
-                    &query.params.limit,
-                ],
-            )
-            .map_err(|error| SearchError::Backend(error.to_string()))?;
+        let rows = match &query.params {
+            Bm25SqlParams::Scoped {
+                query: query_text,
+                scope_kind,
+                scope_value,
+                limit,
+            } => self
+                .conn
+                .query(&query.sql, &[query_text, scope_kind, scope_value, limit])
+                .map_err(|error| SearchError::Backend(error.to_string()))?,
+            Bm25SqlParams::Global {
+                query: query_text,
+                limit,
+            } => self
+                .conn
+                .query(&query.sql, &[query_text, limit])
+                .map_err(|error| SearchError::Backend(error.to_string()))?,
+        };
 
         rows.into_iter()
             .map(|row| row_to_result(row, &request.scope))
@@ -345,8 +360,30 @@ mod tests {
         assert!(sql.sql.contains("gwiki_documents"));
         assert!(sql.sql.contains("gwiki_chunks"));
         assert!(sql.sql.contains("@@@"));
-        assert_eq!(sql.params.scope_kind, "project");
-        assert_eq!(sql.params.scope_value, "project-1");
+        match sql.params {
+            Bm25SqlParams::Scoped {
+                scope_kind,
+                scope_value,
+                ..
+            } => {
+                assert_eq!(scope_kind, "project");
+                assert_eq!(scope_value, "project-1");
+            }
+            Bm25SqlParams::Global { .. } => panic!("project scope should bind scoped params"),
+        }
+    }
+
+    #[test]
+    fn bm25_global_sql_omits_scope_predicates() {
+        let sql =
+            build_bm25_sql("ownership", &SearchScope::global(), 10).expect("query is searchable");
+
+        assert!(!sql.sql.contains("WHERE c.scope_kind ="));
+        assert!(!sql.sql.contains("WHERE d.scope_kind ="));
+        assert!(!sql.sql.contains("AND c.scope_id = $3"));
+        assert!(!sql.sql.contains("AND d.scope_id = $3"));
+        assert!(sql.sql.contains("LIMIT $2"));
+        assert!(matches!(sql.params, Bm25SqlParams::Global { .. }));
     }
 
     #[test]

@@ -37,6 +37,11 @@ impl EnvGuard {
         self
     }
 
+    pub(crate) fn and_set(mut self, key: &'static str, value: impl AsRef<OsStr>) -> Self {
+        self.set_value(key, value.as_ref());
+        self
+    }
+
     fn locked() -> Self {
         Self {
             old_values: Vec::new(),

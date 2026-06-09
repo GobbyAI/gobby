@@ -56,10 +56,9 @@ fn run_attached(
 
 fn search_scope_for_identity(scope: &ScopeIdentity) -> crate::search::SearchScope {
     match scope.kind {
+        ScopeKind::Global => crate::search::SearchScope::global(),
         ScopeKind::Topic => crate::search::SearchScope::topic(scope.id.clone()),
-        ScopeKind::Project | ScopeKind::Global => {
-            crate::search::SearchScope::project(scope.id.clone())
-        }
+        ScopeKind::Project => crate::search::SearchScope::project(scope.id.clone()),
     }
 }
 

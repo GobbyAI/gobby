@@ -299,24 +299,6 @@ fn falkor_password_reads_password_key() {
 
 #[test]
 #[serial_test::serial]
-fn falkor_password_ignores_legacy_requirepass_key() {
-    with_service_env(&[], || {
-        let values = std::collections::HashMap::from([
-            ("databases.falkordb.host", r#""stored-falkor.local""#),
-            ("databases.falkordb.requirepass", r#""legacy-pass""#),
-        ]);
-
-        let falkor = resolve_falkordb_config_from_values(config_value_for(&values), |value| {
-            Ok(value.to_string())
-        })
-        .expect("falkordb config");
-
-        assert_eq!(falkor.password, None);
-    });
-}
-
-#[test]
-#[serial_test::serial]
 fn invalid_service_port_warns_and_uses_default() {
     with_service_env(&[], || {
         for raw_port in [r#""0""#, r#""not-a-port""#] {

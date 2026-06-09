@@ -178,8 +178,14 @@ pub fn mark_stale_markdown(markdown: &str, reason: &str) -> Result<String, Front
         "stale_reason".to_string(),
         Value::String(reason.trim().to_string()),
     );
-    let frontmatter = serialize_yaml_frontmatter(&parsed.metadata)?;
-    Ok(format!("---\n{frontmatter}---\n{}", parsed.body))
+    let (delimiter, frontmatter) = match parsed.format.unwrap_or(FrontmatterFormat::Yaml) {
+        FrontmatterFormat::Yaml => ("---", serialize_yaml_frontmatter(&parsed.metadata)?),
+        FrontmatterFormat::Toml => ("+++", serialize_toml_frontmatter(&parsed.metadata)?),
+    };
+    Ok(format!(
+        "{delimiter}\n{frontmatter}{delimiter}\n{}",
+        parsed.body
+    ))
 }
 
 impl FrontmatterError {
@@ -293,6 +299,16 @@ fn serialize_yaml_frontmatter(metadata: &WikiFrontmatter) -> Result<String, Fron
     Ok(yaml)
 }
 
+fn serialize_toml_frontmatter(metadata: &WikiFrontmatter) -> Result<String, FrontmatterError> {
+    let mut toml = toml::to_string(&metadata.as_json()).map_err(|error| {
+        FrontmatterError::new(format!("failed to serialize TOML frontmatter: {error}"))
+    })?;
+    if !toml.ends_with('\n') {
+        toml.push('\n');
+    }
+    Ok(toml)
+}
+
 fn parse_yaml(raw: &str) -> Result<Value, FrontmatterError> {
     if raw.trim().is_empty() {
         return Ok(Value::Object(Map::new()));
@@ -355,8 +371,6 @@ fn frontmatter_from_object(mut object: Map<String, Value>) -> WikiFrontmatter {
     let indexed_at = object
         .remove("indexed_at")
         .and_then(|value| string_value(&value));
-    let captured_from = captured_from.or_else(|| source.as_ref().and_then(string_value));
-
     WikiFrontmatter {
         title,
         aliases,
@@ -585,6 +599,38 @@ mod tests {
                 .get("stale_reason")
                 .and_then(Value::as_str),
             Some("src/lib.rs changed")
+        );
+        assert_eq!(parsed.metadata.title.as_deref(), Some("Code Page"));
+        assert_eq!(parsed.body, "# Code Page\n");
+    }
+
+    #[test]
+    fn change_triggered_refresh_preserves_toml_frontmatter() {
+        let markdown = concat!(
+            "+++\n",
+            "title = \"Code Page\"\n",
+            "generated_by = \"gcode-codewiki\"\n",
+            "+++\n",
+            "# Code Page\n",
+        );
+
+        let marked = mark_stale_markdown(markdown, "src/lib.rs changed").expect("mark stale");
+        assert!(marked.starts_with("+++\n"), "{marked}");
+        assert!(marked.contains("stale = true"), "{marked}");
+        assert!(
+            marked.contains("stale_reason = \"src/lib.rs changed\""),
+            "{marked}"
+        );
+        let parsed = parse_frontmatter(&marked).expect("parse marked markdown");
+
+        assert_eq!(parsed.format, Some(FrontmatterFormat::Toml));
+        assert_eq!(
+            parsed
+                .metadata
+                .unknown
+                .get("stale")
+                .and_then(Value::as_bool),
+            Some(true)
         );
         assert_eq!(parsed.metadata.title.as_deref(), Some("Code Page"));
         assert_eq!(parsed.body, "# Code Page\n");
