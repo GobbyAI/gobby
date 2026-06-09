@@ -33,6 +33,16 @@ fn test_symbol(summary: Option<String>) -> Symbol {
     }
 }
 
+fn test_symbol_with_index(index: usize) -> Symbol {
+    let mut symbol = test_symbol(None);
+    symbol.id = format!("symbol-{index}");
+    symbol.name = format!("run_{index}");
+    symbol.qualified_name = format!("crate::run_{index}");
+    symbol.byte_start = index;
+    symbol.byte_end = index + 1;
+    symbol
+}
+
 #[test]
 fn payloads_carry_provenance_metadata() {
     let payload = CodeSymbolVectorPayload::from_symbol(&test_symbol(Some("does work".into())));
@@ -78,9 +88,17 @@ fn summaries_are_optional_enrichment() {
 #[test]
 fn collection_name_is_stable() {
     assert_eq!(
-        collection_name(CODE_SYMBOL_COLLECTION_PREFIX, "project-1"),
+        collection_name(CODE_SYMBOL_COLLECTION_PREFIX, "project-1").unwrap(),
         "code_symbols_project-1"
     );
+}
+
+#[test]
+fn collection_name_rejects_invalid_custom_project_ids() {
+    let error = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, "bad/project")
+        .expect_err("path-like custom collection should fail");
+
+    assert!(error.to_string().contains("invalid character"));
 }
 
 #[test]
@@ -146,6 +164,23 @@ fn blank_qdrant_url_is_missing_config() {
     .expect_err("blank URL should be treated as missing config");
 
     assert_eq!(err, VectorLifecycleError::MissingQdrantConfig);
+}
+
+#[test]
+fn delete_project_collection_rejects_invalid_collection_name() {
+    let err = delete_project_collection(
+        &QdrantConfig {
+            url: Some("http://127.0.0.1:1".to_string()),
+            api_key: None,
+        },
+        "bad/project",
+    )
+    .expect_err("invalid collection should fail before delete request");
+
+    assert!(matches!(
+        err,
+        VectorLifecycleError::InvalidCollectionName(_)
+    ));
 }
 
 #[test]
@@ -474,6 +509,74 @@ fn sync_rejects_embedding_vector_count_mismatch() {
     assert_eq!(embedding_requests.len(), 1);
     assert_eq!(qdrant_requests.len(), 1);
     assert!(!qdrant_requests[0].contains("/points"));
+}
+
+#[test]
+fn sync_file_symbols_batches_embedding_and_qdrant_upsert() {
+    let first_embedding_batch = (0..128)
+        .map(|index| json!({"index": index, "embedding": [0.1, 0.2, 0.3]}))
+        .collect::<Vec<_>>();
+    let second_embedding_batch = vec![json!({"index": 0, "embedding": [0.4, 0.5, 0.6]})];
+    let (embedding_url, embedding_handle) = spawn_http_responses(vec![
+        (200, json!({"data": first_embedding_batch})),
+        (200, json!({"data": second_embedding_batch})),
+    ]);
+    let (qdrant_url, qdrant_handle) = spawn_http_responses(vec![
+        (
+            200,
+            json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": "Cosine"}}}}}),
+        ),
+        (
+            200,
+            json!({"result": {"operation_id": 17, "status": "completed"}, "status": "ok"}),
+        ),
+        (
+            200,
+            json!({"result": {"operation_id": 18, "status": "completed"}, "status": "ok"}),
+        ),
+        (200, json!({"result": {"count": 0}, "status": "ok"})),
+    ]);
+    let mut lifecycle = CodeSymbolVectorLifecycle::new(
+        "project-1".to_string(),
+        QdrantConfig {
+            url: Some(qdrant_url),
+            api_key: None,
+        },
+        EmbeddingConfig {
+            api_base: format!("{embedding_url}/v1"),
+            model: "embed-small".to_string(),
+            api_key: None,
+            query_prefix: None,
+            timeout_seconds: 10,
+        },
+        CodeVectorSettings {
+            vector_dim: Some(3),
+        },
+    )
+    .expect("lifecycle");
+    let symbols = (0..129).map(test_symbol_with_index).collect::<Vec<_>>();
+
+    let output = lifecycle
+        .sync_file_symbols("src/lib.rs", &symbols)
+        .expect("sync file symbols");
+    let embedding_requests = embedding_handle.join().expect("embedding requests");
+    let qdrant_requests = qdrant_handle.join().expect("qdrant requests");
+    let upsert_requests = qdrant_requests
+        .iter()
+        .filter(|request| request.contains("/points?wait=true"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(output.vectors_upserted, 129);
+    assert_eq!(embedding_requests.len(), 2);
+    assert!(embedding_requests[0].contains("run_0"));
+    assert!(embedding_requests[0].contains("run_127"));
+    assert!(!embedding_requests[0].contains("run_128"));
+    assert!(embedding_requests[1].contains("run_128"));
+    assert_eq!(upsert_requests.len(), 2);
+    assert!(upsert_requests[0].contains(r#""symbol-0""#));
+    assert!(upsert_requests[0].contains(r#""symbol-127""#));
+    assert!(!upsert_requests[0].contains(r#""symbol-128""#));
+    assert!(upsert_requests[1].contains(r#""symbol-128""#));
 }
 
 #[test]

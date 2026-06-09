@@ -10,6 +10,7 @@ use serde_json::{Map, Value};
 use std::time::Duration;
 
 const QDRANT_TIMEOUT: Duration = Duration::from_secs(5);
+pub const DEFAULT_UPSERT_BATCH_SIZE: usize = 128;
 pub use reqwest::StatusCode;
 
 mod naming;
@@ -395,6 +396,40 @@ pub fn upsert(
     }
 
     Ok(result)
+}
+
+pub fn upsert_batched(
+    config: &QdrantConfig,
+    collection: &str,
+    points: Vec<UpsertRequest>,
+) -> anyhow::Result<usize> {
+    upsert_batched_with_size(config, collection, points, DEFAULT_UPSERT_BATCH_SIZE)
+}
+
+pub fn upsert_batched_with_size(
+    config: &QdrantConfig,
+    collection: &str,
+    points: Vec<UpsertRequest>,
+    batch_size: usize,
+) -> anyhow::Result<usize> {
+    if points.is_empty() {
+        return Ok(0);
+    }
+
+    let batch_size = batch_size.max(1);
+    let mut upserted = 0;
+    let mut remaining = points.into_iter();
+    loop {
+        let batch = remaining.by_ref().take(batch_size).collect::<Vec<_>>();
+        if batch.is_empty() {
+            break;
+        }
+        let requested = batch.len();
+        upsert(config, collection, batch)?;
+        upserted += requested;
+    }
+
+    Ok(upserted)
 }
 
 fn parse_upsert_result(data: &Value) -> anyhow::Result<UpsertResult> {

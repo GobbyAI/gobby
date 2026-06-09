@@ -19,6 +19,7 @@ const MINIFIED_JS_AVG_LINE_BYTES: usize = 2 * 1024;
 const GCODE_CONFIG_PATH: &str = ".gobby/gcode.json";
 const DEFAULT_HIDDEN_ALLOWLIST_PATTERNS: &[&str] = &[
     ".gobby/plans/**/*.md",
+    ".gobby/wiki/**/*.md",
     ".github/workflows/**/*.yml",
     ".github/workflows/**/*.yaml",
 ];
@@ -113,6 +114,9 @@ pub fn classify_file(
     exclude_patterns: &[impl AsRef<str>],
 ) -> Option<FileClassification> {
     if !is_safe_text_file(root, path, exclude_patterns) {
+        return None;
+    }
+    if is_generated_wiki_metadata(root, path) {
         return None;
     }
     if is_generated_js_bundle(path) {
@@ -292,10 +296,45 @@ fn is_hidden_metadata_content_only(root: &Path, path: &Path) -> bool {
         return true;
     }
 
+    if components.len() >= 3
+        && components[0] == ".gobby"
+        && components[1] == "wiki"
+        && path_has_extension(path, &["md"])
+    {
+        return true;
+    }
+
     components.len() >= 3
         && components[0] == ".github"
         && components[1] == "workflows"
         && path_has_extension(path, &["yml", "yaml"])
+}
+
+fn is_generated_wiki_metadata(root: &Path, path: &Path) -> bool {
+    let rel = path.strip_prefix(root).unwrap_or(path);
+    let components = rel
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(value) => value.to_str(),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    if components.len() >= 3
+        && components[0] == ".gobby"
+        && components[1] == "wiki"
+        && components[2] == "_meta"
+    {
+        return true;
+    }
+
+    components.len() >= 3
+        && components[0] == ".gobby"
+        && components[1] == "wiki"
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(".json.lock"))
 }
 
 fn path_has_extension(path: &Path, extensions: &[&str]) -> bool {
@@ -626,7 +665,43 @@ mod tests {
         let (ast, content_only) = discover_files(root, &[] as &[&str]);
 
         assert!(rels(root, ast).is_empty());
-        assert!(rels(root, content_only).is_empty());
+        assert_eq!(rels(root, content_only), vec![".gobby/wiki/page.md"]);
+    }
+
+    #[test]
+    fn discovers_wiki_markdown_and_skips_generated_wiki_metadata() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        write_file(root, ".gobby/wiki/page.md", b"# Wiki\n");
+        write_file(root, ".gobby/wiki/nested/page.md", b"# Nested\n");
+        write_file(root, ".gobby/wiki/_meta/codewiki.json", b"{}\n");
+        write_file(root, ".gobby/wiki/_meta/readme.md", b"# Generated\n");
+        write_file(root, ".gobby/wiki/wikis.json.lock", b"lock\n");
+        write_file(root, ".gobby/wiki/nested/page.json.lock", b"lock\n");
+
+        let (ast, content_only) = discover_files(root, &[] as &[&str]);
+
+        assert!(rels(root, ast).is_empty());
+        assert_eq!(
+            rels(root, content_only),
+            vec![".gobby/wiki/nested/page.md", ".gobby/wiki/page.md"]
+        );
+        assert_eq!(
+            classify_file(
+                root,
+                &root.join(".gobby/wiki/_meta/codewiki.json"),
+                &[] as &[&str]
+            ),
+            None
+        );
+        assert_eq!(
+            classify_file(
+                root,
+                &root.join(".gobby/wiki/wikis.json.lock"),
+                &[] as &[&str]
+            ),
+            None
+        );
     }
 
     #[test]

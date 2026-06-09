@@ -23,6 +23,7 @@ use super::types::{
 };
 
 const QDRANT_LIFECYCLE_TIMEOUT: Duration = Duration::from_secs(10);
+const VECTOR_SYNC_BATCH_SIZE: usize = gobby_core::qdrant::DEFAULT_UPSERT_BATCH_SIZE;
 
 #[derive(Debug)]
 pub struct CodeSymbolVectorLifecycle {
@@ -312,7 +313,7 @@ impl CodeSymbolVectorLifecycle {
         let requested = points.len();
         let (_result, state) =
             gobby_core::qdrant::with_qdrant(Some(&self.qdrant), None, |config| {
-                gobby_core::qdrant::upsert(config, &self.collection, points).map(Some)
+                gobby_core::qdrant::upsert_batched(config, &self.collection, points).map(Some)
             })
             .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
         match state {
@@ -333,22 +334,18 @@ impl CodeSymbolVectorLifecycle {
             return Ok(Vec::new());
         }
 
-        let texts = symbols
-            .iter()
-            .map(vector_text_for_symbol)
-            .collect::<Vec<_>>();
-        let vectors = self.embedding.embed_text_batch(&texts)?;
-        if vectors.len() != symbols.len() {
-            return Err(VectorLifecycleError::EmbeddingResponse(format!(
-                "embedding batch returned {} vector(s) for {} symbol(s)",
-                vectors.len(),
-                symbols.len()
-            )));
-        }
-        symbols
-            .iter()
-            .zip(vectors)
-            .map(|(symbol, vector)| {
+        let mut points = Vec::with_capacity(symbols.len());
+        for batch in symbols.chunks(VECTOR_SYNC_BATCH_SIZE) {
+            let texts = batch.iter().map(vector_text_for_symbol).collect::<Vec<_>>();
+            let vectors = self.embedding.embed_text_batch(&texts)?;
+            if vectors.len() != batch.len() {
+                return Err(VectorLifecycleError::EmbeddingResponse(format!(
+                    "embedding batch returned {} vector(s) for {} symbol(s)",
+                    vectors.len(),
+                    batch.len()
+                )));
+            }
+            for (symbol, vector) in batch.iter().zip(vectors) {
                 if vector.len() != expected_vector_size {
                     return Err(VectorLifecycleError::EmbeddingResponse(format!(
                         "embedding for symbol {} returned {} dimension(s), expected {}",
@@ -358,13 +355,15 @@ impl CodeSymbolVectorLifecycle {
                     )));
                 }
                 let payload = payload_map(CodeSymbolVectorPayload::from_symbol(symbol))?;
-                Ok(UpsertRequest {
+                points.push(UpsertRequest {
                     id: symbol.id.clone(),
                     vector,
                     payload,
-                })
-            })
-            .collect()
+                });
+            }
+        }
+
+        Ok(points)
     }
 
     fn qdrant_request(

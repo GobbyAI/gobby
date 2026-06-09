@@ -8,6 +8,7 @@ use crate::search::SearchScope;
 use crate::search::semantic::{OpenAiEmbeddingBackend, QueryEmbedder, SemanticEmbedding};
 
 const VECTOR_DISTANCE_COSINE: &str = "Cosine";
+const VECTOR_SYNC_BATCH_SIZE: usize = gobby_core::qdrant::DEFAULT_UPSERT_BATCH_SIZE;
 const WIKI_VECTOR_UUID_NAMESPACE: uuid::Uuid = uuid::Uuid::from_bytes([
     0x67, 0x77, 0x69, 0x6b, 0x69, 0x00, 0x40, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 ]);
@@ -121,23 +122,53 @@ where
         });
     }
 
-    let texts = chunks
-        .iter()
-        .map(|chunk| chunk.content.clone())
-        .collect::<Vec<_>>();
-    let vectors = embedder.embed_texts(&texts)?;
-    if vectors.len() != chunks.len() {
-        return Err(WikiVectorError::Embedding(format!(
-            "embedding batch returned {} vector(s) for {} chunk(s)",
-            vectors.len(),
-            chunks.len()
-        )));
+    let mut vector_size = None;
+    let mut points = Vec::with_capacity(chunks.len());
+    for chunk_batch in chunks.chunks(VECTOR_SYNC_BATCH_SIZE) {
+        let texts = chunk_batch
+            .iter()
+            .map(|chunk| chunk.content.clone())
+            .collect::<Vec<_>>();
+        let vectors = embedder.embed_texts(&texts)?;
+        if vectors.len() != chunk_batch.len() {
+            return Err(WikiVectorError::Embedding(format!(
+                "embedding batch returned {} vector(s) for {} chunk(s)",
+                vectors.len(),
+                chunk_batch.len()
+            )));
+        }
+
+        for (chunk, vector) in chunk_batch.iter().zip(vectors) {
+            let expected_size = match vector_size {
+                Some(size) => size,
+                None => {
+                    let size = vector.len();
+                    if size == 0 {
+                        return Err(WikiVectorError::Embedding(
+                            "embedding vector was empty".to_string(),
+                        ));
+                    }
+                    vector_size = Some(size);
+                    size
+                }
+            };
+            if vector.len() != expected_size {
+                return Err(WikiVectorError::Embedding(format!(
+                    "embedding for chunk {} returned {} dimension(s), expected {}",
+                    chunk.id,
+                    vector.len(),
+                    expected_size
+                )));
+            }
+            points.push(WikiVectorPoint {
+                id: point_id_for_chunk(chunk),
+                vector,
+                payload: payload_for_chunk(scope, chunk),
+            });
+        }
     }
 
-    let vector_size = vectors
-        .first()
-        .map(Vec::len)
-        .filter(|size| *size > 0)
+    let vector_size = vector_size
         .ok_or_else(|| WikiVectorError::Embedding("embedding vector was empty".to_string()))?;
     store.ensure_collection(
         &collection,
@@ -147,27 +178,10 @@ where
         },
     )?;
 
-    let points = chunks
-        .iter()
-        .zip(vectors)
-        .map(|(chunk, vector)| {
-            if vector.len() != vector_size {
-                return Err(WikiVectorError::Embedding(format!(
-                    "embedding for chunk {} returned {} dimension(s), expected {}",
-                    chunk.id,
-                    vector.len(),
-                    vector_size
-                )));
-            }
-            Ok(WikiVectorPoint {
-                id: point_id_for_chunk(chunk),
-                vector,
-                payload: payload_for_chunk(scope, chunk),
-            })
-        })
-        .collect::<Result<Vec<_>, WikiVectorError>>()?;
     let upserted = points.len();
-    store.upsert_points(&collection, points)?;
+    for point_batch in points.chunks(VECTOR_SYNC_BATCH_SIZE) {
+        store.upsert_points(&collection, point_batch.to_vec())?;
+    }
 
     Ok(WikiVectorSyncOutcome {
         chunks: chunks.len(),
@@ -392,7 +406,7 @@ impl WikiVectorStore for GwikiQdrantVectorStore {
                 payload: point.payload,
             })
             .collect();
-        gobby_core::qdrant::upsert(&self.config, collection, points)
+        gobby_core::qdrant::upsert_batched(&self.config, collection, points)
             .map(|_| ())
             .map_err(|error| WikiVectorError::Qdrant(error.to_string()))
     }
@@ -498,6 +512,50 @@ mod tests {
         );
     }
 
+    #[test]
+    fn vector_sync_batches_embedding_and_upserts() {
+        let scope = SearchScope::project("project-1");
+        let chunks = (0..129)
+            .map(|index| WikiVectorChunk {
+                id: format!("chunk:project:project-1:notes/page.md:{index}"),
+                path: "notes/page.md".to_string(),
+                title: Some("Page".to_string()),
+                heading: Some("Overview".to_string()),
+                chunk_index: index,
+                byte_start: index,
+                byte_end: index + 1,
+                content: format!("chunk content {index}"),
+            })
+            .collect::<Vec<_>>();
+        let mut source = MockChunkSource {
+            chunks,
+            stale_paths: Vec::new(),
+        };
+        let mut embedder = MockEmbedder {
+            vectors: vec![vec![0.1, 0.2, 0.3]; 129],
+            inputs: Vec::new(),
+        };
+        let mut store = RecordingVectorStore::default();
+
+        let outcome = sync_scope_vectors(&scope, &mut source, &mut embedder, &mut store)
+            .expect("vector sync succeeds");
+
+        assert_eq!(outcome.chunks, 129);
+        assert_eq!(outcome.upserted, 129);
+        assert_eq!(embedder.inputs.len(), 129);
+        assert_eq!(store.ensured.len(), 1);
+        assert_eq!(store.upserts.len(), 2);
+        assert_eq!(store.upserts[0].points.len(), 128);
+        assert_eq!(store.upserts[1].points.len(), 1);
+        assert_eq!(
+            store.upserts[1].points[0]
+                .payload
+                .get("chunk_index")
+                .and_then(Value::as_u64),
+            Some(128)
+        );
+    }
+
     #[cfg(feature = "embeddings-http")]
     #[test]
     fn direct_embedding_backend_batches_texts() {
@@ -575,7 +633,8 @@ mod tests {
     impl WikiVectorEmbedder for MockEmbedder {
         fn embed_texts(&mut self, texts: &[String]) -> Result<Vec<Vec<f32>>, WikiVectorError> {
             self.inputs.extend(texts.iter().cloned());
-            Ok(self.vectors.clone())
+            let count = texts.len().min(self.vectors.len());
+            Ok(self.vectors.drain(0..count).collect())
         }
     }
 

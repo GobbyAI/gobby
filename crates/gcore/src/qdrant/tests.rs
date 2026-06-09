@@ -1,8 +1,12 @@
 use super::*;
 use crate::config::QdrantConfig;
 use crate::degradation::ServiceState;
-use crate::test_http::{RequestHandle, spawn_json_response_with_status};
+use crate::test_http::{RequestHandle, read_http_request, spawn_json_response_with_status};
 use serde_json::{Map, Value, json};
+use std::io::{self, Write};
+use std::net::TcpListener;
+use std::thread;
+use std::time::Duration;
 
 #[test]
 fn payload_schema_is_opaque() {
@@ -154,6 +158,52 @@ fn upsert_requires_completed_qdrant_operation() {
         }
     );
     assert!(request.contains("PUT /collections/collection/points?wait=true HTTP/1.1"));
+}
+
+#[test]
+fn upsert_batched_splits_points_by_batch_size() {
+    let responses = vec![
+        (
+            200,
+            json!({"result": {"operation_id": 17, "status": "completed"}, "status": "ok"}),
+        ),
+        (
+            200,
+            json!({"result": {"operation_id": 18, "status": "completed"}, "status": "ok"}),
+        ),
+        (
+            200,
+            json!({"result": {"operation_id": 19, "status": "completed"}, "status": "ok"}),
+        ),
+    ];
+    let (base_url, request_handle) = spawn_qdrant_responses(responses);
+    let config = QdrantConfig {
+        url: Some(base_url),
+        api_key: None,
+    };
+    let points = (0..5)
+        .map(|index| UpsertRequest {
+            id: format!("point-{index}"),
+            vector: vec![index as f32],
+            payload: Map::new(),
+        })
+        .collect();
+
+    let upserted =
+        upsert_batched_with_size(&config, "collection", points, 2).expect("batched upsert");
+    let requests = request_handle
+        .join()
+        .expect("request thread")
+        .expect("requests");
+
+    assert_eq!(upserted, 5);
+    assert_eq!(requests.len(), 3);
+    assert!(requests[0].contains(r#""point-0""#));
+    assert!(requests[0].contains(r#""point-1""#));
+    assert!(!requests[0].contains(r#""point-2""#));
+    assert!(requests[1].contains(r#""point-2""#));
+    assert!(requests[1].contains(r#""point-3""#));
+    assert!(requests[2].contains(r#""point-4""#));
 }
 
 #[test]
@@ -427,7 +477,7 @@ fn collection_lifecycle_ensures_schema_and_deletes_filtered_points() {
         json!({"status": "ok", "result": {}}),
         json!({"status": "ok", "result": {"status": 7}}),
     ] {
-        let (delete_url, _delete_handle) = spawn_qdrant_response(200, body);
+        let (delete_url, delete_handle) = spawn_qdrant_response(200, body);
         let config = QdrantConfig {
             url: Some(delete_url),
             api_key: None,
@@ -436,6 +486,10 @@ fn collection_lifecycle_ensures_schema_and_deletes_filtered_points() {
             delete_points_by_filter(&config, "gwiki_project_project-1", json!({"must": []}))
                 .expect_err("malformed delete operation status should fail");
         assert!(error.downcast_ref::<QdrantError>().is_some());
+        delete_handle
+            .join()
+            .expect("delete request thread")
+            .unwrap();
     }
 }
 
@@ -470,4 +524,33 @@ fn collection_point_count_reads_collection_info() {
 
 fn spawn_qdrant_response(status: u16, body: Value) -> (String, RequestHandle) {
     spawn_json_response_with_status(status, body.to_string()).expect("spawn qdrant test server")
+}
+
+fn spawn_qdrant_responses(
+    responses: Vec<(u16, Value)>,
+) -> (String, thread::JoinHandle<io::Result<Vec<String>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind qdrant test server");
+    let base_url = format!("http://{}", listener.local_addr().expect("local addr"));
+    let handle = thread::spawn(move || {
+        let mut requests = Vec::new();
+        for (status, body) in responses {
+            let (mut stream, _) = listener.accept()?;
+            stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+            requests.push(read_http_request(&mut stream)?);
+
+            let reason = StatusCode::from_u16(status)
+                .ok()
+                .and_then(|status| status.canonical_reason())
+                .unwrap_or("OK");
+            let body = body.to_string();
+            write!(
+                stream,
+                "HTTP/1.1 {status} {reason}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            )?;
+        }
+        Ok(requests)
+    });
+
+    (base_url, handle)
 }
