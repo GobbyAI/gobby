@@ -263,6 +263,39 @@ def _claude_plan_keystrokes(option_id: str, pane_text: str) -> PlanKeystrokeSequ
     return None
 
 
+# --- Codex native plan-mode approval menu ------------------------------------
+# Captured empirically from Codex CLI v0.138.0 (gpt-5.5) in a tmux pane
+# (task #15728). Entering Plan mode (`/plan`) and letting the model propose a
+# plan renders ONE approval menu; typing the item number selects AND activates
+# it immediately -- the "Press enter to confirm" hint applies only to arrow-key
+# navigation, the digit needs no following Enter (verified live: pressing "3"
+# alone selected "stay in Plan mode" and dismissed the menu):
+#     Implement this plan?
+#       1. Yes, implement this plan          Switch to Default and start coding.
+#       2. Yes, clear context and implement  Fresh thread.
+#       3. No, stay in Plan mode             Continue planning with the model.
+#       Press enter to confirm or esc to go back
+# Unlike Claude, Codex's plan menu has a SINGLE approve semantic ("implement"):
+# it cannot express auto/bypass-vs-manual approval at this menu (the post-plan
+# approval mode is governed by the session's --ask-for-approval policy, not
+# selectable here), so both plan_options approves collapse onto "1" -- the same
+# precedent as Claude's bare confirm menu. request-changes maps to "3" (stay in
+# Plan mode so the user can send revision feedback). A single, always-present
+# menu shape means a static map suffices -- no pane-aware resolver needed.
+
+
+def _codex_digit(digit: str) -> PlanKeystrokeSequence:
+    """Codex plan-menu selection: the item number activates with no Enter."""
+    return PlanKeystrokeSequence(strokes=(PlanKeystroke(digit, literal=True),))
+
+
+_CODEX_PLAN_MENU: dict[str, PlanKeystrokeSequence] = {
+    "approve_yolo": _codex_digit("1"),
+    "approve_act": _codex_digit("1"),
+    REQUEST_CHANGES_OPTION_ID: _codex_digit("3"),
+}
+
+
 def _register_builtin_plan_keystrokes(registry: PlanKeystrokeRegistry) -> None:
     """Per-CLI registration point for native plan-menu keystrokes.
 
@@ -290,7 +323,9 @@ def _register_builtin_plan_keystrokes(registry: PlanKeystrokeRegistry) -> None:
     """
     # --- claude (ExitPlanMode menu) -- task #15727 ---
     registry.register_resolver("claude", _claude_plan_keystrokes)
-    # --- codex -- task #15728 ---
+    # --- codex (Plan mode `/plan` -> "Implement this plan?" menu) -- task #15728 ---
+    for _codex_option_id, _codex_sequence in _CODEX_PLAN_MENU.items():
+        registry.register("codex", _codex_option_id, _codex_sequence)
     # --- droid (ExitSpecMode menu) -- task #15729 ---
     # --- gemini (ACP) -- task #15730 ---
     # --- grok (ACP) -- task #15731 ---

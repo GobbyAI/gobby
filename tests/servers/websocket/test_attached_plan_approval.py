@@ -371,6 +371,70 @@ class TestAttachedPlanApprovalClaude:
         ws.send.assert_not_awaited()
 
 
+class TestAttachedPlanApprovalCodex:
+    """Codex's static single-shape path: no pane capture, digit-only dispatch."""
+
+    @pytest.mark.asyncio
+    async def test_approve_dispatches_digit_only_without_capture(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+        server.session_manager.get.return_value = _make_terminal_session(source="codex")
+
+        tmux_manager = MagicMock()
+        tmux_manager.capture_pane = AsyncMock(return_value="should not be read")
+        tmux_manager.send_keys = AsyncMock(return_value=True)
+
+        with patch(_TMUX_PATCH, return_value=tmux_manager):
+            await handle_attached_plan_approval(
+                server,
+                ws,
+                "term-1",
+                {"decision": "approve", "option_id": "approve_act"},
+                registry=build_default_plan_keystroke_registry(),
+            )
+
+        # Single fixed menu shape -> no live-pane disambiguation needed.
+        tmux_manager.capture_pane.assert_not_awaited()
+        # Codex plan menu activates on the digit alone; approve maps to "1".
+        tmux_manager.send_keys.assert_awaited_once_with("%11", "1", literal=True)
+        msg = json.loads(ws.send.await_args.args[0])
+        assert msg["option_id"] == "approve_act"
+        assert msg["ok"] is True
+        server._send_error.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_request_changes_dispatches_stay_in_plan_mode(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+        server.session_manager.get.return_value = _make_terminal_session(source="codex")
+
+        tmux_manager = MagicMock()
+        tmux_manager.capture_pane = AsyncMock(return_value="should not be read")
+        tmux_manager.send_keys = AsyncMock(return_value=True)
+
+        with patch(_TMUX_PATCH, return_value=tmux_manager):
+            await handle_attached_plan_approval(
+                server,
+                ws,
+                "term-1",
+                {"decision": "request_changes"},
+                registry=build_default_plan_keystroke_registry(),
+            )
+
+        tmux_manager.capture_pane.assert_not_awaited()
+        # request-changes maps to "3" (No, stay in Plan mode), digit only.
+        tmux_manager.send_keys.assert_awaited_once_with("%11", "3", literal=True)
+        msg = json.loads(ws.send.await_args.args[0])
+        assert msg == {
+            "type": "plan_approval_dispatched",
+            "target_session_id": "term-1",
+            "decision": "request_changes",
+            "option_id": REQUEST_CHANGES_OPTION_ID,
+            "ok": True,
+        }
+        server._send_error.assert_not_awaited()
+
+
 class TestPlanApprovalRouting:
     @pytest.mark.asyncio
     async def test_target_session_id_routes_to_attached_handler(self) -> None:

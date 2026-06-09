@@ -248,6 +248,11 @@ def _confirm(digit: str) -> PlanKeystrokeSequence:
     return PlanKeystrokeSequence((PlanKeystroke(digit, literal=True),))
 
 
+def _codex(digit: str) -> PlanKeystrokeSequence:
+    """Expected Codex plan-menu selection: the digit activates with no Enter."""
+    return PlanKeystrokeSequence((PlanKeystroke(digit, literal=True),))
+
+
 class TestClaudeResolver:
     """Claude's pane-aware mapping over both native ExitPlanMode menu shapes."""
 
@@ -312,11 +317,77 @@ class TestClaudeResolver:
         )
 
 
+# Verbatim capture from Codex CLI v0.138.0 (gpt-5.5) in a tmux pane: the single
+# plan-mode approval menu shown after `/plan` proposes a plan.
+_CODEX_PLAN_MENU_PANE = """\
+  Implement this plan?
+
+› 1. Yes, implement this plan          Switch to Default and start coding.
+  2. Yes, clear context and implement  Fresh thread. Context: 2% used.
+  3. No, stay in Plan mode             Continue planning with the model.
+  Press enter to confirm or esc to go back
+"""
+
+
+class TestCodexPlanMenu:
+    """Codex's single-shape plan-mode approval menu -- a static (non-pane) map."""
+
+    def test_codex_is_registered_static(self) -> None:
+        assert DEFAULT_PLAN_KEYSTROKES.has_source("codex") is True
+        # One always-present menu shape -> static map, no live-pane inspection.
+        assert DEFAULT_PLAN_KEYSTROKES.requires_pane("codex") is False
+
+    def test_registered_options(self) -> None:
+        assert DEFAULT_PLAN_KEYSTROKES.registered_options("codex") == frozenset(
+            {"approve_yolo", "approve_act", REQUEST_CHANGES_OPTION_ID}
+        )
+
+    @pytest.mark.parametrize(
+        ("option_id", "expected"),
+        [
+            # Codex's plan menu has a single "implement" approve, so both
+            # approves collapse onto "1"; request-changes is "3" (stay in Plan
+            # mode so the user can send revision feedback).
+            ("approve_yolo", _codex("1")),
+            ("approve_act", _codex("1")),
+            (REQUEST_CHANGES_OPTION_ID, _codex("3")),
+        ],
+    )
+    def test_plan_menu_mapping(self, option_id: str, expected: PlanKeystrokeSequence) -> None:
+        assert DEFAULT_PLAN_KEYSTROKES.resolve("codex", option_id) == expected
+
+    @pytest.mark.parametrize(
+        ("option_id", "digit"),
+        [("approve_yolo", "1"), ("approve_act", "1"), (REQUEST_CHANGES_OPTION_ID, "3")],
+    )
+    def test_digit_activates_without_enter(self, option_id: str, digit: str) -> None:
+        # Verified live: the item number selects AND activates with no trailing
+        # Enter (unlike Claude's full menu).
+        seq = DEFAULT_PLAN_KEYSTROKES.resolve("codex", option_id)
+        assert seq is not None
+        assert [s.keys for s in seq.strokes] == [digit]
+        assert all(s.literal for s in seq.strokes)
+
+    def test_static_resolution_ignores_pane_text(self) -> None:
+        # No pane-aware resolver for codex, so resolve_for_pane falls back to the
+        # static map and returns the same sequence regardless of pane content.
+        assert (
+            DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("codex", "approve_yolo", _CODEX_PLAN_MENU_PANE)
+            == DEFAULT_PLAN_KEYSTROKES.resolve("codex", "approve_yolo")
+            == _codex("1")
+        )
+        assert DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("codex", "approve_act", "") == _codex("1")
+
+    def test_unknown_option_returns_none(self) -> None:
+        assert DEFAULT_PLAN_KEYSTROKES.resolve("codex", "approve_bogus") is None
+
+
 class TestDefaultRegistry:
     def test_remaining_clis_pending(self) -> None:
-        # Claude (#15727) is registered; the other per-CLI child tasks populate
-        # these. This asserts the contract so an accidental population is caught.
-        for source in ("codex", "droid", "gemini", "grok", "qwen"):
+        # Claude (#15727) and Codex (#15728) are registered; the other per-CLI
+        # child tasks populate these. This asserts the contract so an accidental
+        # population is caught.
+        for source in ("droid", "gemini", "grok", "qwen"):
             assert DEFAULT_PLAN_KEYSTROKES.has_source(source) is False
             assert DEFAULT_PLAN_KEYSTROKES.requires_pane(source) is False
             assert DEFAULT_PLAN_KEYSTROKES.resolve(source, "approve_yolo") is None
