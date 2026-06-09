@@ -10,6 +10,36 @@ use super::{
     document_kind, source_node_id, unresolved_target_id,
 };
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum GraphAnalyticsError {
+    DuplicateNode {
+        id: String,
+        existing_kind: String,
+        duplicate_kind: String,
+        existing_weight: f64,
+        duplicate_weight: f64,
+    },
+}
+
+impl std::fmt::Display for GraphAnalyticsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DuplicateNode {
+                id,
+                existing_kind,
+                duplicate_kind,
+                existing_weight,
+                duplicate_weight,
+            } => write!(
+                f,
+                "duplicate graph node `{id}` has conflicting metadata: existing kind `{existing_kind}` weight {existing_weight}, duplicate kind `{duplicate_kind}` weight {duplicate_weight}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for GraphAnalyticsError {}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct GraphExportAnalytics {
     pub communities: Vec<GraphExportCommunity>,
@@ -54,15 +84,21 @@ pub struct GraphExportHotspot {
     pub weight: f64,
 }
 
-pub fn analyze_facts(facts: &WikiGraphFacts) -> GraphExportAnalytics {
-    GraphExportAnalytics::from_core(analyze(&analytics_graph_from_facts(facts)))
+pub fn analyze_facts(facts: &WikiGraphFacts) -> Result<GraphExportAnalytics, GraphAnalyticsError> {
+    Ok(GraphExportAnalytics::from_core(analyze(
+        &analytics_graph_from_facts(facts)?,
+    )))
 }
 
-pub fn analytics_graph_from_memory(graph: &MemoryWikiGraph) -> AnalyticsGraph {
+pub fn analytics_graph_from_memory(
+    graph: &MemoryWikiGraph,
+) -> Result<AnalyticsGraph, GraphAnalyticsError> {
     analytics_graph_from_facts(&graph.facts)
 }
 
-pub fn analytics_graph_from_facts(facts: &WikiGraphFacts) -> AnalyticsGraph {
+pub fn analytics_graph_from_facts(
+    facts: &WikiGraphFacts,
+) -> Result<AnalyticsGraph, GraphAnalyticsError> {
     let mut nodes = BTreeMap::new();
     let mut edges = Vec::new();
 
@@ -72,15 +108,15 @@ pub fn analytics_graph_from_facts(facts: &WikiGraphFacts) -> AnalyticsGraph {
             document_id(&document.scope, &document.path),
             document_kind(&document.path),
             1.0,
-        );
+        )?;
     }
 
     for source in &facts.sources {
         let source_id = source_node_id(&source.scope, &source.source_path);
-        insert_node(&mut nodes, source_id.clone(), "source", 0.5);
+        insert_node(&mut nodes, source_id.clone(), "source", 0.5)?;
 
         let citation_id = citation_node(source).id;
-        insert_node(&mut nodes, citation_id.clone(), "citation", 0.25);
+        insert_node(&mut nodes, citation_id.clone(), "citation", 0.25)?;
 
         edges.push(AnalyticsEdge {
             source: source_id,
@@ -99,7 +135,7 @@ pub fn analytics_graph_from_facts(facts: &WikiGraphFacts) -> AnalyticsGraph {
             WikiGraphLinkTarget::Resolved(path) => document_id(&link.scope, path),
             WikiGraphLinkTarget::Unresolved(target) => {
                 let node_id = unresolved_target_id(&link.scope, target);
-                insert_node(&mut nodes, node_id.clone(), "unresolved_target", 0.25);
+                insert_node(&mut nodes, node_id.clone(), "unresolved_target", 0.25)?;
                 node_id
             }
         };
@@ -110,10 +146,10 @@ pub fn analytics_graph_from_facts(facts: &WikiGraphFacts) -> AnalyticsGraph {
         });
     }
 
-    AnalyticsGraph {
+    Ok(AnalyticsGraph {
         nodes: nodes.into_values().collect(),
         edges,
-    }
+    })
 }
 
 fn insert_node(
@@ -121,17 +157,22 @@ fn insert_node(
     id: String,
     kind: impl Into<String>,
     weight: f64,
-) {
+) -> Result<(), GraphAnalyticsError> {
     let kind = kind.into();
     if let Some(existing) = nodes.get(&id) {
-        assert_eq!(existing.kind, kind, "duplicate graph node kind mismatch");
-        assert_eq!(
-            existing.weight, weight,
-            "duplicate graph node weight mismatch"
-        );
-        return;
+        if existing.kind != kind || existing.weight != weight {
+            return Err(GraphAnalyticsError::DuplicateNode {
+                id,
+                existing_kind: existing.kind.clone(),
+                duplicate_kind: kind,
+                existing_weight: existing.weight,
+                duplicate_weight: weight,
+            });
+        }
+        return Ok(());
     }
     nodes.insert(id.clone(), AnalyticsNode { id, kind, weight });
+    Ok(())
 }
 
 impl GraphExportAnalytics {
@@ -241,29 +282,47 @@ mod tests {
             documents: vec![
                 WikiGraphDocument {
                     scope: scope.clone(),
-                    path: "wiki/a.md".into(),
+                    path: "knowledge/topics/a.md".into(),
                     title: None,
                 },
                 WikiGraphDocument {
                     scope: scope.clone(),
-                    path: "wiki/b.md".into(),
+                    path: "knowledge/topics/b.md".into(),
                     title: None,
                 },
             ],
             links: vec![WikiGraphLink {
                 scope,
-                source_path: "wiki/a.md".into(),
+                source_path: "knowledge/topics/a.md".into(),
                 raw_target: "B".to_string(),
-                target: WikiGraphLinkTarget::Resolved("wiki/b.md".into()),
+                target: WikiGraphLinkTarget::Resolved("knowledge/topics/b.md".into()),
             }],
             sources: Vec::new(),
             code_edges: Vec::new(),
         });
 
-        let analytics_graph = analytics_graph_from_memory(&graph);
+        let analytics_graph = analytics_graph_from_memory(&graph).expect("analytics graph");
 
         assert_eq!(analytics_graph.nodes.len(), 2);
         assert_eq!(analytics_graph.edges.len(), 1);
         assert_eq!(analytics_graph.edges[0].kind, "links");
+    }
+
+    #[test]
+    fn graph_analytics_rejects_duplicate_node_metadata() {
+        let mut nodes = BTreeMap::new();
+        insert_node(&mut nodes, "node-1".to_string(), "topic", 1.0).expect("first insert");
+
+        let error = insert_node(&mut nodes, "node-1".to_string(), "source", 0.5)
+            .expect_err("duplicate node must fail");
+
+        assert!(matches!(
+            error,
+            GraphAnalyticsError::DuplicateNode {
+                existing_kind,
+                duplicate_kind,
+                ..
+            } if existing_kind == "topic" && duplicate_kind == "source"
+        ));
     }
 }

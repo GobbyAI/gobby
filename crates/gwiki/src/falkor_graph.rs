@@ -244,6 +244,7 @@ fn code_call_edges_query() -> &'static str {
         WHERE source.file_path = $path OR (target:CodeSymbol AND target.file_path = $path) \
         RETURN source.file_path AS source_file_path, source.name AS source_name, \
                target.file_path AS target_file_path, target.name AS target_name, r.line AS line \
+        ORDER BY source.file_path, source.name, target.file_path, target.name, r.line \
         LIMIT toInteger($limit)"
 }
 
@@ -289,6 +290,7 @@ fn code_import_edges_query() -> &'static str {
     "\
         MATCH (file:CodeFile {path: $path, project: $project})-[r:IMPORTS]->(module:CodeModule {project: $project}) \
         RETURN file.path AS source_file_path, module.name AS target_name \
+        ORDER BY file.path, module.name \
         LIMIT toInteger($limit)"
 }
 
@@ -829,6 +831,10 @@ mod tests {
 
         assert!(call_query.contains("LIMIT toInteger($limit)"));
         assert!(import_query.contains("LIMIT toInteger($limit)"));
+        assert!(call_query.contains(
+            "ORDER BY source.file_path, source.name, target.file_path, target.name, r.line"
+        ));
+        assert!(import_query.contains("ORDER BY file.path, module.name"));
         assert!(!call_query.contains("LIMIT 200"));
         assert!(!import_query.contains("LIMIT 200"));
 

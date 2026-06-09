@@ -120,7 +120,7 @@ fn representative_ask_output() -> AskOutput {
         hits: vec![SearchResultOutput {
             title: Some("Contract guardrails".to_string()),
             fusion_key: "wiki:contract-guardrails".to_string(),
-            wiki_page: PathBuf::from("wiki/contract-guardrails.md"),
+            wiki_page: PathBuf::from("knowledge/topics/contract-guardrails.md"),
             source_path: PathBuf::from("crates/gwiki/src/contract.rs"),
             snippet: "Contracts must describe serialized command output.".to_string(),
             score: 0.98,
@@ -133,10 +133,10 @@ fn representative_ask_output() -> AskOutput {
         }],
         related_pages: vec![AskRelatedPageOutput {
             title: Some("CLI contracts".to_string()),
-            path: PathBuf::from("wiki/cli-contracts.md"),
+            path: PathBuf::from("knowledge/topics/cli-contracts.md"),
             score: 0.72,
         }],
-        sources: vec!["wiki/contract-guardrails.md".to_string()],
+        sources: vec!["knowledge/topics/contract-guardrails.md".to_string()],
         code_edges: vec![AskCodeEdgeOutput {
             source: "crates/gwiki/src/contract.rs:contract".to_string(),
             target: "crates/gwiki/src/output.rs:AskOutput".to_string(),
@@ -153,7 +153,7 @@ fn representative_ask_output() -> AskOutput {
         truncated: false,
         truncated_components: Vec::new(),
         gaps: vec!["No daemon fixture covered this output shape.".to_string()],
-        stale_candidates: vec!["wiki/old-contract-keys.md".to_string()],
+        stale_candidates: vec!["knowledge/topics/old-contract-keys.md".to_string()],
         suggested_questions: vec!["Which commands publish json_output_keys?".to_string()],
         warnings: vec!["semantic search degraded".to_string()],
         ai: Some(AskAiOutput {

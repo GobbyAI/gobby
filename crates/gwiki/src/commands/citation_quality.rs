@@ -403,6 +403,8 @@ fn confidence_explanation(available: bool) -> String {
 
 fn section_id_for(page_path: &Path, heading: &str) -> String {
     if heading == "Overview" {
+        // Overview headings are page-level summaries; use the page slug so multiple
+        // overview sections on one page still share the same documented collision behavior.
         return page_path
             .file_stem()
             .and_then(|stem| stem.to_str())

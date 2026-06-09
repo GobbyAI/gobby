@@ -97,6 +97,7 @@ struct PreparedEdge {
 struct PreparedGraph {
     nodes: Vec<NodeRef>,
     weights: Vec<f64>,
+    weights_by_id: HashMap<String, f64>,
     edges: Vec<PreparedEdge>,
     adjacency: Vec<Vec<(usize, usize)>>,
 }
@@ -128,6 +129,10 @@ impl PreparedGraph {
             .iter()
             .map(|(_, _, weight)| *weight)
             .collect::<Vec<_>>();
+        let weights_by_id = nodes
+            .iter()
+            .map(|(id, _, weight)| (id.clone(), *weight))
+            .collect::<HashMap<_, _>>();
         let indexes = nodes
             .iter()
             .enumerate()
@@ -166,6 +171,7 @@ impl PreparedGraph {
         Self {
             nodes: node_refs,
             weights,
+            weights_by_id,
             edges,
             adjacency,
         }
@@ -372,6 +378,14 @@ struct BridgeSearch {
     bridge_edges: HashSet<usize>,
 }
 
+struct BridgeFrame {
+    node: usize,
+    parent_edge: Option<usize>,
+    next_neighbor: usize,
+    child_count: usize,
+    is_articulation: bool,
+}
+
 impl BridgeSearch {
     fn new(node_count: usize) -> Self {
         Self {
@@ -384,41 +398,72 @@ impl BridgeSearch {
     }
 
     fn visit(&mut self, node: usize, parent_edge: Option<usize>, graph: &PreparedGraph) {
-        self.discovery[node] = Some(self.next);
-        self.low[node] = self.next;
-        self.next += 1;
+        if self.discovery[node].is_some() {
+            return;
+        }
+        self.discover(node);
+        let mut stack = vec![BridgeFrame {
+            node,
+            parent_edge,
+            next_neighbor: 0,
+            child_count: 0,
+            is_articulation: false,
+        }];
 
-        let mut child_count = 0;
-        let mut is_articulation = false;
+        while let Some(frame_index) = stack.len().checked_sub(1) {
+            let node = stack[frame_index].node;
+            if stack[frame_index].next_neighbor < graph.adjacency[node].len() {
+                let (neighbor, edge_index) =
+                    graph.adjacency[node][stack[frame_index].next_neighbor];
+                stack[frame_index].next_neighbor += 1;
+                if Some(edge_index) == stack[frame_index].parent_edge {
+                    continue;
+                }
 
-        for (neighbor, edge_index) in &graph.adjacency[node] {
-            if Some(*edge_index) == parent_edge {
+                if self.discovery[neighbor].is_none() {
+                    stack[frame_index].child_count += 1;
+                    self.discover(neighbor);
+                    stack.push(BridgeFrame {
+                        node: neighbor,
+                        parent_edge: Some(edge_index),
+                        next_neighbor: 0,
+                        child_count: 0,
+                        is_articulation: false,
+                    });
+                } else {
+                    self.low[node] = self.low[node].min(self.discovery[neighbor].unwrap_or(0));
+                }
                 continue;
             }
 
-            if self.discovery[*neighbor].is_none() {
-                child_count += 1;
-                self.visit(*neighbor, Some(*edge_index), graph);
-                self.low[node] = self.low[node].min(self.low[*neighbor]);
+            let mut finished = stack.pop().expect("frame exists");
+            if finished.parent_edge.is_none() && finished.child_count > 1 {
+                finished.is_articulation = true;
+            }
+            if finished.is_articulation {
+                self.articulation_points.insert(finished.node);
+            }
 
-                if self.low[*neighbor] > self.discovery[node].unwrap_or(0) {
-                    self.bridge_edges.insert(*edge_index);
-                }
-                if parent_edge.is_some() && self.low[*neighbor] >= self.discovery[node].unwrap_or(0)
+            if let Some(parent) = stack.last_mut() {
+                let parent_node = parent.node;
+                self.low[parent_node] = self.low[parent_node].min(self.low[finished.node]);
+                let parent_discovery = self.discovery[parent_node].unwrap_or(0);
+                if let Some(edge_index) = finished.parent_edge
+                    && self.low[finished.node] > parent_discovery
                 {
-                    is_articulation = true;
+                    self.bridge_edges.insert(edge_index);
                 }
-            } else {
-                self.low[node] = self.low[node].min(self.discovery[*neighbor].unwrap_or(0));
+                if parent.parent_edge.is_some() && self.low[finished.node] >= parent_discovery {
+                    parent.is_articulation = true;
+                }
             }
         }
+    }
 
-        if parent_edge.is_none() && child_count > 1 {
-            is_articulation = true;
-        }
-        if is_articulation {
-            self.articulation_points.insert(node);
-        }
+    fn discover(&mut self, node: usize) {
+        self.discovery[node] = Some(self.next);
+        self.low[node] = self.next;
+        self.next += 1;
     }
 }
 
@@ -430,12 +475,7 @@ fn compare_edge_ref(left: &EdgeRef, right: &EdgeRef) -> Ordering {
 }
 
 fn weight_for(node: &NodeRef, graph: &PreparedGraph) -> f64 {
-    graph
-        .nodes
-        .iter()
-        .position(|candidate| candidate.id == node.id)
-        .map(|index| graph.weights[index])
-        .unwrap_or(0.0)
+    graph.weights_by_id.get(&node.id).copied().unwrap_or(0.0)
 }
 
 #[cfg(test)]

@@ -65,6 +65,25 @@ fn report_shape() {
 }
 
 #[test]
+fn graph_report_hotspots_use_shared_centrality_degree() {
+    let nodes = vec![
+        ReportNode::new("src/lib.rs", "src/lib.rs", "file"),
+        ReportNode::new("sym:handler", "handler", "function").with_file_path("src/lib.rs"),
+    ];
+    let edges = vec![
+        ReportCodeEdge::new("src/lib.rs", "sym:handler", "DEFINES"),
+        ReportCodeEdge::new("src/lib.rs", "sym:handler", "DEFINES"),
+    ];
+
+    let hotspots = summarize_hotspots(&nodes, &edges, DEFAULT_TOP_LIMIT);
+
+    assert_eq!(hotspots.high_degree_files[0].degree, 1);
+    assert_eq!(hotspots.high_degree_files[0].outgoing, 2);
+    assert_eq!(hotspots.high_degree_symbols[0].degree, 1);
+    assert_eq!(hotspots.high_degree_symbols[0].incoming, 2);
+}
+
+#[test]
 fn graph_report_hotspots_and_bridge_summary_match_pinned_output() {
     let snapshot = ReportGraphSnapshot {
         nodes: vec![
@@ -99,73 +118,81 @@ fn graph_report_hotspots_and_bridge_summary_match_pinned_output() {
 
     assert_eq!(
         summarize_hotspots(&snapshot.nodes, &snapshot.code_edges, DEFAULT_TOP_LIMIT),
-        GraphReportHotspots {
-            high_degree_files: vec![GraphHotspot {
-                id: "src/lib.rs".to_string(),
-                name: "src/lib.rs".to_string(),
-                node_type: "file".to_string(),
-                degree: 2,
-                incoming: 0,
-                outgoing: 2,
-                file_path: None,
-            }],
-            high_degree_symbols: vec![
-                GraphHotspot {
-                    id: "sym:handler".to_string(),
-                    name: "handler".to_string(),
-                    node_type: "function".to_string(),
-                    degree: 3,
-                    incoming: 1,
-                    outgoing: 2,
-                    file_path: Some("src/lib.rs".to_string()),
-                },
-                GraphHotspot {
-                    id: "sym:parse".to_string(),
-                    name: "parse".to_string(),
-                    node_type: "function".to_string(),
-                    degree: 2,
-                    incoming: 1,
-                    outgoing: 1,
-                    file_path: Some("src/lib.rs".to_string()),
-                },
-            ],
-            high_degree_modules: vec![GraphHotspot {
-                id: "mod:api".to_string(),
-                name: "api".to_string(),
-                node_type: "module".to_string(),
-                degree: 1,
-                incoming: 1,
-                outgoing: 0,
-                file_path: None,
-            }],
-            incoming_call_hotspots: vec![GraphHotspot {
-                id: "sym:parse".to_string(),
-                name: "parse".to_string(),
-                node_type: "function".to_string(),
-                degree: 1,
-                incoming: 1,
-                outgoing: 0,
-                file_path: Some("src/lib.rs".to_string()),
-            }],
-        }
+        expected_graph_hotspots()
     );
     assert_eq!(
         summarize_bridge_edges(&bridge_edges),
-        Some(BridgeReportSummary {
-            relation: RELATES_TO_CODE.to_string(),
-            edge_count: 1,
-            inferred: true,
-            read_only: true,
-            source_system_counts: vec![NamedCount {
-                name: "gobby-memory".to_string(),
-                count: 1,
-            }],
-            confidence_range: Some(ConfidenceRange {
-                min: 0.72,
-                max: 0.72,
-            }),
-        })
+        Some(expected_bridge_summary())
     );
+}
+
+fn expected_graph_hotspots() -> GraphReportHotspots {
+    GraphReportHotspots {
+        high_degree_files: vec![GraphHotspot {
+            id: "src/lib.rs".to_string(),
+            name: "src/lib.rs".to_string(),
+            node_type: "file".to_string(),
+            degree: 2,
+            incoming: 0,
+            outgoing: 2,
+            file_path: None,
+        }],
+        high_degree_symbols: vec![
+            GraphHotspot {
+                id: "sym:handler".to_string(),
+                name: "handler".to_string(),
+                node_type: "function".to_string(),
+                degree: 3,
+                incoming: 1,
+                outgoing: 2,
+                file_path: Some("src/lib.rs".to_string()),
+            },
+            GraphHotspot {
+                id: "sym:parse".to_string(),
+                name: "parse".to_string(),
+                node_type: "function".to_string(),
+                degree: 2,
+                incoming: 1,
+                outgoing: 1,
+                file_path: Some("src/lib.rs".to_string()),
+            },
+        ],
+        high_degree_modules: vec![GraphHotspot {
+            id: "mod:api".to_string(),
+            name: "api".to_string(),
+            node_type: "module".to_string(),
+            degree: 1,
+            incoming: 1,
+            outgoing: 0,
+            file_path: None,
+        }],
+        incoming_call_hotspots: vec![GraphHotspot {
+            id: "sym:parse".to_string(),
+            name: "parse".to_string(),
+            node_type: "function".to_string(),
+            degree: 1,
+            incoming: 1,
+            outgoing: 0,
+            file_path: Some("src/lib.rs".to_string()),
+        }],
+    }
+}
+
+fn expected_bridge_summary() -> BridgeReportSummary {
+    BridgeReportSummary {
+        relation: RELATES_TO_CODE.to_string(),
+        edge_count: 1,
+        inferred: true,
+        read_only: true,
+        source_system_counts: vec![NamedCount {
+            name: "gobby-memory".to_string(),
+            count: 1,
+        }],
+        confidence_range: Some(ConfidenceRange {
+            min: 0.72,
+            max: 0.72,
+        }),
+    }
 }
 
 #[test]

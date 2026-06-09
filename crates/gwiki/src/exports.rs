@@ -140,7 +140,7 @@ pub fn export_graph_artifacts(
     facts: &WikiGraphFacts,
     options: GraphExportOptions,
 ) -> Result<Vec<ExportArtifact>, WikiError> {
-    let export = facts.export_graph(options);
+    let export = facts.export_graph(options).map_err(graph_export_error)?;
     let graph_json = serde_json::to_string_pretty(&export).map_err(|error| WikiError::Json {
         action: "serialize graph export",
         path: None,
@@ -170,6 +170,13 @@ pub fn export_graph_artifacts(
         }
     };
     Ok(vec![graph_artifact, report_artifact])
+}
+
+fn graph_export_error(error: crate::graph::analytics::GraphAnalyticsError) -> WikiError {
+    WikiError::InvalidInput {
+        field: "graph",
+        message: error.to_string(),
+    }
 }
 
 pub fn export_markdown_report(
@@ -261,6 +268,7 @@ fn workflow_assets_bundle() -> String {
 mod tests {
     use std::fs;
 
+    use crate::graph::analytics::GraphAnalyticsError;
     use crate::graph::{
         GraphExportOptions, WikiGraphDocument, WikiGraphFacts, WikiGraphLink, WikiGraphLinkTarget,
         WikiGraphSource,
@@ -335,7 +343,7 @@ mod tests {
             documents: vec![
                 WikiGraphDocument {
                     scope: scope.clone(),
-                    path: "wiki/pages/overview.md".into(),
+                    path: "knowledge/topics/overview.md".into(),
                     title: Some("Overview".to_string()),
                 },
                 WikiGraphDocument {
@@ -351,14 +359,14 @@ mod tests {
             ],
             links: vec![WikiGraphLink {
                 scope: scope.clone(),
-                source_path: "wiki/pages/overview.md".into(),
+                source_path: "knowledge/topics/overview.md".into(),
                 raw_target: "code/src/lib.rs".to_string(),
                 target: WikiGraphLinkTarget::Resolved("code/src/lib.rs".into()),
             }],
             sources: vec![WikiGraphSource {
                 scope,
                 source_path: "raw/sources/example.md".into(),
-                document_path: "wiki/pages/overview.md".into(),
+                document_path: "knowledge/topics/overview.md".into(),
             }],
             code_edges: Vec::new(),
         };
@@ -418,7 +426,7 @@ mod tests {
         );
         assert_eq!(
             graph_json["analytics"]["centrality"][0]["node"]["id"],
-            serde_json::json!("document:project:project-123:wiki/pages/overview.md")
+            serde_json::json!("document:project:project-123:knowledge/topics/overview.md")
         );
         assert_eq!(
             graph_json["analytics"]["centrality"][0]["degree"],
@@ -437,14 +445,14 @@ mod tests {
         assert!(report.contains("# GWiki Graph Report"));
         assert!(report.contains("## Analytics"));
         assert!(report.contains(
-            "- Top central node: document:project:project-123:wiki/pages/overview.md (degree 2)"
+            "- Top central node: document:project:project-123:knowledge/topics/overview.md (degree 2)"
         ));
         assert!(report.contains("- Communities: 5"));
         assert!(report.contains("## Degraded sources"));
         assert!(report.contains("- falkordb_unavailable"));
         assert!(report.contains("```mermaid"));
         assert!(report.contains(
-            "document_project_project_123_wiki_pages_overview_md --> document_project_project_123_code_src_lib_rs"
+            "document_project_project_123_knowledge_topics_overview_md --> document_project_project_123_code_src_lib_rs"
         ));
     }
 
@@ -465,5 +473,24 @@ mod tests {
 
         assert!(error.to_string().contains("GRAPH_REPORT.md"));
         assert!(!outputs.join("graph.json").exists());
+    }
+
+    #[test]
+    fn graph_export_errors_are_invalid_input() {
+        let error = graph_export_error(GraphAnalyticsError::DuplicateNode {
+            id: "node-1".to_string(),
+            existing_kind: "topic".to_string(),
+            duplicate_kind: "source".to_string(),
+            existing_weight: 1.0,
+            duplicate_weight: 0.5,
+        });
+
+        assert!(matches!(
+            error,
+            WikiError::InvalidInput {
+                field: "graph",
+                message
+            } if message.contains("duplicate graph node `node-1`")
+        ));
     }
 }

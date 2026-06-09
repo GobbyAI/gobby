@@ -185,13 +185,13 @@
         "degraded_sources",
         "hits",
         "related_pages",
-"sources",
-"code_edges",
-"code_citations",
-"truncated",
-"truncated_components",
-"gaps",
-"stale_candidates",
+        "sources",
+        "code_edges",
+        "code_citations",
+        "truncated",
+        "truncated_components",
+        "gaps",
+        "stale_candidates",
         "suggested_questions",
         "warnings",
         "ai",
@@ -209,12 +209,12 @@
       "multimodal": "none",
       "degradation": {
         "output_shape": "model off emits an extractive citation-list answer; signal loss falls back to wiki-only grounding",
-"metadata_keys": [
-"degraded",
-"degraded_sources[]",
-"truncated",
-"truncated_components[]"
-]
+        "metadata_keys": [
+          "degraded",
+          "degraded_sources[]",
+          "truncated",
+          "truncated_components[]"
+        ]
       }
     },
     {
@@ -657,13 +657,13 @@
       "multimodal": "none",
       "degradation": {
         "output_shape": "wiki-link-only neighborhood",
-"metadata_keys": [
-"warnings[]",
-"degradation.degraded",
-"degradation.degraded_sources[]",
-"degradation.truncated",
-"degradation.truncated_components[]"
-]
+        "metadata_keys": [
+          "warnings[]",
+          "degradation.degraded",
+          "degradation.degraded_sources[]",
+          "degradation.truncated",
+          "degradation.truncated_components[]"
+        ]
       }
     },
     {

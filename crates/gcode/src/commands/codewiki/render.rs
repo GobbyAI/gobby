@@ -501,8 +501,18 @@ pub(crate) fn render_hotspots_doc(hotspots: &HotspotsDoc) -> String {
         return doc;
     }
 
+    let hotspot_ids = hotspots
+        .hotspots
+        .iter()
+        .map(|finding| finding.node.id.clone())
+        .collect::<BTreeSet<_>>();
     write_hotspot_section(&mut doc, "Hotspots", &hotspots.hotspots);
-    write_hotspot_section(&mut doc, "God Nodes", &hotspots.god_nodes);
+    write_hotspot_section_with_cross_refs(
+        &mut doc,
+        "God Nodes",
+        &hotspots.god_nodes,
+        Some((&hotspot_ids, "Hotspots")),
+    );
     write_hotspot_section(&mut doc, "Bridges", &hotspots.bridges);
 
     if hotspots.hotspots.is_empty() && hotspots.god_nodes.is_empty() && hotspots.bridges.is_empty()
@@ -514,6 +524,15 @@ pub(crate) fn render_hotspots_doc(hotspots: &HotspotsDoc) -> String {
 }
 
 fn write_hotspot_section(doc: &mut String, title: &str, findings: &[HotspotFinding]) {
+    write_hotspot_section_with_cross_refs(doc, title, findings, None);
+}
+
+fn write_hotspot_section_with_cross_refs(
+    doc: &mut String,
+    title: &str,
+    findings: &[HotspotFinding],
+    cross_ref: Option<(&BTreeSet<String>, &str)>,
+) {
     doc.push_str("## ");
     doc.push_str(title);
     doc.push_str("\n\n");
@@ -524,6 +543,18 @@ fn write_hotspot_section(doc: &mut String, title: &str, findings: &[HotspotFindi
     }
 
     for finding in findings {
+        if let Some((existing_ids, section)) = cross_ref
+            && existing_ids.contains(&finding.node.id)
+        {
+            let _ = writeln!(
+                doc,
+                "- {} ({}) - also listed under {section}; see that entry for full details.",
+                finding.node.wikilink,
+                inline_code(&finding.node.label)
+            );
+            continue;
+        }
+
         let mut details = Vec::new();
         details.push(format!("kind {}", inline_code(&finding.node.kind)));
         details.push(format!("component {}", inline_code(&finding.node.id)));

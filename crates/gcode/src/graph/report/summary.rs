@@ -66,24 +66,37 @@ fn gcore_hotspots_for_code_graph(
         }),
     );
     let analytics = analyze(&graph);
+    let edge_degree = edge_degree_stats(edges);
+
+    GraphReportHotspots {
+        high_degree_files: analytics_top_hotspots(nodes, &analytics, &edge_degree, top_n, |node| {
+            node.node_type == "file"
+        }),
+        high_degree_symbols: analytics_top_hotspots(
+            nodes,
+            &analytics,
+            &edge_degree,
+            top_n,
+            |node| is_symbol_node(&node.node_type),
+        ),
+        high_degree_modules: analytics_top_hotspots(
+            nodes,
+            &analytics,
+            &edge_degree,
+            top_n,
+            |node| node.node_type == "module",
+        ),
+        incoming_call_hotspots: gcore_incoming_call_hotspots(nodes, edges, top_n),
+    }
+}
+
+fn edge_degree_stats(edges: &[ReportCodeEdge]) -> HashMap<&str, DegreeStats> {
     let mut degree = HashMap::<&str, DegreeStats>::new();
     for edge in edges {
         degree.entry(&edge.source).or_default().outgoing += 1;
         degree.entry(&edge.target).or_default().incoming += 1;
     }
-
-    GraphReportHotspots {
-        high_degree_files: analytics_top_hotspots(nodes, &analytics, &degree, top_n, |node| {
-            node.node_type == "file"
-        }),
-        high_degree_symbols: analytics_top_hotspots(nodes, &analytics, &degree, top_n, |node| {
-            is_symbol_node(&node.node_type)
-        }),
-        high_degree_modules: analytics_top_hotspots(nodes, &analytics, &degree, top_n, |node| {
-            node.node_type == "module"
-        }),
-        incoming_call_hotspots: gcore_incoming_call_hotspots(nodes, edges, top_n),
-    }
+    degree
 }
 
 fn gcore_incoming_call_hotspots(
@@ -145,7 +158,7 @@ fn gcore_incoming_call_hotspots(
 fn analytics_top_hotspots(
     nodes: &[ReportNode],
     analytics: &GraphAnalytics,
-    degree: &HashMap<&str, DegreeStats>,
+    edge_degree: &HashMap<&str, DegreeStats>,
     top_n: usize,
     include: impl Fn(&ReportNode) -> bool,
 ) -> Vec<GraphHotspot> {
@@ -161,13 +174,15 @@ fn analytics_top_hotspots(
             if !include(node) {
                 return None;
             }
-            let stats = degree.get(node.id.as_str())?;
-            let total = stats.incoming + stats.outgoing;
-            (total > 0).then(|| GraphHotspot {
+            let stats = edge_degree
+                .get(node.id.as_str())
+                .copied()
+                .unwrap_or_default();
+            (score.degree > 0).then(|| GraphHotspot {
                 id: node.id.clone(),
                 name: node.name.clone(),
                 node_type: node.node_type.clone(),
-                degree: total,
+                degree: score.degree,
                 incoming: stats.incoming,
                 outgoing: stats.outgoing,
                 file_path: node.file_path.clone(),

@@ -65,6 +65,15 @@ pub(crate) fn build_module_docs(
             .flat_map(|file| {
                 file.symbols
                     .iter()
+                    .map(|symbol| symbol.component_id.clone())
+            })
+            .collect::<Vec<_>>();
+        let prompt_component_ids = files
+            .iter()
+            .filter(|file| file.module == module || module_is_ancestor(&module, &file.module))
+            .flat_map(|file| {
+                file.symbols
+                    .iter()
                     .map(|symbol| format!("{} ({})", symbol.component_label, symbol.component_id))
             })
             .collect::<Vec<_>>();
@@ -74,7 +83,12 @@ pub(crate) fn build_module_docs(
         let source_spans = collect_link_spans(&direct_files, &child_modules);
         let generated = maybe_generate(
             generate,
-            &prompts::module_prompt(&module, &file_summaries, &child_summaries, &component_ids),
+            &prompts::module_prompt(
+                &module,
+                &file_summaries,
+                &child_summaries,
+                &prompt_component_ids,
+            ),
             prompts::MODULE_SYSTEM,
         )
         .unwrap_or(fallback);

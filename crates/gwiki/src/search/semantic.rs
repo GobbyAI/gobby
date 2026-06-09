@@ -10,7 +10,6 @@ use gobby_core::config::{EmbeddingConfig, QdrantConfig};
 use gobby_core::degradation::DegradationKind;
 use gobby_core::qdrant::{
     CollectionScope, SearchHit, SearchRequest, collection_name, legacy_collection_name,
-    resolve_collection_name,
 };
 use serde_json::{Map, Value, json};
 
@@ -66,12 +65,12 @@ pub enum SemanticEmbedding {
 }
 
 pub trait VectorSearchBackend {
-    fn resolve_collection(
+    fn collection_point_count(
         &mut self,
         _config: &QdrantConfig,
-        scope: &SearchScope,
-    ) -> anyhow::Result<String> {
-        Ok(collection_for_scope(scope))
+        _collection: &str,
+    ) -> anyhow::Result<Option<u64>> {
+        Ok(None)
     }
 
     fn search(
@@ -141,18 +140,7 @@ where
         }
     };
 
-    let preferred_collection = collection_for_scope(&request.scope);
-    let collection = match vector_backend.resolve_collection(qdrant, &request.scope) {
-        Ok(collection) => collection,
-        Err(error) => {
-            return Ok(qdrant_degradation(error));
-        }
-    };
-    if collection != preferred_collection {
-        log::warn!(
-            "gwiki semantic search used deprecated legacy Qdrant collection `{collection}`; reindex to use `{preferred_collection}`"
-        );
-    }
+    let collection = collection_for_scope(&request.scope);
     let filter = payload_filter(&request.scope);
     let qdrant_request = SearchRequest {
         vector,
@@ -211,18 +199,20 @@ where
         limit: request.limit,
         filter: request.filter.clone(),
     };
-    match vector_backend.search(qdrant, collection, request) {
-        Ok(hits) => Ok(hits),
-        Err(error) if is_collection_not_found(&error, collection) => {
-            let legacy_collection = legacy_collection_for_scope(scope);
-            let hits = vector_backend.search(qdrant, &legacy_collection, retry_request)?;
-            log::warn!(
-                "gwiki semantic search used deprecated legacy Qdrant collection `{legacy_collection}`; reindex to use `{collection}`"
-            );
-            Ok(hits)
-        }
-        Err(error) => Err(error),
+    let hits = vector_backend.search(qdrant, collection, request)?;
+    if !hits.is_empty() || vector_backend.collection_point_count(qdrant, collection)? != Some(0) {
+        return Ok(hits);
     }
+
+    let legacy_collection = legacy_collection_for_scope(scope);
+    if legacy_collection == collection {
+        return Ok(hits);
+    }
+    let legacy_hits = vector_backend.search(qdrant, &legacy_collection, retry_request)?;
+    log::warn!(
+        "gwiki semantic search used deprecated legacy Qdrant collection `{legacy_collection}` because `{collection}` is empty; reindex to populate the preferred collection"
+    );
+    Ok(legacy_hits)
 }
 
 fn legacy_collection_for_scope(scope: &SearchScope) -> String {
@@ -234,17 +224,6 @@ fn qdrant_collection_scope(scope: &SearchScope) -> CollectionScope<'_> {
         SearchScope::Project { project_id } => CollectionScope::Project(project_id),
         SearchScope::Topic { topic } => CollectionScope::Topic(topic),
     }
-}
-
-fn is_collection_not_found(error: &anyhow::Error, collection: &str) -> bool {
-    matches!(
-        error.downcast_ref::<gobby_core::qdrant::QdrantError>(),
-        Some(gobby_core::qdrant::QdrantError::HttpStatus {
-            status,
-            collection: Some(error_collection),
-            ..
-        }) if status.as_u16() == 404 && error_collection == collection
-    )
 }
 
 pub fn payload_filter(scope: &SearchScope) -> Value {
@@ -482,12 +461,12 @@ fn embed_daemon_query(context: &AiContext, query: &str) -> Result<Vec<f32>, Sear
 pub struct GobbyQdrantBackend;
 
 impl VectorSearchBackend for GobbyQdrantBackend {
-    fn resolve_collection(
+    fn collection_point_count(
         &mut self,
         config: &QdrantConfig,
-        scope: &SearchScope,
-    ) -> anyhow::Result<String> {
-        resolve_collection_name(config, "gwiki", qdrant_collection_scope(scope))
+        collection: &str,
+    ) -> anyhow::Result<Option<u64>> {
+        gobby_core::qdrant::collection_point_count(config, collection)
     }
 
     fn search(

@@ -94,7 +94,7 @@ pub fn inspect(vault_root: &Path, scope: ScopeIdentity) -> Result<HealthReport, 
 }
 
 pub fn render_text(report: &HealthReport) -> String {
-    let mut text = format!("Wiki health report\nScope: {}\n", report.scope);
+    let mut text = format!("# Wiki health report\n\nScope: {}\n", report.scope);
     render_paths(&mut text, "Stale pages", &report.stale_pages);
     render_sources(&mut text, "Stale citations", &report.stale_citations);
     render_sources(&mut text, "Uncited sources", &report.uncited_sources);
@@ -598,7 +598,9 @@ mod tests {
         assert_eq!(report.duplicate_concepts[0].title, "Cache");
         assert_eq!(report.uncompiled_sources[0].source_id, source.id);
         assert!(root.join("meta/health/latest.json").exists());
-        assert!(root.join("meta/health/latest.md").exists());
+        let markdown =
+            std::fs::read_to_string(root.join("meta/health/latest.md")).expect("health markdown");
+        assert!(markdown.starts_with("# Wiki health report\n\nScope: topic:ops\n"));
     }
 
     #[test]

@@ -8,7 +8,10 @@ use super::{
 };
 
 impl WikiGraphFacts {
-    pub fn export_graph(&self, options: GraphExportOptions) -> GraphExport {
+    pub fn export_graph(
+        &self,
+        options: GraphExportOptions,
+    ) -> Result<GraphExport, analytics::GraphAnalyticsError> {
         let mut nodes = Vec::new();
         let mut node_ids = BTreeSet::new();
         let mut edges = GraphExportEdges::default();
@@ -67,32 +70,28 @@ impl WikiGraphFacts {
         }
 
         for edge in &self.code_edges {
-            let graph_edge = GraphExportEdge {
+            let (kind, output_edges) = match edge.kind.as_str() {
+                "imports" => ("imports", &mut edges.imports),
+                "callers" => ("callers", &mut edges.callers),
+                _ => ("calls", &mut edges.calls),
+            };
+            output_edges.push(GraphExportEdge {
                 source: code_endpoint_id(&edge.scope, &edge.source),
                 target: code_endpoint_id(&edge.scope, &edge.target),
-                kind: match edge.kind.as_str() {
-                    "imports" => "imports",
-                    "callers" => "callers",
-                    _ => "calls",
-                },
+                kind,
                 raw_target: Some(edge.provenance.clone()),
-            };
-            match edge.kind.as_str() {
-                "imports" => edges.imports.push(graph_edge),
-                "callers" => edges.callers.push(graph_edge),
-                _ => edges.calls.push(graph_edge),
-            }
+            });
         }
 
         let degraded = !options.degraded_sources.is_empty();
-        GraphExport {
+        Ok(GraphExport {
             command: "graph",
             degraded,
             degraded_sources: options.degraded_sources,
-            analytics: analytics::analyze_facts(self),
+            analytics: analytics::analyze_facts(self)?,
             nodes,
             edges,
-        }
+        })
     }
 }
 
@@ -193,25 +192,25 @@ mod tests {
             documents: vec![
                 WikiGraphDocument {
                     scope: project.clone(),
-                    path: "wiki/shared.md".into(),
+                    path: "knowledge/topics/shared.md".into(),
                     title: Some("Shared".to_string()),
                 },
                 WikiGraphDocument {
                     scope: topic.clone(),
-                    path: "wiki/shared.md".into(),
+                    path: "knowledge/topics/shared.md".into(),
                     title: Some("Shared".to_string()),
                 },
             ],
             links: vec![
                 WikiGraphLink {
                     scope: project.clone(),
-                    source_path: "wiki/shared.md".into(),
+                    source_path: "knowledge/topics/shared.md".into(),
                     raw_target: "Missing".to_string(),
                     target: WikiGraphLinkTarget::Unresolved("Missing".to_string()),
                 },
                 WikiGraphLink {
                     scope: topic.clone(),
-                    source_path: "wiki/shared.md".into(),
+                    source_path: "knowledge/topics/shared.md".into(),
                     raw_target: "Missing".to_string(),
                     target: WikiGraphLinkTarget::Unresolved("Missing".to_string()),
                 },
@@ -219,12 +218,12 @@ mod tests {
             sources: vec![WikiGraphSource {
                 scope: project.clone(),
                 source_path: "raw/source.md".into(),
-                document_path: "wiki/shared.md".into(),
+                document_path: "knowledge/topics/shared.md".into(),
             }],
             code_edges: vec![
                 WikiGraphCodeEdge {
                     scope: project.clone(),
-                    document_path: PathBuf::from("wiki/shared.md"),
+                    document_path: PathBuf::from("knowledge/topics/shared.md"),
                     source: "src/lib.rs".to_string(),
                     target: "crate::main".to_string(),
                     kind: "imports".to_string(),
@@ -234,7 +233,7 @@ mod tests {
                 },
                 WikiGraphCodeEdge {
                     scope: project,
-                    document_path: PathBuf::from("wiki/shared.md"),
+                    document_path: PathBuf::from("knowledge/topics/shared.md"),
                     source: "src/lib.rs:run".to_string(),
                     target: "src/main.rs:main".to_string(),
                     kind: "calls".to_string(),
@@ -244,7 +243,7 @@ mod tests {
                 },
                 WikiGraphCodeEdge {
                     scope: SearchScope::project("project-1"),
-                    document_path: PathBuf::from("wiki/shared.md"),
+                    document_path: PathBuf::from("knowledge/topics/shared.md"),
                     source: "src/main.rs:main".to_string(),
                     target: "src/lib.rs:run".to_string(),
                     kind: "callers".to_string(),
@@ -255,24 +254,26 @@ mod tests {
             ],
         };
 
-        let export = facts.export_graph(GraphExportOptions::available());
+        let export = facts
+            .export_graph(GraphExportOptions::available())
+            .expect("graph export");
         let node_ids = export
             .nodes
             .iter()
             .map(|node| node.id.as_str())
             .collect::<BTreeSet<_>>();
 
-        assert!(node_ids.contains("document:project:project-1:wiki/shared.md"));
-        assert!(node_ids.contains("document:topic:project-1:wiki/shared.md"));
+        assert!(node_ids.contains("document:project:project-1:knowledge/topics/shared.md"));
+        assert!(node_ids.contains("document:topic:project-1:knowledge/topics/shared.md"));
         assert!(node_ids.contains("unresolved:project:project-1:Missing"));
         assert!(node_ids.contains("unresolved:topic:project-1:Missing"));
         assert_eq!(
             export.edges.links[0].source,
-            "document:project:project-1:wiki/shared.md"
+            "document:project:project-1:knowledge/topics/shared.md"
         );
         assert_eq!(
             export.edges.links[1].source,
-            "document:topic:project-1:wiki/shared.md"
+            "document:topic:project-1:knowledge/topics/shared.md"
         );
         assert_eq!(
             export.edges.imports[0].source,

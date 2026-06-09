@@ -59,7 +59,7 @@ fn semantic_search_is_scope_filtered() {
 }
 
 #[test]
-fn semantic_search_falls_back_to_legacy_collection_on_new_collection_404() {
+fn semantic_search_falls_back_to_legacy_collection_when_preferred_is_empty() {
     let embedding = EmbeddingConfig {
         api_base: "http://embeddings.local/v1".to_string(),
         model: "embed-model".to_string(),
@@ -73,8 +73,11 @@ fn semantic_search_falls_back_to_legacy_collection_on_new_collection_404() {
     };
     let mut embedder = FixedEmbedder::new(vec![0.1, 0.2, 0.3]);
     let mut vector = LegacyFallbackVectorBackend {
-        hits: vec![vector_hit("doc-1", "project", "project-1")],
+        preferred_hits: Vec::new(),
+        legacy_hits: vec![vector_hit("doc-1", "project", "project-1")],
+        preferred_point_count: Some(0),
         collections: Vec::new(),
+        counted_collections: Vec::new(),
     };
 
     let outcome = search_semantic(
@@ -100,11 +103,59 @@ fn semantic_search_falls_back_to_legacy_collection_on_new_collection_404() {
         ]
     );
     assert_eq!(
+        vector.counted_collections,
+        vec!["gwiki_project_project-1".to_string()]
+    );
+    assert_eq!(
         gobby_core::qdrant::legacy_collection_name(
             "gwiki",
             gobby_core::qdrant::CollectionScope::Topic("rust")
         ),
         "gwiki:topic:rust"
+    );
+}
+
+#[test]
+fn semantic_search_does_not_fallback_when_preferred_collection_has_points() {
+    let embedding = EmbeddingConfig {
+        api_base: "http://embeddings.local/v1".to_string(),
+        model: "embed-model".to_string(),
+        api_key: None,
+        query_prefix: None,
+        timeout_seconds: 10,
+    };
+    let qdrant = QdrantConfig {
+        url: Some("http://qdrant.local".to_string()),
+        api_key: None,
+    };
+    let mut embedder = FixedEmbedder::new(vec![0.1, 0.2, 0.3]);
+    let mut vector = LegacyFallbackVectorBackend {
+        preferred_hits: Vec::new(),
+        legacy_hits: vec![vector_hit("legacy-doc", "project", "project-1")],
+        preferred_point_count: Some(7),
+        collections: Vec::new(),
+        counted_collections: Vec::new(),
+    };
+
+    let outcome = search_semantic(
+        SemanticSearchRequest {
+            query: "ownership".to_string(),
+            scope: SearchScope::project("project-1"),
+            limit: 5,
+        },
+        Some(&SemanticEmbedding::Direct(embedding)),
+        Some(&qdrant),
+        &mut embedder,
+        &mut vector,
+    )
+    .expect("semantic search succeeds");
+
+    assert!(outcome.hits.is_empty());
+    assert!(outcome.degradation.is_none());
+    assert_eq!(vector.collections, vec!["gwiki_project_project-1"]);
+    assert_eq!(
+        vector.counted_collections,
+        vec!["gwiki_project_project-1".to_string()]
     );
 }
 
@@ -360,11 +411,23 @@ fn test_ai_context() -> AiContext {
 }
 
 struct LegacyFallbackVectorBackend {
-    hits: Vec<gobby_core::qdrant::SearchHit>,
+    preferred_hits: Vec<gobby_core::qdrant::SearchHit>,
+    legacy_hits: Vec<gobby_core::qdrant::SearchHit>,
+    preferred_point_count: Option<u64>,
     collections: Vec<String>,
+    counted_collections: Vec<String>,
 }
 
 impl VectorSearchBackend for LegacyFallbackVectorBackend {
+    fn collection_point_count(
+        &mut self,
+        _config: &QdrantConfig,
+        collection: &str,
+    ) -> anyhow::Result<Option<u64>> {
+        self.counted_collections.push(collection.to_string());
+        Ok(self.preferred_point_count)
+    }
+
     fn search(
         &mut self,
         _config: &QdrantConfig,
@@ -373,16 +436,9 @@ impl VectorSearchBackend for LegacyFallbackVectorBackend {
     ) -> anyhow::Result<Vec<SearchHit>> {
         self.collections.push(collection.to_string());
         if collection.starts_with("gwiki_project_") {
-            return Err(gobby_core::qdrant::QdrantError::HttpStatus {
-                operation: "search",
-                status: gobby_core::qdrant::StatusCode::NOT_FOUND,
-                body: "missing collection".to_string(),
-                collection: Some(collection.to_string()),
-                request: Some(format!("/collections/{collection}/points/search")),
-            }
-            .into());
+            return Ok(self.preferred_hits.clone());
         }
-        Ok(self.hits.clone())
+        Ok(self.legacy_hits.clone())
     }
 }
 

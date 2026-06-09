@@ -210,7 +210,7 @@ fn unsupported_claims(
     claims
         .into_iter()
         .filter_map(|claim| {
-            if has_page_source_support
+            if (has_page_source_support && claim.kind == ClaimKind::Structural)
                 || supported_lines.contains(&claim.line)
                 || has_inline_source_support(&claim.text)
             {
@@ -317,6 +317,13 @@ struct ClaimLine {
     line: usize,
     heading: Option<String>,
     text: String,
+    kind: ClaimKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClaimKind {
+    Prose,
+    Structural,
 }
 
 /// Extract auditable prose claims from markdown body lines.
@@ -396,10 +403,30 @@ fn claim_lines(page: &WikiPage, options: &AuditOptions) -> Vec<ClaimLine> {
             line: line_number(&page.markdown, line_start),
             heading: current_heading.clone(),
             text: text.to_string(),
+            kind: claim_kind(text),
         });
     }
 
     claims
+}
+
+fn claim_kind(text: &str) -> ClaimKind {
+    if is_structural_codewiki_claim(text) {
+        ClaimKind::Structural
+    } else {
+        ClaimKind::Prose
+    }
+}
+
+fn is_structural_codewiki_claim(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.starts_with("module:")
+        || lower.starts_with("parent:")
+        || lower.starts_with("signature:")
+        || lower.starts_with("source path:")
+        || lower.starts_with("component:")
+        || lower.starts_with("components:")
+        || lower.starts_with("[[code/")
 }
 
 fn heading_title(line: &str) -> Option<String> {
@@ -721,6 +748,38 @@ Signature: `fn example() -> bool {`
         );
 
         assert!(claims.is_empty());
+    }
+
+    #[test]
+    fn codewiki_frontmatter_source_spans_do_not_support_prose_claims() {
+        let markdown = r#"---
+title: crates/example.rs
+type: code_file
+source_files:
+- file: crates/example.rs
+  ranges:
+  - 1-12
+---
+
+# crates/example.rs
+
+Module: [[code/modules/crates|crates]]
+This generated page makes an unsupported prose claim.
+"#;
+        let page = test_codewiki_page("code/files/crates/example.rs.md", markdown);
+
+        let claims = unsupported_claims(
+            &page,
+            &ProvenanceGraph::default(),
+            &Arc::new(Vec::new()),
+            &AuditOptions::default(),
+        );
+
+        assert_eq!(claims.len(), 1);
+        assert_eq!(
+            claims[0].claim,
+            "This generated page makes an unsupported prose claim."
+        );
     }
 
     #[test]

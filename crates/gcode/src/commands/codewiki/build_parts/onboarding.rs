@@ -12,23 +12,22 @@ pub(crate) fn build_onboarding_doc(
 ) -> OnboardingDoc {
     let entry_points = onboarding_entry_points(files);
     let mut degraded_sources = BTreeSet::new();
-    let mut graph_degraded = false;
+    let mut fallback_to_unavailable = false;
     let reading_order = match graph_availability {
         CodewikiGraphAvailability::Unavailable => {
             degraded_sources.insert("graph-analytics-unavailable".to_string());
-            graph_degraded = true;
             Vec::new()
         }
         CodewikiGraphAvailability::Truncated => {
             degraded_sources.insert("graph-truncated".to_string());
-            graph_degraded = true;
+            fallback_to_unavailable = true;
             ranked_onboarding_steps(files, modules, graph_edges)
         }
         CodewikiGraphAvailability::Available => {
             ranked_onboarding_steps(files, modules, graph_edges)
         }
     };
-    if graph_degraded && reading_order.is_empty() {
+    if fallback_to_unavailable && reading_order.is_empty() {
         degraded_sources.insert("graph-analytics-unavailable".to_string());
     }
 

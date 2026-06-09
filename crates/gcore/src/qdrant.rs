@@ -219,6 +219,31 @@ pub fn collection_schema(
     Ok(Some(parse_collection_schema(&data)))
 }
 
+/// Return the current point count for a collection, or `None` when absent or unavailable.
+pub fn collection_point_count(
+    config: &QdrantConfig,
+    collection: &str,
+) -> anyhow::Result<Option<u64>> {
+    let request_path = collection_request_path(collection);
+    let resp = qdrant_request(config, reqwest::Method::GET, &request_path)?.send()?;
+    let status = resp.status();
+    if status == StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    if !status.is_success() {
+        return Err(qdrant_http_error(
+            "get collection",
+            status,
+            resp,
+            collection,
+            request_path,
+        ));
+    }
+
+    let data: Value = resp.json()?;
+    Ok(parse_collection_point_count(&data))
+}
+
 /// Delete all points matching a Qdrant filter.
 pub fn delete_points_by_filter(
     config: &QdrantConfig,
@@ -247,29 +272,36 @@ pub fn delete_points_by_filter(
     }
 
     let data: Value = resp.json()?;
-    if let Some(result) = data.get("result") {
-        let Some(operation_status) = result.get("status").and_then(Value::as_str) else {
-            let operation_status = result
-                .get("status")
-                .map(Value::to_string)
-                .unwrap_or_else(|| "<missing>".to_string());
-            return Err(QdrantError::OperationStatus {
-                operation: "delete points",
-                operation_status,
-                collection: Some(collection.to_string()),
-                request: Some(format!("POST {request_path}")),
-            }
-            .into());
-        };
-        if operation_status != "completed" {
-            return Err(QdrantError::OperationStatus {
-                operation: "delete points",
-                operation_status: operation_status.to_string(),
-                collection: Some(collection.to_string()),
-                request: Some(format!("POST {request_path}")),
-            }
-            .into());
+    let Some(result) = data.get("result") else {
+        return Err(QdrantError::OperationStatus {
+            operation: "delete points",
+            operation_status: "<missing result>".to_string(),
+            collection: Some(collection.to_string()),
+            request: Some(format!("POST {request_path}")),
         }
+        .into());
+    };
+    let Some(operation_status) = result.get("status").and_then(Value::as_str) else {
+        let operation_status = result
+            .get("status")
+            .map(Value::to_string)
+            .unwrap_or_else(|| "<missing>".to_string());
+        return Err(QdrantError::OperationStatus {
+            operation: "delete points",
+            operation_status,
+            collection: Some(collection.to_string()),
+            request: Some(format!("POST {request_path}")),
+        }
+        .into());
+    };
+    if operation_status != "completed" {
+        return Err(QdrantError::OperationStatus {
+            operation: "delete points",
+            operation_status: operation_status.to_string(),
+            collection: Some(collection.to_string()),
+            request: Some(format!("POST {request_path}")),
+        }
+        .into());
     }
     Ok(())
 }
@@ -414,6 +446,15 @@ fn parse_collection_schema(data: &Value) -> ExistingVectorCollectionSchema {
         .and_then(Value::as_str)
         .map(str::to_string);
     ExistingVectorCollectionSchema { size, distance }
+}
+
+fn parse_collection_point_count(data: &Value) -> Option<u64> {
+    data.pointer("/result/points_count")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            data.pointer("/result/vectors_count")
+                .and_then(Value::as_u64)
+        })
 }
 
 fn ensure_compatible_collection(
@@ -935,6 +976,7 @@ mod tests {
         assert!(request.contains("\"notes/page.md\""));
 
         for body in [
+            json!({"status": "ok"}),
             json!({"status": "ok", "result": {}}),
             json!({"status": "ok", "result": {"status": 7}}),
         ] {
@@ -948,6 +990,35 @@ mod tests {
                     .expect_err("malformed delete operation status should fail");
             assert!(error.downcast_ref::<QdrantError>().is_some());
         }
+    }
+
+    #[test]
+    fn collection_point_count_reads_collection_info() {
+        let (base_url, request_handle) = spawn_qdrant_response(
+            200,
+            json!({"result": {"points_count": 3, "vectors_count": 9}}),
+        );
+        let config = QdrantConfig {
+            url: Some(base_url),
+            api_key: None,
+        };
+
+        let count = collection_point_count(&config, "gwiki_project_project-1")
+            .expect("collection count")
+            .expect("points count");
+        let request = request_handle.join().expect("request thread").unwrap();
+
+        assert_eq!(count, 3);
+        assert!(request.starts_with("GET /collections/gwiki_project_project-1 HTTP/1.1"));
+
+        assert_eq!(
+            parse_collection_point_count(&json!({"result": {"vectors_count": 4}})),
+            Some(4)
+        );
+        assert_eq!(
+            parse_collection_point_count(&json!({"result": {"points_count": "unknown"}})),
+            None
+        );
     }
 
     fn spawn_qdrant_response(status: u16, body: Value) -> (String, RequestHandle) {

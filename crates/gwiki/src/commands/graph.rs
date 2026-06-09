@@ -62,26 +62,30 @@ fn degraded_optional_sources(conn: &mut postgres::Client) -> Result<Vec<String>,
             }
         })?;
 
+    Ok(degraded_optional_sources_from_config(&mut source))
+}
+
+fn degraded_optional_sources_from_config(source: &mut impl ConfigSource) -> Vec<String> {
     let mut degraded = Vec::new();
-    if gobby_core::config::resolve_falkordb_config(&mut source).is_none() {
+    if gobby_core::config::resolve_falkordb_config(source).is_none() {
         degraded.push("falkordb_unavailable".to_string());
     }
 
-    let ai_context = AiContext::resolve(None, &mut source);
+    let ai_context = AiContext::resolve(None, source);
     let has_embedding = has_embedding_capability(
         ai_context
             .binding(gobby_core::config::AiCapability::Embed)
             .routing,
-        &mut source,
+        source,
     );
-    let has_qdrant = gobby_core::config::resolve_qdrant_config(&mut source)
+    let has_qdrant = gobby_core::config::resolve_qdrant_config(source)
         .filter(qdrant_config_has_url)
         .is_some();
     if !has_embedding || !has_qdrant {
         degraded.push("semantic_relations_unavailable".to_string());
     }
 
-    Ok(degraded)
+    degraded
 }
 
 fn has_embedding_capability(routing: AiRouting, source: &mut impl ConfigSource) -> bool {
@@ -116,4 +120,103 @@ fn qdrant_config_has_url(config: &QdrantConfig) -> bool {
         .url
         .as_deref()
         .is_some_and(|url| !url.trim().is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use crate::support::test_env::EnvGuard;
+
+    use super::*;
+
+    #[derive(Default)]
+    struct TestConfigSource {
+        values: BTreeMap<&'static str, &'static str>,
+    }
+
+    impl TestConfigSource {
+        fn with(mut self, key: &'static str, value: &'static str) -> Self {
+            self.values.insert(key, value);
+            self
+        }
+    }
+
+    impl ConfigSource for TestConfigSource {
+        fn config_value(&mut self, key: &str) -> Option<String> {
+            self.values.get(key).map(|value| (*value).to_string())
+        }
+
+        fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+            Ok(value.to_string())
+        }
+    }
+
+    fn degraded_markers(mut source: TestConfigSource) -> Vec<String> {
+        let _env = EnvGuard::unset("GOBBY_FALKORDB_HOST")
+            .and_unset("GOBBY_FALKORDB_PORT")
+            .and_unset("GOBBY_FALKORDB_PASSWORD")
+            .and_unset("GOBBY_QDRANT_URL")
+            .and_unset("GOBBY_QDRANT_API_KEY");
+        degraded_optional_sources_from_config(&mut source)
+    }
+
+    fn falkor_config() -> TestConfigSource {
+        TestConfigSource::default().with("databases.falkordb.host", "127.0.0.1")
+    }
+
+    fn with_embedding_and_qdrant(source: TestConfigSource) -> TestConfigSource {
+        source
+            .with("ai.embeddings.api_base", "http://embeddings.local/v1")
+            .with("databases.qdrant.url", "http://qdrant.local")
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn degraded_optional_sources_reports_all_missing_optional_services() {
+        assert_eq!(
+            degraded_markers(TestConfigSource::default()),
+            vec![
+                "falkordb_unavailable".to_string(),
+                "semantic_relations_unavailable".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn degraded_optional_sources_accepts_present_falkor_embedding_and_qdrant() {
+        assert!(degraded_markers(with_embedding_and_qdrant(falkor_config())).is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn degraded_optional_sources_reports_missing_falkor_only() {
+        assert_eq!(
+            degraded_markers(with_embedding_and_qdrant(TestConfigSource::default())),
+            vec!["falkordb_unavailable".to_string()]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn degraded_optional_sources_reports_missing_semantic_relations() {
+        assert_eq!(
+            degraded_markers(falkor_config()),
+            vec!["semantic_relations_unavailable".to_string()]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn degraded_optional_sources_treats_blank_qdrant_url_as_missing() {
+        let source = falkor_config()
+            .with("ai.embeddings.api_base", "http://embeddings.local/v1")
+            .with("databases.qdrant.url", " ");
+
+        assert_eq!(
+            degraded_markers(source),
+            vec!["semantic_relations_unavailable".to_string()]
+        );
+    }
 }

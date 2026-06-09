@@ -40,7 +40,7 @@ fn cargo_features_define_public_boundary() {
         r#"falkordb = { version = "0.2", optional = true }"#,
         r#"reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }"#,
         r#"base64 = { version = "0.22", optional = true }"#,
-        r#"fernet = "0.2.2" # THIS IS NOT OPTIONAL"#,
+        r#"fernet = "0.2.2""#,
         r#"bytes = { version = "1", optional = true }"#,
         r#"httpdate = { version = "1", optional = true }"#,
         r#"rand = { version = "0.8", optional = true }"#,

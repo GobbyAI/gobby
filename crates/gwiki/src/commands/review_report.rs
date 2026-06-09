@@ -497,6 +497,8 @@ fn parse_unified_diff_files(contents: &str) -> Vec<String> {
             .strip_prefix("+++ b/")
             .or_else(|| line.strip_prefix("--- a/"))
         {
+            // `+++ b/` is the new path; `--- a/` keeps deleted files visible when
+            // the right side is `/dev/null`.
             if path != "/dev/null" {
                 files.insert(path.to_string());
             }
@@ -504,6 +506,8 @@ fn parse_unified_diff_files(contents: &str) -> Vec<String> {
             && let Some((left, right)) = rest.split_once(" b/")
         {
             if right.trim().is_empty() {
+                // Malformed or truncated diff headers have no right side; keep the
+                // left path so the report still scopes the affected deleted file.
                 files.insert(left.trim().trim_matches('"').to_string());
             } else {
                 // Rename headers carry old and new paths; review impact follows the new path.

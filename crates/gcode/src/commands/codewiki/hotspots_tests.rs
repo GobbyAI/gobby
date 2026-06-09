@@ -52,6 +52,7 @@ fn codewiki_hotspots_page_surfaces_analytics_rankings() {
     assert!(hotspots.contains("[[code/files/src/lib.rs|Hub]]"));
     assert!(hotspots.contains("[[code/files/src/lib.rs|src/lib.rs]]"));
     assert!(hotspots.contains("frequency 3"));
+    assert!(hotspots.contains("also listed under Hotspots"));
     assert!(!hotspots.contains("analytics unavailable"));
 }
 

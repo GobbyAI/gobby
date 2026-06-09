@@ -1,4 +1,4 @@
-use super::super::*;
+use super::super::{CodewikiIndexSnapshot, CodewikiSymbolSnapshot};
 use serde::Serialize;
 use std::collections::BTreeSet;
 
