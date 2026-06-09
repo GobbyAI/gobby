@@ -872,8 +872,9 @@ def load_config(
                 try:
                     with open(config_path) as f:
                         file_dict = yaml.safe_load(f)
-                except Exception as e:
-                    logger.warning(f"Failed to read config file {config_path}: {e}")
+                except (OSError, yaml.YAMLError) as e:
+                    logger.error("Failed to read config file %s: %s", config_path, e)
+                    raise
                 else:
                     if isinstance(file_dict, dict):
                         _reject_removed_file_config_sections(file_dict, config_path)

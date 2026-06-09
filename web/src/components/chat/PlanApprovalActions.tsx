@@ -79,7 +79,13 @@ export function PlanApprovalActions({
           value={feedback}
           onChange={(e) => setFeedback(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            const event = e as typeof e & { isComposing?: boolean }
+            if (
+              e.key === 'Enter' &&
+              !e.shiftKey &&
+              !event.isComposing &&
+              !e.nativeEvent.isComposing
+            ) {
               e.preventDefault()
               submitReject()
             }

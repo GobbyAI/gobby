@@ -332,11 +332,13 @@ def _format_project_memories(
         break
 
     result = _render_project_memory(body_lines, omitted_count)
-    while len(result) > budget and body_lines:
+    for _ in range(len(body_lines)):
+        if len(result) <= budget:
+            break
         body_lines.pop()
         omitted_count += 1
         result = _render_project_memory(body_lines, omitted_count)
-    return result
+    return result if len(result) <= budget else ""
 
 
 def dispatch_mcp_calls(

@@ -557,7 +557,7 @@ def test_transcript_index_appender_hydrate_restores_public_resume_state(
     index = build_index_from_file(path, "codex", SESSION, mtime_ns=st.st_mtime_ns, size=st.st_size)
     appender = TranscriptIndexAppender("codex", SESSION, path)
 
-    hydrated = appender.hydrate(
+    hydrated = appender.hydrate_from_index(
         index=index,
         state=RenderState(),
         current_id=None,

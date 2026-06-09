@@ -12,6 +12,23 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = REPO_ROOT / "src" / "gobby"
 MIGRATIONS_SOURCE = SRC_ROOT / "storage" / "migrations.py"
 MIGRATION_HELPERS_MODULE = "gobby.storage.migration_helpers"
+MEMORY_DREAM_STATUS_INVARIANT = (
+    "status IN ('started', 'running', 'completed', 'failed', 'reverted', 'revert_failed')"
+)
+MEMORY_DREAM_ACTION_INVARIANT = (
+    "action IN ('keep', 'delete', 'refresh', 'merge', 'supersede', 'review')"
+)
+MEMORY_DREAM_PROJECT_FK = "project_id TEXT REFERENCES projects(id) ON DELETE CASCADE"
+MEMORY_DREAM_PROJECT_COMMENT = (
+    "Nullable for global/system dream runs; cron rows are anchored to PERSONAL_PROJECT_ID."
+)
+MEMORY_DREAM_SNAPSHOT_RUN_INDEX = "ON memory_dream_snapshots(run_id);"
+MEMORY_DREAM_LEGACY_SNAPSHOT_RUN_INDEX = "ON memory_dream_snapshots(run_id, id);"
+MEMORY_DREAM_RUNTIME_NORMALIZERS = (
+    "UPDATE memory_dream_snapshots\n               SET action = CASE",
+    "UPDATE memory_dream_runs\n               SET status = 'failed'",
+    "ADD CONSTRAINT memory_dream_runs_status_check",
+)
 
 
 def _tracked_migration_names(migrations_dir: Path) -> list[str]:
@@ -77,6 +94,38 @@ def _imports_migration_helpers(path: Path) -> list[int]:
                 lines.append(node.lineno)
 
     return lines
+
+
+def _assert_contains_all(label: str, content: str, snippets: tuple[str, ...]) -> None:
+    missing = [snippet for snippet in snippets if snippet not in content]
+    assert missing == [], f"{label} missing expected snippets: {missing}"
+
+
+def _assert_absent_all(label: str, content: str, snippets: tuple[str, ...]) -> None:
+    present = [snippet for snippet in snippets if snippet in content]
+    assert present == [], f"{label} contained forbidden snippets: {present}"
+
+
+def _assert_memory_dream_project_scope(label: str, content: str) -> None:
+    _assert_contains_all(label, content, (MEMORY_DREAM_PROJECT_FK, MEMORY_DREAM_PROJECT_COMMENT))
+
+
+def _assert_memory_dream_snapshot_run_index(label: str, content: str) -> None:
+    _assert_contains_all(label, content, (MEMORY_DREAM_SNAPSHOT_RUN_INDEX,))
+    _assert_absent_all(label, content, (MEMORY_DREAM_LEGACY_SNAPSHOT_RUN_INDEX,))
+
+
+def _assert_memory_dream_constraints(label: str, content: str) -> None:
+    _assert_contains_all(
+        label,
+        content,
+        (
+            "memory_dream_runs_status_check",
+            MEMORY_DREAM_STATUS_INVARIANT,
+            "memory_dream_snapshots_action_check",
+            MEMORY_DREAM_ACTION_INVARIANT,
+        ),
+    )
 
 
 def test_legacy_migration_api_is_absent_from_source_and_runtime() -> None:
@@ -294,35 +343,29 @@ def test_memory_dream_constraints_migration_and_baseline_define_invariants() -> 
     ).read_text(encoding="utf-8")
     baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
     runtime_storage = (SRC_ROOT / "memory" / "dream" / "storage.py").read_text(encoding="utf-8")
-    status_invariant = "status IN ('started', 'running', 'completed', 'failed', 'reverted')"
-    action_invariant = "action IN ('keep', 'delete', 'refresh', 'merge', 'supersede', 'review')"
-    project_fk = "project_id TEXT REFERENCES projects(id) ON DELETE CASCADE"
-    project_nullable_comment = (
-        "Nullable for global/system dream runs; cron rows are anchored to PERSONAL_PROJECT_ID."
-    )
 
-    assert project_fk in creation_migration
-    assert project_nullable_comment in creation_migration
-    assert "ON memory_dream_snapshots(run_id);" in creation_migration
-    assert "ON memory_dream_snapshots(run_id, id);" not in creation_migration
-    assert "memory_dream_runs_status_check" in migration
-    assert "ALTER COLUMN status SET DEFAULT 'started'" in migration
-    assert "UPDATE memory_dream_runs" in migration
-    assert "SET status = 'failed'" in migration
-    assert status_invariant in migration
-    assert "memory_dream_snapshots_action_check" in migration
-    assert "supersede_create' THEN 'supersede" in migration
-    assert action_invariant in migration
-    assert "memory_dream_runs_status_check" in baseline
-    assert project_fk in baseline
-    assert project_nullable_comment in baseline
-    assert "ON memory_dream_snapshots(run_id);" in baseline
-    assert "ON memory_dream_snapshots(run_id, id);" not in baseline
-    assert status_invariant in baseline
-    assert "memory_dream_snapshots_action_check" in baseline
-    assert action_invariant in baseline
-    assert "UPDATE memory_dream_snapshots\n               SET action = CASE" not in runtime_storage
-    assert "UPDATE memory_dream_runs\n               SET status = 'failed'" not in runtime_storage
+    _assert_memory_dream_project_scope("memory dream creation migration", creation_migration)
+    _assert_memory_dream_snapshot_run_index("memory dream creation migration", creation_migration)
+    _assert_memory_dream_constraints("memory dream creation migration", creation_migration)
+    _assert_contains_all(
+        "memory dream constraint migration",
+        migration,
+        (
+            "ALTER COLUMN status SET DEFAULT 'started'",
+            "UPDATE memory_dream_runs",
+            "SET status = 'failed'",
+            "supersede_create' THEN 'supersede",
+        ),
+    )
+    _assert_memory_dream_constraints("memory dream constraint migration", migration)
+    _assert_memory_dream_project_scope("memory dream baseline", baseline)
+    _assert_memory_dream_snapshot_run_index("memory dream baseline", baseline)
+    _assert_memory_dream_constraints("memory dream baseline", baseline)
+    _assert_absent_all(
+        "memory dream runtime storage",
+        runtime_storage,
+        MEMORY_DREAM_RUNTIME_NORMALIZERS,
+    )
 
 
 def test_memory_dream_migration_only_deletes_retired_system_cron_jobs() -> None:

@@ -162,6 +162,8 @@ class MemoryDreamService:
                 summary=summary,
             )
             return {"success": True, "run_id": run_id, "run": run}
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:  # noqa: BLE001 - failure must be persisted on the run
             completed_ts = datetime.now(UTC).isoformat()
             run = await asyncio.to_thread(

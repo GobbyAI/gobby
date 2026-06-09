@@ -11,23 +11,26 @@ UPDATE memory_dream_runs
    SET status = 'failed',
        completed_at = COALESCE(completed_at, NOW()),
        updated_at = NOW()
- WHERE status NOT IN ('started', 'running', 'completed', 'failed', 'reverted');
+ WHERE status NOT IN ('started', 'running', 'completed', 'failed', 'reverted', 'revert_failed');
 
 ALTER TABLE memory_dream_runs
     ALTER COLUMN status SET DEFAULT 'started';
 
 DO $$
 BEGIN
-    IF NOT EXISTS (
+    IF EXISTS (
         SELECT 1
           FROM pg_constraint
          WHERE conname = 'memory_dream_runs_status_check'
            AND conrelid = 'memory_dream_runs'::regclass
     ) THEN
         ALTER TABLE memory_dream_runs
-            ADD CONSTRAINT memory_dream_runs_status_check
-            CHECK (status IN ('started', 'running', 'completed', 'failed', 'reverted'));
+            DROP CONSTRAINT memory_dream_runs_status_check;
     END IF;
+
+    ALTER TABLE memory_dream_runs
+        ADD CONSTRAINT memory_dream_runs_status_check
+        CHECK (status IN ('started', 'running', 'completed', 'failed', 'reverted', 'revert_failed'));
 
     IF NOT EXISTS (
         SELECT 1

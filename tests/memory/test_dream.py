@@ -12,7 +12,12 @@ import pytest
 from gobby.memory.dream.apply import apply_dream_plan, revert_dream_run
 from gobby.memory.dream.candidates import discover_stale_candidates
 from gobby.memory.dream.duplicates import find_duplicate_groups
-from gobby.memory.dream.models import DreamAction, DreamCandidate
+from gobby.memory.dream.models import (
+    CONTENT_TRUNCATE_LIMIT,
+    CONTENT_TRUNCATION_MARKER,
+    DreamAction,
+    DreamCandidate,
+)
 from gobby.memory.dream.plan import validate_dream_plan
 from gobby.memory.dream.planner import build_raw_plan
 from gobby.memory.dream.service import MemoryDreamService, _decode_raw_plan_metadata
@@ -58,6 +63,15 @@ def _candidate(memory_id: str) -> DreamCandidate:
         updated_at="2025-01-01T00:00:00+00:00",
         last_accessed_at="2026-01-01T00:00:00+00:00",
     )
+
+
+def test_candidate_prompt_content_marks_truncation() -> None:
+    candidate = replace(_candidate("long"), content="x" * (CONTENT_TRUNCATE_LIMIT + 1))
+
+    prompt = candidate.to_prompt_dict()
+
+    assert prompt["content"].endswith(CONTENT_TRUNCATION_MARKER)
+    assert len(prompt["content"]) == CONTENT_TRUNCATE_LIMIT
 
 
 @pytest.mark.asyncio
@@ -149,7 +163,9 @@ async def test_stale_candidate_discovery_sorts_invalid_created_at_last() -> None
     assert [candidate.id for candidate in result] == ["valid", "invalid"]
 
 
-async def test_build_raw_plan_logs_non_dict_actions(caplog) -> None:
+async def test_build_raw_plan_logs_non_dict_actions(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     llm_service = MagicMock()
     llm_service.call_json_feature = AsyncMock(
         return_value={"actions": [{"action": "refresh"}, "invalid"]}
@@ -179,7 +195,9 @@ async def test_build_raw_plan_logs_non_dict_actions(caplog) -> None:
 
 
 @pytest.mark.asyncio
-async def test_stale_candidate_discovery_uses_defaults_for_bad_config(caplog) -> None:
+async def test_stale_candidate_discovery_uses_defaults_for_bad_config(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     manager = MagicMock()
     old = _memory("old")
     old.updated_at = "2025-01-01T00:00:00+00:00"

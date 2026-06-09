@@ -38,7 +38,7 @@ class CodewikiRefreshRequest(BaseModel):
     root_path: str
     project_id: str | None = None
     out_dir: str | None = None
-    ai: Literal["auto", "on", "off"] = "auto"
+    ai: Literal["auto", "on", "off", "daemon", "direct"] = "auto"
 
 
 def _log_schedule_refresh_error(

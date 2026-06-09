@@ -26,6 +26,16 @@ def get_background_tasks() -> tuple[asyncio.Task[dict[str, Any]], ...]:
     return tuple(_BACKGROUND_DREAM_TASKS)
 
 
+async def cleanup_background_dream_tasks() -> None:
+    tasks = tuple(_BACKGROUND_DREAM_TASKS)
+    if not tasks:
+        return
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    _BACKGROUND_DREAM_TASKS.clear()
+
+
 def _handle_background_task(task: asyncio.Task[dict[str, Any]], run_id: str) -> None:
     _BACKGROUND_DREAM_TASKS.discard(task)
     try:

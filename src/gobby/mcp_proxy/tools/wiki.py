@@ -223,7 +223,7 @@ def create_wiki_registry(
                 topic,
                 lambda gwiki: gwiki.research(
                     query,
-                    audit=audit,
+                    audit=audit is True,
                     source_constraints=constraints,
                     max_steps=max_steps,
                     max_tokens=max_tokens,

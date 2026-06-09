@@ -125,11 +125,27 @@ def test_codewiki_refresh_validates_ai(client: TestClient, mock_server: MagicMoc
 
     response = client.post(
         "/api/code-index/codewiki/refresh",
-        json={"root_path": "/repo", "ai": "bad"},
+        json={"root_path": "/repo", "ai": "direct"},
     )
 
     assert response.status_code == 400
     assert response.json()["detail"] == "ai must be one of auto, daemon, direct, off"
+
+
+def test_codewiki_refresh_rejects_unknown_ai_literal(
+    client: TestClient,
+    mock_server: MagicMock,
+) -> None:
+    trigger = MagicMock()
+    mock_server.services.codewiki_trigger = trigger
+
+    response = client.post(
+        "/api/code-index/codewiki/refresh",
+        json={"root_path": "/repo", "ai": "bad"},
+    )
+
+    assert response.status_code == 422
+    trigger.request_refresh.assert_not_called()
 
 
 def test_codewiki_refresh_maps_expected_path_errors_to_bad_request(

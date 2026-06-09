@@ -57,7 +57,7 @@ def hydrate_appender_from_index(
     _seed_pending_tool_stubs(state, index)
     current_id = _seed_current_message_stub(state, index)
 
-    return appender.hydrate(
+    return appender.hydrate_from_index(
         index=index,
         state=state,
         current_id=current_id,

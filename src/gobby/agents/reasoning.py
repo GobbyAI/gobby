@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import inspect
 import threading
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
@@ -26,6 +27,7 @@ _FALLBACK_REASONING_EFFORTS: dict[str, frozenset[str]] = {
     "grok": frozenset({"low", "medium", "high"}),
 }
 _fallback_catalog: ProviderModelCatalog | None = None
+_fallback_catalog_config: DaemonConfig | None = None
 _fallback_catalog_lock = threading.Lock()
 
 
@@ -69,20 +71,39 @@ class SpawnReasoningResolution:
 def _get_provider_models(provider: str, daemon_config: DaemonConfig | None) -> list[dict[str, Any]]:
     from gobby.app_context import get_app_context
 
-    global _fallback_catalog
+    global _fallback_catalog, _fallback_catalog_config
 
     ctx = get_app_context()
     catalog = getattr(ctx, "provider_model_catalog", None) if ctx else None
     if catalog is None:
-        from gobby.servers.provider_models import ProviderModelCatalog
-
         with _fallback_catalog_lock:
-            if _fallback_catalog is None:
-                _fallback_catalog = ProviderModelCatalog()
+            if _fallback_catalog is None or _fallback_catalog_config is not daemon_config:
+                _fallback_catalog = _new_fallback_catalog(daemon_config)
+                _fallback_catalog_config = daemon_config
             catalog = _fallback_catalog
     snapshot = catalog.get_provider_snapshot(provider)
     models = snapshot.get("models")
     return list(models) if isinstance(models, list) else []
+
+
+def _new_fallback_catalog(daemon_config: DaemonConfig | None) -> ProviderModelCatalog:
+    from gobby.servers.provider_models import ProviderModelCatalog
+
+    catalog_cls = cast(Any, ProviderModelCatalog)
+    signature = inspect.signature(catalog_cls)
+    parameters = signature.parameters
+    if "daemon_config" in parameters:
+        return cast(ProviderModelCatalog, catalog_cls(daemon_config))
+    if "config" in parameters:
+        return cast(ProviderModelCatalog, catalog_cls(config=daemon_config))
+    if any(
+        parameter.default is inspect.Parameter.empty
+        and parameter.kind
+        in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        for parameter in parameters.values()
+    ):
+        return cast(ProviderModelCatalog, catalog_cls(daemon_config))
+    return cast(ProviderModelCatalog, catalog_cls())
 
 
 def _select_model_entries(

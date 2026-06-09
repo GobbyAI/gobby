@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 # Planner prompt content budget per candidate; keep prompts bounded and deterministic.
 CONTENT_TRUNCATE_LIMIT = 1600
+CONTENT_TRUNCATION_MARKER = "\n... [truncated]"
 
 DreamActionName = Literal["keep", "delete", "refresh", "merge", "supersede", "review"]
 
@@ -33,7 +34,7 @@ class DreamCandidate:
         """Return compact JSON-safe context for the planner prompt."""
         return {
             "id": self.id,
-            "content": self.content[:CONTENT_TRUNCATE_LIMIT],
+            "content": _truncate_content(self.content),
             "memory_type": self.memory_type,
             "project_id": self.project_id,
             "source_type": self.source_type,
@@ -96,3 +97,10 @@ class DreamAction:
             "reason": self.reason,
             "confidence": self.confidence,
         }
+
+
+def _truncate_content(content: str | None) -> str | None:
+    if content is None or len(content) <= CONTENT_TRUNCATE_LIMIT:
+        return content
+    limit = CONTENT_TRUNCATE_LIMIT - len(CONTENT_TRUNCATION_MARKER)
+    return f"{content[:limit]}{CONTENT_TRUNCATION_MARKER}"

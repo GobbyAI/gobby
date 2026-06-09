@@ -135,31 +135,6 @@ class MemoryDreamStore:
                 IF NOT EXISTS (
                     SELECT 1
                       FROM pg_constraint
-                     WHERE conname = 'memory_dream_runs_status_check'
-                       AND conrelid = 'memory_dream_runs'::regclass
-                       AND pg_get_constraintdef(oid) LIKE '%revert_failed%'
-                ) THEN
-                    ALTER TABLE memory_dream_runs
-                        DROP CONSTRAINT IF EXISTS memory_dream_runs_status_check;
-                    ALTER TABLE memory_dream_runs
-                        ADD CONSTRAINT memory_dream_runs_status_check
-                        CHECK (
-                            status IN (
-                                'started', 'running', 'completed', 'failed', 'reverted',
-                                'revert_failed'
-                            )
-                        );
-                END IF;
-            END $$;
-            """
-        )
-        self.db.execute(
-            """
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1
-                      FROM pg_constraint
                      WHERE conname = 'memory_dream_snapshots_action_check'
                        AND conrelid = 'memory_dream_snapshots'::regclass
                 ) THEN

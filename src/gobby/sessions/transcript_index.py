@@ -433,7 +433,7 @@ class TranscriptIndexAppender:
             size=size,
         )
 
-    def hydrate(
+    def hydrate_from_index(
         self,
         *,
         index: TranscriptIndex,

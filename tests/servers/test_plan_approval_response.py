@@ -6,6 +6,7 @@ or unknown ``option_id`` falls back to the generic-approve default (normal mode,
 auto-continue) so older clients stay compatible.
 """
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock
 
@@ -372,6 +373,51 @@ async def test_option_act_droid_blocking_gate_still_auto_continues() -> None:
     does not auto-execute natively (verified live). The approve path must still
     inject a continuation for a blocking-gate CLI, so do NOT re-add a
     `not blocking_plan` skip here or the approved plan just sits idle."""
+    host = _make_host()
+    session = _make_session(provider="droid", has_pending_plan=True, plan_auto_switch=False)
+    session.has_blocking_plan_decision = True
+    host._chat_sessions["c"] = session
+    approval_started = asyncio.Event()
+    active_turn_released = asyncio.Event()
+
+    async def sync_permission_mode() -> None:
+        approval_started.set()
+
+    session.sync_sdk_permission_mode = AsyncMock(side_effect=sync_permission_mode)
+
+    async def active_turn() -> None:
+        await active_turn_released.wait()
+
+    host._active_chat_tasks["c"] = asyncio.create_task(active_turn())
+
+    approval = asyncio.create_task(
+        SessionControlMixin._handle_plan_approval_response(
+            host,
+            AsyncMock(),
+            {"conversation_id": "c", "decision": "approve", "option_id": "approve_act"},
+        )
+    )
+
+    try:
+        await approval_started.wait()
+
+        session.set_chat_mode.assert_called_once_with("normal")
+        session.provide_plan_decision.assert_called_once_with("approve")
+        host._handle_chat_message.assert_not_awaited()
+
+        active_turn_released.set()
+        await approval
+    finally:
+        active_turn_released.set()
+        await asyncio.gather(approval, host._active_chat_tasks["c"], return_exceptions=True)
+
+    host._handle_chat_message.assert_awaited_once()
+    _, cont = host._handle_chat_message.await_args[0]
+    assert "Act mode" in cont["content"]
+
+
+@pytest.mark.asyncio
+async def test_option_act_droid_blocking_gate_continues_when_turn_already_drained() -> None:
     host = _make_host()
     session = _make_session(provider="droid", has_pending_plan=True, plan_auto_switch=False)
     session.has_blocking_plan_decision = True

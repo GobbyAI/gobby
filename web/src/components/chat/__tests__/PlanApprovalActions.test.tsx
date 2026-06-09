@@ -118,6 +118,32 @@ describe('PlanApprovalActions', () => {
     expect(onRequestChanges).toHaveBeenCalledWith('tweak step 2')
   })
 
+  it('does not submit reject while Enter is composing text', () => {
+    const onRequestChanges = vi.fn()
+    render(
+      <PlanApprovalActions
+        onApprove={vi.fn()}
+        onRequestChanges={onRequestChanges}
+        options={YOLO_ACT_OPTIONS}
+        testIdPrefix="x"
+      />,
+    )
+    fireEvent.click(screen.getByTestId('x-reject'))
+    const feedback = screen.getByTestId('x-feedback')
+    fireEvent.change(feedback, { target: { value: 'IME input' } })
+
+    const enter = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true,
+    })
+    Object.defineProperty(enter, 'isComposing', { value: true })
+    fireEvent(feedback, enter)
+
+    expect(onRequestChanges).not.toHaveBeenCalled()
+    expect(screen.getByTestId('x-feedback')).toBeInTheDocument()
+  })
+
   it('reject comment is optional: an empty submit still rejects', () => {
     const onRequestChanges = vi.fn()
     render(

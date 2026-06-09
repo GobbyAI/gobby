@@ -133,6 +133,7 @@ class FakeGateway:
                 "index_counts": {"documents": 1},
                 "degradations": [],
                 "freshness": {"status": "fresh"},
+                "audit_state": "clean",
                 "audit_summary": {"open": 0},
                 "link_summary": {"broken": 0},
                 "graph_metrics": {"nodes": 1},

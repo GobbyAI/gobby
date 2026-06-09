@@ -496,14 +496,7 @@ class HTTPServer:
 
             # Cancel pending background tasks immediately instead of polling
             current_task = asyncio.current_task()
-            background_tasks = {
-                task
-                for task in (
-                    *self._background_tasks,
-                    *memory_dream_tools.get_background_tasks(),
-                )
-                if task is not current_task
-            }
+            background_tasks = {task for task in self._background_tasks if task is not current_task}
             pending_tasks_count = len(background_tasks)
             if pending_tasks_count > 0:
                 logger.debug(
@@ -539,6 +532,15 @@ class HTTPServer:
                             "All background tasks cancelled",
                             extra={"completed": completed_count},
                         )
+
+            try:
+                await memory_dream_tools.cleanup_background_dream_tasks()
+            except Exception as exc:
+                logger.warning(
+                    "Error cleaning up background memory dreams during shutdown: %s",
+                    exc,
+                    exc_info=True,
+                )
 
             try:
                 await self._cleanup_pending_interactions()

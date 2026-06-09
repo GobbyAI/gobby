@@ -181,7 +181,8 @@ def _has_token_sequence(tokens: list[str], unsafe_sequence: tuple[str, ...]) -> 
     if length == 0 or len(tokens) < length:
         return False
     return any(
-        tuple(tokens[index : index + length]) == unsafe_sequence for index in range(len(tokens))
+        tuple(tokens[index : index + length]) == unsafe_sequence
+        for index in range(len(tokens) - length + 1)
     )
 
 
