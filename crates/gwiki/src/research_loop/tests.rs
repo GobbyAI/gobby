@@ -305,7 +305,7 @@ fn research_code_model_off_returns_retrieval_only_scaffold() {
             _limit: usize,
         ) -> Result<ResearchObservation, WikiError> {
             Ok(ResearchObservation::new("search", "1 candidate source")
-                .with_sources(vec!["wiki/code/files/src/handler.rs.md".to_string()])
+                .with_sources(vec!["code/files/src/handler.rs.md".to_string()])
                 .with_code_citations(vec![ResearchCodeCitation {
                     file: "src/handler.rs".to_string(),
                     line: Some(3),
@@ -346,7 +346,7 @@ fn research_code_model_off_returns_retrieval_only_scaffold() {
     assert!(result.accepted_notes.is_empty());
     assert_eq!(
         result.candidate_sources,
-        vec!["wiki/code/files/src/handler.rs.md".to_string()]
+        vec!["code/files/src/handler.rs.md".to_string()]
     );
     assert_eq!(result.code_citations.len(), 1);
     assert_eq!(

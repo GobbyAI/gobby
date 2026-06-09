@@ -245,15 +245,7 @@ fn is_indexable_vault_path(path: &Path) -> bool {
     }
 
     let components = normal_components(path);
-    matches!(
-        components.as_slice(),
-        ["code", ..]
-            | ["knowledge", ..]
-            | ["wiki", "sources", ..]
-            | ["wiki", "concepts", ..]
-            | ["wiki", "topics", ..]
-            | ["wiki", "code", ..]
-    )
+    matches!(components.as_slice(), ["code", ..] | ["knowledge", ..])
 }
 
 fn document_kind(path: &Path) -> Option<WikiDocumentKind> {
@@ -267,11 +259,6 @@ fn document_kind(path: &Path) -> Option<WikiDocumentKind> {
         ["knowledge", "concepts", ..] => Some(WikiDocumentKind::Concept),
         ["knowledge", "topics", ..] => Some(WikiDocumentKind::Topic),
         ["knowledge", ..] => Some(WikiDocumentKind::Concept),
-        ["wiki", "sources", ..] => Some(WikiDocumentKind::SourceNote),
-        ["wiki", "concepts", ..] => Some(WikiDocumentKind::Concept),
-        ["wiki", "topics", ..] => Some(WikiDocumentKind::Topic),
-        // `wiki/code/**` stores generated code documentation, not source code.
-        ["wiki", "code", ..] => Some(WikiDocumentKind::CodeDoc),
         _ => None,
     }
 }
@@ -465,14 +452,14 @@ mod tests {
         let tempdir = tempfile::tempdir().expect("tempdir");
         write_file(
             tempdir.path(),
-            "wiki/topics/rust.md",
-            "# Rust\n\nSee [[Ownership|ownership]] and [Cargo](wiki/concepts/cargo.md).\n",
+            "knowledge/topics/rust.md",
+            "# Rust\n\nSee [[Ownership|ownership]] and [Cargo](knowledge/concepts/cargo.md).\n",
         );
         let mut store = MemoryWikiStore::default();
 
         index_vault(tempdir.path(), &mut store).expect("index vault");
 
-        let path = PathBuf::from("wiki/topics/rust.md");
+        let path = PathBuf::from("knowledge/topics/rust.md");
         assert_eq!(store.documents[&path].kind, WikiDocumentKind::Topic);
         assert!(!store.chunks[&path].is_empty());
         assert_eq!(store.links[&path].len(), 2);
@@ -484,21 +471,25 @@ mod tests {
     fn index_vault_respects_gitignore_by_default_and_option() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         std::fs::create_dir(tempdir.path().join(".git")).expect("git dir");
-        write_file(tempdir.path(), ".gitignore", "wiki/topics/ignored.md\n");
-        write_file(tempdir.path(), "wiki/topics/visible.md", "# Visible\n");
-        write_file(tempdir.path(), "wiki/topics/ignored.md", "# Ignored\n");
+        write_file(
+            tempdir.path(),
+            ".gitignore",
+            "knowledge/topics/ignored.md\n",
+        );
+        write_file(tempdir.path(), "knowledge/topics/visible.md", "# Visible\n");
+        write_file(tempdir.path(), "knowledge/topics/ignored.md", "# Ignored\n");
 
         let mut default_store = MemoryWikiStore::default();
         index_vault(tempdir.path(), &mut default_store).expect("default index vault");
         assert!(
             default_store
                 .documents
-                .contains_key(&PathBuf::from("wiki/topics/visible.md"))
+                .contains_key(&PathBuf::from("knowledge/topics/visible.md"))
         );
         assert!(
             !default_store
                 .documents
-                .contains_key(&PathBuf::from("wiki/topics/ignored.md"))
+                .contains_key(&PathBuf::from("knowledge/topics/ignored.md"))
         );
 
         let mut disabled_store = MemoryWikiStore::default();
@@ -513,7 +504,7 @@ mod tests {
         assert!(
             disabled_store
                 .documents
-                .contains_key(&PathBuf::from("wiki/topics/ignored.md"))
+                .contains_key(&PathBuf::from("knowledge/topics/ignored.md"))
         );
     }
 
@@ -524,11 +515,11 @@ mod tests {
         let raw_before = std::fs::read_to_string(tempdir.path().join("raw/source.txt"))
             .expect("read raw source");
         let mut store = MemoryWikiStore::default();
-        seed_derived_rows(&mut store, "wiki/topics/stale.md");
+        seed_derived_rows(&mut store, "knowledge/topics/stale.md");
 
         index_vault(tempdir.path(), &mut store).expect("index vault");
 
-        let stale = PathBuf::from("wiki/topics/stale.md");
+        let stale = PathBuf::from("knowledge/topics/stale.md");
         assert!(!store.documents.contains_key(&stale));
         assert!(!store.chunks.contains_key(&stale));
         assert!(!store.links.contains_key(&stale));
@@ -573,12 +564,12 @@ mod tests {
     fn unchanged_files_are_skipped() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let body = "# Stable\n\nNo changes.\n";
-        write_file(tempdir.path(), "wiki/concepts/stable.md", body);
+        write_file(tempdir.path(), "knowledge/concepts/stable.md", body);
         let mut store = MemoryWikiStore::default();
 
         index_vault(tempdir.path(), &mut store).expect("first index");
         assert_eq!(
-            store.file_hashes[&PathBuf::from("wiki/concepts/stable.md")],
+            store.file_hashes[&PathBuf::from("knowledge/concepts/stable.md")],
             content_hash(body.as_bytes())
         );
         let document_upserts = store.document_upserts;
@@ -607,23 +598,20 @@ mod tests {
         let tempdir = tempfile::tempdir().expect("tempdir");
         write_file(
             tempdir.path(),
-            "wiki/code/crates/gwiki/src/indexer.md",
-            "---\nsource_files:\n  - crates/gwiki/src/indexer.rs\n---\n# Indexer\n\nSee [[wiki/code/crates/gwiki/src/store|store docs]].\n",
+            "code/crates/gwiki/src/indexer.md",
+            "---\nsource_files:\n  - crates/gwiki/src/indexer.rs\n---\n# Indexer\n\nSee [[code/crates/gwiki/src/store|store docs]].\n",
         );
         let mut store = MemoryWikiStore::default();
 
         index_vault(tempdir.path(), &mut store).expect("index vault");
 
-        let path = PathBuf::from("wiki/code/crates/gwiki/src/indexer.md");
+        let path = PathBuf::from("code/crates/gwiki/src/indexer.md");
         let document = store.documents.get(&path).expect("codedoc document");
         assert_eq!(document.kind, WikiDocumentKind::CodeDoc);
         assert!(document.body.contains("source_files:"));
         assert_eq!(store.sources[&path].kind, WikiDocumentKind::CodeDoc);
         assert_eq!(store.links[&path].len(), 1);
-        assert_eq!(
-            store.links[&path][0].target,
-            "wiki/code/crates/gwiki/src/store"
-        );
+        assert_eq!(store.links[&path][0].target, "code/crates/gwiki/src/store");
         assert_eq!(store.links[&path][0].alias.as_deref(), Some("store docs"));
         assert_eq!(store.ingestions[0].event, WikiIngestionEvent::Added);
     }
@@ -664,30 +652,26 @@ mod tests {
     #[test]
     fn codedoc_tree_indexes_idempotently() {
         let tempdir = tempfile::tempdir().expect("tempdir");
-        write_file(tempdir.path(), "wiki/code/a.md", "# A\n\nSee [[B]].\n");
-        write_file(tempdir.path(), "wiki/code/nested/b.md", "# B\n\nStable.\n");
-        write_file(
-            tempdir.path(),
-            "wiki/code/nested/ignored.txt",
-            "not markdown\n",
-        );
+        write_file(tempdir.path(), "code/a.md", "# A\n\nSee [[B]].\n");
+        write_file(tempdir.path(), "code/nested/b.md", "# B\n\nStable.\n");
+        write_file(tempdir.path(), "code/nested/ignored.txt", "not markdown\n");
         let mut store = MemoryWikiStore::default();
 
         index_vault(tempdir.path(), &mut store).expect("first index");
 
-        let a_path = PathBuf::from("wiki/code/a.md");
-        let b_path = PathBuf::from("wiki/code/nested/b.md");
+        let a_path = PathBuf::from("code/a.md");
+        let b_path = PathBuf::from("code/nested/b.md");
         assert_eq!(store.documents[&a_path].kind, WikiDocumentKind::CodeDoc);
         assert_eq!(store.documents[&b_path].kind, WikiDocumentKind::CodeDoc);
         assert!(
             !store
                 .documents
-                .contains_key(&PathBuf::from("wiki/code/nested/ignored.txt"))
+                .contains_key(&PathBuf::from("code/nested/ignored.txt"))
         );
         assert_eq!(store.document_upserts, 2);
         assert_eq!(store.ingestions.len(), 2);
 
-        write_file(tempdir.path(), "wiki/code/a.md", "# A\n\nChanged.\n");
+        write_file(tempdir.path(), "code/a.md", "# A\n\nChanged.\n");
         index_vault(tempdir.path(), &mut store).expect("second index");
 
         assert_eq!(store.document_upserts, 3);
@@ -704,7 +688,11 @@ mod tests {
     #[test]
     fn memory_index_limit_rejects_large_vaults() {
         let temp = tempfile::tempdir().expect("tempdir");
-        write_file(temp.path(), "wiki/topics/large.md", "# Large\n\nabcdef\n");
+        write_file(
+            temp.path(),
+            "knowledge/topics/large.md",
+            "# Large\n\nabcdef\n",
+        );
 
         let error =
             discover_indexable_hashes_with_limit(temp.path(), Some(4), IndexOptions::default())

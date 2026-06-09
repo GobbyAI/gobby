@@ -191,7 +191,7 @@ fn readable_path_degradation(path: &Path) -> Option<ReadDegradation> {
         None
     } else {
         Some(ReadDegradation::invalid_request(
-            "Read paths must target canonical wiki documents under raw/INDEX.md, _index.md, log.md, or wiki/.",
+            "Read paths must target canonical wiki documents under raw/INDEX.md, _index.md, log.md, knowledge/, or code/.",
         ))
     }
 }
@@ -203,10 +203,10 @@ fn is_readable_wiki_path(path: &Path) -> bool {
 
     matches!(
         normal_components(path).as_slice(),
-        ["wiki", "sources", ..]
-            | ["wiki", "concepts", ..]
-            | ["wiki", "topics", ..]
-            | ["wiki", "code", ..]
+        ["knowledge", "sources", ..]
+            | ["knowledge", "concepts", ..]
+            | ["knowledge", "topics", ..]
+            | ["code", ..]
     )
 }
 
@@ -570,14 +570,14 @@ mod tests {
             std::env::set_var(READ_MAX_BYTES_ENV, "12");
         }
         let temp = tempfile::tempdir().expect("tempdir");
-        let path = temp.path().join("wiki/topics/large.md");
+        let path = temp.path().join("knowledge/topics/large.md");
         std::fs::create_dir_all(path.parent().expect("parent")).expect("topic dir");
         std::fs::write(&path, "# Large\n0123456789abcdef").expect("large markdown");
 
         let output = read_path(
             temp.path(),
             ScopeIdentity::topic("field-work"),
-            PathBuf::from("wiki/topics/large.md"),
+            PathBuf::from("knowledge/topics/large.md"),
         )
         .expect("read path");
 
@@ -610,7 +610,7 @@ mod tests {
     #[test]
     fn title_search_stops_at_scan_budget() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let topic_dir = temp.path().join("wiki/topics");
+        let topic_dir = temp.path().join("knowledge/topics");
         std::fs::create_dir_all(&topic_dir).expect("topic dir");
         std::fs::write(topic_dir.join("target.md"), "# Target\n").expect("target markdown");
 

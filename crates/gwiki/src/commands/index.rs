@@ -304,10 +304,20 @@ fn sync_qdrant_vectors(
     let mut source = vector::PostgresWikiVectorChunkSource::new(conn);
     let mut embedder = vector::GwikiEmbeddingBackend::new(embedding);
     let mut store = vector::GwikiQdrantVectorStore::new(qdrant);
-    let outcome = vector::sync_scope_vectors(search_scope, &mut source, &mut embedder, &mut store)
-        .map_err(|error| WikiError::Config {
-            detail: format!("failed to sync Qdrant vectors for {command}: {error}"),
-        })?;
+    let outcome = match vector::sync_scope_vectors(
+        search_scope,
+        &mut source,
+        &mut embedder,
+        &mut store,
+    ) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            log::warn!(
+                "{command}: Qdrant vector sync failed; continuing with PostgreSQL index: {error}"
+            );
+            return Ok(());
+        }
+    };
     log::debug!(
         "{command}: synced gwiki Qdrant vectors: chunks={} upserted={} stale_paths_deleted={}",
         outcome.chunks,
@@ -374,7 +384,7 @@ fn effective_embedding_route(context: &AiContext) -> AiRouting {
                 log::warn!(
                     "gwiki was built without ai support; auto embedding route cannot use the daemon"
                 );
-                AiRouting::Auto
+                AiRouting::Direct
             }
         }
     }
@@ -595,5 +605,14 @@ mod tests {
 
         assert!(matches!(error, WikiError::Config { .. }));
         assert!(error.to_string().contains("must be greater than 0"));
+    }
+
+    #[test]
+    #[cfg(not(feature = "ai"))]
+    fn auto_embedding_route_falls_back_to_direct_without_ai() {
+        let mut source = TestConfigSource { value: None };
+        let context = AiContext::resolve(None, &mut source);
+
+        assert_eq!(effective_embedding_route(&context), AiRouting::Direct);
     }
 }

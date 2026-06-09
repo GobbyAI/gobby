@@ -843,13 +843,13 @@ mod tests {
         let id = scoped_text_id(
             "chunk",
             &scope,
-            Path::new("wiki/topics/a-very-long-path-name-that-keeps-going.md"),
+            Path::new("knowledge/topics/a-very-long-path-name-that-keeps-going.md"),
             &["1234567890"],
         );
         let id_again = scoped_text_id(
             "chunk",
             &scope,
-            Path::new("wiki/topics/a-very-long-path-name-that-keeps-going.md"),
+            Path::new("knowledge/topics/a-very-long-path-name-that-keeps-going.md"),
             &["1234567890"],
         );
 
@@ -874,9 +874,9 @@ mod tests {
         let mut store = MemoryWikiStore::default();
         let err = store
             .replace_chunks(
-                Path::new("wiki/topics/page.md"),
+                Path::new("knowledge/topics/page.md"),
                 vec![WikiChunk {
-                    path: PathBuf::from("wiki/topics/other.md"),
+                    path: PathBuf::from("knowledge/topics/other.md"),
                     chunk_index: 0,
                     byte_start: 0,
                     byte_end: 4,
@@ -896,9 +896,9 @@ mod tests {
 
         let err = store
             .replace_links(
-                Path::new("wiki/topics/page.md"),
+                Path::new("knowledge/topics/page.md"),
                 vec![WikiLink {
-                    path: PathBuf::from("wiki/topics/other.md"),
+                    path: PathBuf::from("knowledge/topics/other.md"),
                     target: "Target".to_string(),
                     alias: None,
                     byte_start: 0,
@@ -919,7 +919,7 @@ mod tests {
     #[test]
     fn memory_store_keys_sources_by_document_path() {
         let mut store = MemoryWikiStore::default();
-        let document_path = PathBuf::from("wiki/sources/example.md");
+        let document_path = PathBuf::from("knowledge/sources/example.md");
         let source = WikiSource {
             path: PathBuf::from("raw/example.md"),
             document_path: document_path.clone(),

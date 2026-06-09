@@ -8,9 +8,6 @@ pub struct FalkorConfig {
     pub password: Option<String>,
 }
 
-/// Shared FalkorDB graph name for the gcode-produced code graph.
-pub const CODE_GRAPH_NAME: &str = "gobby_code";
-
 /// Qdrant connection configuration.
 ///
 /// Collection naming is consumer-owned.

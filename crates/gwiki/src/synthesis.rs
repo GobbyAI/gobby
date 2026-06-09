@@ -20,9 +20,9 @@ pub enum ArticleKind {
 impl ArticleKind {
     pub fn directory(self) -> &'static str {
         match self {
-            Self::Source => "wiki/sources",
-            Self::Concept => "wiki/concepts",
-            Self::Topic => "wiki/topics",
+            Self::Source => "knowledge/sources",
+            Self::Concept => "knowledge/concepts",
+            Self::Topic => "knowledge/topics",
         }
     }
 
@@ -686,7 +686,7 @@ mod tests {
     #[test]
     fn existing_page_requires_merge_intent() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let page_path = temp.path().join("wiki/topics/existing.md");
+        let page_path = temp.path().join("knowledge/topics/existing.md");
         std::fs::create_dir_all(page_path.parent().expect("page parent")).expect("create parent");
         std::fs::write(&page_path, "human-authored page").expect("existing page written");
 
@@ -715,7 +715,7 @@ mod tests {
     #[test]
     fn synthesized_page_write_classifies_create_and_overwrite_atomically() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let page_path = temp.path().join("wiki/topics/new.md");
+        let page_path = temp.path().join("knowledge/topics/new.md");
         let page = SynthesizedPage {
             path: page_path.clone(),
             title: "New".to_string(),
@@ -748,7 +748,7 @@ mod tests {
     #[test]
     fn source_page_paths_reserve_article_path() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let article_path = temp.path().join("wiki/sources/collision.md");
+        let article_path = temp.path().join("knowledge/sources/collision.md");
         let sources = vec![SynthesisSource {
             title: "Collision".to_string(),
             path: PathBuf::from("raw/collision.md"),
@@ -758,7 +758,7 @@ mod tests {
         let paths = source_page_paths(temp.path(), &article_path, &sources);
 
         assert_ne!(paths[0], article_path);
-        assert!(paths[0].starts_with(temp.path().join("wiki/sources")));
+        assert!(paths[0].starts_with(temp.path().join("knowledge/sources")));
     }
 
     #[test]

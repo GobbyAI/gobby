@@ -117,15 +117,15 @@ mod tests {
     fn fusion_preserves_sources() {
         let response = fuse_sources(
             vec![
-                search_result("document:wiki/topics/rust.md", SearchSource::Bm25),
-                search_result("document:wiki/topics/borrow.md", SearchSource::Bm25),
+                search_result("document:knowledge/topics/rust.md", SearchSource::Bm25),
+                search_result("document:knowledge/topics/borrow.md", SearchSource::Bm25),
             ],
             vec![search_result(
-                "document:wiki/topics/rust.md",
+                "document:knowledge/topics/rust.md",
                 SearchSource::Semantic,
             )],
             vec![search_result(
-                "document:wiki/topics/rust.md",
+                "document:knowledge/topics/rust.md",
                 SearchSource::Graph,
             )],
             vec![DegradationKind::PartialSearch {
@@ -138,7 +138,7 @@ mod tests {
         let fused = response
             .results
             .iter()
-            .find(|result| result.id == "document:wiki/topics/rust.md")
+            .find(|result| result.id == "document:knowledge/topics/rust.md")
             .expect("shared document is fused");
 
         assert_eq!(
@@ -180,12 +180,12 @@ mod tests {
     fn fusion_uses_canonical_page_key() {
         let response = fuse_sources(
             vec![search_result(
-                "chunk:wiki/topics/rust.md:0",
+                "chunk:knowledge/topics/rust.md:0",
                 SearchSource::Bm25,
             )],
             vec![search_result("point:semantic-rust", SearchSource::Semantic)],
             vec![search_result(
-                "document:wiki/topics/rust.md",
+                "document:knowledge/topics/rust.md",
                 SearchSource::Graph,
             )],
             Vec::new(),
@@ -194,7 +194,10 @@ mod tests {
 
         assert_eq!(response.results.len(), 1);
         let fused = &response.results[0];
-        assert_eq!(fused.fusion_key(), "project:project-1:wiki/topics/rust.md");
+        assert_eq!(
+            fused.fusion_key(),
+            "project:project-1:knowledge/topics/rust.md"
+        );
         assert_eq!(
             fused.sources,
             vec![
@@ -222,7 +225,7 @@ mod tests {
             id: id.to_string(),
             title: Some("Rust".to_string()),
             scope: SearchScope::project("project-1"),
-            path: "wiki/topics/rust.md".into(),
+            path: "knowledge/topics/rust.md".into(),
             source_path: "raw/INDEX.md".into(),
             hit_kind: SearchHitKind::Document,
             snippet: "Ownership and borrowing".to_string(),
@@ -236,7 +239,7 @@ mod tests {
                 heading: Some("Rust".to_string()),
             }),
             provenance: SearchProvenance {
-                document_path: "wiki/topics/rust.md".into(),
+                document_path: "knowledge/topics/rust.md".into(),
                 source_path: "raw/INDEX.md".into(),
                 source_kind: "topic".to_string(),
                 content_hash: Some("hash".to_string()),

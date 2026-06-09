@@ -310,19 +310,19 @@ fn compile_writes_obsidian_markdown() {
     assert!(
         outcome
             .article_path
-            .ends_with("wiki/topics/durable-compile.md")
+            .ends_with("knowledge/topics/durable-compile.md")
     );
     assert!(page.starts_with("---\n"));
     assert!(page.contains("title: \"Durable Compile\""));
     assert!(page.contains("source_kind: \"topic\""));
-    assert!(page.contains("[[wiki/sources/compile-behavior|Compile behavior]]"));
+    assert!(page.contains("[[knowledge/sources/compile-behavior|Compile behavior]]"));
     assert!(page.contains("Example Docs, Compile API"));
 
-    let source_page = scope.root().join("wiki/sources/compile-behavior.md");
+    let source_page = scope.root().join("knowledge/sources/compile-behavior.md");
     assert!(source_page.exists());
     let provenance =
         std::fs::read_to_string(scope.root().join("meta/provenance.json")).expect("provenance");
-    assert!(provenance.contains("wiki/topics/durable-compile.md"));
+    assert!(provenance.contains("knowledge/topics/durable-compile.md"));
     assert!(provenance.contains("raw/research/compile.md"));
     let provenance: ProvenanceGraph = serde_json::from_str(&provenance).expect("parse provenance");
     let source = &provenance.links()[0].source;
@@ -335,7 +335,7 @@ fn index_update_preserves_unrelated_entries() {
     let scope = ResearchScope::project_for_id("project-1", temp.path());
     std::fs::write(
         scope.root().join("_index.md"),
-        "# Wiki Index\n\n- [[wiki/topics/existing|Existing Entry]]\n",
+        "# Wiki Index\n\n- [[knowledge/topics/existing|Existing Entry]]\n",
     )
     .expect("index written");
     let note_path = scope.root().join("raw/research/index.md");
@@ -355,15 +355,15 @@ fn index_update_preserves_unrelated_entries() {
     .expect("wiki article compiled");
 
     let index = std::fs::read_to_string(scope.root().join("_index.md")).expect("index read");
-    assert!(index.contains("[[wiki/topics/existing|Existing Entry]]"));
-    assert!(index.contains("[[wiki/topics/index-preservation|Index Preservation]]"));
+    assert!(index.contains("[[knowledge/topics/existing|Existing Entry]]"));
+    assert!(index.contains("[[knowledge/topics/index-preservation|Index Preservation]]"));
 }
 
 #[test]
 fn index_update_uses_structural_heading_and_link_checks() {
     let temp = tempfile::tempdir().expect("tempdir");
     let article = SynthesizedPage {
-        path: temp.path().join("wiki/topics/exact.md"),
+        path: temp.path().join("knowledge/topics/exact.md"),
         title: "Exact".to_string(),
         markdown: "# Exact\n\n".to_string(),
     };
@@ -372,7 +372,7 @@ fn index_update_uses_structural_heading_and_link_checks() {
         concat!(
             "# Wiki Index\n\n",
             "## Compiled pages archive\n\n",
-            "- [[wiki/topics/exact|Exact]] archived copy\n"
+            "- [[knowledge/topics/exact|Exact]] archived copy\n"
         ),
     )
     .expect("index written");
@@ -384,7 +384,7 @@ fn index_update_uses_structural_heading_and_link_checks() {
     assert_eq!(
         index
             .lines()
-            .filter(|line| *line == "- [[wiki/topics/exact|Exact]]")
+            .filter(|line| *line == "- [[knowledge/topics/exact|Exact]]")
             .count(),
         1
     );
@@ -394,10 +394,10 @@ fn index_update_uses_structural_heading_and_link_checks() {
 fn insert_compiled_page_link_creates_missing_compiled_heading() {
     let mut index = "# Wiki Index\n\n".to_string();
 
-    insert_compiled_page_link(&mut index, "[[wiki/topics/missing|Missing]]")
+    insert_compiled_page_link(&mut index, "[[knowledge/topics/missing|Missing]]")
         .expect("missing heading is created");
 
-    assert!(index.contains("## Compiled pages\n\n- [[wiki/topics/missing|Missing]]\n"));
+    assert!(index.contains("## Compiled pages\n\n- [[knowledge/topics/missing|Missing]]\n"));
 }
 
 #[test]

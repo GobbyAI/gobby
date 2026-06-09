@@ -3,6 +3,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
+use gobby_core::ai::effective_route;
+use gobby_core::ai_context::{AiConfigSource, AiContext, AiContextOptions};
+use gobby_core::config::{AiCapability, AiRouting};
+use gobby_core::gobby_home;
 use serde::Serialize;
 
 use crate::credibility::{CredibilityInput, CredibilityScore, CredibilitySourceType};
@@ -109,7 +113,11 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
     let resolved = resolve_selection_context(&selection)?;
     let _postgres_index =
         crate::support::postgres::require_postgres_index("gwiki citation-quality")?;
-    let report = build_report(resolved.scope.root(), resolved.output_scope, false)?;
+    let report = build_report(
+        resolved.scope.root(),
+        resolved.output_scope,
+        text_generation_available()?,
+    )?;
     write_artifact(
         resolved.scope.root(),
         &report.artifact_path,
@@ -126,6 +134,31 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
         payload,
         report.markdown,
     ))
+}
+
+fn text_generation_available() -> Result<bool, WikiError> {
+    let mut source = ai_config_source()?;
+    let context = AiContext::resolve_with_options(
+        None,
+        &mut source,
+        AiContextOptions {
+            no_ai: false,
+            forced_routing: None,
+        },
+    );
+    Ok(matches!(
+        effective_route(&context, AiCapability::TextGenerate),
+        AiRouting::Direct | AiRouting::Daemon
+    ))
+}
+
+fn ai_config_source() -> Result<AiConfigSource, WikiError> {
+    let gobby_home = gobby_home().map_err(|error| WikiError::Config {
+        detail: format!("failed to resolve Gobby home for gwiki citation-quality config: {error}"),
+    })?;
+    AiConfigSource::from_gobby_home(&gobby_home).map_err(|error| WikiError::Config {
+        detail: format!("failed to resolve AI config for gwiki citation-quality: {error}"),
+    })
 }
 
 pub(crate) fn build_report(
@@ -543,7 +576,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         write_page(
             temp.path(),
-            "topic.md",
+            "knowledge/topics/topic.md",
             "# Topic\n\n## Supported\nClaim with source [src-1].\n\n## Missing\nClaim without source.\n",
         );
         SourceManifest {
@@ -558,7 +591,7 @@ mod tests {
         let mut provenance = ProvenanceGraph::default();
         provenance.add_link(ProvenanceLink {
             section: WikiSectionRef {
-                page_path: PathBuf::from("wiki/topic.md"),
+                page_path: PathBuf::from("knowledge/topics/topic.md"),
                 heading: "Supported".to_string(),
                 section_id: "supported".to_string(),
             },
@@ -578,7 +611,11 @@ mod tests {
         let report = build_report(temp.path(), ScopeIdentity::global(), false).expect("report");
 
         assert!(report.markdown.contains("## Coverage Gaps"));
-        assert!(report.markdown.contains("wiki/topic.md#missing"));
+        assert!(
+            report
+                .markdown
+                .contains("knowledge/topics/topic.md#missing")
+        );
         assert!(report.markdown.contains("## Stale Source Warnings"));
         assert!(report.markdown.contains("src-1"));
         assert!(report.markdown.contains("## Contradictions"));
@@ -596,7 +633,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         write_page(
             temp.path(),
-            "topic.md",
+            "knowledge/topics/topic.md",
             "# Topic\n\n## Claim\nShared claim.\n",
         );
         SourceManifest {
@@ -611,7 +648,7 @@ mod tests {
         for source_id in ["src-1", "src-2"] {
             provenance.add_link(ProvenanceLink {
                 section: WikiSectionRef {
-                    page_path: PathBuf::from("wiki/topic.md"),
+                    page_path: PathBuf::from("knowledge/topics/topic.md"),
                     heading: "Claim".to_string(),
                     section_id: "claim".to_string(),
                 },
@@ -665,8 +702,8 @@ mod tests {
     }
 
     fn write_page(root: &std::path::Path, relative: &str, markdown: &str) {
-        let path = root.join("wiki").join(relative);
-        std::fs::create_dir_all(path.parent().expect("parent")).expect("create wiki dir");
+        let path = root.join(relative);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create page dir");
         std::fs::write(path, markdown).expect("write page");
     }
 

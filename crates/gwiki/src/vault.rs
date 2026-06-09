@@ -10,7 +10,6 @@ use crate::scope::ResolvedScope;
 ///
 /// `code/` contains generated code documentation, `knowledge/` contains
 /// synthesized wiki pages, and `_meta/` contains shared generation metadata.
-/// Legacy `wiki/**` paths remain indexable for existing vaults.
 pub const CODE_ROOT: &str = "code";
 pub const KNOWLEDGE_ROOT: &str = "knowledge";
 pub const SHARED_META_ROOT: &str = "_meta";
@@ -36,10 +35,6 @@ const DIRECTORIES: &[&str] = &[
     SHARED_META_ROOT,
     "raw",
     "raw/assets",
-    "wiki",
-    "wiki/sources",
-    "wiki/concepts",
-    "wiki/topics",
     "inbox",
     "outputs",
     "meta",
@@ -265,9 +260,9 @@ mod tests {
         assert!(paths.directories.contains(&"code"));
         assert!(paths.directories.contains(&"knowledge"));
         assert!(paths.directories.contains(&"_meta"));
-        assert!(paths.directories.contains(&"wiki/sources"));
-        assert!(paths.directories.contains(&"wiki/concepts"));
-        assert!(paths.directories.contains(&"wiki/topics"));
+        assert!(paths.directories.contains(&"knowledge/sources"));
+        assert!(paths.directories.contains(&"knowledge/concepts"));
+        assert!(paths.directories.contains(&"knowledge/topics"));
         assert!(paths.directories.contains(&"outputs"));
         assert!(paths.directories.contains(&"meta/health"));
         assert!(paths.files.contains(&"raw/INDEX.md"));

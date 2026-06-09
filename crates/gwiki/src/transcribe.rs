@@ -213,7 +213,7 @@ fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
 }
 
 fn derived_markdown_path(record: &SourceRecord) -> PathBuf {
-    PathBuf::from("wiki")
+    PathBuf::from("knowledge")
         .join("sources")
         .join(format!("{}.md", record.id))
 }
@@ -463,7 +463,7 @@ mod tests {
         assert_eq!(client.calls.get(), 1);
         assert_eq!(
             result.path,
-            PathBuf::from("wiki/sources").join(format!("{}.md", record.id))
+            PathBuf::from("knowledge/sources").join(format!("{}.md", record.id))
         );
         assert!(result.degradation.is_none());
 
@@ -478,7 +478,7 @@ mod tests {
         assert!(markdown.contains("Original audio: `raw/assets/interview.wav`"));
         assert!(markdown.contains("Raw source: `raw/"));
         assert!(markdown.contains("## Source References"));
-        let derived_dir = temp.path().join("wiki/sources");
+        let derived_dir = temp.path().join("knowledge/sources");
         let temp_entries = std::fs::read_dir(&derived_dir)
             .expect("derived dir")
             .filter_map(Result::ok)

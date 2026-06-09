@@ -12,19 +12,19 @@ fn read_returns_scoped_wiki_document_contract() {
     common::assert_success(&init, "init");
 
     let vault = fixture.topic_vault("rust");
-    let ownership_path = vault.join("wiki/topics/ownership.md");
+    let ownership_path = vault.join("knowledge/topics/ownership.md");
     std::fs::write(
         &ownership_path,
         "# Ownership\n\nOwnership evidence stays scoped.\n",
     )
     .expect("write ownership page");
     std::fs::write(
-        vault.join("wiki/topics/shared.md"),
+        vault.join("knowledge/topics/shared.md"),
         "# Shared\n\nTopic page.\n",
     )
     .expect("write shared topic page");
     std::fs::write(
-        vault.join("wiki/concepts/shared.md"),
+        vault.join("knowledge/concepts/shared.md"),
         "# Shared\n\nConcept page.\n",
     )
     .expect("write shared concept page");
@@ -39,7 +39,7 @@ fn read_returns_scoped_wiki_document_contract() {
             "rust",
             "read",
             "--path",
-            "wiki/topics/ownership.md",
+            "knowledge/topics/ownership.md",
         ],
     );
     common::assert_success(&by_path, "read by path");
@@ -51,9 +51,12 @@ fn read_returns_scoped_wiki_document_contract() {
     assert_eq!(by_path_payload["requested"]["kind"], "path");
     assert_eq!(
         by_path_payload["requested"]["value"],
-        "wiki/topics/ownership.md"
+        "knowledge/topics/ownership.md"
     );
-    assert_eq!(by_path_payload["wiki_path"], "wiki/topics/ownership.md");
+    assert_eq!(
+        by_path_payload["wiki_path"],
+        "knowledge/topics/ownership.md"
+    );
     assert_json_path(&by_path_payload["absolute_path"], &ownership_path);
     assert_eq!(by_path_payload["title"], "Ownership");
     assert_eq!(by_path_payload["content_format"], "markdown");
@@ -86,7 +89,10 @@ fn read_returns_scoped_wiki_document_contract() {
     let by_title_payload = common::json_stdout(&by_title);
     assert_eq!(by_title_payload["status"], "found");
     assert_eq!(by_title_payload["requested"]["kind"], "title");
-    assert_eq!(by_title_payload["wiki_path"], "wiki/topics/ownership.md");
+    assert_eq!(
+        by_title_payload["wiki_path"],
+        "knowledge/topics/ownership.md"
+    );
 
     let missing = gwiki(
         &fixture,
@@ -98,13 +104,13 @@ fn read_returns_scoped_wiki_document_contract() {
             "rust",
             "read",
             "--path",
-            "wiki/topics/missing.md",
+            "knowledge/topics/missing.md",
         ],
     );
     common::assert_success(&missing, "read missing");
     let missing_payload = common::json_stdout(&missing);
     assert_eq!(missing_payload["status"], "not_found");
-    assert_eq!(missing_payload["wiki_path"], "wiki/topics/missing.md");
+    assert_eq!(missing_payload["wiki_path"], "knowledge/topics/missing.md");
     assert_eq!(missing_payload["content"], serde_json::Value::Null);
     assert_eq!(missing_payload["degradations"][0]["reason"], "not_found");
 

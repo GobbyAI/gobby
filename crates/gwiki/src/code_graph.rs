@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::provenance::ProvenanceGraph;
 
-pub(crate) const CODE_GRAPH_NAME: &str = gobby_core::config::CODE_GRAPH_NAME;
+pub(crate) const CODE_GRAPH_NAME: &str = "gobby_code";
 const GRAPH_SERVICE: &str = "gcode_code_graph";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -254,8 +254,7 @@ mod tests {
     use gobby_core::degradation::{DegradationKind, ServiceState};
 
     #[test]
-    fn code_graph_name_comes_from_shared_config() {
-        assert_eq!(CODE_GRAPH_NAME, gobby_core::config::CODE_GRAPH_NAME);
+    fn code_graph_name_matches_gcode_projection() {
         assert_eq!(CODE_GRAPH_NAME, "gobby_code");
     }
 
@@ -312,7 +311,7 @@ mod tests {
                 byte_end: 10,
             },
             section: crate::provenance::WikiSectionRef {
-                page_path: "wiki/code/a.md".into(),
+                page_path: "code/a.md".into(),
                 heading: "A".to_string(),
                 section_id: "a".to_string(),
             },
@@ -327,7 +326,7 @@ mod tests {
                 byte_end: 10,
             },
             section: crate::provenance::WikiSectionRef {
-                page_path: "wiki/code/b.md".into(),
+                page_path: "code/b.md".into(),
                 heading: "B".to_string(),
                 section_id: "b".to_string(),
             },
@@ -362,8 +361,8 @@ mod tests {
                 .map(|page| page.page_path.as_path())
                 .collect::<Vec<_>>(),
             vec![
-                std::path::Path::new("wiki/code/a.md"),
-                std::path::Path::new("wiki/code/b.md")
+                std::path::Path::new("code/a.md"),
+                std::path::Path::new("code/b.md")
             ]
         );
     }
@@ -380,7 +379,7 @@ mod tests {
                 byte_end: 10,
             },
             section: crate::provenance::WikiSectionRef {
-                page_path: "wiki/code/a.md".into(),
+                page_path: "code/a.md".into(),
                 heading: "A".to_string(),
                 section_id: "a".to_string(),
             },
@@ -405,7 +404,7 @@ mod tests {
         assert_eq!(affected.pages.len(), 1);
         assert_eq!(
             affected.pages[0].page_path,
-            std::path::PathBuf::from("wiki/code/a.md")
+            std::path::PathBuf::from("code/a.md")
         );
         assert_eq!(affected.degradations.len(), 1);
     }

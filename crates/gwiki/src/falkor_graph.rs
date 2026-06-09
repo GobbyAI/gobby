@@ -485,7 +485,7 @@ fn normalize_path(path: PathBuf) -> PathBuf {
 
 fn code_doc_source_path(path: &Path) -> Option<String> {
     normalize_graph_path(path)
-        .strip_prefix("wiki/code/files/")
+        .strip_prefix("code/files/")
         .and_then(|path| path.strip_suffix(".md"))
         .map(str::to_string)
 }
@@ -592,7 +592,7 @@ mod tests {
         let scope = SearchScope::topic("rust");
         let documents = vec![WikiGraphDocument {
             scope: scope.clone(),
-            path: PathBuf::from("wiki/topics/rust.md"),
+            path: PathBuf::from("knowledge/topics/rust.md"),
             title: Some("Rust Async".to_string()),
         }];
         let document_paths = documents
@@ -603,18 +603,18 @@ mod tests {
         assert_eq!(
             resolve_graph_target(
                 "Rust Async",
-                Path::new("wiki/topics/source.md"),
+                Path::new("knowledge/topics/source.md"),
                 &document_paths,
                 &slug_targets
             ),
             Some(graph::WikiGraphLinkTarget::Resolved(PathBuf::from(
-                "wiki/topics/rust.md"
+                "knowledge/topics/rust.md"
             )))
         );
         assert_eq!(
             resolve_graph_target(
                 "Missing Page",
-                Path::new("wiki/topics/source.md"),
+                Path::new("knowledge/topics/source.md"),
                 &document_paths,
                 &slug_targets
             ),
@@ -625,7 +625,7 @@ mod tests {
         assert!(
             resolve_graph_target(
                 "https://example.test",
-                Path::new("wiki/topics/source.md"),
+                Path::new("knowledge/topics/source.md"),
                 &document_paths,
                 &slug_targets
             )
@@ -650,7 +650,7 @@ mod tests {
     #[test]
     fn ask_unified_graph_code_doc_source_path_maps_to_code_file() {
         assert_eq!(
-            code_doc_source_path(Path::new("wiki/code/files/crates/gwiki/src/lib.rs.md")),
+            code_doc_source_path(Path::new("code/files/crates/gwiki/src/lib.rs.md")),
             Some("crates/gwiki/src/lib.rs".to_string())
         );
         assert_eq!(code_doc_source_path(Path::new("wiki/notes.md")), None);

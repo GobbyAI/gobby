@@ -24,6 +24,7 @@ const CLI_SUBCOMMANDS: &[&str] = &[
     "backlinks",
     "link-suggest",
     "benchmark",
+    "citation-quality",
     "research",
     "compile",
     "export",

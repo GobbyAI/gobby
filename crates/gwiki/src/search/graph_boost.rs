@@ -397,68 +397,77 @@ mod tests {
     #[test]
     fn rank_link_neighborhood_boosts_outbound_and_backlinks() {
         let documents = vec![
-            document("wiki/topics/seed.md", Some("Seed")),
-            document("wiki/topics/outbound.md", Some("Outbound")),
-            document("wiki/topics/backlink.md", Some("Backlink")),
+            document("knowledge/topics/seed.md", Some("Seed")),
+            document("knowledge/topics/outbound.md", Some("Outbound")),
+            document("knowledge/topics/backlink.md", Some("Backlink")),
         ];
         let links = vec![
-            link("wiki/topics/seed.md", "wiki/topics/outbound.md"),
-            link("wiki/topics/backlink.md", "Seed"),
-            link("wiki/topics/outbound.md", "https://example.com"),
+            link("knowledge/topics/seed.md", "knowledge/topics/outbound.md"),
+            link("knowledge/topics/backlink.md", "Seed"),
+            link("knowledge/topics/outbound.md", "https://example.com"),
         ];
 
         let ranked = rank_link_neighborhood(
             &documents,
             &links,
-            &[PathBuf::from("wiki/topics/seed.md")],
+            &[PathBuf::from("knowledge/topics/seed.md")],
             10,
         );
 
         assert_eq!(ranked.len(), 2);
-        assert_eq!(ranked[0], (PathBuf::from("wiki/topics/outbound.md"), 1.0));
-        assert_eq!(ranked[1], (PathBuf::from("wiki/topics/backlink.md"), 0.8));
+        assert_eq!(
+            ranked[0],
+            (PathBuf::from("knowledge/topics/outbound.md"), 1.0)
+        );
+        assert_eq!(
+            ranked[1],
+            (PathBuf::from("knowledge/topics/backlink.md"), 0.8)
+        );
     }
 
     #[test]
     fn rank_link_neighborhood_filters_non_searchable_before_truncating() {
         let documents = vec![
-            document("wiki/topics/seed.md", Some("Seed")),
+            document("knowledge/topics/seed.md", Some("Seed")),
             document("meta/high.md", Some("High")),
-            document("wiki/topics/low.md", Some("Low")),
+            document("knowledge/topics/low.md", Some("Low")),
         ];
         let links = vec![
-            link("wiki/topics/seed.md", "meta/high.md"),
-            link("wiki/topics/low.md", "Seed"),
+            link("knowledge/topics/seed.md", "meta/high.md"),
+            link("knowledge/topics/low.md", "Seed"),
         ];
 
         let ranked = rank_link_neighborhood(
             &documents,
             &links,
-            &[PathBuf::from("wiki/topics/seed.md")],
+            &[PathBuf::from("knowledge/topics/seed.md")],
             1,
         );
 
-        assert_eq!(ranked, vec![(PathBuf::from("wiki/topics/low.md"), 0.8)]);
+        assert_eq!(
+            ranked,
+            vec![(PathBuf::from("knowledge/topics/low.md"), 0.8)]
+        );
     }
 
     #[test]
     fn rank_link_neighborhood_resolves_targets_relative_to_source() {
         let documents = vec![
-            document("wiki/topics/seed.md", Some("Seed")),
-            document("wiki/topics/outbound.md", Some("Outbound")),
+            document("knowledge/topics/seed.md", Some("Seed")),
+            document("knowledge/topics/outbound.md", Some("Outbound")),
         ];
-        let links = vec![link("wiki/topics/seed.md", "outbound.md")];
+        let links = vec![link("knowledge/topics/seed.md", "outbound.md")];
 
         let ranked = rank_link_neighborhood(
             &documents,
             &links,
-            &[PathBuf::from("wiki/topics/seed.md")],
+            &[PathBuf::from("knowledge/topics/seed.md")],
             10,
         );
 
         assert_eq!(
             ranked,
-            vec![(PathBuf::from("wiki/topics/outbound.md"), 1.0)]
+            vec![(PathBuf::from("knowledge/topics/outbound.md"), 1.0)]
         );
     }
 
@@ -466,7 +475,7 @@ mod tests {
     fn graph_boost_hits_marks_graph_source() {
         let hits = graph_boost_hits(
             SearchScope::topic("docs"),
-            vec![(PathBuf::from("wiki/topics/linked.md"), 1.0)],
+            vec![(PathBuf::from("knowledge/topics/linked.md"), 1.0)],
             10,
         );
 
@@ -474,7 +483,7 @@ mod tests {
         assert_eq!(hits[0].sources, vec![SearchSource::Graph]);
         assert_eq!(
             hits[0].provenance.document_path,
-            PathBuf::from("wiki/topics/linked.md")
+            PathBuf::from("knowledge/topics/linked.md")
         );
     }
 

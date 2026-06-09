@@ -269,12 +269,12 @@ mod tests {
         };
         let affected = vec![
             AffectedPage {
-                page_path: PathBuf::from("wiki/code/derived.md"),
+                page_path: PathBuf::from("code/derived.md"),
                 source_ids: vec!["source-derived".to_string()],
                 source_paths: vec![PathBuf::from("src/lib.rs")],
             },
             AffectedPage {
-                page_path: PathBuf::from("wiki/code/canonical.md"),
+                page_path: PathBuf::from("code/canonical.md"),
                 source_ids: vec!["source-canonical".to_string()],
                 source_paths: vec![PathBuf::from("src/canonical.rs")],
             },
@@ -285,7 +285,7 @@ mod tests {
         assert_eq!(selection.source_ids_to_refresh, vec!["source-derived"]);
         assert_eq!(
             selection.pages_to_mark_stale,
-            vec![PathBuf::from("wiki/code/canonical.md")]
+            vec![PathBuf::from("code/canonical.md")]
         );
     }
 }

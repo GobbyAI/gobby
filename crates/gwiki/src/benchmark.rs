@@ -5,6 +5,7 @@ use gobby_core::config::{
     AiCapability, AiRouting, EmbeddingConfig, FalkorConfig, QdrantConfig, resolve_embedding_config,
     resolve_falkordb_config, resolve_qdrant_config,
 };
+use gobby_core::degradation::DegradationKind;
 use gobby_core::falkor::GraphClient;
 use postgres::Client;
 use serde::Serialize;
@@ -59,6 +60,8 @@ pub struct RetrievalPrecisionReport {
     pub available: bool,
     pub examples: Vec<RetrievalPrecisionExample>,
     pub reason: Option<String>,
+    #[serde(skip)]
+    pub backend_degraded_sources: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -130,6 +133,7 @@ pub fn report_from_postgres(
         graph_coverage,
         retrieval_precision,
         source_mix,
+        &optional,
         model_provider,
     ))
 }
@@ -152,16 +156,20 @@ fn build_report(
     graph_coverage: GraphCoverageReport,
     retrieval_precision: RetrievalPrecisionReport,
     source_mix: SourceMixReport,
+    optional: &OptionalBenchmarkSources,
     model_provider: AvailabilityReport,
 ) -> BenchmarkReport {
     let mut degraded = BTreeSet::new();
     if !graph_coverage.available {
         degraded.insert(DEGRADE_FALKORDB.to_string());
     }
-    if !retrieval_precision.available {
+    if !qdrant_source_configured(optional) {
         degraded.insert(DEGRADE_QDRANT.to_string());
+    }
+    if optional.embedding.is_none() {
         degraded.insert(DEGRADE_EMBEDDINGS.to_string());
     }
+    degraded.extend(retrieval_precision.backend_degraded_sources.iter().cloned());
     if !model_provider.available {
         degraded.insert(DEGRADE_MODEL_PROVIDER.to_string());
     }
@@ -359,34 +367,28 @@ where
     E: QueryEmbedder,
     V: VectorSearchBackend,
 {
-    let qdrant_available = optional
+    let Some(qdrant) = optional
         .qdrant
         .as_ref()
-        .and_then(|config| config.url.as_deref())
-        .is_some_and(|url| !url.trim().is_empty());
-    let Some(qdrant) = optional.qdrant.as_ref().filter(|_| qdrant_available) else {
-        return RetrievalPrecisionReport {
-            available: false,
-            examples: Vec::new(),
-            reason: Some("Qdrant and embedding provider are not both configured".to_string()),
-        };
+        .filter(|_| qdrant_source_configured(optional))
+    else {
+        return unavailable_retrieval_precision(
+            "Qdrant and embedding provider are not both configured",
+            vec![DEGRADE_QDRANT.to_string()],
+        );
     };
     let Some(embedding) = optional.embedding.as_ref() else {
-        return RetrievalPrecisionReport {
-            available: false,
-            examples: Vec::new(),
-            reason: Some("Qdrant and embedding provider are not both configured".to_string()),
-        };
+        return unavailable_retrieval_precision(
+            "Qdrant and embedding provider are not both configured",
+            vec![DEGRADE_EMBEDDINGS.to_string()],
+        );
     };
     let candidates = seeded_retrieval_candidates(rows);
     if candidates.is_empty() {
-        return RetrievalPrecisionReport {
-            available: false,
-            examples: Vec::new(),
-            reason: Some(
-                "seeded project has no path-backed chunks for retrieval precision".to_string(),
-            ),
-        };
+        return unavailable_retrieval_precision(
+            "seeded project has no path-backed chunks for retrieval precision",
+            Vec::new(),
+        );
     }
 
     let embedding = SemanticEmbedding::Direct(embedding.clone());
@@ -405,19 +407,14 @@ where
         ) {
             Ok(outcome) => outcome,
             Err(error) => {
-                return RetrievalPrecisionReport {
-                    available: false,
-                    examples: Vec::new(),
-                    reason: Some(error.to_string()),
-                };
+                return unavailable_retrieval_precision(error.to_string(), Vec::new());
             }
         };
         if let Some(degradation) = outcome.degradation {
-            return RetrievalPrecisionReport {
-                available: false,
-                examples: Vec::new(),
-                reason: Some(format!("{degradation:?}")),
-            };
+            return unavailable_retrieval_precision(
+                format!("{degradation:?}"),
+                semantic_degraded_sources(&degradation),
+            );
         }
         let returned_path = outcome
             .hits
@@ -439,18 +436,46 @@ where
     }
 
     if examples.is_empty() {
-        return RetrievalPrecisionReport {
-            available: false,
-            examples,
-            reason: Some("semantic benchmark returned no retrieval examples".to_string()),
-        };
+        return unavailable_retrieval_precision(
+            "semantic benchmark returned no retrieval examples",
+            Vec::new(),
+        );
     }
 
     RetrievalPrecisionReport {
         available: true,
         examples,
         reason: None,
+        backend_degraded_sources: Vec::new(),
     }
+}
+
+fn unavailable_retrieval_precision(
+    reason: impl Into<String>,
+    backend_degraded_sources: Vec<String>,
+) -> RetrievalPrecisionReport {
+    RetrievalPrecisionReport {
+        available: false,
+        examples: Vec::new(),
+        reason: Some(reason.into()),
+        backend_degraded_sources,
+    }
+}
+
+fn semantic_degraded_sources(degradation: &DegradationKind) -> Vec<String> {
+    match degradation {
+        DegradationKind::ServiceUnavailable { service, .. } => vec![service.clone()],
+        DegradationKind::PartialSearch { unavailable, .. } => unavailable.clone(),
+        _ => Vec::new(),
+    }
+}
+
+fn qdrant_source_configured(optional: &OptionalBenchmarkSources) -> bool {
+    optional
+        .qdrant
+        .as_ref()
+        .and_then(|config| config.url.as_deref())
+        .is_some_and(|url| !url.trim().is_empty())
 }
 
 fn seeded_retrieval_candidates(rows: &BenchmarkRows) -> Vec<RetrievalPrecisionCandidate> {
@@ -680,21 +705,19 @@ mod tests {
 
     #[test]
     fn benchmark_report_marks_optional_sources_degraded_without_zero_fill() {
+        let optional = OptionalBenchmarkSources {
+            falkor: None,
+            qdrant: None,
+            embedding: None,
+            model_provider_available: false,
+        };
         let report = build_report(
             ScopeIdentity::topic("rust"),
             token_compression(&rows()),
             graph_coverage(&rows(), &SearchScope::topic("rust"), None),
-            retrieval_precision(
-                &rows(),
-                &SearchScope::topic("rust"),
-                &OptionalBenchmarkSources {
-                    falkor: None,
-                    qdrant: None,
-                    embedding: None,
-                    model_provider_available: false,
-                },
-            ),
+            retrieval_precision(&rows(), &SearchScope::topic("rust"), &optional),
             source_mix(&rows()),
+            &optional,
             AvailabilityReport {
                 available: false,
                 reason: Some("text model provider is not configured".to_string()),
@@ -719,6 +742,47 @@ mod tests {
                 "model_provider".to_string(),
                 "qdrant".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn benchmark_report_does_not_degrade_configured_backends_without_examples() {
+        let rows = BenchmarkRows {
+            document_paths: Vec::new(),
+            document_bodies: Vec::new(),
+            chunk_paths: Vec::new(),
+            chunk_contents: Vec::new(),
+            documents: 0,
+            links: 0,
+            sources: 0,
+            document_kinds: BTreeMap::new(),
+            source_kinds: BTreeMap::new(),
+        };
+        let optional = configured_optional_sources();
+        let mut embedder = FixedEmbedder;
+        let mut vector_backend = SequenceVectorBackend::new(Vec::new());
+        let retrieval_precision = retrieval_precision_with_backends(
+            &rows,
+            &SearchScope::topic("rust"),
+            &optional,
+            &mut embedder,
+            &mut vector_backend,
+        );
+        let report = build_report(
+            ScopeIdentity::topic("rust"),
+            token_compression(&rows),
+            graph_coverage(&rows, &SearchScope::topic("rust"), None),
+            retrieval_precision,
+            source_mix(&rows),
+            &optional,
+            model_provider(&optional),
+        );
+
+        assert!(!report.degraded_sources.contains(&"qdrant".to_string()));
+        assert!(!report.degraded_sources.contains(&"embeddings".to_string()));
+        assert_eq!(
+            report.retrieval_precision.reason.as_deref(),
+            Some("seeded project has no path-backed chunks for retrieval precision")
         );
     }
 }

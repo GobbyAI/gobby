@@ -201,7 +201,7 @@ mod tests {
             byte_end: 96,
         };
         let section = WikiSectionRef {
-            page_path: PathBuf::from("wiki/topics/provenance.md"),
+            page_path: PathBuf::from("knowledge/topics/provenance.md"),
             heading: "Durable provenance".to_string(),
             section_id: "durable-provenance".to_string(),
         };
@@ -238,7 +238,7 @@ mod tests {
                 byte_end: 42,
             },
             section: WikiSectionRef {
-                page_path: PathBuf::from("wiki/topics/roundtrip.md"),
+                page_path: PathBuf::from("knowledge/topics/roundtrip.md"),
                 heading: "Roundtrip".to_string(),
                 section_id: "roundtrip".to_string(),
             },

@@ -292,7 +292,7 @@ fn is_code_result(hit: &SearchResultOutput) -> bool {
     hit.wiki_page
         .to_string_lossy()
         .replace('\\', "/")
-        .starts_with("wiki/code/files/")
+        .starts_with("code/files/")
 }
 
 fn synthesize(
@@ -590,8 +590,8 @@ mod tests {
             vec![
                 SearchResultOutput {
                     title: Some("Request handler".to_string()),
-                    fusion_key: "project:project-1:wiki/code/files/src/handler.rs.md".to_string(),
-                    wiki_page: PathBuf::from("wiki/code/files/src/handler.rs.md"),
+                    fusion_key: "project:project-1:code/files/src/handler.rs.md".to_string(),
+                    wiki_page: PathBuf::from("code/files/src/handler.rs.md"),
                     source_path: PathBuf::from("src/handler.rs"),
                     snippet: "fn handle() calls route().".to_string(),
                     score: 0.95,
@@ -659,7 +659,7 @@ mod tests {
                 },
                 WikiGraphDocument {
                     scope: scope.clone(),
-                    path: PathBuf::from("wiki/code/files/src/handler.rs.md"),
+                    path: PathBuf::from("code/files/src/handler.rs.md"),
                     title: Some("Request handler".to_string()),
                 },
             ],
@@ -668,17 +668,17 @@ mod tests {
                 source_path: PathBuf::from("wiki/architecture.md"),
                 raw_target: "handler".to_string(),
                 target: WikiGraphLinkTarget::Resolved(PathBuf::from(
-                    "wiki/code/files/src/handler.rs.md",
+                    "code/files/src/handler.rs.md",
                 )),
             }],
             sources: vec![WikiGraphSource {
                 scope: scope.clone(),
                 source_path: PathBuf::from("src/handler.rs"),
-                document_path: PathBuf::from("wiki/code/files/src/handler.rs.md"),
+                document_path: PathBuf::from("code/files/src/handler.rs.md"),
             }],
             code_edges: vec![WikiGraphCodeEdge {
                 scope: scope.clone(),
-                document_path: PathBuf::from("wiki/code/files/src/handler.rs.md"),
+                document_path: PathBuf::from("code/files/src/handler.rs.md"),
                 source: "src/handler.rs:handle".to_string(),
                 target: "src/router.rs:route".to_string(),
                 kind: "calls".to_string(),
@@ -700,7 +700,7 @@ mod tests {
             vec!["shared_code_graph_unavailable".to_string()]
         );
         assert!(output.related_pages.iter().any(|page| {
-            page.path == PathBuf::from("wiki/code/files/src/handler.rs.md")
+            page.path == PathBuf::from("code/files/src/handler.rs.md")
                 && page.title.as_deref() == Some("Request handler")
         }));
         assert!(output.code_edges.iter().any(|edge| {
@@ -719,7 +719,7 @@ mod tests {
 
         let prompt = synthesis_prompt(&output);
         assert!(prompt.contains("Unified graph context:"));
-        assert!(prompt.contains("wiki/code/files/src/handler.rs.md"));
+        assert!(prompt.contains("code/files/src/handler.rs.md"));
         assert!(prompt.contains("src/handler.rs:42 (handle)"));
     }
 

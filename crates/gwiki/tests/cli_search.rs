@@ -46,7 +46,7 @@ mod serial_db {
     #[serial_test::serial(serial_db)]
     fn index_uses_configured_postgres_store() {
         let fixture = common::GwikiFixture::new();
-        let wiki_page = fixture.topic_vault("rust").join("wiki/topics/rust.md");
+        let wiki_page = fixture.topic_vault("rust").join("knowledge/topics/rust.md");
         std::fs::create_dir_all(wiki_page.parent().expect("wiki page parent")).expect("mkdir wiki");
         std::fs::write(&wiki_page, "# Ownership\n\nBorrowing and lifetimes.\n")
             .expect("write wiki");
@@ -113,7 +113,9 @@ mod serial_db {
         let topic = common::unique_topic("rust");
         let _cleanup = common::GwikiScopeCleanup::new(database_url.clone(), "topic", topic.clone());
         let unique_term = common::unique_topic("durablebm25").replace('-', "");
-        let wiki_page = fixture.topic_vault(&topic).join("wiki/topics/ownership.md");
+        let wiki_page = fixture
+            .topic_vault(&topic)
+            .join("knowledge/topics/ownership.md");
         std::fs::create_dir_all(wiki_page.parent().expect("wiki page parent")).expect("mkdir wiki");
         std::fs::write(
             &wiki_page,
@@ -155,7 +157,7 @@ mod serial_db {
         assert!(
             results
                 .iter()
-                .any(|result| result["wiki_page"].as_str() == Some("wiki/topics/ownership.md")),
+                .any(|result| result["wiki_page"].as_str() == Some("knowledge/topics/ownership.md")),
             "search did not return indexed wiki page\nstdout:\n{}",
             String::from_utf8_lossy(&search.stdout)
         );

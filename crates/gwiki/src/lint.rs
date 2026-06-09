@@ -135,13 +135,13 @@ pub(crate) struct WikiPage {
 }
 
 pub(crate) fn collect_pages(vault_root: &Path) -> Result<Vec<WikiPage>, WikiError> {
-    let wiki_root = vault_root.join("wiki");
-    if !wiki_root.exists() {
-        return Ok(Vec::new());
-    }
-
     let mut raw_pages = Vec::new();
-    collect_markdown_files(vault_root, &wiki_root, &mut raw_pages)?;
+    for root_name in ["knowledge", "code"] {
+        let page_root = vault_root.join(root_name);
+        if page_root.exists() {
+            collect_markdown_files(vault_root, &page_root, &mut raw_pages)?;
+        }
+    }
     raw_pages.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
 
     let known_targets = known_targets(&raw_pages);
@@ -318,7 +318,8 @@ fn ignored_target(target: &str) -> bool {
 fn link_lookup_targets(page: &WikiPage, link: &WikiLink) -> Vec<String> {
     let mut targets = vec![link.normalized_target.clone()];
     if (link.kind != LinkKind::Markdown && link.kind != LinkKind::Wikilink)
-        || link.normalized_target.starts_with("wiki/")
+        || link.normalized_target.starts_with("knowledge/")
+        || link.normalized_target.starts_with("code/")
         || link.normalized_target.starts_with("raw/")
         || link.normalized_target.starts_with("meta/")
         || Path::new(&link.normalized_target).is_absolute()
@@ -501,17 +502,17 @@ mod tests {
         let root = temp.path();
         write_page(
             root,
-            "wiki/topics/home.md",
+            "knowledge/topics/home.md",
             "---\ntitle: Home\n---\n# Home\nSee [[Linked]], [linked](linked.md), [[Missing]], and [gone](missing.md).\n",
         );
         write_page(
             root,
-            "wiki/topics/linked.md",
+            "knowledge/topics/linked.md",
             "---\ntitle: Linked\n---\n# Linked\nBack to [[Home]].\n",
         );
         write_page(
             root,
-            "wiki/topics/orphan.md",
+            "knowledge/topics/orphan.md",
             "---\ntitle: Orphan\n---\n# Orphan\nNo inbound links.\n",
         );
 
@@ -520,13 +521,13 @@ mod tests {
         assert_eq!(report.broken_links.len(), 2);
         assert_eq!(
             report.broken_links[0].path,
-            PathBuf::from("wiki/topics/home.md")
+            PathBuf::from("knowledge/topics/home.md")
         );
         assert_eq!(report.broken_links[0].target, "Missing");
         assert_eq!(report.broken_links[1].target, "missing.md");
         assert_eq!(
             report.orphan_pages,
-            vec![PathBuf::from("wiki/topics/orphan.md")]
+            vec![PathBuf::from("knowledge/topics/orphan.md")]
         );
     }
 
@@ -536,12 +537,12 @@ mod tests {
         let root = temp.path();
         write_page(
             root,
-            "wiki/code/repo.md",
-            "---\ntitle: Repository Overview\n---\n# Repository Overview\n[[modules/crates|crates]]\n",
+            "code/repo.md",
+            "---\ntitle: Repository Overview\n---\n# Repository Overview\n[[code/modules/crates|crates]]\n",
         );
         write_page(
             root,
-            "wiki/code/modules/crates.md",
+            "code/modules/crates.md",
             "---\ntitle: crates\n---\n# crates\n[[../repo|Repository Overview]]\n",
         );
 
@@ -553,7 +554,7 @@ mod tests {
     #[test]
     fn relative_markdown_links_clamp_traversal_at_vault_root() {
         assert_eq!(
-            normalize_path_components("wiki/topics", "../../../outside.md"),
+            normalize_path_components("knowledge/topics", "../../../outside.md"),
             "outside.md"
         );
     }
@@ -563,14 +564,14 @@ mod tests {
         assert!(ignored_target("//cdn.example.test/asset.png"));
         assert!(ignored_target(r"\\server\share\page.md"));
         assert!(ignored_target("https://example.test/page"));
-        assert!(!ignored_target("wiki/topics/page.md"));
+        assert!(!ignored_target("knowledge/topics/page.md"));
     }
 
     #[test]
     fn lint_is_read_only() {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path();
-        let relative = "wiki/topics/home.md";
+        let relative = "knowledge/topics/home.md";
         write_page(
             root,
             relative,

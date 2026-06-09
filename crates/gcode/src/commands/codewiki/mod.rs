@@ -462,7 +462,13 @@ fn generate_hierarchical_docs_with_graph_availability(
     input: &CodewikiInput,
     mut generate: Option<&mut TextGenerator<'_>>,
 ) -> Vec<(String, String)> {
-    generate_hierarchical_docs_core(input, None, &mut generate).expect("ownership disabled")
+    match generate_hierarchical_docs_core(input, None, &mut generate) {
+        Ok(docs) => docs,
+        Err(error) => {
+            log::warn!("codewiki generation failed without ownership metadata: {error}");
+            Vec::new()
+        }
+    }
 }
 
 fn generate_hierarchical_docs_with_ownership(

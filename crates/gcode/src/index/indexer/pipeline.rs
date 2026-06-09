@@ -337,6 +337,7 @@ pub(super) fn explicit_route_from_discovery(
 }
 
 fn normalize_existing_path(path: PathBuf) -> PathBuf {
+    // Fall back to the original path so transient explicit-file paths still reach cleanup.
     path.canonicalize().unwrap_or(path)
 }
 

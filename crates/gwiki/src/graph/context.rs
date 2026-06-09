@@ -471,7 +471,7 @@ mod tests {
                 doc(scope.clone(), "wiki/architecture.md", Some("Architecture")),
                 doc(
                     scope.clone(),
-                    "wiki/code/files/src/handler.rs.md",
+                    "code/files/src/handler.rs.md",
                     Some("src/handler.rs"),
                 ),
             ],
@@ -479,17 +479,17 @@ mod tests {
                 scope.clone(),
                 "wiki/architecture.md",
                 "Handler",
-                "wiki/code/files/src/handler.rs.md",
+                "code/files/src/handler.rs.md",
             )],
             sources: vec![source(
                 scope.clone(),
                 "src/handler.rs",
-                "wiki/code/files/src/handler.rs.md",
+                "code/files/src/handler.rs.md",
             )],
             code_edges: vec![
                 code_edge(
                     scope.clone(),
-                    "wiki/code/files/src/handler.rs.md",
+                    "code/files/src/handler.rs.md",
                     "src/handler.rs:handle",
                     "src/router.rs:route",
                     "calls",
@@ -498,7 +498,7 @@ mod tests {
                 ),
                 code_edge(
                     scope.clone(),
-                    "wiki/code/files/src/handler.rs.md",
+                    "code/files/src/handler.rs.md",
                     "src/main.rs:main",
                     "src/handler.rs:handle",
                     "callers",
@@ -507,7 +507,7 @@ mod tests {
                 ),
                 code_edge(
                     scope.clone(),
-                    "wiki/code/files/src/handler.rs.md",
+                    "code/files/src/handler.rs.md",
                     "src/handler.rs",
                     "crate::router",
                     "imports",
@@ -522,7 +522,7 @@ mod tests {
         let neighborhoods = json["neighborhoods"].as_array().expect("neighborhoods");
         let code = neighborhoods
             .iter()
-            .find(|node| node["path"] == "wiki/code/files/src/handler.rs.md")
+            .find(|node| node["path"] == "code/files/src/handler.rs.md")
             .expect("code neighborhood");
 
         assert!(
@@ -556,7 +556,7 @@ mod tests {
                 .expect("doc links")
                 .iter()
                 .any(|link| link["source"] == "wiki/architecture.md"
-                    && link["target"] == "wiki/code/files/src/handler.rs.md")
+                    && link["target"] == "code/files/src/handler.rs.md")
         );
     }
 

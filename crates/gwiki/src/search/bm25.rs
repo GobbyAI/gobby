@@ -160,15 +160,15 @@ pub fn is_keyword_searchable_path(path: &str) -> bool {
     if !normalized.ends_with(".md") {
         return false;
     }
-    normalized.starts_with("wiki/sources/")
-        || normalized.starts_with("wiki/concepts/")
-        || normalized.starts_with("wiki/topics/")
-        || normalized.starts_with("wiki/code/")
+    normalized.starts_with("knowledge/sources/")
+        || normalized.starts_with("knowledge/concepts/")
+        || normalized.starts_with("knowledge/topics/")
+        || normalized.starts_with("code/")
 }
 
 fn searchable_path_predicate(column: &str) -> String {
     format!(
-        "{column} = 'raw/INDEX.md' OR {column} LIKE 'wiki/sources/%.md' OR {column} LIKE 'wiki/concepts/%.md' OR {column} LIKE 'wiki/topics/%.md' OR {column} LIKE 'wiki/code/%.md'"
+        "{column} = 'raw/INDEX.md' OR {column} LIKE 'knowledge/sources/%.md' OR {column} LIKE 'knowledge/concepts/%.md' OR {column} LIKE 'knowledge/topics/%.md' OR {column} LIKE 'code/%.md'"
     )
 }
 
@@ -361,10 +361,10 @@ mod tests {
     fn keyword_search_covers_generated_wiki_pages() {
         for path in [
             "raw/INDEX.md",
-            "wiki/sources/citation.md",
-            "wiki/concepts/ownership.md",
-            "wiki/topics/rust.md",
-            "wiki/code/modules/crates.md",
+            "knowledge/sources/citation.md",
+            "knowledge/concepts/ownership.md",
+            "knowledge/topics/rust.md",
+            "code/modules/crates.md",
         ] {
             assert!(
                 is_keyword_searchable_path(path),
@@ -422,7 +422,7 @@ mod tests {
             id: id.to_string(),
             title: Some("Ownership".to_string()),
             scope,
-            path: "wiki/topics/rust.md".into(),
+            path: "knowledge/topics/rust.md".into(),
             source_path: "raw/INDEX.md".into(),
             hit_kind: SearchHitKind::Chunk,
             snippet: "ownership borrowing lifetimes".to_string(),
@@ -436,7 +436,7 @@ mod tests {
                 heading: Some("Ownership".to_string()),
             }),
             provenance: crate::search::SearchProvenance {
-                document_path: "wiki/topics/rust.md".into(),
+                document_path: "knowledge/topics/rust.md".into(),
                 source_path: "raw/INDEX.md".into(),
                 source_kind: "topic".to_string(),
                 content_hash: Some("hash".to_string()),

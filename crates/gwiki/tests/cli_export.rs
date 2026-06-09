@@ -7,7 +7,7 @@ fn export_workflow_assets_writes_outputs_without_mutating_wiki_pages() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let hub = tmp.path().join("hub");
     let vault = hub.join("topics").join("rust");
-    let wiki_page = vault.join("wiki/topics/ownership.md");
+    let wiki_page = vault.join("knowledge/topics/ownership.md");
     fs::create_dir_all(wiki_page.parent().expect("wiki parent")).expect("create wiki dir");
     fs::write(&wiki_page, "# Ownership\n\nCanonical page.\n").expect("write wiki page");
     let before = fs::read_to_string(&wiki_page).expect("read before");

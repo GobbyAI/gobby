@@ -100,7 +100,7 @@ pub fn write_image_derived_markdown(
 }
 
 fn derived_markdown_path(record: &SourceRecord) -> PathBuf {
-    PathBuf::from("wiki")
+    PathBuf::from("knowledge")
         .join("sources")
         .join(format!("{}.md", record.id))
 }
@@ -420,7 +420,7 @@ mod tests {
         assert_eq!(client.calls.get(), 1);
         assert_eq!(
             result.path,
-            PathBuf::from("wiki/sources").join(format!("{}.md", record.id))
+            PathBuf::from("knowledge/sources").join(format!("{}.md", record.id))
         );
         assert!(result.degradation.is_none());
 
@@ -617,7 +617,7 @@ mod tests {
         let markdown = std::fs::read_to_string(temp.path().join(&first.path)).expect("markdown");
         assert!(markdown.contains("vision_degradation: second"));
         assert!(
-            std::fs::read_dir(temp.path().join("wiki/sources"))
+            std::fs::read_dir(temp.path().join("knowledge/sources"))
                 .expect("sources dir")
                 .all(|entry| !entry
                     .expect("dir entry")

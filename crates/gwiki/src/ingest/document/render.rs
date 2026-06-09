@@ -210,7 +210,7 @@ fn render_document_derived_markdown(
 }
 
 fn derived_markdown_path(record: &crate::sources::SourceRecord) -> PathBuf {
-    PathBuf::from("wiki")
+    PathBuf::from("knowledge")
         .join("sources")
         .join(format!("{}.md", record.id))
 }

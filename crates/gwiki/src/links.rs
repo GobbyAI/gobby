@@ -411,22 +411,25 @@ mod tests {
     #[test]
     fn extracts_all_link_shapes() {
         let markdown = concat!(
-            "See [[wiki/concepts/Existing Note|existing note]], ",
+            "See [[knowledge/concepts/Existing Note|existing note]], ",
             "[guide](docs/Guide.md), ",
             "[[Missing Note]], and ",
             "[gone](missing/page.md).\n",
         );
-        let links = extract_links(markdown, ["wiki/concepts/Existing Note", "docs/Guide"]);
+        let links = extract_links(markdown, ["knowledge/concepts/Existing Note", "docs/Guide"]);
 
         assert_eq!(links.len(), 4);
         assert_eq!(links[0].kind, LinkKind::Wikilink);
-        assert_eq!(links[0].target, "wiki/concepts/Existing Note");
-        assert_eq!(links[0].normalized_target, "wiki/concepts/Existing Note");
+        assert_eq!(links[0].target, "knowledge/concepts/Existing Note");
+        assert_eq!(
+            links[0].normalized_target,
+            "knowledge/concepts/Existing Note"
+        );
         assert_eq!(links[0].alias.as_deref(), Some("existing note"));
         assert!(links[0].resolved);
         assert_eq!(
             &markdown[links[0].byte_start..links[0].byte_end],
-            "[[wiki/concepts/Existing Note|existing note]]"
+            "[[knowledge/concepts/Existing Note|existing note]]"
         );
 
         assert_eq!(links[1].kind, LinkKind::Markdown);
@@ -498,7 +501,7 @@ mod tests {
     #[test]
     fn links_ignore_code_spans_and_fences() {
         let markdown = concat!(
-            "Use `[[files/{file}|{file}]]` as a template.\n",
+            "Use `[[code/files/{file}|{file}]]` as a template.\n",
             "```md\n",
             "[[Missing in fence]]\n",
             "[missing](inside-fence.md)\n",

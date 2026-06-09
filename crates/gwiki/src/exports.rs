@@ -267,7 +267,7 @@ mod tests {
     fn exports_do_not_mutate_wiki_state() {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path();
-        let wiki_page = root.join("wiki/topics/ownership.md");
+        let wiki_page = root.join("knowledge/topics/ownership.md");
         fs::create_dir_all(wiki_page.parent().expect("wiki parent")).expect("wiki dir");
         fs::write(&wiki_page, "# Ownership\n\nCanonical page.\n").expect("wiki page");
         let before = fs::read_to_string(&wiki_page).expect("read before");

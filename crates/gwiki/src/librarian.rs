@@ -480,17 +480,17 @@ mod tests {
         .expect("source registered");
         write_page(
             root,
-            "wiki/topics/stale.md",
+            "knowledge/topics/stale.md",
             "---\ntitle: Stale\nstale: true\n---\n# Stale\nUnsupported operational claim.\nSee [[Missing]].\n",
         );
         write_page(
             root,
-            "wiki/code/example.md",
+            "code/example.md",
             "---\ntitle: Example code\ngenerated_by: gcode-codewiki\nsource_spans:\n  - path: src/lib.rs\n    start_line: 1\n    end_line: 1\ncodewiki_status: stale\n---\n# Example code\nDocuments old code.\n",
         );
 
         let original_page =
-            std::fs::read_to_string(root.join("wiki/topics/stale.md")).expect("read page");
+            std::fs::read_to_string(root.join("knowledge/topics/stale.md")).expect("read page");
         let report = run(
             root,
             ScopeIdentity::topic("ops"),
@@ -503,24 +503,24 @@ mod tests {
 
         assert_eq!(
             report.check("stale_pages").items,
-            vec![PathBuf::from("wiki/topics/stale.md")]
+            vec![PathBuf::from("knowledge/topics/stale.md")]
         );
         assert_eq!(
             report.check("missing_citations").items,
-            vec![PathBuf::from("wiki/topics/stale.md")]
+            vec![PathBuf::from("knowledge/topics/stale.md")]
         );
         assert_eq!(
             report.check("broken_links").items,
-            vec![PathBuf::from("wiki/topics/stale.md")]
+            vec![PathBuf::from("knowledge/topics/stale.md")]
         );
         assert_eq!(
             report.check("weak_provenance").items,
-            vec![PathBuf::from("wiki/code/example.md")]
+            vec![PathBuf::from("code/example.md")]
         );
         assert!(report.check("outdated_codewiki").available);
         assert_eq!(
             report.check("outdated_codewiki").items,
-            vec![PathBuf::from("wiki/code/example.md")]
+            vec![PathBuf::from("code/example.md")]
         );
         assert!(report.check("outdated_codewiki").note.is_none());
         assert!(!report.check("patch_suggestions").available);
@@ -537,7 +537,7 @@ mod tests {
                 .all(|diff| diff.applies_to_canonical_content)
         );
         assert_eq!(
-            std::fs::read_to_string(root.join("wiki/topics/stale.md")).expect("read page"),
+            std::fs::read_to_string(root.join("knowledge/topics/stale.md")).expect("read page"),
             original_page
         );
         assert!(root.join("meta/librarian/proposals.json").exists());
@@ -557,7 +557,7 @@ mod tests {
         let root = temp.path();
         write_page(
             root,
-            "wiki/topics/page.md",
+            "knowledge/topics/page.md",
             "---\ntitle: Page\n---\n# Page\nSupported enough. [source](https://example.com)\n",
         );
 
@@ -583,7 +583,7 @@ mod tests {
         let root = temp.path();
         write_page(
             root,
-            "wiki/code/example.md",
+            "code/example.md",
             "---\ntitle: Example code\ngenerated_by: gcode-codewiki\nsource_spans:\n  - path: src/lib.rs\n    start_line: 1\n    end_line: 1\ncodewiki_status: stale\n---\n# Example code\nDocuments old code.\n",
         );
 
@@ -602,9 +602,14 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn librarian_requires_configured_postgres_index() {
+        let _guard = ENV_TEST_LOCK.lock().expect("env test lock");
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path();
-        write_page(root, "wiki/topics/page.md", "# Page\n\nSupported enough.\n");
+        write_page(
+            root,
+            "knowledge/topics/page.md",
+            "# Page\n\nSupported enough.\n",
+        );
         let _database_url = EnvGuard::set(
             "GWIKI_DATABASE_URL",
             OsStr::new("postgresql://127.0.0.1:1/gwiki"),

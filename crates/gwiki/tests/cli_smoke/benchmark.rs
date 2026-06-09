@@ -10,7 +10,7 @@ fn benchmark_reports_seeded_fixture_and_degraded_optional_sources() {
     let topic = common::unique_topic("benchmark");
     let _cleanup = common::GwikiScopeCleanup::new(database_url.clone(), "topic", topic.clone());
     let vault = fixture.topic_vault(&topic);
-    let wiki_dir = vault.join("wiki/topics");
+    let wiki_dir = vault.join("knowledge/topics");
     fs::create_dir_all(&wiki_dir).expect("create wiki dir");
     fs::write(
         wiki_dir.join("ownership.md"),

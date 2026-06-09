@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use gobby_core::ai::{daemon, effective_route, text};
 use gobby_core::ai_context::{AiConfigSource, AiContext, AiContextOptions};
@@ -167,14 +167,11 @@ fn code_citations_from_search_results(
 }
 
 fn is_code_result(path: &Path) -> bool {
-    normalized_path(path).starts_with("wiki/code/files/")
+    normalized_path(path).starts_with("code/files/")
 }
 
 fn normalized_path(path: &Path) -> String {
-    path.components()
-        .collect::<PathBuf>()
-        .to_string_lossy()
-        .replace('\\', "/")
+    path.to_string_lossy().replace('\\', "/")
 }
 
 pub(crate) struct CommandRead {

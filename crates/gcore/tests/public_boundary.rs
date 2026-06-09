@@ -45,7 +45,7 @@ fn cargo_features_define_public_boundary() {
         r#"rand = { version = "0.8", optional = true }"#,
         r#"ureq = { version = "2", optional = true }"#,
         r#"ignore = { version = "0.4", optional = true }"#,
-        r#"sha2 = { version = "0.10", optional = true }"#,
+        r#"sha2 = { version = "0.11", optional = true }"#,
         r#"urlencoding = { version = "2", optional = true }"#,
     ] {
         assert!(

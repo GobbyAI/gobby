@@ -612,11 +612,11 @@ mod tests {
                 output: "review-report.md".to_string(),
             },
             affected_pages: vec![AffectedPage {
-                page_path: PathBuf::from("wiki/code/lib.md"),
+                page_path: PathBuf::from("code/lib.md"),
                 source_ids: vec!["src-lib".to_string()],
                 source_paths: vec![PathBuf::from("src/lib.rs")],
             }],
-            stale_pages: vec![PathBuf::from("wiki/code/lib.md")],
+            stale_pages: vec![PathBuf::from("code/lib.md")],
             neighborhoods: vec![CodeGraphEdge {
                 edge: "CALLS".to_string(),
                 source: "symbol-a".to_string(),
@@ -668,7 +668,7 @@ mod tests {
         assert!(markdown.contains("## Risky dependency shifts"));
         assert!(markdown.contains("symbol-a"));
         assert!(markdown.contains("## Affected wiki pages"));
-        assert!(markdown.contains("wiki/code/lib.md"));
+        assert!(markdown.contains("code/lib.md"));
     }
 
     #[test]

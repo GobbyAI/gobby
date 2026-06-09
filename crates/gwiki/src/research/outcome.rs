@@ -94,14 +94,16 @@ pub(crate) fn outcome_degradations(payload: &Value) -> Vec<String> {
 pub(crate) fn dedup_code_citations(
     citations: Vec<ResearchCodeCitation>,
 ) -> Vec<ResearchCodeCitation> {
+    let mut seen = HashSet::new();
     let mut deduped = Vec::new();
     for citation in citations {
-        if !deduped.iter().any(|existing: &ResearchCodeCitation| {
-            existing.file == citation.file
-                && existing.line == citation.line
-                && existing.symbol == citation.symbol
-                && existing.provenance == citation.provenance
-        }) {
+        let key = (
+            citation.file.clone(),
+            citation.line,
+            citation.symbol.clone(),
+            citation.provenance.clone(),
+        );
+        if seen.insert(key) {
             deduped.push(citation);
         }
     }
@@ -314,6 +316,25 @@ mod tests {
                 "c".to_string(),
             ]),
             vec!["a", "b", "c"]
+        );
+    }
+
+    #[test]
+    fn dedup_code_citations_preserves_first_seen_order() {
+        let citation = ResearchCodeCitation {
+            file: "src/lib.rs".to_string(),
+            line: Some(7),
+            symbol: Some("handler".to_string()),
+            provenance: vec!["search".to_string()],
+        };
+        let other = ResearchCodeCitation {
+            symbol: Some("service".to_string()),
+            ..citation.clone()
+        };
+
+        assert_eq!(
+            dedup_code_citations(vec![citation.clone(), other.clone(), citation.clone()]),
+            vec![citation, other]
         );
     }
 

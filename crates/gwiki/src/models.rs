@@ -236,7 +236,7 @@ mod tests {
             WikiScope::Project {
                 project_id: "project-1".to_string(),
             },
-            "wiki/topics/a.md",
+            "knowledge/topics/a.md",
             WikiSourceKind::Topic,
             "hash",
             Value::Null,

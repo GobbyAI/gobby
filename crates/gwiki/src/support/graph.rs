@@ -162,9 +162,9 @@ mod tests {
     fn graph_uses_distinct_source_document_paths() {
         let mut store = MemoryWikiStore::default();
         store.documents.insert(
-            PathBuf::from("wiki/topics/rust.md"),
+            PathBuf::from("knowledge/topics/rust.md"),
             WikiDocument {
-                path: PathBuf::from("wiki/topics/rust.md"),
+                path: PathBuf::from("knowledge/topics/rust.md"),
                 kind: WikiDocumentKind::Topic,
                 title: Some("Rust".to_string()),
                 content_hash: "hash".to_string(),
@@ -175,7 +175,7 @@ mod tests {
             PathBuf::from("raw/source.md"),
             WikiSource {
                 path: PathBuf::from("raw/source.md"),
-                document_path: PathBuf::from("wiki/topics/rust.md"),
+                document_path: PathBuf::from("knowledge/topics/rust.md"),
                 kind: WikiDocumentKind::SourceNote,
                 content_hash: "hash".to_string(),
             },
@@ -185,14 +185,17 @@ mod tests {
         let source = &graph.graph_facts_for_tests().sources[0];
 
         assert_eq!(source.source_path, PathBuf::from("raw/source.md"));
-        assert_eq!(source.document_path, PathBuf::from("wiki/topics/rust.md"));
+        assert_eq!(
+            source.document_path,
+            PathBuf::from("knowledge/topics/rust.md")
+        );
     }
 
     #[test]
     fn graph_rejects_url_like_external_targets() {
         let store = MemoryWikiStore::default();
         let slug_targets = slug_target_map(&store);
-        let source = Path::new("wiki/topics/source.md");
+        let source = Path::new("knowledge/topics/source.md");
 
         assert!(
             resolve_graph_target("//cdn.example.test/page", source, &store, &slug_targets)
@@ -208,9 +211,9 @@ mod tests {
     fn graph_resolves_slug_targets_from_precomputed_map() {
         let mut store = MemoryWikiStore::default();
         store.documents.insert(
-            PathBuf::from("wiki/topics/rust-async.md"),
+            PathBuf::from("knowledge/topics/rust-async.md"),
             WikiDocument {
-                path: PathBuf::from("wiki/topics/rust-async.md"),
+                path: PathBuf::from("knowledge/topics/rust-async.md"),
                 kind: WikiDocumentKind::Topic,
                 title: Some("Rust Async".to_string()),
                 content_hash: "hash".to_string(),
@@ -222,12 +225,12 @@ mod tests {
         assert_eq!(
             resolve_graph_target(
                 "Rust Async",
-                Path::new("wiki/topics/source.md"),
+                Path::new("knowledge/topics/source.md"),
                 &store,
                 &slug_targets
             ),
             Some(graph::WikiGraphLinkTarget::Resolved(PathBuf::from(
-                "wiki/topics/rust-async.md"
+                "knowledge/topics/rust-async.md"
             )))
         );
     }
@@ -236,9 +239,9 @@ mod tests {
     fn graph_resolves_relative_targets_from_source_document_directory() {
         let mut store = MemoryWikiStore::default();
         for path in [
-            "wiki/topics/nested/source.md",
-            "wiki/topics/nested/bar.md",
-            "wiki/topics/concepts/foo.md",
+            "knowledge/topics/nested/source.md",
+            "knowledge/topics/nested/bar.md",
+            "knowledge/topics/concepts/foo.md",
         ] {
             store.documents.insert(
                 PathBuf::from(path),
@@ -252,18 +255,18 @@ mod tests {
             );
         }
         let slug_targets = slug_target_map(&store);
-        let source = Path::new("wiki/topics/nested/source.md");
+        let source = Path::new("knowledge/topics/nested/source.md");
 
         assert_eq!(
             resolve_graph_target("bar.md", source, &store, &slug_targets),
             Some(graph::WikiGraphLinkTarget::Resolved(PathBuf::from(
-                "wiki/topics/nested/bar.md"
+                "knowledge/topics/nested/bar.md"
             )))
         );
         assert_eq!(
             resolve_graph_target("../concepts/foo.md", source, &store, &slug_targets),
             Some(graph::WikiGraphLinkTarget::Resolved(PathBuf::from(
-                "wiki/topics/concepts/foo.md"
+                "knowledge/topics/concepts/foo.md"
             )))
         );
     }

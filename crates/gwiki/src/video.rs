@@ -325,7 +325,7 @@ fn frame_sample(asset_path: &Path, timestamp_seconds: u32) -> VideoFrameSample {
 }
 
 fn derived_markdown_path(record: &SourceRecord) -> PathBuf {
-    PathBuf::from("wiki")
+    PathBuf::from("knowledge")
         .join("sources")
         .join(format!("{}.md", record.id))
 }

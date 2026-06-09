@@ -288,9 +288,9 @@ mod tests {
     #[test]
     fn semantic_unavailable_degrades() {
         let mut bm25 = bm25::MemoryBm25Backend::new(vec![search_result(
-            "bm25:wiki/topics/rust.md:0",
+            "bm25:knowledge/topics/rust.md:0",
             SearchScope::project("project-1"),
-            "wiki/topics/rust.md",
+            "knowledge/topics/rust.md",
         )]);
         let mut semantic = semantic::UnavailableSemanticBackend;
         let mut graph = graph_boost::NoopGraphBoostBackend;
@@ -333,9 +333,9 @@ mod tests {
     fn graph_linked_pages_enter_search_results() {
         let scope = SearchScope::project("project-1");
         let mut bm25 = bm25::MemoryBm25Backend::new(vec![search_result(
-            "document:wiki/topics/seed.md",
+            "document:knowledge/topics/seed.md",
             scope.clone(),
-            "wiki/topics/seed.md",
+            "knowledge/topics/seed.md",
         )]);
         let mut semantic = semantic::UnavailableSemanticBackend;
         let mut graph = graph_boost::MemoryGraphBoostBackend::new(memory_graph(scope.clone()));
@@ -356,7 +356,9 @@ mod tests {
         let linked = response
             .results
             .iter()
-            .find(|result| result.path.as_path() == std::path::Path::new("wiki/topics/linked.md"))
+            .find(|result| {
+                result.path.as_path() == std::path::Path::new("knowledge/topics/linked.md")
+            })
             .expect("linked page is included");
         assert!(linked.sources.contains(&SearchSource::Graph));
     }
@@ -365,9 +367,9 @@ mod tests {
     fn combined_partial_search_reports_all_unavailable_sources_once() {
         let scope = SearchScope::project("project-1");
         let mut bm25 = bm25::MemoryBm25Backend::new(vec![search_result(
-            "bm25:wiki/topics/rust.md:0",
+            "bm25:knowledge/topics/rust.md:0",
             scope.clone(),
-            "wiki/topics/rust.md",
+            "knowledge/topics/rust.md",
         )]);
         let mut semantic = semantic::UnavailableSemanticBackend;
         let mut graph = DegradedGraphBackend;
@@ -433,15 +435,15 @@ mod tests {
         let mut graph = crate::graph::MemoryWikiGraph::default();
         graph.replace_facts(crate::graph::WikiGraphFacts {
             documents: vec![
-                graph_doc(scope.clone(), "wiki/topics/seed.md"),
-                graph_doc(scope.clone(), "wiki/topics/linked.md"),
+                graph_doc(scope.clone(), "knowledge/topics/seed.md"),
+                graph_doc(scope.clone(), "knowledge/topics/linked.md"),
             ],
             links: vec![crate::graph::WikiGraphLink {
                 scope,
-                source_path: PathBuf::from("wiki/topics/seed.md"),
-                raw_target: "wiki/topics/linked.md".to_string(),
+                source_path: PathBuf::from("knowledge/topics/seed.md"),
+                raw_target: "knowledge/topics/linked.md".to_string(),
                 target: crate::graph::WikiGraphLinkTarget::Resolved(PathBuf::from(
-                    "wiki/topics/linked.md",
+                    "knowledge/topics/linked.md",
                 )),
             }],
             sources: Vec::new(),

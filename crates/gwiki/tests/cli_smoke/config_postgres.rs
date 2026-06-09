@@ -19,14 +19,14 @@ fn command_outputs_do_not_emit_static_placeholder_results() {
     common::assert_success(&init, "init");
 
     let vault = fixture.topic_vault(&topic);
-    fs::create_dir_all(vault.join("wiki/topics")).expect("create topic dir");
+    fs::create_dir_all(vault.join("knowledge/topics")).expect("create topic dir");
     fs::write(
-        vault.join("wiki/topics/ownership.md"),
+        vault.join("knowledge/topics/ownership.md"),
         "# Ownership\n\nOwnership placeholderneedle evidence.\n",
     )
     .expect("write ownership page");
     fs::write(
-        vault.join("wiki/topics/rust.md"),
+        vault.join("knowledge/topics/rust.md"),
         "# Rust\n\nRust links to [[Ownership]]. Missing [[Borrow checker]].\n",
     )
     .expect("write rust page");
@@ -82,7 +82,7 @@ fn command_outputs_do_not_emit_static_placeholder_results() {
             "backlinks",
             "--topic",
             &topic,
-            "wiki/topics/ownership.md",
+            "knowledge/topics/ownership.md",
         ],
     );
     common::assert_success(&backlinks, "backlinks");
@@ -194,9 +194,9 @@ fn configured_index_uses_postgres_writer_when_database_url_is_set() {
     let topic = fixture.init_topic("pg-writer-contract");
     let invalid_database_url = "postgresql://127.0.0.1:1/gwiki";
 
-    fs::create_dir_all(topic.vault.join("wiki/topics")).expect("create topic dir");
+    fs::create_dir_all(topic.vault.join("knowledge/topics")).expect("create topic dir");
     fs::write(
-        topic.vault.join("wiki/topics/durable-search.md"),
+        topic.vault.join("knowledge/topics/durable-search.md"),
         "# Durable Search\n\nConfigured indexing must use PostgreSQL.\n",
     )
     .expect("write topic page");
@@ -257,9 +257,9 @@ mod serial_db {
         );
         common::assert_success(&setup, "setup");
 
-        fs::create_dir_all(topic.vault.join("wiki/topics")).expect("create topic dir");
+        fs::create_dir_all(topic.vault.join("knowledge/topics")).expect("create topic dir");
         fs::write(
-            topic.vault.join("wiki/topics/durable-search.md"),
+            topic.vault.join("knowledge/topics/durable-search.md"),
             "# Durable Search\n\nDurable bm25needle content is searchable after indexing.\n",
         )
         .expect("write topic page");
@@ -294,7 +294,7 @@ mod serial_db {
             .expect("search results array");
         assert!(
             results.iter().any(|result| {
-                result["wiki_page"] == "wiki/topics/durable-search.md"
+                result["wiki_page"] == "knowledge/topics/durable-search.md"
                     && result["sources"]
                         .as_array()
                         .is_some_and(|sources| sources.iter().any(|source| source == "bm25"))

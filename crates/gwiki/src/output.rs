@@ -287,8 +287,8 @@ mod tests {
             2,
             vec![SearchResultOutput {
                 title: Some("Ownership".to_string()),
-                fusion_key: "topic:rust:wiki/topics/ownership.md".to_string(),
-                wiki_page: "wiki/topics/ownership.md".into(),
+                fusion_key: "topic:rust:knowledge/topics/ownership.md".to_string(),
+                wiki_page: "knowledge/topics/ownership.md".into(),
                 source_path: "raw/INDEX.md".into(),
                 snippet: "Ownership rules move values.".to_string(),
                 score: 0.91,
@@ -307,7 +307,7 @@ mod tests {
             "Ownership controls value moves.",
             vec![QueryCitation {
                 source_path: "raw/INDEX.md".into(),
-                wiki_page: "wiki/topics/ownership.md".into(),
+                wiki_page: "knowledge/topics/ownership.md".into(),
                 title: Some("Ownership".to_string()),
                 lines: Some("4-8".to_string()),
             }],
@@ -328,8 +328,8 @@ mod tests {
                 "limit": 2,
                 "results": [{
                     "title": "Ownership",
-                    "fusion_key": "topic:rust:wiki/topics/ownership.md",
-                    "wiki_page": "wiki/topics/ownership.md",
+                    "fusion_key": "topic:rust:knowledge/topics/ownership.md",
+                    "wiki_page": "knowledge/topics/ownership.md",
                     "source_path": "raw/INDEX.md",
                     "snippet": "Ownership rules move values.",
                     "score": 0.91,
@@ -352,7 +352,7 @@ mod tests {
                 "answer": "Ownership controls value moves.",
                 "citations": [{
                     "source_path": "raw/INDEX.md",
-                    "wiki_page": "wiki/topics/ownership.md",
+                    "wiki_page": "knowledge/topics/ownership.md",
                     "title": "Ownership",
                     "lines": "4-8"
                 }]
@@ -378,7 +378,7 @@ mod tests {
             "See the Ownership page.",
             vec![QueryCitation {
                 source_path: "raw/rust-book.md".into(),
-                wiki_page: "wiki/topics/ownership.md".into(),
+                wiki_page: "knowledge/topics/ownership.md".into(),
                 title: Some("Ownership".to_string()),
                 lines: Some("12-21".to_string()),
             }],
@@ -391,11 +391,11 @@ mod tests {
         );
         assert_eq!(
             citation.wiki_page,
-            std::path::PathBuf::from("wiki/topics/ownership.md")
+            std::path::PathBuf::from("knowledge/topics/ownership.md")
         );
 
         let rendered = render_query_text(&query);
         assert!(rendered.contains("Source: raw/rust-book.md"));
-        assert!(rendered.contains("Wiki: wiki/topics/ownership.md"));
+        assert!(rendered.contains("Wiki: knowledge/topics/ownership.md"));
     }
 }

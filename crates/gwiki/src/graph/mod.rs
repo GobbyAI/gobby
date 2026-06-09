@@ -526,7 +526,7 @@ fn scoped_id(scope: &SearchScope, kind: &str, value: &str) -> String {
 
 fn document_kind(path: &Path) -> &'static str {
     let graph_path = graph_path(path);
-    if graph_path.starts_with("wiki/") {
+    if graph_path.starts_with("knowledge/") {
         "wiki_page"
     } else if graph_path.starts_with("code/") || is_code_path(path) {
         "code"
@@ -586,25 +586,25 @@ mod tests {
             documents: vec![
                 WikiGraphDocument {
                     scope: SearchScope::project("project-1"),
-                    path: "wiki/topics/rust.md".into(),
+                    path: "knowledge/topics/rust.md".into(),
                     title: Some("Rust".to_string()),
                 },
                 WikiGraphDocument {
                     scope: SearchScope::project("project-1"),
-                    path: "wiki/concepts/ownership.md".into(),
+                    path: "knowledge/concepts/ownership.md".into(),
                     title: Some("Ownership".to_string()),
                 },
             ],
             links: vec![
                 WikiGraphLink {
                     scope: SearchScope::project("project-1"),
-                    source_path: "wiki/topics/rust.md".into(),
+                    source_path: "knowledge/topics/rust.md".into(),
                     raw_target: "Ownership".to_string(),
-                    target: WikiGraphLinkTarget::Resolved("wiki/concepts/ownership.md".into()),
+                    target: WikiGraphLinkTarget::Resolved("knowledge/concepts/ownership.md".into()),
                 },
                 WikiGraphLink {
                     scope: SearchScope::project("project-1"),
-                    source_path: "wiki/topics/rust.md".into(),
+                    source_path: "knowledge/topics/rust.md".into(),
                     raw_target: "Borrow checker".to_string(),
                     target: WikiGraphLinkTarget::Unresolved("Borrow checker".to_string()),
                 },
@@ -612,7 +612,7 @@ mod tests {
             sources: vec![WikiGraphSource {
                 scope: SearchScope::project("project-1"),
                 source_path: "raw/INDEX.md".into(),
-                document_path: "wiki/topics/rust.md".into(),
+                document_path: "knowledge/topics/rust.md".into(),
             }],
             code_edges: Vec::new(),
         };
@@ -692,23 +692,26 @@ mod tests {
             documents: vec![
                 doc(
                     SearchScope::project("project-1"),
-                    "wiki/concepts/ownership.md",
+                    "knowledge/concepts/ownership.md",
                 ),
-                doc(SearchScope::project("project-1"), "wiki/topics/rust.md"),
-                doc(SearchScope::topic("rust"), "wiki/topics/rust.md"),
+                doc(
+                    SearchScope::project("project-1"),
+                    "knowledge/topics/rust.md",
+                ),
+                doc(SearchScope::topic("rust"), "knowledge/topics/rust.md"),
             ],
             links: vec![
                 resolved_link(
                     SearchScope::project("project-1"),
-                    "wiki/topics/rust.md",
+                    "knowledge/topics/rust.md",
                     "Ownership",
-                    "wiki/concepts/ownership.md",
+                    "knowledge/concepts/ownership.md",
                 ),
                 resolved_link(
                     SearchScope::topic("rust"),
-                    "wiki/topics/rust.md",
+                    "knowledge/topics/rust.md",
                     "Ownership",
-                    "wiki/concepts/ownership.md",
+                    "knowledge/concepts/ownership.md",
                 ),
             ],
             sources: Vec::new(),
@@ -717,14 +720,14 @@ mod tests {
 
         let backlinks = graph.backlinks(
             &SearchScope::project("project-1"),
-            "wiki/concepts/ownership.md",
+            "knowledge/concepts/ownership.md",
         );
 
         assert_eq!(backlinks.len(), 1);
         assert_eq!(backlinks[0].scope, SearchScope::project("project-1"));
         assert_eq!(
             backlinks[0].source_path,
-            PathBuf::from("wiki/topics/rust.md")
+            PathBuf::from("knowledge/topics/rust.md")
         );
     }
 
@@ -736,27 +739,27 @@ mod tests {
         graph.replace_facts(WikiGraphFacts {
             documents: vec![doc(
                 SearchScope::project("project-1"),
-                "wiki/topics/rust.md",
+                "knowledge/topics/rust.md",
             )],
             links: vec![
                 unresolved_link(
                     SearchScope::project("project-1"),
-                    "wiki/topics/rust.md",
+                    "knowledge/topics/rust.md",
                     "Ownership",
                 ),
                 unresolved_link(
                     SearchScope::project("project-1"),
-                    "wiki/concepts/lifetime.md",
+                    "knowledge/concepts/lifetime.md",
                     "Ownership",
                 ),
                 unresolved_link(
                     SearchScope::project("project-1"),
-                    "wiki/topics/rust.md",
+                    "knowledge/topics/rust.md",
                     "Borrow checker",
                 ),
                 unresolved_link(
                     SearchScope::topic("rust"),
-                    "wiki/topics/rust.md",
+                    "knowledge/topics/rust.md",
                     "Ownership",
                 ),
             ],

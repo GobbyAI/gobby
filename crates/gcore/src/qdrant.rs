@@ -231,7 +231,7 @@ pub fn collection_schema(
     }
 
     let data: Value = resp.json()?;
-    Ok(parse_collection_schema(&data))
+    Ok(Some(parse_collection_schema(&data)))
 }
 
 /// Delete all points matching a Qdrant filter.
@@ -409,17 +409,17 @@ fn parse_point_id(id: &Value) -> Option<String> {
     }
 }
 
-fn parse_collection_schema(data: &Value) -> Option<ExistingVectorCollectionSchema> {
-    let vectors = data.pointer("/result/config/params/vectors")?;
+fn parse_collection_schema(data: &Value) -> ExistingVectorCollectionSchema {
+    let vectors = data.pointer("/result/config/params/vectors");
     let size = vectors
-        .get("size")
+        .and_then(|vectors| vectors.get("size"))
         .and_then(Value::as_u64)
         .and_then(|size| usize::try_from(size).ok());
     let distance = vectors
-        .get("distance")
+        .and_then(|vectors| vectors.get("distance"))
         .and_then(Value::as_str)
         .map(str::to_string);
-    Some(ExistingVectorCollectionSchema { size, distance })
+    ExistingVectorCollectionSchema { size, distance }
 }
 
 fn ensure_compatible_collection(
@@ -427,11 +427,8 @@ fn ensure_compatible_collection(
     expected: &VectorCollectionSchema,
     found: &ExistingVectorCollectionSchema,
 ) -> anyhow::Result<()> {
-    if found.size.is_some_and(|size| size != expected.size)
-        || found
-            .distance
-            .as_ref()
-            .is_some_and(|distance| distance != &expected.distance)
+    if found.size != Some(expected.size)
+        || found.distance.as_deref() != Some(expected.distance.as_str())
     {
         anyhow::bail!(
             "Qdrant collection `{collection}` has incompatible schema: expected size {} distance {}, found size {:?} distance {:?}",
@@ -890,6 +887,23 @@ mod tests {
 
         assert!(!is_qdrant_unreachable(&client_error));
         assert!(is_qdrant_unreachable(&server_error));
+    }
+
+    #[test]
+    fn qdrant_collection_schema_rejects_named_or_unrecognized_vectors() {
+        let expected = VectorCollectionSchema {
+            size: 3,
+            distance: "Cosine".to_string(),
+        };
+        for data in [
+            json!({"result":{"config":{"params":{"vectors":{"default":{"size":3,"distance":"Cosine"}}}}}}),
+            json!({"result":{"config":{"params":{}}}}),
+        ] {
+            let found = parse_collection_schema(&data);
+            let error = ensure_compatible_collection("test", &expected, &found)
+                .expect_err("incomplete schema should be rejected");
+            assert!(error.to_string().contains("incompatible schema"));
+        }
     }
 
     #[test]

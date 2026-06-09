@@ -462,7 +462,7 @@ fn source_issue(source: &SourceRecord) -> HealthSourceIssue {
 fn duplicate_concepts(pages: &[crate::lint::WikiPage]) -> Vec<DuplicateConcept> {
     let mut by_title: BTreeMap<String, (String, Vec<PathBuf>)> = BTreeMap::new();
     for page in pages {
-        if !page.relative_path.starts_with("wiki/concepts") {
+        if !page.relative_path.starts_with("knowledge/concepts") {
             continue;
         }
         let title = title_for_page(page);
@@ -573,17 +573,17 @@ mod tests {
         .expect("source registered");
         write_page(
             root,
-            "wiki/topics/stale.md",
+            "knowledge/topics/stale.md",
             "---\ntitle: Stale\nstale: true\n---\n# Stale\nSee [[Missing]].\n",
         );
         write_page(
             root,
-            "wiki/concepts/cache-a.md",
+            "knowledge/concepts/cache-a.md",
             "---\ntitle: Cache\nsource_kind: concept\n---\n# Cache\nConcept A.\n",
         );
         write_page(
             root,
-            "wiki/concepts/cache-b.md",
+            "knowledge/concepts/cache-b.md",
             "---\ntitle: Cache\nsource_kind: concept\n---\n# Cache\nConcept B.\n",
         );
 
@@ -591,7 +591,7 @@ mod tests {
 
         assert_eq!(
             report.stale_pages,
-            vec![PathBuf::from("wiki/topics/stale.md")]
+            vec![PathBuf::from("knowledge/topics/stale.md")]
         );
         assert_eq!(report.uncited_sources[0].source_id, source.id);
         assert_eq!(report.broken_links[0].target, "Missing");
@@ -615,7 +615,11 @@ mod tests {
             .with_citation("Example Source"),
         )
         .expect("source registered");
-        write_page(root, "wiki/topics/page.md", "# Page\nSee raw/INDEX.md.\n");
+        write_page(
+            root,
+            "knowledge/topics/page.md",
+            "# Page\nSee raw/INDEX.md.\n",
+        );
 
         let report = inspect(root, ScopeIdentity::topic("ops")).expect("health inspects");
 
@@ -666,7 +670,7 @@ mod tests {
         .expect("uncited source registered");
         write_page(
             root,
-            "wiki/topics/cited.md",
+            "knowledge/topics/cited.md",
             "# Cited\n\n[Cited Example](https://example.com/cited)\n",
         );
 
@@ -769,7 +773,7 @@ mod tests {
                 byte_end: 10,
             },
             section: crate::provenance::WikiSectionRef {
-                page_path: PathBuf::from("wiki/code/lib.md"),
+                page_path: PathBuf::from("code/lib.md"),
                 heading: "Lib".to_string(),
                 section_id: "lib".to_string(),
             },
@@ -789,10 +793,7 @@ mod tests {
         .expect("affected pages");
 
         assert_eq!(affected.pages.len(), 1);
-        assert_eq!(
-            affected.pages[0].page_path,
-            PathBuf::from("wiki/code/lib.md")
-        );
+        assert_eq!(affected.pages[0].page_path, PathBuf::from("code/lib.md"));
         assert_eq!(affected.degradations.len(), 1);
     }
 

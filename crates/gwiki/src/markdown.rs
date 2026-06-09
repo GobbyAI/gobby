@@ -316,8 +316,8 @@ mod tests {
         let overview_start = markdown.find("# Overview").expect("overview offset");
         let details_start = markdown.find("# Details").expect("details offset");
 
-        let parsed =
-            parse_markdown("wiki/topics/parser.md", markdown, ["Known"]).expect("parse markdown");
+        let parsed = parse_markdown("knowledge/topics/parser.md", markdown, ["Known"])
+            .expect("parse markdown");
 
         assert_eq!(
             parsed.body_start,
@@ -356,7 +356,7 @@ mod tests {
         let markdown = "````md\n# Not Heading\n```\n# Still Not Heading\n````\n# Heading\n";
 
         let parsed = parse_markdown(
-            "wiki/topics/fences.md",
+            "knowledge/topics/fences.md",
             markdown,
             std::iter::empty::<&str>(),
         )
@@ -369,7 +369,7 @@ mod tests {
     #[test]
     fn index_parse_is_read_only() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let page = tmp.path().join("wiki/topics/Page.md");
+        let page = tmp.path().join("knowledge/topics/Page.md");
         std::fs::create_dir_all(page.parent().expect("parent")).expect("create parent");
         let markdown = "---\ntitle: Page\n---\n# Page\nSee [[Other Page]].\n";
         std::fs::write(&page, markdown).expect("write page");

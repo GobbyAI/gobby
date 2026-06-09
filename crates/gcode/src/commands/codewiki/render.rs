@@ -7,7 +7,7 @@ pub(crate) fn render_module_dependency_mermaid(
     files: &[FileDoc],
     graph_edges: &[CodewikiGraphEdge],
 ) -> Option<String> {
-    let all_edges = collect_module_edges(files, graph_edges);
+    let all_edges = collect_import_module_edges(files, graph_edges);
     if all_edges.is_empty() {
         return None;
     }
@@ -36,7 +36,7 @@ pub(crate) fn render_architecture_dependency_mermaid(
     files: &[FileDoc],
     graph_edges: &[CodewikiGraphEdge],
 ) -> Option<String> {
-    let edges = collect_module_edges(files, graph_edges);
+    let edges = collect_import_module_edges(files, graph_edges);
     if edges.is_empty() {
         return None;
     }
@@ -56,7 +56,7 @@ pub(crate) fn render_architecture_dependency_mermaid(
     Some(diagram)
 }
 
-fn collect_module_edges(
+fn collect_import_module_edges(
     files: &[FileDoc],
     graph_edges: &[CodewikiGraphEdge],
 ) -> BTreeSet<(String, String)> {

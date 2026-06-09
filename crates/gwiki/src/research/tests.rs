@@ -26,6 +26,16 @@ fn write_test_source(root: &Path) {
     std::fs::write(raw_dir.join("source.md"), "source").expect("source file");
 }
 
+fn write_project_identity(project_root: &Path, project_id: &str) {
+    let gobby_dir = project_root.join(".gobby");
+    std::fs::create_dir_all(&gobby_dir).expect("gobby dir");
+    std::fs::write(
+        gobby_dir.join("gcode.json"),
+        format!("{{\n  \"id\": \"{project_id}\",\n  \"name\": \"test\"\n}}\n"),
+    )
+    .expect("project identity");
+}
+
 #[test]
 fn frontmatter_block_accepts_crlf_delimiters() {
     let markdown = "---\r\nresearch_note_id: abc\r\nresearch_status: completed\r\n---\r\nBody";
@@ -64,6 +74,7 @@ research_status: completed
 #[test]
 fn research_reloads_checkpoint_without_daemon_dispatch() {
     let temp = tempfile::tempdir().expect("tempdir");
+    write_project_identity(temp.path(), "project-1");
     let scope = ResearchScope::project_for_id("project-1", temp.path());
     let checkpoint = ResearchSession {
         session_id: "research-existing".to_string(),

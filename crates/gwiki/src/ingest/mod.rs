@@ -672,16 +672,16 @@ mod tests {
     fn ingest_indexes_raw_without_wiki_rewrite() {
         let temp = tempfile::tempdir().expect("tempdir");
         let wiki_body = "# Existing Topic\n\nUser-authored notes stay intact.\n";
-        write_file(temp.path(), "wiki/topics/existing.md", wiki_body);
+        write_file(temp.path(), "knowledge/topics/existing.md", wiki_body);
         let source_path = temp.path().join("capture.txt");
         std::fs::write(&source_path, "captured source text\n").expect("write source");
 
         let mut store = MemoryWikiStore::default();
         store.file_hashes.insert(
-            PathBuf::from("wiki/topics/existing.md"),
+            PathBuf::from("knowledge/topics/existing.md"),
             content_hash(wiki_body.as_bytes()),
         );
-        let before = std::fs::read_to_string(temp.path().join("wiki/topics/existing.md"))
+        let before = std::fs::read_to_string(temp.path().join("knowledge/topics/existing.md"))
             .expect("read existing before");
         let scope = ScopeIdentity::global();
         let ai_context = no_ai_context();
@@ -701,7 +701,7 @@ mod tests {
         )
         .expect("ingest path");
 
-        let after = std::fs::read_to_string(temp.path().join("wiki/topics/existing.md"))
+        let after = std::fs::read_to_string(temp.path().join("knowledge/topics/existing.md"))
             .expect("read existing after");
         assert_eq!(after, before);
         assert!(temp.path().join(&result.raw_path).is_file());
@@ -709,7 +709,7 @@ mod tests {
         assert!(
             !store
                 .documents
-                .contains_key(&PathBuf::from("wiki/topics/existing.md"))
+                .contains_key(&PathBuf::from("knowledge/topics/existing.md"))
         );
         assert!(store.ingestions.iter().any(|ingestion| {
             ingestion.path == Path::new("raw/INDEX.md")

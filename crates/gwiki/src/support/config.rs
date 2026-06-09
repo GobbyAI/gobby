@@ -95,6 +95,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn local_index_options_read_gcore_yaml() {
         let home = tempfile::tempdir().expect("home");
         write_file(
@@ -110,6 +111,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn memory_indexing_uses_local_index_options() {
         let home = tempfile::tempdir().expect("home");
         write_file(
@@ -121,8 +123,8 @@ mod tests {
 
         let vault = tempfile::tempdir().expect("vault");
         std::fs::create_dir(vault.path().join(".git")).expect("git dir");
-        write_file(vault.path(), ".gitignore", "wiki/topics/ignored.md\n");
-        write_file(vault.path(), "wiki/topics/ignored.md", "# Ignored\n");
+        write_file(vault.path(), ".gitignore", "knowledge/topics/ignored.md\n");
+        write_file(vault.path(), "knowledge/topics/ignored.md", "# Ignored\n");
 
         let mut store = MemoryWikiStore::default();
         crate::indexer::index_vault_with_options(
@@ -135,7 +137,7 @@ mod tests {
         assert!(
             store
                 .documents
-                .contains_key(&std::path::PathBuf::from("wiki/topics/ignored.md"))
+                .contains_key(&std::path::PathBuf::from("knowledge/topics/ignored.md"))
         );
     }
 }

@@ -4,9 +4,9 @@ fn assert_vault_shape(root: &std::path::Path) {
     for dir in [
         "raw",
         "raw/assets",
-        "wiki/sources",
-        "wiki/concepts",
-        "wiki/topics",
+        "knowledge/sources",
+        "knowledge/concepts",
+        "knowledge/topics",
         "inbox",
         "outputs",
         "meta/health",

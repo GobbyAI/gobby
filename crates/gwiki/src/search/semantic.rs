@@ -984,7 +984,7 @@ mod tests {
         payload.insert("scope_kind".to_string(), json!(scope_kind));
         payload.insert("project_id".to_string(), json!(scope_value));
         payload.insert("topic".to_string(), json!(scope_value));
-        payload.insert("path".to_string(), json!("wiki/topics/rust.md"));
+        payload.insert("path".to_string(), json!("knowledge/topics/rust.md"));
         payload.insert("source_path".to_string(), json!("raw/INDEX.md"));
         payload.insert("source_kind".to_string(), json!("topic"));
         payload.insert("content_hash".to_string(), json!("hash"));

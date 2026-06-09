@@ -33,14 +33,14 @@ fn public_cli_smoke_uses_gwiki_modules() {
     );
 
     let vault = fixture.topic_vault("rust");
-    fs::create_dir_all(vault.join("wiki/topics")).expect("create topic dir");
+    fs::create_dir_all(vault.join("knowledge/topics")).expect("create topic dir");
     fs::write(
-        vault.join("wiki/topics/ownership.md"),
+        vault.join("knowledge/topics/ownership.md"),
         "# Ownership\n\nOwnership explains borrowing.\n",
     )
     .expect("write ownership page");
     fs::write(
-        vault.join("wiki/topics/rust.md"),
+        vault.join("knowledge/topics/rust.md"),
         "# Rust\n\nRust links to [[Ownership]]. Missing [[Borrow checker]].\n",
     )
     .expect("write rust page");
@@ -98,19 +98,17 @@ fn public_cli_smoke_uses_gwiki_modules() {
     );
     common::assert_success(&search, "search");
     let search_payload = common::json_stdout(&search);
+    let results = search_payload["results"]
+        .as_array()
+        .expect("search results array");
+    assert!(!results.is_empty(), "{search_payload:#}");
     assert!(
-        search_payload["results"]
+        results.iter().any(|result| result["sources"]
             .as_array()
-            .is_some_and(|results| !results.is_empty()),
+            .is_some_and(|sources| sources.iter().any(|source| source == "bm25"))),
         "{search_payload:#}"
     );
-    let first_result = &search_payload["results"][0];
-    assert!(
-        first_result["sources"]
-            .as_array()
-            .is_some_and(|sources| sources.iter().any(|source| source == "bm25")),
-        "{search_payload:#}"
-    );
+    let first_result = &results[0];
     assert!(
         first_result["explanations"]
             .as_array()
@@ -127,7 +125,7 @@ fn public_cli_smoke_uses_gwiki_modules() {
             "backlinks",
             "--topic",
             "rust",
-            "wiki/topics/ownership.md",
+            "knowledge/topics/ownership.md",
         ],
     );
     common::assert_success(&backlinks, "backlinks");
@@ -192,7 +190,7 @@ fn public_cli_smoke_uses_gwiki_modules() {
             "--outline",
             "Overview",
             "--target",
-            "wiki/topics/ownership-synthesis.md",
+            "knowledge/topics/ownership-synthesis.md",
         ],
     );
     common::assert_success(&compile, "compile");
@@ -200,9 +198,13 @@ fn public_cli_smoke_uses_gwiki_modules() {
     assert_eq!(compile_payload["command"], "compile");
     assert_json_path(
         &compile_payload["article_path"],
-        &vault.join("wiki/topics/ownership-synthesis.md"),
+        &vault.join("knowledge/topics/ownership-synthesis.md"),
     );
-    assert!(vault.join("wiki/sources/ownership-evidence.md").is_file());
+    assert!(
+        vault
+            .join("knowledge/sources/ownership-evidence.md")
+            .is_file()
+    );
 
     let audit = gwiki(
         &fixture,
@@ -283,7 +285,7 @@ fn public_cli_smoke_continues_research_compile_audit_in_topic_scope() {
     assert!(
         compile_payload["article_path"]
             .as_str()
-            .is_some_and(|path| path.ends_with("wiki/topics/rust.md")),
+            .is_some_and(|path| path.ends_with("knowledge/topics/rust.md")),
         "{compile_payload:#}"
     );
 

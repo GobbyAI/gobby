@@ -731,7 +731,11 @@ mod tests {
     fn source_asset_path_rejects_traversal_absolute_and_non_raw_assets() {
         let temp = tempfile::tempdir().expect("tempdir");
 
-        for value in ["../escape.pdf", "/tmp/escape.pdf", "wiki/topics/article.md"] {
+        for value in [
+            "../escape.pdf",
+            "/tmp/escape.pdf",
+            "knowledge/topics/article.md",
+        ] {
             let error = source_asset_path(temp.path(), value).expect_err("unsafe path rejected");
             assert_eq!(error.code(), "invalid_input");
         }

@@ -139,7 +139,7 @@ pub fn run_with_options(
 
 fn scope_includes_page(scope: &ScopeIdentity, path: &Path) -> bool {
     match scope.kind {
-        ScopeKind::Topic => path.starts_with(Path::new("wiki").join("topics")),
+        ScopeKind::Topic => path.starts_with(Path::new("knowledge").join("topics")),
         ScopeKind::Project | ScopeKind::Global => true,
     }
 }
@@ -230,7 +230,7 @@ fn unsupported_claims(
 
 fn has_codewiki_frontmatter_source_spans(page: &WikiPage) -> bool {
     let page_path = page.relative_path.to_string_lossy().replace('\\', "/");
-    (page_path.starts_with("code/") || page_path.starts_with("wiki/code/"))
+    page_path.starts_with("code/")
         && page
             .parsed
             .frontmatter
@@ -437,8 +437,8 @@ fn is_thematic_break(line: &str) -> bool {
 
 fn has_inline_source_support(line: &str) -> bool {
     let lower = line.to_ascii_lowercase();
-    lower.contains("[[wiki/sources/")
-        || lower.contains("(wiki/sources/")
+    lower.contains("[[knowledge/sources/")
+        || lower.contains("(knowledge/sources/")
         || has_code_source_span(line)
         || has_link_like_source_token(&lower, "citation:")
         || has_link_like_source_token(&lower, "source:")
@@ -498,10 +498,10 @@ fn has_link_like_source_token(line: &str, token: &str) -> bool {
         if has_boundary
             && (after.starts_with("http://")
                 || after.starts_with("https://")
-                || after.starts_with("[[wiki/sources/")
+                || after.starts_with("[[knowledge/sources/")
                 || after.starts_with('[')
-                || after.starts_with("(wiki/sources/")
-                || after.starts_with("wiki/sources/")
+                || after.starts_with("(knowledge/sources/")
+                || after.starts_with("knowledge/sources/")
                 || after.starts_with("gwiki-source:"))
         {
             return true;
@@ -530,7 +530,7 @@ mod tests {
             .with_citation("Example Source"),
         )
         .expect("source registered");
-        let page = root.join("wiki/topics/claims.md");
+        let page = root.join("knowledge/topics/claims.md");
         std::fs::create_dir_all(page.parent().expect("page parent")).expect("create wiki dir");
         std::fs::write(
             &page,
@@ -542,7 +542,7 @@ mod tests {
 
         assert_eq!(report.unsupported_claims.len(), 1);
         let claim = &report.unsupported_claims[0];
-        assert_eq!(claim.path, PathBuf::from("wiki/topics/claims.md"));
+        assert_eq!(claim.path, PathBuf::from("knowledge/topics/claims.md"));
         assert_eq!(claim.line, 6);
         assert_eq!(claim.heading.as_deref(), Some("Claims"));
         assert!(claim.claim.contains("Unsupported operational claim"));
@@ -557,7 +557,7 @@ mod tests {
     fn reports_include_paths_and_scope() {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path();
-        let page = root.join("wiki/topics/path-scope.md");
+        let page = root.join("knowledge/topics/path-scope.md");
         std::fs::create_dir_all(page.parent().expect("page parent")).expect("create wiki dir");
         std::fs::write(
             &page,
@@ -577,7 +577,7 @@ mod tests {
         assert_eq!(
             json.pointer("/unsupported_claims/0/path")
                 .and_then(serde_json::Value::as_str),
-            Some("wiki/topics/path-scope.md")
+            Some("knowledge/topics/path-scope.md")
         );
     }
 
@@ -585,8 +585,8 @@ mod tests {
     fn topic_scope_audits_only_topic_pages() {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path();
-        let topic_page = root.join("wiki/topics/topic-claim.md");
-        let concept_page = root.join("wiki/concepts/concept-claim.md");
+        let topic_page = root.join("knowledge/topics/topic-claim.md");
+        let concept_page = root.join("knowledge/concepts/concept-claim.md");
         std::fs::create_dir_all(topic_page.parent().expect("topic parent"))
             .expect("create topic dir");
         std::fs::create_dir_all(concept_page.parent().expect("concept parent"))
@@ -607,18 +607,18 @@ mod tests {
         assert_eq!(report.unsupported_claims.len(), 1);
         assert_eq!(
             report.unsupported_claims[0].path,
-            PathBuf::from("wiki/topics/topic-claim.md")
+            PathBuf::from("knowledge/topics/topic-claim.md")
         );
     }
 
     #[test]
     fn frontmatter_closes_only_on_matching_document_start_delimiter() {
         let page = WikiPage {
-            path: PathBuf::from("wiki/topics/frontmatter.md"),
-            relative_path: PathBuf::from("wiki/topics/frontmatter.md"),
+            path: PathBuf::from("knowledge/topics/frontmatter.md"),
+            relative_path: PathBuf::from("knowledge/topics/frontmatter.md"),
             markdown: "+++\ntitle = \"Frontmatter\"\n---\nstill_frontmatter = true\n+++\n# Body\nClaim after TOML frontmatter.\n---\nClaim after thematic break.\n".to_string(),
             parsed: crate::markdown::parse_markdown(
-                "wiki/topics/frontmatter.md",
+                "knowledge/topics/frontmatter.md",
                 "# Body\n",
                 std::iter::empty::<&str>(),
             )
@@ -636,12 +636,12 @@ mod tests {
     #[test]
     fn multiline_html_comments_do_not_emit_claims() {
         let page = WikiPage {
-            path: PathBuf::from("wiki/topics/comments.md"),
-            relative_path: PathBuf::from("wiki/topics/comments.md"),
+            path: PathBuf::from("knowledge/topics/comments.md"),
+            relative_path: PathBuf::from("knowledge/topics/comments.md"),
             markdown: "# Comments\nVisible claim.\n<!--\nHidden claim.\n-->\nAfter claim.\n"
                 .to_string(),
             parsed: crate::markdown::parse_markdown(
-                "wiki/topics/comments.md",
+                "knowledge/topics/comments.md",
                 "# Comments\n",
                 std::iter::empty::<&str>(),
             )
@@ -663,7 +663,7 @@ mod tests {
             "Evidence source: https://example.com/report"
         ));
         assert!(has_inline_source_support(
-            "Evidence citation: [[wiki/sources/source-1]]"
+            "Evidence citation: [[knowledge/sources/source-1]]"
         ));
     }
 
@@ -696,15 +696,15 @@ source_files:
 
 # crates/example.rs
 
-Module: [[modules/crates|crates]]
+Module: [[code/modules/crates|crates]]
 Signature: `fn example() -> bool {`
 "#;
         let page = WikiPage {
-            path: PathBuf::from("wiki/code/files/crates/example.rs.md"),
-            relative_path: PathBuf::from("wiki/code/files/crates/example.rs.md"),
+            path: PathBuf::from("code/files/crates/example.rs.md"),
+            relative_path: PathBuf::from("code/files/crates/example.rs.md"),
             markdown: markdown.to_string(),
             parsed: crate::markdown::parse_markdown(
-                "wiki/code/files/crates/example.rs.md",
+                "code/files/crates/example.rs.md",
                 markdown,
                 std::iter::empty::<&str>(),
             )
@@ -792,11 +792,11 @@ Signature: `fn example() -> bool {`
     #[test]
     fn configured_ignored_sections_extend_defaults() {
         let page = WikiPage {
-            path: PathBuf::from("wiki/topics/release.md"),
-            relative_path: PathBuf::from("wiki/topics/release.md"),
+            path: PathBuf::from("knowledge/topics/release.md"),
+            relative_path: PathBuf::from("knowledge/topics/release.md"),
             markdown: "# Release\nClaim needing support.\n## Notes\nIgnored internal note.\n## Sources\nIgnored source note.\n".to_string(),
             parsed: crate::markdown::parse_markdown(
-                "wiki/topics/release.md",
+                "knowledge/topics/release.md",
                 "# Release\n",
                 std::iter::empty::<&str>(),
             )
