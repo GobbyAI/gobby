@@ -279,14 +279,8 @@ impl WikiVectorChunkSource for PostgresWikiVectorChunkSource<'_> {
 
 fn row_to_vector_chunk(row: postgres::Row) -> Result<WikiVectorChunk, WikiVectorError> {
     let chunk_index: i32 = row.get("chunk_index");
-    let byte_start = row
-        .get::<_, Option<String>>("byte_start")
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or_default();
-    let byte_end = row
-        .get::<_, Option<String>>("byte_end")
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or_default();
+    let byte_start = required_row_usize(&row, "byte_start")?;
+    let byte_end = required_row_usize(&row, "byte_end")?;
     let heading_path: Vec<String> = row.get("heading_path");
     let heading = if heading_path.is_empty() {
         None
@@ -304,6 +298,23 @@ fn row_to_vector_chunk(row: postgres::Row) -> Result<WikiVectorChunk, WikiVector
         byte_start,
         byte_end,
         content: row.get("content"),
+    })
+}
+
+fn required_row_usize(row: &postgres::Row, column: &'static str) -> Result<usize, WikiVectorError> {
+    let raw = row.try_get::<_, Option<String>>(column).map_err(|error| {
+        WikiVectorError::InvalidData(format!("{column} is unavailable: {error}"))
+    })?;
+    parse_required_usize(raw, column)
+}
+
+fn parse_required_usize(
+    raw: Option<String>,
+    column: &'static str,
+) -> Result<usize, WikiVectorError> {
+    let raw = raw.ok_or_else(|| WikiVectorError::InvalidData(format!("{column} is missing")))?;
+    raw.parse::<usize>().map_err(|error| {
+        WikiVectorError::InvalidData(format!("{column} value {raw:?} is invalid: {error}"))
     })
 }
 
@@ -519,6 +530,19 @@ mod tests {
         assert!(request.contains("authorization: Bearer test-key"));
         assert_eq!(payload["model"], "embed-model");
         assert_eq!(payload["input"], serde_json::json!(texts));
+    }
+
+    #[test]
+    fn vector_required_offset_parser_rejects_missing_and_malformed_values() {
+        assert!(matches!(
+            parse_required_usize(None, "byte_start"),
+            Err(WikiVectorError::InvalidData(message)) if message.contains("byte_start is missing")
+        ));
+        assert!(matches!(
+            parse_required_usize(Some("abc".to_string()), "byte_end"),
+            Err(WikiVectorError::InvalidData(message))
+                if message.contains("byte_end value \"abc\" is invalid")
+        ));
     }
 
     struct MockChunkSource {

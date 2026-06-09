@@ -156,12 +156,15 @@ fn code_citations_from_search_results(
         } else {
             hit.sources.clone()
         };
-        citations.push(ResearchCodeCitation {
-            file: hit.source_path.display().to_string(),
-            line: None,
-            symbol: hit.title.clone(),
-            provenance,
-        });
+        citations.push(
+            ResearchCodeCitation::new(
+                hit.source_path.display().to_string(),
+                None,
+                hit.title.clone(),
+                provenance,
+            )
+            .expect("search result code citations have provenance"),
+        );
     }
     dedup_code_citations(citations)
 }

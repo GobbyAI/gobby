@@ -61,11 +61,14 @@ pub fn module_prompt(
     modules: &[ChildSummary],
     components: &[String],
 ) -> String {
-    let mut prompt = format!(
-        "Summarize this module once from lower-level summaries.\n\nModule: {module}\n\nFiles:\n"
-    );
-    append_child_summary_sections(&mut prompt, files, modules, components);
-    prompt
+    build_entity_prompt(
+        "Summarize this module once from lower-level summaries.",
+        "Module",
+        module,
+        files,
+        modules,
+        components,
+    )
 }
 
 pub fn repo_prompt(modules: &[ChildSummary], files: &[ChildSummary]) -> String {
@@ -96,9 +99,25 @@ pub fn architecture_prompt(
     modules: &[ChildSummary],
     components: &[String],
 ) -> String {
-    let mut prompt = format!(
-        "Summarize this subsystem's responsibility for a repository architecture overview.\n\nSubsystem: {subsystem}\n\nFiles:\n"
-    );
+    build_entity_prompt(
+        "Summarize this subsystem's responsibility for a repository architecture overview.",
+        "Subsystem",
+        subsystem,
+        files,
+        modules,
+        components,
+    )
+}
+
+fn build_entity_prompt(
+    header: &str,
+    entity_label: &str,
+    entity: &str,
+    files: &[ChildSummary],
+    modules: &[ChildSummary],
+    components: &[String],
+) -> String {
+    let mut prompt = format!("{header}\n\n{entity_label}: {entity}\n\nFiles:\n");
     append_child_summary_sections(&mut prompt, files, modules, components);
     prompt
 }

@@ -63,19 +63,22 @@ pub(crate) fn outcome_code_citations(
             let Some(file) = sanitize_code_path(file) else {
                 continue;
             };
-            citations.push(ResearchCodeCitation {
-                file,
-                line: value
-                    .get("line")
-                    .and_then(Value::as_u64)
-                    .and_then(|line| usize::try_from(line).ok()),
-                symbol: value
-                    .get("symbol")
-                    .and_then(Value::as_str)
-                    .map(|symbol| symbol.trim().to_string())
-                    .filter(|symbol| !symbol.is_empty()),
-                provenance: vec![provenance.to_string()],
-            });
+            citations.push(
+                ResearchCodeCitation::new(
+                    file,
+                    value
+                        .get("line")
+                        .and_then(Value::as_u64)
+                        .and_then(|line| usize::try_from(line).ok()),
+                    value
+                        .get("symbol")
+                        .and_then(Value::as_str)
+                        .map(|symbol| symbol.trim().to_string())
+                        .filter(|symbol| !symbol.is_empty()),
+                    vec![provenance.to_string()],
+                )
+                .expect("outcome code citations have provenance"),
+            );
         }
     }
     dedup_code_citations(citations)
@@ -98,20 +101,20 @@ pub(crate) fn dedup_code_citations(
     let mut seen = HashSet::new();
     let mut deduped = Vec::new();
     for mut citation in citations {
-        dedup_code_citation_provenance(&mut citation.provenance);
+        dedup_code_citation_provenance(citation.provenance_mut());
         let key = (
-            citation.file.clone(),
-            citation.line,
-            citation.symbol.clone(),
+            citation.file().to_string(),
+            citation.line(),
+            citation.symbol().map(str::to_string),
         );
         if seen.insert(key.clone()) {
             indexes.insert(key, deduped.len());
             deduped.push(citation);
         } else if let Some(index) = indexes.get(&key).copied() {
             let existing: &mut ResearchCodeCitation = &mut deduped[index];
-            for provenance in citation.provenance.drain(..) {
-                if !existing.provenance.contains(&provenance) {
-                    existing.provenance.push(provenance);
+            for provenance in citation.provenance().iter().cloned() {
+                if !existing.provenance().contains(&provenance) {
+                    existing.provenance_mut().push(provenance);
                 }
             }
         }
@@ -355,28 +358,38 @@ mod tests {
 
     #[test]
     fn dedup_code_citations_preserves_first_seen_order() {
-        let citation = ResearchCodeCitation {
-            file: "src/lib.rs".to_string(),
-            line: Some(7),
-            symbol: Some("handler".to_string()),
-            provenance: vec!["search".to_string()],
-        };
-        let other = ResearchCodeCitation {
-            symbol: Some("service".to_string()),
-            ..citation.clone()
-        };
-        let reranked = ResearchCodeCitation {
-            provenance: vec![
+        let citation = ResearchCodeCitation::new(
+            "src/lib.rs",
+            Some(7),
+            Some("handler".to_string()),
+            vec!["search".to_string()],
+        )
+        .expect("citation");
+        let other = ResearchCodeCitation::new(
+            "src/lib.rs",
+            Some(7),
+            Some("service".to_string()),
+            vec!["search".to_string()],
+        )
+        .expect("other citation");
+        let reranked = ResearchCodeCitation::new(
+            "src/lib.rs",
+            Some(7),
+            Some("handler".to_string()),
+            vec![
                 "rerank".to_string(),
                 "search".to_string(),
                 "rerank".to_string(),
             ],
-            ..citation.clone()
-        };
-        let merged = ResearchCodeCitation {
-            provenance: vec!["search".to_string(), "rerank".to_string()],
-            ..citation.clone()
-        };
+        )
+        .expect("reranked citation");
+        let merged = ResearchCodeCitation::new(
+            "src/lib.rs",
+            Some(7),
+            Some("handler".to_string()),
+            vec!["search".to_string(), "rerank".to_string()],
+        )
+        .expect("merged citation");
 
         assert_eq!(
             dedup_code_citations(vec![citation, other.clone(), reranked]),
@@ -399,7 +412,7 @@ mod tests {
         let citations = outcome_code_citations(&payload, "search");
 
         assert_eq!(citations.len(), 1);
-        assert_eq!(citations[0].file, "src/lib.rs");
+        assert_eq!(citations[0].file(), "src/lib.rs");
     }
 
     #[test]

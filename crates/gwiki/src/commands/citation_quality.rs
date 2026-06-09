@@ -551,10 +551,8 @@ mod tests {
     use crate::sources::{
         CompileStatus, IngestionMethod, SourceKind, SourceManifest, SourceRecord,
     };
-    use std::ffi::{OsStr, OsString};
+    use crate::support::test_env::{ENV_TEST_LOCK, EnvGuard};
     use std::path::PathBuf;
-
-    static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     #[serial_test::serial]
@@ -686,10 +684,7 @@ mod tests {
             r#"{"id":"11111111-1111-4111-8111-111111111111"}"#,
         )
         .expect("write project json");
-        let _database_url = EnvGuard::set(
-            "GWIKI_DATABASE_URL",
-            OsStr::new("postgresql://127.0.0.1:1/gwiki"),
-        );
+        let _database_url = EnvGuard::set("GWIKI_DATABASE_URL", "postgresql://127.0.0.1:1/gwiki");
 
         let error =
             execute(ScopeSelection::project(temp.path())).expect_err("PostgreSQL is required");
@@ -722,51 +717,6 @@ mod tests {
             ingestion_method: IngestionMethod::Research,
             compile_status: CompileStatus::Compiled,
             replay: None,
-        }
-    }
-
-    // Test-only process env mutation guard. Callers hold ENV_TEST_LOCK and, for
-    // cross-test ordering, mark env-mutating tests with serial_test::serial.
-    struct EnvGuard {
-        key: &'static str,
-        old_value: Option<OsString>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: &OsStr) -> Self {
-            let guard = Self {
-                key,
-                old_value: std::env::var_os(key),
-            };
-            unsafe {
-                // SAFETY: env-mutating tests hold ENV_TEST_LOCK and run serially.
-                std::env::set_var(key, value);
-            }
-            guard
-        }
-
-        fn unset(key: &'static str) -> Self {
-            let guard = Self {
-                key,
-                old_value: std::env::var_os(key),
-            };
-            unsafe {
-                // SAFETY: env-mutating tests hold ENV_TEST_LOCK and run serially.
-                std::env::remove_var(key);
-            }
-            guard
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            unsafe {
-                // SAFETY: EnvGuard is only used by the same locked serial tests.
-                match &self.old_value {
-                    Some(value) => std::env::set_var(self.key, value),
-                    None => std::env::remove_var(self.key),
-                }
-            }
         }
     }
 }

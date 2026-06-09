@@ -69,10 +69,18 @@ fn load_index_counts(
                             degradations,
                         });
                     }
-                    Err(_) => degradations.push("postgres_index_counts_unavailable".to_string()),
+                    Err(error) => {
+                        log::warn!(
+                            "failed to load PostgreSQL index counts for gwiki trust: {error}"
+                        );
+                        degradations.push("postgres_index_counts_unavailable".to_string());
+                    }
                 }
             }
-            Err(_) => degradations.push("postgres_unavailable".to_string()),
+            Err(error) => {
+                log::warn!("failed to connect to PostgreSQL for gwiki trust: {error}");
+                degradations.push("postgres_unavailable".to_string());
+            }
         }
     } else {
         degradations.push("postgres_unconfigured".to_string());

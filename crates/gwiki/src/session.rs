@@ -58,14 +58,93 @@ pub struct DaemonDispatch {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "ResearchCodeCitationUnchecked")]
 pub struct ResearchCodeCitation {
-    pub file: String,
+    file: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub line: Option<usize>,
+    line: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub symbol: Option<String>,
+    symbol: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub provenance: Vec<String>,
+    provenance: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct ResearchCodeCitationUnchecked {
+    file: String,
+    #[serde(default)]
+    line: Option<usize>,
+    #[serde(default)]
+    symbol: Option<String>,
+    #[serde(default)]
+    provenance: Vec<String>,
+}
+
+impl TryFrom<ResearchCodeCitationUnchecked> for ResearchCodeCitation {
+    type Error = String;
+
+    fn try_from(value: ResearchCodeCitationUnchecked) -> Result<Self, Self::Error> {
+        Self::from_parts(value.file, value.line, value.symbol, value.provenance)
+    }
+}
+
+impl ResearchCodeCitation {
+    pub fn new(
+        file: impl Into<String>,
+        line: Option<usize>,
+        symbol: Option<String>,
+        provenance: Vec<String>,
+    ) -> Result<Self, WikiError> {
+        Self::from_parts(file.into(), line, symbol, provenance).map_err(|message| {
+            WikiError::InvalidInput {
+                field: "code_citations",
+                message,
+            }
+        })
+    }
+
+    fn from_parts(
+        file: String,
+        line: Option<usize>,
+        symbol: Option<String>,
+        provenance: Vec<String>,
+    ) -> Result<Self, String> {
+        if file.trim().is_empty() {
+            return Err("code citation file must be non-empty".to_string());
+        }
+        if provenance.is_empty() {
+            return Err("code citation provenance must be non-empty".to_string());
+        }
+        if provenance.iter().any(|source| source.trim().is_empty()) {
+            return Err("code citation provenance entries must be non-empty".to_string());
+        }
+        Ok(Self {
+            file,
+            line,
+            symbol,
+            provenance,
+        })
+    }
+
+    pub fn file(&self) -> &str {
+        &self.file
+    }
+
+    pub fn line(&self) -> Option<usize> {
+        self.line
+    }
+
+    pub fn symbol(&self) -> Option<&str> {
+        self.symbol.as_deref()
+    }
+
+    pub fn provenance(&self) -> &[String] {
+        &self.provenance
+    }
+
+    pub(crate) fn provenance_mut(&mut self) -> &mut Vec<String> {
+        &mut self.provenance
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -331,6 +410,31 @@ mod tests {
         assert_eq!(state.selected_source_titles, vec!["Compile behavior"]);
         assert_eq!(state.citations, vec!["Example Docs"]);
         assert!(!state.write_intent);
+    }
+
+    #[test]
+    fn research_code_citation_rejects_empty_provenance() {
+        let error = ResearchCodeCitation::new("src/lib.rs", None, None, Vec::new())
+            .expect_err("empty provenance is invalid");
+
+        assert!(matches!(
+            error,
+            WikiError::InvalidInput {
+                field: "code_citations",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn research_code_citation_deserialization_rejects_empty_provenance() {
+        let error = serde_json::from_value::<ResearchCodeCitation>(serde_json::json!({
+            "file": "src/lib.rs",
+            "provenance": []
+        }))
+        .expect_err("empty provenance is invalid");
+
+        assert!(error.to_string().contains("provenance"));
     }
 
     #[test]

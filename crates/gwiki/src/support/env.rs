@@ -237,11 +237,12 @@ fn parse_positive_u64(raw: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::{OsStr, OsString};
     use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
+
+    use crate::support::test_env::{ENV_TEST_LOCK, EnvGuard};
 
     #[test]
     fn positive_u64_env_parser_rejects_invalid_values() {
@@ -255,6 +256,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn database_url_uses_gobby_broker_when_env_missing() {
+        let _env_lock = ENV_TEST_LOCK.lock().expect("env lock");
         let expected_database_url = "postgresql://brokered.example/gobby";
         let token = "local-token";
         let (port, handle) = spawn_database_url_broker(expected_database_url, token);
@@ -315,46 +317,5 @@ mod tests {
             request
         });
         (port, handle)
-    }
-
-    struct EnvGuard {
-        key: &'static str,
-        old_value: Option<OsString>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: &OsStr) -> Self {
-            let guard = Self {
-                key,
-                old_value: std::env::var_os(key),
-            };
-            unsafe {
-                std::env::set_var(key, value);
-            }
-            guard
-        }
-
-        fn unset(key: &'static str) -> Self {
-            let guard = Self {
-                key,
-                old_value: std::env::var_os(key),
-            };
-            unsafe {
-                std::env::remove_var(key);
-            }
-            guard
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            unsafe {
-                if let Some(value) = &self.old_value {
-                    std::env::set_var(self.key, value);
-                } else {
-                    std::env::remove_var(self.key);
-                }
-            }
-        }
     }
 }

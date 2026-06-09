@@ -502,14 +502,14 @@ impl LoopState {
     }
 
     fn push_code_citation(&mut self, citation: ResearchCodeCitation) {
-        if citation.file.trim().is_empty() {
+        if citation.file().trim().is_empty() {
             return;
         }
         if !self.code_citations.iter().any(|existing| {
-            existing.file == citation.file
-                && existing.line == citation.line
-                && existing.symbol == citation.symbol
-                && existing.provenance == citation.provenance
+            existing.file() == citation.file()
+                && existing.line() == citation.line()
+                && existing.symbol() == citation.symbol()
+                && existing.provenance() == citation.provenance()
         }) {
             self.code_citations.push(citation);
         }
@@ -554,14 +554,14 @@ fn citations_for_sources(
 }
 
 fn citation_matches_source(citation: &ResearchCodeCitation, source: &str) -> bool {
-    let citation_components = path_components(&citation.file);
+    let citation_components = path_components(citation.file());
     let source_components = path_components(source);
     if citation_components.is_empty() || source_components.is_empty() {
         return false;
     }
     source_components == citation_components
         || (citation_components.len() >= 2 && source_components.ends_with(&citation_components))
-        || trailing_path_components_match(&source_components, &citation_components, 2)
+        || (source_components.len() >= 2 && citation_components.ends_with(&source_components))
 }
 
 fn path_components(value: &str) -> Vec<&str> {
@@ -571,25 +571,14 @@ fn path_components(value: &str) -> Vec<&str> {
         .collect()
 }
 
-fn trailing_path_components_match(
-    source: &[&str],
-    citation: &[&str],
-    min_components: usize,
-) -> bool {
-    if source.len() < min_components || citation.len() < min_components {
-        return false;
-    }
-    source[source.len() - min_components..] == citation[citation.len() - min_components..]
-}
-
 fn dedup_code_citations(citations: Vec<ResearchCodeCitation>) -> Vec<ResearchCodeCitation> {
     let mut deduped = Vec::new();
     for citation in citations {
         if !deduped.iter().any(|existing: &ResearchCodeCitation| {
-            existing.file == citation.file
-                && existing.line == citation.line
-                && existing.symbol == citation.symbol
-                && existing.provenance == citation.provenance
+            existing.file() == citation.file()
+                && existing.line() == citation.line()
+                && existing.symbol() == citation.symbol()
+                && existing.provenance() == citation.provenance()
         }) {
             deduped.push(citation);
         }
@@ -615,19 +604,19 @@ mod tests {
     use super::*;
 
     fn citation(file: &str) -> ResearchCodeCitation {
-        ResearchCodeCitation {
-            file: file.to_string(),
-            line: None,
-            symbol: None,
-            provenance: vec!["search".to_string()],
-        }
+        ResearchCodeCitation::new(file, None, None, vec!["search".to_string()])
+            .expect("test citation")
     }
 
     #[test]
-    fn citation_matching_requires_two_components_for_fuzzy_fallback() {
+    fn citation_matching_uses_exact_or_suffix_paths() {
         assert!(!citation_matches_source(
             &citation("lib.rs"),
             "other/src/lib.rs"
+        ));
+        assert!(!citation_matches_source(
+            &citation("src/lib.rs"),
+            "other/lib.rs"
         ));
         assert!(citation_matches_source(
             &citation("src/lib.rs"),

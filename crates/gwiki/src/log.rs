@@ -137,6 +137,9 @@ fn same_file_identity(left: &Path, right: &Path) -> bool {
             return None;
         }
         let info = unsafe { info.assume_init() };
+        if info.nFileIndexHigh == 0 && info.nFileIndexLow == 0 {
+            return None;
+        }
         Some((
             info.dwVolumeSerialNumber,
             info.nFileIndexHigh,

@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write;
 use std::path::Path;
+use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use gix::bstr::ByteSlice;
@@ -219,6 +221,7 @@ fn derived_owners_for_files(
     let Ok(head) = repo.head_id() else {
         return BTreeMap::new();
     };
+    let head = head.detach();
     status.blame_available = true;
 
     let started = Instant::now();
@@ -239,7 +242,13 @@ fn derived_owners_for_files(
             out.insert(file.clone(), cached.contributors.clone());
             continue;
         }
-        let contributors = blame_file_contributors(&repo, head.detach(), file).unwrap_or_default();
+        let remaining_timeout = options.blame_timeout.saturating_sub(started.elapsed());
+        let Some(contributors) =
+            blame_file_contributors_with_timeout(project_root, head, file, remaining_timeout)
+        else {
+            status.partial = true;
+            break;
+        };
         meta.files.insert(
             file.clone(),
             CachedBlameSummary {
@@ -256,11 +265,42 @@ fn content_hash(project_root: &Path, file: &str) -> Option<String> {
     hasher::file_content_hash(&project_root.join(file)).ok()
 }
 
+fn blame_file_contributors_with_timeout(
+    project_root: &Path,
+    head: gix::ObjectId,
+    file: &str,
+    timeout: Duration,
+) -> Option<Vec<OwnershipContributor>> {
+    let project_root = project_root.to_path_buf();
+    let file = file.to_string();
+    run_with_timeout(timeout, move || {
+        blame_file_contributors(&project_root, head, &file).unwrap_or_default()
+    })
+}
+
+fn run_with_timeout<T, F>(timeout: Duration, work: F) -> Option<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = sender.send(work());
+    });
+    recv_with_timeout(receiver, timeout)
+}
+
+fn recv_with_timeout<T>(receiver: mpsc::Receiver<T>, timeout: Duration) -> Option<T> {
+    receiver.recv_timeout(timeout).ok()
+}
+
 fn blame_file_contributors(
-    repo: &gix::Repository,
+    project_root: &Path,
     head: gix::ObjectId,
     file: &str,
 ) -> anyhow::Result<Vec<OwnershipContributor>> {
+    let mut repo = gix::discover(project_root)?;
+    repo.object_cache_size_if_unset(4 * 1024 * 1024);
     let outcome = repo.blame_file(
         file.as_bytes().as_bstr(),
         head,
@@ -591,6 +631,14 @@ mod tests {
         assert!(doc.contains("partial: true"));
         assert!(doc.contains("Ownership is partial"));
         assert_eq!(meta.files.len(), 1);
+    }
+
+    #[test]
+    fn codewiki_ownership_recv_timeout_returns_none() {
+        let (_sender, receiver) = mpsc::channel::<usize>();
+        let result = recv_with_timeout(receiver, Duration::from_millis(1));
+
+        assert_eq!(result, None);
     }
 
     fn modules<const N: usize>(items: [(&str, &str); N]) -> HashMap<String, String> {

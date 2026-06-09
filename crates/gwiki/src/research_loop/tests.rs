@@ -221,12 +221,15 @@ fn research_code_citations_flow_into_accepted_notes() {
         ) -> Result<ResearchObservation, WikiError> {
             Ok(ResearchObservation::new("search", "1 code hit")
                 .with_sources(vec!["src/handler.rs".to_string()])
-                .with_code_citations(vec![ResearchCodeCitation {
-                    file: "src/handler.rs".to_string(),
-                    line: Some(12),
-                    symbol: Some("handle".to_string()),
-                    provenance: vec!["search".to_string(), "graph_context".to_string()],
-                }]))
+                .with_code_citations(vec![
+                    ResearchCodeCitation::new(
+                        "src/handler.rs",
+                        Some(12),
+                        Some("handle".to_string()),
+                        vec!["search".to_string(), "graph_context".to_string()],
+                    )
+                    .expect("code citation"),
+                ]))
         }
     }
 
@@ -235,12 +238,13 @@ fn research_code_citations_flow_into_accepted_notes() {
     std::fs::create_dir_all(&src_dir).expect("src dir");
     std::fs::write(src_dir.join("handler.rs"), "fn handle() {}").expect("source file");
 
-    let expected = ResearchCodeCitation {
-        file: "src/handler.rs".to_string(),
-        line: Some(12),
-        symbol: Some("handle".to_string()),
-        provenance: vec!["search".to_string(), "graph_context".to_string()],
-    };
+    let expected = ResearchCodeCitation::new(
+        "src/handler.rs",
+        Some(12),
+        Some("handle".to_string()),
+        vec!["search".to_string(), "graph_context".to_string()],
+    )
+    .expect("expected citation");
     let mut model = FakeModel::new(vec![
         ModelDecision {
             action: ResearchAction::Search {
@@ -306,12 +310,15 @@ fn research_code_model_off_returns_retrieval_only_scaffold() {
         ) -> Result<ResearchObservation, WikiError> {
             Ok(ResearchObservation::new("search", "1 candidate source")
                 .with_sources(vec!["code/files/src/handler.rs.md".to_string()])
-                .with_code_citations(vec![ResearchCodeCitation {
-                    file: "src/handler.rs".to_string(),
-                    line: Some(3),
-                    symbol: Some("handle".to_string()),
-                    provenance: vec!["retrieval_scaffold".to_string()],
-                }]))
+                .with_code_citations(vec![
+                    ResearchCodeCitation::new(
+                        "src/handler.rs",
+                        Some(3),
+                        Some("handle".to_string()),
+                        vec!["retrieval_scaffold".to_string()],
+                    )
+                    .expect("code citation"),
+                ]))
         }
     }
 
