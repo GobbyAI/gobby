@@ -64,6 +64,20 @@ class FailingAdapter:
         raise RuntimeError(self.message)
 
 
+class ProviderFailureAdapter:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+        self.requests: list[TextGenerationRequest] = []
+
+    async def generate(self, request: TextGenerationRequest) -> str:
+        self.requests.append(request)
+        raise self.error
+
+    async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
+        self.requests.append(request)
+        raise self.error
+
+
 class JSONAdapter(RecordingAdapter):
     async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
         self.requests.append(request)
@@ -244,6 +258,136 @@ async def test_text_generation_service_falls_back_across_profile_candidates() ->
     assert result.model == "haiku"
     assert local.requests[0].model == "qwen-local"
     assert claude.requests[0].model == "haiku"
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_falls_back_to_profile_defaults_for_unavailable_override(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                available=False,
+                models=("haiku",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.3-codex-spark",),
+            ),
+        ]
+    )
+    codex = RecordingAdapter("codex")
+    service = TextGenerationService(registry, {"codex": codex})
+
+    with caplog.at_level(logging.WARNING, logger=TEXT_GENERATION_LOGGER):
+        result = await service.generate_result(
+            TextGenerationRequest(
+                prompt="summarize",
+                profile="feature_low",
+                candidates=("claude/haiku",),
+                caller="session_summary",
+            )
+        )
+
+    assert result.text == "codex:summarize"
+    assert result.provider == "codex"
+    assert result.model == "gpt-5.3-codex-spark"
+    assert codex.requests[0].model == "gpt-5.3-codex-spark"
+    [fallback_record] = [
+        record
+        for record in caplog.records
+        if record.name == TEXT_GENERATION_LOGGER
+        and record.message == "feature_llm_candidate_fallback"
+    ]
+    assert fallback_record.feature == "session_summary"
+    assert fallback_record.profile == "feature_low"
+    assert fallback_record.failed_candidates == ["claude/haiku"]
+    assert fallback_record.fallback_candidates[0] == "codex/gpt-5.3-codex-spark"
+    assert "claude/haiku" not in fallback_record.fallback_candidates
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_json_fallback_for_degraded_claude() -> None:
+    from gobby.llm.claude import ClaudeSDKProviderFailure
+
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                available=True,
+                models=("haiku",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.3-codex-spark",),
+            ),
+        ]
+    )
+    claude = ProviderFailureAdapter(ClaudeSDKProviderFailure("provider degraded"))
+    codex = JSONAdapter("codex")
+    service = TextGenerationService(registry, {"claude": claude, "codex": codex})
+
+    result = await service.generate_json(
+        TextGenerationRequest(
+            prompt="classify",
+            profile="feature_low",
+            candidates=("claude/haiku",),
+            caller="session_summary",
+        )
+    )
+
+    assert result == {"provider": "codex", "model": "gpt-5.3-codex-spark"}
+    assert claude.requests[0].model == "haiku"
+    assert codex.requests[0].model == "gpt-5.3-codex-spark"
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_skips_profile_fallback_for_non_recoverable_failure() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                available=True,
+                models=("haiku",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.3-codex-spark",),
+            ),
+        ]
+    )
+    claude = FailingAdapter("malformed model output")
+    codex = RecordingAdapter("codex")
+    service = TextGenerationService(registry, {"claude": claude, "codex": codex})
+
+    with pytest.raises(RuntimeError, match="malformed model output"):
+        await service.generate_result(
+            TextGenerationRequest(
+                prompt="summarize",
+                profile="feature_low",
+                candidates=("claude/haiku",),
+                caller="session_summary",
+            )
+        )
+
+    assert claude.requests[0].model == "haiku"
+    assert codex.requests == []
 
 
 @pytest.mark.asyncio

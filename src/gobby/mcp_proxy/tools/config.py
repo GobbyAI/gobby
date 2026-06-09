@@ -84,6 +84,12 @@ def _storage_config_key_to_public_key(key: str) -> str:
     return key
 
 
+def _remove_scalar_parent_keys(flat: dict[str, Any], key: str) -> None:
+    parts = key.split(".")
+    for index in range(1, len(parts)):
+        flat.pop(".".join(parts[:index]), None)
+
+
 def create_config_registry(
     config: DaemonConfig,
     config_store: ConfigStore,
@@ -392,20 +398,17 @@ def create_config_registry(
             had_secret = storage_key in secret_keys
 
             # Validate the post-delete state before mutating DB or memory.
-            flat = _flat_config()
-            flat.pop(runtime_key, None)
             remaining_override_keys = {
                 storage_embedding_config_key_to_runtime_key(k)
                 for k in override_keys - {storage_key}
             }
             defaults_flat = flatten_config(DaemonConfigCls().model_dump(mode="json", by_alias=True))
-            parent_prefix = runtime_key.rsplit(".", 1)[0] + "." if "." in runtime_key else ""
-            if (
-                parent_prefix
-                and not any(k.startswith(parent_prefix) for k in remaining_override_keys)
-                and not any(k.startswith(parent_prefix) for k in defaults_flat)
-            ):
-                flat = {k: v for k, v in flat.items() if not k.startswith(parent_prefix)}
+            current_flat = _flat_config()
+            flat = dict(defaults_flat)
+            for remaining_key in remaining_override_keys:
+                if remaining_key in current_flat:
+                    _remove_scalar_parent_keys(flat, remaining_key)
+                    flat[remaining_key] = current_flat[remaining_key]
             new_config = DaemonConfigCls(**unflatten_config(flat))
 
             if had_secret:

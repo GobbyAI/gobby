@@ -16,6 +16,7 @@ from gobby.config.embedding_keys import (
     AI_EMBEDDING_MODEL_KEY,
     EMBEDDING_API_KEY_SECRET_NAME,
 )
+from gobby.config.feature_base import DEFAULT_PROFILE_CANDIDATES, FeatureProfile
 from gobby.mcp_proxy.tools.config import create_config_registry
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.config_store import ConfigStore, config_key_to_secret_name, is_secret_key_name
@@ -929,6 +930,39 @@ class TestDeleteConfig:
         assert result["success"] is True
         assert config_state["config"].daemon_port == default_port
         assert config_state["config"].daemon_port != 61001
+
+    def test_delete_related_feature_overrides_rebuilds_from_remaining_db_overrides(
+        self,
+        config_store: ConfigStore,
+        config_state: dict[str, DaemonConfig],
+    ) -> None:
+        """Deleting related feature overrides should not retain derived candidates."""
+        mid_candidates = list(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.MID])
+        config_store.set("session_summary.candidates", mid_candidates)
+        config_store.set("session_summary.profile", FeatureProfile.MID.value)
+        config_state["config"] = DaemonConfig(
+            session_summary={
+                "candidates": mid_candidates,
+                "profile": FeatureProfile.MID,
+            }
+        )
+        registry = create_config_registry(
+            config=config_state["config"],
+            config_store=config_store,
+            config_setter=lambda c: config_state.__setitem__("config", c),
+        )
+        delete_tool = registry.get_tool("delete_config")
+
+        assert delete_tool(key="session_summary.candidates")["success"] is True
+        result = delete_tool(key="session_summary.profile")
+
+        assert result["success"] is True
+        assert "session_summary.candidates" not in config_store.list_keys()
+        assert "session_summary.profile" not in config_store.list_keys()
+        assert config_state["config"].session_summary.profile == FeatureProfile.LOW
+        assert config_state["config"].session_summary.candidates == list(
+            DEFAULT_PROFILE_CANDIDATES[FeatureProfile.LOW]
+        )
 
     def test_delete_config_removes_last_dynamic_hub_key(
         self,
