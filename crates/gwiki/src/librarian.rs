@@ -454,11 +454,11 @@ fn write_text(vault_root: &Path, relative: &Path, text: &str) -> Result<(), Wiki
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::{OsStr, OsString};
     use std::path::{Path, PathBuf};
 
     use crate::ScopeIdentity;
     use crate::sources::{SourceDraft, SourceManifest};
+    use crate::support::test_env::{ENV_TEST_LOCK, EnvGuard};
 
     use super::*;
 
@@ -600,6 +600,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn librarian_requires_configured_postgres_index() {
+        let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock");
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path();
         write_page(
@@ -607,10 +608,7 @@ mod tests {
             "knowledge/topics/page.md",
             "# Page\n\nSupported enough.\n",
         );
-        let _database_url = EnvGuard::set(
-            "GWIKI_DATABASE_URL",
-            OsStr::new("postgresql://127.0.0.1:1/gwiki"),
-        );
+        let _database_url = EnvGuard::set("GWIKI_DATABASE_URL", "postgresql://127.0.0.1:1/gwiki");
 
         let error = run(root, ScopeIdentity::topic("ops"), Options::default())
             .expect_err("PostgreSQL is required");
@@ -627,35 +625,5 @@ mod tests {
         let path = root.join(relative);
         std::fs::create_dir_all(path.parent().expect("page parent")).expect("create parent");
         std::fs::write(path, markdown).expect("write page");
-    }
-
-    struct EnvGuard {
-        key: &'static str,
-        old_value: Option<OsString>,
-    }
-
-    // EnvGuard mutates process-wide environment and must only be used by #[serial_test::serial] tests.
-    impl EnvGuard {
-        fn set(key: &'static str, value: &OsStr) -> Self {
-            let guard = Self {
-                key,
-                old_value: std::env::var_os(key),
-            };
-            unsafe {
-                std::env::set_var(key, value);
-            }
-            guard
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            unsafe {
-                match &self.old_value {
-                    Some(value) => std::env::set_var(self.key, value),
-                    None => std::env::remove_var(self.key),
-                }
-            }
-        }
     }
 }
