@@ -170,3 +170,29 @@ def test_javascript_skill_loads_strict_runtime_boundary_pattern() -> None:
     assert result.loaded.actions[1]["path"] == "references/types.md"
     assert result.loaded.actions[2]["path"] == "references/error-handling.md"
     assert result.has_behavioral_delta
+
+
+def test_go_skill_loads_strict_module_boundary_pattern() -> None:
+    """Verify Go work loads references before module and boundary changes."""
+    result = run_recorded_skill_scenario(SCENARIOS / "go/strict-module-boundaries.yaml")
+
+    assert result.baseline.action_names == (
+        "write_unvalidated_http_client",
+        "run_broad_go_test",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "update_go_module",
+        "model_domain_types",
+        "validate_external_response",
+        "add_table_tests",
+        "run_validation",
+        "respond",
+    )
+    assert result.loaded.actions[0]["path"] == "references/configuration.md"
+    assert result.loaded.actions[1]["path"] == "references/types.md"
+    assert result.loaded.actions[2]["path"] == "references/error-handling.md"
+    assert result.has_behavioral_delta

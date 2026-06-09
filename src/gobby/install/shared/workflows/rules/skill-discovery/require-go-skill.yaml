@@ -1,0 +1,19 @@
+tags: [skill-discovery, context, gobby, default]
+
+rules:
+  require-go-skill:
+    description: "Block first Go write/edit until go coding standards are loaded"
+    event: before_tool
+    enabled: true
+    priority: 30
+    when: >
+      not skill_loaded('go')
+      and event.data.get('canonical_tool_kind') == 'write'
+      and (
+        event.data.get('canonical_file_path', '').endswith('.go')
+        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('go.mod', 'go.sum', 'go.work', 'go.work.sum')
+        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('.golangci.yml', '.golangci.yaml', 'golangci.yml', 'golangci.yaml')
+      )
+    effects:
+      - type: block
+        reason: 'Call get_skill(name="go") on gobby-skills through mcp__gobby__ progressive discovery: list_mcp_servers -> list_tools("gobby-skills") -> get_tool_schema("gobby-skills", "get_skill") -> call_tool("gobby-skills", "get_skill", {"name": "go"}). Then continue.'

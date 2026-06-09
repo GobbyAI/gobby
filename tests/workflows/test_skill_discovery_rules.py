@@ -57,6 +57,7 @@ def _sync_bundled(db):
 
 SKILL_DISCOVERY_RULES = {
     "discover-skill-hubs-on-turn-start",
+    "require-go-skill",
     "require-javascript-skill",
     "require-python-skill",
     "require-rust-skill",
@@ -663,6 +664,128 @@ class TestRequireJavaScriptSkillCondition:
 
     def test_skips_non_edit_write_tool(self) -> None:
         assert self._eval("/project/src/main.js", canonical_tool_kind="read") is False
+
+    def test_skips_empty_file_path(self) -> None:
+        assert self._eval("") is False
+
+
+# --- require-go-skill structure ---
+
+
+class TestRequireGoSkillStructure:
+    """Verify require-go-skill rule structure."""
+
+    def test_is_before_tool_event(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-go-skill")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.when is not None
+        assert "not skill_loaded('go')" in body.when
+
+    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-go-skill")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert len(body.effects) == 1
+        assert body.effects[0].type == "block"
+        assert body.effects[0].reason == skill_fetch_directive("go")
+
+
+# --- require-go-skill condition evaluation ---
+
+
+class TestRequireGoSkillCondition:
+    """Test the require-go-skill condition evaluates correctly."""
+
+    CONDITION = (
+        "not skill_loaded('go') "
+        "and event.data.get('canonical_tool_kind') == 'write' "
+        "and ("
+        "event.data.get('canonical_file_path', '').endswith('.go') "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
+        "in ('go.mod', 'go.sum', 'go.work', 'go.work.sum') "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
+        "in ('.golangci.yml', '.golangci.yaml', 'golangci.yml', 'golangci.yaml')"
+        ")"
+    )
+
+    def _eval(
+        self,
+        file_path: str,
+        *,
+        canonical_tool_kind: str = "write",
+        loaded_skills: list[str] | None = None,
+        injected_skills: list[str] | None = None,
+    ) -> bool:
+        variables = {"loaded_skills": loaded_skills or []}
+        if injected_skills is not None:
+            variables["injected_skills"] = injected_skills
+        context = {
+            "variables": variables,
+            "event": SimpleNamespace(
+                data={
+                    "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_file_path": file_path,
+                }
+            ),
+            "tool_input": {},
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        return evaluator.evaluate(self.CONDITION)
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/main.go",
+            "/project/internal/profile/client.go",
+            "/project/cmd/server/main_test.go",
+        ],
+    )
+    def test_matches_go_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/go.mod",
+            "/project/go.sum",
+            "/project/go.work",
+            "/project/go.work.sum",
+            "/project/.golangci.yml",
+            "/project/.golangci.yaml",
+            "/project/golangci.yml",
+            "/project/golangci.yaml",
+        ],
+    )
+    def test_matches_go_config_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/src/main.ts",
+            "/project/src/main.js",
+            "/project/go.mod.bak",
+            "/project/.golangci.toml",
+            "/project/Dockerfile",
+        ],
+    )
+    def test_skips_non_go_targets(self, file_path: str) -> None:
+        assert self._eval(file_path) is False
+
+    def test_skips_when_already_loaded(self) -> None:
+        assert self._eval("/project/main.go", loaded_skills=["go"]) is False
+
+    def test_does_not_skip_when_legacy_injected(self) -> None:
+        assert self._eval("/project/main.go", injected_skills=["go"]) is True
+
+    def test_skips_non_edit_write_tool(self) -> None:
+        assert self._eval("/project/main.go", canonical_tool_kind="read") is False
 
     def test_skips_empty_file_path(self) -> None:
         assert self._eval("") is False

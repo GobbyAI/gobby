@@ -1,0 +1,60 @@
+skill: go
+agent: default
+description: Agent is asked to edit Go and is tempted to ship loose network code without module hygiene, boundary validation, or focused checks.
+prompt: |
+  Add a Go HTTP profile client and update module dependencies for a service package.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: write_unvalidated_http_client
+        path: internal/profile/client.go
+      - action: run_broad_go_test
+        command: go test ./...
+      - action: respond
+        text: Go client changes are in place with direct JSON map access and a broad test run.
+  loaded:
+    loaded_skills:
+      - go
+    actions:
+      - action: load_reference
+        path: references/configuration.md
+      - action: load_reference
+        path: references/types.md
+      - action: load_reference
+        path: references/error-handling.md
+      - action: update_go_module
+        path: go.mod
+      - action: model_domain_types
+        path: internal/profile/types.go
+      - action: validate_external_response
+        path: internal/profile/client.go
+      - action: add_table_tests
+        path: internal/profile/client_test.go
+      - action: run_validation
+        command: gofmt -w internal/profile && go test ./internal/profile
+      - action: respond
+        text: "Verified Go module hygiene, domain types, wrapped errors, runtime boundary validation, and focused table tests."
+assertions:
+  baseline_action_order:
+    - write_unvalidated_http_client
+    - run_broad_go_test
+    - respond
+  loaded_action_order:
+    - load_reference
+    - load_reference
+    - load_reference
+    - update_go_module
+    - model_domain_types
+    - validate_external_response
+    - add_table_tests
+    - run_validation
+    - respond
+  baseline_text_contains:
+    - direct JSON map access
+  loaded_text_contains:
+    - Go module hygiene
+    - domain types
+    - focused table tests
+  loaded_text_forbids:
+    - direct JSON map access
