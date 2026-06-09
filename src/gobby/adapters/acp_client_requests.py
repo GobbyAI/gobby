@@ -87,11 +87,90 @@ async def handle_client_request(
             yield event
         return
 
+    if method == "session/request_permission":
+        await _handle_request_permission_request(client, request)
+        return
+
     await write_json_rpc_error(
         client,
         request.get("id"),
         code=-32601,
         message=f"Unknown client request method: {method}",
+    )
+
+
+# Permission-option kinds we treat as approval, in preference order. We prefer
+# ``allow_once`` so Gobby is reconsulted on every tool call instead of the CLI
+# permanently bypassing its own permission prompt for the rest of the session.
+_PERMISSION_ALLOW_KINDS = ("allow_once", "allow_always")
+
+
+def _select_permission_option(options: Any) -> tuple[str | None, str | None]:
+    """Pick an auto-approval option from an ACP ``session/request_permission``.
+
+    Managed web-chat ACP sessions approve tool calls through Gobby's own
+    lifecycle/hook systems and the web UI, not the CLI's native interactive
+    permission prompt. Auto-select an "allow" option so the agent executes the
+    tool instead of treating the unanswered permission round-trip as a failure.
+
+    Returns ``(option_id, kind)``; ``option_id`` is ``None`` when no allow-kind
+    option is offered.
+    """
+    by_kind: dict[str, str] = {}
+    if isinstance(options, list):
+        for option in options:
+            if not isinstance(option, dict):
+                continue
+            option_id = option.get("optionId")
+            kind = option.get("kind")
+            if isinstance(option_id, str) and isinstance(kind, str) and kind not in by_kind:
+                by_kind[kind] = option_id
+    for kind in _PERMISSION_ALLOW_KINDS:
+        if kind in by_kind:
+            return by_kind[kind], kind
+    return None, None
+
+
+async def _handle_request_permission_request(
+    client: Any,
+    request: dict[str, Any],
+) -> None:
+    """Answer an ACP ``session/request_permission`` request.
+
+    A spec-compliant ACP agent (Gemini/Qwen) blocks the tool call on this
+    request. If the client never answers — or answers with a JSON-RPC error —
+    the Node CLI surfaces the rejected permission to the model as the literal
+    string ``[object Object]`` and spirals into a runaway diagnostic loop
+    (gobby #15705). Always return a well-formed outcome so the agent can
+    proceed cleanly.
+    """
+    params = request.get("params")
+    options = params.get("options") if isinstance(params, dict) else None
+    option_id, kind = _select_permission_option(options)
+
+    if option_id is None:
+        # No allow option was offered: decline gracefully with a well-formed
+        # ``cancelled`` outcome rather than erroring, so the agent records a
+        # clean cancellation instead of an unrenderable error object.
+        await write_json_rpc_result(
+            client,
+            request.get("id"),
+            {"outcome": {"outcome": "cancelled"}},
+        )
+        return
+
+    tool_call = params.get("toolCall") if isinstance(params, dict) else None
+    tool_title = tool_call.get("title") if isinstance(tool_call, dict) else None
+    logger.debug(
+        "%s ACP auto-approved tool permission (%s) via option %s",
+        getattr(client, "display_name", "ACP"),
+        tool_title or "tool",
+        kind,
+    )
+    await write_json_rpc_result(
+        client,
+        request.get("id"),
+        {"outcome": {"outcome": "selected", "optionId": option_id}},
     )
 
 
