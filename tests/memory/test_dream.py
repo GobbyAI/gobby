@@ -280,6 +280,25 @@ def test_duplicate_groups_choose_canonical_without_quadratic_index_lookup() -> N
     assert groups[0].canonical_content == "same"
 
 
+def test_duplicate_groups_choose_longest_content_as_canonical() -> None:
+    shorter = replace(
+        _candidate("shorter"),
+        content="same",
+        created_at="2024-01-01T00:00:00+00:00",
+    )
+    longer = replace(
+        _candidate("longer"),
+        content="Same  ",
+        created_at="2024-02-01T00:00:00+00:00",
+    )
+
+    groups = find_duplicate_groups([shorter, longer])
+
+    assert len(groups) == 1
+    assert groups[0].memory_ids == ["shorter", "longer"]
+    assert groups[0].canonical_content == "Same  "
+
+
 def test_duplicate_groups_ignore_non_string_content() -> None:
     candidate = replace(_candidate("bad"), content=None)
 

@@ -35,12 +35,15 @@ CREATE INDEX IF NOT EXISTS idx_memory_dream_snapshots_run
 ON memory_dream_snapshots(run_id);
 
 DELETE FROM cron_jobs
-WHERE name IN (
-    'nightly-memory-cleanup',
-    'gobby:nightly-memory-cleanup',
-    'gobby:memory-cleanup'
-)
-OR (
-    action_type = 'pipeline'
-    AND action_config->>'pipeline_name' = 'nightly-memory-cleanup'
+WHERE is_system = true
+AND (
+    name IN (
+        'nightly-memory-cleanup',
+        'gobby:nightly-memory-cleanup',
+        'gobby:memory-cleanup'
+    )
+    OR (
+        action_type = 'pipeline'
+        AND action_config->>'pipeline_name' = 'nightly-memory-cleanup'
+    )
 );

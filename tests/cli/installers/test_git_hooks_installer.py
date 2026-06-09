@@ -433,9 +433,8 @@ class TestInstallGitHooks:
         install_git_hooks(tmp_path)
 
         content = (hooks_dir / "post-commit").read_text()
-        assert "[[ \"$ROOT_PATH\" == *$'\\n'* ]]" in content
-        assert "[[ \"$ROOT_PATH\" == *$'\\r'* ]]" in content
-        assert "[[ \"$ROOT_PATH\" == *$'\\t'* ]]" in content
+        assert '[[ "$ROOT_PATH"' not in content
+        assert "$'" not in content
         assert "grep -q '[[:cntrl:]]'" in content
 
     def test_skips_already_installed_hooks(self, tmp_path: Path) -> None:

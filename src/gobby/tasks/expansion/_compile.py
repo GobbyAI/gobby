@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from collections import defaultdict
 from pathlib import Path
@@ -231,7 +230,7 @@ async def _invoke_llm_compile(
             caller="tasks.expansion.compile",
         )
         return cast(dict[str, Any], result)
-    except (json.JSONDecodeError, ValueError) as exc:
+    except Exception as exc:
         raise ValueError(
             f"Expansion compiler did not return valid JSON for {scope}: {exc!r}"
         ) from exc

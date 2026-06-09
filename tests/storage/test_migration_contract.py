@@ -321,6 +321,15 @@ def test_memory_dream_constraints_migration_and_baseline_define_invariants() -> 
     assert "UPDATE memory_dream_runs\n               SET status = 'failed'" not in runtime_storage
 
 
+def test_memory_dream_migration_only_deletes_retired_system_cron_jobs() -> None:
+    migration = (SRC_ROOT / "storage" / "migrations" / "274_memory_dream.sql").read_text(
+        encoding="utf-8"
+    )
+
+    assert "DELETE FROM cron_jobs\nWHERE is_system = true\nAND (" in migration
+    assert "action_config->>'pipeline_name' = 'nightly-memory-cleanup'" in migration
+
+
 def test_migration_helpers_are_not_imported_by_runtime_storage_paths() -> None:
     violations: list[str] = []
 

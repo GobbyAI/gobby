@@ -137,18 +137,18 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
 
     claude = registry.binding(AICapability.TEXT_GENERATE, "claude")
     assert claude is not None
-    assert claude.models == ()
+    assert claude.models == ("haiku", "opus", "sonnet")
     assert "default_model" not in claude.metadata
     assert "auth_mode" not in claude.metadata
 
     codex = registry.binding(AICapability.TEXT_GENERATE, "codex")
     assert codex is not None
-    assert codex.models == ()
+    assert codex.models == ("gpt-5.3-codex-spark", "gpt-5.4-mini", "gpt-5.3-codex")
     assert "default_model" not in codex.metadata
     assert "auth_mode" not in codex.metadata
 
 
-def test_daemon_registry_accepts_claude_model_requests_without_provider_config() -> None:
+def test_daemon_registry_matches_configured_claude_model_aliases() -> None:
     registry = build_daemon_ai_capability_registry(
         DaemonConfig(),
         provider_installed=lambda _entry: True,
@@ -160,12 +160,37 @@ def test_daemon_registry_accepts_claude_model_requests_without_provider_config()
         provider="claude",
         model="claude-haiku-4-5",
     )
+    provider_scoped = registry.select(
+        AICapability.TEXT_GENERATE,
+        provider="claude",
+        model="claude/claude-haiku-4-5",
+    )
 
     assert haiku.provider == "claude"
     assert full_model.provider == "claude"
-    assert haiku.models == ()
-    assert full_model.models == ()
+    assert provider_scoped.provider == "claude"
+    assert haiku.models == ("haiku", "opus", "sonnet")
+    assert full_model.models == ("haiku", "opus", "sonnet")
+    assert provider_scoped.models == ("haiku", "opus", "sonnet")
     assert "default_model" not in haiku.metadata
+
+
+def test_daemon_registry_applies_feature_models_to_provider_capabilities() -> None:
+    registry = build_daemon_ai_capability_registry(
+        DaemonConfig(),
+        provider_installed=lambda _entry: True,
+    )
+
+    vision = registry.binding(AICapability.VISION_EXTRACT, "claude")
+    agent = registry.binding(AICapability.AGENT_SPAWN, "claude")
+    web = registry.binding(AICapability.WEB_CHAT, "claude")
+
+    assert vision is not None
+    assert agent is not None
+    assert web is not None
+    assert vision.models == ("haiku", "opus", "sonnet")
+    assert agent.models == ("haiku", "opus", "sonnet")
+    assert web.models == ("haiku", "opus", "sonnet")
 
 
 def test_daemon_registry_reports_only_proven_vision_extract_bindings_available() -> None:

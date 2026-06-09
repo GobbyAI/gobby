@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from gobby.memory.dream.service import run_memory_dream
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
 from gobby.storage.projects import PERSONAL_PROJECT_ID
+
+if TYPE_CHECKING:
+    from gobby.config.persistence import MemoryDreamConfig
+    from gobby.llm.service import LLMService
+    from gobby.memory.manager import MemoryManager
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +35,9 @@ def register_memory_dream_cron(
     *,
     cron_storage: CronJobStorage,
     cron_executor: CronRegistrationProtocol,
-    memory_manager: Any,
-    dream_config: Any,
-    llm_service: Any | None = None,
+    memory_manager: MemoryManager,
+    dream_config: MemoryDreamConfig,
+    llm_service: LLMService | None = None,
     project_id: str | None = None,
 ) -> int:
     """Register the memory dream handler and reconcile its single system row."""
@@ -76,7 +81,7 @@ def register_memory_dream_cron(
 
 def _ensure_system_job(
     cron_storage: CronJobStorage,
-    dream_config: Any,
+    dream_config: MemoryDreamConfig,
     project_id: str | None,
 ) -> None:
     existing = cron_storage.get_job_by_name(MEMORY_DREAM_CRON_JOB_NAME)

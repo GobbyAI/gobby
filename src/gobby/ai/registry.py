@@ -13,6 +13,9 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel
+
+from gobby.config.feature_base import FeatureDefaultConfig, normalize_feature_candidate
 from gobby.providers import AGY_UNAVAILABLE_REASON, ProviderMetadata, provider_metadata
 from gobby.search.embeddings import is_embedding_configured
 
@@ -101,6 +104,19 @@ def _normalize_adapter_style(adapter_style: AIAdapterStyle | str) -> AIAdapterSt
         ) from exc
 
 
+def _normalize_binding_model(provider: str, model: str) -> str:
+    """Normalize provider-scoped model aliases for binding comparisons."""
+    raw_model = model.strip()
+    if not raw_model:
+        return raw_model
+    candidate = raw_model if "/" in raw_model else f"{provider}/{raw_model}"
+    normalized = normalize_feature_candidate(candidate)
+    normalized_provider, separator, normalized_model = normalized.partition("/")
+    if separator and _normalize_provider(normalized_provider) == _normalize_provider(provider):
+        return normalized_model
+    return raw_model
+
+
 @dataclass(frozen=True, kw_only=True, init=False)
 class CapabilityBinding:
     """One provider binding for one canonical AI capability."""
@@ -127,7 +143,9 @@ class CapabilityBinding:
         normalized_capability = normalize_capability(capability)
         normalized_provider = _normalize_provider(provider)
         normalized_adapter_style = _normalize_adapter_style(adapter_style)
-        normalized_models = tuple(model for model in models if model)
+        normalized_models = tuple(
+            _normalize_binding_model(normalized_provider, model) for model in models if model
+        )
         normalized_metadata = MappingProxyType(dict(metadata or {}))
         normalized_reason = reason
         if not available and not normalized_reason:
@@ -167,7 +185,11 @@ class CapabilityBinding:
 
     def supports_model(self, model: str | None) -> bool:
         """Return whether this binding can satisfy the requested model."""
-        return model is None or not self.models or model in self.models
+        return (
+            model is None
+            or not self.models
+            or _normalize_binding_model(self.provider, model) in self.models
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Return API-safe binding status data."""
@@ -334,6 +356,7 @@ def build_daemon_ai_capability_registry(
 ) -> AICapabilityRegistry:
     """Build the daemon's baseline AI capability registry."""
     installed = provider_installed or (lambda entry: entry.installed())
+    feature_models_by_provider = _feature_candidate_models_by_provider(config)
     bindings: list[CapabilityBinding] = [
         _embedding_binding(config),
         _local_text_generate_binding(config),
@@ -344,17 +367,59 @@ def build_daemon_ai_capability_registry(
     for entry in provider_metadata():
         if entry.provider == "agy":
             continue
-        text_binding = _text_generate_binding(entry, installed)
+        text_binding = _text_generate_binding(entry, installed, feature_models_by_provider)
         if text_binding is not None:
             bindings.append(text_binding)
-        vision_binding = _vision_extract_binding(entry, installed)
+        vision_binding = _vision_extract_binding(entry, installed, feature_models_by_provider)
         if vision_binding is not None:
             bindings.append(vision_binding)
-        bindings.append(_provider_binding(AICapability.AGENT_SPAWN, entry, installed))
-        bindings.append(_provider_binding(AICapability.WEB_CHAT, entry, installed))
+        bindings.append(
+            _provider_binding(
+                AICapability.AGENT_SPAWN, entry, installed, feature_models_by_provider
+            )
+        )
+        bindings.append(
+            _provider_binding(AICapability.WEB_CHAT, entry, installed, feature_models_by_provider)
+        )
 
     bindings.extend(_agy_unavailable_bindings())
     return AICapabilityRegistry(bindings)
+
+
+def _feature_candidate_models_by_provider(
+    config: DaemonConfig | None,
+) -> dict[str, tuple[str, ...]]:
+    if config is None:
+        return {}
+    models_by_provider: dict[str, list[str]] = {}
+    for feature_config in _iter_feature_default_configs(config):
+        for candidate in feature_config.candidates:
+            provider, separator, model = normalize_feature_candidate(candidate).partition("/")
+            if not separator or not provider.strip() or not model.strip():
+                continue
+            normalized_provider = _normalize_provider(provider)
+            normalized_model = _normalize_binding_model(normalized_provider, model)
+            provider_models = models_by_provider.setdefault(normalized_provider, [])
+            if normalized_model not in provider_models:
+                provider_models.append(normalized_model)
+    return {provider: tuple(models) for provider, models in models_by_provider.items()}
+
+
+def _iter_feature_default_configs(value: object) -> Iterable[FeatureDefaultConfig]:
+    if isinstance(value, FeatureDefaultConfig):
+        yield value
+        return
+    if isinstance(value, BaseModel):
+        for field_name in value.__class__.model_fields:
+            yield from _iter_feature_default_configs(getattr(value, field_name))
+        return
+    if isinstance(value, Mapping):
+        for item in value.values():
+            yield from _iter_feature_default_configs(item)
+        return
+    if isinstance(value, Sequence) and not isinstance(value, str):
+        for item in value:
+            yield from _iter_feature_default_configs(item)
 
 
 def _embedding_binding(config: DaemonConfig | None) -> CapabilityBinding:
@@ -509,8 +574,10 @@ def _openai_compatible_audio_binding(
 def _text_generate_binding(
     entry: ProviderMetadata,
     provider_installed: Callable[[ProviderMetadata], bool],
+    feature_models_by_provider: Mapping[str, tuple[str, ...]],
 ) -> CapabilityBinding | None:
     metadata = _metadata_for_generation_binding(entry)
+    models = feature_models_by_provider.get(_normalize_provider(entry.provider), ())
 
     adapter_style = _text_generate_adapter_style(entry.provider)
     if adapter_style is None:
@@ -522,6 +589,7 @@ def _text_generate_binding(
             provider=entry.provider,
             adapter_style=adapter_style,
             available=True,
+            models=models,
             metadata=metadata,
         )
 
@@ -530,6 +598,7 @@ def _text_generate_binding(
         entry.provider,
         adapter_style=adapter_style,
         reason=f"{entry.display_name} CLI is not installed.",
+        models=models,
         metadata=metadata,
     )
 
@@ -562,8 +631,10 @@ def _local_text_generate_binding(config: DaemonConfig | None) -> CapabilityBindi
 def _vision_extract_binding(
     entry: ProviderMetadata,
     provider_installed: Callable[[ProviderMetadata], bool],
+    feature_models_by_provider: Mapping[str, tuple[str, ...]],
 ) -> CapabilityBinding | None:
     metadata = _metadata_for_generation_binding(entry)
+    models = feature_models_by_provider.get(_normalize_provider(entry.provider), ())
 
     adapter_style = _vision_extract_adapter_style(entry.provider)
     if adapter_style is None:
@@ -578,6 +649,7 @@ def _vision_extract_binding(
                 "No daemon vision_extract adapter has proven image payload support for "
                 f"{entry.display_name}."
             ),
+            models=models,
             metadata=metadata,
         )
 
@@ -587,6 +659,7 @@ def _vision_extract_binding(
             provider=entry.provider,
             adapter_style=adapter_style,
             available=True,
+            models=models,
             metadata=metadata,
         )
 
@@ -595,6 +668,7 @@ def _vision_extract_binding(
         entry.provider,
         adapter_style=adapter_style,
         reason=f"{entry.display_name} CLI is not installed.",
+        models=models,
         metadata=metadata,
     )
 
@@ -658,6 +732,7 @@ def _provider_binding(
     capability: AICapability,
     entry: ProviderMetadata,
     provider_installed: Callable[[ProviderMetadata], bool],
+    feature_models_by_provider: Mapping[str, tuple[str, ...]],
 ) -> CapabilityBinding:
     supported = (
         entry.supports_agent_spawn
@@ -670,6 +745,7 @@ def _provider_binding(
         "deprecated": entry.deprecated,
         "deprecation_message": entry.deprecation_message,
     }
+    models = feature_models_by_provider.get(_normalize_provider(entry.provider), ())
     if not supported:
         return CapabilityBinding.unavailable(
             capability,
@@ -677,6 +753,7 @@ def _provider_binding(
             adapter_style=adapter_style,
             reason=entry.unavailable_reason
             or f"{entry.display_name} does not support {capability.value}.",
+            models=models,
             metadata=metadata,
         )
 
@@ -686,6 +763,7 @@ def _provider_binding(
             provider=entry.provider,
             adapter_style=adapter_style,
             available=True,
+            models=models,
             metadata=metadata,
         )
 
@@ -694,6 +772,7 @@ def _provider_binding(
         entry.provider,
         adapter_style=adapter_style,
         reason=f"{entry.display_name} CLI is not installed.",
+        models=models,
         metadata=metadata,
     )
 

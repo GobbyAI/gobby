@@ -14,5 +14,9 @@ def _get_daemon_client(ctx: click.Context) -> DaemonClient:
     """Get a DaemonClient for calling daemon HTTP API."""
     from gobby.utils.daemon_client import DaemonClient
 
-    config: DaemonConfig = ctx.obj["config"]
+    if not isinstance(ctx.obj, dict):
+        raise click.ClickException("Daemon config is unavailable in CLI context")
+    config = ctx.obj.get("config")
+    if not isinstance(config, DaemonConfig):
+        raise click.ClickException("Daemon config is unavailable in CLI context")
     return DaemonClient(host="localhost", port=config.daemon_port)

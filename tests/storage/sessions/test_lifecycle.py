@@ -495,12 +495,12 @@ class TestSessionManagerLifecycle:
         # +1 active for the bootstrapped system session
         assert counts.get("active") == 2
         assert counts.get("paused") == 1
-        assert counts.get("deleted") == 1
+        assert "deleted" not in counts
 
         project_counts = session_manager.count_by_status(project_id=sample_project["id"])
         assert project_counts.get("active") == 1
         assert project_counts.get("paused") == 1
-        assert project_counts.get("deleted") == 1
+        assert "deleted" not in project_counts
 
     def test_count_by_status_empty(self, session_manager: SessionManager) -> None:
         """Test count_by_status with no user sessions (only bootstrapped system session)."""

@@ -258,11 +258,8 @@ class _QueryMixin:
         Returns:
             Dictionary mapping status to count
         """
-        params: tuple[str, ...] = ()
-        where_clause = ""
-        if project_id:
-            where_clause = "WHERE project_id = %s"
-            params = (project_id,)
+        conditions, params = _build_session_filters(project_id, None, None)
+        where_clause = f"WHERE {' AND '.join(conditions)}"
         rows = self.db.fetchall(
             f"""
             SELECT status, COUNT(*) as count
@@ -270,7 +267,7 @@ class _QueryMixin:
             {where_clause}
             GROUP BY status
             """,  # nosec B608
-            params,
+            tuple(params),
         )
         return {row["status"]: row["count"] for row in rows}
 
