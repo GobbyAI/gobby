@@ -503,9 +503,11 @@ fn parse_unified_diff_files(contents: &str) -> Vec<String> {
         } else if let Some(rest) = line.strip_prefix("diff --git a/")
             && let Some((left, right)) = rest.split_once(" b/")
         {
-            files.insert(right.trim().trim_matches('"').to_string());
             if right.trim().is_empty() {
                 files.insert(left.trim().trim_matches('"').to_string());
+            } else {
+                // Rename headers carry old and new paths; review impact follows the new path.
+                files.insert(right.trim().trim_matches('"').to_string());
             }
         }
     }
@@ -708,5 +710,19 @@ mod tests {
         assert!(markdown.contains("degraded: true"));
         assert!(markdown.contains("degraded_sources: [shared_code_graph_unavailable]"));
         assert!(markdown.contains("graph/analytics unavailable"));
+    }
+
+    #[test]
+    fn parse_unified_diff_files_uses_new_rename_path_and_skips_empty_right_path() {
+        let files = parse_unified_diff_files(
+            "diff --git a/src/old.rs b/src/new.rs\n\
+             similarity index 99%\n\
+             diff --git a/src/deleted.rs b/\n",
+        );
+
+        assert_eq!(
+            files,
+            vec!["src/deleted.rs".to_string(), "src/new.rs".to_string()]
+        );
     }
 }

@@ -70,17 +70,17 @@ impl WikiGraphFacts {
             let graph_edge = GraphExportEdge {
                 source: code_endpoint_id(&edge.scope, &edge.source),
                 target: code_endpoint_id(&edge.scope, &edge.target),
-                kind: if edge.kind == "imports" {
-                    "imports"
-                } else {
-                    "calls"
+                kind: match edge.kind.as_str() {
+                    "imports" => "imports",
+                    "callers" => "callers",
+                    _ => "calls",
                 },
                 raw_target: Some(edge.provenance.clone()),
             };
-            if edge.kind == "imports" {
-                edges.imports.push(graph_edge);
-            } else {
-                edges.calls.push(graph_edge);
+            match edge.kind.as_str() {
+                "imports" => edges.imports.push(graph_edge),
+                "callers" => edges.callers.push(graph_edge),
+                _ => edges.calls.push(graph_edge),
             }
         }
 
@@ -104,6 +104,7 @@ pub fn render_graph_report(export: &GraphExport) -> String {
         export.edges.links.len()
             + export.edges.imports.len()
             + export.edges.calls.len()
+            + export.edges.callers.len()
             + export.edges.trust.len()
             + export.edges.audit.len()
     ));
@@ -151,6 +152,7 @@ pub fn render_graph_report(export: &GraphExport) -> String {
         .iter()
         .chain(export.edges.imports.iter())
         .chain(export.edges.calls.iter())
+        .chain(export.edges.callers.iter())
         .chain(export.edges.trust.iter())
         .chain(export.edges.audit.iter())
     {
@@ -166,6 +168,7 @@ pub fn render_graph_report(export: &GraphExport) -> String {
     report.push_str(&format!("- links: {}\n", export.edges.links.len()));
     report.push_str(&format!("- imports: {}\n", export.edges.imports.len()));
     report.push_str(&format!("- calls: {}\n", export.edges.calls.len()));
+    report.push_str(&format!("- callers: {}\n", export.edges.callers.len()));
     report.push_str(&format!("- trust: {}\n", export.edges.trust.len()));
     report.push_str(&format!("- audit: {}\n", export.edges.audit.len()));
     report
@@ -239,6 +242,16 @@ mod tests {
                     line: Some(1),
                     provenance: "test".to_string(),
                 },
+                WikiGraphCodeEdge {
+                    scope: SearchScope::project("project-1"),
+                    document_path: PathBuf::from("wiki/shared.md"),
+                    source: "src/main.rs:main".to_string(),
+                    target: "src/lib.rs:run".to_string(),
+                    kind: "callers".to_string(),
+                    direction: "incoming".to_string(),
+                    line: Some(2),
+                    provenance: "test".to_string(),
+                },
             ],
         };
 
@@ -273,6 +286,14 @@ mod tests {
             export.edges.calls[0].target,
             "code:project:project-1:src/main.rs:main"
         );
+        assert_eq!(
+            export.edges.callers[0].source,
+            "code:project:project-1:src/main.rs:main"
+        );
+        assert_eq!(
+            export.edges.callers[0].target,
+            "code:project:project-1:src/lib.rs:run"
+        );
         let report = render_graph_report(&export);
         assert!(
             report.contains(
@@ -282,5 +303,9 @@ mod tests {
         assert!(report.contains(
             "code_project_project_1_src_lib_rs_run --> code_project_project_1_src_main_rs_main"
         ));
+        assert!(report.contains(
+            "code_project_project_1_src_main_rs_main --> code_project_project_1_src_lib_rs_run"
+        ));
+        assert!(report.contains("- callers: 1"));
     }
 }

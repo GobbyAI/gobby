@@ -203,6 +203,7 @@ pub(crate) struct ArchitectureSubsystem {
     source_spans: Vec<SourceSpan>,
 }
 
+#[derive(Debug, Clone)]
 pub(crate) struct OnboardingDoc {
     source_spans: Vec<SourceSpan>,
     entry_points: Vec<OnboardingEntryPoint>,
@@ -210,12 +211,14 @@ pub(crate) struct OnboardingDoc {
     degraded_sources: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
 pub(crate) struct OnboardingEntryPoint {
     link: String,
     description: String,
     source_span: SourceSpan,
 }
 
+#[derive(Debug, Clone)]
 pub(crate) struct OnboardingStep {
     module: String,
     summary: String,

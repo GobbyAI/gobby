@@ -101,7 +101,7 @@ fn codewiki_onboarding_degrades_to_structural_entry_points_without_graph_analyti
     assert!(onboarding.contains("degraded: true"));
     assert!(onboarding.contains("- graph-analytics-unavailable"));
     assert!(onboarding.contains("## Entry Points"));
-    assert!(onboarding.contains("## Structural Start Points"));
+    assert!(!onboarding.contains("## Structural Start Points"));
     assert!(!onboarding.contains("## Recommended Reading Order"));
     assert!(onboarding.contains("[[code/files/src/main.rs|src/main.rs]]"));
     assert!(onboarding.contains("[[code/files/src/lib.rs|src/lib.rs]]"));

@@ -7,7 +7,6 @@ struct Frontmatter<'a> {
     title: &'a str,
     #[serde(rename = "type")]
     kind: &'a str,
-    source: Vec<FrontmatterSourceFile<'a>>,
     provenance: Vec<FrontmatterSourceFile<'a>>,
     generated_by: &'static str,
     trust: &'static str,
@@ -289,6 +288,8 @@ pub(crate) fn frontmatter(title: &str, kind: &str, source_spans: &[SourceSpan]) 
     frontmatter_with_degradation(title, kind, source_spans, &[])
 }
 
+/// Builds the same generated frontmatter as [`frontmatter`], plus optional
+/// `degraded` and `degraded_sources` fields when graph/AI inputs are partial.
 pub(crate) fn frontmatter_with_degradation(
     title: &str,
     kind: &str,
@@ -322,7 +323,6 @@ pub(crate) fn frontmatter_with_degradation(
     let data = Frontmatter {
         title,
         kind,
-        source: source_files.clone(),
         provenance: source_files,
         generated_by: "gcode-codewiki",
         trust: "generated",

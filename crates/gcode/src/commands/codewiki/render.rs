@@ -450,13 +450,7 @@ pub(crate) fn render_onboarding_doc(onboarding: &OnboardingDoc) -> String {
     }
 
     if onboarding.reading_order.is_empty() {
-        if !onboarding.entry_points.is_empty() {
-            doc.push_str("## Structural Start Points\n\n");
-            for entry in &onboarding.entry_points {
-                let _ = writeln!(doc, "- {} - {}", entry.link, entry.description);
-            }
-            doc.push('\n');
-        }
+        // Entry Points above already covers the non-graph fallback.
         return doc;
     }
 

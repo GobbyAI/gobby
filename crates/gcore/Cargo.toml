@@ -18,6 +18,7 @@ falkor = ["dep:falkordb", "dep:urlencoding"]
 qdrant = ["dep:reqwest", "dep:urlencoding"]
 indexing = ["dep:ignore", "dep:sha2"]
 search = []
+# Enables the in-memory graph analytics module; no optional dependency is needed.
 graph-analytics = []
 local-backend = ["dep:ureq"]
 ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:httpdate", "dep:rand", "local-backend", "reqwest/multipart"]

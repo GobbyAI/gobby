@@ -94,7 +94,7 @@ fn codewiki_unified_vault_emits_code_paths_frontmatter_and_wikilinks() {
             .and_then(serde_yaml::Value::as_str),
         Some("gcode-codewiki")
     );
-    assert!(frontmatter.get("source").is_some());
+    assert!(frontmatter.get("source").is_none());
     assert!(frontmatter.get("provenance").is_some());
     assert_eq!(
         frontmatter.get("trust").and_then(serde_yaml::Value::as_str),
@@ -738,7 +738,7 @@ fn citations_validated_against_spans() {
         .map(|(_, content)| content)
         .expect("file doc");
 
-    assert!(file_doc.contains("source:\n"));
+    assert!(!file_doc.contains("source:\n"));
     assert!(file_doc.contains("provenance:\n"));
     assert!(source_files_from_frontmatter(file_doc).contains("src/lib.rs"));
     assert!(file_doc.contains("10-14"));

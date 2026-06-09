@@ -678,6 +678,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn citation_quality_requires_configured_postgres_index() {
+        let _guard = ENV_TEST_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
         std::fs::create_dir_all(temp.path().join(".gobby/wiki")).expect("create wiki root");
         std::fs::write(
@@ -724,6 +725,8 @@ mod tests {
         }
     }
 
+    // Test-only process env mutation guard. Callers hold ENV_TEST_LOCK and, for
+    // cross-test ordering, mark env-mutating tests with serial_test::serial.
     struct EnvGuard {
         key: &'static str,
         old_value: Option<OsString>,
@@ -736,6 +739,7 @@ mod tests {
                 old_value: std::env::var_os(key),
             };
             unsafe {
+                // SAFETY: env-mutating tests hold ENV_TEST_LOCK and run serially.
                 std::env::set_var(key, value);
             }
             guard
@@ -747,6 +751,7 @@ mod tests {
                 old_value: std::env::var_os(key),
             };
             unsafe {
+                // SAFETY: env-mutating tests hold ENV_TEST_LOCK and run serially.
                 std::env::remove_var(key);
             }
             guard
@@ -756,6 +761,7 @@ mod tests {
     impl Drop for EnvGuard {
         fn drop(&mut self) {
             unsafe {
+                // SAFETY: EnvGuard is only used by the same locked serial tests.
                 match &self.old_value {
                     Some(value) => std::env::set_var(self.key, value),
                     None => std::env::remove_var(self.key),

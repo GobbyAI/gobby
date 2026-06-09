@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 
-use gobby_core::config::FalkorConfig;
+use gobby_core::config::{CODE_GRAPH_NAME, FalkorConfig};
 use gobby_core::degradation::DegradationKind;
 use gobby_core::falkor::{GraphClient, Row};
 use postgres::Client;
@@ -18,7 +18,6 @@ use crate::support::text::slugify;
 
 pub const FALKORDB_GRAPH_NAME: &str = "gobby_wiki";
 pub(crate) const SHARED_CODE_GRAPH_TRUNCATED_SOURCE: &str = "shared_code_graph_truncated";
-const CODE_FALKORDB_GRAPH_NAME: &str = "gobby_code";
 const CODE_GRAPH_PROVENANCE: &str = "shared_code_graph";
 const CODE_CALL_EDGE_TRUNCATION_COMPONENT: &str = "code_call_edges";
 const CODE_IMPORT_EDGE_TRUNCATION_COMPONENT: &str = "code_import_edges";
@@ -109,7 +108,7 @@ pub(crate) fn load_code_graph_edges(
     documents: &[WikiGraphDocument],
     limits: SharedCodeGraphLimits,
 ) -> anyhow::Result<SharedCodeGraphEdges> {
-    let mut client = GraphClient::from_config(config, CODE_FALKORDB_GRAPH_NAME)?;
+    let mut client = GraphClient::from_config(config, CODE_GRAPH_NAME)?;
     let code_documents = documents
         .iter()
         .filter_map(|document| {

@@ -106,6 +106,7 @@ pub struct GraphExportEdges {
     pub links: Vec<GraphExportEdge>,
     pub imports: Vec<GraphExportEdge>,
     pub calls: Vec<GraphExportEdge>,
+    pub callers: Vec<GraphExportEdge>,
     pub trust: Vec<GraphExportEdge>,
     pub audit: Vec<GraphExportEdge>,
 }

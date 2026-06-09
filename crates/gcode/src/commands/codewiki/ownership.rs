@@ -318,7 +318,6 @@ fn ownership_frontmatter(partial: bool, degraded_sources: &[String]) -> String {
         title: &'static str,
         #[serde(rename = "type")]
         kind: &'static str,
-        source: Vec<&'a str>,
         provenance: Vec<&'a str>,
         generated_by: &'static str,
         trust: &'static str,
@@ -334,7 +333,6 @@ fn ownership_frontmatter(partial: bool, degraded_sources: &[String]) -> String {
     let data = Frontmatter {
         title: "Code Ownership",
         kind: "code_ownership",
-        source: Vec::new(),
         provenance: Vec::new(),
         generated_by: "gcode-codewiki",
         trust: "generated",

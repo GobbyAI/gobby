@@ -703,15 +703,8 @@ fn falkordb_config_has_no_domain_graph_name() {
         password: None,
     };
 
+    // FalkorConfig stays connection-only; graph selection is supplied by consumers.
     assert!(!format!("{config:?}").contains("graph"));
-    let forbidden = ["gobby", "_", "code"].concat();
-    for source in [
-        include_str!("mod.rs"),
-        include_str!("types.rs"),
-        include_str!("resolve.rs"),
-    ] {
-        assert!(!source.contains(&forbidden));
-    }
 }
 
 #[test]

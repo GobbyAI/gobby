@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 
-use gobby_core::config::FalkorConfig;
+use gobby_core::config::{CODE_GRAPH_NAME, FalkorConfig};
 use gobby_core::degradation::{DegradationKind, ServiceState};
 use gobby_core::falkor::{self, GraphClient, Row};
 use serde::{Deserialize, Serialize};
@@ -9,7 +9,6 @@ use serde_json::Value;
 
 use crate::provenance::ProvenanceGraph;
 
-pub(crate) const CODE_GRAPH_NAME: &str = "gobby_code";
 const GRAPH_SERVICE: &str = "gcode_code_graph";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

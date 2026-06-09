@@ -7,6 +7,9 @@
 mod resolve;
 mod types;
 
+/// FalkorDB graph name owned by the gcode code graph projection.
+pub const CODE_GRAPH_NAME: &str = "gobby_code";
+
 pub use resolve::{
     ConfigSource, EnvOnlySource, INDEXING_RESPECT_GITIGNORE_KEY, LayeredConfigSource,
     decode_config_value, resolve_ai_tuning, resolve_capability_binding, resolve_capability_routing,

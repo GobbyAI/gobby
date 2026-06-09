@@ -64,29 +64,7 @@ pub fn module_prompt(
     let mut prompt = format!(
         "Summarize this module once from lower-level summaries.\n\nModule: {module}\n\nFiles:\n"
     );
-    if files.is_empty() {
-        prompt.push_str("- No direct files.\n");
-    } else {
-        for file in files {
-            let _ = writeln!(prompt, "- {}: {}", file.name, file.summary);
-        }
-    }
-    prompt.push_str("\nChild modules:\n");
-    if modules.is_empty() {
-        prompt.push_str("- No child modules.\n");
-    } else {
-        for module in modules {
-            let _ = writeln!(prompt, "- {}: {}", module.name, module.summary);
-        }
-    }
-    prompt.push_str("\nStable component IDs:\n");
-    if components.is_empty() {
-        prompt.push_str("- No indexed components.\n");
-    } else {
-        for component in components {
-            let _ = writeln!(prompt, "- {component}");
-        }
-    }
+    append_child_summary_sections(&mut prompt, files, modules, components);
     prompt
 }
 
@@ -121,6 +99,16 @@ pub fn architecture_prompt(
     let mut prompt = format!(
         "Summarize this subsystem's responsibility for a repository architecture overview.\n\nSubsystem: {subsystem}\n\nFiles:\n"
     );
+    append_child_summary_sections(&mut prompt, files, modules, components);
+    prompt
+}
+
+fn append_child_summary_sections(
+    prompt: &mut String,
+    files: &[ChildSummary],
+    modules: &[ChildSummary],
+    components: &[String],
+) {
     if files.is_empty() {
         prompt.push_str("- No direct files.\n");
     } else {
@@ -144,7 +132,6 @@ pub fn architecture_prompt(
             let _ = writeln!(prompt, "- {component}");
         }
     }
-    prompt
 }
 
 #[derive(Debug, Clone)]
