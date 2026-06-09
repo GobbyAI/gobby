@@ -15,7 +15,6 @@
 
 use crate::envelope::Envelope;
 use anyhow::{Context, Result};
-use serde::Serialize;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -121,9 +120,9 @@ pub fn enqueue_to(envelope: &Envelope, inbox: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// POST a Python-compatible live hook payload derived from the envelope to the
-/// daemon. On 2xx, delete the inbox file and return `Delivered`. On any other
-/// outcome, leave the file and return `Enqueued`.
+/// POST the current hook envelope to the daemon. On 2xx, delete the inbox file
+/// and return `Delivered`. On any other outcome, leave the file and return
+/// `Enqueued`.
 ///
 /// `daemon_url` is the base URL (e.g. `http://127.0.0.1:60887`). The
 /// endpoint path is appended here.
@@ -140,7 +139,7 @@ pub fn post_and_cleanup(
         req = req.set(k, v);
     }
 
-    let body = match serde_json::to_string(&LiveRequest::from(envelope)) {
+    let body = match serde_json::to_string(envelope) {
         Ok(s) => s,
         Err(e) => {
             return DeliveryReport {
@@ -189,23 +188,6 @@ pub fn post_and_cleanup(
                 response_body: None,
                 transport_error: Some(transport_error),
             }
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct LiveRequest<'a> {
-    hook_type: &'a str,
-    input_data: &'a serde_json::Value,
-    source: &'a str,
-}
-
-impl<'a> From<&'a Envelope> for LiveRequest<'a> {
-    fn from(envelope: &'a Envelope) -> Self {
-        Self {
-            hook_type: &envelope.hook_type,
-            input_data: &envelope.input_data,
-            source: &envelope.source,
         }
     }
 }
@@ -416,9 +398,10 @@ mod tests {
             assert!(request.contains("\"hook_type\":\"SessionStart\""));
             assert!(request.contains("\"input_data\":{\"session_id\":\"s\"}"));
             assert!(request.contains("\"source\":\"codex\""));
-            assert!(!request.contains("\"schema_version\""));
-            assert!(!request.contains("\"enqueued_at\""));
-            assert!(!request.contains("\"critical\""));
+            assert!(request.contains("\"schema_version\":1"));
+            assert!(request.contains("\"enqueued_at\""));
+            assert!(request.contains("\"critical\":false"));
+            assert!(request.contains("\"headers\":{\"X-Gobby-Session-Id\":\"s\"}"));
             stream
                 .write_all(
                     b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 35\r\n\r\n{\"decision\":\"accept\",\"reason\":\"ok\"}",
@@ -465,6 +448,8 @@ mod tests {
             assert!(request.contains("POST /api/hooks/execute HTTP/1.1"));
             assert!(request.contains("\"hook_type\":\"PreToolUse\""));
             assert!(request.contains("\"source\":\"droid\""));
+            assert!(request.contains("\"schema_version\":1"));
+            assert!(request.contains("\"critical\":false"));
             assert!(request.contains("\"input_data\":{\"hook_event_name\":\"PreToolUse\""));
             assert!(request.contains("\"tool_input\":{\"file_path\":\"src/main.rs\"}"));
             stream
