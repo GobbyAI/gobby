@@ -458,7 +458,7 @@ mod tests {
 
     use crate::ScopeIdentity;
     use crate::sources::{SourceDraft, SourceManifest};
-    use crate::support::test_env::{ENV_TEST_LOCK, EnvGuard};
+    use crate::support::test_env::EnvGuard;
 
     use super::*;
 
@@ -600,7 +600,6 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn librarian_requires_configured_postgres_index() {
-        let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock");
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path();
         write_page(

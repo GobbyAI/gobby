@@ -326,7 +326,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
+      id-token: write # Required for crates.io trusted publishing via GitHub OIDC.
     environment: crates-io
 
     steps:

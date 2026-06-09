@@ -1,45 +1,71 @@
 use std::ffi::{OsStr, OsString};
+use std::sync::MutexGuard;
 
 pub(crate) static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub(crate) struct EnvGuard {
-    key: &'static str,
-    old_value: Option<OsString>,
+    old_values: Vec<(&'static str, Option<OsString>)>,
+    _lock: MutexGuard<'static, ()>,
 }
 
 impl EnvGuard {
     pub(crate) fn set(key: &'static str, value: impl AsRef<OsStr>) -> Self {
-        let guard = Self {
-            key,
-            old_value: std::env::var_os(key),
-        };
-        unsafe {
-            // SAFETY: env-mutating tests hold ENV_TEST_LOCK and run serially.
-            std::env::set_var(key, value.as_ref());
-        }
+        let mut guard = Self::locked();
+        guard.set_value(key, value.as_ref());
         guard
     }
 
     pub(crate) fn unset(key: &'static str) -> Self {
-        let guard = Self {
-            key,
-            old_value: std::env::var_os(key),
-        };
+        let mut guard = Self::locked();
+        guard.unset_value(key);
+        guard
+    }
+
+    pub(crate) fn and_unset(mut self, key: &'static str) -> Self {
+        self.unset_value(key);
+        self
+    }
+
+    fn locked() -> Self {
+        Self {
+            old_values: Vec::new(),
+            _lock: ENV_TEST_LOCK.lock().expect("env lock"),
+        }
+    }
+
+    fn set_value(&mut self, key: &'static str, value: &OsStr) {
+        self.capture_old_value(key);
         unsafe {
-            // SAFETY: env-mutating tests hold ENV_TEST_LOCK and run serially.
+            // SAFETY: EnvGuard holds ENV_TEST_LOCK until Drop restores the variable.
+            std::env::set_var(key, value);
+        }
+    }
+
+    fn unset_value(&mut self, key: &'static str) {
+        self.capture_old_value(key);
+        unsafe {
+            // SAFETY: EnvGuard holds ENV_TEST_LOCK until Drop restores the variable.
             std::env::remove_var(key);
         }
-        guard
+    }
+
+    fn capture_old_value(&mut self, key: &'static str) {
+        if self.old_values.iter().any(|(stored, _)| *stored == key) {
+            return;
+        }
+        self.old_values.push((key, std::env::var_os(key)));
     }
 }
 
 impl Drop for EnvGuard {
     fn drop(&mut self) {
-        unsafe {
-            // SAFETY: env-mutating tests hold ENV_TEST_LOCK and run serially.
-            match &self.old_value {
-                Some(value) => std::env::set_var(self.key, value),
-                None => std::env::remove_var(self.key),
+        for (key, old_value) in self.old_values.iter().rev() {
+            unsafe {
+                // SAFETY: EnvGuard still holds ENV_TEST_LOCK while restoring variables.
+                match old_value {
+                    Some(value) => std::env::set_var(*key, value),
+                    None => std::env::remove_var(*key),
+                }
             }
         }
     }

@@ -2,7 +2,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -52,11 +52,16 @@ fn gwiki_with_database_url(
 }
 
 fn assert_json_path(value: &serde_json::Value, expected: &Path) {
+    let actual = value.as_str().expect("path string");
     assert_eq!(
-        value.as_str(),
-        Some(expected.to_str().expect("path utf8")),
+        comparable_test_path(Path::new(actual)),
+        comparable_test_path(expected),
         "{value:#}"
     );
+}
+
+fn comparable_test_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn serve_http_responses(

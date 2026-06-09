@@ -51,7 +51,7 @@ fn benchmark_reports_seeded_fixture_and_degraded_optional_sources() {
     assert_eq!(payload["command"], "benchmark");
     assert_eq!(payload["scope"]["kind"], "topic");
     assert_eq!(payload["scope"]["id"], topic);
-    assert_eq!(payload["token_compression"]["available"], true);
+    assert!(payload["token_compression"]["available"].as_bool() == Some(true));
     assert!(
         payload["token_compression"]["ratio"]
             .as_f64()

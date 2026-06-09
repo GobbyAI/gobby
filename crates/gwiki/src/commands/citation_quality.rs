@@ -551,17 +551,16 @@ mod tests {
     use crate::sources::{
         CompileStatus, IngestionMethod, SourceKind, SourceManifest, SourceRecord,
     };
-    use crate::support::test_env::{ENV_TEST_LOCK, EnvGuard};
+    use crate::support::test_env::EnvGuard;
     use std::path::PathBuf;
 
     #[test]
     #[serial_test::serial]
     fn citation_quality_execute_requires_postgresql_index() {
-        let _guard = ENV_TEST_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
-        let _home = EnvGuard::set("GOBBY_HOME", temp.path().as_os_str());
-        let _gwiki_url = EnvGuard::unset("GWIKI_DATABASE_URL");
-        let _gobby_dsn = EnvGuard::unset("GOBBY_POSTGRES_DSN");
+        let _env = EnvGuard::set("GOBBY_HOME", temp.path().as_os_str())
+            .and_unset("GWIKI_DATABASE_URL")
+            .and_unset("GOBBY_POSTGRES_DSN");
 
         let error = execute(ScopeSelection::Detect).expect_err("missing postgres must fail");
 
@@ -676,7 +675,6 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn citation_quality_requires_configured_postgres_index() {
-        let _guard = ENV_TEST_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
         std::fs::create_dir_all(temp.path().join(".gobby/wiki")).expect("create wiki root");
         std::fs::write(

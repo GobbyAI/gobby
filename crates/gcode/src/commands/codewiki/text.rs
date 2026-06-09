@@ -2,6 +2,8 @@ use std::fmt::Write as _;
 
 use super::*;
 
+const FALLBACK_CITATION_LINE_WIDTH: usize = 240;
+
 #[derive(serde::Serialize)]
 struct Frontmatter<'a> {
     title: &'a str,
@@ -155,25 +157,57 @@ pub(crate) fn collect_link_spans(files: &[FileLink], modules: &[ModuleLink]) -> 
 }
 
 pub(crate) fn citation_list(spans: &[SourceSpan]) -> String {
+    wrap_citation_items(
+        spans
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .map(|span| span.citation()),
+        FALLBACK_CITATION_LINE_WIDTH,
+    )
+}
+
+fn wrap_citation_items<I>(items: I, max_line_width: usize) -> String
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for item in items {
+        let separator_width = usize::from(!line.is_empty());
+        if !line.is_empty() && line.len() + separator_width + item.len() > max_line_width {
+            lines.push(std::mem::take(&mut line));
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(&item);
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines.join("\n")
+}
+
+pub(crate) fn citation_markers(spans: &[SourceSpan]) -> String {
+    wrap_citation_items(
+        citation_references(spans)
+            .into_iter()
+            .map(|(index, _)| format!("[{index}]")),
+        FALLBACK_CITATION_LINE_WIDTH,
+    )
+}
+
+fn citation_references(spans: &[SourceSpan]) -> Vec<(usize, String)> {
     spans
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>()
         .into_iter()
-        .map(|span| span.citation())
-        .collect::<Vec<_>>()
-        .chunks(4)
-        .map(|chunk| chunk.join(" "))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-pub(crate) fn citation_markers(spans: &[SourceSpan]) -> String {
-    citation_references(spans)
-        .into_iter()
-        .map(|(index, _)| format!("[{index}]"))
-        .collect::<Vec<_>>()
-        .join(" ")
+        .enumerate()
+        .map(|(index, span)| (index + 1, span.citation()))
+        .collect()
 }
 
 pub(crate) fn replace_citations_with_markers(text: &str, spans: &[SourceSpan]) -> String {
@@ -194,17 +228,6 @@ pub(crate) fn write_references(doc: &mut String, spans: &[SourceSpan]) {
         let _ = writeln!(doc, "- [{index}] {citation}");
     }
     doc.push('\n');
-}
-
-fn citation_references(spans: &[SourceSpan]) -> Vec<(usize, String)> {
-    spans
-        .iter()
-        .cloned()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .enumerate()
-        .map(|(index, span)| (index + 1, span.citation()))
-        .collect()
 }
 
 pub(crate) fn ground_text(
@@ -341,4 +364,62 @@ pub(crate) fn frontmatter_with_degradation(
     }
     out.push_str("---\n\n");
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn span(file: impl Into<String>, line_start: usize, line_end: usize) -> SourceSpan {
+        SourceSpan {
+            file: file.into(),
+            line_start,
+            line_end,
+        }
+    }
+
+    #[test]
+    fn citation_list_wraps_fallback_citations_by_width() {
+        let spans = (0..8)
+            .map(|index| {
+                span(
+                    format!(
+                        "crates/gcode/src/generated/deep/module/path/with/long/components/file_{index}.rs"
+                    ),
+                    index + 1,
+                    index + 10,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let citations = citation_list(&spans);
+
+        assert!(citations.lines().count() > 1, "{citations}");
+        assert!(
+            citations
+                .lines()
+                .all(|line| line.len() <= FALLBACK_CITATION_LINE_WIDTH),
+            "{citations}"
+        );
+        for span in spans {
+            assert!(citations.contains(&span.citation()));
+        }
+    }
+
+    #[test]
+    fn citation_markers_use_shared_width_wrapper() {
+        let spans = (0..80)
+            .map(|index| span(format!("src/file_{index:02}.rs"), 1, 1))
+            .collect::<Vec<_>>();
+
+        let markers = citation_markers(&spans);
+
+        assert!(markers.lines().count() > 1, "{markers}");
+        assert!(
+            markers
+                .lines()
+                .all(|line| line.len() <= FALLBACK_CITATION_LINE_WIDTH),
+            "{markers}"
+        );
+    }
 }

@@ -255,7 +255,7 @@ fn grouped_counts(
         .map(|row| {
             let kind = row.get::<_, String>(0);
             let count = row.get::<_, i64>(1);
-            Ok((kind, count as u64))
+            Ok((kind, count_to_u64(count, action)?))
         })
         .collect()
 }
@@ -271,7 +271,13 @@ fn scalar_count(
         .query_one(sql, &[&scope_kind, &scope_id])
         .map_err(postgres_error(action))?;
     let count = row.get::<_, i64>(0);
-    Ok(count as u64)
+    count_to_u64(count, action)
+}
+
+fn count_to_u64(count: i64, action: &'static str) -> Result<u64, WikiError> {
+    u64::try_from(count).map_err(|_| WikiError::Config {
+        detail: format!("{action} returned negative count {count}"),
+    })
 }
 
 fn token_compression(rows: &BenchmarkRows) -> TokenCompressionReport {
@@ -584,14 +590,8 @@ fn query_graph_counts(config: &FalkorConfig, scope: &SearchScope) -> anyhow::Res
 
 fn graph_scope_params(scope: &SearchScope) -> HashMap<String, String> {
     HashMap::from([
-        (
-            "scope_kind".to_string(),
-            gobby_core::falkor::escape_string(scope.scope_kind()),
-        ),
-        (
-            "scope_id".to_string(),
-            gobby_core::falkor::escape_string(scope.scope_value()),
-        ),
+        ("scope_kind".to_string(), scope.scope_kind().to_string()),
+        ("scope_id".to_string(), scope.scope_value().to_string()),
     ])
 }
 
@@ -826,5 +826,13 @@ mod tests {
             report.retrieval_precision.reason.as_deref(),
             Some("seeded project has no path-backed chunks for retrieval precision")
         );
+    }
+
+    #[test]
+    fn count_to_u64_rejects_negative_counts() {
+        let error = count_to_u64(-1, "count benchmark rows").expect_err("negative count fails");
+
+        assert!(matches!(error, WikiError::Config { .. }));
+        assert!(error.to_string().contains("negative count -1"));
     }
 }

@@ -49,6 +49,7 @@ pub fn resolve_secret(conn: &mut Client, secret_name: &str) -> anyhow::Result<St
         .with_context(|| format!("failed to read {}", salt_path.display()))?;
     let fernet_key = derive_fernet_key(&machine_id, &salt);
 
+    // Secrets are resolved case-insensitively; case-only duplicates collide on this key.
     let name = name.to_lowercase();
     let row = conn
         .query_one(

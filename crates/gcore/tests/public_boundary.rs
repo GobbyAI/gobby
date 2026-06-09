@@ -22,7 +22,7 @@ fn cargo_features_define_public_boundary() {
 
     for expected in [
         "default = []",
-        r#"postgres = ["dep:postgres", "dep:postgres-types", "dep:postgres-openssl", "dep:openssl", "dep:base64", "dep:fernet", "dep:pbkdf2", "dep:sha2"]"#,
+        r#"postgres = ["dep:postgres", "dep:postgres-types", "dep:postgres-openssl", "dep:openssl", "dep:base64", "dep:pbkdf2", "dep:sha2"]"#,
         r#"falkor = ["dep:falkordb", "dep:urlencoding"]"#,
         r#"qdrant = ["dep:reqwest", "dep:urlencoding"]"#,
         r#"indexing = ["dep:ignore", "dep:sha2"]"#,
@@ -40,6 +40,7 @@ fn cargo_features_define_public_boundary() {
         r#"falkordb = { version = "0.2", optional = true }"#,
         r#"reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }"#,
         r#"base64 = { version = "0.22", optional = true }"#,
+        r#"fernet = "0.2.2" # THIS IS NOT OPTIONAL"#,
         r#"bytes = { version = "1", optional = true }"#,
         r#"httpdate = { version = "1", optional = true }"#,
         r#"rand = { version = "0.8", optional = true }"#,

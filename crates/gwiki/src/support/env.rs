@@ -242,7 +242,7 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
 
-    use crate::support::test_env::{ENV_TEST_LOCK, EnvGuard};
+    use crate::support::test_env::EnvGuard;
 
     #[test]
     fn positive_u64_env_parser_rejects_invalid_values() {
@@ -256,7 +256,6 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn database_url_uses_gobby_broker_when_env_missing() {
-        let _env_lock = ENV_TEST_LOCK.lock().expect("env lock");
         let expected_database_url = "postgresql://brokered.example/gobby";
         let token = "local-token";
         let (port, handle) = spawn_database_url_broker(expected_database_url, token);
@@ -267,9 +266,9 @@ mod tests {
         )
         .expect("write bootstrap");
         fs::write(home.path().join("local_cli_token"), format!("{token}\n")).expect("write token");
-        let _home = EnvGuard::set("GOBBY_HOME", home.path().as_os_str());
-        let _gwiki_url = EnvGuard::unset("GWIKI_DATABASE_URL");
-        let _gobby_dsn = EnvGuard::unset("GOBBY_POSTGRES_DSN");
+        let _env = EnvGuard::set("GOBBY_HOME", home.path().as_os_str())
+            .and_unset("GWIKI_DATABASE_URL")
+            .and_unset("GOBBY_POSTGRES_DSN");
 
         let resolved = database_url()
             .expect("resolve database url")
