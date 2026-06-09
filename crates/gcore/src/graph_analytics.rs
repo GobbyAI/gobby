@@ -178,6 +178,9 @@ impl PreparedGraph {
     }
 
     fn centrality(&self) -> Vec<CentralityScore> {
+        // Normalized degree centrality uses n - 1 as the maximum possible
+        // neighbor count in the full graph. In disconnected graphs this keeps
+        // component scores comparable to the whole input, not to component size.
         let denominator = self.nodes.len().saturating_sub(1) as f64;
         let mut scores = self
             .nodes

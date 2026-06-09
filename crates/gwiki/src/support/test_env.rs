@@ -1,8 +1,19 @@
 use std::ffi::{OsStr, OsString};
 use std::sync::MutexGuard;
 
+/// Serializes environment mutations made through `EnvGuard` in this crate's
+/// tests.
+///
+/// This lock only protects callers that use the helper. It cannot make global
+/// process environment access safe for tests that read or write env vars
+/// directly while another guarded mutation is active.
 pub(crate) static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Restores environment variables when dropped after a guarded test mutation.
+///
+/// `EnvGuard` captures each key once, holds `ENV_TEST_LOCK` for its lifetime,
+/// and restores in reverse order. The safety boundary is partial: unsynchronized
+/// env access outside this helper can still race guarded mutations.
 pub(crate) struct EnvGuard {
     old_values: Vec<(&'static str, Option<OsString>)>,
     _lock: MutexGuard<'static, ()>,

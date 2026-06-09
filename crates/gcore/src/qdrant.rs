@@ -14,7 +14,7 @@ pub const DEFAULT_UPSERT_BATCH_SIZE: usize = 128;
 pub use reqwest::StatusCode;
 
 mod naming;
-pub use naming::{CollectionScope, collection_name};
+pub use naming::{CollectionNameError, CollectionScope, collection_name};
 
 #[derive(Debug, thiserror::Error)]
 pub enum QdrantError {

@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Instant;
 
 use postgres::Client;
@@ -179,16 +179,6 @@ fn index_explicit_files_with_connection(
     let mut routed_files = Vec::new();
     let mut ast_files = Vec::new();
     let mut content_only_files = Vec::new();
-    let discovered_routes = if ctx.indexing.respect_gitignore {
-        Some(discovered_explicit_routes(
-            root_path,
-            excludes,
-            discovery_options(ctx),
-        ))
-    } else {
-        None
-    };
-
     for fp in &request.explicit_files {
         let abs = if fp.is_absolute() {
             fp.clone()
@@ -204,10 +194,12 @@ fn index_explicit_files_with_connection(
             continue;
         }
 
-        let route = discovered_routes
-            .as_ref()
-            .map(|(ast, content_only)| explicit_route_from_discovery(&abs, ast, content_only))
-            .unwrap_or_else(|| explicit_file_route(root_path, &abs, excludes));
+        let route = explicit_route_with_discovery_options(
+            root_path,
+            &abs,
+            excludes,
+            discovery_options(ctx),
+        );
 
         match route {
             ExplicitFileRoute::Ast => {
@@ -306,39 +298,20 @@ fn discovery_options(ctx: &Context) -> walker::DiscoveryOptions {
     }
 }
 
-pub(super) fn discovered_explicit_routes(
-    root_path: &std::path::Path,
+pub(super) fn explicit_route_with_discovery_options(
+    root_path: &Path,
+    abs: &Path,
     excludes: &[&str],
     options: walker::DiscoveryOptions,
-) -> (HashSet<PathBuf>, HashSet<PathBuf>) {
-    let (ast, content_only) = walker::discover_files_with_options(root_path, excludes, options);
-    (
-        ast.into_iter().map(normalize_existing_path).collect(),
-        content_only
-            .into_iter()
-            .map(normalize_existing_path)
-            .collect(),
-    )
-}
-
-pub(super) fn explicit_route_from_discovery(
-    abs: &Path,
-    ast: &HashSet<PathBuf>,
-    content_only: &HashSet<PathBuf>,
 ) -> ExplicitFileRoute {
-    let normalized = normalize_existing_path(abs.to_path_buf());
-    if ast.contains(&normalized) {
-        ExplicitFileRoute::Ast
-    } else if content_only.contains(&normalized) {
-        ExplicitFileRoute::ContentOnly
-    } else {
-        ExplicitFileRoute::Skip
+    if !options.respect_gitignore {
+        return explicit_file_route(root_path, abs, excludes);
     }
-}
-
-fn normalize_existing_path(path: PathBuf) -> PathBuf {
-    // Fall back to the original path so transient explicit-file paths still reach cleanup.
-    path.canonicalize().unwrap_or(path)
+    match walker::classify_explicit_file_with_options(root_path, abs, excludes, options) {
+        Some(walker::FileClassification::Ast) => ExplicitFileRoute::Ast,
+        Some(walker::FileClassification::ContentOnly) => ExplicitFileRoute::ContentOnly,
+        None => ExplicitFileRoute::Skip,
+    }
 }
 
 pub(super) fn cleanup_skipped_explicit_file_if_indexed(

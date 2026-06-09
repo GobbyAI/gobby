@@ -122,28 +122,17 @@ fn same_file_identity(left: &Path, right: &Path) -> bool {
 
 #[cfg(windows)]
 fn same_file_identity(left: &Path, right: &Path) -> bool {
-    use std::fs::File;
-    use std::mem::MaybeUninit;
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::Storage::FileSystem::{
-        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
-    };
+    use std::os::windows::fs::MetadataExt;
 
     fn identity(path: &Path) -> Option<(u32, u32, u32)> {
-        let file = File::open(path).ok()?;
-        let mut info = MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
-        let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) };
-        if ok == 0 {
-            return None;
-        }
-        let info = unsafe { info.assume_init() };
-        if info.nFileIndexHigh == 0 && info.nFileIndexLow == 0 {
+        let metadata = std::fs::metadata(path).ok()?;
+        if metadata.file_index_high() == 0 && metadata.file_index_low() == 0 {
             return None;
         }
         Some((
-            info.dwVolumeSerialNumber,
-            info.nFileIndexHigh,
-            info.nFileIndexLow,
+            metadata.volume_serial_number(),
+            metadata.file_index_high(),
+            metadata.file_index_low(),
         ))
     }
 

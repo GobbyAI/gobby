@@ -12,7 +12,7 @@ use serde::Serialize;
 pub fn lifecycle_status(
     ctx: &Context,
     action: CodeSymbolVectorLifecycleAction,
-) -> CodeSymbolVectorLifecycleStatus {
+) -> Result<CodeSymbolVectorLifecycleStatus, VectorLifecycleError> {
     let prefix = CODE_SYMBOL_COLLECTION_PREFIX;
     code_symbols::lifecycle_status(ctx.project_id.clone(), prefix, action)
 }

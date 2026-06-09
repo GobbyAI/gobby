@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, btree_map::Entry};
 use std::fmt::Write;
 use std::path::Path;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -246,6 +246,7 @@ fn derived_owners_for_files(
         return BTreeMap::new();
     };
     let head = head.detach();
+    let repo = Arc::new(repo.into_sync());
     status.blame_available = true;
 
     let started = Instant::now();
@@ -267,7 +268,8 @@ fn derived_owners_for_files(
             continue;
         }
         let remaining_timeout = options.blame_timeout.saturating_sub(started.elapsed());
-        match blame_file_contributors_with_timeout(project_root, head, file, remaining_timeout) {
+        match blame_file_contributors_with_timeout(Arc::clone(&repo), head, file, remaining_timeout)
+        {
             BlameContributorsOutcome::Success(contributors) => {
                 meta.files.insert(
                     file.clone(),
@@ -297,15 +299,15 @@ fn content_hash(project_root: &Path, file: &str) -> Option<String> {
 }
 
 fn blame_file_contributors_with_timeout(
-    project_root: &Path,
+    repo: Arc<gix::ThreadSafeRepository>,
     head: gix::ObjectId,
     file: &str,
     timeout: Duration,
 ) -> BlameContributorsOutcome {
-    let project_root = project_root.to_path_buf();
     let file = file.to_string();
     match run_with_timeout(timeout, move || {
-        blame_file_contributors(&project_root, head, &file)
+        let repo = repo.to_thread_local();
+        blame_file_contributors(&repo, head, &file)
     }) {
         Some(Ok(contributors)) => BlameContributorsOutcome::Success(contributors),
         Some(Err(error)) => BlameContributorsOutcome::Error(error),
@@ -330,12 +332,10 @@ fn recv_with_timeout<T>(receiver: mpsc::Receiver<T>, timeout: Duration) -> Optio
 }
 
 fn blame_file_contributors(
-    project_root: &Path,
+    repo: &gix::Repository,
     head: gix::ObjectId,
     file: &str,
 ) -> anyhow::Result<Vec<OwnershipContributor>> {
-    let mut repo = gix::discover(project_root)?;
-    repo.object_cache_size_if_unset(4 * 1024 * 1024);
     let outcome = repo.blame_file(
         file.as_bytes().as_bstr(),
         head,

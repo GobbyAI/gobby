@@ -46,13 +46,13 @@ pub fn lifecycle_status(
     project_id: impl Into<String>,
     collection_prefix: &str,
     action: CodeSymbolVectorLifecycleAction,
-) -> CodeSymbolVectorLifecycleStatus {
+) -> Result<CodeSymbolVectorLifecycleStatus, VectorLifecycleError> {
     let project_id = project_id.into();
-    CodeSymbolVectorLifecycleStatus {
-        collection: collection_name(collection_prefix, &project_id),
+    Ok(CodeSymbolVectorLifecycleStatus {
+        collection: collection_name(collection_prefix, &project_id)?,
         project_id,
         action,
-    }
+    })
 }
 
 impl CodeSymbolVectorLifecycle {
@@ -64,7 +64,7 @@ impl CodeSymbolVectorLifecycle {
     ) -> Result<Self, VectorLifecycleError> {
         Self::require_qdrant_boundary_config(&qdrant)?;
 
-        let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, &project_id);
+        let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, &project_id)?;
         let embedding = EmbeddingBackend::new(embedding.into())?;
         let client = reqwest::blocking::Client::builder()
             .timeout(QDRANT_LIFECYCLE_TIMEOUT)

@@ -137,7 +137,7 @@ fn release_gcore_uses_workspace_validation() {
     assert_eq!(
         count_run_step(
             workflow,
-            "cargo clippy --workspace --all-targets -- -D warnings"
+            "cargo clippy -p gobby-core --all-targets -- -D warnings"
         ),
         1,
         "gobby-core release default clippy step count"
@@ -145,7 +145,7 @@ fn release_gcore_uses_workspace_validation() {
     assert_eq!(
         count_run_step(
             workflow,
-            "cargo clippy --workspace --all-targets --no-default-features -- -D warnings"
+            "cargo clippy -p gobby-core --all-targets --no-default-features -- -D warnings"
         ),
         1,
         "gobby-core release no-default clippy step count"

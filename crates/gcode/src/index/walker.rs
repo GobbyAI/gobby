@@ -134,6 +134,20 @@ pub fn classify_file(
     }
 }
 
+/// Classify an explicitly requested file with discovery filters applied to that
+/// one path instead of walking the whole project root.
+pub fn classify_explicit_file_with_options(
+    root: &Path,
+    path: &Path,
+    exclude_patterns: &[impl AsRef<str>],
+    options: DiscoveryOptions,
+) -> Option<FileClassification> {
+    if options.respect_gitignore && !explicit_path_visible(root, path, options) {
+        return None;
+    }
+    classify_file(root, path, exclude_patterns)
+}
+
 /// Return true when `path` is an unsupported, safe text file suitable for chunks.
 pub fn is_content_indexable(
     root: &Path,
@@ -181,6 +195,30 @@ fn push_classified_file(
     }
 }
 
+fn explicit_path_visible(root: &Path, path: &Path, options: DiscoveryOptions) -> bool {
+    if is_hidden_path(root, path) && !HiddenPathAllowlist::load(root).matches(root, path) {
+        return false;
+    }
+
+    let walk_root = path.parent().unwrap_or(root);
+    let mut settings = gobby_core::indexing::WalkerSettings::new(walk_root);
+    settings.respect_gitignore = options.respect_gitignore;
+    settings.max_filesize = Some(MAX_FILE_SIZE);
+    let mut builder = settings.into_walker();
+    builder.hidden(false);
+    builder.max_depth(Some(1));
+    builder
+        .build()
+        .flatten()
+        .any(|entry| entry.path().is_file() && same_existing_path(entry.path(), path))
+}
+
+fn same_existing_path(left: &Path, right: &Path) -> bool {
+    let left = left.canonicalize().unwrap_or_else(|_| left.to_path_buf());
+    let right = right.canonicalize().unwrap_or_else(|_| right.to_path_buf());
+    left == right
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HiddenPathAllowlist {
     patterns: Vec<String>,
@@ -222,6 +260,16 @@ impl HiddenPathAllowlist {
             }
         }
         paths.into_iter().collect()
+    }
+
+    fn matches(&self, root: &Path, path: &Path) -> bool {
+        let rel = path.strip_prefix(root).unwrap_or(path);
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        self.patterns.iter().any(|pattern| {
+            glob::Pattern::new(pattern)
+                .map(|pattern| pattern.matches_path(Path::new(&rel)))
+                .unwrap_or(false)
+        })
     }
 }
 

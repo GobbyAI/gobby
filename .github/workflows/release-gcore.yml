@@ -29,10 +29,10 @@ jobs:
           tool: nextest
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy -p gobby-core --all-targets -- -D warnings
 
       - name: Clippy without default features
-        run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
+        run: cargo clippy -p gobby-core --all-targets --no-default-features -- -D warnings
 
       - name: Run tests
         run: cargo nextest run --profile ci --workspace

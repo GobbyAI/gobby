@@ -9,6 +9,7 @@ pub enum SearchError {
     MissingQdrantConfig,
     MissingEmbeddingConfig,
     QueryEmbeddingFailed,
+    InvalidCollectionName(gobby_core::qdrant::CollectionNameError),
     VectorSearch(String),
 }
 
@@ -18,6 +19,7 @@ impl std::fmt::Display for SearchError {
             Self::MissingQdrantConfig => write!(f, "Qdrant config is missing"),
             Self::MissingEmbeddingConfig => write!(f, "embedding config is missing"),
             Self::QueryEmbeddingFailed => write!(f, "query embedding failed"),
+            Self::InvalidCollectionName(error) => write!(f, "{error}"),
             Self::VectorSearch(error) => write!(f, "semantic vector search failed: {error}"),
         }
     }
@@ -44,7 +46,8 @@ pub fn search_code_symbols(
         None => return Err(SearchError::QueryEmbeddingFailed),
     };
 
-    let collection = collection_name(&request.collection_prefix, &request.project_id);
+    let collection = collection_name(&request.collection_prefix, &request.project_id)
+        .map_err(SearchError::InvalidCollectionName)?;
     match vector_search(qdrant_config, &collection, &embedding, request.limit) {
         Ok(hits) => Ok(hits
             .into_iter()

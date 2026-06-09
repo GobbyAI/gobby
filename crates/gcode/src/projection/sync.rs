@@ -342,6 +342,7 @@ fn vector_error_kind(error: &VectorLifecycleError) -> &'static str {
         VectorLifecycleError::EmbeddingResponse(_) => "embedding_response",
         VectorLifecycleError::QdrantHttp { .. } => "qdrant_http",
         VectorLifecycleError::QdrantOperation(_) => "qdrant_operation",
+        VectorLifecycleError::InvalidCollectionName(_) => "invalid_collection_name",
         VectorLifecycleError::DimensionMismatch { .. } => "dimension_mismatch",
     }
 }

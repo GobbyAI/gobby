@@ -166,6 +166,7 @@ fn semantic_embedding_query(config: &EmbeddingConfig, query: &str) -> String {
 
 pub fn collection_for_scope(scope: &SearchScope) -> String {
     collection_name("gwiki", qdrant_collection_scope(scope))
+        .expect("project and topic collection scopes are infallible")
 }
 
 fn qdrant_collection_scope(scope: &SearchScope) -> CollectionScope<'_> {

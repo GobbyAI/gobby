@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::WikiError;
+use gobby_core::qdrant::{CollectionScope, collection_name};
 
 pub const WIKI_DOC_LABEL: &str = "WikiDoc";
 pub const WIKI_SOURCE_LABEL: &str = "WikiSource";
@@ -157,14 +158,19 @@ pub fn validate_topic_name(topic_name: &str) -> Result<String, WikiError> {
 }
 
 pub fn project_collection_name(project_id: &str) -> Result<String, WikiError> {
-    Ok(format!(
-        "gwiki_project_{}",
-        validate_project_id(project_id)?
-    ))
+    let project_id = validate_project_id(project_id)?;
+    Ok(
+        collection_name("gwiki", CollectionScope::Project(&project_id))
+            .expect("project collection scopes are infallible"),
+    )
 }
 
 pub fn topic_collection_name(topic_name: &str) -> Result<String, WikiError> {
-    Ok(format!("gwiki_topic_{}", validate_topic_name(topic_name)?))
+    let topic_name = validate_topic_name(topic_name)?;
+    Ok(
+        collection_name("gwiki", CollectionScope::Topic(&topic_name))
+            .expect("topic collection scopes are infallible"),
+    )
 }
 
 fn validate_scope_id(kind: &'static str, value: &str) -> Result<String, WikiError> {

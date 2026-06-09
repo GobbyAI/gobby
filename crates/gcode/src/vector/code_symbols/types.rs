@@ -151,6 +151,7 @@ pub enum VectorLifecycleError {
         body: String,
     },
     QdrantOperation(String),
+    InvalidCollectionName(gobby_core::qdrant::CollectionNameError),
     DimensionMismatch {
         collection: String,
         expected_size: usize,
@@ -182,6 +183,7 @@ impl fmt::Display for VectorLifecycleError {
                 body,
             } => write!(f, "Qdrant {operation} failed: HTTP {status}: {body}"),
             Self::QdrantOperation(reason) => write!(f, "Qdrant operation failed: {reason}"),
+            Self::InvalidCollectionName(error) => write!(f, "{error}"),
             Self::DimensionMismatch {
                 collection,
                 expected_size,
@@ -197,6 +199,12 @@ impl fmt::Display for VectorLifecycleError {
                 found_distance.as_deref().unwrap_or("unknown")
             ),
         }
+    }
+}
+
+impl From<gobby_core::qdrant::CollectionNameError> for VectorLifecycleError {
+    fn from(error: gobby_core::qdrant::CollectionNameError) -> Self {
+        Self::InvalidCollectionName(error)
     }
 }
 

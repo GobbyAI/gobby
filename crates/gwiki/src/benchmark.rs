@@ -585,7 +585,7 @@ fn query_graph_counts(config: &FalkorConfig, scope: &SearchScope) -> anyhow::Res
         "MATCH (source:WikiDoc {scope_kind: $scope_kind, scope_id: $scope_id})-[rel:WIKI_LINKS_TO|MENTIONS_TARGET]->(target) WHERE (target:WikiDoc AND target.scope_kind = $scope_kind AND target.scope_id = $scope_id) OR (target:WikiTarget AND target.scope_kind = $scope_kind AND target.scope_id = $scope_id) RETURN count(rel) AS count",
         Some(params),
     )?;
-    Ok((falkor_count(&doc_rows), falkor_count(&link_rows)))
+    Ok((falkor_count(&doc_rows)?, falkor_count(&link_rows)?))
 }
 
 fn graph_scope_params(scope: &SearchScope) -> HashMap<String, String> {
@@ -595,15 +595,24 @@ fn graph_scope_params(scope: &SearchScope) -> HashMap<String, String> {
     ])
 }
 
-fn falkor_count(rows: &[HashMap<String, Value>]) -> u64 {
-    rows.first()
+fn falkor_count(rows: &[HashMap<String, Value>]) -> anyhow::Result<u64> {
+    let count = rows
+        .first()
         .and_then(|row| row.get("count"))
         .and_then(|value| {
             value
                 .as_u64()
-                .or_else(|| value.as_i64().map(|count| count as u64))
+                .map(Ok)
+                .or_else(|| value.as_i64().map(i64_count_to_u64))
         })
-        .unwrap_or(0)
+        .transpose()?
+        .unwrap_or(0);
+    Ok(count)
+}
+
+fn i64_count_to_u64(count: i64) -> anyhow::Result<u64> {
+    u64::try_from(count)
+        .map_err(|_| anyhow::anyhow!("FalkorDB count returned negative value {count}"))
 }
 
 fn token_count(text: &str) -> u64 {
@@ -834,5 +843,17 @@ mod tests {
 
         assert!(matches!(error, WikiError::Config { .. }));
         assert!(error.to_string().contains("negative count -1"));
+    }
+
+    #[test]
+    fn falkor_count_rejects_negative_counts() {
+        let rows = [HashMap::from([(
+            "count".to_string(),
+            serde_json::json!(-1),
+        )])];
+
+        let error = falkor_count(&rows).expect_err("negative FalkorDB count fails");
+
+        assert!(error.to_string().contains("negative value -1"));
     }
 }

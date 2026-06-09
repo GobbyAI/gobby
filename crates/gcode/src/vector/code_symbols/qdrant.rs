@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use crate::config::{CODE_SYMBOL_COLLECTION_PREFIX, QdrantConfig};
-use gobby_core::qdrant::{CollectionScope, SearchRequest};
+use gobby_core::qdrant::{CollectionNameError, CollectionScope, SearchRequest};
 
 use super::types::{ExistingVectorCollectionSchema, VectorLifecycleError};
 
@@ -14,7 +14,10 @@ const QDRANT_DELETE_TIMEOUT_SECS_ENV: &str = "GCODE_QDRANT_DELETE_TIMEOUT_SECS";
 const DEFAULT_QDRANT_DELETE_TIMEOUT: Duration = Duration::from_secs(60);
 static QDRANT_HTTP_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
 
-pub fn collection_name(collection_prefix: &str, project_id: &str) -> String {
+pub fn collection_name(
+    collection_prefix: &str,
+    project_id: &str,
+) -> Result<String, CollectionNameError> {
     let collection = format!("{collection_prefix}{project_id}");
     gobby_core::qdrant::collection_name("gcode", CollectionScope::Custom(&collection))
 }
@@ -28,7 +31,7 @@ pub fn delete_project_collection(
     project_id: &str,
 ) -> Result<usize, VectorLifecycleError> {
     let client = qdrant_http_client()?;
-    let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, project_id);
+    let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, project_id)?;
     delete_qdrant_collection(&client, qdrant, &collection)
 }
 
@@ -38,7 +41,7 @@ pub fn delete_file_vectors(
     file_path: &str,
 ) -> Result<usize, VectorLifecycleError> {
     let client = qdrant_http_client()?;
-    let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, project_id);
+    let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, project_id)?;
     delete_vectors_for_filter(&client, qdrant, &collection, project_id, Some(file_path))
 }
 

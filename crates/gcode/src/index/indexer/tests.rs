@@ -2,8 +2,7 @@ use super::file::{ExplicitFileRoute, explicit_file_route, write_parsed_file_fact
 use super::lifecycle::{cleanup_deleted_file_projections, current_file_state};
 use super::overlay::{IndexedFileState, OverlayReconcileAction, overlay_reconcile_action};
 use super::pipeline::{
-    cleanup_skipped_explicit_file_if_indexed, discovered_explicit_routes,
-    explicit_route_from_discovery,
+    cleanup_skipped_explicit_file_if_indexed, explicit_route_with_discovery_options,
 };
 use super::sink::CodeFactSink;
 use super::util::DEFAULT_EXCLUDES;
@@ -355,31 +354,65 @@ fn explicit_file_routes_follow_respect_gitignore_setting() {
     write_file(root, "ignored.rs", b"fn ignored() {}\n");
     write_file(root, "src/lib.rs", b"fn visible() {}\n");
 
-    let (ast, content_only) = discovered_explicit_routes(
+    let route = explicit_route_with_discovery_options(
         root,
+        &root.join("ignored.rs"),
         DEFAULT_EXCLUDES,
         walker::DiscoveryOptions {
             respect_gitignore: true,
         },
     );
-    assert_eq!(
-        explicit_route_from_discovery(&root.join("ignored.rs"), &ast, &content_only),
-        ExplicitFileRoute::Skip
-    );
-    assert_eq!(
-        explicit_route_from_discovery(&root.join("src/lib.rs"), &ast, &content_only),
-        ExplicitFileRoute::Ast
-    );
-
-    let (ast, content_only) = discovered_explicit_routes(
+    assert_eq!(route, ExplicitFileRoute::Skip);
+    let route = explicit_route_with_discovery_options(
         root,
+        &root.join("src/lib.rs"),
+        DEFAULT_EXCLUDES,
+        walker::DiscoveryOptions {
+            respect_gitignore: true,
+        },
+    );
+    assert_eq!(route, ExplicitFileRoute::Ast);
+
+    let route = explicit_route_with_discovery_options(
+        root,
+        &root.join("ignored.rs"),
         DEFAULT_EXCLUDES,
         walker::DiscoveryOptions {
             respect_gitignore: false,
         },
     );
+    assert_eq!(route, ExplicitFileRoute::Ast);
+}
+
+#[test]
+fn explicit_file_route_applies_parent_gitignore_without_full_discovery() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    std::fs::create_dir(root.join(".git")).expect("git dir");
+    write_file(root, "src/.gitignore", b"ignored.rs\n");
+    write_file(root, "src/ignored.rs", b"fn ignored() {}\n");
+    write_file(root, "src/visible.rs", b"fn visible() {}\n");
+
     assert_eq!(
-        explicit_route_from_discovery(&root.join("ignored.rs"), &ast, &content_only),
+        explicit_route_with_discovery_options(
+            root,
+            &root.join("src/ignored.rs"),
+            DEFAULT_EXCLUDES,
+            walker::DiscoveryOptions {
+                respect_gitignore: true,
+            },
+        ),
+        ExplicitFileRoute::Skip
+    );
+    assert_eq!(
+        explicit_route_with_discovery_options(
+            root,
+            &root.join("src/visible.rs"),
+            DEFAULT_EXCLUDES,
+            walker::DiscoveryOptions {
+                respect_gitignore: true,
+            },
+        ),
         ExplicitFileRoute::Ast
     );
 }

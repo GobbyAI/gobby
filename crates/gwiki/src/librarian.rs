@@ -249,12 +249,14 @@ fn optional_check(
 }
 
 fn weak_provenance_pages(pages: &[lint::WikiPage], provenance: &ProvenanceGraph) -> Vec<PathBuf> {
-    pages
+    let mut paths = pages
         .iter()
         .filter(|page| page_is_codewiki(page))
         .filter(|page| !provenance_mentions_page(provenance, &page.relative_path))
         .map(|page| page.relative_path.clone())
-        .collect()
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
 }
 
 fn provenance_mentions_page(provenance: &ProvenanceGraph, path: &Path) -> bool {
@@ -266,12 +268,14 @@ fn provenance_mentions_page(provenance: &ProvenanceGraph, path: &Path) -> bool {
 }
 
 fn outdated_codewiki_pages(pages: &[lint::WikiPage]) -> Vec<PathBuf> {
-    pages
+    let mut paths = pages
         .iter()
         .filter(|page| page_is_codewiki(page))
         .filter(|page| frontmatter_flag(&page.markdown, "codewiki_status", "stale"))
         .map(|page| page.relative_path.clone())
-        .collect()
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
 }
 
 fn page_is_codewiki(page: &lint::WikiPage) -> bool {
@@ -457,6 +461,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crate::ScopeIdentity;
+    use crate::markdown::parse_markdown;
     use crate::sources::{SourceDraft, SourceManifest};
     use crate::support::test_env::EnvGuard;
 
@@ -598,6 +603,23 @@ mod tests {
     }
 
     #[test]
+    fn librarian_codewiki_path_checks_are_sorted() {
+        let pages = vec![
+            codewiki_page("code/z.md", true),
+            codewiki_page("code/a.md", true),
+        ];
+
+        assert_eq!(
+            weak_provenance_pages(&pages, &ProvenanceGraph::default()),
+            vec![PathBuf::from("code/a.md"), PathBuf::from("code/z.md")]
+        );
+        assert_eq!(
+            outdated_codewiki_pages(&pages),
+            vec![PathBuf::from("code/a.md"), PathBuf::from("code/z.md")]
+        );
+    }
+
+    #[test]
     #[serial_test::serial]
     fn librarian_requires_configured_postgres_index() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -624,5 +646,21 @@ mod tests {
         let path = root.join(relative);
         std::fs::create_dir_all(path.parent().expect("page parent")).expect("create parent");
         std::fs::write(path, markdown).expect("write page");
+    }
+
+    fn codewiki_page(relative: &str, stale: bool) -> lint::WikiPage {
+        let markdown = format!(
+            "---\ntitle: Code\ngenerated_by: gcode-codewiki\ncodewiki_status: {}\n---\n# Code\n",
+            if stale { "stale" } else { "fresh" }
+        );
+        let relative_path = PathBuf::from(relative);
+        lint::WikiPage {
+            path: relative_path.clone(),
+            relative_path: relative_path.clone(),
+            parsed: parse_markdown(relative_path, &markdown, Vec::<String>::new())
+                .expect("parse test page"),
+            markdown,
+            has_frontmatter: true,
+        }
     }
 }
