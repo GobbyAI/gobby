@@ -258,6 +258,16 @@ def _droid(digit: str) -> PlanKeystrokeSequence:
     return PlanKeystrokeSequence((PlanKeystroke(digit, literal=True),))
 
 
+def _gemini(digit: str) -> PlanKeystrokeSequence:
+    """Expected Gemini approval-menu selection: the digit activates with no Enter."""
+    return PlanKeystrokeSequence((PlanKeystroke(digit, literal=True),))
+
+
+def _gemini_escape() -> PlanKeystrokeSequence:
+    """Expected Gemini reject: the shape-independent Escape ('(esc)') shortcut."""
+    return PlanKeystrokeSequence((PlanKeystroke("Escape"),))
+
+
 class TestClaudeResolver:
     """Claude's pane-aware mapping over both native ExitPlanMode menu shapes."""
 
@@ -452,12 +462,106 @@ class TestDroidPlanMenu:
         assert DEFAULT_PLAN_KEYSTROKES.resolve("droid", "approve_bogus") is None
 
 
+# Verbatim captures from Gemini CLI v0.44.1 (Google, model Auto) in a tmux pane:
+# the per-action approval menus shown in manual/default mode. The reject option's
+# DIGIT differs between tool types (4 vs 3) while "Allow once"/"Allow for this
+# session" stay at positions 1/2 and the "(esc)" shortcut always rejects.
+_GEMINI_EDIT_MENU_PANE = """\
+ Apply this change?
+
+ ● 1. Allow once
+   2. Allow for this session
+   3. Modify with external editor
+   4. No, suggest changes (esc)
+"""
+
+_GEMINI_SHELL_MENU_PANE = """\
+ Allow execution of [Shell]?
+
+ ● 1. Allow once
+   2. Allow for this session
+   3. No, suggest changes (esc)
+"""
+
+
+class TestGeminiPlanMenu:
+    """Gemini's per-action approval menu -- a static (non-pane) map whose reject
+    uses the shape-independent Esc key (the reject digit varies by tool type)."""
+
+    def test_gemini_is_registered_static(self) -> None:
+        assert DEFAULT_PLAN_KEYSTROKES.has_source("gemini") is True
+        # Stable approve positions (1/2) + Esc reject resolve every menu shape, so
+        # no live-pane inspection is needed.
+        assert DEFAULT_PLAN_KEYSTROKES.requires_pane("gemini") is False
+
+    def test_registered_options(self) -> None:
+        assert DEFAULT_PLAN_KEYSTROKES.registered_options("gemini") == frozenset(
+            {"approve_yolo", "approve_act", REQUEST_CHANGES_OPTION_ID}
+        )
+
+    @pytest.mark.parametrize(
+        ("option_id", "expected"),
+        [
+            # "Allow once" (1) keeps prompting -> approve_act/normal; "Allow for
+            # this session" (2) stops prompting -> approve_yolo/bypass.
+            ("approve_act", _gemini("1")),
+            ("approve_yolo", _gemini("2")),
+            # Reject via Esc: the reject digit is not stable across menu shapes.
+            (REQUEST_CHANGES_OPTION_ID, _gemini_escape()),
+        ],
+    )
+    def test_plan_menu_mapping(self, option_id: str, expected: PlanKeystrokeSequence) -> None:
+        assert DEFAULT_PLAN_KEYSTROKES.resolve("gemini", option_id) == expected
+
+    @pytest.mark.parametrize(
+        ("option_id", "digit"),
+        [("approve_act", "1"), ("approve_yolo", "2")],
+    )
+    def test_approve_digit_activates_without_enter(self, option_id: str, digit: str) -> None:
+        # Verified live: the item number selects AND activates with no trailing
+        # Enter (the footer's Enter hint applies only to arrow-key nav).
+        seq = DEFAULT_PLAN_KEYSTROKES.resolve("gemini", option_id)
+        assert seq is not None
+        assert [s.keys for s in seq.strokes] == [digit]
+        assert all(s.literal for s in seq.strokes)
+
+    def test_reject_uses_named_escape_key(self) -> None:
+        # request-changes is the named Esc key (literal=False so tmux interprets
+        # the key name), NOT a digit -- the reject item's number varies by tool
+        # type (4 for edits, 3 for shell) while "(esc)" is constant.
+        seq = DEFAULT_PLAN_KEYSTROKES.resolve("gemini", REQUEST_CHANGES_OPTION_ID)
+        assert seq is not None
+        assert [s.keys for s in seq.strokes] == ["Escape"]
+        assert all(not s.literal for s in seq.strokes)
+
+    def test_static_resolution_ignores_pane_text(self) -> None:
+        # No pane-aware resolver: resolve_for_pane returns the same static
+        # sequence for both the edit-menu and shell-menu shapes (and empty text).
+        assert (
+            DEFAULT_PLAN_KEYSTROKES.resolve_for_pane(
+                "gemini", "approve_yolo", _GEMINI_EDIT_MENU_PANE
+            )
+            == DEFAULT_PLAN_KEYSTROKES.resolve_for_pane(
+                "gemini", "approve_yolo", _GEMINI_SHELL_MENU_PANE
+            )
+            == DEFAULT_PLAN_KEYSTROKES.resolve("gemini", "approve_yolo")
+            == _gemini("2")
+        )
+        assert (
+            DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("gemini", REQUEST_CHANGES_OPTION_ID, "")
+            == _gemini_escape()
+        )
+
+    def test_unknown_option_returns_none(self) -> None:
+        assert DEFAULT_PLAN_KEYSTROKES.resolve("gemini", "approve_bogus") is None
+
+
 class TestDefaultRegistry:
     def test_remaining_clis_pending(self) -> None:
-        # Claude (#15727), Codex (#15728), and Droid (#15729) are registered; the
-        # other per-CLI child tasks populate these. This asserts the contract so
-        # an accidental population is caught.
-        for source in ("gemini", "grok", "qwen"):
+        # Claude (#15727), Codex (#15728), Droid (#15729), and Gemini (#15730) are
+        # registered; the remaining per-CLI child tasks populate these. This
+        # asserts the contract so an accidental population is caught.
+        for source in ("grok", "qwen"):
             assert DEFAULT_PLAN_KEYSTROKES.has_source(source) is False
             assert DEFAULT_PLAN_KEYSTROKES.requires_pane(source) is False
             assert DEFAULT_PLAN_KEYSTROKES.resolve(source, "approve_yolo") is None

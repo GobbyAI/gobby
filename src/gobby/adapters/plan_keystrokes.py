@@ -333,6 +333,52 @@ _DROID_PLAN_MENU: dict[str, PlanKeystrokeSequence] = {
 }
 
 
+# --- Gemini native tool-approval menu (interactive TUI) ----------------------
+# Captured empirically from Gemini CLI v0.44.1 (Google, model Auto) in a tmux
+# pane (task #15730). Gemini's plan mode (`--approval-mode plan`) is read-only
+# and gates the *plan* conversationally ("Does this plan look good to you?") with
+# no selectable menu -- the approval mode is cycled with Shift+Tab, not chosen
+# from a keystroke menu. The native keystroke-selectable gate is the per-action
+# approval prompt shown in manual/default mode when the agent runs a tool;
+# typing the item number selects AND activates immediately (no following Enter --
+# verified live: "4" and Esc each dismissed the menu and cancelled the action
+# without touching the file). The menu's top two options are stable across tool
+# types, but the reject option's NUMBER varies by tool while its "(esc)" shortcut
+# is constant:
+#     Apply this change?                  (Edit/Write)
+#       1. Allow once
+#       2. Allow for this session
+#       3. Modify with external editor
+#       4. No, suggest changes (esc)
+#     Allow execution of [Shell]?         (Shell)
+#       1. Allow once
+#       2. Allow for this session
+#       3. No, suggest changes (esc)
+# Unlike Codex/Droid, Gemini's menu CAN express the bypass-vs-manual distinction:
+# "Allow once" (1, keep prompting each action) -> approve_act/normal, and "Allow
+# for this session" (2, stop prompting this session) -> approve_yolo/bypass.
+# request-changes maps to the Esc KEY rather than a digit because the reject
+# item's number is not stable (4 for edits, 3 for shell) while Esc always rejects
+# -- so a static map keyed on the stable positions 1/2 plus Esc resolves every
+# menu shape without a pane-aware resolver (requires_pane("gemini") stays False).
+# Option 3 "Modify with external editor" (edit menu only, opens an external
+# editor) is deliberately unused: it does not fit a single-keystroke dispatch.
+
+
+def _gemini_digit(digit: str) -> PlanKeystrokeSequence:
+    """Gemini approval-menu selection: the item number activates with no Enter."""
+    return PlanKeystrokeSequence(strokes=(PlanKeystroke(digit, literal=True),))
+
+
+_GEMINI_PLAN_MENU: dict[str, PlanKeystrokeSequence] = {
+    "approve_act": _gemini_digit("1"),
+    "approve_yolo": _gemini_digit("2"),
+    # Reject via the "(esc)" shortcut: the menu's reject DIGIT varies by tool
+    # type, but Escape always rejects regardless of menu shape.
+    REQUEST_CHANGES_OPTION_ID: PlanKeystrokeSequence(strokes=(PlanKeystroke("Escape"),)),
+}
+
+
 def _register_builtin_plan_keystrokes(registry: PlanKeystrokeRegistry) -> None:
     """Per-CLI registration point for native plan-menu keystrokes.
 
@@ -366,7 +412,9 @@ def _register_builtin_plan_keystrokes(registry: PlanKeystrokeRegistry) -> None:
     # --- droid (spec mode `--use-spec` -> "Proceed with the proposal" menu) -- task #15729 ---
     for _droid_option_id, _droid_sequence in _DROID_PLAN_MENU.items():
         registry.register("droid", _droid_option_id, _droid_sequence)
-    # --- gemini (ACP) -- task #15730 ---
+    # --- gemini (interactive TUI tool-approval menu) -- task #15730 ---
+    for _gemini_option_id, _gemini_sequence in _GEMINI_PLAN_MENU.items():
+        registry.register("gemini", _gemini_option_id, _gemini_sequence)
     # --- grok (ACP) -- task #15731 ---
     # --- qwen (ACP) -- task #15732 ---
     return
