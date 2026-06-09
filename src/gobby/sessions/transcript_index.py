@@ -46,6 +46,7 @@ from gobby.sessions.message_stats import (
     accumulate_message_stats,
     empty_message_stats,
 )
+from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcript_parsing import _get_parser
 from gobby.sessions.transcript_renderer import RenderState, render_incremental
 from gobby.sessions.transcript_source import (
@@ -347,6 +348,7 @@ class TranscriptIndexAppender:
             start_index=self._next_start_index,
         )
         for event in events:
+            records = normalize_transcript_records(event.records, self.index.source)
             if self._safe_to_start_event and _should_record_parsed_boundary(
                 self.index.parsed_boundaries, self.index.parsed_message_count
             ):
@@ -362,7 +364,7 @@ class TranscriptIndexAppender:
                     )
                 )
 
-            for offset_in_event, record in enumerate(event.records):
+            for offset_in_event, record in enumerate(records):
                 if not isinstance(record, ParsedMessage):
                     continue
                 stats_messages.append(record)
@@ -400,7 +402,7 @@ class TranscriptIndexAppender:
                 _free_resolved_tool_calls(self._state)
             self._safe_to_start_event = event.parser_safe
             self._next_start_index = _next_index_after_records(
-                event.records, self._next_start_index, event.parsed_index
+                records, self._next_start_index, event.parsed_index
             )
 
         if stats_messages:

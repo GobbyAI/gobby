@@ -51,12 +51,14 @@ def compute_message_stats(messages: Sequence[MessageProtocol]) -> MessageStats:
 
     for msg in messages:
         message_count += 1
-        if msg.role == "assistant" and msg.content_type == "text":
+        role = _message_attr(msg, "role")
+        content_type = _message_attr(msg, "content_type")
+        if role == "assistant" and content_type == "text":
             turn_count += 1
-            content = msg.content
+            content = _message_attr(msg, "content")
             if isinstance(content, str) and content.strip():
                 last_assistant_content = content.strip()[-_LAST_ASSISTANT_CONTENT_LIMIT:]
-        if msg.tool_name:
+        if _message_attr(msg, "tool_name"):
             tool_call_count += 1
 
     return MessageStats(
@@ -65,6 +67,13 @@ def compute_message_stats(messages: Sequence[MessageProtocol]) -> MessageStats:
         tool_call_count=tool_call_count,
         last_assistant_content=last_assistant_content,
     )
+
+
+def _message_attr(msg: MessageProtocol, name: str) -> Any:
+    try:
+        return getattr(msg, name)
+    except AttributeError:
+        return None
 
 
 def empty_message_stats() -> MessageStats:

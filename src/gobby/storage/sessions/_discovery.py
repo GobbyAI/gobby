@@ -245,11 +245,7 @@ class _DiscoveryMixin:
         """Find the unique active session matching project and terminal identity."""
         normalized_parent_pid = _normalize_context_parent_pid(parent_pid)
         normalized_project_id = project_id.strip() if isinstance(project_id, str) else None
-        if (
-            not isinstance(project_id, str)
-            or not normalized_project_id
-            or normalized_parent_pid is None
-        ):
+        if not normalized_project_id or normalized_parent_pid is None:
             return None
 
         rows = self.db.fetchall(

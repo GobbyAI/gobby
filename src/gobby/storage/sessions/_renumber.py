@@ -72,21 +72,23 @@ class _RenumberMixin:
             old_seq_nums = [
                 item["old_seq_num"] for item in mapping if item["old_seq_num"] is not None
             ]
-            min_seq_num = min(old_seq_nums, default=0)
-            temp_offset = abs(min_seq_num) + len(mapping) + 1
+            final_updates = [(item["new_seq_num"], item["session_id"]) for item in mapping]
 
-            # Move rows through a disjoint negative range before writing final refs.
-            # PostgreSQL checks per-project seq_num uniqueness immediately, so
-            # mapping + old_seq_nums/min_seq_num/temp_offset reserve negative
-            # values for the first executemany; the second executemany applies
-            # final positive seq_nums.
-            conn.executemany(
-                "UPDATE sessions SET seq_num = %s WHERE id = %s",
-                [(-(temp_offset + item["new_seq_num"]), item["session_id"]) for item in mapping],
-            )
-            conn.executemany(
-                "UPDATE sessions SET seq_num = %s WHERE id = %s",
-                [(item["new_seq_num"], item["session_id"]) for item in mapping],
-            )
+            if old_seq_nums:
+                min_seq_num = min(old_seq_nums)
+                temp_offset = abs(min_seq_num) + len(mapping) + 1
+
+                # Move rows through a disjoint negative range before writing final refs.
+                # PostgreSQL checks per-project seq_num uniqueness immediately, so
+                # mapping + old_seq_nums/min_seq_num/temp_offset reserve negative
+                # values for the first executemany; the second applies final refs.
+                conn.executemany(
+                    "UPDATE sessions SET seq_num = %s WHERE id = %s",
+                    [
+                        (-(temp_offset + item["new_seq_num"]), item["session_id"])
+                        for item in mapping
+                    ],
+                )
+            conn.executemany("UPDATE sessions SET seq_num = %s WHERE id = %s", final_updates)
 
         return mapping

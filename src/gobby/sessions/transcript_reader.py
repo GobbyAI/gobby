@@ -45,6 +45,7 @@ from gobby.sessions.transcript_limits import (
     NATIVE_JSON_MAX_BYTES,
     RENDERED_LIMIT_MAX,
 )
+from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcript_parsing import (
     _get_parser,
     _parse_json_session,
@@ -596,7 +597,9 @@ def _collect_legacy_from_file(
         RawLine(byte_offset=None, raw_line_no=i, text=text)
         for i, text in enumerate(_iter_jsonl_lines(path))
     )
-    return _collect_legacy_dicts(parser, raws, session_id=session_id, cap=cap, role=role)
+    return _collect_legacy_dicts(
+        parser, raws, source=source, session_id=session_id, cap=cap, role=role
+    )
 
 
 def _iter_jsonl_raw_lines_from(
@@ -643,7 +646,7 @@ def _collect_legacy_from_file_windowed(
     skip = max(0, offset - seen)
     out: list[dict[str, Any]] = []
     for event in parser.iter_parse_events(raws, start_index=boundary.parsed_index_start):
-        for record in event.records:
+        for record in normalize_transcript_records(event.records, source):
             if not isinstance(record, ParsedMessage):
                 continue
             row = _parsed_to_dicts([record])[0]
@@ -668,13 +671,16 @@ def _collect_legacy_from_archive(
         RawLine(byte_offset=None, raw_line_no=i, text=text)
         for i, text in enumerate(_iter_archive_lines(path))
     )
-    return _collect_legacy_dicts(parser, raws, session_id=session_id, cap=cap, role=role)
+    return _collect_legacy_dicts(
+        parser, raws, source=source, session_id=session_id, cap=cap, role=role
+    )
 
 
 def _collect_legacy_dicts(
     parser: Any,
     raws: Any,
     *,
+    source: str,
     session_id: str,
     cap: int,
     role: str | None,
@@ -686,7 +692,7 @@ def _collect_legacy_dicts(
     """
     out: list[dict[str, Any]] = []
     for event in parser.iter_parse_events(raws, start_index=0):
-        for record in event.records:
+        for record in normalize_transcript_records(event.records, source):
             if not isinstance(record, ParsedMessage):
                 continue
             row = _parsed_to_dicts([record])[0]

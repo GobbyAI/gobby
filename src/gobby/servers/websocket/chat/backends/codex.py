@@ -52,6 +52,7 @@ from gobby.servers.websocket.chat.backends.codex_events import (
     prefer_codex_usage,
 )
 from gobby.servers.websocket.chat.permissions import ManagedWebChatPermissionsMixin
+from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.storage.config_store import ConfigStore
@@ -257,11 +258,11 @@ class CodexManagedChatSession(
                 with open(self._transcript_path or "", encoding="utf-8") as handle:
                     handle.seek(offset)
                     parser = CodexTranscriptParser(session_id=self._thread_id)
-                    parsed = parser.parse_lines(handle.readlines())
+                    parsed = normalize_transcript_records(
+                        parser.parse_lines(handle.readlines()), "codex"
+                    )
             except OSError:
                 return ""
-
-            from gobby.sessions.transcripts.base import ParsedMessage
 
             assistant_chunks = [
                 message.content.strip()
@@ -291,7 +292,9 @@ class CodexManagedChatSession(
                 with open(self._transcript_path or "", encoding="utf-8") as handle:
                     handle.seek(offset)
                     parser = CodexTranscriptParser(session_id=self._thread_id)
-                    return parser.parse_lines(handle.readlines())
+                    return normalize_transcript_records(
+                        parser.parse_lines(handle.readlines()), "codex"
+                    )
             except OSError:
                 return []
 

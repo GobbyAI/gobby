@@ -183,7 +183,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
             return self._parse_tool_call(data, payload, index, timestamp)
         if payload_type in {"function_call_output", "custom_tool_call_output"}:
             return self._parse_tool_call_output(data, payload, index, timestamp)
-        if payload_type == "reasoning":
+        if payload_type in {"reasoning", "tool_search_call", "tool_search_output"}:
             return None
 
         self.error_log.log_unknown_block(

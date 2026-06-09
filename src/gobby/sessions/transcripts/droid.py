@@ -124,7 +124,7 @@ class DroidTranscriptParser(BaseTranscriptParser):
             return []
 
         record_type = record.get("type")
-        if record_type == "session_start":
+        if record_type in {"session_start", "todo_state"}:
             return []
         if record_type != "message":
             self.error_log.log_unknown_block(

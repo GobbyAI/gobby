@@ -20,6 +20,8 @@ the ACP path does.
 
 from __future__ import annotations
 
+import asyncio
+import json
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
@@ -28,7 +30,10 @@ import pytest
 from gobby.adapters.gemini_acp_client import StreamEvent
 from gobby.llm.claude_models import ChatEvent, DoneEvent, TextChunk, ThinkingEvent
 from gobby.servers.websocket.chat.backends.codex import CodexManagedChatSession
-from gobby.servers.websocket.chat.backends.droid import DroidManagedChatSession
+from gobby.servers.websocket.chat.backends.droid import (
+    DroidManagedChatSession,
+    DroidWebChatBackend,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -63,6 +68,72 @@ class _FakeDroidBackend:
             yield ev
 
 
+class _FakeDroidStdin:
+    def __init__(self) -> None:
+        self.writes: list[bytes] = []
+
+    def write(self, data: bytes) -> None:
+        self.writes.append(data)
+
+    async def drain(self) -> None:
+        return None
+
+
+class _FakeDroidProcess:
+    def __init__(self) -> None:
+        self.stdin = _FakeDroidStdin()
+
+
+class _FakeDroidHandle:
+    def __init__(self) -> None:
+        self.process = _FakeDroidProcess()
+
+
+class _FakeDroidPermissionBackend(DroidWebChatBackend):
+    """Routes a Droid permission request through the production handler."""
+
+    def __init__(self, events: list[StreamEvent], tool_name: str, tool_input: dict[str, Any]):
+        super().__init__()
+        self._events = events
+        self._tool_name = tool_name
+        self._tool_input = tool_input
+        self.response_writes: list[bytes] = []
+
+    async def send_message(
+        self, session: DroidManagedChatSession, prompt: str
+    ) -> AsyncIterator[StreamEvent]:
+        del prompt
+        for ev in self._events:
+            yield ev
+        handle = _FakeDroidHandle()
+        decision_task = asyncio.create_task(self._approve_next_plan(session))
+        await self._handle_permission_request(
+            handle,
+            session,
+            [
+                StreamEvent(
+                    event_type="content_delta",
+                    data={
+                        "kind": "permission_request",
+                        "request_id": "permission-exit-spec",
+                        "tool_name": self._tool_name,
+                        "tool_input": self._tool_input,
+                        "call_id": "tc-exit-spec",
+                    },
+                )
+            ],
+        )
+        await decision_task
+        self.response_writes = handle.process.stdin.writes
+        yield _droid_result()
+
+    @staticmethod
+    async def _approve_next_plan(session: DroidManagedChatSession) -> None:
+        while session._pending_plan_event is None:
+            await asyncio.sleep(0)
+        session.provide_plan_decision("approve")
+
+
 def _make_codex_session(
     chat_mode: str, events: list[ChatEvent]
 ) -> tuple[CodexManagedChatSession, Broadcasts]:
@@ -87,6 +158,19 @@ def _make_droid_session(
     return session, _attach_plan_capture(session)
 
 
+def _make_droid_permission_session(
+    chat_mode: str,
+    events: list[StreamEvent],
+    tool_name: str,
+    tool_input: dict[str, Any],
+) -> tuple[DroidManagedChatSession, Broadcasts, _FakeDroidPermissionBackend]:
+    backend = _FakeDroidPermissionBackend(events, tool_name, tool_input)
+    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session.chat_mode = chat_mode
+    session._connected = True
+    return session, _attach_plan_capture(session), backend
+
+
 def _attach_plan_capture(session: Any) -> Broadcasts:
     broadcasts: Broadcasts = []
 
@@ -103,20 +187,6 @@ def _droid_text(content: str) -> StreamEvent:
 
 def _droid_result() -> StreamEvent:
     return StreamEvent(event_type="result", data={"usage": {}})
-
-
-def _droid_tool_call(tool_name: str, tool_input: dict[str, Any]) -> StreamEvent:
-    # ExitSpecMode reaches Gobby as a permission_request tool call; that kind
-    # skips the pre-tool lifecycle, matching the real plan-exit approval flow.
-    return StreamEvent(
-        event_type="content_delta",
-        data={
-            "kind": "permission_request",
-            "tool_name": tool_name,
-            "tool_input": tool_input,
-            "call_id": "tc-exit-spec",
-        },
-    )
 
 
 # --------------------------------------------------------------------------- #
@@ -255,12 +325,11 @@ async def test_droid_structured_plan_supersedes_prose_preamble() -> None:
     # then delivers the actual spec via the ExitSpecMode tool argument. The
     # structured plan must win over the preamble, not the other way around.
     real_plan = "## Plan\n\n1. Step one\n2. Step two\n3. Step three"
-    session, broadcasts = _make_droid_session(
+    session, broadcasts, backend = _make_droid_permission_session(
         "plan",
-        [
-            _droid_text("Good. I have enough context to propose a plan."),
-            _droid_tool_call("ExitSpecMode", {"plan": real_plan}),
-        ],
+        [_droid_text("Good. I have enough context to propose a plan.")],
+        "ExitSpecMode",
+        {"plan": real_plan},
     )
 
     [e async for e in session.send_message("draft a plan")]
@@ -269,17 +338,21 @@ async def test_droid_structured_plan_supersedes_prose_preamble() -> None:
     assert broadcasts[0][0] == real_plan
     assert session.has_pending_plan is True
     assert session._pending_plan_structured is True
+    response = json.loads(backend.response_writes[0].decode("utf-8"))
+    assert response["id"] == "permission-exit-spec"
+    assert response["result"] == {"selectedOption": "proceed_once"}
 
 
 async def test_droid_structured_plan_not_clobbered_by_later_prose() -> None:
     # Once a structured plan is pinned, later (even longer) prose chatter must
     # not displace it.
     real_plan = "## Plan\n\n1. Step one"
-    session, broadcasts = _make_droid_session(
-        "plan",
-        [_droid_tool_call("ExitSpecMode", {"plan": real_plan})],
+    session, broadcasts, backend = _make_droid_permission_session(
+        "plan", [], "ExitSpecMode", {"plan": real_plan}
     )
     [e async for e in session.send_message("draft a plan")]
+    response = json.loads(backend.response_writes[0].decode("utf-8"))
+    assert response["id"] == "permission-exit-spec"
     assert broadcasts[-1][0] == real_plan
 
     session._backend = _FakeDroidBackend(

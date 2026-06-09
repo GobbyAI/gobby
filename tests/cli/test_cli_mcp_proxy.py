@@ -545,6 +545,29 @@ def test_import_server_needs_configuration(cli_runner, mock_daemon_client, mock_
         assert "API_KEY" in result.output
 
 
+def test_import_server_requires_approval(cli_runner, mock_daemon_client, mock_config) -> None:
+    """Test import preview that requires explicit add-server approval."""
+    with patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client):
+        mock_daemon_client.call_http_api.return_value.status_code = 200
+        mock_daemon_client.call_http_api.return_value.json.return_value = {
+            "status": "requires_approval",
+            "config": {"name": "my-server", "transport": "stdio"},
+            "missing": [],
+            "instructions": "Review the generated command first",
+        }
+
+        result = cli_runner.invoke(
+            mcp_proxy,
+            ["import-server", "--github", "https://github.com/example/mcp-server"],
+            obj={"config": mock_config},
+        )
+
+        assert result.exit_code == 0
+        assert "ready for approval" in result.output
+        assert "my-server" in result.output
+        assert "add-server" in result.output
+
+
 def test_import_server_no_source(cli_runner, mock_daemon_client, mock_config) -> None:
     """Test import without specifying a source."""
     with patch("gobby.cli.mcp_proxy.get_daemon_client", return_value=mock_daemon_client):

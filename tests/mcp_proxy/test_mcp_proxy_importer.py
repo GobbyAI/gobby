@@ -749,19 +749,18 @@ class TestParseAndAddConfig:
         assert "<YOUR_API_KEY>" in result["missing"]
 
     @pytest.mark.asyncio
-    async def test_adds_server_without_secrets(self, importer):
-        """Test adds server directly when no secrets needed."""
+    async def test_returns_approval_preview_without_secrets(self, importer):
+        """Test synthesized config is previewed when no secrets are needed."""
         text = '{"name": "no-secrets", "transport": "http", "url": "http://localhost"}'
 
         with patch.object(importer, "_add_server", new_callable=AsyncMock) as mock_add:
-            mock_add.return_value = {"success": True, "imported": ["no-secrets"]}
+            result = await importer._parse_and_add_config(text)
 
-            await importer._parse_and_add_config(text)
-
-            mock_add.assert_called_once()
-            call_kwargs = mock_add.call_args.kwargs
-            assert call_kwargs["name"] == "no-secrets"
-            assert call_kwargs["transport"] == "http"
+            mock_add.assert_not_called()
+        assert result["status"] == "requires_approval"
+        assert result["requires_approval"] is True
+        assert result["missing"] == []
+        assert result["config"]["name"] == "no-secrets"
 
     @pytest.mark.asyncio
     async def test_returns_error_for_missing_name(self, importer):

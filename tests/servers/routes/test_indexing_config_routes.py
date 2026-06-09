@@ -13,16 +13,11 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def temp_db(hub_db: HubDatabase) -> HubDatabase:
-    return hub_db
-
-
-@pytest.fixture
-def client(temp_db: HubDatabase) -> TestClient:
+def client(hub_db: HubDatabase) -> TestClient:
     server = create_http_server(
         config=DaemonConfig(),
-        database=temp_db,
-        task_manager=LocalTaskManager(temp_db),
+        database=hub_db,
+        task_manager=LocalTaskManager(hub_db),
     )
     return TestClient(server.app)
 

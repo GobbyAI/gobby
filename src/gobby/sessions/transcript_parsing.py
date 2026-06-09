@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcripts.base import ParsedMessage
 
 if TYPE_CHECKING:
@@ -61,7 +62,8 @@ def _parse_lines(
     """Parse lines into ParsedMessage objects."""
     parser = _get_parser(source, session_id=session_id, transcript_path=transcript_path)
     parsed = parser.parse_lines(lines, start_index=0)
-    return [r for r in parsed if isinstance(r, ParsedMessage)]
+    normalized = normalize_transcript_records(parsed, source)
+    return [r for r in normalized if isinstance(r, ParsedMessage)]
 
 
 def _parse_json_session(
@@ -76,10 +78,18 @@ def _parse_json_session(
 
     if source == "gemini":
         parser = GeminiTranscriptParser(session_id=session_id)
-        return parser.parse_session_json(data)
+        return [
+            r
+            for r in normalize_transcript_records(parser.parse_session_json(data), source)
+            if isinstance(r, ParsedMessage)
+        ]
     if source == "qwen":
         parser = QwenTranscriptParser(session_id=session_id)
-        return parser.parse_session_json(data)
+        return [
+            r
+            for r in normalize_transcript_records(parser.parse_session_json(data), source)
+            if isinstance(r, ParsedMessage)
+        ]
     return _parse_lines(
         [json.dumps(data)],
         source,

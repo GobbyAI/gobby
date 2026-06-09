@@ -565,6 +565,16 @@ def import_server(
         click.echo("\nUse 'gobby mcp-proxy add-server' to add with required values.")
         return
 
+    if result.get("status") == "requires_approval":
+        click.echo("Server configuration extracted and ready for approval:")
+        config = result.get("config", {})
+        click.echo(f"  Name: {config.get('name')}")
+        click.echo(f"  Transport: {config.get('transport')}")
+        if result.get("instructions"):
+            click.echo(f"\nInstructions:\n{result['instructions']}")
+        click.echo("\nUse 'gobby mcp-proxy add-server' to add this server.")
+        return
+
     if result.get("success"):
         imported = result.get("imported", [])
         if imported:

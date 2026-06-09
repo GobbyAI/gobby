@@ -13,6 +13,10 @@ from typing import TYPE_CHECKING, Any, Literal
 from fastapi import Depends, HTTPException, Request
 
 from gobby.mcp_proxy.tools.internal import normalize_internal_success_result
+from gobby.mcp_proxy.wait_tools import (
+    MCP_WRAPPER_FINGERPRINT_HEADER,
+    mcp_wrapper_fingerprint_stale_result,
+)
 from gobby.servers.routes.dependencies import get_internal_manager, get_mcp_manager, get_server
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.telemetry.instruments import inc_counter, observe_histogram
@@ -43,8 +47,12 @@ def _stale_stdio_wrapper_wait_result(
     *,
     require_stdio_proxy: bool,
 ) -> dict[str, Any] | None:
-    _ = (request, tool_name, require_stdio_proxy)
-    return None
+    if not require_stdio_proxy:
+        return None
+    return mcp_wrapper_fingerprint_stale_result(
+        tool_name,
+        request.headers.get(MCP_WRAPPER_FINGERPRINT_HEADER),
+    )
 
 
 def _get_requested_session_id(arguments: Any, request: Request | None = None) -> str | None:
@@ -161,9 +169,9 @@ def _set_context_for_request(
     # target-tool parameter and must not make child-session workflow
     # enforcement apply to the caller.
     session_id = header_session_id or argument_session_id
-    session_ref_origin: Literal["explicit", "ambient"] = (
-        "explicit" if header_session_id else "ambient"
-    )
+    session_ref_origin: Literal["explicit", "ambient"] = "ambient"
+    if not header_session_id and argument_session_id:
+        session_ref_origin = "explicit"
 
     # HTTP-specific bootstrap: old clients send only X-Gobby-Project-Id as a
     # caller-project hint. New clients also send X-Gobby-Caller-Project-Id; when

@@ -93,7 +93,7 @@ async def discover_stale_candidates(
         if len(page) < page_limit:
             break
 
-    return sorted(candidates, key=lambda item: (-item.age_days, item.created_at))
+    return sorted(candidates, key=_candidate_sort_key)
 
 
 def _in_scope(memory_project_id: str | None, project_id: str | None, include_global: bool) -> bool:
@@ -124,6 +124,13 @@ def _parse_datetime(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+def _candidate_sort_key(item: DreamCandidate) -> tuple[float, datetime]:
+    created_at = _parse_datetime(item.created_at)
+    if created_at is None:
+        created_at = datetime.max.replace(tzinfo=UTC)
+    return (-item.age_days, created_at)
 
 
 def _positive_int_value(value: Any, attr: str, default: int) -> int:

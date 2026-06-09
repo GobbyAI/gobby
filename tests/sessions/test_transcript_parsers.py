@@ -1180,6 +1180,27 @@ class TestCodexTranscriptParser:
         assert parser.parse_line(self._reasoning(), 0) is None
         assert calls == []
 
+    def test_parse_line_tool_search_metadata_is_ignored_without_unknown_warning(
+        self, parser, monkeypatch
+    ) -> None:
+        calls: list[dict[str, Any]] = []
+
+        def _log_unknown_block(**kwargs: Any) -> None:
+            calls.append(kwargs)
+
+        monkeypatch.setattr(parser.error_log, "log_unknown_block", _log_unknown_block)
+
+        for payload_type in ("tool_search_call", "tool_search_output"):
+            line = json.dumps(
+                {
+                    "timestamp": "2024-06-15T10:30:00Z",
+                    "type": "response_item",
+                    "payload": {"type": payload_type, "status": "completed"},
+                }
+            )
+            assert parser.parse_line(line, 0) is None
+        assert calls == []
+
     def test_parse_line_invalid_json(self, parser) -> None:
         assert parser.parse_line("not valid json", 0) is None
 

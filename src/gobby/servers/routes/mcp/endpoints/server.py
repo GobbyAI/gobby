@@ -290,9 +290,9 @@ async def import_mcp_server(
             assert query is not None
             result = await importer.import_from_query(query)
 
-        # Broadcast MCP server imported event
+        # Broadcast only when an import actually persisted at least one server.
         ws = server.services.websocket_server
-        if ws:
+        if ws and isinstance(result, dict) and result.get("imported"):
             try:
                 await ws.broadcast_mcp_event("server_imported", "bulk")
             except Exception as e:

@@ -52,7 +52,26 @@ async def build_raw_plan(
             )
             raw_actions = response.get("actions", []) if isinstance(response, dict) else []
             if isinstance(raw_actions, list):
+                invalid_actions = [item for item in raw_actions if not isinstance(item, dict)]
+                if invalid_actions:
+                    logger.warning(
+                        "Memory dream planner returned non-dict actions",
+                        extra={
+                            "raw_actions": invalid_actions,
+                            "project_id": project_id,
+                            "candidate_ids": [candidate.id for candidate in candidates],
+                        },
+                    )
                 actions.extend(item for item in raw_actions if isinstance(item, dict))
+            elif raw_actions:
+                logger.warning(
+                    "Memory dream planner returned invalid actions payload",
+                    extra={
+                        "raw_actions": raw_actions,
+                        "project_id": project_id,
+                        "candidate_ids": [candidate.id for candidate in candidates],
+                    },
+                )
         except _EXPECTED_PLANNER_ERRORS as exc:
             planner_errors.append(str(exc))
             logger.warning("Memory dream planner unavailable: %s", exc)

@@ -13,6 +13,7 @@ from gobby.memory.dream.candidates import discover_stale_candidates
 from gobby.memory.dream.duplicates import find_duplicate_groups
 from gobby.memory.dream.models import DreamAction, DreamCandidate
 from gobby.memory.dream.plan import validate_dream_plan
+from gobby.memory.dream.planner import build_raw_plan
 from gobby.memory.dream.service import MemoryDreamService, _decode_raw_plan_metadata
 from gobby.memory.dream.storage import MemoryDreamStore
 
@@ -100,6 +101,61 @@ async def test_stale_candidate_discovery_ties_by_created_at() -> None:
     )
 
     assert [candidate.id for candidate in result] == ["older", "newer"]
+
+
+async def test_stale_candidate_discovery_sorts_invalid_created_at_last() -> None:
+    manager = MagicMock()
+    valid = _memory("valid")
+    invalid = _memory("invalid")
+    for memory in (valid, invalid):
+        memory.updated_at = "2025-01-01T00:00:00+00:00"
+    valid.created_at = "2024-01-01T00:00:00+00:00"
+    invalid.created_at = "not-a-date"
+    manager.alist_memories = AsyncMock(side_effect=[[invalid, valid], []])
+    config = SimpleNamespace(
+        stale_age_days=30,
+        scan_limit=10,
+        max_scan_rows=100,
+        include_global_memories=True,
+    )
+
+    result = await discover_stale_candidates(
+        manager,
+        config,
+        project_id="proj-1",
+        now=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    assert [candidate.id for candidate in result] == ["valid", "invalid"]
+
+
+async def test_build_raw_plan_logs_non_dict_actions(caplog) -> None:
+    llm_service = MagicMock()
+    llm_service.call_json_feature = AsyncMock(
+        return_value={"actions": [{"action": "refresh"}, "invalid"]}
+    )
+    candidate = _candidate("memory-1")
+
+    with patch("gobby.memory.dream.planner.PromptLoader.render", return_value="prompt"):
+        plan = await build_raw_plan(
+            candidates=[candidate],
+            duplicate_groups=[],
+            dream_config=SimpleNamespace(prompt_path="memory/dream"),
+            llm_service=llm_service,
+            db=None,
+            project_id="proj-1",
+            skip_consolidation=False,
+        )
+
+    assert plan["actions"] == [{"action": "refresh"}]
+    record = next(
+        item
+        for item in caplog.records
+        if item.message == "Memory dream planner returned non-dict actions"
+    )
+    assert record.raw_actions == ["invalid"]
+    assert record.project_id == "proj-1"
+    assert record.candidate_ids == ["memory-1"]
 
 
 @pytest.mark.asyncio
@@ -501,6 +557,15 @@ def test_update_run_rejects_unknown_fields() -> None:
 
     with pytest.raises(ValueError, match="unknown_column"):
         store.update_run(run_id, unknown_column="bad")
+
+
+def test_restore_memory_row_rejects_incomplete_snapshot() -> None:
+    store = MemoryDreamStore(_FakeDreamDB())
+    row = _row("memory-1", "content")
+    row.pop("updated_at")
+
+    with pytest.raises(ValueError, match="missing columns: updated_at"):
+        store.restore_memory_row(row)
 
 
 class _FakeMemoryManager:

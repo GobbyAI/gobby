@@ -53,7 +53,7 @@ _RUN_UPDATE_SET_CLAUSES = {
 class MemoryDreamStore:
     """Store memory dream runs and exact mutation snapshots."""
 
-    def __init__(self, db: HubDatabase):
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
 
     def ensure_schema(self) -> None:
@@ -300,7 +300,12 @@ class MemoryDreamStore:
         return snapshots
 
     def restore_memory_row(self, data: dict[str, Any]) -> None:
-        values = {column: data.get(column) for column in _MEMORY_COLUMNS}
+        missing = [column for column in _MEMORY_COLUMNS if column not in data]
+        if missing:
+            raise ValueError(
+                f"Cannot restore memory row with missing columns: {', '.join(missing)}"
+            )
+        values = {column: data[column] for column in _MEMORY_COLUMNS}
         values["tags"] = _json(values.get("tags") or [])
         self.db.execute(
             RESTORE_MEMORY_SQL,

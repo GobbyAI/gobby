@@ -12,13 +12,8 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def temp_db(postgres_db: HubDatabase) -> HubDatabase:
-    return postgres_db
-
-
-@pytest.fixture
-def config_store(temp_db: HubDatabase) -> ConfigStore:
-    return ConfigStore(temp_db)
+def config_store(postgres_db: HubDatabase) -> ConfigStore:
+    return ConfigStore(postgres_db)
 
 
 @pytest.fixture

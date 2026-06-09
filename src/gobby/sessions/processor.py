@@ -57,6 +57,7 @@ from gobby.sessions.transcript_index import (
     persist_index_sidecar,
 )
 from gobby.sessions.transcript_index_resume import hydrate_appender_from_index
+from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcript_renderer import RenderState, render_incremental
 from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent, TranscriptParser
@@ -780,7 +781,11 @@ class SessionMessageProcessor:
         if not parser:
             return
 
-        parsed_records = parser.parse_lines(new_lines, start_index=last_index + 1)
+        source = getattr(parser, "cli_name", None)
+        parsed_records = normalize_transcript_records(
+            parser.parse_lines(new_lines, start_index=last_index + 1),
+            source if isinstance(source, str) else None,
+        )
 
         # Split mixed records: ParsedMessage feeds stats/rendering. Codex MCP
         # lifecycle records are parsed for transcript fidelity, while native
@@ -912,7 +917,11 @@ class SessionMessageProcessor:
             logger.warning(f"No GeminiTranscriptParser for JSON session {session_id}")
             return
 
-        all_messages = parser.parse_session_json(data)
+        all_messages = [
+            r
+            for r in normalize_transcript_records(parser.parse_session_json(data), "gemini")
+            if isinstance(r, ParsedMessage)
+        ]
         if not all_messages:
             self._last_mtime[session_id] = current_mtime
             return

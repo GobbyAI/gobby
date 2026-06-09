@@ -1,5 +1,9 @@
+import pytest
+
 from gobby.config.feature_base import DEFAULT_PROFILE_CANDIDATES, FeatureProfile
 from gobby.config.pipelines import PipelineConfig
+
+pytestmark = pytest.mark.unit
 
 
 def test_prompt_step_uses_low_feature_defaults() -> None:

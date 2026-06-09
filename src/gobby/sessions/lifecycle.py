@@ -27,11 +27,12 @@ from gobby.sessions.context_usage import (
     snapshot_from_token_usage,
     snapshot_from_window_metadata,
 )
-from gobby.sessions.message_stats import compute_message_stats
+from gobby.sessions.message_stats import MessageProtocol, compute_message_stats
 from gobby.sessions.summarize import TURN_PATTERN
 from gobby.sessions.summary_validity import is_summary_markdown_valid
 from gobby.sessions.transcript_archive import backup_transcript
 from gobby.sessions.transcript_index import rebuild_and_persist_index
+from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
@@ -556,13 +557,20 @@ class SessionLifecycleManager:
             except json.JSONDecodeError as e:
                 logger.error(f"Invalid JSON in transcript {transcript_path}: {e}")
                 return
-            messages = parser.parse_session_json(data)
+            messages = [
+                r
+                for r in normalize_transcript_records(
+                    parser.parse_session_json(data), session.source
+                )
+                if isinstance(r, ParsedMessage)
+            ]
         else:
             # parse_lines may yield a mix of ParsedMessage and ParsedToolEvent
             # records; this token-event path only consumes ParsedMessage
             # fields (model, usage, message_id).
             parsed_records = parser.parse_lines(raw.splitlines(keepends=True), start_index=0)
-            messages = [r for r in parsed_records if isinstance(r, ParsedMessage)]
+            normalized = normalize_transcript_records(parsed_records, session.source)
+            messages = [r for r in normalized if isinstance(r, ParsedMessage)]
 
         if not messages:
             return
@@ -572,7 +580,7 @@ class SessionLifecycleManager:
         # still record real message/turn/tool counts instead of phantom zeros.
         # Same predicate as the live path via compute_message_stats.
         try:
-            stats = compute_message_stats(messages)
+            stats = compute_message_stats(cast("list[MessageProtocol]", messages))
             self.session_manager.update_stats(
                 session_id,
                 message_count=stats["message_count"],

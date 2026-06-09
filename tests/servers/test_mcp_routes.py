@@ -32,10 +32,12 @@ from fastapi.testclient import TestClient
 from starlette.requests import ClientDisconnect
 
 from gobby.app_context import ServiceContainer
+from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.lazy import CircuitBreakerOpen
 from gobby.mcp_proxy.models import MCPError
 from gobby.mcp_proxy.wait_tools import (
     MCP_WRAPPER_FINGERPRINT_HEADER,
+    MCP_WRAPPER_STALE_ERROR_CODE,
     mcp_wrapper_current_source_fingerprint,
 )
 from gobby.servers.http import HTTPServer
@@ -1680,6 +1682,47 @@ class TestImportMCPServer:
         assert data["success"] is False
         assert "No current project" in data["error"]
 
+    def test_import_preview_does_not_broadcast_imported_event(
+        self, session_storage: SessionManager
+    ) -> None:
+        """Preview-only synthesized imports do not broadcast persisted imports."""
+        websocket_server = MagicMock()
+        websocket_server.broadcast_mcp_event = AsyncMock()
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            config=DaemonConfig(),
+            session_manager=session_storage,
+            websocket_server=websocket_server,
+        )
+        importer = MagicMock()
+        importer.import_from_github = AsyncMock(
+            return_value={
+                "status": "requires_approval",
+                "requires_approval": True,
+                "config": {"name": "preview", "transport": "stdio"},
+                "missing": [],
+            }
+        )
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.utils.project_context.get_project_context",
+                return_value={"id": "test-project", "name": "test"},
+            ),
+            patch("gobby.mcp_proxy.importer.MCPServerImporter", return_value=importer),
+        ):
+            response = client.post(
+                "/api/mcp/servers/import",
+                json={"github_url": "https://github.com/example/mcp-server"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "requires_approval"
+        websocket_server.broadcast_mcp_event.assert_not_awaited()
+
     # Note: Server import tests with complex config are tested via integration tests
     # as they require proper lifespan initialization with config
 
@@ -2076,10 +2119,10 @@ class TestMCPProxy:
         assert data["success"] is True
         assert data["result"] == {"tool": "list_tasks"}
 
-    def test_proxy_accepts_missing_wait_wrapper_fingerprint(
+    def test_proxy_rejects_missing_wait_wrapper_fingerprint(
         self, session_storage: SessionManager
     ) -> None:
-        """Legacy route accepts older wrappers without fingerprint headers."""
+        """Legacy route rejects older wrappers without fingerprint headers."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -2102,13 +2145,14 @@ class TestMCPProxy:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["success"] is True
-        assert data["result"] == {"tool": "wait_for_agent"}
+        assert data["success"] is False
+        assert data["error_code"] == MCP_WRAPPER_STALE_ERROR_CODE
+        assert data["restart_required"] is True
 
-    def test_proxy_accepts_stale_wait_wrapper_fingerprint(
+    def test_proxy_rejects_stale_wait_wrapper_fingerprint(
         self, session_storage: SessionManager
     ) -> None:
-        """Legacy route accepts already-running wrappers with stale fingerprints."""
+        """Legacy route rejects already-running wrappers with stale fingerprints."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -2132,8 +2176,10 @@ class TestMCPProxy:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["success"] is True
-        assert data["result"] == {"tool": "wait_for_agent"}
+        assert data["success"] is False
+        assert data["error_code"] == MCP_WRAPPER_STALE_ERROR_CODE
+        assert data["provided_wrapper_fingerprint"] == "stale-wrapper"
+        assert data["restart_required"] is True
 
     def test_proxy_accepts_current_wait_wrapper_fingerprint(
         self, session_storage: SessionManager

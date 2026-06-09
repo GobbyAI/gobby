@@ -86,6 +86,17 @@ def _codex_out(call_id: str, output: str) -> str:
     )
 
 
+def _grok_event(update: dict[str, object]) -> str:
+    return json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {"sessionId": SESSION, "update": update},
+            "timestamp": "2026-05-22T22:22:00Z",
+        }
+    )
+
+
 def _codex_rich() -> list[str]:
     """Exercises adjacent + non-adjacent (cross-group) results, an unresolved-at-EOF
     call, and an EOF flush group. (A *distant* duplicate for an already-resolved
@@ -335,6 +346,37 @@ def test_postcut_duplicate_result_suppressed(tmp_path) -> None:
     )
     assert result.returned_count == index.total_groups - 2
     _assert_equiv(full[2:], result.groups)
+
+
+def test_grok_hook_execution_window_does_not_render_unknown(tmp_path) -> None:
+    lines = [
+        _grok_event(
+            {
+                "sessionUpdate": "agent_message_chunk",
+                "content": {"type": "text", "text": "Checking."},
+            }
+        ),
+        _grok_event(
+            {
+                "sessionUpdate": "hook_execution",
+                "hookName": "PostToolUse",
+                "status": "failed",
+                "message": "Policy blocked the command.",
+            }
+        ),
+    ]
+    path = _write(tmp_path, "grok", lines)
+    st = os.stat(path)
+    index = build_index_from_file(path, "grok", SESSION, mtime_ns=st.st_mtime_ns, size=st.st_size)
+
+    result = render_window(
+        path, "grok", SESSION, index, limit=10, offset=0, order="head", max_span=HUGE
+    )
+    block_types = [block.type for message in result.groups for block in message.content_blocks]
+
+    assert "unknown" not in block_types
+    assert result.groups[-1].role == "system"
+    assert result.groups[-1].content_blocks[0].content == "Policy blocked the command."
 
 
 def test_tail_offset_zero_is_newest_slice(tmp_path) -> None:

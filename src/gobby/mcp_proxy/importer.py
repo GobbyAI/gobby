@@ -228,7 +228,8 @@ class MCPServerImporter:
                 caller="mcp_proxy.importer.github",
             )
 
-            # Parse and add if no secrets needed
+            # Parse synthesized config into a preview; explicit add-server is
+            # the approval/install step.
             return await self._parse_and_add_config(result_text)
 
         except Exception as e:
@@ -287,7 +288,8 @@ class MCPServerImporter:
                 caller="mcp_proxy.importer.query",
             )
 
-            # Parse and add if no secrets needed
+            # Parse synthesized config into a preview; explicit add-server is
+            # the approval/install step.
             return await self._parse_and_add_config(result_text)
 
         except Exception as e:
@@ -410,7 +412,8 @@ class MCPServerImporter:
         base_delay = retry_after
         if base_delay is None:
             base_delay = GITHUB_BASE_BACKOFF_SECONDS * (2**attempt)
-        jitter = random.uniform(0.0, min(0.25, base_delay * 0.2))
+        # Retry jitter does not require cryptographic randomness.
+        jitter = random.uniform(0.0, min(0.25, base_delay * 0.2))  # nosec B311
         return base_delay + jitter
 
     def _github_retry_after_seconds(self, response: Any) -> float | None:
@@ -631,13 +634,13 @@ class MCPServerImporter:
 
     async def _parse_and_add_config(self, result_text: str) -> dict[str, Any]:
         """
-        Parse LLM response and add server if no secrets needed.
+        Parse LLM response and return a non-mutating preview.
 
         Args:
             result_text: Raw text from LLM
 
         Returns:
-            Success result if added, or needs_configuration if secrets required
+            Preview result requiring approval, or needs_configuration if secrets are required
         """
         # Try to extract JSON from the response
         config = self._extract_json(result_text)
@@ -653,18 +656,6 @@ class MCPServerImporter:
         missing = self._find_missing_secrets(config)
         instructions = config.pop("instructions", None)
 
-        if missing:
-            # Secrets needed - return config for user to fill in
-            result: dict[str, Any] = {
-                "status": "needs_configuration",
-                "config": config,
-                "missing": missing,
-            }
-            if instructions:
-                result["instructions"] = instructions
-            return result
-
-        # No secrets needed - add the server directly
         name = config.get("name")
         transport = config.get("transport")
 
@@ -675,17 +666,27 @@ class MCPServerImporter:
                 "config": config,
             }
 
-        return await self._add_server(
-            name=name,
-            transport=transport,
-            url=config.get("url"),
-            command=config.get("command"),
-            args=config.get("args"),
-            env=config.get("env"),
-            headers=config.get("headers"),
-            enabled=config.get("enabled", True),
-            description=config.get("description"),
-        )
+        if missing:
+            # Secrets needed - return config for user to fill in.
+            result: dict[str, Any] = {
+                "status": "needs_configuration",
+                "requires_approval": True,
+                "config": config,
+                "missing": missing,
+            }
+            if instructions:
+                result["instructions"] = instructions
+            return result
+
+        result = {
+            "status": "requires_approval",
+            "requires_approval": True,
+            "config": config,
+            "missing": [],
+        }
+        if instructions:
+            result["instructions"] = instructions
+        return result
 
     def _extract_json(self, text: str) -> dict[str, Any] | None:
         """

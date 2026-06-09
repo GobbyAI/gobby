@@ -211,6 +211,7 @@ async def heuristic_title_from_transcript(
     if not transcript_path or not Path(transcript_path).exists():
         return None
     try:
+        from gobby.sessions.transcript_normalization import normalize_transcript_records
         from gobby.sessions.transcripts import ParsedMessage, get_parser
 
         parser = get_parser(source or "")
@@ -228,7 +229,7 @@ async def heuristic_title_from_transcript(
         if not lines:
             return None
 
-        for record in parser.parse_lines(lines):
+        for record in normalize_transcript_records(parser.parse_lines(lines), source):
             if not isinstance(record, ParsedMessage):
                 continue
             if record.role != "user" or record.content_type != "text":

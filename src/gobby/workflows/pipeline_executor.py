@@ -108,6 +108,7 @@ class PipelineExecutor:
             session_manager: Optional SessionManager for session creation
             completion_registry: Optional CompletionEventRegistry for wait steps
             run_db: Optional bounded executor bridge for hub database work
+            pipeline_config: Optional pipeline configuration for step defaults
         """
         self.db = db
         self.execution_manager = execution_manager

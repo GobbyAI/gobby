@@ -211,8 +211,7 @@ def create_wiki_registry(
         require_ai: bool = False,
     ) -> dict[str, Any]:
         async def call() -> dict[str, Any]:
-            audit_enabled = audit
-            if query is None and not audit_enabled:
+            if query is None and not audit:
                 return _validation_error("query is required unless audit is true")
             ai_value = _normalize_ai(ai)
             _validate_positive_int("max_steps", max_steps)
@@ -224,7 +223,7 @@ def create_wiki_registry(
                 topic,
                 lambda gwiki: gwiki.research(
                     query,
-                    audit=audit_enabled,
+                    audit=audit,
                     source_constraints=constraints,
                     max_steps=max_steps,
                     max_tokens=max_tokens,

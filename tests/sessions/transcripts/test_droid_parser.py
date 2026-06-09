@@ -157,6 +157,21 @@ def test_parse_line_returns_first_expanded_block() -> None:
     assert record.content == "I should inspect the MCP server registry."
 
 
+def test_todo_state_metadata_is_ignored_without_unknown_warning(monkeypatch) -> None:
+    parser = DroidTranscriptParser()
+    calls: list[dict[str, Any]] = []
+
+    def _log_unknown_block(**kwargs: Any) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr(parser.error_log, "log_unknown_block", _log_unknown_block)
+
+    line = json.dumps({"type": "todo_state", "todos": [{"content": "check", "status": "done"}]})
+
+    assert parser.parse_line(line, 0) is None
+    assert calls == []
+
+
 def test_extract_last_messages_strips_injected_user_blocks() -> None:
     parser = DroidTranscriptParser()
 

@@ -66,7 +66,7 @@ class TestSetContextForRequest:
         kwargs = mock_helper.call_args.kwargs
         assert kwargs["session_ref"] == "#5"
         assert kwargs["project_ref"] == PROJECT_ID
-        assert kwargs["session_ref_origin"] == "ambient"
+        assert kwargs["session_ref_origin"] == "explicit"
         assert kwargs["project_ref_is_fallback"] is True
 
     def test_uuid_session_id_forwarded_verbatim_to_helper(self) -> None:
@@ -83,7 +83,7 @@ class TestSetContextForRequest:
 
         # Flip of the old lock-in: UUID-shaped refs no longer bypass resolution.
         assert mock_helper.call_args.kwargs["session_ref"] == external_uuid
-        assert mock_helper.call_args.kwargs["session_ref_origin"] == "ambient"
+        assert mock_helper.call_args.kwargs["session_ref_origin"] == "explicit"
 
     def test_hash_n_no_project_header_bootstraps_from_header_session(self) -> None:
         """#N ref without x-gobby-project-id derives project from x-gobby-session-id."""
@@ -111,7 +111,7 @@ class TestSetContextForRequest:
         # The derived project_id is fed back into the helper
         assert mock_helper.call_args.kwargs["session_ref"] == header_session_uuid
         assert mock_helper.call_args.kwargs["project_ref"] == PROJECT_ID
-        assert mock_helper.call_args.kwargs["session_ref_origin"] == "explicit"
+        assert mock_helper.call_args.kwargs["session_ref_origin"] == "ambient"
 
     def test_hash_n_no_project_header_bootstraps_from_unique_header_hash_ref(self) -> None:
         """A stdio wrapper #N can provide scope when it is unique across projects."""
@@ -148,7 +148,7 @@ class TestSetContextForRequest:
             _set_context_for_request(server, {"session_id": "#5"}, request)
 
         assert mock_helper.call_args.kwargs["project_ref"] is None
-        assert mock_helper.call_args.kwargs["session_ref_origin"] == "explicit"
+        assert mock_helper.call_args.kwargs["session_ref_origin"] == "ambient"
 
     def test_no_session_id_forwards_header_project_ref(self) -> None:
         """No session ref → helper receives only the x-gobby-project-id header."""
@@ -178,7 +178,7 @@ class TestSetContextForRequest:
             _set_context_for_request(server, {}, request)
 
         assert mock_helper.call_args.kwargs["session_ref"] == "#7"
-        assert mock_helper.call_args.kwargs["session_ref_origin"] == "explicit"
+        assert mock_helper.call_args.kwargs["session_ref_origin"] == "ambient"
 
     def test_caller_project_header_scopes_wrapper_session_separately_from_target(self) -> None:
         """Cross-project calls keep caller session scope distinct from target project context."""
@@ -200,7 +200,7 @@ class TestSetContextForRequest:
         assert kwargs["session_ref"] == "#7"
         assert kwargs["project_ref"] == PROJECT_ID
         assert kwargs["session_scope_ref"] == caller_project_id
-        assert kwargs["session_ref_origin"] == "explicit"
+        assert kwargs["session_ref_origin"] == "ambient"
         assert kwargs["project_ref_is_fallback"] is False
 
     def test_header_session_wins_over_target_argument_session(self) -> None:
@@ -215,7 +215,7 @@ class TestSetContextForRequest:
             _set_context_for_request(server, {"session_id": "target-session"}, request)
 
         assert mock_helper.call_args.kwargs["session_ref"] == "caller-session"
-        assert mock_helper.call_args.kwargs["session_ref_origin"] == "explicit"
+        assert mock_helper.call_args.kwargs["session_ref_origin"] == "ambient"
 
     def test_set_contexts_unresolvable_uuid_does_not_plant_session_context(self) -> None:
         """Helper returns empty tokens → no session ContextVar planted."""
@@ -229,6 +229,6 @@ class TestSetContextForRequest:
             tokens = _set_context_for_request(server, {"session_id": "bogus"}, request)
 
         assert mock_helper.called
-        assert mock_helper.call_args.kwargs["session_ref_origin"] == "ambient"
+        assert mock_helper.call_args.kwargs["session_ref_origin"] == "explicit"
         assert tokens.session_token is None
         assert tokens.resolved_session_id is None

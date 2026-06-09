@@ -43,6 +43,7 @@ from gobby.sessions.gzip_seek_index import (
     GzipBlockIndex,
     iter_gzip_block_raw_lines,
 )
+from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcript_parsing import _get_parser
 from gobby.sessions.transcript_renderer import (
     RenderedMessage,
@@ -366,7 +367,7 @@ def render_window(
     reached_eof = False
 
     for event in parser.iter_parse_events(tracked, start_index=resume_boundary.parsed_index_start):
-        for record in event.records:
+        for record in normalize_transcript_records(event.records, source):
             if not isinstance(record, ParsedMessage):
                 continue
             done, state = render_incremental(
