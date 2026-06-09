@@ -19,6 +19,7 @@ from gobby.adapters.plan_keystrokes import (
     PlanKeystroke,
     PlanKeystrokeRegistry,
     PlanKeystrokeSequence,
+    build_default_plan_keystroke_registry,
 )
 from gobby.servers.websocket.handlers.plan_approval import (
     handle_attached_plan_approval,
@@ -27,6 +28,16 @@ from gobby.servers.websocket.handlers.plan_approval import (
 from gobby.servers.websocket.session_control import SessionControlMixin
 
 _TMUX_PATCH = "gobby.servers.websocket.handlers.plan_approval.get_tmux_manager_for_context"
+
+# Trimmed verbatim Claude Code v2.1.169 captures (full plan menu vs. bare confirm).
+_CLAUDE_FULL_MENU_PANE = (
+    "Claude has written up a plan and is ready to execute. Would you like to proceed?\n"
+    " 1. Yes, and use auto mode\n"
+    " 2. Yes, manually approve edits\n"
+    " 3. No, refine with Ultraplan on Claude Code on the web\n"
+    " 4. Tell Claude what to change\n"
+)
+_CLAUDE_CONFIRM_MENU_PANE = "Exit plan mode?\n Claude wants to exit plan mode\n 1. Yes\n 2. No\n"
 
 
 class ConcreteSessionControl(SessionControlMixin):
@@ -258,6 +269,105 @@ class TestAttachedPlanApprovalDispatch:
         # The surfaced error names the keystroke-send failure, and no
         # confirmation frame is emitted when the dispatch did not complete.
         assert "keystrokes" in server._send_error.await_args.args[1]
+        ws.send.assert_not_awaited()
+
+
+class TestAttachedPlanApprovalClaude:
+    """Claude's pane-aware path: capture the live menu, then pick keys per shape."""
+
+    @pytest.mark.asyncio
+    async def test_full_menu_approve_yolo_captures_and_dispatches(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+        server.session_manager.get.return_value = _make_terminal_session(source="claude")
+
+        tmux_manager = MagicMock()
+        tmux_manager.capture_pane = AsyncMock(return_value=_CLAUDE_FULL_MENU_PANE)
+        tmux_manager.send_keys = AsyncMock(return_value=True)
+
+        with patch(_TMUX_PATCH, return_value=tmux_manager):
+            await handle_attached_plan_approval(
+                server,
+                ws,
+                "term-1",
+                {"decision": "approve", "option_id": "approve_yolo"},
+                registry=build_default_plan_keystroke_registry(),
+            )
+
+        # Live pane was captured to disambiguate the menu shape.
+        tmux_manager.capture_pane.assert_awaited_once()
+        assert tmux_manager.capture_pane.await_args.args[0] == "%11"
+        # Full menu: digit '1' then Enter to activate.
+        assert tmux_manager.send_keys.await_args_list[0].args == ("%11", "1")
+        assert tmux_manager.send_keys.await_args_list[0].kwargs == {"literal": True}
+        assert tmux_manager.send_keys.await_args_list[1].args == ("%11", "Enter")
+        assert tmux_manager.send_keys.await_args_list[1].kwargs == {"literal": False}
+        msg = json.loads(ws.send.await_args.args[0])
+        assert msg["option_id"] == "approve_yolo"
+        assert msg["ok"] is True
+        server._send_error.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_confirm_menu_request_changes_sends_digit_only(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+        server.session_manager.get.return_value = _make_terminal_session(source="claude")
+
+        tmux_manager = MagicMock()
+        tmux_manager.capture_pane = AsyncMock(return_value=_CLAUDE_CONFIRM_MENU_PANE)
+        tmux_manager.send_keys = AsyncMock(return_value=True)
+
+        with patch(_TMUX_PATCH, return_value=tmux_manager):
+            await handle_attached_plan_approval(
+                server,
+                ws,
+                "term-1",
+                {"decision": "request_changes"},
+                registry=build_default_plan_keystroke_registry(),
+            )
+
+        # The live pane was read to pick the confirm-menu mapping.
+        tmux_manager.capture_pane.assert_awaited_once()
+        # Bare confirm menu activates on the digit alone -- no trailing Enter.
+        tmux_manager.send_keys.assert_awaited_once_with("%11", "2", literal=True)
+        msg = json.loads(ws.send.await_args.args[0])
+        assert msg == {
+            "type": "plan_approval_dispatched",
+            "target_session_id": "term-1",
+            "decision": "request_changes",
+            "option_id": REQUEST_CHANGES_OPTION_ID,
+            "ok": True,
+        }
+        server._send_error.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_menu_on_pane_reports_unmapped(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+        server.session_manager.get.return_value = _make_terminal_session(source="claude")
+
+        tmux_manager = MagicMock()
+        tmux_manager.capture_pane = AsyncMock(return_value="just a shell prompt, no menu\n")
+        tmux_manager.send_keys = AsyncMock(return_value=True)
+
+        with patch(_TMUX_PATCH, return_value=tmux_manager):
+            await handle_attached_plan_approval(
+                server,
+                ws,
+                "term-1",
+                {"decision": "approve", "option_id": "approve_yolo"},
+                registry=build_default_plan_keystroke_registry(),
+            )
+
+        # The pane was captured, found no menu, and no keystrokes were guessed.
+        tmux_manager.capture_pane.assert_awaited_once()
+        server._send_error.assert_awaited_once()
+        assert server._send_error.await_args.kwargs.get("code") == "PLAN_KEYSTROKES_UNMAPPED"
+        # The surfaced error names the source and the unmapped option.
+        error_message = server._send_error.await_args.args[1]
+        assert "claude" in error_message
+        assert "approve_yolo" in error_message
+        tmux_manager.send_keys.assert_not_awaited()
         ws.send.assert_not_awaited()
 
 

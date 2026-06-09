@@ -34,6 +34,11 @@ logger = logging.getLogger(__name__)
 # the inject path does not cancel a still-streaming turn.
 _PLAN_TURN_DRAIN_TIMEOUT_SECONDS = 120.0
 
+# Lines of the attached CLI's tmux pane to capture for native plan-menu detection
+# (Path B). The menu markers sit within the last few lines of the prompt; this is
+# generous headroom around them.
+_PLAN_MENU_CAPTURE_LINES = 60
+
 
 async def _send_mode_changed(
     websocket: Any,
@@ -283,7 +288,20 @@ async def handle_attached_plan_approval(
         )
         return
 
-    sequence = registry.resolve(source, action_option_id)
+    tmux = get_tmux_manager_for_context(ctx)
+    # Some CLIs (Claude) render more than one native menu shape, where the same
+    # logical option maps onto different keys; those sources need the live pane
+    # to disambiguate before keys are chosen.
+    pane_text = ""
+    if registry.requires_pane(source):
+        try:
+            captured = await tmux.capture_pane(tmux_pane, lines=_PLAN_MENU_CAPTURE_LINES)
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.warning("Failed to capture pane %s for plan-menu detection: %s", tmux_pane, exc)
+            captured = None
+        pane_text = captured or ""
+
+    sequence = registry.resolve_for_pane(source, action_option_id, pane_text)
     if sequence is None:
         await mixin._send_error(
             websocket,
@@ -293,7 +311,6 @@ async def handle_attached_plan_approval(
         )
         return
 
-    tmux = get_tmux_manager_for_context(ctx)
     try:
         dispatched = await dispatch_plan_keystrokes(tmux, tmux_pane, sequence)
     except (OSError, RuntimeError, ValueError) as exc:

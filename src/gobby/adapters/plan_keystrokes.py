@@ -78,8 +78,25 @@ class SupportsSendKeys(Protocol):
     async def send_keys(self, session_name: str, keys: str, *, literal: bool = ...) -> bool: ...
 
 
+# A pane-aware resolver maps ``(option_id, live_pane_text)`` onto a keystroke
+# sequence, or ``None`` when the pane shows no menu it recognizes. It exists for
+# CLIs whose native plan prompt has more than one shape, where the same logical
+# option selects different keys per shape (Claude's full plan menu vs. its bare
+# "exit plan mode?" confirm). Sources without a resolver fall back to the static
+# ``(source, option_id)`` map.
+PlanMenuResolver = Callable[[str, str], "PlanKeystrokeSequence | None"]
+
+
 class PlanKeystrokeRegistry:
-    """Maps ``(source, option_id)`` to the keystroke sequence that selects it.
+    """Maps a plan action onto the keystroke sequence that selects it.
+
+    Two registration styles coexist:
+
+    * **Static** -- ``register(source, option_id, sequence)`` for a CLI whose
+      native menu has a single fixed shape; resolved by :meth:`resolve`.
+    * **Pane-aware** -- ``register_resolver(source, resolver)`` for a CLI whose
+      menu has multiple shapes that must be told apart from the live pane text
+      before keys are chosen; resolved by :meth:`resolve_for_pane`.
 
     ``source`` is the CLI provider name (``session.source`` -- e.g. ``claude``,
     ``codex``, ``droid``), matching the key space used elsewhere. ``option_id`` is
@@ -89,25 +106,52 @@ class PlanKeystrokeRegistry:
 
     def __init__(self) -> None:
         self._map: dict[tuple[str, str], PlanKeystrokeSequence] = {}
+        self._resolvers: dict[str, PlanMenuResolver] = {}
 
     def register(self, source: str, option_id: str, sequence: PlanKeystrokeSequence) -> None:
-        """Register (overwriting) the sequence for ``(source, option_id)``."""
+        """Register (overwriting) the static sequence for ``(source, option_id)``."""
         self._map[(source, option_id)] = sequence
 
+    def register_resolver(self, source: str, resolver: PlanMenuResolver) -> None:
+        """Register (overwriting) a pane-aware resolver for ``source``."""
+        self._resolvers[source] = resolver
+
     def resolve(self, source: str | None, option_id: str | None) -> PlanKeystrokeSequence | None:
-        """Return the sequence for ``(source, option_id)`` or ``None`` if unmapped."""
+        """Return the static sequence for ``(source, option_id)`` or ``None``."""
         if not source or not option_id:
             return None
         return self._map.get((source, option_id))
 
+    def requires_pane(self, source: str | None) -> bool:
+        """Whether resolving ``source`` needs live pane text (has a resolver)."""
+        return bool(source) and source in self._resolvers
+
+    def resolve_for_pane(
+        self, source: str | None, option_id: str | None, pane_text: str
+    ) -> PlanKeystrokeSequence | None:
+        """Resolve using a pane-aware resolver when present, else the static map.
+
+        ``pane_text`` is the live tmux pane content; it is consulted only when a
+        resolver is registered for ``source``. Returns ``None`` when no sequence
+        applies, so the caller errors rather than sending a guessed key.
+        """
+        if not source or not option_id:
+            return None
+        resolver = self._resolvers.get(source)
+        if resolver is not None:
+            return resolver(option_id, pane_text)
+        return self._map.get((source, option_id))
+
     def has_source(self, source: str | None) -> bool:
-        """Whether any sequence is registered for ``source``."""
+        """Whether any static sequence or resolver is registered for ``source``."""
         if not source:
             return False
+        if source in self._resolvers:
+            return True
         return any(key_source == source for key_source, _ in self._map)
 
     def registered_options(self, source: str) -> frozenset[str]:
-        """The option ids registered for ``source``."""
+        """The statically-registered option ids for ``source``."""
         return frozenset(option_id for key_source, option_id in self._map if key_source == source)
 
 
@@ -148,6 +192,77 @@ async def dispatch_plan_keystrokes(
     return True
 
 
+# --- Claude Code native plan menus -------------------------------------------
+# Captured empirically from Claude Code v2.1.169 in a gobby-managed tmux pane
+# (task #15727). Claude shows TWO menu shapes when leaving plan mode, and they
+# differ in BOTH the option set AND the activation mechanic, so the menu must be
+# read from the live pane before keys are chosen -- a static map would mis-fire
+# ("2" is *manually approve* in the full menu but *No/reject* in the bare
+# confirm).
+#
+# FULL menu (a plan was written) -- a digit MOVES the selection cursor, Enter
+# activates:
+#     Claude has written up a plan and is ready to execute. Would you like to proceed?
+#       1. Yes, and use auto mode
+#       2. Yes, manually approve edits
+#       3. No, refine with Ultraplan on Claude Code on the web
+#       4. Tell Claude what to change
+# CONFIRM menu (no plan was written) -- the bare Yes/No menu activates on the
+# digit alone, with no Enter:
+#     Exit plan mode?
+#     Claude wants to exit plan mode
+#       1. Yes
+#       2. No
+_CLAUDE_FULL_MENU_MARKERS = ("manually approve edits", "use auto mode")
+_CLAUDE_CONFIRM_MENU_MARKER = "wants to exit plan mode"
+
+
+def _claude_digit_then_enter(digit: str) -> PlanKeystrokeSequence:
+    """Full-menu selection: type the item number, then Enter to activate."""
+    return PlanKeystrokeSequence(
+        strokes=(PlanKeystroke(digit, literal=True), PlanKeystroke("Enter")),
+    )
+
+
+def _claude_digit_only(digit: str) -> PlanKeystrokeSequence:
+    """Confirm-menu selection: the bare Yes/No menu activates on the digit."""
+    return PlanKeystrokeSequence(strokes=(PlanKeystroke(digit, literal=True),))
+
+
+# Full plan menu: 1=auto(yolo), 2=manual(act), 4="tell Claude what to change"
+# (keep planning / request changes). Option 3 routes to web Ultraplan and is
+# deliberately unused.
+_CLAUDE_FULL_MENU: dict[str, PlanKeystrokeSequence] = {
+    "approve_yolo": _claude_digit_then_enter("1"),
+    "approve_act": _claude_digit_then_enter("2"),
+    REQUEST_CHANGES_OPTION_ID: _claude_digit_then_enter("4"),
+}
+
+# Bare confirm menu has only Yes/No, so both approves collapse to "Yes" (1) --
+# there is no edits to auto-accept-vs-manually-approve when no plan was written --
+# and request-changes is "No" (2).
+_CLAUDE_CONFIRM_MENU: dict[str, PlanKeystrokeSequence] = {
+    "approve_yolo": _claude_digit_only("1"),
+    "approve_act": _claude_digit_only("1"),
+    REQUEST_CHANGES_OPTION_ID: _claude_digit_only("2"),
+}
+
+
+def _claude_plan_keystrokes(option_id: str, pane_text: str) -> PlanKeystrokeSequence | None:
+    """Resolve Claude's plan-menu keystrokes from the live pane text.
+
+    Detects which native menu is showing and returns the option's sequence for
+    that menu. Returns ``None`` when the pane shows neither known menu, so the
+    handler reports ``PLAN_KEYSTROKES_UNMAPPED`` instead of sending a guessed key.
+    """
+    lowered = pane_text.lower()
+    if any(marker in lowered for marker in _CLAUDE_FULL_MENU_MARKERS):
+        return _CLAUDE_FULL_MENU.get(option_id)
+    if _CLAUDE_CONFIRM_MENU_MARKER in lowered:
+        return _CLAUDE_CONFIRM_MENU.get(option_id)
+    return None
+
+
 def _register_builtin_plan_keystrokes(registry: PlanKeystrokeRegistry) -> None:
     """Per-CLI registration point for native plan-menu keystrokes.
 
@@ -174,6 +289,7 @@ def _register_builtin_plan_keystrokes(registry: PlanKeystrokeRegistry) -> None:
         )
     """
     # --- claude (ExitPlanMode menu) -- task #15727 ---
+    registry.register_resolver("claude", _claude_plan_keystrokes)
     # --- codex -- task #15728 ---
     # --- droid (ExitSpecMode menu) -- task #15729 ---
     # --- gemini (ACP) -- task #15730 ---
@@ -200,6 +316,7 @@ __all__ = [
     "PlanKeystroke",
     "PlanKeystrokeRegistry",
     "PlanKeystrokeSequence",
+    "PlanMenuResolver",
     "SupportsSendKeys",
     "build_default_plan_keystroke_registry",
     "dispatch_plan_keystrokes",
