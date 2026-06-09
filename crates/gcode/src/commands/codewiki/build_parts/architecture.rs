@@ -1,4 +1,5 @@
 use super::super::*;
+use super::modules::prompt_component_ids_for_module;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 pub(crate) fn build_architecture_doc(
@@ -47,13 +48,14 @@ pub(crate) fn build_architecture_doc(
         let fallback =
             structural_module_summary(&module.module, &module.direct_files, &module.child_modules);
         let source_spans = collect_link_spans(&module.direct_files, &module.child_modules);
+        let prompt_component_ids = prompt_component_ids_for_module(files, &module.module);
         let generated = maybe_generate(
             generate,
             &prompts::architecture_prompt(
                 &module.module,
                 &file_summaries,
                 &child_summaries,
-                &module.component_ids,
+                &prompt_component_ids,
             ),
             prompts::ARCHITECTURE_SYSTEM,
         );

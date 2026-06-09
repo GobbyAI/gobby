@@ -76,3 +76,54 @@ fn codewiki_architecture_overview_page_uses_subsystems_and_degradation_metadata(
     assert!(rendered.contains("m_src_api[\"src/api\"] --> m_src_domain[\"src/domain\"]"));
     assert!(rendered.contains("m_src_domain[\"src/domain\"] --> m_src_storage[\"src/storage\"]"));
 }
+
+#[test]
+fn architecture_prompt_formats_component_labels_with_raw_ids() {
+    let handle_id = test_component_id("src/api/handler.rs", "handle", "function");
+    let route_id = test_component_id("src/api/router.rs", "route", "function");
+    let input = CodewikiInput {
+        files: vec![
+            "src/api/handler.rs".to_string(),
+            "src/api/router.rs".to_string(),
+        ],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![
+            test_symbol(
+                "src/api/handler.rs",
+                "handle",
+                "function",
+                1,
+                "pub fn handle()",
+            ),
+            test_symbol(
+                "src/api/router.rs",
+                "route",
+                "function",
+                1,
+                "pub fn route()",
+            ),
+        ],
+    };
+    let mut architecture_prompts = Vec::new();
+    {
+        let mut generator = |prompt: &str, system: &str| {
+            if system == prompts::ARCHITECTURE_SYSTEM {
+                architecture_prompts.push(prompt.to_string());
+            }
+            Some("Generated summary [src/api/handler.rs:1].".to_string())
+        };
+
+        let _docs = generate_hierarchical_docs(&input, Some(&mut generator));
+    }
+
+    let prompt = architecture_prompts
+        .iter()
+        .find(|prompt| prompt.contains("Subsystem: src/api"))
+        .expect("src/api architecture prompt");
+
+    assert!(prompt.contains(&format!("- handle [function] ({handle_id})")));
+    assert!(prompt.contains(&format!("- route [function] ({route_id})")));
+    assert!(!prompt.contains(&format!("- {handle_id}\n")));
+    assert!(!prompt.contains(&format!("- {route_id}\n")));
+}

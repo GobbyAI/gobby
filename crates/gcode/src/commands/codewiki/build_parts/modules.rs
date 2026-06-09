@@ -68,15 +68,7 @@ pub(crate) fn build_module_docs(
                     .map(|symbol| symbol.component_id.clone())
             })
             .collect::<Vec<_>>();
-        let prompt_component_ids = files
-            .iter()
-            .filter(|file| file.module == module || module_is_ancestor(&module, &file.module))
-            .flat_map(|file| {
-                file.symbols
-                    .iter()
-                    .map(|symbol| format!("{} ({})", symbol.component_label, symbol.component_id))
-            })
-            .collect::<Vec<_>>();
+        let prompt_component_ids = prompt_component_ids_for_module(files, &module);
         let dependency_diagram = render_module_dependency_mermaid(&module, files, graph_edges);
         let call_diagram = render_module_call_mermaid(&module, files, graph_edges);
         let fallback = structural_module_summary(&module, &direct_files, &child_modules);
@@ -111,4 +103,16 @@ pub(crate) fn build_module_docs(
 
     docs.sort_by(|a, b| a.module.cmp(&b.module));
     docs
+}
+
+pub(super) fn prompt_component_ids_for_module(files: &[FileDoc], module: &str) -> Vec<String> {
+    files
+        .iter()
+        .filter(|file| file.module == module || module_is_ancestor(module, &file.module))
+        .flat_map(|file| {
+            file.symbols
+                .iter()
+                .map(|symbol| format!("{} ({})", symbol.component_label, symbol.component_id))
+        })
+        .collect()
 }
