@@ -10,6 +10,7 @@ from gobby.storage import chat_attachments, chat_messages
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
+
 def create_chat_router(server: "HTTPServer") -> APIRouter:
     """Create chat router with message persistence endpoints."""
     router = APIRouter(prefix="/api/chat", tags=["chat"])

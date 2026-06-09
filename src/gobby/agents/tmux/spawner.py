@@ -219,7 +219,7 @@ class TmuxSpawner(TerminalSpawnerBase):
         return f"tmux attach -t {session_name}"
 
     # ------------------------------------------------------------------
-# spawn_agent terminal orchestration
+    # spawn_agent terminal orchestration
     # ------------------------------------------------------------------
 
     def spawn_agent(

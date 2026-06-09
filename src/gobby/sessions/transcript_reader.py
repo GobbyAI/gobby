@@ -624,9 +624,7 @@ def _collect_flat_from_file_windowed(
     boundary = index.parsed_boundary_for_offset(offset, role)
     if boundary is None or boundary.byte_start is None:
         cap = offset + limit
-        return _collect_flat_from_file(path, source, session_id, cap, role)[
-            offset : offset + limit
-        ]
+        return _collect_flat_from_file(path, source, session_id, cap, role)[offset : offset + limit]
 
     parser = _get_parser(source, session_id=session_id, transcript_path=path)
     raws = _iter_jsonl_raw_lines_from(

@@ -274,7 +274,7 @@ def update_task_metadata(
     blocked_fields = [
         field_name
         for field_name, value in (
-        ("claimed_by_session_id", claimed_by_session_id),
+            ("claimed_by_session_id", claimed_by_session_id),
             ("closed_reason", closed_reason),
             ("closed_at", closed_at),
             ("closed_in_session_id", closed_in_session_id),
