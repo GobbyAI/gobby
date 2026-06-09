@@ -102,11 +102,61 @@ _PLAN_EXIT_TOOL_KEYS = frozenset({"exitspecmode", "exitplanmode", "updateplan"})
 # Argument keys, in priority order, that may hold the plan/spec body.
 _PLAN_TOOL_ARG_KEYS: tuple[str, ...] = ("plan", "spec", "content", "markdown", "text")
 
+# Tools that execute a command or mutate state. Droid narrates their output as
+# assistant content *after* they run (e.g. reformatting ``git status`` into a
+# results table). That post-execution narration is not plan content, so once
+# such a tool completes the prose-plan capture stops (see ``_closes_plan_capture``).
+# Compared as alphanumeric-only lowercase so separators/casing/namespacing in the
+# upstream tool name don't matter.
+_PLAN_CAPTURE_CLOSING_TOOLS = frozenset(
+    {
+        "bash",
+        "shell",
+        "sh",
+        "exec",
+        "execcommand",
+        "runcommand",
+        "command",
+        "edit",
+        "write",
+        "multiedit",
+        "notebookedit",
+        "applypatch",
+        "strreplace",
+        "strreplaceeditor",
+        "strreplacebasededittool",
+    }
+)
+
+# A plan body is "present" once the captured prose has a markdown heading or
+# enough substance. Guards capture-close so a research-first turn (run a read
+# command, then present the plan) still surfaces the plan.
+_PLAN_HEADING_RE = re.compile(r"(?m)^\s{0,3}#{1,6}\s")
+_PLAN_CAPTURE_MIN_CHARS = 160
+
 
 def _is_plan_exit_tool(tool_name: str) -> bool:
     """Whether ``tool_name`` is a plan-exit/spec tool carrying a plan body."""
     key = "".join(ch for ch in tool_name.lower() if ch.isalnum())
     return key in _PLAN_EXIT_TOOL_KEYS
+
+
+def _closes_plan_capture(tool_name: str, captured: str) -> bool:
+    """Whether a completed tool ends prose-plan capture for this turn.
+
+    Command/mutation tools narrate their output as assistant content *after*
+    they run, which is execution narration rather than plan. Once such a tool
+    completes and a plan body is already captured, stop accumulating prose so
+    the post-execution narration does not leak into the broadcast plan
+    (#15724). Guarded on a plan already being present so a research-first turn
+    (read command, then present the plan) still surfaces the plan.
+    """
+    key = "".join(ch for ch in tool_name.lower() if ch.isalnum())
+    if key not in _PLAN_CAPTURE_CLOSING_TOOLS:
+        return False
+    return (
+        bool(_PLAN_HEADING_RE.search(captured)) or len(captured.strip()) >= _PLAN_CAPTURE_MIN_CHARS
+    )
 
 
 def _extract_plan_from_tool_args(arguments: dict[str, Any]) -> str | None:
@@ -200,6 +250,13 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
             pending_tool_calls: dict[str, dict[str, Any]] = {}
             saw_content_delta = False
             plan_text_parts: list[str] = []
+            # Prose-plan capture state (#15724). ``plan_capture_open`` closes once
+            # a command/mutation tool runs after a plan body is present, so the
+            # execution narration that follows is not captured. ``plan_pending_break``
+            # inserts a paragraph break across a tool boundary so a heading that
+            # follows the boundary still renders as markdown.
+            plan_capture_open = True
+            plan_pending_break = False
             # Authoritative plan body captured from a plan-exit tool argument
             # (Droid ExitSpecMode). Takes priority over accumulated prose, which
             # is often just a conversational preamble (#15693).
@@ -256,12 +313,25 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
                             tool_input if isinstance(tool_input, dict) else {},
                             chat_event.result if chat_event.success else chat_event.error,
                         )
+                        # A completed tool ends the current prose paragraph; a
+                        # following heading must start a new line to render. If the
+                        # tool executed/mutated after a plan body is present, stop
+                        # capturing so its narrated output is excluded (#15724).
+                        plan_pending_break = True
+                        if plan_capture_open and _closes_plan_capture(
+                            str(pending.get("tool_name", "")), "".join(plan_text_parts)
+                        ):
+                            plan_capture_open = False
                     elif (
                         isinstance(chat_event, TextChunk)
                         and stream_event.event_type == "content_delta"
                     ):
-                        plan_text_parts.append(chat_event.content)
                         saw_content_delta = True
+                        if plan_capture_open:
+                            if plan_pending_break and plan_text_parts:
+                                plan_text_parts.append("\n\n")
+                            plan_pending_break = False
+                            plan_text_parts.append(chat_event.content)
 
                     if isinstance(chat_event, DoneEvent):
                         # Droid can emit an intermediate ``result``/DoneEvent

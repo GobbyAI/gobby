@@ -189,6 +189,20 @@ def _droid_result() -> StreamEvent:
     return StreamEvent(event_type="result", data={"usage": {}})
 
 
+def _droid_tool_use(tool_name: str, call_id: str = "c1") -> StreamEvent:
+    return StreamEvent(
+        event_type="content_delta",
+        data={"kind": "tool_use", "tool_name": tool_name, "call_id": call_id, "tool_input": {}},
+    )
+
+
+def _droid_tool_result(call_id: str = "c1", result: str = "ok") -> StreamEvent:
+    return StreamEvent(
+        event_type="content_delta",
+        data={"kind": "tool_result", "call_id": call_id, "success": True, "result": result},
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Codex
 # --------------------------------------------------------------------------- #
@@ -538,3 +552,73 @@ async def test_droid_intermediate_result_does_not_truncate_plan() -> None:
     assert session.has_pending_plan is True
     # Exactly one DoneEvent surfaces despite the two `result` events.
     assert sum(isinstance(e, DoneEvent) for e in events) == 1
+
+
+async def test_droid_execution_narration_after_command_excluded_from_plan() -> None:
+    # Droid presents a plan, then runs a command and re-narrates its output as
+    # assistant content (a results table). That post-execution narration is not
+    # plan content and must not leak into the broadcast plan (#15724).
+    session, broadcasts = _make_droid_session(
+        "plan",
+        [
+            _droid_text("## Plan: Check status\n\nRun `git status` and report."),
+            _droid_tool_use("Bash"),
+            _droid_tool_result(result="M file.py"),
+            _droid_text("## Uncommitted Changes\n\n| file.py | Modified |"),
+            _droid_result(),
+        ],
+    )
+
+    [e async for e in session.send_message("draft a plan")]
+
+    assert len(broadcasts) == 1
+    plan = broadcasts[0][0] or ""
+    assert "## Plan: Check status" in plan
+    assert "Uncommitted Changes" not in plan
+    assert "Modified" not in plan
+
+
+async def test_droid_tool_boundary_inserts_paragraph_break_before_heading() -> None:
+    # A plan-management tool (TodoWrite) runs between the conversational preamble
+    # and the plan heading. The broadcast separates them with a blank line so the
+    # heading renders as markdown instead of gluing to the preamble (#15724).
+    session, broadcasts = _make_droid_session(
+        "plan",
+        [
+            _droid_text("I'll create a plan."),
+            _droid_tool_use("TodoWrite"),
+            _droid_tool_result(),
+            _droid_text("## Plan: Do the thing\n\n1. Step one"),
+            _droid_result(),
+        ],
+    )
+
+    [e async for e in session.send_message("draft a plan")]
+
+    assert len(broadcasts) == 1
+    plan = broadcasts[0][0] or ""
+    assert plan == "I'll create a plan.\n\n## Plan: Do the thing\n\n1. Step one"
+    # TodoWrite is a plan-management tool, so the plan body is fully captured.
+    assert "Step one" in plan
+
+
+async def test_droid_research_command_before_plan_does_not_close_capture() -> None:
+    # A read command runs before any plan body exists (research-first). It must
+    # NOT close capture, so the plan presented afterward still surfaces (#15724).
+    session, broadcasts = _make_droid_session(
+        "plan",
+        [
+            _droid_text("Let me check the layout."),
+            _droid_tool_use("Bash"),
+            _droid_tool_result(result="src/\ntests/"),
+            _droid_text("## Plan: Add module\n\n1. Create src/x.py"),
+            _droid_result(),
+        ],
+    )
+
+    [e async for e in session.send_message("draft a plan")]
+
+    assert len(broadcasts) == 1
+    plan = broadcasts[0][0] or ""
+    assert "## Plan: Add module" in plan
+    assert "Create src/x.py" in plan
