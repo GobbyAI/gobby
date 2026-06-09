@@ -12,6 +12,7 @@ const LOCAL_TOKEN_HEADER: &str = "X-Gobby-Local-Token";
 const VOICE_TRANSCRIBE_PATH: &str = "/api/voice/transcribe";
 const VISION_EXTRACT_PATH: &str = "/api/llm/vision/extract";
 const TEXT_GENERATE_PATH: &str = "/api/llm/generate";
+const TEXT_GENERATE_DEFAULT_PROFILE: &str = "feature_low";
 const EMBEDDINGS_PATH: &str = "/api/embeddings";
 
 #[derive(Debug, Clone, Copy)]
@@ -307,10 +308,18 @@ fn text_request_body(
     max_tokens: Option<usize>,
 ) -> Value {
     let mut body = Map::new();
+    let provider = non_empty(provider);
+    let model = non_empty(model);
     body.insert("prompt".to_string(), Value::String(prompt.to_string()));
-    insert_optional(&mut body, "system", system);
+    insert_optional(&mut body, "system_prompt", system);
     insert_optional(&mut body, "provider", provider);
     insert_optional(&mut body, "model", model);
+    if provider.is_none() && model.is_none() {
+        body.insert(
+            "profile".to_string(),
+            Value::String(TEXT_GENERATE_DEFAULT_PROFILE.to_string()),
+        );
+    }
     insert_optional(&mut body, "project_id", project_id);
     if let Some(max_tokens) = max_tokens.filter(|value| *value > 0) {
         body.insert("max_tokens".to_string(), Value::from(max_tokens));
@@ -442,7 +451,9 @@ mod tests {
         assert_eq!(body["model"], "daemon-model");
         assert_eq!(body["project_id"], "project-123");
         assert_eq!(body["prompt"], "Write a title");
-        assert_eq!(body["system"], "Be brief");
+        assert_eq!(body["system_prompt"], "Be brief");
+        assert!(body.get("system").is_none());
+        assert!(body.get("profile").is_none());
         assert_eq!(body["max_tokens"], 64);
         assert_eq!(result.text, "ok");
         assert_eq!(
@@ -461,6 +472,29 @@ mod tests {
         assert_eq!(body["provider"], "daemon-provider");
         assert_eq!(body["model"], "daemon-model");
         assert!(body.get("project_id").is_none());
+        assert!(body.get("profile").is_none());
+    }
+
+    #[test]
+    fn text_generation_defaults_to_feature_low_without_provider_model() {
+        let (port, request) = spawn_server(r#"{"text":"ok"}"#);
+        let home = temp_home();
+        let _env = EnvGuard::set_home(home.path());
+        write_daemon_files(home.path(), port, "text-token");
+        let mut cfg = test_context(Some("project-123"));
+        cfg.bindings.text_generate.provider = None;
+        cfg.bindings.text_generate.model = None;
+
+        generate_via_daemon(&cfg, "No provider", Some("Be brief")).unwrap();
+        let request = request.join().unwrap().unwrap();
+        let body = request_body_json(&request);
+
+        assert_eq!(body["prompt"], "No provider");
+        assert_eq!(body["system_prompt"], "Be brief");
+        assert_eq!(body["profile"], "feature_low");
+        assert!(body.get("provider").is_none());
+        assert!(body.get("model").is_none());
+        assert_eq!(body["project_id"], "project-123");
     }
 
     #[test]
