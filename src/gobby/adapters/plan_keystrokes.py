@@ -379,6 +379,41 @@ _GEMINI_PLAN_MENU: dict[str, PlanKeystrokeSequence] = {
 }
 
 
+def _grok_digit(digit: str) -> PlanKeystrokeSequence:
+    """Grok approval-menu selection: the item number activates with no Enter."""
+    return PlanKeystrokeSequence(strokes=(PlanKeystroke(digit, literal=True),))
+
+
+# Grok ("Grok Build" TUI) native tool-approval menu. Captured empirically for
+# task #15731 by driving ``grok --permission-mode default`` on a pty and reading
+# the rendered menu grid (the gobby-managed ACP path runs grok with
+# ``--always-approve`` and never prompts; this mapping is for the native TUI a
+# user runs under a proxy terminal). Two menu shapes were observed and the
+# selectable option NUMBERS are positionally stable across both ([*] = the
+# default-highlighted radio item):
+#
+#   Shell command:                             File write:
+#     1 [*] Yes, and don't ask again for          1 [*] Yes, and don't ask again for
+#           anything (always-approve mode)              anything (always-approve mode)
+#     2 [ ] Always allow: <command>               2 [ ] Yes, allow all edits this session
+#     3 [ ] Yes, proceed                          3 [ ] Yes
+#     4 [ ] No, reject (type to add feedback)     4 [ ] No, reject (type to add feedback)
+#   footer: "1/4:select | [Left/Right:scope] | Ctrl+o:yolo | Ctrl+c:cancel"
+#
+# Empirically verified: pressing the digit activates immediately with NO Enter
+# (digit "3" approved and executed an echo; digit "4" denied a file write and
+# the file was never created). Option 1 (always-approve mode) is the bypass/yolo
+# item, option 3 is the single manual approval, option 4 is reject. Option 2 is
+# a scope-specific "allow" whose wording varies and has no uniform plan_options
+# mapping. Esc only "unselects" the radio (it never rejects), so reject is the
+# stable digit 4 -- not Escape as with gemini.
+_GROK_PLAN_MENU: dict[str, PlanKeystrokeSequence] = {
+    "approve_yolo": _grok_digit("1"),
+    "approve_act": _grok_digit("3"),
+    REQUEST_CHANGES_OPTION_ID: _grok_digit("4"),
+}
+
+
 def _register_builtin_plan_keystrokes(registry: PlanKeystrokeRegistry) -> None:
     """Per-CLI registration point for native plan-menu keystrokes.
 
@@ -415,7 +450,9 @@ def _register_builtin_plan_keystrokes(registry: PlanKeystrokeRegistry) -> None:
     # --- gemini (interactive TUI tool-approval menu) -- task #15730 ---
     for _gemini_option_id, _gemini_sequence in _GEMINI_PLAN_MENU.items():
         registry.register("gemini", _gemini_option_id, _gemini_sequence)
-    # --- grok (ACP) -- task #15731 ---
+    # --- grok (Grok Build TUI tool-approval menu) -- task #15731 ---
+    for _grok_option_id, _grok_sequence in _GROK_PLAN_MENU.items():
+        registry.register("grok", _grok_option_id, _grok_sequence)
     # --- qwen (ACP) -- task #15732 ---
     return
 

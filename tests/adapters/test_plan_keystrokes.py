@@ -268,6 +268,11 @@ def _gemini_escape() -> PlanKeystrokeSequence:
     return PlanKeystrokeSequence((PlanKeystroke("Escape"),))
 
 
+def _grok(digit: str) -> PlanKeystrokeSequence:
+    """Expected Grok approval-menu selection: the digit activates with no Enter."""
+    return PlanKeystrokeSequence((PlanKeystroke(digit, literal=True),))
+
+
 class TestClaudeResolver:
     """Claude's pane-aware mapping over both native ExitPlanMode menu shapes."""
 
@@ -556,12 +561,106 @@ class TestGeminiPlanMenu:
         assert DEFAULT_PLAN_KEYSTROKES.resolve("gemini", "approve_bogus") is None
 
 
+# Verbatim captures from Grok ("Grok Build" Beta 0.2.38, xAI) driven on a pty in
+# `--permission-mode default`: the per-action approval menus. The option numbers
+# (1 always-approve / 3 single-approve / 4 reject) stay positionally stable; only
+# option 2's scope-specific wording changes between tool types.
+_GROK_SHELL_MENU_PANE = """\
+ Run the exact user-requested shell command: echo hello-grok-cap
+ echo hello-grok-cap
+ Use ← → to choose permission whitelist scope
+
+ 1 (●) Yes, and don't ask again for anything (always-approve mode)
+ 2 (○) Always allow: echo hello-grok-cap
+ 3 (○) Yes, proceed
+ 4 (○) No, reject (type to add feedback)
+"""
+
+_GROK_EDIT_MENU_PANE = """\
+ Allow Write `cap_probe.txt`?
+
+ 1 (●) Yes, and don't ask again for anything (always-approve mode)
+ 2 (○) Yes, allow all edits during this session
+ 3 (○) Yes
+ 4 (○) No, reject (type to add feedback)
+"""
+
+
+class TestGrokPlanMenu:
+    """Grok's ("Grok Build" TUI) per-action approval menu -- a static (non-pane)
+    map whose option numbers (1 yolo / 3 approve / 4 reject) are positionally
+    stable across menu shapes, so every action is a single immediate digit."""
+
+    def test_grok_is_registered_static(self) -> None:
+        assert DEFAULT_PLAN_KEYSTROKES.has_source("grok") is True
+        # Stable digit positions across menu shapes -> no live-pane inspection.
+        assert DEFAULT_PLAN_KEYSTROKES.requires_pane("grok") is False
+
+    def test_registered_options(self) -> None:
+        assert DEFAULT_PLAN_KEYSTROKES.registered_options("grok") == frozenset(
+            {"approve_yolo", "approve_act", REQUEST_CHANGES_OPTION_ID}
+        )
+
+    @pytest.mark.parametrize(
+        ("option_id", "expected"),
+        [
+            # 1 = "always-approve mode" (bypass) -> approve_yolo; 3 = "Yes,
+            # proceed"/"Yes" (single approval) -> approve_act; 4 = "No, reject".
+            ("approve_yolo", _grok("1")),
+            ("approve_act", _grok("3")),
+            (REQUEST_CHANGES_OPTION_ID, _grok("4")),
+        ],
+    )
+    def test_plan_menu_mapping(self, option_id: str, expected: PlanKeystrokeSequence) -> None:
+        assert DEFAULT_PLAN_KEYSTROKES.resolve("grok", option_id) == expected
+
+    @pytest.mark.parametrize(
+        ("option_id", "digit"),
+        [("approve_yolo", "1"), ("approve_act", "3"), (REQUEST_CHANGES_OPTION_ID, "4")],
+    )
+    def test_digit_activates_without_enter(self, option_id: str, digit: str) -> None:
+        # Verified live: the item number selects AND activates with no trailing
+        # Enter -- approves (digit 3 ran an echo) and reject alike (digit 4 denied
+        # a write; the file was never created).
+        seq = DEFAULT_PLAN_KEYSTROKES.resolve("grok", option_id)
+        assert seq is not None
+        assert [s.keys for s in seq.strokes] == [digit]
+        assert all(s.literal for s in seq.strokes)
+
+    def test_reject_uses_stable_digit_not_escape(self) -> None:
+        # Unlike gemini, grok's reject is the stable digit 4 (identical "No,
+        # reject" item across menu shapes); Esc only "unselects" the radio.
+        seq = DEFAULT_PLAN_KEYSTROKES.resolve("grok", REQUEST_CHANGES_OPTION_ID)
+        assert seq is not None
+        assert [s.keys for s in seq.strokes] == ["4"]
+        assert all(s.literal for s in seq.strokes)
+
+    def test_static_resolution_ignores_pane_text(self) -> None:
+        # No pane-aware resolver: resolve_for_pane returns the same static
+        # sequence for both the edit-menu and shell-menu shapes (and empty text).
+        assert (
+            DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("grok", "approve_act", _GROK_EDIT_MENU_PANE)
+            == DEFAULT_PLAN_KEYSTROKES.resolve_for_pane(
+                "grok", "approve_act", _GROK_SHELL_MENU_PANE
+            )
+            == DEFAULT_PLAN_KEYSTROKES.resolve("grok", "approve_act")
+            == _grok("3")
+        )
+        assert DEFAULT_PLAN_KEYSTROKES.resolve_for_pane(
+            "grok", REQUEST_CHANGES_OPTION_ID, ""
+        ) == _grok("4")
+
+    def test_unknown_option_returns_none(self) -> None:
+        assert DEFAULT_PLAN_KEYSTROKES.resolve("grok", "approve_bogus") is None
+
+
 class TestDefaultRegistry:
     def test_remaining_clis_pending(self) -> None:
-        # Claude (#15727), Codex (#15728), Droid (#15729), and Gemini (#15730) are
-        # registered; the remaining per-CLI child tasks populate these. This
-        # asserts the contract so an accidental population is caught.
-        for source in ("grok", "qwen"):
+        # Claude (#15727), Codex (#15728), Droid (#15729), Gemini (#15730), and
+        # Grok (#15731) are registered; the remaining per-CLI child task (qwen,
+        # #15732) populates this. This asserts the contract so an accidental
+        # population is caught.
+        for source in ("qwen",):
             assert DEFAULT_PLAN_KEYSTROKES.has_source(source) is False
             assert DEFAULT_PLAN_KEYSTROKES.requires_pane(source) is False
             assert DEFAULT_PLAN_KEYSTROKES.resolve(source, "approve_yolo") is None

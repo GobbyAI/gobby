@@ -592,6 +592,100 @@ class TestAttachedPlanApprovalGemini:
         server._send_error.assert_not_awaited()
 
 
+class TestAttachedPlanApprovalGrok:
+    """Grok's ("Grok Build" TUI) static approval-menu path: no pane capture;
+    positionally-stable digits (1 yolo / 3 approve / 4 reject), every action a
+    single immediate literal digit (reject is digit 4, not Esc)."""
+
+    @pytest.mark.asyncio
+    async def test_approve_act_dispatches_digit_three_without_capture(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+        server.session_manager.get.return_value = _make_terminal_session(source="grok")
+
+        tmux_manager = MagicMock()
+        tmux_manager.capture_pane = AsyncMock(return_value="should not be read")
+        tmux_manager.send_keys = AsyncMock(return_value=True)
+
+        with patch(_TMUX_PATCH, return_value=tmux_manager):
+            await handle_attached_plan_approval(
+                server,
+                ws,
+                "term-1",
+                {"decision": "approve", "option_id": "approve_act"},
+                registry=build_default_plan_keystroke_registry(),
+            )
+
+        # Stable digit positions -> no live-pane disambiguation.
+        tmux_manager.capture_pane.assert_not_awaited()
+        # approve_act ("Yes, proceed"/"Yes", single approval) maps to "3".
+        tmux_manager.send_keys.assert_awaited_once_with("%11", "3", literal=True)
+        msg = json.loads(ws.send.await_args.args[0])
+        assert msg["option_id"] == "approve_act"
+        assert msg["ok"] is True
+        server._send_error.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_approve_yolo_dispatches_digit_one_without_capture(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+        server.session_manager.get.return_value = _make_terminal_session(source="grok")
+
+        tmux_manager = MagicMock()
+        tmux_manager.capture_pane = AsyncMock(return_value="should not be read")
+        tmux_manager.send_keys = AsyncMock(return_value=True)
+
+        with patch(_TMUX_PATCH, return_value=tmux_manager):
+            await handle_attached_plan_approval(
+                server,
+                ws,
+                "term-1",
+                {"decision": "approve", "option_id": "approve_yolo"},
+                registry=build_default_plan_keystroke_registry(),
+            )
+
+        tmux_manager.capture_pane.assert_not_awaited()
+        # approve_yolo ("always-approve mode", bypass) maps to "1".
+        tmux_manager.send_keys.assert_awaited_once_with("%11", "1", literal=True)
+        msg = json.loads(ws.send.await_args.args[0])
+        assert msg["option_id"] == "approve_yolo"
+        assert msg["ok"] is True
+        server._send_error.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_request_changes_dispatches_reject_digit_four(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+        server.session_manager.get.return_value = _make_terminal_session(source="grok")
+
+        tmux_manager = MagicMock()
+        tmux_manager.capture_pane = AsyncMock(return_value="should not be read")
+        tmux_manager.send_keys = AsyncMock(return_value=True)
+
+        with patch(_TMUX_PATCH, return_value=tmux_manager):
+            await handle_attached_plan_approval(
+                server,
+                ws,
+                "term-1",
+                {"decision": "request_changes"},
+                registry=build_default_plan_keystroke_registry(),
+            )
+
+        tmux_manager.capture_pane.assert_not_awaited()
+        # request-changes is the stable reject digit "4" (literal) -- grok's "No,
+        # reject" item is identical across menu shapes; Esc only unselects.
+        tmux_manager.send_keys.assert_awaited_once_with("%11", "4", literal=True)
+        msg = json.loads(ws.send.await_args.args[0])
+        assert msg == {
+            "type": "plan_approval_dispatched",
+            "target_session_id": "term-1",
+            "decision": "request_changes",
+            "option_id": REQUEST_CHANGES_OPTION_ID,
+            "ok": True,
+        }
+        server._send_error.assert_not_awaited()
+
+
 class TestPlanApprovalRouting:
     @pytest.mark.asyncio
     async def test_target_session_id_routes_to_attached_handler(self) -> None:
