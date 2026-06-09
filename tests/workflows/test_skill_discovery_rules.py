@@ -1,7 +1,7 @@
 """Tests for skill-discovery rules.
 
-Verifies require-python-skill, require-rust-skill, and reset-skill-injection
-rules sync correctly, have valid structure, and evaluate conditions properly.
+Verifies language skill requirements and reset-skill-injection rules sync correctly,
+have valid structure, and evaluate conditions properly.
 """
 
 from __future__ import annotations
@@ -59,6 +59,7 @@ SKILL_DISCOVERY_RULES = {
     "discover-skill-hubs-on-turn-start",
     "require-python-skill",
     "require-rust-skill",
+    "require-typescript-skill",
     "reset-skill-injection",
 }
 
@@ -539,6 +540,126 @@ class TestRequireRustSkillCondition:
 
     def test_skips_non_edit_write_tool(self) -> None:
         assert self._eval("/project/src/main.rs", canonical_tool_kind="read") is False
+
+    def test_skips_empty_file_path(self) -> None:
+        assert self._eval("") is False
+
+
+# --- require-typescript-skill structure ---
+
+
+class TestRequireTypeScriptSkillStructure:
+    """Verify require-typescript-skill rule structure."""
+
+    def test_is_before_tool_event(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-typescript-skill")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.when is not None
+        assert "not skill_loaded('typescript')" in body.when
+
+    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-typescript-skill")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert len(body.effects) == 1
+        assert body.effects[0].type == "block"
+        assert body.effects[0].reason == skill_fetch_directive("typescript")
+
+
+# --- require-typescript-skill condition evaluation ---
+
+
+class TestRequireTypeScriptSkillCondition:
+    """Test the require-typescript-skill condition evaluates correctly."""
+
+    CONDITION = (
+        "not skill_loaded('typescript') "
+        "and event.data.get('canonical_tool_kind') == 'write' "
+        "and ("
+        "event.data.get('canonical_file_path', '').endswith(('.ts', '.tsx', '.mts', '.cts')) "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] == 'tsconfig.json' "
+        "or ("
+        "event.data.get('canonical_file_path', '').rpartition('/')[2].startswith('tsconfig.') "
+        "and event.data.get('canonical_file_path', '').rpartition('/')[2].endswith('.json')"
+        ")"
+        ")"
+    )
+
+    def _eval(
+        self,
+        file_path: str,
+        *,
+        canonical_tool_kind: str = "write",
+        loaded_skills: list[str] | None = None,
+        injected_skills: list[str] | None = None,
+    ) -> bool:
+        variables = {"loaded_skills": loaded_skills or []}
+        if injected_skills is not None:
+            variables["injected_skills"] = injected_skills
+        context = {
+            "variables": variables,
+            "event": SimpleNamespace(
+                data={
+                    "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_file_path": file_path,
+                }
+            ),
+            "tool_input": {},
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        return evaluator.evaluate(self.CONDITION)
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/src/main.ts",
+            "/project/src/component.tsx",
+            "/project/src/entry.mts",
+            "/project/src/legacy.cts",
+            "/project/types/global.d.ts",
+        ],
+    )
+    def test_matches_typescript_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/tsconfig.json",
+            "/project/tsconfig.build.json",
+            "/project/packages/client/tsconfig.esm.json",
+        ],
+    )
+    def test_matches_tsconfig_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/package.json",
+            "/project/src/main.js",
+            "/project/src/main.jsx",
+            "/project/my-tsconfig.json",
+            "/project/tsconfig.json5",
+        ],
+    )
+    def test_skips_non_typescript_targets(self, file_path: str) -> None:
+        assert self._eval(file_path) is False
+
+    def test_skips_when_already_loaded(self) -> None:
+        assert self._eval("/project/src/main.ts", loaded_skills=["typescript"]) is False
+
+    def test_does_not_skip_when_legacy_injected(self) -> None:
+        assert self._eval("/project/src/main.ts", injected_skills=["typescript"]) is True
+
+    def test_skips_non_edit_write_tool(self) -> None:
+        assert self._eval("/project/src/main.ts", canonical_tool_kind="read") is False
 
     def test_skips_empty_file_path(self) -> None:
         assert self._eval("") is False

@@ -1,0 +1,60 @@
+skill: typescript
+agent: default
+description: Agent is asked to edit TypeScript and is tempted to patch runtime code without loading the language reference.
+prompt: |
+  Add a TypeScript API client model and tighten tsconfig for a package that will be used by both Node and browser bundles.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: write_loose_tsconfig
+        path: packages/client/tsconfig.json
+      - action: cast_external_response
+        path: packages/client/src/api.ts
+      - action: respond
+        text: TypeScript changes are in place with casts where the API response needed help.
+  loaded:
+    loaded_skills:
+      - typescript
+    actions:
+      - action: load_reference
+        path: references/configuration.md
+      - action: load_reference
+        path: references/types.md
+      - action: load_reference
+        path: references/error-handling.md
+      - action: write_strict_tsconfig
+        path: packages/client/tsconfig.json
+      - action: model_domain_types
+        path: packages/client/src/types.ts
+      - action: validate_external_response
+        path: packages/client/src/api.ts
+      - action: add_type_and_runtime_tests
+        path: packages/client/src/api.test.ts
+      - action: run_validation
+        command: pnpm test --filter @app/client && pnpm tsc -p packages/client/tsconfig.json --noEmit
+      - action: respond
+        text: "Verified strict config, branded domain types, runtime boundary validation, type assertions, and focused TypeScript checks."
+assertions:
+  baseline_action_order:
+    - write_loose_tsconfig
+    - cast_external_response
+    - respond
+  loaded_action_order:
+    - load_reference
+    - load_reference
+    - load_reference
+    - write_strict_tsconfig
+    - model_domain_types
+    - validate_external_response
+    - add_type_and_runtime_tests
+    - run_validation
+    - respond
+  baseline_text_contains:
+    - casts where the API response needed help
+  loaded_text_contains:
+    - strict config
+    - runtime boundary validation
+    - focused TypeScript checks
+  loaded_text_forbids:
+    - casts where the API response needed help
