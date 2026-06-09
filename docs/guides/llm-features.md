@@ -7,7 +7,7 @@ their external form; for task features that is `gobby-tasks`, matching the MCP s
 
 | Profile | Default candidates |
 | --- | --- |
-| `feature_low` | `codex/gpt-5.3-codex-spark`, `codex/gpt-5.4-mini`, `claude/haiku`, `local/Qwen3-Coder-30B-A3B-Instruct` |
+| `feature_low` | `codex/gpt-5.4-mini`, `claude/haiku`, `local/Qwen3-Coder-30B-A3B-Instruct` |
 | `feature_mid` | `codex/gpt-5.3-codex-spark`, `claude/sonnet`, `local/Qwen3-Coder-Next` |
 | `feature_high` | `codex/gpt-5.3-codex`, `claude/opus`, `local/Qwen3-Coder-Next` |
 

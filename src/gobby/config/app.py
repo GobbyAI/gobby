@@ -31,7 +31,7 @@ from gobby.config.embedding_keys import (
     storage_embedding_config_entries_to_runtime,
 )
 from gobby.config.extensions import HookExtensionsConfig
-from gobby.config.feature_candidate_defaults import reject_stale_default_feature_candidate_rows
+from gobby.config.feature_candidate_defaults import delete_stale_default_feature_candidate_rows
 from gobby.config.features import (
     ChatConfig,
     ImportMCPServerConfig,
@@ -881,7 +881,7 @@ def load_config(
                         deep_merge(config_dict, file_dict)
 
         # Layer 3: DB values (runtime overrides via config_store)
-        reject_stale_default_feature_candidate_rows(config_store)
+        delete_stale_default_feature_candidate_rows(config_store)
         flat_db = config_store.get_all()
         flat_db = _drop_legacy_neo4j_config_store_keys(flat_db, config_store)
         flat_db = _drop_legacy_embedding_config_store_keys(flat_db, config_store)

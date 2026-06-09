@@ -25,7 +25,6 @@ class FeatureProfile(StrEnum):
 
 DEFAULT_PROFILE_CANDIDATES: dict[FeatureProfile, tuple[str, ...]] = {
     FeatureProfile.LOW: (
-        "codex/gpt-5.3-codex-spark",
         "codex/gpt-5.4-mini",
         "claude/haiku",
         "local/Qwen3-Coder-30B-A3B-Instruct",
@@ -116,7 +115,7 @@ class FeatureDefaultConfig(BaseModel):
         default_factory=list,
         description=(
             "Ordered provider/model candidates, for example "
-            "['codex/gpt-5.3-codex-spark', 'local/Qwen3-Coder-30B-A3B-Instruct']."
+            "['codex/gpt-5.4-mini', 'local/Qwen3-Coder-30B-A3B-Instruct']."
         ),
     )
 

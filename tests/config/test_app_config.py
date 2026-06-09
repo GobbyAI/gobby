@@ -672,7 +672,7 @@ class TestLoadConfig:
         )
 
         assert config.memory.kg.profile == FeatureProfile.LOW
-        assert config.memory.kg.candidates[0] == "codex/gpt-5.3-codex-spark"
+        assert config.memory.kg.candidates[0] == "codex/gpt-5.4-mini"
 
     def test_load_config_normalizes_persisted_claude_feature_candidates(
         self, temp_dir: Path
@@ -695,10 +695,16 @@ class TestLoadConfig:
 
         assert config.session_summary.candidates == ["claude/haiku", "claude/sonnet"]
 
-    def test_load_config_rejects_defaults_seeded_claude_only_feature_candidates(
+    def test_load_config_deletes_defaults_seeded_claude_only_feature_candidates(
         self, temp_dir: Path
     ) -> None:
-        """Old defaults-source Claude-only candidate rows fail loudly."""
+        """Old defaults-source Claude-only candidate rows fall through to profiles."""
+
+        values = {
+            "session_summary.candidates": ["claude/haiku"],
+            "gobby-tasks.validation.candidates": ["claude/sonnet"],
+        }
+        deleted: list[str] = []
 
         class DummyDB:
             def fetchall(self, _query: str, _params: tuple[object, ...]) -> list[dict[str, object]]:
@@ -717,13 +723,20 @@ class TestLoadConfig:
             db = DummyDB()
 
             def get_all(self) -> dict[str, object]:
-                return {"session_summary.candidates": ["claude/haiku"]}
+                return dict(values)
 
-        with pytest.raises(ValueError, match="Stale defaults-seeded Claude-only"):
-            load_config(
-                config_file=str(temp_dir / "bootstrap.yaml"),
-                config_store=DummyConfigStore(),
-            )
+            def delete(self, key: str) -> bool:
+                deleted.append(key)
+                return values.pop(key, None) is not None
+
+        config = load_config(
+            config_file=str(temp_dir / "bootstrap.yaml"),
+            config_store=DummyConfigStore(),
+        )
+
+        assert deleted == ["gobby-tasks.validation.candidates", "session_summary.candidates"]
+        assert config.session_summary.candidates[0] == "codex/gpt-5.4-mini"
+        assert config.gobby_tasks.validation.candidates[0] == "codex/gpt-5.3-codex-spark"
 
     def test_load_config_preserves_user_claude_only_feature_candidates(
         self, temp_dir: Path

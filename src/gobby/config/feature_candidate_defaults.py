@@ -34,8 +34,8 @@ _FEATURE_CANDIDATE_PROFILES: dict[str, FeatureProfile] = {
 }
 
 
-def reject_stale_default_feature_candidate_rows(config_store: Any | None) -> None:
-    """Fail fast when old defaults-seeded Claude-only candidates are still persisted."""
+def delete_stale_default_feature_candidate_rows(config_store: Any | None) -> None:
+    """Delete old defaults-seeded Claude-only candidates so profile defaults apply."""
     db = getattr(config_store, "db", None)
     fetchall = getattr(db, "fetchall", None)
     if not callable(fetchall):
@@ -54,12 +54,34 @@ def reject_stale_default_feature_candidate_rows(config_store: Any | None) -> Non
     if not stale_keys:
         return
 
+    delete = getattr(config_store, "delete", None)
+    if not callable(delete):
+        joined = ", ".join(stale_keys)
+        raise ValueError(
+            "Stale defaults-seeded Claude-only feature candidate rows found in "
+            f"config_store but cannot be deleted: {joined}."
+        )
+
+    failed_keys: list[str] = []
+    for key in stale_keys:
+        try:
+            delete(key)
+        except Exception as exc:
+            logger.debug("Failed to delete stale feature candidate key %s: %s", key, exc)
+            failed_keys.append(key)
+
+    if failed_keys:
+        joined = ", ".join(failed_keys)
+        raise ValueError(
+            "Failed to delete stale defaults-seeded Claude-only feature candidate rows "
+            f"from config_store: {joined}."
+        )
+
     joined = ", ".join(stale_keys)
-    raise ValueError(
-        "Stale defaults-seeded Claude-only feature candidate rows found in "
-        f"config_store: {joined}. Gobby 0.5.0 does not rewrite old defaults at "
-        "startup; delete these defaults or reseed config defaults so Codex-first "
-        "profile candidates apply."
+    logger.warning(
+        "Deleted stale defaults-seeded Claude-only feature candidate rows so profile "
+        "defaults apply: %s",
+        joined,
     )
 
 

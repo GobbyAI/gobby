@@ -219,8 +219,6 @@ chat:
 gobby-tasks:
   validation:
     profile: mid
-    candidates:
-      - claude/haiku
 ```
 
 Feature configs select ordered `provider/model` candidates. Provider auth and

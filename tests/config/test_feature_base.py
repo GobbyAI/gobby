@@ -29,7 +29,6 @@ class TestFeatureProfile:
 
     def test_profile_candidate_ordering(self) -> None:
         assert DEFAULT_PROFILE_CANDIDATES[FeatureProfile.LOW] == (
-            "codex/gpt-5.3-codex-spark",
             "codex/gpt-5.4-mini",
             "claude/haiku",
             "local/Qwen3-Coder-30B-A3B-Instruct",

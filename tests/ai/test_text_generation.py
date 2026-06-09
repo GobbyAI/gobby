@@ -319,7 +319,7 @@ async def test_text_generation_service_falls_back_to_profile_defaults_for_unavai
                 provider="codex",
                 adapter_style=AIAdapterStyle.DAEMON,
                 available=True,
-                models=("gpt-5.3-codex-spark",),
+                models=("gpt-5.4-mini",),
             ),
         ]
     )
@@ -338,8 +338,8 @@ async def test_text_generation_service_falls_back_to_profile_defaults_for_unavai
 
     assert result.text == "codex:summarize"
     assert result.provider == "codex"
-    assert result.model == "gpt-5.3-codex-spark"
-    assert codex.requests[0].model == "gpt-5.3-codex-spark"
+    assert result.model == "gpt-5.4-mini"
+    assert codex.requests[0].model == "gpt-5.4-mini"
     [fallback_record] = [
         record
         for record in caplog.records
@@ -349,7 +349,7 @@ async def test_text_generation_service_falls_back_to_profile_defaults_for_unavai
     assert fallback_record.feature == "session_summary"
     assert fallback_record.profile == "feature_low"
     assert fallback_record.failed_candidates == ["claude/haiku"]
-    assert fallback_record.fallback_candidates[0] == "codex/gpt-5.3-codex-spark"
+    assert fallback_record.fallback_candidates[0] == "codex/gpt-5.4-mini"
     assert "claude/haiku" not in fallback_record.fallback_candidates
 
 
