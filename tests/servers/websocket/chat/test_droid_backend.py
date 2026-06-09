@@ -25,6 +25,7 @@ from gobby.servers.websocket.chat.backends.droid import (
     DroidWebChatBackend,
     _extract_plan_from_tool_args,
     _is_plan_exit_tool,
+    _redact_droid_stderr,
     droid_tool_name_adapter,
     parse_droid_stream_line,
 )
@@ -197,6 +198,23 @@ def test_droid_tool_name_adapter() -> None:
     assert droid_tool_name_adapter("mcp__gobby__list") == "mcp__gobby__list"
     assert droid_tool_name_adapter("Execute") == "Bash"
     assert droid_tool_name_adapter("Read") == "Read"
+
+
+def test_redact_droid_stderr_covers_bearer_and_named_credentials() -> None:
+    text = (
+        "Authorization: Bearer sk-secret\n"
+        "DROID_AUTH_TOKEN=token-secret\n"
+        "factory.api-key: key-secret"
+    )
+
+    redacted = _redact_droid_stderr(text)
+
+    assert "sk-secret" not in redacted
+    assert "token-secret" not in redacted
+    assert "key-secret" not in redacted
+    assert "Bearer <redacted>" in redacted
+    assert "DROID_AUTH_TOKEN=<redacted>" in redacted
+    assert "factory.api-key: <redacted>" in redacted
 
 
 def test_is_plan_exit_tool_matches_regardless_of_separators_and_case() -> None:

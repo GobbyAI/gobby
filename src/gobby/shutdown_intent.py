@@ -73,9 +73,7 @@ def get_shutdown_source_path(home: Path | None = None) -> Path:
     return home / "shutdown_source.json"
 
 
-def get_active_shutdown_marker_path(home: Path | None = None) -> Path:
-    """Return the shutdown marker path used by hook guards."""
-    return get_shutdown_marker_path(home)
+get_active_shutdown_marker_path = get_shutdown_marker_path
 
 
 def write_shutdown_intent(

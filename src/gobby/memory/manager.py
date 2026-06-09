@@ -559,7 +559,7 @@ class MemoryManager:
         *,
         project_id: str | None = None,
         memory_type: str | None = None,
-        limit: int | None = DEFAULT_LIST_LIMIT,
+        limit: int | None = None,
         offset: int = 0,
         tags_all: list[str] | None = None,
     ) -> list[Memory]:

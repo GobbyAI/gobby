@@ -76,7 +76,7 @@ class FakeMemoryManager:
         self,
         project_id: str | None = None,
         memory_type: str | None = None,
-        limit: int = 50,
+        limit: int | None = None,
         offset: int = 0,
         tags_all: list[str] | None = None,
         tags_any: list[str] | None = None,
@@ -91,13 +91,16 @@ class FakeMemoryManager:
             memories = [
                 memory for memory in memories if set(tags_all).issubset(set(memory.tags or []))
             ]
+        if limit is None:
+            return memories[offset:]
         return memories[offset : offset + limit]
 
     async def alist_memories(
         self,
+        *,
         project_id: str | None = None,
         memory_type: str | None = None,
-        limit: int = 50,
+        limit: int | None = None,
         offset: int = 0,
         tags_all: list[str] | None = None,
     ) -> list[FakeMemory]:

@@ -337,15 +337,15 @@ class TestCloseTask:
     async def test_close_task_uses_project_path_override_for_commit_checks(
         self, mock_task_manager, mock_sync_manager
     ):
-        """Cross-repo close_task calls should resolve commits in the provided repo."""
+        """Cross-repo close_task calls must use a registered repo path."""
         task = _make_task(commits=["abc1234"])
         mock_task_manager.get_task.return_value = task
         mock_task_manager.link_commit.return_value = task
         mock_task_manager.list_tasks.return_value = []
         mock_task_manager.close_task.return_value = task
-        registry = _create_registry(mock_task_manager, mock_sync_manager)
 
         with (
+            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockPM,
             patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
             ) as mock_vcr,
@@ -354,6 +354,8 @@ class TestCloseTask:
                 side_effect=lambda sha, cwd=None: sha,
             ) as mock_norm,
         ):
+            MockPM.return_value.get.return_value = MagicMock(repo_path="/external/repo")
+            registry = _create_registry(mock_task_manager, mock_sync_manager)
             mock_vcr.return_value = MagicMock(can_close=True)
             await registry.call(
                 "close_task",

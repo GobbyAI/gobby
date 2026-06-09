@@ -464,7 +464,9 @@ class TestUISettingsRoundTrip:
         assert store.get("ui_settings.defaultChatMode") == "plan"
         assert store.get("ui_settings.planPendingVariant") == "amber"
 
-    def test_ui_settings_rejects_retired_post_plan_mode_key(self, client: TestClient) -> None:
+    def test_ui_settings_rejects_retired_post_plan_mode_key(
+        self, client: TestClient, temp_db: HubDatabase
+    ) -> None:
         """The post-plan-mode preference was removed; mode is chosen at approval."""
         response = client.put(
             "/api/config/ui-settings",
@@ -476,6 +478,7 @@ class TestUISettingsRoundTrip:
         get_response = client.get("/api/config/ui-settings")
         assert get_response.status_code == 200
         assert "postPlanChatMode" not in get_response.json()
+        assert ConfigStore(temp_db).get("ui_settings.postPlanChatMode") is None
 
 
 class TestGlobalToolApprovalRules:

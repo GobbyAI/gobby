@@ -27,6 +27,7 @@ def _normalize_project_path(path: str) -> str:
 
 
 def _resolve_project_ref_or_path(project_ref: str, manager: SessionManager) -> str:
+    # SessionManager owns manager.db; LocalProjectManager only borrows it here.
     project_manager = LocalProjectManager(manager.db)
 
     project = project_manager.get(project_ref)

@@ -433,6 +433,22 @@ class TranscriptIndexAppender:
             size=size,
         )
 
+    def hydrate(
+        self,
+        *,
+        index: TranscriptIndex,
+        state: RenderState,
+        current_id: str | None,
+        next_parser_index: int,
+        next_raw_line_no: int,
+    ) -> TranscriptIndexAppender:
+        self.index, self._state = index, state
+        self._role_counts = dict(index.role_message_counts)
+        self._prev_current_id = current_id
+        self._next_start_index, self._next_raw_line_no = next_parser_index, next_raw_line_no
+        self._safe_to_start_event = index.safe_to_start_event is not False
+        return self
+
     def snapshot(self, *, mtime_ns: int, size: int) -> TranscriptIndex:
         """Return the current index with EOF-dependent parser adjustments resolved."""
         self.index.mtime_ns = mtime_ns

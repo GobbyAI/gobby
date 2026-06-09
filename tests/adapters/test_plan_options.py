@@ -86,6 +86,16 @@ def test_all_sources_share_the_same_set() -> None:
         assert get_plan_accept_options(source) == claude
 
 
+def test_plan_accept_options_returns_mutable_list_copy() -> None:
+    options = get_plan_accept_options(SessionSource.CLAUDE)
+    options.pop()
+
+    assert [opt.id for opt in get_plan_accept_options(SessionSource.CLAUDE)] == [
+        "approve_yolo",
+        "approve_act",
+    ]
+
+
 def test_string_and_web_chat_suffix_sources_resolve() -> None:
     """Accepts bare provider strings and the ``<provider>_web_chat`` form."""
     bare = get_plan_accept_options("droid")

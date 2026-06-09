@@ -17,6 +17,11 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.task_repo_paths import (
+    RepoPathValidationError,
+    resolve_project_repo_path,
+    resolve_task_repo_path,
+)
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.utils.project_context import get_project_context
 
@@ -69,24 +74,6 @@ def create_commit_registry(
     if task_manager is None:
         raise ValueError("task_manager is required for task ID resolution")
 
-    def _repo_path_for(
-        project_path: str | None = None,
-        *,
-        task_project_id: str | None = None,
-    ) -> str | None:
-        if project_path:
-            return project_path
-        if task_project_id and project_manager:
-            project = project_manager.get(task_project_id)
-            if project:
-                return project.repo_path
-        ctx = get_project_context()
-        if ctx and ctx.get("id") and project_manager:
-            project = project_manager.get(ctx["id"])
-            if project:
-                return project.repo_path
-        return None
-
     # --- link_commit ---
 
     def link_commit(
@@ -101,7 +88,16 @@ def create_commit_registry(
         except (TaskNotFoundError, ValueError) as e:
             return {"error": f"Invalid task_id: {e}"}
 
-        repo_path = _repo_path_for(project_path)
+        task = task_manager.get_task(resolved_task_id)
+        try:
+            repo_path = resolve_task_repo_path(
+                task_manager=task_manager,
+                project_manager=project_manager,
+                task=task,
+                project_path=project_path,
+            )
+        except RepoPathValidationError as e:
+            return {"error": str(e)}
 
         try:
             task = task_manager.link_commit(resolved_task_id, commit_sha, cwd=repo_path)
@@ -153,7 +149,16 @@ def create_commit_registry(
         except (TaskNotFoundError, ValueError) as e:
             return {"error": f"Invalid task_id: {e}"}
 
-        repo_path = _repo_path_for(project_path)
+        task = task_manager.get_task(resolved_task_id)
+        try:
+            repo_path = resolve_task_repo_path(
+                task_manager=task_manager,
+                project_manager=project_manager,
+                task=task,
+                project_path=project_path,
+            )
+        except RepoPathValidationError as e:
+            return {"error": str(e)}
 
         try:
             task = task_manager.unlink_commit(resolved_task_id, commit_sha, cwd=repo_path)
@@ -204,17 +209,36 @@ def create_commit_registry(
 
         # Validate task exists if provided, but keep original #N format
         # because extract_task_ids_from_message returns #N format from git log
+        resolved_task_id: str | None = None
+        task_project_id: str | None = None
         if task_id:
             try:
-                resolve_task_id_for_mcp(task_manager, task_id)
+                resolved_task_id = resolve_task_id_for_mcp(task_manager, task_id)
             except (TaskNotFoundError, ValueError) as e:
                 return {"error": f"Invalid task_id: {e}"}
-
-        repo_path = _repo_path_for(project_path)
+            task = task_manager.get_task(resolved_task_id)
+            task_project_id = task.project_id
+            try:
+                repo_path = resolve_task_repo_path(
+                    task_manager=task_manager,
+                    project_manager=project_manager,
+                    task=task,
+                    project_path=project_path,
+                )
+            except RepoPathValidationError as e:
+                return {"error": str(e)}
+        else:
+            try:
+                repo_path = resolve_project_repo_path(
+                    project_manager=project_manager,
+                    project_path=project_path,
+                )
+            except RepoPathValidationError as e:
+                return {"error": str(e)}
 
         # Get project_id for resolving #N task references
         ctx = get_project_context()
-        project_id = ctx.get("id") if ctx else None
+        project_id = task_project_id or (ctx.get("id") if ctx else None)
 
         result = auto_link_commits_fn(
             task_manager=task_manager,
@@ -281,7 +305,15 @@ def create_commit_registry(
         if get_task_diff_fn is None:
             return {"error": "get_task_diff_fn not configured"}
 
-        repo_path = _repo_path_for(project_path, task_project_id=task.project_id)
+        try:
+            repo_path = resolve_task_repo_path(
+                task_manager=task_manager,
+                project_manager=project_manager,
+                task=task,
+                project_path=project_path,
+            )
+        except RepoPathValidationError as e:
+            return {"error": str(e)}
 
         result = get_task_diff_fn(
             task_id=resolved_task_id,

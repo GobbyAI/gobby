@@ -121,7 +121,7 @@ def get_plan_accept_options(source: SessionSource | str) -> list[PlanAcceptOptio
     (YOLO vs Act), not per-CLI. ``source`` is retained in the signature so
     callers stay stable and a future per-source divergence has a seam.
     """
-    return _FIXED_PLAN_OPTIONS
+    return _FIXED_PLAN_OPTIONS.copy()
 
 
 def get_plan_accept_option(

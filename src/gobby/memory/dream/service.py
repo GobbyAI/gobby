@@ -6,7 +6,7 @@ import asyncio
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Any
 
 from gobby.config.persistence import MemoryDreamConfig
 from gobby.memory.dream.apply import apply_dream_plan, revert_dream_run
@@ -14,46 +14,8 @@ from gobby.memory.dream.candidates import discover_stale_candidates
 from gobby.memory.dream.duplicates import find_duplicate_groups
 from gobby.memory.dream.plan import validate_dream_plan
 from gobby.memory.dream.planner import build_raw_plan
+from gobby.memory.dream.protocols import MemoryDreamLLMProtocol, MemoryDreamManagerProtocol
 from gobby.memory.dream.storage import MemoryDreamStore
-from gobby.storage.hub.protocol import HubDatabase
-
-
-class MemoryManagerProtocol(Protocol):
-    db: HubDatabase
-
-    async def alist_memories(self, *, limit: int | None, offset: int) -> list[Any]: ...
-
-    async def create_memory(
-        self,
-        content: str,
-        memory_type: str = "fact",
-        project_id: str | None = None,
-        source_type: str = "agent",
-        source_session_id: str | None = None,
-        tags: list[str] | None = None,
-    ) -> Any: ...
-
-    async def update_memory(
-        self,
-        memory_id: str,
-        content: str | None = None,
-        tags: list[str] | None = None,
-    ) -> Any: ...
-
-    async def delete_memory(self, memory_id: str) -> bool: ...
-
-    async def reconcile_stores(self, dry_run: bool = False) -> dict[str, Any]: ...
-
-
-class LLMServiceProtocol(Protocol):
-    async def call_json_feature(
-        self,
-        feature_config: Any,
-        prompt: str,
-        system_prompt: str | None = None,
-        *,
-        caller: str | None = None,
-    ) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True)
@@ -78,9 +40,9 @@ class MemoryDreamService:
     def __init__(
         self,
         *,
-        memory_manager: MemoryManagerProtocol,
+        memory_manager: MemoryDreamManagerProtocol,
         dream_config: MemoryDreamConfig | None = None,
-        llm_service: LLMServiceProtocol | None = None,
+        llm_service: MemoryDreamLLMProtocol | None = None,
     ) -> None:
         self.memory_manager = memory_manager
         self.dream_config = dream_config or MemoryDreamConfig()
@@ -225,9 +187,9 @@ class MemoryDreamService:
 
 async def run_memory_dream(
     *,
-    memory_manager: Any,
+    memory_manager: MemoryDreamManagerProtocol,
     dream_config: MemoryDreamConfig | None = None,
-    llm_service: Any | None = None,
+    llm_service: MemoryDreamLLMProtocol | None = None,
     dry_run: bool = False,
     skip_consolidation: bool = False,
     memory_type: str | None = None,

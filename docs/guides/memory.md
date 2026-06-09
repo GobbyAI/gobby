@@ -225,7 +225,9 @@ call_tool(server_name="gobby-memory", tool_name="memory_dream", arguments={
 
 ## HTTP Routes
 
-The daemon exposes memory routes under `/api/memories`.
+The daemon exposes standard memory routes under `/api/memories`. Memory dream
+routes are top-level daemon routes under `/memory/dream`; they are not prefixed
+with `/api/memories`.
 
 | Method and route | Purpose |
 | --- | --- |

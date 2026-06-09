@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, cast
 
 import click
 import httpx
@@ -44,7 +44,6 @@ def memory_dream(
 
     payload = {
         "dry_run": dry_run,
-        "wait": wait,
         "skip_consolidation": skip_consolidation,
         "memory_type": memory_type,
     }
@@ -123,7 +122,7 @@ def _request(
             timeout=timeout,
         )
         response.raise_for_status()
-        return dict(response.json())
+        return cast("dict[str, Any]", response.json())
     except (httpx.HTTPError, ConnectionError, OSError, ValueError) as exc:
         raise click.ClickException(f"Could not reach daemon: {exc}") from exc
 

@@ -4,17 +4,14 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 
+from gobby.config.persistence import MemoryDreamConfig
+from gobby.memory.dream.protocols import MemoryDreamLLMProtocol, MemoryDreamManagerProtocol
 from gobby.memory.dream.service import run_memory_dream
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
 from gobby.storage.projects import PERSONAL_PROJECT_ID
-
-if TYPE_CHECKING:
-    from gobby.config.persistence import MemoryDreamConfig
-    from gobby.llm.service import LLMService
-    from gobby.memory.manager import MemoryManager
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +32,9 @@ def register_memory_dream_cron(
     *,
     cron_storage: CronJobStorage,
     cron_executor: CronRegistrationProtocol,
-    memory_manager: MemoryManager,
+    memory_manager: MemoryDreamManagerProtocol,
     dream_config: MemoryDreamConfig,
-    llm_service: LLMService | None = None,
+    llm_service: MemoryDreamLLMProtocol | None = None,
     project_id: str | None = None,
 ) -> int:
     """Register the memory dream handler and reconcile its single system row."""
@@ -72,7 +69,9 @@ def register_memory_dream_cron(
             run_id = run.get("id")
         if run_id is None:
             raise RuntimeError("memory dream completed without run_id")
-        return f"memory dream {run_id} completed: {summary.get('mutations', 0)} mutation(s)"
+        raw_mutations = summary.get("mutations", 0)
+        mutations = raw_mutations if isinstance(raw_mutations, int) else 0
+        return f"memory dream {run_id} completed: {mutations} mutation(s)"
 
     cron_executor.register_handler(MEMORY_DREAM_CRON_HANDLER, _handler)
     _ensure_system_job(cron_storage, dream_config, project_id)

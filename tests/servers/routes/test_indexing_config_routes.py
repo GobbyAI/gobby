@@ -31,7 +31,7 @@ def test_config_values_expose_indexing_default(client: TestClient) -> None:
 
 def test_config_values_round_trip_indexing_respect_gitignore(
     client: TestClient,
-    temp_db: HubDatabase,
+    hub_db: HubDatabase,
 ) -> None:
     response = client.put(
         "/api/config/values",
@@ -40,7 +40,7 @@ def test_config_values_round_trip_indexing_respect_gitignore(
 
     assert response.status_code == 200
     assert response.json()["ok"] is True
-    assert ConfigStore(temp_db).get("indexing.respect_gitignore") is False
+    assert ConfigStore(hub_db).get("indexing.respect_gitignore") is False
 
     values = client.get("/api/config/values").json()["values"]
     assert values["indexing"]["respect_gitignore"] is False

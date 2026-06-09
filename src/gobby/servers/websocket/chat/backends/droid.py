@@ -60,8 +60,11 @@ DROID_PERMISSION_CANCEL = "cancel"
 DROID_PERMISSION_PROCEED_ONCE = "proceed_once"
 DROID_STDERR_MAX_CHARS = 1000
 _DROID_STDERR_REDACTIONS = (
-    re.compile(r"(?i)(authorization:\s*bearer\s+)[^\s]+"),
-    re.compile(r"(?i)\b(api[_-]?key|token|secret|password)\b\s*([=:])\s*[^\s]+"),
+    re.compile(r"(?i)\b(bearer\s+)[^\s]+"),
+    re.compile(
+        r"(?i)\b([a-z0-9_.-]*(?:api[_-]?key|token|secret|password)[a-z0-9_.-]*)\b"
+        r"(\s*[=:]\s*)[^\s]+"
+    ),
 )
 
 
@@ -135,9 +138,10 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
     _pending_approval_decision: str | None = field(default=None, repr=False)
     _plan_approved: bool = field(default=False, repr=False)
     _plan_feedback: str | None = field(default=None, repr=False)
-    # Set when the permission resolver broadcasts + blocks a plan-exit tool
-    # (ExitSpecMode) this turn, so send_message's post-loop broadcast does not
-    # re-broadcast the spec (or a prose preamble) after the decision (#15682).
+    # Turn-scoped guard set by the permission resolver when it broadcasts and
+    # blocks an ExitSpecMode plan-exit tool while send_message holds self._lock.
+    # Keep it coupled to resolver flow; otherwise post-loop broadcasting can
+    # duplicate the structured spec after the plan decision resolves (#15682).
     _plan_exit_blocked_this_turn: bool = field(default=False, repr=False)
     _is_first_turn: bool = field(default=True, repr=False)
 

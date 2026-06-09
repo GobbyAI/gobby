@@ -30,7 +30,7 @@ from gobby.sessions.transcript_index import (
     persist_index_sidecar,
 )
 from gobby.sessions.transcript_io import _count_nonempty_lines
-from gobby.sessions.transcript_renderer import RenderedMessage, render_transcript
+from gobby.sessions.transcript_renderer import RenderedMessage, RenderState, render_transcript
 from gobby.sessions.transcripts.base import ParsedMessage, RawLine
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
@@ -546,6 +546,30 @@ def test_transcript_index_appender_persists_append_growth(tmp_path: Path) -> Non
     assert loaded.parsed_message_count == rebuilt.parsed_message_count
     assert loaded.total_groups == rebuilt.total_groups
     assert loaded.parsed_boundaries
+
+
+def test_transcript_index_appender_hydrate_restores_public_resume_state(
+    tmp_path: Path,
+) -> None:
+    lines = _codex_lines()
+    path = _write(tmp_path, "codex-hydrate", lines)
+    st = os.stat(path)
+    index = build_index_from_file(path, "codex", SESSION, mtime_ns=st.st_mtime_ns, size=st.st_size)
+    appender = TranscriptIndexAppender("codex", SESSION, path)
+
+    hydrated = appender.hydrate(
+        index=index,
+        state=RenderState(),
+        current_id=None,
+        next_parser_index=index.next_parser_index or 0,
+        next_raw_line_no=index.next_raw_line_no or 0,
+    )
+
+    assert hydrated is appender
+    snapshot = appender.snapshot(mtime_ns=st.st_mtime_ns, size=st.st_size)
+    assert snapshot.parsed_message_count == index.parsed_message_count
+    assert snapshot.next_parser_index == index.next_parser_index
+    assert snapshot.next_raw_line_no == index.next_raw_line_no
 
 
 def test_sidecar_round_trips_stats_and_resume_metadata(tmp_path: Path) -> None:

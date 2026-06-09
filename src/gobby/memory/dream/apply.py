@@ -9,6 +9,7 @@ from typing import Any
 import psycopg
 
 from gobby.memory.dream.models import DreamAction, DreamCandidate
+from gobby.memory.dream.protocols import MemoryDreamManagerProtocol
 from gobby.memory.dream.storage import MemoryDreamStore
 
 logger = logging.getLogger(__name__)
@@ -17,7 +18,7 @@ _EXPECTED_ACTION_ERRORS = (ValueError, OSError, psycopg.Error)
 
 async def apply_dream_plan(
     *,
-    memory_manager: Any,
+    memory_manager: MemoryDreamManagerProtocol,
     store: MemoryDreamStore,
     run_id: str,
     actions: list[DreamAction],
@@ -64,7 +65,7 @@ async def revert_dream_run(
     *,
     store: MemoryDreamStore,
     run_id: str,
-    memory_manager: Any | None = None,
+    memory_manager: MemoryDreamManagerProtocol | None = None,
     reconcile_after_revert: bool = True,
 ) -> dict[str, Any]:
     """Restore memory rows from a dream run's snapshots in reverse order."""
@@ -110,7 +111,7 @@ async def revert_dream_run(
 
 async def _apply_action(
     *,
-    memory_manager: Any,
+    memory_manager: MemoryDreamManagerProtocol,
     store: MemoryDreamStore,
     run_id: str,
     action: DreamAction,
@@ -128,7 +129,7 @@ async def _apply_action(
 
 
 async def _delete(
-    memory_manager: Any,
+    memory_manager: MemoryDreamManagerProtocol,
     store: MemoryDreamStore,
     run_id: str,
     memory_id: str,
@@ -152,7 +153,7 @@ async def _delete(
 
 
 async def _refresh(
-    memory_manager: Any,
+    memory_manager: MemoryDreamManagerProtocol,
     store: MemoryDreamStore,
     run_id: str,
     action: DreamAction,
@@ -180,7 +181,7 @@ async def _refresh(
 
 
 async def _merge(
-    memory_manager: Any,
+    memory_manager: MemoryDreamManagerProtocol,
     store: MemoryDreamStore,
     run_id: str,
     action: DreamAction,
@@ -213,7 +214,7 @@ async def _merge(
 
 
 async def _supersede(
-    memory_manager: Any,
+    memory_manager: MemoryDreamManagerProtocol,
     store: MemoryDreamStore,
     run_id: str,
     action: DreamAction,
@@ -248,7 +249,7 @@ async def _supersede(
     return mutations
 
 
-async def _reconcile(memory_manager: Any, summary: dict[str, Any]) -> None:
+async def _reconcile(memory_manager: MemoryDreamManagerProtocol, summary: dict[str, Any]) -> None:
     try:
         summary["reconcile"] = await memory_manager.reconcile_stores(dry_run=False)
     except Exception as exc:  # noqa: BLE001 - reconciliation must not hide applied snapshots

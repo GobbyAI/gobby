@@ -16,8 +16,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class AICapabilityRegistryProtocol(Protocol):
+    def bindings_for(
+        self,
+        feature: str,
+        *,
+        provider: str | None = None,
+        include_unavailable: bool = True,
+    ) -> tuple[Any, ...]: ...
+
+
 class TextGenerationDependency(Protocol):
-    registry: Any
+    registry: AICapabilityRegistryProtocol
 
     async def generate(self, request: TextGenerationRequest) -> str: ...
 

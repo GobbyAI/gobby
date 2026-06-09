@@ -8,6 +8,10 @@ import logging
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.task_repo_paths import (
+    RepoPathValidationError,
+    resolve_task_repo_path,
+)
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._helpers import SKIP_REASONS
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
@@ -98,9 +102,16 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                     "or a previously-claimed task",
                 }
 
-        # Get repo_path for git commands (needed before link_commit). An explicit
-        # project_path supports cross-repo coordination tasks.
-        repo_path = project_path or ctx.get_project_repo_path(task.project_id)
+        # Get repo_path for git commands (needed before link_commit).
+        try:
+            repo_path = resolve_task_repo_path(
+                task_manager=ctx.task_manager,
+                project_manager=ctx.project_manager,
+                task=task,
+                project_path=project_path,
+            )
+        except RepoPathValidationError as e:
+            return {"error": str(e)}
         cwd = repo_path or "."
 
         # Link commit if provided (convenience for link + close in one call)

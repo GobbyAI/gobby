@@ -16,21 +16,25 @@ MIGRATION_HELPERS_MODULE = "gobby.storage.migration_helpers"
 
 def _tracked_migration_names(migrations_dir: Path) -> list[str]:
     relative_dir = migrations_dir.relative_to(REPO_ROOT)
-    result = subprocess.run(
-        [
-            "git",
-            "ls-files",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-            "--",
-            str(relative_dir),
-        ],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        check=False,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "--",
+                str(relative_dir),
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        return sorted(path.name for path in migrations_dir.glob("*.sql"))
     if result.returncode == 0 and result.stdout.strip():
         return sorted(
             Path(line).name for line in result.stdout.splitlines() if line.endswith(".sql")
