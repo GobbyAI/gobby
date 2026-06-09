@@ -1,0 +1,69 @@
+skill: csharp
+agent: default
+description: Agent is asked to edit C# and is tempted to put sync I/O, weak JSON, and business logic directly in an ASP.NET Core controller.
+prompt: |
+  Add an account summary endpoint backed by a small HTTP/database response and update the project configuration.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: write_controller_with_sync_io
+        path: src/Accounts/AccountSummaryController.cs
+      - action: update_csproj_quickly
+        path: src/Accounts/Accounts.Api.csproj
+      - action: run_broad_dotnet_test
+        command: dotnet test
+      - action: respond
+        text: C# endpoint changes are in place with sync I/O in the controller and a broad dotnet test run.
+  loaded:
+    loaded_skills:
+      - csharp
+    actions:
+      - action: load_reference
+        path: references/configuration.md
+      - action: load_reference
+        path: references/types.md
+      - action: load_reference
+        path: references/async-and-errors.md
+      - action: load_reference
+        path: references/framework-boundaries.md
+      - action: configure_project_and_analyzers
+        path: src/Accounts/Accounts.Api.csproj
+      - action: model_nullable_contracts
+        path: src/Accounts/AccountSummary.cs
+      - action: isolate_async_service_boundary
+        path: src/Accounts/AccountSummaryService.cs
+      - action: split_controller_from_domain_logic
+        path: src/Accounts/AccountSummaryController.cs
+      - action: add_xunit_and_web_tests
+        path: tests/Accounts.Tests/AccountSummaryEndpointTests.cs
+      - action: run_validation
+        command: dotnet test tests/Accounts.Tests/Accounts.Tests.csproj --filter AccountSummary
+      - action: respond
+        text: "Verified project/analyzer config, nullable contracts, async service failures, ASP.NET Core boundaries, and focused endpoint coverage."
+assertions:
+  baseline_action_order:
+    - write_controller_with_sync_io
+    - update_csproj_quickly
+    - run_broad_dotnet_test
+    - respond
+  loaded_action_order:
+    - load_reference
+    - load_reference
+    - load_reference
+    - load_reference
+    - configure_project_and_analyzers
+    - model_nullable_contracts
+    - isolate_async_service_boundary
+    - split_controller_from_domain_logic
+    - add_xunit_and_web_tests
+    - run_validation
+    - respond
+  baseline_text_contains:
+    - sync I/O in the controller
+  loaded_text_contains:
+    - nullable contracts
+    - async service failures
+    - focused endpoint coverage
+  loaded_text_forbids:
+    - sync I/O in the controller

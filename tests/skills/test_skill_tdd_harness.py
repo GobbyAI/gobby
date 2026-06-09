@@ -285,3 +285,33 @@ def test_dart_skill_loads_strict_widget_boundary_pattern() -> None:
     assert result.loaded.actions[2]["path"] == "references/async-and-errors.md"
     assert result.loaded.actions[3]["path"] == "references/flutter-boundaries.md"
     assert result.has_behavioral_delta
+
+
+def test_csharp_skill_loads_strict_service_boundary_pattern() -> None:
+    """Verify C# work loads references before ASP.NET Core and project changes."""
+    result = run_recorded_skill_scenario(SCENARIOS / "csharp/strict-service-boundaries.yaml")
+
+    assert result.baseline.action_names == (
+        "write_controller_with_sync_io",
+        "update_csproj_quickly",
+        "run_broad_dotnet_test",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "configure_project_and_analyzers",
+        "model_nullable_contracts",
+        "isolate_async_service_boundary",
+        "split_controller_from_domain_logic",
+        "add_xunit_and_web_tests",
+        "run_validation",
+        "respond",
+    )
+    assert result.loaded.actions[0]["path"] == "references/configuration.md"
+    assert result.loaded.actions[1]["path"] == "references/types.md"
+    assert result.loaded.actions[2]["path"] == "references/async-and-errors.md"
+    assert result.loaded.actions[3]["path"] == "references/framework-boundaries.md"
+    assert result.has_behavioral_delta

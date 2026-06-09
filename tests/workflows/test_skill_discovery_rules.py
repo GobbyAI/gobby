@@ -57,6 +57,7 @@ def _sync_bundled(db):
 
 SKILL_DISCOVERY_RULES = {
     "discover-skill-hubs-on-turn-start",
+    "require-csharp-skill",
     "require-dart-skill",
     "require-go-skill",
     "require-java-skill",
@@ -793,6 +794,139 @@ class TestRequireDartSkillCondition:
 
     def test_skips_non_edit_write_tool(self) -> None:
         assert self._eval("/project/lib/main.dart", canonical_tool_kind="read") is False
+
+    def test_skips_empty_file_path(self) -> None:
+        assert self._eval("") is False
+
+
+# --- require-csharp-skill structure ---
+
+
+class TestRequireCSharpSkillStructure:
+    """Verify require-csharp-skill rule structure."""
+
+    def test_is_before_tool_event(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-csharp-skill")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.when is not None
+        assert "not skill_loaded('csharp')" in body.when
+
+    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-csharp-skill")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert len(body.effects) == 1
+        assert body.effects[0].type == "block"
+        assert body.effects[0].reason == skill_fetch_directive("csharp")
+
+
+# --- require-csharp-skill condition evaluation ---
+
+
+class TestRequireCSharpSkillCondition:
+    """Test the require-csharp-skill condition evaluates correctly."""
+
+    CONDITION = (
+        "not skill_loaded('csharp') "
+        "and event.data.get('canonical_tool_kind') == 'write' "
+        "and ("
+        "event.data.get('canonical_file_path', '').endswith(("
+        "'.cs', '.csx', '.csproj', '.sln', '.slnx', '.razor', '.cshtml', '.cake'"
+        ")) "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
+        "in ('global.json', 'nuget.config', 'NuGet.Config', 'packages.lock.json', "
+        "'dotnet-tools.json', 'omnisharp.json', 'stylecop.json') "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
+        "in ('Directory.Build.props', 'Directory.Build.targets', 'Directory.Packages.props')"
+        ")"
+    )
+
+    def _eval(
+        self,
+        file_path: str,
+        *,
+        canonical_tool_kind: str = "write",
+        loaded_skills: list[str] | None = None,
+        injected_skills: list[str] | None = None,
+    ) -> bool:
+        variables = {"loaded_skills": loaded_skills or []}
+        if injected_skills is not None:
+            variables["injected_skills"] = injected_skills
+        context = {
+            "variables": variables,
+            "event": SimpleNamespace(
+                data={
+                    "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_file_path": file_path,
+                }
+            ),
+            "tool_input": {},
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        return evaluator.evaluate(self.CONDITION)
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/src/Accounts/AccountSummaryService.cs",
+            "/project/src/Accounts/Program.cs",
+            "/project/build/build.cake",
+            "/project/src/App/App.razor",
+            "/project/src/App/Views/Home.cshtml",
+        ],
+    )
+    def test_matches_csharp_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/App.sln",
+            "/project/App.slnx",
+            "/project/src/Accounts/Accounts.Api.csproj",
+            "/project/global.json",
+            "/project/NuGet.Config",
+            "/project/nuget.config",
+            "/project/packages.lock.json",
+            "/project/.config/dotnet-tools.json",
+            "/project/omnisharp.json",
+            "/project/stylecop.json",
+            "/project/Directory.Build.props",
+            "/project/Directory.Build.targets",
+            "/project/Directory.Packages.props",
+        ],
+    )
+    def test_matches_dotnet_config_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/package.json",
+            "/project/appsettings.json",
+            "/project/.editorconfig",
+            "/project/Directory.Build.props.bak",
+            "/project/src/Accounts/AccountSummary.java",
+            "/project/src/Accounts/project.xml",
+        ],
+    )
+    def test_skips_non_csharp_targets(self, file_path: str) -> None:
+        assert self._eval(file_path) is False
+
+    def test_skips_when_already_loaded(self) -> None:
+        assert self._eval("/project/src/App/Program.cs", loaded_skills=["csharp"]) is False
+
+    def test_does_not_skip_when_legacy_injected(self) -> None:
+        assert self._eval("/project/src/App/Program.cs", injected_skills=["csharp"]) is True
+
+    def test_skips_non_edit_write_tool(self) -> None:
+        assert self._eval("/project/src/App/Program.cs", canonical_tool_kind="read") is False
 
     def test_skips_empty_file_path(self) -> None:
         assert self._eval("") is False
