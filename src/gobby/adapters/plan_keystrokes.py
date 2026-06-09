@@ -414,6 +414,40 @@ _GROK_PLAN_MENU: dict[str, PlanKeystrokeSequence] = {
 }
 
 
+def _qwen_digit(digit: str) -> PlanKeystrokeSequence:
+    """Qwen Code approval-menu selection: the item number activates with no Enter."""
+    return PlanKeystrokeSequence(strokes=(PlanKeystroke(digit, literal=True),))
+
+
+# Qwen Code (Qwen CLI TUI) native tool-approval menu. Captured empirically for
+# task #15732 by driving ``qwen --approval-mode default`` on a pty against a
+# working local LM Studio backend and reading the rendered menu grid (the
+# gobby-managed ACP path runs qwen headless and never shows this menu; this
+# mapping is for the native TUI a user runs under a proxy terminal). Qwen Code
+# is a Gemini-CLI fork, so its RadioButtonSelect confirmation menu matches
+# gemini's verbatim ([*] = the default-highlighted item):
+#
+#   Apply this change?
+#     [*] 1. Yes, allow once
+#     [ ] 2. Yes, allow always
+#     [ ] 3. No, suggest changes (esc)
+#
+# Empirically verified: the item NUMBER activates immediately with NO Enter
+# (digit "1" approved and wrote the probe file; digit "2" likewise approved and
+# wrote it). Option 1 ("allow once") is the single manual approval, option 2
+# ("allow always") is the auto-accept / bypass item. Esc rejects regardless of
+# menu shape (Esc on the write menu cancelled the write and the file was never
+# created); like gemini, the reject DIGIT varies by tool type while Escape is
+# the shape-independent reject shown as the menu's "(esc)" shortcut.
+_QWEN_PLAN_MENU: dict[str, PlanKeystrokeSequence] = {
+    "approve_act": _qwen_digit("1"),
+    "approve_yolo": _qwen_digit("2"),
+    # Reject via the "(esc)" shortcut: the menu's reject DIGIT varies by tool
+    # type, but Escape always rejects regardless of menu shape (matches gemini).
+    REQUEST_CHANGES_OPTION_ID: PlanKeystrokeSequence(strokes=(PlanKeystroke("Escape"),)),
+}
+
+
 def _register_builtin_plan_keystrokes(registry: PlanKeystrokeRegistry) -> None:
     """Per-CLI registration point for native plan-menu keystrokes.
 
@@ -453,8 +487,9 @@ def _register_builtin_plan_keystrokes(registry: PlanKeystrokeRegistry) -> None:
     # --- grok (Grok Build TUI tool-approval menu) -- task #15731 ---
     for _grok_option_id, _grok_sequence in _GROK_PLAN_MENU.items():
         registry.register("grok", _grok_option_id, _grok_sequence)
-    # --- qwen (ACP) -- task #15732 ---
-    return
+    # --- qwen (Qwen Code TUI tool-approval menu) -- task #15732 ---
+    for _qwen_option_id, _qwen_sequence in _QWEN_PLAN_MENU.items():
+        registry.register("qwen", _qwen_option_id, _qwen_sequence)
 
 
 def build_default_plan_keystroke_registry() -> PlanKeystrokeRegistry:
