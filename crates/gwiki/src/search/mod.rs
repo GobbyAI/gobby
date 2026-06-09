@@ -116,18 +116,21 @@ pub struct WikiSearchResult {
 }
 
 impl WikiSearchResult {
-    pub fn fusion_key(&self) -> String {
-        format!(
+    pub fn fusion_key(&self) -> Result<String, SearchError> {
+        Ok(format!(
             "{}:{}:{}",
             self.scope.scope_kind(),
             self.scope.scope_value(),
-            normalized_path(&self.path)
-        )
+            normalized_path(&self.path)?
+        ))
     }
 }
 
-fn normalized_path(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+fn normalized_path(path: &Path) -> Result<String, SearchError> {
+    let value = path
+        .to_str()
+        .ok_or_else(|| SearchError::InvalidPath { path: path.into() })?;
+    Ok(value.replace('\\', "/"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,12 +150,16 @@ pub struct WikiSearchResponse {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SearchError {
     Backend(String),
+    InvalidPath { path: PathBuf },
 }
 
 impl fmt::Display for SearchError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Backend(message) => write!(f, "wiki search backend failed: {message}"),
+            Self::InvalidPath { path } => {
+                write!(f, "search result path is not valid UTF-8: {path:?}")
+            }
         }
     }
 }
@@ -234,13 +241,13 @@ where
         });
     }
 
-    Ok(rrf::fuse_sources(
+    rrf::fuse_sources(
         bm25_hits,
         semantic_hits,
         graph_outcome.hits,
         degradations,
         request.limit,
-    ))
+    )
 }
 
 fn graph_seed_paths(

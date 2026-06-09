@@ -232,7 +232,7 @@ mod tests {
                     provenance: "test".to_string(),
                 },
                 WikiGraphCodeEdge {
-                    scope: project,
+                    scope: project.clone(),
                     document_path: PathBuf::from("knowledge/topics/shared.md"),
                     source: "src/lib.rs:run".to_string(),
                     target: "src/main.rs:main".to_string(),
@@ -262,51 +262,41 @@ mod tests {
             .iter()
             .map(|node| node.id.as_str())
             .collect::<BTreeSet<_>>();
+        let project_document = document_id(&project, &PathBuf::from("knowledge/topics/shared.md"));
+        let topic_document = document_id(&topic, &PathBuf::from("knowledge/topics/shared.md"));
+        let project_unresolved = unresolved_target_id(&project, "Missing");
+        let topic_unresolved = unresolved_target_id(&topic, "Missing");
+        let import_source = code_endpoint_id(&project, "src/lib.rs");
+        let call_source = code_endpoint_id(&project, "src/lib.rs:run");
+        let call_target = code_endpoint_id(&project, "src/main.rs:main");
 
-        assert!(node_ids.contains("document:project:project-1:knowledge/topics/shared.md"));
-        assert!(node_ids.contains("document:topic:project-1:knowledge/topics/shared.md"));
-        assert!(node_ids.contains("unresolved:project:project-1:Missing"));
-        assert!(node_ids.contains("unresolved:topic:project-1:Missing"));
-        assert_eq!(
-            export.edges.links[0].source,
-            "document:project:project-1:knowledge/topics/shared.md"
-        );
-        assert_eq!(
-            export.edges.links[1].source,
-            "document:topic:project-1:knowledge/topics/shared.md"
-        );
-        assert_eq!(
-            export.edges.imports[0].source,
-            "code:project:project-1:src/lib.rs"
-        );
-        assert_eq!(
-            export.edges.calls[0].source,
-            "code:project:project-1:src/lib.rs:run"
-        );
-        assert_eq!(
-            export.edges.calls[0].target,
-            "code:project:project-1:src/main.rs:main"
-        );
-        assert_eq!(
-            export.edges.callers[0].source,
-            "code:project:project-1:src/main.rs:main"
-        );
-        assert_eq!(
-            export.edges.callers[0].target,
-            "code:project:project-1:src/lib.rs:run"
-        );
+        assert!(node_ids.contains(project_document.as_str()));
+        assert!(node_ids.contains(topic_document.as_str()));
+        assert!(node_ids.contains(project_unresolved.as_str()));
+        assert!(node_ids.contains(topic_unresolved.as_str()));
+        assert_eq!(export.edges.links[0].source, project_document);
+        assert_eq!(export.edges.links[1].source, topic_document);
+        assert_eq!(export.edges.imports[0].source, import_source);
+        assert_eq!(export.edges.calls[0].source, call_source);
+        assert_eq!(export.edges.calls[0].target, call_target);
+        assert_eq!(export.edges.callers[0].source, call_target);
+        assert_eq!(export.edges.callers[0].target, call_source);
         let report = render_graph_report(&export);
-        assert!(
-            report.contains(
-                "code_project_project_1_src_lib_rs --> code_project_project_1_crate__main"
-            )
-        );
-        assert!(report.contains(
-            "code_project_project_1_src_lib_rs_run --> code_project_project_1_src_main_rs_main"
-        ));
-        assert!(report.contains(
-            "code_project_project_1_src_main_rs_main --> code_project_project_1_src_lib_rs_run"
-        ));
+        assert!(report.contains(&format!(
+            "{} --> {}",
+            mermaid_node_id(&export.edges.imports[0].source),
+            mermaid_node_id(&export.edges.imports[0].target)
+        )));
+        assert!(report.contains(&format!(
+            "{} --> {}",
+            mermaid_node_id(&export.edges.calls[0].source),
+            mermaid_node_id(&export.edges.calls[0].target)
+        )));
+        assert!(report.contains(&format!(
+            "{} --> {}",
+            mermaid_node_id(&export.edges.callers[0].source),
+            mermaid_node_id(&export.edges.callers[0].target)
+        )));
         assert!(report.contains("- callers: 1"));
     }
 }

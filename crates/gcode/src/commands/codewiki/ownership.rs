@@ -1,7 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, btree_map::Entry};
 use std::fmt::Write;
 use std::path::Path;
-use std::sync::{Arc, mpsc};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+    mpsc,
+};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -237,8 +241,9 @@ fn derived_owners_for_files(
 
     let started = Instant::now();
     let mut out = BTreeMap::new();
-    for (index, file) in files.iter().enumerate() {
-        if index >= options.blame_file_cap || started.elapsed() >= options.blame_timeout {
+    let mut blame_misses = 0usize;
+    for file in files {
+        if started.elapsed() >= options.blame_timeout {
             status.partial = true;
             break;
         }
@@ -253,6 +258,11 @@ fn derived_owners_for_files(
             out.insert(file.clone(), cached.contributors.clone());
             continue;
         }
+        if blame_misses >= options.blame_file_cap {
+            status.partial = true;
+            break;
+        }
+        blame_misses += 1;
         let remaining_timeout = options.blame_timeout.saturating_sub(started.elapsed());
         match blame_file_contributors_with_timeout(Arc::clone(&repo), head, file, remaining_timeout)
         {
@@ -291,9 +301,19 @@ fn blame_file_contributors_with_timeout(
     timeout: Duration,
 ) -> BlameContributorsOutcome {
     let file = file.to_string();
-    match run_with_timeout(timeout, move || {
+    match run_with_timeout(timeout, move |cancelled| {
+        if cancelled.load(Ordering::Relaxed) {
+            anyhow::bail!("git blame cancelled before start");
+        }
         let repo = repo.to_thread_local();
-        blame_file_contributors(&repo, head, &file)
+        if cancelled.load(Ordering::Relaxed) {
+            anyhow::bail!("git blame cancelled before blame");
+        }
+        let outcome = blame_file_contributors(&repo, head, &file);
+        if cancelled.load(Ordering::Relaxed) {
+            anyhow::bail!("git blame cancelled after blame");
+        }
+        outcome
     }) {
         Some(Ok(contributors)) => BlameContributorsOutcome::Success(contributors),
         Some(Err(error)) => BlameContributorsOutcome::Error(error),
@@ -304,17 +324,33 @@ fn blame_file_contributors_with_timeout(
 fn run_with_timeout<T, F>(timeout: Duration, work: F) -> Option<T>
 where
     T: Send + 'static,
-    F: FnOnce() -> T + Send + 'static,
+    F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
 {
     let (sender, receiver) = mpsc::channel();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let worker_cancelled = Arc::clone(&cancelled);
     thread::spawn(move || {
-        let _ = sender.send(work());
+        if worker_cancelled.load(Ordering::Relaxed) {
+            return;
+        }
+        let _ = sender.send(work(worker_cancelled));
     });
-    recv_with_timeout(receiver, timeout)
+    recv_with_timeout(receiver, timeout, &cancelled)
 }
 
-fn recv_with_timeout<T>(receiver: mpsc::Receiver<T>, timeout: Duration) -> Option<T> {
-    receiver.recv_timeout(timeout).ok()
+fn recv_with_timeout<T>(
+    receiver: mpsc::Receiver<T>,
+    timeout: Duration,
+    cancelled: &AtomicBool,
+) -> Option<T> {
+    match receiver.recv_timeout(timeout) {
+        Ok(value) => Some(value),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            cancelled.store(true, Ordering::Relaxed);
+            None
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => None,
+    }
 }
 
 fn blame_file_contributors(
@@ -749,6 +785,44 @@ mod tests {
     }
 
     #[test]
+    fn codewiki_ownership_file_cap_counts_only_cache_misses() {
+        let project = git_project_with_two_files();
+        let cached_hash = content_hash(project.path(), "src/a.rs").expect("hash a");
+        let cached_contributor = OwnershipContributor {
+            contributor_id: "cached".to_string(),
+            name: "Cached Owner".to_string(),
+            email: None,
+            lines: 1,
+        };
+        let mut meta = OwnershipMeta {
+            files: BTreeMap::from([(
+                "src/a.rs".to_string(),
+                CachedBlameSummary {
+                    content_hash: cached_hash,
+                    contributors: vec![cached_contributor],
+                },
+            )]),
+        };
+
+        let doc = build_ownership_doc(
+            project.path(),
+            &["src/a.rs".to_string(), "src/b.rs".to_string()],
+            &modules([("src/a.rs", "src"), ("src/b.rs", "src")]),
+            &mut meta,
+            OwnershipOptions {
+                blame_file_cap: 1,
+                blame_timeout: Duration::from_secs(10),
+            },
+        )
+        .expect("ownership doc");
+
+        assert!(!doc.contains("partial: true"));
+        assert!(!doc.contains("Ownership is partial"));
+        assert!(meta.files.contains_key("src/a.rs"));
+        assert!(meta.files.contains_key("src/b.rs"));
+    }
+
+    #[test]
     fn codewiki_ownership_blame_error_marks_partial_without_caching() {
         let project = git_project_with_history();
         std::fs::write(
@@ -778,9 +852,11 @@ mod tests {
     #[test]
     fn codewiki_ownership_recv_timeout_returns_none() {
         let (_sender, receiver) = mpsc::channel::<usize>();
-        let result = recv_with_timeout(receiver, Duration::from_millis(1));
+        let cancelled = AtomicBool::new(false);
+        let result = recv_with_timeout(receiver, Duration::from_millis(1), &cancelled);
 
         assert_eq!(result, None);
+        assert!(cancelled.load(Ordering::Relaxed));
     }
 
     fn modules<const N: usize>(items: [(&str, &str); N]) -> HashMap<String, String> {

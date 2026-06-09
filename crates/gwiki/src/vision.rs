@@ -80,7 +80,7 @@ pub fn write_image_derived_markdown(
         },
         VisionEndpoint::Unavailable(degradation) => (None, Some(degradation)),
     };
-    let relative_path = derived_markdown_path(record);
+    let relative_path = derived_markdown_path(record)?;
     let path = vault_root.join(&relative_path);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| WikiError::Io {

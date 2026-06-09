@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 
 use crate::commands::index;
 use crate::frontmatter;
+use crate::paths;
 use crate::sources::{CompileStatus, SourceKind, SourceManifest, SourceRecord};
 use crate::support::counts::IndexCounts;
 use crate::support::scope::{resolve_command_scope, resolved_scope_identity};
@@ -485,20 +486,7 @@ fn rollback_removed_source(
 }
 
 fn raw_source_path(id: &str) -> Result<PathBuf, WikiError> {
-    let id = id.trim();
-    if id.is_empty()
-        || id.contains('/')
-        || id.contains('\\')
-        || Path::new(id)
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_)))
-    {
-        return Err(WikiError::InvalidInput {
-            field: "source_id",
-            message: format!("unsafe source id `{id}`"),
-        });
-    }
-    Ok(Path::new("raw").join(format!("{id}.md")))
+    paths::raw_source_path(id)
 }
 
 fn source_asset_path(vault_root: &Path, value: &str) -> Result<PathBuf, WikiError> {

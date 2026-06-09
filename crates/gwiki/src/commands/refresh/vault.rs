@@ -2,22 +2,10 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use crate::WikiError;
+use crate::paths;
 
 pub(crate) fn raw_source_path(id: &str) -> Result<PathBuf, WikiError> {
-    let id = id.trim();
-    if id.is_empty()
-        || id.contains('/')
-        || id.contains('\\')
-        || Path::new(id)
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_)))
-    {
-        return Err(WikiError::InvalidInput {
-            field: "source_id",
-            message: format!("unsafe source id `{id}`"),
-        });
-    }
-    Ok(Path::new("raw").join(format!("{id}.md")))
+    paths::raw_source_path(id)
 }
 
 /// Returns vault-relative raw asset paths whose file stem matches `id`.

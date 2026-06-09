@@ -1,9 +1,10 @@
 use gobby_core::ai_context::{AiConfigSource, AiContext};
-use gobby_core::config::{AiRouting, ConfigSource, QdrantConfig, resolve_embedding_config};
+use gobby_core::config::{AiRouting, ConfigSource, resolve_embedding_config};
 use gobby_core::gobby_home;
 use serde_json::json;
 
 use crate::graph::GraphExportOptions;
+use crate::support::config::qdrant_config_has_url;
 use crate::support::env::database_url_for;
 use crate::support::scope::resolve_selection_context;
 use crate::support::search::PostgresConfigSource;
@@ -113,13 +114,6 @@ fn has_embedding_capability(routing: AiRouting, source: &mut impl ConfigSource) 
             }
         }
     }
-}
-
-fn qdrant_config_has_url(config: &QdrantConfig) -> bool {
-    config
-        .url
-        .as_deref()
-        .is_some_and(|url| !url.trim().is_empty())
 }
 
 #[cfg(test)]

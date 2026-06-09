@@ -1,5 +1,5 @@
 use gobby_core::config::{
-    ConfigSource, EnvOnlySource, LayeredConfigSource, resolve_indexing_config,
+    ConfigSource, EnvOnlySource, LayeredConfigSource, QdrantConfig, resolve_indexing_config,
 };
 use gobby_core::provisioning::{StandaloneConfig, gcore_config_path};
 use postgres::Client;
@@ -57,6 +57,13 @@ pub(crate) fn shared_code_graph_limits_from_conn(
     let primary = PostgresConfigSource { conn };
     let mut source = LayeredConfigSource::new(Some(primary), standalone);
     resolve_shared_code_graph_limits(&mut source)
+}
+
+pub(crate) fn qdrant_config_has_url(config: &QdrantConfig) -> bool {
+    config
+        .url
+        .as_deref()
+        .is_some_and(|url| !url.trim().is_empty())
 }
 
 fn read_standalone_config() -> Result<Option<StandaloneConfig>, WikiError> {

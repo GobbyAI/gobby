@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::search::SearchScope;
+use uuid::Uuid;
 
 pub mod analytics;
 pub mod context;
@@ -505,7 +506,7 @@ fn citation_node_id(scope: &SearchScope, source_path: &Path, document_path: &Pat
     scoped_id(
         scope,
         "citation",
-        &format!("{}:{}", graph_path(source_path), graph_path(document_path)),
+        &[graph_path(source_path), graph_path(document_path)].join("\0"),
     )
 }
 
@@ -518,11 +519,36 @@ fn code_endpoint_id(scope: &SearchScope, endpoint: &str) -> String {
 }
 
 fn scoped_id(scope: &SearchScope, kind: &str, value: &str) -> String {
-    format!(
-        "{kind}:{}:{}:{value}",
+    let key = format!(
+        "kind={kind}\0scope_kind={}\0scope_value={}\0value={value}",
         scope.scope_kind(),
         scope.scope_value()
-    )
+    );
+    let stable = Uuid::new_v5(&Uuid::NAMESPACE_URL, key.as_bytes());
+    let readable = readable_id_prefix(value);
+    format!("{kind}-{readable}-{stable}")
+}
+
+fn readable_id_prefix(value: &str) -> String {
+    let mut prefix = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    while prefix.contains("--") {
+        prefix = prefix.replace("--", "-");
+    }
+    let prefix = prefix.trim_matches('-');
+    if prefix.is_empty() {
+        "id".to_string()
+    } else {
+        prefix.chars().take(48).collect()
+    }
 }
 
 fn document_kind(path: &Path) -> &'static str {
@@ -684,6 +710,16 @@ mod tests {
         assert_eq!(joined.matches(SUPPORTS_REL).count(), 0);
         assert_eq!(joined.matches(MENTIONS_TARGET_REL).count(), 1);
         assert!(joined.contains(WIKI_TARGET_LABEL));
+    }
+
+    #[test]
+    fn scoped_graph_ids_hash_structured_values() {
+        let scope = SearchScope::project("project:1");
+        let id = scoped_id(&scope, "document", "knowledge/topics/a:b.md");
+
+        assert!(id.starts_with("document-knowledge-topics-a-b-md-"));
+        assert_eq!(id, scoped_id(&scope, "document", "knowledge/topics/a:b.md"));
+        assert_ne!(id, "document:project:project:1:knowledge/topics/a:b.md");
     }
 
     #[test]

@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use crate::search::{SearchSource, SearchSourceExplanation, WikiSearchResponse, WikiSearchResult};
+use crate::search::{
+    SearchError, SearchSource, SearchSourceExplanation, WikiSearchResponse, WikiSearchResult,
+};
 use gobby_core::degradation::DegradationKind;
 
 pub fn fuse_sources(
@@ -9,21 +11,21 @@ pub fn fuse_sources(
     graph_hits: Vec<WikiSearchResult>,
     degradations: Vec<DegradationKind>,
     limit: usize,
-) -> WikiSearchResponse {
+) -> Result<WikiSearchResponse, SearchError> {
     if limit == 0 {
-        return WikiSearchResponse {
+        return Ok(WikiSearchResponse {
             results: Vec::new(),
             degradations,
-        };
+        });
     }
 
-    let bm25_keys = ranked_keys(&bm25_hits);
-    let semantic_keys = ranked_keys(&semantic_hits);
-    let graph_keys = ranked_keys(&graph_hits);
+    let bm25_keys = ranked_keys(&bm25_hits)?;
+    let semantic_keys = ranked_keys(&semantic_hits)?;
+    let graph_keys = ranked_keys(&graph_hits)?;
 
     let mut by_key = BTreeMap::new();
     for hit in bm25_hits.into_iter().chain(semantic_hits).chain(graph_hits) {
-        let key = hit.fusion_key();
+        let key = hit.fusion_key()?;
         by_key
             .entry(key)
             .and_modify(|existing| merge_hit_metadata(existing, &hit))
@@ -83,13 +85,13 @@ pub fn fuse_sources(
         .collect::<Vec<_>>();
     results.truncate(limit);
 
-    WikiSearchResponse {
+    Ok(WikiSearchResponse {
         results,
         degradations,
-    }
+    })
 }
 
-fn ranked_keys(hits: &[WikiSearchResult]) -> Vec<String> {
+fn ranked_keys(hits: &[WikiSearchResult]) -> Result<Vec<String>, SearchError> {
     hits.iter().map(WikiSearchResult::fusion_key).collect()
 }
 
@@ -133,7 +135,8 @@ mod tests {
                 unavailable: vec!["semantic".to_string()],
             }],
             10,
-        );
+        )
+        .expect("fusion succeeds");
 
         let fused = response
             .results
@@ -190,12 +193,13 @@ mod tests {
             )],
             Vec::new(),
             10,
-        );
+        )
+        .expect("fusion succeeds");
 
         assert_eq!(response.results.len(), 1);
         let fused = &response.results[0];
         assert_eq!(
-            fused.fusion_key(),
+            fused.fusion_key().expect("fusion key"),
             "project:project-1:knowledge/topics/rust.md"
         );
         assert_eq!(
@@ -218,6 +222,21 @@ mod tests {
                 SearchSource::Semantic
             ]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fusion_rejects_invalid_utf8_paths() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let mut hit = search_result("document:invalid", SearchSource::Bm25);
+        hit.path = OsString::from_vec(vec![0xff]).into();
+
+        let error = fuse_sources(vec![hit], Vec::new(), Vec::new(), Vec::new(), 10)
+            .expect_err("invalid path rejected");
+
+        assert!(matches!(error, SearchError::InvalidPath { .. }));
     }
 
     fn search_result(id: &str, source: SearchSource) -> WikiSearchResult {

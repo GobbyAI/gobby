@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 
 use crate::frontmatter::parse_frontmatter;
 use crate::provenance::ProvenanceGraph;
+use crate::support::scope::scope_includes_page;
 use crate::{ScopeIdentity, WikiError, audit, health, lint};
 
 const LIBRARIAN_DIR: &str = "meta/librarian";
@@ -114,7 +115,10 @@ pub fn run(
     let audit_report =
         audit::run_with_options(vault_root, scope.clone(), audit::AuditOptions::from_env())?;
     let lint_report = lint::run(vault_root, scope.clone())?;
-    let pages = lint::collect_pages(vault_root)?;
+    let pages = lint::collect_pages(vault_root)?
+        .into_iter()
+        .filter(|page| scope_includes_page(&scope, &page.relative_path))
+        .collect::<Vec<_>>();
     let provenance = ProvenanceGraph::load_from_vault(vault_root)?;
 
     let stale_pages = health_report.stale_pages.clone();
@@ -496,7 +500,7 @@ mod tests {
             std::fs::read_to_string(root.join("knowledge/topics/stale.md")).expect("read page");
         let report = run(
             root,
-            ScopeIdentity::topic("ops"),
+            ScopeIdentity::project("project-1"),
             Options {
                 shared_code_graph_available: true,
                 ..Options::offline()
@@ -510,7 +514,10 @@ mod tests {
         );
         assert_eq!(
             report.check("missing_citations").items,
-            vec![PathBuf::from("knowledge/topics/stale.md")]
+            vec![
+                PathBuf::from("code/example.md"),
+                PathBuf::from("knowledge/topics/stale.md"),
+            ]
         );
         assert_eq!(
             report.check("broken_links").items,
@@ -552,6 +559,35 @@ mod tests {
                 .iter()
                 .any(|task| task.description.contains(&source.id))
         );
+    }
+
+    #[test]
+    fn librarian_filters_codewiki_checks_to_selected_scope() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write_page(
+            root,
+            "knowledge/topics/topic.md",
+            "# Topic\nSupported claim.\n",
+        );
+        write_page(
+            root,
+            "code/example.md",
+            "---\ntitle: Example code\ngenerated_by: gcode-codewiki\ncodewiki_status: stale\n---\n# Example code\nDocuments old code.\n",
+        );
+
+        let report = run(
+            root,
+            ScopeIdentity::topic("ops"),
+            Options {
+                shared_code_graph_available: true,
+                ..Options::offline()
+            },
+        )
+        .expect("librarian runs");
+
+        assert!(report.check("weak_provenance").items.is_empty());
+        assert!(report.check("outdated_codewiki").items.is_empty());
     }
 
     #[test]

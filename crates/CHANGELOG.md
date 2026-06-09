@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+#### gcode/gwiki
+
+- **Pre-release embedding provider names are canonical** — setup accepts
+  `lmstudio`, `ollama`, `openai-compatible`, or `none`; older aliases are
+  invalid.
+- **Canonical wiki layout** — `gwiki` uses `knowledge/**` for compiled content
+  and does not read deprecated `wiki/**` content paths.
+
 ## [1.0.0] — gcode
 
 First stable release of `gcode`. The CLI surface, JSON envelopes, and PostgreSQL

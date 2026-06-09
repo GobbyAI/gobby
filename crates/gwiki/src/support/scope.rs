@@ -1,5 +1,8 @@
+use std::path::Path;
+
 use crate::{
-    ScopeIdentity, ScopeSelection, WikiError, indexer, scope as wiki_scope, search, session, store,
+    ScopeIdentity, ScopeKind, ScopeSelection, WikiError, indexer, scope as wiki_scope, search,
+    session, store,
 };
 
 use super::config;
@@ -94,6 +97,13 @@ pub(crate) fn resolved_scope_identity(scope: &wiki_scope::ResolvedScope) -> Scop
         ScopePrecedence::Topic(topic) => ScopeIdentity::topic(topic),
         ScopePrecedence::Project(project_id) => ScopeIdentity::project(project_id),
         ScopePrecedence::DefaultProject => ScopeIdentity::project(DEFAULT_PROJECT_ID),
+    }
+}
+
+pub(crate) fn scope_includes_page(scope: &ScopeIdentity, path: &Path) -> bool {
+    match scope.kind {
+        ScopeKind::Topic => path.starts_with(Path::new("knowledge").join("topics")),
+        ScopeKind::Project | ScopeKind::Global => true,
     }
 }
 

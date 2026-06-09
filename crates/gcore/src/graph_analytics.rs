@@ -434,7 +434,8 @@ impl BridgeSearch {
                         is_articulation: false,
                     });
                 } else {
-                    self.low[node] = self.low[node].min(self.discovery[neighbor].unwrap_or(0));
+                    self.low[node] = self.low[node]
+                        .min(self.discovery[neighbor].expect("neighbor already discovered"));
                 }
                 continue;
             }
@@ -450,7 +451,8 @@ impl BridgeSearch {
             if let Some(parent) = stack.last_mut() {
                 let parent_node = parent.node;
                 self.low[parent_node] = self.low[parent_node].min(self.low[finished.node]);
-                let parent_discovery = self.discovery[parent_node].unwrap_or(0);
+                let parent_discovery =
+                    self.discovery[parent_node].expect("parent node already discovered");
                 if let Some(edge_index) = finished.parent_edge
                     && self.low[finished.node] > parent_discovery
                 {

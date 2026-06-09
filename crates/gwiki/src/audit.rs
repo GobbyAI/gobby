@@ -11,8 +11,9 @@ use crate::markdown::{
 };
 use crate::provenance::ProvenanceGraph;
 use crate::sources::SourceManifest;
+use crate::support::scope::scope_includes_page;
 use crate::synthesis::slugify;
-use crate::{ScopeIdentity, ScopeKind, WikiError};
+use crate::{ScopeIdentity, WikiError};
 
 const DEFAULT_IGNORED_SECTIONS: &[&str] = &[
     "citations",
@@ -135,13 +136,6 @@ pub fn run_with_options(
         unsupported_claims,
         source_context,
     })
-}
-
-fn scope_includes_page(scope: &ScopeIdentity, path: &Path) -> bool {
-    match scope.kind {
-        ScopeKind::Topic => path.starts_with(Path::new("knowledge").join("topics")),
-        ScopeKind::Project | ScopeKind::Global => true,
-    }
 }
 
 pub fn render_text(report: &AuditReport) -> String {

@@ -27,16 +27,22 @@ pub fn collection_name(
     scope: CollectionScope<'_>,
 ) -> Result<String, CollectionNameError> {
     match scope {
-        CollectionScope::Project(id) => Ok(format!("{namespace}_project_{id}")),
-        CollectionScope::Topic(name) => Ok(format!("{namespace}_topic_{name}")),
+        CollectionScope::Project(id) => {
+            validate_collection_name_component(id)?;
+            Ok(format!("{namespace}_project_{id}"))
+        }
+        CollectionScope::Topic(name) => {
+            validate_collection_name_component(name)?;
+            Ok(format!("{namespace}_topic_{name}"))
+        }
         CollectionScope::Custom(name) => {
-            validate_custom_collection_name(name)?;
+            validate_collection_name_component(name)?;
             Ok(name.to_string())
         }
     }
 }
 
-fn validate_custom_collection_name(name: &str) -> Result<(), CollectionNameError> {
+fn validate_collection_name_component(name: &str) -> Result<(), CollectionNameError> {
     if name.is_empty() {
         return Err(CollectionNameError::Empty);
     }
@@ -99,6 +105,20 @@ mod tests {
             assert!(
                 collection_name("gcode", CollectionScope::Custom(invalid)).is_err(),
                 "{invalid:?} should fail"
+            );
+        }
+    }
+
+    #[test]
+    fn scoped_collection_names_reject_invalid_components() {
+        for invalid in ["", "bad/name", "bad:name", "bad name"] {
+            assert!(
+                collection_name("gwiki", CollectionScope::Project(invalid)).is_err(),
+                "project id {invalid:?} should fail"
+            );
+            assert!(
+                collection_name("gwiki", CollectionScope::Topic(invalid)).is_err(),
+                "topic {invalid:?} should fail"
             );
         }
     }

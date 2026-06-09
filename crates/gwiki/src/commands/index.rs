@@ -4,15 +4,15 @@ use std::path::{Path, PathBuf};
 use gobby_core::ai::effective_route;
 use gobby_core::ai_context::{AiConfigSource, AiContext, LocalAiConfigSource};
 use gobby_core::config::{
-    AiCapability, AiRouting, ConfigSource, QdrantConfig, resolve_embedding_config,
-    resolve_falkordb_config, resolve_qdrant_config,
+    AiCapability, AiRouting, ConfigSource, resolve_embedding_config, resolve_falkordb_config,
+    resolve_qdrant_config,
 };
 use postgres::Client;
 use serde_json::json;
 
 use crate::ingest::{self, IngestResult};
 use crate::search::SearchScope;
-use crate::support::config::{index_options_from_conn, local_index_options};
+use crate::support::config::{index_options_from_conn, local_index_options, qdrant_config_has_url};
 use crate::support::counts::{IndexCounts, index_counts, postgres_index_counts};
 use crate::support::env::database_url_for;
 use crate::support::scope::{
@@ -395,13 +395,6 @@ fn effective_embedding_route(context: &AiContext) -> AiRouting {
             }
         }
     }
-}
-
-fn qdrant_config_has_url(config: &QdrantConfig) -> bool {
-    config
-        .url
-        .as_deref()
-        .is_some_and(|url| !url.trim().is_empty())
 }
 
 fn indexed_counts_for_postgres(

@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use gobby_core::ai::effective_route;
 use gobby_core::ai_context::AiContext;
 use gobby_core::config::{
     AiCapability, AiRouting, FalkorConfig, QdrantConfig, resolve_embedding_config,
@@ -17,6 +18,7 @@ use crate::search::semantic::{
     GobbyQdrantBackend, OpenAiEmbeddingBackend, QueryEmbedder, SemanticEmbedding,
     SemanticSearchRequest, VectorSearchBackend, search_semantic,
 };
+use crate::support::config::qdrant_config_has_url;
 use crate::{ScopeIdentity, WikiError};
 
 const DEGRADE_FALKORDB: &str = "falkordb";
@@ -476,18 +478,14 @@ fn semantic_degraded_sources(degradation: &DegradationKind) -> Vec<String> {
 }
 
 fn qdrant_source_configured(optional: &OptionalBenchmarkSources) -> bool {
-    optional
-        .qdrant
-        .as_ref()
-        .and_then(|config| config.url.as_deref())
-        .is_some_and(|url| !url.trim().is_empty())
+    optional.qdrant.as_ref().is_some_and(qdrant_config_has_url)
 }
 
 fn resolve_benchmark_embedding(
     context: &AiContext,
     source: &mut impl gobby_core::config::ConfigSource,
 ) -> Option<SemanticEmbedding> {
-    match effective_benchmark_route(context, AiCapability::Embed) {
+    match effective_route(context, AiCapability::Embed) {
         AiRouting::Off => None,
         AiRouting::Daemon => {
             #[cfg(feature = "ai")]
@@ -538,7 +536,7 @@ fn model_provider(optional: &OptionalBenchmarkSources) -> AvailabilityReport {
 }
 
 fn model_provider_available(context: &AiContext) -> bool {
-    let route = effective_benchmark_route(context, AiCapability::TextGenerate);
+    let route = effective_route(context, AiCapability::TextGenerate);
     let binding = context.binding(AiCapability::TextGenerate);
     match route {
         AiRouting::Off => false,
@@ -548,29 +546,6 @@ fn model_provider_available(context: &AiContext) -> bool {
                 && binding.model.as_deref().is_some_and(non_empty)
         }
         AiRouting::Auto => unreachable!("effective benchmark route resolves Auto"),
-    }
-}
-
-fn effective_benchmark_route(context: &AiContext, capability: AiCapability) -> AiRouting {
-    let binding = context.binding(capability);
-    match binding.routing {
-        AiRouting::Auto => {
-            #[cfg(feature = "ai")]
-            {
-                AiRouting::Daemon
-            }
-            #[cfg(not(feature = "ai"))]
-            {
-                if binding.api_base.as_deref().is_some_and(non_empty)
-                    && binding.model.as_deref().is_some_and(non_empty)
-                {
-                    AiRouting::Direct
-                } else {
-                    AiRouting::Off
-                }
-            }
-        }
-        route => route,
     }
 }
 

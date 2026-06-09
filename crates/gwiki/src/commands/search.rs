@@ -1,13 +1,16 @@
 #[cfg(feature = "ai")]
 use gobby_core::ai::effective_route;
 use gobby_core::ai_context::{AiConfigSource, AiContext};
+#[cfg(test)]
+use gobby_core::config::QdrantConfig;
 use gobby_core::config::{
-    AiCapability, AiRouting, QdrantConfig, resolve_embedding_config, resolve_falkordb_config,
+    AiCapability, AiRouting, resolve_embedding_config, resolve_falkordb_config,
     resolve_qdrant_config,
 };
 
 use crate::output::{SearchOutput, SearchResultOutput};
 use crate::search as wiki_search;
+use crate::support::config::qdrant_config_has_url;
 use crate::support::env::database_url_for;
 use crate::support::scope::{
     indexed_store_for_selection, resolve_command_scope, resolved_scope_identity,
@@ -158,13 +161,6 @@ fn required_search_config(service: &'static str) -> WikiError {
     }
 }
 
-fn qdrant_config_has_url(config: &QdrantConfig) -> bool {
-    config
-        .url
-        .as_deref()
-        .is_some_and(|url| !url.trim().is_empty())
-}
-
 fn resolve_semantic_embedding(
     context: &AiContext,
     source: &mut impl gobby_core::config::ConfigSource,
@@ -264,35 +260,32 @@ where
             include_semantic: input.include_semantic,
         },
     )?;
-    let results = response
-        .results
-        .into_iter()
-        .map(|result| {
-            let fusion_key = result.fusion_key();
-            SearchResultOutput {
-                title: result.title,
-                fusion_key,
-                wiki_page: result.path,
-                source_path: result.source_path,
-                snippet: result.snippet,
-                score: result.score,
-                sources: result
-                    .sources
-                    .iter()
-                    .map(|source| source.as_str().to_string())
-                    .collect(),
-                explanations: result
-                    .explanations
-                    .iter()
-                    .map(|explanation| crate::output::SearchSourceExplanationOutput {
-                        source: explanation.source.as_str().to_string(),
-                        rank: explanation.rank,
-                        score: explanation.score,
-                    })
-                    .collect(),
-            }
-        })
-        .collect::<Vec<_>>();
+    let mut results = Vec::with_capacity(response.results.len());
+    for result in response.results {
+        let fusion_key = result.fusion_key()?;
+        results.push(SearchResultOutput {
+            title: result.title,
+            fusion_key,
+            wiki_page: result.path,
+            source_path: result.source_path,
+            snippet: result.snippet,
+            score: result.score,
+            sources: result
+                .sources
+                .iter()
+                .map(|source| source.as_str().to_string())
+                .collect(),
+            explanations: result
+                .explanations
+                .iter()
+                .map(|explanation| crate::output::SearchSourceExplanationOutput {
+                    source: explanation.source.as_str().to_string(),
+                    rank: explanation.rank,
+                    score: explanation.score,
+                })
+                .collect(),
+        });
+    }
     let degradations = response
         .degradations
         .iter()

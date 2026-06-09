@@ -14,7 +14,7 @@ use crate::health;
 use crate::lint::collect_pages;
 use crate::provenance::ProvenanceGraph;
 use crate::sources::{SourceKind, SourceManifest, SourceRecord};
-use crate::support::scope::resolve_selection_context;
+use crate::support::scope::{resolve_selection_context, scope_includes_page};
 use crate::{CommandOutcome, ScopeIdentity, ScopeSelection, WikiError};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -174,7 +174,7 @@ pub(crate) fn build_report(
     let provenance = ProvenanceGraph::load_from_vault(vault_root)?;
     let health = health::inspect(vault_root, scope.clone())?;
     let credibility = credibility_section(&manifest.entries, &provenance);
-    let coverage_gaps = coverage_gap_section(vault_root, &provenance)?;
+    let coverage_gaps = coverage_gap_section(vault_root, &scope, &provenance)?;
     let contradictions = contradiction_section(&provenance, ai_available);
     let stale_sources = stale_source_section(&health);
     let confidence = confidence_section(
@@ -289,10 +289,14 @@ fn corroborating_sources(source: &SourceRecord, provenance: &ProvenanceGraph) ->
 
 fn coverage_gap_section(
     vault_root: &Path,
+    scope: &ScopeIdentity,
     provenance: &ProvenanceGraph,
 ) -> Result<CoverageGapSection, WikiError> {
     let mut gaps = Vec::new();
-    for page in collect_pages(vault_root)? {
+    for page in collect_pages(vault_root)?
+        .into_iter()
+        .filter(|page| scope_includes_page(scope, &page.relative_path))
+    {
         for heading in page.parsed.headings {
             let section_id = section_id_for(&page.relative_path, &heading.title);
             if provenance
@@ -690,6 +694,38 @@ mod tests {
         assert!(!report.markdown.contains("Shared claim."));
         assert!(!report.markdown.contains("src-1, src-2"));
         assert!(report.markdown.contains("No contradictions reported."));
+    }
+
+    #[test]
+    fn citation_quality_coverage_gaps_apply_selected_scope() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_page(
+            temp.path(),
+            "knowledge/topics/topic.md",
+            "# Topic\n\n## Missing\nTopic claim.\n",
+        );
+        write_page(
+            temp.path(),
+            "knowledge/concepts/concept.md",
+            "# Concept\n\n## Missing\nConcept claim.\n",
+        );
+        SourceManifest::default()
+            .write(temp.path())
+            .expect("write source manifest");
+
+        let report =
+            build_report(temp.path(), ScopeIdentity::topic("rust"), false).expect("topic report");
+
+        assert!(
+            report
+                .markdown
+                .contains("knowledge/topics/topic.md#missing")
+        );
+        assert!(
+            !report
+                .markdown
+                .contains("knowledge/concepts/concept.md#missing")
+        );
     }
 
     #[test]

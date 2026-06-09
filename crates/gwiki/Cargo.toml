@@ -59,6 +59,7 @@ quick-xml = { version = "0.38", optional = true }
 zip = { version = "4", default-features = false, features = ["deflate"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
+# Reserved for Windows symlink handling in compile::tests::compile_rejects_target_page_through_symlinked_parent.
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]

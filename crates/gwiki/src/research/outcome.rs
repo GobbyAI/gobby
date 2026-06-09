@@ -65,22 +65,24 @@ pub(crate) fn outcome_code_citations(
                 log::debug!("skipping outcome code citation with unsafe `file`: {file}");
                 continue;
             };
-            citations.push(
-                ResearchCodeCitation::new(
-                    file,
-                    value
-                        .get("line")
-                        .and_then(Value::as_u64)
-                        .and_then(|line| usize::try_from(line).ok()),
-                    value
-                        .get("symbol")
-                        .and_then(Value::as_str)
-                        .map(|symbol| symbol.trim().to_string())
-                        .filter(|symbol| !symbol.is_empty()),
-                    vec![provenance.to_string()],
-                )
-                .expect("outcome code citations have provenance"),
-            );
+            match ResearchCodeCitation::new(
+                file,
+                value
+                    .get("line")
+                    .and_then(Value::as_u64)
+                    .and_then(|line| usize::try_from(line).ok()),
+                value
+                    .get("symbol")
+                    .and_then(Value::as_str)
+                    .map(|symbol| symbol.trim().to_string())
+                    .filter(|symbol| !symbol.is_empty()),
+                vec![provenance.to_string()],
+            ) {
+                Ok(citation) => citations.push(citation),
+                Err(error) => {
+                    log::debug!("skipping outcome code citation with invalid provenance: {error}");
+                }
+            }
         }
     }
     dedup_code_citations(citations)
@@ -415,6 +417,19 @@ mod tests {
 
         assert_eq!(citations.len(), 1);
         assert_eq!(citations[0].file(), "src/lib.rs");
+    }
+
+    #[test]
+    fn outcome_code_citations_skip_empty_provenance() {
+        let payload = serde_json::json!({
+            "code_citations": [
+                {"file": "src/lib.rs", "line": 7, "symbol": "handler"}
+            ]
+        });
+
+        let citations = outcome_code_citations(&payload, "");
+
+        assert!(citations.is_empty());
     }
 
     #[test]

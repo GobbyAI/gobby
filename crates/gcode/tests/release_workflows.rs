@@ -203,9 +203,9 @@ fn release_workflows_use_github_cli_release_creation() {
         );
         assert!(
             workflow.contains(&format!(
-                "assets=({tool}-*.tar.gz {tool}-*.zip {tool}-*.sha256)"
+                "assets=({tool}-*.tar.gz {tool}-*.zip {tool}-*.tar.gz.sha256 {tool}-*.zip.sha256)"
             )),
-            "release-{tool}.yml should include checksum files in the gh release asset array"
+            "release-{tool}.yml should include archive-specific checksum files in the gh release asset array"
         );
     }
 }
@@ -328,9 +328,9 @@ fn release_workflows_generate_and_upload_archive_checksums() {
         let release_body = &workflow[release_upload..];
         assert!(
             workflow[checksum_step..].contains(&format!(
-                "assets=({tool}-*.tar.gz {tool}-*.zip {tool}-*.sha256)"
+                "assets=({tool}-*.tar.gz {tool}-*.zip {tool}-*.tar.gz.sha256 {tool}-*.zip.sha256)"
             )),
-            "release-{tool}.yml should add checksum files to the gh release asset array"
+            "release-{tool}.yml should add archive-specific checksum files to the gh release asset array"
         );
         assert!(
             release_body.contains(GH_RELEASE_CREATE),

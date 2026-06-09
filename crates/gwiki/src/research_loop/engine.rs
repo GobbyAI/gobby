@@ -561,7 +561,6 @@ fn citation_matches_source(citation: &ResearchCodeCitation, source: &str) -> boo
     }
     source_components == citation_components
         || (citation_components.len() >= 2 && source_components.ends_with(&citation_components))
-        || (source_components.len() >= 2 && citation_components.ends_with(&source_components))
 }
 
 fn path_components(value: &str) -> Vec<&str> {
@@ -622,7 +621,7 @@ mod tests {
             &citation("src/lib.rs"),
             "other/src/lib.rs"
         ));
-        assert!(citation_matches_source(
+        assert!(!citation_matches_source(
             &citation("other/src/lib.rs"),
             "src/lib.rs"
         ));

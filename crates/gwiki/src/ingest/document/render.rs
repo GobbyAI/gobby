@@ -43,7 +43,7 @@ pub(crate) fn write_document_derived_markdown(
     extraction: Option<&DocumentExtraction>,
     degradation: Option<&DocumentDegradation>,
 ) -> Result<PathBuf, WikiError> {
-    let relative_path = derived_markdown_path(record);
+    let relative_path = derived_markdown_path(record)?;
     let path = vault_root.join(&relative_path);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| WikiError::Io {

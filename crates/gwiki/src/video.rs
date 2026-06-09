@@ -202,7 +202,7 @@ pub fn write_video_derived_markdown(
 ) -> Result<VideoMarkdownResult, WikiError> {
     let aligned_segments =
         align_transcript_and_frames(request.transcript_segments, request.frame_descriptions);
-    let relative_path = derived_markdown_path(record);
+    let relative_path = derived_markdown_path(record)?;
     let path = vault_root.join(&relative_path);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| WikiError::Io {
