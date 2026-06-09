@@ -29,6 +29,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_VECTOR_EMBEDDING_PROBE_TEXT = "gobby code index embedding probe"
+
 
 @dataclass
 class _MissingProject:
@@ -45,6 +47,26 @@ async def _run_db(
     if run_db is None:
         return await asyncio.to_thread(func, *args, **kwargs)
     return await run_db(func, *args, **kwargs)
+
+
+async def _build_embed_model(embeddings_config: EmbeddingsConfig) -> Any:
+    from gobby.search.embeddings import generate_embeddings
+
+    class _EmbedAdapter:
+        """Adapter wrapping generate_embeddings() to match embed_model.embed() interface."""
+
+        async def embed(self, texts: list[str]) -> list[list[float]]:
+            return await generate_embeddings(
+                texts,
+                model=embeddings_config.model,
+                api_base=embeddings_config.api_base,
+                api_key=embeddings_config.api_key,
+                expected_dim=embeddings_config.dim,
+            )
+
+    embed_model = _EmbedAdapter()
+    await embed_model.embed([_VECTOR_EMBEDDING_PROBE_TEXT])
+    return embed_model
 
 
 async def sync_worker_loop(
@@ -65,30 +87,22 @@ async def sync_worker_loop(
     """
     interval = config.sync_worker_interval_seconds
     batch_size = config.sync_worker_batch_size
+    vector_batch_size = config.sync_worker_vector_batch_size
     embed_model = None
 
-    logger.info(f"Code index sync worker started (interval={interval}s, batch={batch_size})")
+    logger.info(
+        "Code index sync worker started (interval=%ss, batch=%s, vector_batch=%s)",
+        interval,
+        batch_size,
+        vector_batch_size,
+    )
 
     # Set up embedding adapter for vector sync
     if config.embedding_enabled and vector_store is not None:
         try:
-            from gobby.search.embeddings import generate_embeddings
-
-            class _EmbedAdapter:
-                """Adapter wrapping generate_embeddings() to match embed_model.embed() interface."""
-
-                async def embed(self, texts: list[str]) -> list[list[float]]:
-                    return await generate_embeddings(
-                        texts,
-                        model=embeddings_config.model,
-                        api_base=embeddings_config.api_base,
-                        api_key=embeddings_config.api_key,
-                        expected_dim=embeddings_config.dim,
-                    )
-
-            embed_model = _EmbedAdapter()
+            embed_model = await _build_embed_model(embeddings_config)
         except Exception as e:
-            logger.warning(f"Sync worker: embedding unavailable: {e}")
+            logger.warning("Sync worker: embedding unavailable at startup: %s", e)
 
     while not shutdown_flag.is_set():
         gcode_gateway = context.gcode_gateway
@@ -338,40 +352,45 @@ async def _sync_vectors(
     except Exception:
         pass  # Collection may not exist yet
 
-    # Build embedding texts (same format as CodeIndexer._embed_symbols)
-    texts = []
-    ids = []
-    for sym in symbols:
-        parts = [sym.qualified_name]
-        if sym.signature:
-            parts.append(sym.signature)
-        if sym.docstring:
-            parts.append(sym.docstring[:200])
-        texts.append(" ".join(parts))
-        ids.append(sym.id)
+    for start in range(0, len(symbols), config.sync_worker_vector_batch_size):
+        batch = symbols[start : start + config.sync_worker_vector_batch_size]
 
-    # Generate embeddings
-    embeddings = await embed_model.embed(texts)
+        # Build embedding texts (same format as CodeIndexer._embed_symbols)
+        texts = []
+        ids = []
+        for sym in batch:
+            parts = [sym.qualified_name]
+            if sym.signature:
+                parts.append(sym.signature)
+            if sym.docstring:
+                parts.append(sym.docstring[:200])
+            texts.append(" ".join(parts))
+            ids.append(sym.id)
 
-    # Build upsert items
-    items = []
-    for i, emb in enumerate(embeddings):
-        if emb is not None:
-            items.append(
-                (
-                    ids[i],
-                    emb,
-                    {
-                        "name": symbols[i].name,
-                        "kind": symbols[i].kind,
-                        "file_path": symbols[i].file_path,
-                        "project_id": project_id,
-                    },
-                )
+        embeddings = await embed_model.embed(texts)
+        if len(embeddings) != len(batch):
+            raise RuntimeError(
+                f"Embedding backend returned {len(embeddings)} vector(s) for {len(batch)} symbol(s)"
             )
 
-    if items:
-        await vector_store.batch_upsert(items=items, collection_name=collection)
+        items = []
+        for i, emb in enumerate(embeddings):
+            if emb is not None:
+                items.append(
+                    (
+                        ids[i],
+                        emb,
+                        {
+                            "name": batch[i].name,
+                            "kind": batch[i].kind,
+                            "file_path": batch[i].file_path,
+                            "project_id": project_id,
+                        },
+                    )
+                )
+
+        if items:
+            await vector_store.batch_upsert(items=items, collection_name=collection)
 
 
 async def _sync_graph(

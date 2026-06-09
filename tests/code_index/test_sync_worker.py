@@ -40,6 +40,7 @@ class RecoveringVectorStore:
         self.collections: set[str] = set()
         self.calls: list[tuple[str, str, Any]] = []
         self.items: list[tuple[str, list[float], dict[str, Any]]] = []
+        self.upsert_batches: list[list[tuple[str, list[float], dict[str, Any]]]] = []
 
     async def ensure_collection(
         self, collection_name: str, embedding_dim: int | None = None
@@ -60,7 +61,8 @@ class RecoveringVectorStore:
         self.calls.append(("batch_upsert", collection_name, len(items)))
         if collection_name not in self.collections:
             raise MissingCollectionError(collection_name)
-        self.items = items
+        self.upsert_batches.append(items)
+        self.items.extend(items)
 
 
 class SyncWorkerVectorStore(RecoveringVectorStore):
@@ -731,6 +733,105 @@ async def test_sync_file_ensures_missing_vector_collection_before_upsert(
     synced_file = code_storage.get_file(project_id, file_path)
     assert synced_file is not None
     assert synced_file.vectors_synced is True
+
+
+async def test_sync_file_batches_vector_embedding_and_upsert(
+    code_storage: CodeIndexStorage,
+    sample_symbols: list[Symbol],
+    tmp_path: Path,
+) -> None:
+    project_id = "proj-1"
+    file_path = "src/app.py"
+    _write_source(tmp_path)
+    indexed_file = _indexed_file(vectors_synced=False, graph_synced=True)
+    code_storage.upsert_project_stats(
+        IndexedProject(
+            id=project_id,
+            root_path=str(tmp_path),
+            total_files=1,
+            total_symbols=len(sample_symbols),
+        )
+    )
+    code_storage.upsert_file(indexed_file)
+    code_storage.upsert_symbols(sample_symbols)
+    vector_store = RecoveringVectorStore()
+
+    did_sync = await _sync_file(
+        storage=code_storage,
+        vector_store=vector_store,
+        gcode_gateway=None,
+        config=CodeIndexConfig(
+            embedding_enabled=True,
+            graph_enabled=False,
+            sync_worker_vector_batch_size=2,
+        ),
+        embed_model=FakeEmbedModel(),
+        project_id=project_id,
+        root=tmp_path,
+        file=indexed_file,
+        embedding_dim=4,
+    )
+
+    assert did_sync is True
+    assert [len(batch) for batch in vector_store.upsert_batches] == [2, 1]
+    assert len(vector_store.items) == len(sample_symbols)
+    synced_file = code_storage.get_file(project_id, file_path)
+    assert synced_file is not None
+    assert synced_file.vectors_synced is True
+
+
+async def test_sync_file_does_not_mark_vectors_synced_when_later_vector_batch_fails(
+    code_storage: CodeIndexStorage,
+    sample_symbols: list[Symbol],
+    tmp_path: Path,
+) -> None:
+    class FailingSecondBatchEmbedModel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def embed(self, texts: list[str]) -> list[list[float]]:
+            self.calls += 1
+            if self.calls == 2:
+                raise RuntimeError("embedding backend failed")
+            return [[0.1, 0.2, 0.3, 0.4] for _ in texts]
+
+    project_id = "proj-1"
+    file_path = "src/app.py"
+    _write_source(tmp_path)
+    indexed_file = _indexed_file(vectors_synced=False, graph_synced=True)
+    code_storage.upsert_project_stats(
+        IndexedProject(
+            id=project_id,
+            root_path=str(tmp_path),
+            total_files=1,
+            total_symbols=len(sample_symbols),
+        )
+    )
+    code_storage.upsert_file(indexed_file)
+    code_storage.upsert_symbols(sample_symbols)
+    vector_store = RecoveringVectorStore()
+
+    did_sync = await _sync_file(
+        storage=code_storage,
+        vector_store=vector_store,
+        gcode_gateway=None,
+        config=CodeIndexConfig(
+            embedding_enabled=True,
+            graph_enabled=False,
+            sync_worker_vector_batch_size=2,
+        ),
+        embed_model=FailingSecondBatchEmbedModel(),
+        project_id=project_id,
+        root=tmp_path,
+        file=indexed_file,
+        embedding_dim=4,
+    )
+
+    assert did_sync is False
+    assert [len(batch) for batch in vector_store.upsert_batches] == [2]
+    synced_file = code_storage.get_file(project_id, file_path)
+    assert synced_file is not None
+    assert synced_file.vectors_synced is False
 
 
 @pytest.mark.asyncio

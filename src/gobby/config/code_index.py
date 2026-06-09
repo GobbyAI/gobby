@@ -106,6 +106,11 @@ class CodeIndexConfig(BaseModel):
         default=50,
         description="Max files to sync per poll iteration",
     )
+    sync_worker_vector_batch_size: int = Field(
+        default=128,
+        ge=1,
+        description="Max symbols to embed and upsert per vector sync request",
+    )
     content_extensions: list[str] = Field(
         default=[
             ".html",
