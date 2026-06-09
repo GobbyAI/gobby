@@ -253,6 +253,11 @@ def _codex(digit: str) -> PlanKeystrokeSequence:
     return PlanKeystrokeSequence((PlanKeystroke(digit, literal=True),))
 
 
+def _droid(digit: str) -> PlanKeystrokeSequence:
+    """Expected Droid spec-menu selection: the digit activates with no Enter."""
+    return PlanKeystrokeSequence((PlanKeystroke(digit, literal=True),))
+
+
 class TestClaudeResolver:
     """Claude's pane-aware mapping over both native ExitPlanMode menu shapes."""
 
@@ -382,12 +387,77 @@ class TestCodexPlanMenu:
         assert DEFAULT_PLAN_KEYSTROKES.resolve("codex", "approve_bogus") is None
 
 
+# Verbatim capture from Droid CLI v0.137.1 (Factory, spec model Opus 4.8) in a
+# tmux pane: the single spec-mode approval menu shown after the agent proposes a
+# spec in `droid --use-spec`.
+_DROID_PLAN_MENU_PANE = """\
+ 1. Proceed with the proposal
+ 2. Proceed with comment
+ 3. Manually edit spec (open via system default)
+ 4. No and explain why
+   up/down navigate   1-4 select   Enter select   Tab reasoning   Esc cancel
+"""
+
+
+class TestDroidPlanMenu:
+    """Droid's single-shape spec-mode approval menu -- a static (non-pane) map."""
+
+    def test_droid_is_registered_static(self) -> None:
+        assert DEFAULT_PLAN_KEYSTROKES.has_source("droid") is True
+        # One always-present menu shape -> static map, no live-pane inspection.
+        assert DEFAULT_PLAN_KEYSTROKES.requires_pane("droid") is False
+
+    def test_registered_options(self) -> None:
+        assert DEFAULT_PLAN_KEYSTROKES.registered_options("droid") == frozenset(
+            {"approve_yolo", "approve_act", REQUEST_CHANGES_OPTION_ID}
+        )
+
+    @pytest.mark.parametrize(
+        ("option_id", "expected"),
+        [
+            # Droid's spec menu has a single "proceed" approve, so both approves
+            # collapse onto "1"; request-changes is "4" ("No and explain why" ->
+            # stay in spec mode so the user can send revision feedback).
+            ("approve_yolo", _droid("1")),
+            ("approve_act", _droid("1")),
+            (REQUEST_CHANGES_OPTION_ID, _droid("4")),
+        ],
+    )
+    def test_plan_menu_mapping(self, option_id: str, expected: PlanKeystrokeSequence) -> None:
+        assert DEFAULT_PLAN_KEYSTROKES.resolve("droid", option_id) == expected
+
+    @pytest.mark.parametrize(
+        ("option_id", "digit"),
+        [("approve_yolo", "1"), ("approve_act", "1"), (REQUEST_CHANGES_OPTION_ID, "4")],
+    )
+    def test_digit_activates_without_enter(self, option_id: str, digit: str) -> None:
+        # Verified live: the item number selects AND activates with no trailing
+        # Enter ("Enter select" in the footer applies only to arrow-key nav).
+        seq = DEFAULT_PLAN_KEYSTROKES.resolve("droid", option_id)
+        assert seq is not None
+        assert [s.keys for s in seq.strokes] == [digit]
+        assert all(s.literal for s in seq.strokes)
+
+    def test_static_resolution_ignores_pane_text(self) -> None:
+        # No pane-aware resolver for droid, so resolve_for_pane falls back to the
+        # static map and returns the same sequence regardless of pane content.
+        assert (
+            DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("droid", "approve_yolo", _DROID_PLAN_MENU_PANE)
+            == DEFAULT_PLAN_KEYSTROKES.resolve("droid", "approve_yolo")
+            == _droid("1")
+        )
+        assert DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("droid", "approve_act", "") == _droid("1")
+
+    def test_unknown_option_returns_none(self) -> None:
+        assert DEFAULT_PLAN_KEYSTROKES.resolve("droid", "approve_bogus") is None
+
+
 class TestDefaultRegistry:
     def test_remaining_clis_pending(self) -> None:
-        # Claude (#15727) and Codex (#15728) are registered; the other per-CLI
-        # child tasks populate these. This asserts the contract so an accidental
-        # population is caught.
-        for source in ("droid", "gemini", "grok", "qwen"):
+        # Claude (#15727), Codex (#15728), and Droid (#15729) are registered; the
+        # other per-CLI child tasks populate these. This asserts the contract so
+        # an accidental population is caught.
+        for source in ("gemini", "grok", "qwen"):
             assert DEFAULT_PLAN_KEYSTROKES.has_source(source) is False
             assert DEFAULT_PLAN_KEYSTROKES.requires_pane(source) is False
             assert DEFAULT_PLAN_KEYSTROKES.resolve(source, "approve_yolo") is None

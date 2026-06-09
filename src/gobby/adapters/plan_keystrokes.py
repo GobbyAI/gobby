@@ -296,6 +296,43 @@ _CODEX_PLAN_MENU: dict[str, PlanKeystrokeSequence] = {
 }
 
 
+# --- Droid native spec-mode (ExitSpecMode) approval menu ---------------------
+# Captured empirically from Droid CLI v0.137.1 (Factory, spec model Opus 4.8) in
+# a tmux pane (task #15729). Entering spec mode (`droid --use-spec`) and giving
+# the agent a real planning task renders ONE approval menu when it proposes a
+# spec; typing the item number selects AND activates immediately -- the footer's
+# "Enter select" hint applies only to arrow-key (up/down) navigation, the digit
+# needs no following Enter (verified live: pressing "4" alone dismissed the menu
+# and returned to the spec-mode prompt without touching the file):
+#     1. Proceed with the proposal
+#     2. Proceed with comment
+#     3. Manually edit spec (open via system default)
+#     4. No and explain why
+#     up/down navigate   1-4 select   Enter select   Tab reasoning   Esc cancel
+# Like Codex, Droid's spec menu has a SINGLE approve semantic ("proceed"): it
+# cannot express auto/bypass-vs-manual approval here (autonomy is a separate
+# axis -- the "Auto (Off) - all actions require approval" status line, toggled
+# with ctrl+L, not this menu), so both plan_options approves collapse onto "1".
+# request-changes maps to "4" ("No and explain why" -> stays in spec mode so the
+# user can send revision feedback). Options 2 ("Proceed with comment", blocks
+# for a typed comment) and 3 ("Manually edit spec", opens an external editor)
+# are deliberately unused: neither fits a single-keystroke dispatch. A single,
+# always-present menu shape means a static map suffices -- no pane-aware
+# resolver needed (requires_pane("droid") stays False).
+
+
+def _droid_digit(digit: str) -> PlanKeystrokeSequence:
+    """Droid spec-menu selection: the item number activates with no Enter."""
+    return PlanKeystrokeSequence(strokes=(PlanKeystroke(digit, literal=True),))
+
+
+_DROID_PLAN_MENU: dict[str, PlanKeystrokeSequence] = {
+    "approve_yolo": _droid_digit("1"),
+    "approve_act": _droid_digit("1"),
+    REQUEST_CHANGES_OPTION_ID: _droid_digit("4"),
+}
+
+
 def _register_builtin_plan_keystrokes(registry: PlanKeystrokeRegistry) -> None:
     """Per-CLI registration point for native plan-menu keystrokes.
 
@@ -326,7 +363,9 @@ def _register_builtin_plan_keystrokes(registry: PlanKeystrokeRegistry) -> None:
     # --- codex (Plan mode `/plan` -> "Implement this plan?" menu) -- task #15728 ---
     for _codex_option_id, _codex_sequence in _CODEX_PLAN_MENU.items():
         registry.register("codex", _codex_option_id, _codex_sequence)
-    # --- droid (ExitSpecMode menu) -- task #15729 ---
+    # --- droid (spec mode `--use-spec` -> "Proceed with the proposal" menu) -- task #15729 ---
+    for _droid_option_id, _droid_sequence in _DROID_PLAN_MENU.items():
+        registry.register("droid", _droid_option_id, _droid_sequence)
     # --- gemini (ACP) -- task #15730 ---
     # --- grok (ACP) -- task #15731 ---
     # --- qwen (ACP) -- task #15732 ---
