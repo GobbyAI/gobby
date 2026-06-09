@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use gobby_core::ai_context::AiContext;
 use gobby_core::config::{
-    AiCapability, AiRouting, EmbeddingConfig, FalkorConfig, QdrantConfig, resolve_embedding_config,
+    AiCapability, AiRouting, FalkorConfig, QdrantConfig, resolve_embedding_config,
     resolve_falkordb_config, resolve_qdrant_config,
 };
 use gobby_core::degradation::DegradationKind;
@@ -88,11 +88,11 @@ pub struct AvailabilityReport {
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct OptionalBenchmarkSources {
     pub falkor: Option<FalkorConfig>,
     pub qdrant: Option<QdrantConfig>,
-    pub embedding: Option<EmbeddingConfig>,
+    pub embedding: Option<SemanticEmbedding>,
     pub model_provider_available: bool,
 }
 
@@ -145,7 +145,7 @@ pub fn resolve_optional_sources(
     OptionalBenchmarkSources {
         falkor: resolve_falkordb_config(source),
         qdrant: resolve_qdrant_config(source),
-        embedding: resolve_embedding_config(source),
+        embedding: resolve_benchmark_embedding(ai_context, source),
         model_provider_available: model_provider_available(ai_context),
     }
 }
@@ -223,7 +223,7 @@ fn load_benchmark_rows(conn: &mut Client, scope: &SearchScope) -> Result<Benchma
     )?;
     let links = scalar_count(
         conn,
-        "SELECT COUNT(*) FROM gwiki_links WHERE scope_kind = $1 AND scope_id = $2 AND link_kind = 'wiki'",
+        "SELECT COUNT(*) FROM gwiki_links WHERE scope_kind = $1 AND scope_id = $2 AND link_kind IN ('wiki', 'mention')",
         scope_kind,
         scope_id,
         "query gwiki benchmark link count",
@@ -391,7 +391,6 @@ where
         );
     }
 
-    let embedding = SemanticEmbedding::Direct(embedding.clone());
     let mut examples = Vec::with_capacity(candidates.len());
     for candidate in candidates {
         let outcome = match search_semantic(
@@ -400,7 +399,7 @@ where
                 scope: scope.clone(),
                 limit: 1,
             },
-            Some(&embedding),
+            Some(embedding),
             Some(qdrant),
             embedder,
             vector_backend,
@@ -478,6 +477,27 @@ fn qdrant_source_configured(optional: &OptionalBenchmarkSources) -> bool {
         .is_some_and(|url| !url.trim().is_empty())
 }
 
+fn resolve_benchmark_embedding(
+    context: &AiContext,
+    source: &mut impl gobby_core::config::ConfigSource,
+) -> Option<SemanticEmbedding> {
+    match effective_benchmark_route(context, AiCapability::Embed) {
+        AiRouting::Off => None,
+        AiRouting::Daemon => {
+            #[cfg(feature = "ai")]
+            {
+                Some(SemanticEmbedding::Daemon(Box::new(context.clone())))
+            }
+            #[cfg(not(feature = "ai"))]
+            {
+                None
+            }
+        }
+        AiRouting::Direct => resolve_embedding_config(source).map(SemanticEmbedding::Direct),
+        AiRouting::Auto => unreachable!("effective benchmark route resolves Auto"),
+    }
+}
+
 fn seeded_retrieval_candidates(rows: &BenchmarkRows) -> Vec<RetrievalPrecisionCandidate> {
     rows.document_paths
         .iter()
@@ -512,18 +532,39 @@ fn model_provider(optional: &OptionalBenchmarkSources) -> AvailabilityReport {
 }
 
 fn model_provider_available(context: &AiContext) -> bool {
+    let route = effective_benchmark_route(context, AiCapability::TextGenerate);
     let binding = context.binding(AiCapability::TextGenerate);
-    match binding.routing {
+    match route {
         AiRouting::Off => false,
         AiRouting::Daemon => true,
         AiRouting::Direct => {
             binding.api_base.as_deref().is_some_and(non_empty)
                 && binding.model.as_deref().is_some_and(non_empty)
         }
+        AiRouting::Auto => unreachable!("effective benchmark route resolves Auto"),
+    }
+}
+
+fn effective_benchmark_route(context: &AiContext, capability: AiCapability) -> AiRouting {
+    let binding = context.binding(capability);
+    match binding.routing {
         AiRouting::Auto => {
-            binding.api_base.as_deref().is_some_and(non_empty)
-                && binding.model.as_deref().is_some_and(non_empty)
+            #[cfg(feature = "ai")]
+            {
+                AiRouting::Daemon
+            }
+            #[cfg(not(feature = "ai"))]
+            {
+                if binding.api_base.as_deref().is_some_and(non_empty)
+                    && binding.model.as_deref().is_some_and(non_empty)
+                {
+                    AiRouting::Direct
+                } else {
+                    AiRouting::Off
+                }
+            }
         }
+        route => route,
     }
 }
 
@@ -586,6 +627,7 @@ fn postgres_error(action: &'static str) -> impl FnOnce(postgres::Error) -> WikiE
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gobby_core::config::EmbeddingConfig;
     use gobby_core::qdrant::{SearchHit, SearchRequest};
 
     struct FixedEmbedder;
@@ -659,13 +701,13 @@ mod tests {
                 url: Some("http://qdrant.local".to_string()),
                 api_key: None,
             }),
-            embedding: Some(EmbeddingConfig {
+            embedding: Some(SemanticEmbedding::Direct(EmbeddingConfig {
                 api_base: "http://embeddings.local/v1".to_string(),
                 model: "embed-model".to_string(),
                 api_key: None,
                 query_prefix: Some("query: ".to_string()),
                 timeout_seconds: 10,
-            }),
+            })),
             model_provider_available: false,
         }
     }

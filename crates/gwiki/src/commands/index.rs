@@ -230,6 +230,13 @@ fn ai_project_id(scope: &ScopeIdentity) -> Option<String> {
     (scope.kind == ScopeKind::Project).then(|| scope.id.clone())
 }
 
+fn ai_project_id_for_search(scope: &SearchScope) -> Option<String> {
+    match scope {
+        SearchScope::Project { project_id } => Some(project_id.clone()),
+        SearchScope::Topic { .. } => None,
+    }
+}
+
 fn gobby_home() -> Result<PathBuf, WikiError> {
     gobby_core::gobby_home().map_err(|error| WikiError::Config {
         detail: format!("failed to resolve Gobby home for gwiki AI config: {error}"),
@@ -286,7 +293,7 @@ fn sync_qdrant_vectors(
             .map_err(|error| WikiError::Config {
                 detail: format!("failed to resolve AI config for {command}: {error}"),
             })?;
-        let ai_context = AiContext::resolve(None, &mut source);
+        let ai_context = AiContext::resolve(ai_project_id_for_search(search_scope), &mut source);
         let embedding = resolve_vector_embedding(&ai_context, &mut source);
         let qdrant = resolve_qdrant_config(&mut source).filter(qdrant_config_has_url);
         (embedding, qdrant)

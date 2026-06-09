@@ -8,7 +8,10 @@ use gobby_core::ai::daemon;
 use gobby_core::ai_context::AiContext;
 use gobby_core::config::{EmbeddingConfig, QdrantConfig};
 use gobby_core::degradation::DegradationKind;
-use gobby_core::qdrant::{CollectionScope, SearchHit, SearchRequest, collection_name};
+use gobby_core::qdrant::{
+    CollectionScope, SearchHit, SearchRequest, collection_name, legacy_collection_name,
+    resolve_collection_name,
+};
 use serde_json::{Map, Value, json};
 
 use crate::search::{
@@ -63,6 +66,14 @@ pub enum SemanticEmbedding {
 }
 
 pub trait VectorSearchBackend {
+    fn resolve_collection(
+        &mut self,
+        _config: &QdrantConfig,
+        scope: &SearchScope,
+    ) -> anyhow::Result<String> {
+        Ok(collection_for_scope(scope))
+    }
+
     fn search(
         &mut self,
         config: &QdrantConfig,
@@ -130,7 +141,18 @@ where
         }
     };
 
-    let collection = collection_for_scope(&request.scope);
+    let preferred_collection = collection_for_scope(&request.scope);
+    let collection = match vector_backend.resolve_collection(qdrant, &request.scope) {
+        Ok(collection) => collection,
+        Err(error) => {
+            return Ok(qdrant_degradation(error));
+        }
+    };
+    if collection != preferred_collection {
+        log::warn!(
+            "gwiki semantic search used deprecated legacy Qdrant collection `{collection}`; reindex to use `{preferred_collection}`"
+        );
+    }
     let filter = payload_filter(&request.scope);
     let qdrant_request = SearchRequest {
         vector,
@@ -171,12 +193,7 @@ fn semantic_embedding_query(config: &EmbeddingConfig, query: &str) -> String {
 }
 
 pub fn collection_for_scope(scope: &SearchScope) -> String {
-    match scope {
-        SearchScope::Project { project_id } => {
-            collection_name("gwiki", CollectionScope::Project(project_id))
-        }
-        SearchScope::Topic { topic } => collection_name("gwiki", CollectionScope::Topic(topic)),
-    }
+    collection_name("gwiki", qdrant_collection_scope(scope))
 }
 
 fn search_collection_with_legacy_fallback<V>(
@@ -209,9 +226,13 @@ where
 }
 
 fn legacy_collection_for_scope(scope: &SearchScope) -> String {
+    legacy_collection_name("gwiki", qdrant_collection_scope(scope))
+}
+
+fn qdrant_collection_scope(scope: &SearchScope) -> CollectionScope<'_> {
     match scope {
-        SearchScope::Project { project_id } => format!("gwiki:project:{project_id}"),
-        SearchScope::Topic { topic } => format!("gwiki:topic:{topic}"),
+        SearchScope::Project { project_id } => CollectionScope::Project(project_id),
+        SearchScope::Topic { topic } => CollectionScope::Topic(topic),
     }
 }
 
@@ -461,6 +482,14 @@ fn embed_daemon_query(context: &AiContext, query: &str) -> Result<Vec<f32>, Sear
 pub struct GobbyQdrantBackend;
 
 impl VectorSearchBackend for GobbyQdrantBackend {
+    fn resolve_collection(
+        &mut self,
+        config: &QdrantConfig,
+        scope: &SearchScope,
+    ) -> anyhow::Result<String> {
+        resolve_collection_name(config, "gwiki", qdrant_collection_scope(scope))
+    }
+
     fn search(
         &mut self,
         config: &QdrantConfig,

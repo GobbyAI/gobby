@@ -12,6 +12,9 @@ pub(crate) fn build_module_docs(
         for module in module_ancestors(&file.module) {
             module_names.insert(module);
         }
+        for module in module_ancestors(&module_for_file(&file.path)) {
+            module_names.insert(module);
+        }
     }
 
     let mut module_summaries: BTreeMap<String, String> = BTreeMap::new();
@@ -21,9 +24,13 @@ pub(crate) fn build_module_docs(
 
     let mut docs = Vec::new();
     for module in modules {
+        let mut seen_direct_files = BTreeSet::new();
         let direct_files = files
             .iter()
-            .filter(|file| file.module == module)
+            .filter(|file| {
+                (file.module == module || module_for_file(&file.path) == module)
+                    && seen_direct_files.insert(file.path.clone())
+            })
             .map(|file| FileLink {
                 path: file.path.clone(),
                 summary: file.summary.clone(),

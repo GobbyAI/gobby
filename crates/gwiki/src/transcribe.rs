@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use tempfile::{Builder, NamedTempFile};
 
 use crate::ingest::{markdown_metadata, markdown_title, path_to_string, single_line};
+use crate::paths::derived_markdown_path;
 use crate::sources::SourceRecord;
 use crate::{ScopeIdentity, WikiError};
 
@@ -210,12 +211,6 @@ fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
                 source: error,
             })
     }
-}
-
-fn derived_markdown_path(record: &SourceRecord) -> PathBuf {
-    PathBuf::from("knowledge")
-        .join("sources")
-        .join(format!("{}.md", record.id))
 }
 
 fn render_audio_transcript_markdown(

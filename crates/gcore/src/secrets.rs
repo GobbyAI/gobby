@@ -13,6 +13,8 @@ use pbkdf2::pbkdf2_hmac;
 use postgres::Client;
 use sha2::Sha256;
 
+const SECRET_NAME_MAX_LEN: usize = 256;
+
 fn derive_fernet_key(machine_id: &str, salt: &[u8]) -> String {
     let mut key_bytes = [0u8; 32];
     pbkdf2_hmac::<Sha256>(machine_id.as_bytes(), salt, 600_000, &mut key_bytes);
@@ -29,6 +31,9 @@ fn decrypt_fernet(key: &str, token: &str) -> anyhow::Result<String> {
 
 /// Resolve a secret by name from the PostgreSQL hub `secrets` table.
 pub fn resolve_secret(conn: &mut Client, secret_name: &str) -> anyhow::Result<String> {
+    let name = secret_name.trim();
+    validate_secret_name(name)?;
+
     let gobby_dir = crate::gobby_home()?;
     let machine_id_path = gobby_dir.join("machine_id");
     let machine_id = std::fs::read_to_string(&machine_id_path)
@@ -44,7 +49,7 @@ pub fn resolve_secret(conn: &mut Client, secret_name: &str) -> anyhow::Result<St
         .with_context(|| format!("failed to read {}", salt_path.display()))?;
     let fernet_key = derive_fernet_key(&machine_id, &salt);
 
-    let name = secret_name.trim().to_lowercase();
+    let name = name.to_lowercase();
     let row = conn
         .query_one(
             "SELECT encrypted_value FROM secrets WHERE name = $1",
@@ -76,12 +81,14 @@ fn resolve_config_value_with(
         let after_prefix = &rest[start + "$secret:".len()..];
         let name_len = after_prefix
             .bytes()
-            .take_while(|byte| byte.is_ascii_alphanumeric() || matches!(*byte, b'_' | b'-' | b'.'))
+            .take_while(|byte| secret_name_byte(*byte))
             .count();
         if name_len == 0 {
             bail!("empty secret reference in `{value}`");
         }
         let name = &after_prefix[..name_len];
+        validate_secret_name(name)?;
+        validate_secret_reference_boundary(value, name, &after_prefix[name_len..])?;
         output.push_str(&resolve(name)?);
         rest = &after_prefix[name_len..];
     }
@@ -92,6 +99,71 @@ fn resolve_config_value_with(
     }
 
     bail!("unresolved environment pattern in `{value}`")
+}
+
+fn validate_secret_name(name: &str) -> anyhow::Result<()> {
+    if name.is_empty() {
+        bail!("secret name must not be empty");
+    }
+    if name.len() > SECRET_NAME_MAX_LEN {
+        bail!("secret name exceeds {SECRET_NAME_MAX_LEN} characters");
+    }
+    if !name.bytes().all(secret_name_byte) {
+        bail!("secret name contains unsupported characters");
+    }
+    Ok(())
+}
+
+fn validate_secret_reference_boundary(
+    value: &str,
+    name: &str,
+    remainder: &str,
+) -> anyhow::Result<()> {
+    if remainder.is_empty() || remainder.starts_with("$secret:") || remainder.starts_with("${") {
+        return Ok(());
+    }
+    let Some(next) = remainder.chars().next() else {
+        return Ok(());
+    };
+    if secret_boundary_char(next) {
+        return Ok(());
+    }
+    bail!("invalid secret reference boundary after `{name}` in `{value}`");
+}
+
+fn secret_name_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.')
+}
+
+fn secret_boundary_char(value: char) -> bool {
+    value.is_ascii_whitespace()
+        || matches!(
+            value,
+            '/' | '\\'
+                | '@'
+                | ':'
+                | '?'
+                | '&'
+                | '='
+                | '#'
+                | '%'
+                | ','
+                | ';'
+                | '+'
+                | '!'
+                | '~'
+                | '('
+                | ')'
+                | '['
+                | ']'
+                | '{'
+                | '}'
+                | '<'
+                | '>'
+                | '|'
+                | '"'
+                | '\''
+        )
 }
 
 #[cfg(test)]
@@ -171,6 +243,31 @@ mod tests {
             resolve_config_value_with("$secret:MISSING", test_secret_resolver).expect_err("error");
 
         assert!(error.to_string().contains("missing test secret MISSING"));
+    }
+
+    #[test]
+    fn resolve_config_value_rejects_invalid_secret_names() {
+        let invalid_char =
+            resolve_config_value_with("$secret:API_KEY/ok/$secret:BAD*NAME", test_secret_resolver)
+                .expect_err("invalid character");
+        assert!(
+            invalid_char
+                .to_string()
+                .contains("invalid secret reference boundary")
+        );
+
+        let overlong = format!("$secret:{}", "A".repeat(SECRET_NAME_MAX_LEN + 1));
+        let error =
+            resolve_config_value_with(&overlong, test_secret_resolver).expect_err("overlong name");
+        assert!(error.to_string().contains("secret name exceeds"));
+    }
+
+    #[test]
+    fn validate_secret_name_rejects_empty_and_unsupported_names() {
+        assert!(validate_secret_name("").is_err());
+        assert!(validate_secret_name("bad/name").is_err());
+        assert!(validate_secret_name("bad name").is_err());
+        assert!(validate_secret_name("good.NAME-1").is_ok());
     }
 
     #[test]

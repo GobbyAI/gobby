@@ -1,7 +1,9 @@
 use std::fmt;
 
 use gobby_core::config::QdrantConfig;
-use gobby_core::qdrant::{UpsertRequest, VectorCollectionSchema};
+use gobby_core::qdrant::{
+    CollectionScope, UpsertRequest, VectorCollectionSchema, resolve_collection_name,
+};
 use serde_json::{Map, Value, json};
 
 use crate::search::SearchScope;
@@ -76,6 +78,10 @@ pub(crate) trait WikiVectorEmbedder {
 }
 
 pub(crate) trait WikiVectorStore {
+    fn resolve_collection(&mut self, scope: &SearchScope) -> Result<String, WikiVectorError> {
+        Ok(collection_for_scope(scope))
+    }
+
     fn ensure_collection(
         &mut self,
         collection: &str,
@@ -102,7 +108,7 @@ where
     E: WikiVectorEmbedder,
     V: WikiVectorStore,
 {
-    let collection = collection_for_scope(scope);
+    let collection = store.resolve_collection(scope)?;
     let chunks = source.chunks(scope)?;
     let stale_paths = source.stale_paths(scope)?;
     for path in &stale_paths {
@@ -360,6 +366,19 @@ impl GwikiQdrantVectorStore {
 }
 
 impl WikiVectorStore for GwikiQdrantVectorStore {
+    fn resolve_collection(&mut self, scope: &SearchScope) -> Result<String, WikiVectorError> {
+        let preferred = collection_for_scope(scope);
+        let resolved =
+            resolve_collection_name(&self.config, "gwiki", qdrant_collection_scope(scope))
+                .map_err(|error| WikiVectorError::Qdrant(error.to_string()))?;
+        if resolved != preferred {
+            log::warn!(
+                "gwiki vector sync used deprecated legacy Qdrant collection `{resolved}`; reindex to use `{preferred}`"
+            );
+        }
+        Ok(resolved)
+    }
+
     fn ensure_collection(
         &mut self,
         collection: &str,
@@ -391,6 +410,13 @@ impl WikiVectorStore for GwikiQdrantVectorStore {
         gobby_core::qdrant::upsert(&self.config, collection, points)
             .map(|_| ())
             .map_err(|error| WikiVectorError::Qdrant(error.to_string()))
+    }
+}
+
+fn qdrant_collection_scope(scope: &SearchScope) -> CollectionScope<'_> {
+    match scope {
+        SearchScope::Project { project_id } => CollectionScope::Project(project_id),
+        SearchScope::Topic { topic } => CollectionScope::Topic(topic),
     }
 }
 

@@ -6,6 +6,7 @@ use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use crate::ingest::{MetadataValue, markdown_metadata_values, markdown_title, single_line};
+use crate::paths::derived_markdown_path;
 use crate::sources::SourceRecord;
 use crate::support::text::display_path;
 use crate::transcribe::{
@@ -322,12 +323,6 @@ fn frame_sample(asset_path: &Path, timestamp_seconds: u32) -> VideoFrameSample {
         source_asset,
         source_reference,
     }
-}
-
-fn derived_markdown_path(record: &SourceRecord) -> PathBuf {
-    PathBuf::from("knowledge")
-        .join("sources")
-        .join(format!("{}.md", record.id))
 }
 
 fn render_video_derived_markdown(

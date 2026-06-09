@@ -17,7 +17,9 @@ pub(crate) fn render_module_dependency_mermaid(
         return None;
     }
 
+    let omitted_edges = all_edges.len().saturating_sub(bounded_edges.len());
     let mut diagram = "```mermaid\ngraph LR\n".to_string();
+    write_partial_import_graph_comment(&mut diagram, omitted_edges);
     for (source, target) in bounded_edges {
         let _ = writeln!(
             diagram,
@@ -51,7 +53,9 @@ pub(crate) fn render_architecture_dependency_mermaid(
         return None;
     }
 
+    let omitted_edges = edges.len().saturating_sub(bounded_edges.len());
     let mut diagram = "```mermaid\ngraph LR\n".to_string();
+    write_partial_import_graph_comment(&mut diagram, omitted_edges);
     for (source, target) in bounded_edges {
         let _ = writeln!(
             diagram,
@@ -105,6 +109,15 @@ fn collect_import_module_edges(
             Some(((*source).to_string(), (*target).to_string()))
         })
         .collect()
+}
+
+fn write_partial_import_graph_comment(diagram: &mut String, omitted_edges: usize) {
+    if omitted_edges > 0 {
+        let _ = writeln!(
+            diagram,
+            "    %% Partial import graph: {omitted_edges} edge(s) omitted by bounds"
+        );
+    }
 }
 
 pub(crate) fn render_module_call_mermaid(

@@ -38,7 +38,7 @@ pub(crate) fn require_attached_index(command: &'static str) -> Result<(), WikiEr
     })
 }
 
-pub(crate) fn require_postgres_index(command: &str) -> Result<Client, WikiError> {
+pub(crate) fn require_postgres_index(command: &'static str) -> Result<Client, WikiError> {
     let database_url = env::database_url_for(command)?.ok_or_else(|| WikiError::Config {
         detail: format!(
             "PostgreSQL index is required for {command}; configure GWIKI_DATABASE_URL or GOBBY_POSTGRES_DSN"

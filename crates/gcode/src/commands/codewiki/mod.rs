@@ -592,6 +592,8 @@ fn generate_hierarchical_docs_core(
 #[cfg(test)]
 mod hotspots_tests;
 #[cfg(test)]
+mod module_tests;
+#[cfg(test)]
 mod onboarding_tests;
 #[cfg(test)]
 mod tests;

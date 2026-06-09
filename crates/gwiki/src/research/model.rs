@@ -18,6 +18,8 @@ use crate::research_loop::{
 use crate::session::ResearchCodeCitation;
 use crate::{IngestFileOptions, ReadTarget, ScopeSelection, WikiError};
 
+const CODE_FILES_PREFIX: &str = "code/files/";
+
 pub(crate) struct GcoreResearchModel {
     pub(crate) requested_route: AiRouting,
     pub(crate) require_ai: bool,
@@ -170,7 +172,7 @@ fn code_citations_from_search_results(
 }
 
 fn is_code_result(path: &Path) -> bool {
-    normalized_path(path).starts_with("code/files/")
+    normalized_path(path).starts_with(CODE_FILES_PREFIX)
 }
 
 fn normalized_path(path: &Path) -> String {

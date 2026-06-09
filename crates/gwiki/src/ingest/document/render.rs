@@ -4,6 +4,7 @@ use tempfile::{Builder, NamedTempFile};
 
 use crate::document::{DocumentDegradationMatrix, DocumentFailureMode, DocumentUnitCount};
 use crate::ingest::{markdown_metadata, path_to_string, single_line, sync_parent_dir};
+use crate::paths::derived_markdown_path;
 
 use super::*;
 
@@ -207,12 +208,6 @@ fn render_document_derived_markdown(
         markdown.push('\n');
     }
     markdown
-}
-
-fn derived_markdown_path(record: &crate::sources::SourceRecord) -> PathBuf {
-    PathBuf::from("knowledge")
-        .join("sources")
-        .join(format!("{}.md", record.id))
 }
 
 pub(crate) fn document_degradation_for_error(

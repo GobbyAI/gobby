@@ -58,6 +58,7 @@ pub(crate) mod markdown;
 pub mod media;
 pub mod models;
 pub mod output;
+pub(crate) mod paths;
 #[allow(dead_code)]
 pub(crate) mod provenance;
 #[allow(dead_code)]

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use tempfile::{Builder, NamedTempFile};
 
 use crate::ingest::{markdown_metadata, markdown_title, path_to_string, single_line};
+use crate::paths::derived_markdown_path;
 use crate::sources::SourceRecord;
 use crate::{ScopeIdentity, WikiError};
 
@@ -97,12 +98,6 @@ pub fn write_image_derived_markdown(
         path: relative_path,
         degradation,
     })
-}
-
-fn derived_markdown_path(record: &SourceRecord) -> PathBuf {
-    PathBuf::from("knowledge")
-        .join("sources")
-        .join(format!("{}.md", record.id))
 }
 
 fn render_image_derived_markdown(

@@ -100,7 +100,10 @@ fn semantic_search_falls_back_to_legacy_collection_on_new_collection_404() {
         ]
     );
     assert_eq!(
-        legacy_collection_for_scope(&SearchScope::topic("rust")),
+        gobby_core::qdrant::legacy_collection_name(
+            "gwiki",
+            gobby_core::qdrant::CollectionScope::Topic("rust")
+        ),
         "gwiki:topic:rust"
     );
 }
