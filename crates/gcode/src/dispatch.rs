@@ -479,6 +479,7 @@ fn run() -> anyhow::Result<()> {
                 ai.map(AiRouteArg::into),
                 edge_limit,
                 format,
+                cli.verbose,
             )
         }
 

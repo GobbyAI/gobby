@@ -137,7 +137,11 @@ pub(crate) fn write_codewiki_meta(out_dir: &Path, meta: &CodewikiMeta) -> anyhow
 pub(crate) fn read_ownership_meta(out_dir: &Path) -> anyhow::Result<OwnershipMeta> {
     let path = safe_doc_path(out_dir, OWNERSHIP_META_PATH)?;
     match std::fs::read_to_string(&path) {
-        Ok(raw) => Ok(serde_json::from_str(&raw)?),
+        Ok(raw) => {
+            let mut meta = serde_json::from_str::<OwnershipMeta>(&raw)?;
+            meta.normalize_contributor_ids();
+            Ok(meta)
+        }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(OwnershipMeta::default()),
         Err(err) => Err(err.into()),
     }

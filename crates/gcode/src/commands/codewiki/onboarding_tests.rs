@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::models::Symbol;
-
+use super::test_utils::{test_component_id, test_symbol};
 use super::*;
 
 #[test]
@@ -131,37 +130,4 @@ fn codewiki_onboarding_available_empty_reading_order_is_not_unavailable() {
 
     assert!(!onboarding.contains("degraded: true"));
     assert!(!onboarding.contains("- graph-analytics-unavailable"));
-}
-
-fn test_symbol(
-    file_path: &str,
-    name: &str,
-    kind: &str,
-    line_start: usize,
-    signature: &str,
-) -> Symbol {
-    Symbol {
-        id: test_component_id(file_path, name, kind),
-        project_id: "project-1".to_string(),
-        file_path: file_path.to_string(),
-        name: name.to_string(),
-        qualified_name: name.to_string(),
-        kind: kind.to_string(),
-        language: "rust".to_string(),
-        byte_start: 0,
-        byte_end: 0,
-        line_start,
-        line_end: line_start,
-        signature: Some(signature.to_string()),
-        docstring: None,
-        parent_symbol_id: None,
-        content_hash: String::new(),
-        summary: None,
-        created_at: String::new(),
-        updated_at: String::new(),
-    }
-}
-
-fn test_component_id(file_path: &str, name: &str, kind: &str) -> String {
-    Symbol::make_id("project-1", file_path, name, kind, 0)
 }

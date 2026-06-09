@@ -513,7 +513,12 @@ pub(crate) fn render_hotspots_doc(hotspots: &HotspotsDoc) -> String {
         &hotspots.god_nodes,
         Some((&hotspot_ids, "Hotspots")),
     );
-    write_hotspot_section(&mut doc, "Bridges", &hotspots.bridges);
+    write_hotspot_section_with_cross_refs(
+        &mut doc,
+        "Bridges",
+        &hotspots.bridges,
+        Some((&hotspot_ids, "Hotspots")),
+    );
 
     if hotspots.hotspots.is_empty() && hotspots.god_nodes.is_empty() && hotspots.bridges.is_empty()
     {

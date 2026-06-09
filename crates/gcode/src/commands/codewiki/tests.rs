@@ -1,6 +1,9 @@
 use super::io::{
     source_files_from_frontmatter, source_hashes_for_doc, unquote_yaml_string, write_doc,
 };
+use super::test_utils::{
+    test_component_id, test_symbol, test_symbol_range, test_symbol_with_qualified,
+};
 use super::*;
 
 mod architecture;
@@ -920,78 +923,4 @@ fn write_doc_rejects_symlinked_target() {
 
     assert!(err.to_string().contains("symlinked codewiki path"));
     assert!(!outside_target.exists());
-}
-
-pub fn test_symbol(
-    file_path: &str,
-    name: &str,
-    kind: &str,
-    line_start: usize,
-    signature: &str,
-) -> Symbol {
-    test_symbol_with_qualified(file_path, name, name, kind, line_start, signature)
-}
-
-pub fn test_component_id(file_path: &str, name: &str, kind: &str) -> String {
-    Symbol::make_id("project-1", file_path, name, kind, 0)
-}
-
-fn test_symbol_with_qualified(
-    file_path: &str,
-    name: &str,
-    qualified_name: &str,
-    kind: &str,
-    line_start: usize,
-    signature: &str,
-) -> Symbol {
-    Symbol {
-        id: Symbol::make_id("project-1", file_path, name, kind, 0),
-        project_id: "project-1".to_string(),
-        file_path: file_path.to_string(),
-        name: name.to_string(),
-        qualified_name: qualified_name.to_string(),
-        kind: kind.to_string(),
-        language: "rust".to_string(),
-        byte_start: 0,
-        byte_end: 0,
-        line_start,
-        line_end: line_start,
-        signature: Some(signature.to_string()),
-        docstring: None,
-        parent_symbol_id: None,
-        content_hash: String::new(),
-        summary: None,
-        created_at: String::new(),
-        updated_at: String::new(),
-    }
-}
-
-fn test_symbol_range(
-    file_path: &str,
-    name: &str,
-    kind: &str,
-    line_start: usize,
-    line_end: usize,
-    signature: &str,
-) -> Symbol {
-    Symbol {
-        id: Symbol::make_id("project-1", file_path, name, kind, 0),
-        project_id: "project-1".to_string(),
-        file_path: file_path.to_string(),
-        name: name.to_string(),
-        qualified_name: name.to_string(),
-        kind: kind.to_string(),
-        language: "rust".to_string(),
-        byte_start: 0,
-        byte_end: 0,
-        line_start,
-        line_end,
-        signature: Some(signature.to_string()),
-        docstring: None,
-        parent_symbol_id: None,
-        content_hash: String::new(),
-        summary: None,
-        created_at: String::new(),
-        updated_at: String::new(),
-    }
 }

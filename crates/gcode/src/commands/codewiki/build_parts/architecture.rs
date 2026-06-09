@@ -8,6 +8,7 @@ pub(crate) fn build_architecture_doc(
     graph_edges: &[CodewikiGraphEdge],
     graph_availability: CodewikiGraphAvailability,
     generate: &mut Option<&mut TextGenerator<'_>>,
+    progress: &mut CodewikiProgress,
 ) -> ArchitectureDoc {
     let subsystem_names = files
         .iter()
@@ -25,10 +26,12 @@ pub(crate) fn build_architecture_doc(
     }
 
     let mut subsystems = Vec::new();
-    for module in modules
+    let subsystem_modules = modules
         .iter()
         .filter(|module| subsystem_names.contains(&module.module))
-    {
+        .collect::<Vec<_>>();
+    let subsystem_total = subsystem_modules.len();
+    for (index, module) in subsystem_modules.into_iter().enumerate() {
         let file_summaries = module
             .direct_files
             .iter()
@@ -49,6 +52,12 @@ pub(crate) fn build_architecture_doc(
             structural_module_summary(&module.module, &module.direct_files, &module.child_modules);
         let source_spans = collect_link_spans(&module.direct_files, &module.child_modules);
         let prompt_component_ids = prompt_component_ids_for_module(files, &module.module);
+        progress.emit(format!(
+            "generating architecture doc subsystem {}/{} {}",
+            index + 1,
+            subsystem_total,
+            module.module
+        ));
         let generated = maybe_generate(
             generate,
             &prompts::architecture_prompt(

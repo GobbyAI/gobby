@@ -6,6 +6,7 @@ pub(crate) fn build_module_docs(
     graph_edges: &[CodewikiGraphEdge],
     graph_availability: CodewikiGraphAvailability,
     generate: &mut Option<&mut TextGenerator<'_>>,
+    progress: &mut CodewikiProgress,
 ) -> Vec<ModuleDoc> {
     let mut module_names = BTreeSet::new();
     for file in files {
@@ -23,7 +24,8 @@ pub(crate) fn build_module_docs(
     modules.sort_by_key(|module| std::cmp::Reverse(module_depth(module)));
 
     let mut docs = Vec::new();
-    for module in modules {
+    let module_total = modules.len();
+    for (index, module) in modules.into_iter().enumerate() {
         let mut seen_direct_files = BTreeSet::new();
         let direct_files = files
             .iter()
@@ -73,6 +75,12 @@ pub(crate) fn build_module_docs(
         let call_diagram = render_module_call_mermaid(&module, files, graph_edges);
         let fallback = structural_module_summary(&module, &direct_files, &child_modules);
         let source_spans = collect_link_spans(&direct_files, &child_modules);
+        progress.emit(format!(
+            "generating module doc module {}/{} {}",
+            index + 1,
+            module_total,
+            module
+        ));
         let generated = maybe_generate(
             generate,
             &prompts::module_prompt(

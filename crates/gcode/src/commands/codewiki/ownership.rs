@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, btree_map::Entry};
 use std::fmt::Write;
 use std::path::Path;
 use std::sync::mpsc;
@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use gix::bstr::ByteSlice;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::{file_wikilink, module_wikilink};
 use crate::index::hasher;
@@ -32,6 +33,19 @@ pub(crate) struct OwnershipMeta {
     pub files: BTreeMap<String, CachedBlameSummary>,
 }
 
+impl OwnershipMeta {
+    pub(crate) fn normalize_contributor_ids(&mut self) {
+        for summary in self.files.values_mut() {
+            for contributor in &mut summary.contributors {
+                if contributor.contributor_id.is_empty() {
+                    contributor.contributor_id =
+                        contributor_id(&contributor.name, contributor.email.as_deref());
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct CachedBlameSummary {
     pub content_hash: String,
@@ -40,10 +54,19 @@ pub(crate) struct CachedBlameSummary {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct OwnershipContributor {
+    #[serde(default)]
+    pub contributor_id: String,
     pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing)]
     pub email: Option<String>,
     pub lines: usize,
+}
+
+#[derive(Debug)]
+enum BlameContributorsOutcome {
+    Success(Vec<OwnershipContributor>),
+    Timeout,
+    Error(anyhow::Error),
 }
 
 #[derive(Debug)]
@@ -61,6 +84,7 @@ struct CodeownersEntry {
 struct OwnershipStatus {
     codeowners_available: bool,
     blame_available: bool,
+    blame_errors: bool,
     partial: bool,
 }
 
@@ -243,20 +267,27 @@ fn derived_owners_for_files(
             continue;
         }
         let remaining_timeout = options.blame_timeout.saturating_sub(started.elapsed());
-        let Some(contributors) =
-            blame_file_contributors_with_timeout(project_root, head, file, remaining_timeout)
-        else {
-            status.partial = true;
-            break;
-        };
-        meta.files.insert(
-            file.clone(),
-            CachedBlameSummary {
-                content_hash,
-                contributors: contributors.clone(),
-            },
-        );
-        out.insert(file.clone(), contributors);
+        match blame_file_contributors_with_timeout(project_root, head, file, remaining_timeout) {
+            BlameContributorsOutcome::Success(contributors) => {
+                meta.files.insert(
+                    file.clone(),
+                    CachedBlameSummary {
+                        content_hash,
+                        contributors: contributors.clone(),
+                    },
+                );
+                out.insert(file.clone(), contributors);
+            }
+            BlameContributorsOutcome::Timeout => {
+                status.partial = true;
+                break;
+            }
+            BlameContributorsOutcome::Error(error) => {
+                log::debug!("codewiki ownership git blame failed for `{file}`: {error}");
+                status.partial = true;
+                status.blame_errors = true;
+            }
+        }
     }
     out
 }
@@ -270,12 +301,16 @@ fn blame_file_contributors_with_timeout(
     head: gix::ObjectId,
     file: &str,
     timeout: Duration,
-) -> Option<Vec<OwnershipContributor>> {
+) -> BlameContributorsOutcome {
     let project_root = project_root.to_path_buf();
     let file = file.to_string();
-    run_with_timeout(timeout, move || {
-        blame_file_contributors(&project_root, head, &file).unwrap_or_default()
-    })
+    match run_with_timeout(timeout, move || {
+        blame_file_contributors(&project_root, head, &file)
+    }) {
+        Some(Ok(contributors)) => BlameContributorsOutcome::Success(contributors),
+        Some(Err(error)) => BlameContributorsOutcome::Error(error),
+        None => BlameContributorsOutcome::Timeout,
+    }
 }
 
 fn run_with_timeout<T, F>(timeout: Duration, work: F) -> Option<T>
@@ -306,27 +341,72 @@ fn blame_file_contributors(
         head,
         gix::repository::blame_file::Options::default(),
     )?;
-    let mut line_counts: BTreeMap<(String, Option<String>), usize> = BTreeMap::new();
+    let mut line_counts: BTreeMap<String, (String, Option<String>, usize)> = BTreeMap::new();
     for entry in outcome.entries {
         let commit = repo.find_commit(entry.commit_id)?;
         let author = commit.author()?;
         let name = author.name.to_string();
         let email = (!author.email.is_empty()).then(|| author.email.to_string());
-        *line_counts.entry((name, email)).or_default() += entry.len.get() as usize;
+        let contributor_id = contributor_id(&name, email.as_deref());
+        let line_count = entry.len.get() as usize;
+        match line_counts.entry(contributor_id) {
+            Entry::Occupied(mut stored) => {
+                let (stored_name, stored_email, lines) = stored.get_mut();
+                retain_deterministic_identity(stored_name, stored_email, &name, &email);
+                *lines += line_count;
+            }
+            Entry::Vacant(stored) => {
+                stored.insert((name, email, line_count));
+            }
+        }
     }
     let mut contributors = line_counts
         .into_iter()
-        .map(|((name, email), lines)| OwnershipContributor { name, email, lines })
+        .map(
+            |(contributor_id, (name, email, lines))| OwnershipContributor {
+                contributor_id,
+                name,
+                email,
+                lines,
+            },
+        )
         .collect::<Vec<_>>();
     contributors.sort_by(|left, right| {
         right
             .lines
             .cmp(&left.lines)
             .then_with(|| left.name.cmp(&right.name))
-            .then_with(|| left.email.cmp(&right.email))
+            .then_with(|| left.contributor_id.cmp(&right.contributor_id))
     });
     contributors.truncate(5);
     Ok(contributors)
+}
+
+fn contributor_id(name: &str, email: Option<&str>) -> String {
+    let identity = email
+        .map(str::trim)
+        .filter(|email| !email.is_empty())
+        .unwrap_or(name)
+        .trim()
+        .to_ascii_lowercase();
+    let digest = Sha256::digest(identity.as_bytes());
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn retain_deterministic_identity(
+    stored_name: &mut String,
+    stored_email: &mut Option<String>,
+    name: &str,
+    email: &Option<String>,
+) {
+    if name < stored_name.as_str() {
+        *stored_name = name.to_string();
+    }
+    match (stored_email.as_mut(), email) {
+        (Some(stored), Some(next)) if next < stored => *stored = next.clone(),
+        (None, Some(next)) => *stored_email = Some(next.clone()),
+        _ => {}
+    }
 }
 
 fn degraded_sources(
@@ -339,6 +419,9 @@ fn degraded_sources(
     }
     if !status.blame_available {
         sources.push("git_blame_unavailable".to_string());
+    }
+    if status.blame_errors {
+        sources.push("git_blame_errors".to_string());
     }
     if status.partial {
         sources.push("git_blame_partial".to_string());
@@ -445,24 +528,46 @@ fn aggregate_primary(files: &[(&String, &FileOwnership)]) -> Vec<String> {
 }
 
 fn aggregate_contributors(files: &[(&String, &FileOwnership)]) -> Vec<OwnershipContributor> {
-    let mut counts: BTreeMap<(String, Option<String>), usize> = BTreeMap::new();
+    let mut counts: BTreeMap<String, (String, Option<String>, usize)> = BTreeMap::new();
     for (_, ownership) in files {
         for contributor in &ownership.derived {
-            *counts
-                .entry((contributor.name.clone(), contributor.email.clone()))
-                .or_default() += contributor.lines;
+            counts
+                .entry(contributor.contributor_id.clone())
+                .and_modify(|(stored_name, stored_email, lines)| {
+                    retain_deterministic_identity(
+                        stored_name,
+                        stored_email,
+                        &contributor.name,
+                        &contributor.email,
+                    );
+                    *lines += contributor.lines;
+                })
+                .or_insert_with(|| {
+                    (
+                        contributor.name.clone(),
+                        contributor.email.clone(),
+                        contributor.lines,
+                    )
+                });
         }
     }
     let mut contributors = counts
         .into_iter()
-        .map(|((name, email), lines)| OwnershipContributor { name, email, lines })
+        .map(
+            |(contributor_id, (name, email, lines))| OwnershipContributor {
+                contributor_id,
+                name,
+                email,
+                lines,
+            },
+        )
         .collect::<Vec<_>>();
     contributors.sort_by(|left, right| {
         right
             .lines
             .cmp(&left.lines)
             .then_with(|| left.name.cmp(&right.name))
-            .then_with(|| left.email.cmp(&right.email))
+            .then_with(|| left.contributor_id.cmp(&right.contributor_id))
     });
     contributors.truncate(5);
     contributors
@@ -559,6 +664,40 @@ mod tests {
         assert!(doc.contains("Bob"));
         assert!(!doc.contains("git_blame_unavailable"));
         assert_eq!(meta.files.len(), 1);
+        let serialized = serde_json::to_string(&meta).expect("serialize ownership meta");
+        assert!(serialized.contains("contributor_id"));
+        assert!(!serialized.contains("alice@example.com"));
+        assert!(!serialized.contains("bob@example.com"));
+    }
+
+    #[test]
+    fn codewiki_ownership_normalizes_legacy_cached_contributor_ids() {
+        let mut meta = serde_json::from_str::<OwnershipMeta>(
+            r#"{
+              "files": {
+                "src/lib.rs": {
+                  "content_hash": "hash",
+                  "contributors": [
+                    {"name": "Alice", "email": "alice@example.test", "lines": 4},
+                    {"name": "Bob", "email": "bob@example.test", "lines": 2}
+                  ]
+                }
+              }
+            }"#,
+        )
+        .expect("deserialize legacy ownership meta");
+
+        meta.normalize_contributor_ids();
+        let contributors = &meta.files["src/lib.rs"].contributors;
+        assert_ne!(
+            contributors[0].contributor_id,
+            contributors[1].contributor_id
+        );
+
+        let serialized = serde_json::to_string(&meta).expect("serialize ownership meta");
+        assert!(serialized.contains("contributor_id"));
+        assert!(!serialized.contains("alice@example.test"));
+        assert!(!serialized.contains("bob@example.test"));
     }
 
     #[test]
@@ -631,6 +770,33 @@ mod tests {
         assert!(doc.contains("partial: true"));
         assert!(doc.contains("Ownership is partial"));
         assert_eq!(meta.files.len(), 1);
+    }
+
+    #[test]
+    fn codewiki_ownership_blame_error_marks_partial_without_caching() {
+        let project = git_project_with_history();
+        std::fs::write(
+            project.path().join("src/untracked.rs"),
+            "pub fn untracked() {}\n",
+        )
+        .expect("write untracked source");
+        let mut meta = OwnershipMeta::default();
+
+        let doc = build_ownership_doc(
+            project.path(),
+            &["src/untracked.rs".to_string()],
+            &modules([("src/untracked.rs", "src")]),
+            &mut meta,
+            OwnershipOptions {
+                blame_file_cap: 10,
+                blame_timeout: Duration::from_secs(10),
+            },
+        )
+        .expect("ownership doc");
+
+        assert!(doc.contains("partial: true"));
+        assert!(doc.contains("git_blame_errors"));
+        assert!(meta.files.is_empty());
     }
 
     #[test]

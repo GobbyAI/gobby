@@ -6,11 +6,28 @@ pub(crate) fn build_file_doc(
     module: String,
     symbols: Vec<Symbol>,
     generate: &mut Option<&mut TextGenerator<'_>>,
+    progress: &mut CodewikiProgress,
+    file_index: usize,
+    file_total: usize,
 ) -> FileDoc {
+    progress.emit(format!(
+        "generating file doc file {}/{} {}",
+        file_index, file_total, file
+    ));
+    let symbol_total = symbols.len();
     let symbol_docs = symbols
         .into_iter()
-        .map(|symbol| {
+        .enumerate()
+        .map(|(index, symbol)| {
             let fallback = structural_symbol_purpose(&symbol);
+            progress.emit(format!(
+                "generating symbol doc file {}/{} symbol {}/{} {}",
+                file_index,
+                file_total,
+                index + 1,
+                symbol_total,
+                symbol.qualified_name
+            ));
             let generated = maybe_generate(
                 generate,
                 &prompts::symbol_prompt(&symbol),

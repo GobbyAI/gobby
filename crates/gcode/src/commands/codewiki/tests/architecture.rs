@@ -1,3 +1,4 @@
+use super::super::test_utils::{test_component_id, test_symbol};
 use super::*;
 
 #[test]

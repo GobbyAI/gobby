@@ -11,12 +11,14 @@ fn module_docs_include_physical_direct_files_for_ancestor_modules() {
         component_ids: Vec::new(),
     }];
     let mut generate = None;
+    let mut progress = CodewikiProgress::silent();
 
     let docs = build_module_docs(
         &files,
         &[],
         CodewikiGraphAvailability::Available,
         &mut generate,
+        &mut progress,
     );
     let parent = docs
         .iter()

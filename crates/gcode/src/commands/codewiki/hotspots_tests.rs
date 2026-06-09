@@ -1,3 +1,4 @@
+use super::test_utils::{test_component_id, test_symbol};
 use super::*;
 
 #[test]
@@ -96,37 +97,37 @@ fn codewiki_hotspots_page_degrades_when_analytics_unavailable() {
     assert!(!hotspots.contains("frequency 3"));
 }
 
-fn test_symbol(
-    file_path: &str,
-    name: &str,
-    kind: &str,
-    line_start: usize,
-    signature: &str,
-) -> Symbol {
-    Symbol {
-        id: test_component_id(file_path, name, kind),
-        project_id: "project-1".to_string(),
-        file_path: file_path.to_string(),
-        name: name.to_string(),
-        qualified_name: name.to_string(),
-        kind: kind.to_string(),
-        language: "rust".to_string(),
-        byte_start: 0,
-        byte_end: 0,
-        line_start,
-        line_end: line_start,
-        signature: Some(signature.to_string()),
-        docstring: None,
-        parent_symbol_id: None,
-        content_hash: String::new(),
-        summary: None,
-        created_at: String::new(),
-        updated_at: String::new(),
-    }
-}
+#[test]
+fn codewiki_hotspots_page_cross_references_duplicate_bridges() {
+    let node = HotspotNode {
+        id: "component-1".to_string(),
+        kind: "function".to_string(),
+        label: "bridge".to_string(),
+        wikilink: "[[code/files/src/lib.rs|bridge]]".to_string(),
+        file_wikilink: Some("[[code/files/src/lib.rs|src/lib.rs]]".to_string()),
+        source_span: None,
+    };
+    let finding = HotspotFinding {
+        node,
+        degree: Some(4),
+        score: Some(1.0),
+        frequency: Some(2),
+        weight: Some(3.0),
+    };
+    let doc = render_hotspots_doc(&HotspotsDoc {
+        source_spans: Vec::new(),
+        hotspots: vec![finding.clone()],
+        god_nodes: Vec::new(),
+        bridges: vec![finding],
+        degraded_sources: Vec::new(),
+    });
+    let bridges = doc
+        .split("## Bridges")
+        .nth(1)
+        .expect("bridges section rendered");
 
-fn test_component_id(file_path: &str, name: &str, kind: &str) -> String {
-    Symbol::make_id("project-1", file_path, name, kind, 0)
+    assert!(bridges.contains("also listed under Hotspots"));
+    assert!(!bridges.contains("degree 4"));
 }
 
 fn hotspots_frontmatter(hotspots: &str) -> serde_yaml::Value {

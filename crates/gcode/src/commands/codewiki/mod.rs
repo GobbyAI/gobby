@@ -29,6 +29,7 @@ mod graph;
 mod io;
 mod ownership;
 mod paths;
+mod progress;
 mod prompts;
 mod render;
 mod text;
@@ -50,6 +51,7 @@ pub(crate) use graph::fetch_codewiki_graph_edges;
 #[cfg(test)]
 pub(crate) use graph::{codewiki_call_edges_query, codewiki_import_edges_query};
 pub(crate) use ownership::{OwnershipMeta, OwnershipOptions, build_ownership_doc};
+pub(crate) use progress::CodewikiProgress;
 // Markdown path and wikilink helpers.
 pub(crate) use paths::{
     component_label, direct_child_modules, file_doc_path, file_wikilink, in_scope, inline_code,
@@ -359,24 +361,41 @@ pub fn run(
     ai: Option<AiRouting>,
     edge_limit: usize,
     format: Format,
+    verbose: bool,
 ) -> anyhow::Result<()> {
     validate_edge_limit(edge_limit)?;
+
+    let mut progress = CodewikiProgress::stderr(verbose && !ctx.quiet);
 
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let scopes = scope_args
         .iter()
         .map(|value| scope::normalize_file_arg(ctx, value))
         .collect::<Vec<_>>();
+    progress.emit("loading indexed files");
     let files = visibility::visible_tree(&mut conn, ctx)?
         .into_iter()
         .map(|file| file.file_path)
         .filter(|file| in_scope(file, &scopes))
         .collect::<Vec<_>>();
+    progress.emit(format!("loading symbols for {} files", files.len()));
     let mut symbols = Vec::new();
-    for file in &files {
+    for (index, file) in files.iter().enumerate() {
+        progress.emit(format!(
+            "loading symbols file {}/{} {}",
+            index + 1,
+            files.len(),
+            file
+        ));
         symbols.extend(visibility::visible_symbols_for_file(&mut conn, ctx, file)?);
     }
 
+    progress.emit(format!(
+        "fetching graph edges for {} files and {} symbols (limit {})",
+        files.len(),
+        symbols.len(),
+        edge_limit
+    ));
     let graph = fetch_codewiki_graph_edges(ctx, &files, &symbols, edge_limit)?;
     let input = CodewikiInput {
         files,
@@ -388,6 +407,7 @@ pub fn run(
     let ai_enabled = generator.is_some();
     let out_dir = out.unwrap_or_else(|| DEFAULT_OUT_DIR.to_string());
     let out_path = Path::new(&out_dir);
+    progress.emit("reading metadata and hashing snapshot");
     let previous_meta = io::read_codewiki_meta(out_path)?;
     let index_snapshot = build_codewiki_index_snapshot(&ctx.project_root, &input)?;
     let mut ownership_meta = read_ownership_meta(out_path)?;
@@ -396,7 +416,9 @@ pub fn run(
         &ctx.project_root,
         &mut ownership_meta,
         generator.as_deref_mut(),
+        &mut progress,
     )?;
+    progress.emit("generating changes docs");
     docs.push((
         "code/_changes.md".to_string(),
         build_codewiki_changes_doc(previous_meta.index_snapshot.as_ref(), &index_snapshot),
@@ -414,13 +436,14 @@ pub fn run(
         .iter()
         .filter(|symbol| is_core_file(&symbol.file_path))
         .count();
-    let changed_paths = write_incremental_doc_set_with_snapshot(
+    let changed_paths = write_codewiki_docs(
         &ctx.project_root,
         out_path,
         &docs,
         Some(index_snapshot),
+        &ownership_meta,
+        &mut progress,
     )?;
-    write_ownership_meta(out_path, &ownership_meta)?;
     let generated_pages = docs.len();
     let skipped = generated_pages.saturating_sub(changed_paths.len());
 
@@ -455,6 +478,25 @@ fn validate_edge_limit(edge_limit: usize) -> anyhow::Result<()> {
     anyhow::bail!("codewiki --edge-limit must be between 1 and {MAX_EDGE_LIMIT}, got {edge_limit}")
 }
 
+fn write_codewiki_docs(
+    project_root: &Path,
+    out_path: &Path,
+    docs: &[(String, String)],
+    index_snapshot: Option<CodewikiIndexSnapshot>,
+    ownership_meta: &OwnershipMeta,
+    progress: &mut CodewikiProgress,
+) -> anyhow::Result<Vec<String>> {
+    progress.emit(format!(
+        "writing docs {} pages to {}",
+        docs.len(),
+        out_path.display()
+    ));
+    let changed_paths =
+        write_incremental_doc_set_with_snapshot(project_root, out_path, docs, index_snapshot)?;
+    write_ownership_meta(out_path, ownership_meta)?;
+    Ok(changed_paths)
+}
+
 pub fn generate_hierarchical_docs(
     input: &CodewikiInput,
     generate: Option<&mut TextGenerator<'_>>,
@@ -466,7 +508,8 @@ fn generate_hierarchical_docs_with_graph_availability(
     input: &CodewikiInput,
     mut generate: Option<&mut TextGenerator<'_>>,
 ) -> Vec<(String, String)> {
-    match generate_hierarchical_docs_core(input, None, &mut generate) {
+    let mut progress = CodewikiProgress::silent();
+    match generate_hierarchical_docs_core(input, None, &mut generate, &mut progress) {
         Ok(docs) => docs,
         Err(error) => {
             log::warn!("codewiki generation failed without ownership metadata: {error}");
@@ -480,14 +523,36 @@ fn generate_hierarchical_docs_with_ownership(
     project_root: &Path,
     ownership_meta: &mut OwnershipMeta,
     mut generate: Option<&mut TextGenerator<'_>>,
+    progress: &mut CodewikiProgress,
 ) -> anyhow::Result<Vec<(String, String)>> {
-    generate_hierarchical_docs_core(input, Some((project_root, ownership_meta)), &mut generate)
+    generate_hierarchical_docs_core(
+        input,
+        Some((project_root, ownership_meta)),
+        &mut generate,
+        progress,
+    )
+}
+
+#[cfg(test)]
+fn generate_hierarchical_docs_with_progress(
+    input: &CodewikiInput,
+    mut generate: Option<&mut TextGenerator<'_>>,
+    progress: &mut CodewikiProgress,
+) -> Vec<(String, String)> {
+    match generate_hierarchical_docs_core(input, None, &mut generate, progress) {
+        Ok(docs) => docs,
+        Err(error) => {
+            log::warn!("codewiki generation failed without ownership metadata: {error}");
+            Vec::new()
+        }
+    }
 }
 
 fn generate_hierarchical_docs_core(
     input: &CodewikiInput,
     ownership: Option<(&Path, &mut OwnershipMeta)>,
     generate: &mut Option<&mut TextGenerator<'_>>,
+    progress: &mut CodewikiProgress,
 ) -> anyhow::Result<Vec<(String, String)>> {
     let mut files = input
         .files
@@ -517,9 +582,12 @@ fn generate_hierarchical_docs_core(
     }
 
     let file_modules = cluster_file_modules(&files, &symbols_by_file, &input.graph_edges);
+    progress.emit(format!("generating file docs for {} files", files.len()));
+    let file_total = files.len();
     let file_docs = files
         .iter()
-        .map(|file| {
+        .enumerate()
+        .map(|(index, file)| {
             build_file_doc(
                 file,
                 file_modules
@@ -528,29 +596,38 @@ fn generate_hierarchical_docs_core(
                     .unwrap_or_else(|| module_for_file(file)),
                 symbols_by_file.remove(file).unwrap_or_default(),
                 generate,
+                progress,
+                index + 1,
+                file_total,
             )
         })
         .collect::<Vec<_>>();
+    progress.emit("generating module docs");
     let module_docs = build_module_docs(
         &file_docs,
         &input.graph_edges,
         input.graph_availability,
         generate,
+        progress,
     );
-    let repo_doc = build_repo_doc(&file_docs, &module_docs, generate);
+    let repo_doc = build_repo_doc(&file_docs, &module_docs, generate, progress);
+    progress.emit("generating architecture docs");
     let architecture_doc = build_architecture_doc(
         &file_docs,
         &module_docs,
         &input.graph_edges,
         input.graph_availability,
         generate,
+        progress,
     );
+    progress.emit("generating onboarding docs");
     let onboarding_doc = build_onboarding_doc(
         &file_docs,
         &module_docs,
         &input.graph_edges,
         input.graph_availability,
     );
+    progress.emit("generating hotspots docs");
     let hotspots_doc = build_hotspots_doc(&file_docs, &input.graph_edges, input.graph_availability);
 
     let mut docs = vec![
@@ -569,6 +646,7 @@ fn generate_hierarchical_docs_core(
         ),
     ];
     if let Some((project_root, ownership_meta)) = ownership {
+        progress.emit("generating ownership docs");
         docs.push((
             "code/_ownership.md".to_string(),
             build_ownership_doc(
@@ -595,5 +673,9 @@ mod hotspots_tests;
 mod module_tests;
 #[cfg(test)]
 mod onboarding_tests;
+#[cfg(test)]
+mod progress_tests;
+#[cfg(test)]
+mod test_utils;
 #[cfg(test)]
 mod tests;
