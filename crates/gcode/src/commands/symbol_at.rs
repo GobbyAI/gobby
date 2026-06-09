@@ -198,7 +198,9 @@ fn is_numeric_text(value: &str) -> bool {
     !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
 }
 
-/// Converts editor-style 1-based line/column input into a 0-based byte offset.
+/// Converts 1-based editor/LSP line and column inputs to a 0-based byte offset.
+///
+/// Line and column must be greater than zero; out-of-range coordinates bail.
 fn line_column_to_byte_offset(source: &[u8], line: usize, column: usize) -> anyhow::Result<usize> {
     if line == 0 {
         bail!("line must be greater than 0");

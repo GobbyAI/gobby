@@ -26,8 +26,8 @@ const RESEARCH_NOTE_MATERIALIZE_TIMEOUT: Duration = Duration::from_secs(10);
 const RESEARCH_NOTE_MATERIALIZE_INITIAL_DELAY: Duration = Duration::from_millis(25);
 const RESEARCH_NOTE_MATERIALIZE_MAX_DELAY: Duration = Duration::from_millis(250);
 // Stable v5 namespace for accepted research-note identities. It is deliberately
-// separate from source and audit UUIDs so title/body/source collisions cannot
-// alias another research artifact family.
+// separate from the code Symbol ID namespace because accepted_note_draft_id
+// deduplicates research-note content, not codebase symbol indexing artifacts.
 const RESEARCH_NOTE_NAMESPACE: uuid::Uuid = uuid::Uuid::from_bytes([
     0x9c, 0x51, 0x3a, 0x5b, 0x35, 0x92, 0x4d, 0x6d, 0x8e, 0x5f, 0x42, 0x1f, 0x20, 0xb7, 0x8a, 0xe4,
 ]);

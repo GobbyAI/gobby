@@ -46,4 +46,37 @@ mod tests {
             "First paragraph.\n\nSecond paragraph."
         );
     }
+
+    #[test]
+    fn normalize_page_text_multiple_blank_lines() {
+        assert_eq!(normalize_page_text("First\n\n\nSecond"), "First\n\nSecond");
+    }
+
+    #[test]
+    fn normalize_page_text_trailing_blank_lines() {
+        assert_eq!(normalize_page_text("First\n\n"), "First");
+    }
+
+    #[test]
+    fn normalize_page_text_whitespace_only_lines() {
+        assert_eq!(normalize_page_text(" \t \n  \n"), "");
+    }
+
+    #[test]
+    fn normalize_page_text_empty_input() {
+        assert_eq!(normalize_page_text(""), "");
+    }
+
+    #[test]
+    fn normalize_page_text_single_line() {
+        assert_eq!(normalize_page_text("Only line."), "Only line.");
+    }
+
+    #[test]
+    fn normalize_page_text_no_blank_lines() {
+        assert_eq!(
+            normalize_page_text("First line\nwraps here\nand here"),
+            "First line wraps here and here"
+        );
+    }
 }

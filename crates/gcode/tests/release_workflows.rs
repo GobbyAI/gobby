@@ -131,6 +131,54 @@ fn release_workflows_have_one_default_and_one_no_default_check() {
 }
 
 #[test]
+fn release_gcore_uses_workspace_validation() {
+    let workflow = include_str!("../../../.github/workflows/release-gcore.yml");
+
+    assert_eq!(
+        count_run_step(
+            workflow,
+            "cargo clippy --workspace --all-targets -- -D warnings"
+        ),
+        1,
+        "gobby-core release default clippy step count"
+    );
+    assert_eq!(
+        count_run_step(
+            workflow,
+            "cargo clippy --workspace --all-targets --no-default-features -- -D warnings"
+        ),
+        1,
+        "gobby-core release no-default clippy step count"
+    );
+    assert_eq!(
+        count_run_step(workflow, "cargo nextest run --profile ci --workspace"),
+        1,
+        "gobby-core release default test step count"
+    );
+    assert_eq!(
+        count_run_step(
+            workflow,
+            "cargo nextest run --profile ci --workspace --no-default-features"
+        ),
+        1,
+        "gobby-core release no-default test step count"
+    );
+    assert_eq!(
+        count_run_step(workflow, "cargo test --doc --workspace"),
+        1,
+        "gobby-core release default doctest step count"
+    );
+    assert_eq!(
+        count_run_step(
+            workflow,
+            "cargo test --doc --workspace --no-default-features"
+        ),
+        1,
+        "gobby-core release no-default doctest step count"
+    );
+}
+
+#[test]
 fn release_workflows_use_github_cli_release_creation() {
     for (tool, workflow) in RELEASE_WORKFLOWS {
         assert!(

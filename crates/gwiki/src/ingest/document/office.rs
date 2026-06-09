@@ -430,16 +430,20 @@ fn warn_empty_office_paragraph(
 }
 
 pub(crate) fn markdown_table(rows: &[Vec<String>]) -> String {
+    let rows = rows
+        .iter()
+        .filter(|row| row.iter().any(|cell| !cell.trim().is_empty()))
+        .collect::<Vec<_>>();
     if rows.is_empty() {
         return String::new();
     }
-    let column_count = rows.iter().map(Vec::len).max().unwrap_or(1);
+    let column_count = rows.iter().map(|row| row.len()).max().unwrap_or(1);
     let mut markdown = String::new();
-    let header = &rows[0];
+    let header = rows[0];
     push_table_row(&mut markdown, header, column_count);
     let separators = vec!["---".to_string(); column_count];
     push_table_row(&mut markdown, &separators, column_count);
-    for row in rows.iter().skip(1) {
+    for &row in rows.iter().skip(1) {
         push_table_row(&mut markdown, row, column_count);
     }
     markdown.trim_end().to_string()
@@ -495,6 +499,17 @@ mod tests {
             spreadsheet_row_text(&row, 8),
             Some(vec![String::new(), "value".to_string()])
         );
+    }
+
+    #[test]
+    fn markdown_table_filters_fully_empty_rows() {
+        let markdown = markdown_table(&[
+            vec!["Name".to_string(), "Value".to_string()],
+            vec![String::new(), "  ".to_string()],
+            vec!["alpha".to_string(), "1".to_string()],
+        ]);
+
+        assert_eq!(markdown, "| Name | Value |\n| --- | --- |\n| alpha | 1 |");
     }
 
     #[test]

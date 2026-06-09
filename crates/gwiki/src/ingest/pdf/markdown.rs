@@ -350,6 +350,11 @@ mod tests {
     #[test]
     fn ocr_overlap_key_preserves_punctuation_collisions() {
         assert_ne!(overlap_key("A/B"), overlap_key("AB"));
+        assert_ne!(overlap_key("A-1"), overlap_key("A1"));
+        assert_ne!(
+            overlap_key("email@example.com"),
+            overlap_key("emailexamplecom")
+        );
         assert_eq!(
             dedupe_ocr_text("Account A/B", "Account AB"),
             Some("Account AB".to_string())
