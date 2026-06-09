@@ -593,10 +593,10 @@ fn truncated_graph_emits_degradation_marker_with_partial_diagram() {
 }
 
 #[test]
-fn frontmatter_source_files_accept_unquoted_and_escaped_values() {
+fn frontmatter_provenance_accepts_unquoted_and_escaped_values() {
     let files = source_files_from_frontmatter(
         r#"---
-source_files:
+provenance:
   - file: src/plain.rs
   - file: "src/escaped\"quote.rs"
 ---
@@ -608,11 +608,11 @@ source_files:
 }
 
 #[test]
-fn frontmatter_source_files_parse_yaml_with_ranges() {
+fn frontmatter_provenance_parse_yaml_with_ranges() {
     let files = source_files_from_frontmatter(
         r#"---
 title: "Example"
-source_files:
+provenance:
   - file: "src/one:thing.rs"
     ranges:
       - "1-4"
@@ -627,13 +627,28 @@ source_files:
 }
 
 #[test]
+fn frontmatter_legacy_source_files_are_ignored() {
+    let files = source_files_from_frontmatter(
+        r#"---
+source_files:
+- file: src/legacy.rs
+sources:
+- file: src/also-legacy.rs
+---
+"#,
+    );
+
+    assert!(files.is_empty());
+}
+
+#[test]
 fn source_hashes_reject_frontmatter_paths_outside_project_root() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let project_root = tempdir.path().join("project");
     std::fs::create_dir_all(&project_root).expect("project root");
     std::fs::write(tempdir.path().join("outside.rs"), "fn outside() {}").expect("outside file");
     let content = r#"---
-source_files:
+provenance:
   - file: ../outside.rs
 ---
 "#;

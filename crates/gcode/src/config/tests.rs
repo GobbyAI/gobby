@@ -102,7 +102,7 @@ fn adapter_env_precedence_and_json_decode() {
         let values = std::collections::HashMap::from([
             ("databases.falkordb.host", r#""stored-falkor.local""#),
             ("databases.falkordb.port", r#""16380""#),
-            ("databases.falkordb.requirepass", r#""stored-pass""#),
+            ("databases.falkordb.password", r#""stored-pass""#),
             ("databases.qdrant.url", r#""http://qdrant.local:6333""#),
             ("databases.qdrant.api_key", r#""qdrant-key""#),
             (
@@ -194,10 +194,7 @@ fn adapter_resolves_config_store_secrets() {
     with_service_env(&[], || {
         let values = std::collections::HashMap::from([
             ("databases.falkordb.host", "falkor.local"),
-            (
-                "databases.falkordb.requirepass",
-                "$secret:falkordb_password",
-            ),
+            ("databases.falkordb.password", "$secret:falkordb_password"),
             ("databases.qdrant.url", "http://qdrant.local:6333"),
             ("databases.qdrant.api_key", "$secret:qdrant_api_key"),
             (embedding_keys::AI_API_BASE, "http://embeddings.local:11434"),
@@ -262,7 +259,7 @@ fn phase7_config_resolution_returns_gcode_falkor_config_with_core_fields_and_gra
         let values = std::collections::HashMap::from([
             ("databases.falkordb.host", r#""stored-falkor.local""#),
             ("databases.falkordb.port", r#""16380""#),
-            ("databases.falkordb.requirepass", r#""stored-pass""#),
+            ("databases.falkordb.password", r#""stored-pass""#),
         ]);
 
         let falkor = resolve_falkordb_config_from_values(config_value_for(&values), |value| {
@@ -284,7 +281,7 @@ fn phase7_config_resolution_returns_gcode_falkor_config_with_core_fields_and_gra
 
 #[test]
 #[serial_test::serial]
-fn falkor_password_falls_back_to_password_key() {
+fn falkor_password_reads_password_key() {
     with_service_env(&[], || {
         let values = std::collections::HashMap::from([
             ("databases.falkordb.host", r#""stored-falkor.local""#),
@@ -297,6 +294,24 @@ fn falkor_password_falls_back_to_password_key() {
         .expect("falkordb config");
 
         assert_eq!(falkor.password.as_deref(), Some("stored-pass"));
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn falkor_password_ignores_legacy_requirepass_key() {
+    with_service_env(&[], || {
+        let values = std::collections::HashMap::from([
+            ("databases.falkordb.host", r#""stored-falkor.local""#),
+            ("databases.falkordb.requirepass", r#""legacy-pass""#),
+        ]);
+
+        let falkor = resolve_falkordb_config_from_values(config_value_for(&values), |value| {
+            Ok(value.to_string())
+        })
+        .expect("falkordb config");
+
+        assert_eq!(falkor.password, None);
     });
 }
 

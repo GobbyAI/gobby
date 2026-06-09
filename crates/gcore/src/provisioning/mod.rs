@@ -116,12 +116,7 @@ impl StandaloneConfig {
 
 impl ConfigSource for StandaloneConfig {
     fn config_value(&mut self, key: &str) -> Option<String> {
-        self.values.get(key).cloned().or_else(|| match key {
-            "databases.falkordb.requirepass" => {
-                self.values.get("databases.falkordb.password").cloned()
-            }
-            _ => None,
-        })
+        self.values.get(key).cloned()
     }
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {

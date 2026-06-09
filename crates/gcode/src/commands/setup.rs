@@ -241,7 +241,6 @@ fn write_gcore_config(
             "databases.falkordb.password",
             &service_options.falkordb_password,
         );
-        config.remove("databases.falkordb.requirepass");
         config.set("databases.qdrant.url", service_options.qdrant_url());
         config.set(
             "services.compose_file",
@@ -256,7 +255,6 @@ fn write_gcore_config(
         }
         if let Some(password) = request.falkordb_password.as_deref() {
             config.set("databases.falkordb.password", password);
-            config.remove("databases.falkordb.requirepass");
         }
         if let Some(qdrant_url) = request.qdrant_url.as_deref() {
             config.set("databases.qdrant.url", qdrant_url);
@@ -312,13 +310,11 @@ fn resolve_embedding_bootstrap(
 
     let mut embedding = match provider.as_deref() {
         Some("none") => return Ok(None),
-        Some("lm-studio") | Some("lmstudio") => EmbeddingBootstrap::lm_studio(),
+        Some("lmstudio") => EmbeddingBootstrap::lm_studio(),
         Some("ollama") => EmbeddingBootstrap::ollama(),
-        Some("openai-compatible") | Some("openai") | Some("remote") => {
-            explicit_embedding_bootstrap(request)?
-        }
+        Some("openai-compatible") => explicit_embedding_bootstrap(request)?,
         Some(other) => anyhow::bail!(
-            "unsupported embedding provider `{other}`; expected lm-studio, ollama, openai-compatible, or none"
+            "unsupported embedding provider `{other}`; expected lmstudio, ollama, openai-compatible, or none"
         ),
         None if request.embedding_api_base.is_some()
             || request.embedding_model.is_some()
@@ -468,7 +464,7 @@ mod tests {
         let home = tempfile::tempdir().expect("temp home");
         let path = gcore_config_path(home.path());
         let mut existing = StandaloneConfig::empty();
-        existing.set(embedding_keys::AI_PROVIDER, "lm-studio");
+        existing.set(embedding_keys::AI_PROVIDER, "lmstudio");
         existing.set(embedding_keys::AI_API_BASE, "http://localhost:1234/v1");
         existing.set(embedding_keys::AI_MODEL, "embed-small");
         existing.set(embedding_keys::AI_DIM, "1024");
@@ -512,6 +508,36 @@ mod tests {
             config.get("databases.postgres.dsn"),
             Some("postgresql://localhost/gobby")
         );
+    }
+
+    #[test]
+    fn setup_rejects_removed_embedding_provider_aliases() {
+        for provider in ["lm-studio", "openai", "remote"] {
+            let mut request = StandaloneSetupRequest::new(true, None, None);
+            request.embedding_provider = Some(provider.to_string());
+            request.embedding_api_base = Some("http://localhost:1234/v1".to_string());
+
+            let error = resolve_embedding_bootstrap(&request)
+                .expect_err("removed embedding provider alias is rejected");
+
+            assert!(
+                error
+                    .to_string()
+                    .contains("expected lmstudio, ollama, openai-compatible, or none")
+            );
+        }
+    }
+
+    #[test]
+    fn setup_accepts_canonical_lmstudio_embedding_provider() {
+        let mut request = StandaloneSetupRequest::new(true, None, None);
+        request.embedding_provider = Some("lmstudio".to_string());
+
+        let embedding = resolve_embedding_bootstrap(&request)
+            .expect("canonical provider accepted")
+            .expect("embedding configured");
+
+        assert_eq!(embedding.provider, "lmstudio");
     }
 
     mod serial_db {

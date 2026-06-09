@@ -599,7 +599,7 @@ mod tests {
         write_file(
             tempdir.path(),
             "code/crates/gwiki/src/indexer.md",
-            "---\nsource_files:\n  - crates/gwiki/src/indexer.rs\n---\n# Indexer\n\nSee [[code/crates/gwiki/src/store|store docs]].\n",
+            "---\nprovenance:\n  - file: crates/gwiki/src/indexer.rs\n---\n# Indexer\n\nSee [[code/crates/gwiki/src/store|store docs]].\n",
         );
         let mut store = MemoryWikiStore::default();
 
@@ -608,7 +608,7 @@ mod tests {
         let path = PathBuf::from("code/crates/gwiki/src/indexer.md");
         let document = store.documents.get(&path).expect("codedoc document");
         assert_eq!(document.kind, WikiDocumentKind::CodeDoc);
-        assert!(document.body.contains("source_files:"));
+        assert!(document.body.contains("provenance:"));
         assert_eq!(store.sources[&path].kind, WikiDocumentKind::CodeDoc);
         assert_eq!(store.links[&path].len(), 1);
         assert_eq!(store.links[&path][0].target, "code/crates/gwiki/src/store");

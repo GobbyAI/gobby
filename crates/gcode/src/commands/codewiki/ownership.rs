@@ -33,19 +33,6 @@ pub(crate) struct OwnershipMeta {
     pub files: BTreeMap<String, CachedBlameSummary>,
 }
 
-impl OwnershipMeta {
-    pub(crate) fn normalize_contributor_ids(&mut self) {
-        for summary in self.files.values_mut() {
-            for contributor in &mut summary.contributors {
-                if contributor.contributor_id.is_empty() {
-                    contributor.contributor_id =
-                        contributor_id(&contributor.name, contributor.email.as_deref());
-                }
-            }
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct CachedBlameSummary {
     pub content_hash: String,
@@ -54,7 +41,6 @@ pub(crate) struct CachedBlameSummary {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct OwnershipContributor {
-    #[serde(default)]
     pub contributor_id: String,
     pub name: String,
     #[serde(default, skip_serializing)]
@@ -671,33 +657,23 @@ mod tests {
     }
 
     #[test]
-    fn codewiki_ownership_normalizes_legacy_cached_contributor_ids() {
-        let mut meta = serde_json::from_str::<OwnershipMeta>(
+    fn codewiki_ownership_requires_cached_contributor_ids() {
+        let error = serde_json::from_str::<OwnershipMeta>(
             r#"{
-              "files": {
-                "src/lib.rs": {
+"files": {
+"src/lib.rs": {
                   "content_hash": "hash",
                   "contributors": [
                     {"name": "Alice", "email": "alice@example.test", "lines": 4},
                     {"name": "Bob", "email": "bob@example.test", "lines": 2}
                   ]
                 }
-              }
-            }"#,
+}
+}"#,
         )
-        .expect("deserialize legacy ownership meta");
+        .expect_err("legacy ownership meta without contributor_id is rejected");
 
-        meta.normalize_contributor_ids();
-        let contributors = &meta.files["src/lib.rs"].contributors;
-        assert_ne!(
-            contributors[0].contributor_id,
-            contributors[1].contributor_id
-        );
-
-        let serialized = serde_json::to_string(&meta).expect("serialize ownership meta");
-        assert!(serialized.contains("contributor_id"));
-        assert!(!serialized.contains("alice@example.test"));
-        assert!(!serialized.contains("bob@example.test"));
+        assert!(error.to_string().contains("missing field `contributor_id`"));
     }
 
     #[test]

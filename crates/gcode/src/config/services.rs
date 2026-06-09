@@ -28,9 +28,7 @@ fn service_env_value(key: &str) -> Option<String> {
     let env_key = match key {
         "databases.falkordb.host" => "GOBBY_FALKORDB_HOST",
         "databases.falkordb.port" => "GOBBY_FALKORDB_PORT",
-        "databases.falkordb.requirepass" | "databases.falkordb.password" => {
-            "GOBBY_FALKORDB_PASSWORD"
-        }
+        "databases.falkordb.password" => "GOBBY_FALKORDB_PASSWORD",
         "databases.qdrant.url" => "GOBBY_QDRANT_URL",
         "databases.qdrant.api_key" => "GOBBY_QDRANT_API_KEY",
         _ => return None,
@@ -356,9 +354,7 @@ fn resolve_falkordb_config_from_source(
         return Ok(None);
     };
     let port = resolve_service_port(source, "databases.falkordb.port", 16379)?;
-    let password = resolve_service_setting(source, "databases.falkordb.requirepass")?.or(
-        resolve_service_setting(source, "databases.falkordb.password")?,
-    );
+    let password = resolve_service_setting(source, "databases.falkordb.password")?;
 
     Ok(Some(FalkorConfig {
         host,

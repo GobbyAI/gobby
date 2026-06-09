@@ -45,7 +45,7 @@ pub const GOBBY_FALKORDB_PASSWORD_ENV: &str = "GOBBY_FALKORDB_PASSWORD";
 
 pub const FALKORDB_HOST_CONFIG_KEY: &str = "databases.falkordb.host";
 pub const FALKORDB_PORT_CONFIG_KEY: &str = "databases.falkordb.port";
-pub const FALKORDB_PASSWORD_CONFIG_KEY: &str = "databases.falkordb.requirepass";
+pub const FALKORDB_PASSWORD_CONFIG_KEY: &str = "databases.falkordb.password";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CodeVectorSettings {

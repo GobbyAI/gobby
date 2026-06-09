@@ -52,9 +52,8 @@ When suppression applies, `ghook` deletes the just-enqueued envelope and returns
 
 - `schemas/inbox-envelope.v1.schema.json` — what lands in the inbox.
 - `schemas/diagnose-output.v2.schema.json` — what `--diagnose` prints. Adds `install_method` and `install_source_url` fields sourced from an installer-written sidecar (`.ghook-install.json`, next to the binary).
-- `schemas/diagnose-output.v1.schema.json` — frozen historical schema for the 0.1.x and 0.2.x diagnose output. Kept for tooling that pinned to v1.
 
-The active schemas (envelope v1, diagnose v2) are validated in unit tests.
+The schemas are validated in unit tests.
 
 ## Install provenance
 

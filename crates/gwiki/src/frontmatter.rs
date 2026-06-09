@@ -355,13 +355,7 @@ fn frontmatter_from_object(mut object: Map<String, Value>) -> WikiFrontmatter {
     let indexed_at = object
         .remove("indexed_at")
         .and_then(|value| string_value(&value));
-    let legacy_source = object
-        .get("source_files")
-        .cloned()
-        .or_else(|| object.get("sources").cloned());
     let captured_from = captured_from.or_else(|| source.as_ref().and_then(string_value));
-    let source = source.or_else(|| legacy_source.clone());
-    let provenance = provenance.or(legacy_source);
 
     WikiFrontmatter {
         title,
@@ -510,7 +504,7 @@ mod tests {
     }
 
     #[test]
-    fn frontmatter_migration_normalizes_legacy_source_files_without_rewriting() {
+    fn legacy_source_files_remain_unknown_metadata() {
         let markdown = concat!(
             "---\n",
             "title: Legacy Code Page\n",
@@ -524,23 +518,8 @@ mod tests {
 
         let parsed = parse_frontmatter(markdown).expect("parse legacy frontmatter");
 
-        let source = parsed
-            .metadata
-            .source
-            .as_ref()
-            .expect("legacy source_files normalized to source");
-        assert_eq!(
-            source,
-            parsed.metadata.provenance.as_ref().expect("provenance")
-        );
-        assert_eq!(
-            source
-                .as_array()
-                .and_then(|items| items.first())
-                .and_then(|item| item.get("file"))
-                .and_then(Value::as_str),
-            Some("src/lib.rs")
-        );
+        assert!(parsed.metadata.source.is_none());
+        assert!(parsed.metadata.provenance.is_none());
         assert!(parsed.metadata.unknown.contains_key("source_files"));
         assert_eq!(parsed.body, "# Body\n");
         assert!(markdown[..parsed.body_start].contains("source_files:"));

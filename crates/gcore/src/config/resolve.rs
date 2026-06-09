@@ -151,13 +151,10 @@ pub fn resolve_falkordb_config(source: &mut impl ConfigSource) -> Option<FalkorC
         "databases.falkordb.port",
         FALKORDB_DEFAULT_PORT,
     );
-    let password = resolve_setting_from_keys(
+    let password = resolve_setting(
         source,
         "GOBBY_FALKORDB_PASSWORD",
-        &[
-            "databases.falkordb.requirepass",
-            "databases.falkordb.password",
-        ],
+        "databases.falkordb.password",
     );
 
     Some(FalkorConfig {

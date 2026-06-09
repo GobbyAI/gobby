@@ -17,7 +17,7 @@ pub struct EmbeddingBootstrap {
 impl EmbeddingBootstrap {
     pub fn lm_studio() -> Self {
         Self {
-            provider: "lm-studio".to_string(),
+            provider: "lmstudio".to_string(),
             api_base: DEFAULT_LM_STUDIO_API_BASE.to_string(),
             model: DEFAULT_LM_STUDIO_MODEL.to_string(),
             vector_dim: DEFAULT_EMBEDDING_VECTOR_DIM,

@@ -182,7 +182,7 @@ fn env_overrides_config_store() {
     let mut source = TestSource::with_values([
         ("databases.falkordb.host", "stored-falkor.local"),
         ("databases.falkordb.port", "16000"),
-        ("databases.falkordb.requirepass", "stored-pass"),
+        ("databases.falkordb.password", "stored-pass"),
         ("databases.qdrant.url", "http://stored-qdrant:6333"),
         ("databases.qdrant.api_key", "stored-qdrant-key"),
     ]);
@@ -214,7 +214,7 @@ fn falkordb_password_resolves_current_config_key() {
 }
 
 #[test]
-fn falkordb_password_prefers_legacy_key_when_both_exist() {
+fn falkordb_password_prefers_current_key_when_legacy_key_exists() {
     let _env = EnvGuard::new();
     let mut source = TestSource::with_values([
         ("databases.falkordb.host", "stored-falkor.local"),
@@ -224,7 +224,26 @@ fn falkordb_password_prefers_legacy_key_when_both_exist() {
 
     let falkordb = resolve_falkordb_config(&mut source).expect("falkordb config");
 
-    assert_eq!(falkordb.password.as_deref(), Some("legacy-pass"));
+    assert_eq!(falkordb.password.as_deref(), Some("current-pass"));
+}
+
+#[test]
+fn falkordb_password_ignores_legacy_requirepass_key() {
+    let _env = EnvGuard::new();
+    let mut source = TestSource::with_values([
+        ("databases.falkordb.host", "falkor.local"),
+        ("databases.falkordb.requirepass", "$secret:FALKOR_PASS"),
+    ]);
+
+    let config = resolve_falkordb_config(&mut source).expect("falkordb config");
+
+    assert_eq!(config.password, None);
+    assert!(
+        !source
+            .resolved_values
+            .iter()
+            .any(|value| value.contains("FALKOR_PASS"))
+    );
 }
 
 #[test]
@@ -232,7 +251,7 @@ fn config_source_handles_secrets() {
     let _env = EnvGuard::new();
     let mut source = TestSource::with_values([
         ("databases.falkordb.host", "falkor.local"),
-        ("databases.falkordb.requirepass", "$secret:FALKOR_PASS"),
+        ("databases.falkordb.password", "$secret:FALKOR_PASS"),
     ]);
 
     let config = resolve_falkordb_config(&mut source).expect("falkordb config");
@@ -522,7 +541,7 @@ fn resolve_config_handles_json_encoded_store_values() {
     let mut source = TestSource::with_raw_values([
         ("databases.falkordb.host", r#""json-falkor.local""#),
         ("databases.falkordb.port", r#""17001""#),
-        ("databases.falkordb.requirepass", r#""$secret:FALKOR_PASS""#),
+        ("databases.falkordb.password", r#""$secret:FALKOR_PASS""#),
         ("databases.qdrant.url", r#""http://json-qdrant:6333""#),
         ("databases.qdrant.api_key", r#"["alpha",1]"#),
         (

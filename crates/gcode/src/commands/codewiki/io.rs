@@ -137,11 +137,7 @@ pub(crate) fn write_codewiki_meta(out_dir: &Path, meta: &CodewikiMeta) -> anyhow
 pub(crate) fn read_ownership_meta(out_dir: &Path) -> anyhow::Result<OwnershipMeta> {
     let path = safe_doc_path(out_dir, OWNERSHIP_META_PATH)?;
     match std::fs::read_to_string(&path) {
-        Ok(raw) => {
-            let mut meta = serde_json::from_str::<OwnershipMeta>(&raw)?;
-            meta.normalize_contributor_ids();
-            Ok(meta)
-        }
+        Ok(raw) => Ok(serde_json::from_str::<OwnershipMeta>(&raw)?),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(OwnershipMeta::default()),
         Err(err) => Err(err.into()),
     }
@@ -192,7 +188,7 @@ pub(crate) fn source_files_from_frontmatter(content: &str) -> BTreeSet<String> {
         return files;
     };
 
-    for key in ["source", "provenance", "source_files", "sources"] {
+    for key in ["provenance"] {
         let key = serde_yaml::Value::String(key.to_string());
         let Some(serde_yaml::Value::Sequence(sources)) = frontmatter.get(&key) else {
             continue;

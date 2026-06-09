@@ -148,7 +148,6 @@ fn write_gwiki_gcore_config(
             "databases.falkordb.password",
             &service_options.falkordb_password,
         );
-        config.remove("databases.falkordb.requirepass");
         config.set("databases.qdrant.url", service_options.qdrant_url());
         config.set(
             "services.compose_file",
@@ -163,7 +162,6 @@ fn write_gwiki_gcore_config(
         }
         if let Some(password) = options.falkordb_password.as_deref() {
             config.set("databases.falkordb.password", password);
-            config.remove("databases.falkordb.requirepass");
         }
         if let Some(qdrant_url) = options.qdrant_url.as_deref() {
             config.set("databases.qdrant.url", qdrant_url);

@@ -234,14 +234,8 @@ fn has_codewiki_frontmatter_source_spans(page: &WikiPage) -> bool {
         && page
             .parsed
             .frontmatter
-            .source
+            .provenance
             .iter()
-            .chain(page.parsed.frontmatter.provenance.iter())
-            .chain(
-                ["source_files", "sources"]
-                    .iter()
-                    .filter_map(|key| page.parsed.frontmatter.unknown.get(*key)),
-            )
             .any(frontmatter_value_has_code_source_span)
 }
 
@@ -715,7 +709,7 @@ mod tests {
         let markdown = r#"---
 title: crates/example.rs
 type: code_file
-source_files:
+provenance:
 - file: crates/example.rs
   ranges:
   - 1-12
@@ -755,7 +749,7 @@ Signature: `fn example() -> bool {`
         let markdown = r#"---
 title: crates/example.rs
 type: code_file
-source_files:
+provenance:
 - file: crates/example.rs
   ranges:
   - 1-12
@@ -796,12 +790,8 @@ source_files:
 
 Signature: `fn example() -> bool {`
 "#;
-        let shared = r#"---
+        let canonical = r#"---
 title: crates/example.rs
-source:
-- file: crates/example.rs
-  ranges:
-  - 1-12
 provenance:
 - file: crates/example.rs
   ranges:
@@ -817,23 +807,28 @@ Signature: `fn example() -> bool {`
 "#;
 
         let legacy_page = test_codewiki_page("code/files/crates/example.rs.md", legacy);
-        let shared_page = test_codewiki_page("code/files/crates/example.rs.md", shared);
+        let canonical_page = test_codewiki_page("code/files/crates/example.rs.md", canonical);
 
-        assert!(has_codewiki_frontmatter_source_spans(&legacy_page));
-        assert!(has_codewiki_frontmatter_source_spans(&shared_page));
+        assert!(!has_codewiki_frontmatter_source_spans(&legacy_page));
+        assert!(has_codewiki_frontmatter_source_spans(&canonical_page));
         assert_eq!(
             unsupported_claims(
                 &legacy_page,
                 &ProvenanceGraph::default(),
                 &Arc::new(Vec::new()),
                 &AuditOptions::default(),
-            ),
+            )
+            .len(),
+            1
+        );
+        assert!(
             unsupported_claims(
-                &shared_page,
+                &canonical_page,
                 &ProvenanceGraph::default(),
                 &Arc::new(Vec::new()),
                 &AuditOptions::default(),
             )
+            .is_empty()
         );
     }
 
