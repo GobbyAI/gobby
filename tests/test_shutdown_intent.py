@@ -11,8 +11,10 @@ import pytest
 from gobby.shutdown_intent import (
     ShutdownIntent,
     get_active_shutdown_marker_path,
+    get_shutdown_source_path,
     read_active_shutdown_intent,
     read_shutdown_intent,
+    read_shutdown_source_record,
     write_shutdown_intent,
 )
 
@@ -116,9 +118,13 @@ def test_write_shutdown_intent_records_active_marker(tmp_path: Path) -> None:
     write_shutdown_intent("cli_restart", "restart", home=tmp_path)
 
     record = read_shutdown_intent(home=tmp_path)
+    source_record = read_shutdown_source_record(home=tmp_path)
 
     assert record.intent is ShutdownIntent.RESTART
     assert not (tmp_path / "shutdown_intent_active.json").exists()
+    assert source_record is not None
+    assert source_record.source == "cli_restart"
+    assert get_shutdown_source_path(tmp_path).exists()
 
 
 def test_read_active_shutdown_intent_returns_none_after_consuming_marker(
@@ -128,9 +134,13 @@ def test_read_active_shutdown_intent_returns_none_after_consuming_marker(
     consumed = read_shutdown_intent(home=tmp_path)
 
     active = read_active_shutdown_intent(home=tmp_path)
+    source_record = read_shutdown_source_record(home=tmp_path)
 
     assert consumed.intent is ShutdownIntent.RESTART
     assert active is None
+    assert source_record is not None
+    assert source_record.intent is ShutdownIntent.RESTART
+    assert source_record.sender_pid == 789
 
 
 def test_read_active_shutdown_intent_returns_stale_record(tmp_path: Path) -> None:

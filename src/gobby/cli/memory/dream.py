@@ -154,18 +154,22 @@ def _wait_for_completion(
             raise click.ClickException(
                 f"Timed out after {timeout:g}s waiting for dream run {run_id}"
             )
-        data = _request(
-            ctx,
-            f"/memory/dream/{run_id}",
-            method="GET",
-            timeout=min(_START_REQUEST_TIMEOUT_SECONDS, remaining),
-        )
-        status = _status(data)
-        if status and status != last_status:
-            click.echo(f"Status: {status}")
-            last_status = status
-        if status in _TERMINAL_STATUSES:
-            return data
+        try:
+            data = _request(
+                ctx,
+                f"/memory/dream/{run_id}",
+                method="GET",
+                timeout=min(_START_REQUEST_TIMEOUT_SECONDS, remaining),
+            )
+        except click.ClickException as exc:
+            click.echo(f"Warning: failed to poll dream run {run_id}: {exc.message}", err=True)
+        else:
+            status = _status(data)
+            if status and status != last_status:
+                click.echo(f"Status: {status}")
+                last_status = status
+            if status in _TERMINAL_STATUSES:
+                return data
         sleep_for = min(_WAIT_POLL_INTERVAL_SECONDS, max(0.0, deadline - time.monotonic()))
         time.sleep(sleep_for)
 

@@ -268,6 +268,10 @@ class MemoryDreamConfig(FeatureDefaultConfig):
         default=5000,
         description="Maximum memory rows to scan while finding stale candidates",
     )
+    candidate_page_timeout_seconds: float = Field(
+        default=10.0,
+        description="Maximum seconds to wait for one stale-candidate memory page",
+    )
     stale_age_days: int = Field(
         default=30,
         description="Minimum age in days before a memory is reviewed by dream",
@@ -303,6 +307,14 @@ class MemoryDreamConfig(FeatureDefaultConfig):
         """Validate positive integer settings."""
         if v < 1:
             raise ValueError("value must be at least 1")
+        return v
+
+    @field_validator("candidate_page_timeout_seconds")
+    @classmethod
+    def validate_positive_float(cls, v: float) -> float:
+        """Validate positive float settings."""
+        if v <= 0.0:
+            raise ValueError("value must be greater than 0")
         return v
 
     @field_validator("min_action_confidence", "min_delete_confidence")

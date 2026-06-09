@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -7,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from gobby.config.persistence import DatabasesConfig
 from gobby.servers.routes.admin import create_admin_router
-from gobby.shutdown_intent import ShutdownIntent
+from gobby.shutdown_intent import ShutdownIntent, read_shutdown_intent, write_shutdown_intent
 
 pytestmark = pytest.mark.unit
 
@@ -137,6 +138,31 @@ class TestAdminRoutes:
         assert data["process"]["memory_rss_mb"] == 100.0
         assert "test-server" in data["mcp_servers"]
         assert data["mcp_servers"]["test-server"]["connected"] is True
+
+    @patch("gobby.servers.routes.admin._health.psutil")
+    @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
+    def test_status_endpoint_reads_persistent_shutdown_source(
+        self,
+        mock_to_thread: MagicMock,
+        mock_psutil: MagicMock,
+        client: TestClient,
+        tmp_path: Path,
+    ) -> None:
+        mock_process = MagicMock()
+        mock_process.memory_info.return_value = MagicMock(rss=0, vms=0)
+        mock_process.num_threads.return_value = 1
+        mock_psutil.Process.return_value = mock_process
+        mock_to_thread.return_value = 0.0
+        write_shutdown_intent("cli_restart", ShutdownIntent.RESTART, sender_pid=123, home=tmp_path)
+        read_shutdown_intent(home=tmp_path)
+
+        with patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path):
+            response = client.get("/api/admin/status")
+
+        assert response.status_code == 200
+        assert response.json()["last_shutdown"] == (
+            "source=cli_restart, intent=restart, sender_pid=123"
+        )
 
     @patch("gobby.servers.routes.admin._health.is_qdrant_healthy", new_callable=AsyncMock)
     @patch("gobby.servers.routes.admin._health.psutil")

@@ -443,14 +443,19 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         # Last shutdown source
         last_shutdown: str | None = None
         try:
-            import json as _json
-
             from gobby.cli.utils import get_gobby_home as _ghome2
+            from gobby.shutdown_intent import (
+                format_shutdown_source,
+                read_active_shutdown_intent,
+                read_shutdown_source_record,
+            )
 
-            source_file = _ghome2() / "shutdown_intent_active.json"
-            if source_file.exists():
-                data = _json.loads(source_file.read_text())
-                last_shutdown = data.get("source", "unknown")
+            home = _ghome2()
+            shutdown_record = read_shutdown_source_record(home=home)
+            if shutdown_record is None:
+                shutdown_record = read_active_shutdown_intent(home=home, max_age_seconds=120)
+            if shutdown_record is not None:
+                last_shutdown = format_shutdown_source(shutdown_record)
         except Exception:
             pass
 

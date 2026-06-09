@@ -654,6 +654,21 @@ async def test_wait_for_plan_decision_times_out_to_reject() -> None:
     assert session.has_blocking_plan_decision is False
 
 
+async def test_wait_for_plan_decision_cancellation_clears_gate() -> None:
+    backend = DroidWebChatBackend()
+    session, _broadcasts = _exit_spec_session(backend)
+
+    task = asyncio.create_task(session._wait_for_plan_decision(timeout=30.0))
+    await asyncio.wait({task}, timeout=0)
+
+    assert session.has_blocking_plan_decision is True
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert session.has_blocking_plan_decision is False
+
+
 @pytest.mark.asyncio
 async def test_send_message_supports_multiple_turns_on_same_process() -> None:
     process = _FakeProcess(

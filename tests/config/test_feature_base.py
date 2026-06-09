@@ -96,6 +96,17 @@ class TestFeatureDefaultConfig:
         assert cfg.profile == FeatureProfile.HIGH
         assert cfg.candidates[0] == "claude/sonnet"
 
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"provider": "claude"},
+            {"model": "claude-sonnet-4-5"},
+        ],
+    )
+    def test_rejects_half_specified_legacy_provider_model(self, kwargs: dict[str, str]) -> None:
+        with pytest.raises(ValidationError, match="provider and model"):
+            FeatureDefaultConfig(**kwargs)
+
     def test_appends_legacy_candidate_after_explicit_candidates(self) -> None:
         cfg = FeatureDefaultConfig(
             **{
@@ -156,3 +167,10 @@ class TestFeatureConfigInheritance:
             cfg = config_cls()
             assert cfg.profile == FeatureProfile.HIGH
             assert cfg.candidates == list(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.HIGH])
+
+    def test_memory_dream_candidate_page_timeout_must_be_positive(self) -> None:
+        from gobby.config.persistence import MemoryDreamConfig
+
+        assert MemoryDreamConfig().candidate_page_timeout_seconds == 10.0
+        with pytest.raises(ValidationError, match="greater than 0"):
+            MemoryDreamConfig(candidate_page_timeout_seconds=0.0)

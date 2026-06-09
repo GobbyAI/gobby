@@ -499,7 +499,9 @@ def check_config_mismatches(config: Any) -> list[dict[str, str]]:
     # Chat candidates vs CLIs
     chat_candidates = getattr(getattr(config, "chat", None), "candidates", ())
     uses_claude_chat = any(
-        str(candidate).partition("/")[0] == "claude" for candidate in chat_candidates
+        candidate.partition("/")[0] == "claude"
+        for candidate in chat_candidates
+        if isinstance(candidate, str)
     )
     if uses_claude_chat and not shutil.which("claude"):
         issues.append(

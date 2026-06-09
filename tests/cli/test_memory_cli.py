@@ -518,6 +518,41 @@ class TestMemoryDreamCommand:
         assert 0.0 < calls[1].kwargs["timeout"] <= 5.0
         assert 0.0 < calls[2].kwargs["timeout"] <= 5.0
 
+    def test_dream_wait_continues_after_transient_poll_failure(
+        self,
+        runner: CliRunner,
+    ) -> None:
+        mock_client = MagicMock()
+        mock_client.call_http_api.side_effect = [
+            _FakeHTTPResponse({"success": True, "run_id": "dream-1", "status": "started"}),
+            OSError("temporarily unavailable"),
+            _FakeHTTPResponse(
+                {
+                    "success": True,
+                    "run": {
+                        "id": "dream-1",
+                        "status": "completed",
+                        "summary": {"candidates_reviewed": 0, "mutations": 0, "snapshots": 0},
+                    },
+                }
+            ),
+        ]
+
+        with (
+            patch("gobby.cli.memory.dream._get_daemon_client", return_value=mock_client),
+            patch("gobby.cli.memory.dream.time.sleep") as sleep,
+        ):
+            result = runner.invoke(
+                memory_cli,
+                ["dream", "--wait", "--timeout", "5"],
+                obj={"config": MagicMock(daemon_port=60887)},
+            )
+
+        assert result.exit_code == 0
+        assert "Warning: failed to poll dream run dream-1" in result.output
+        assert "Status: completed" in result.output
+        sleep.assert_called_once()
+
 
 class TestMemoryBackupCommand:
     """Tests for gobby memory backup command."""

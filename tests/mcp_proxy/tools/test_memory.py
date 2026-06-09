@@ -681,3 +681,58 @@ class TestMemoryDreamTools:
         assert revert["success"] is True
         service.status.assert_awaited_once_with("dream-1")
         service.revert.assert_awaited_once_with("dream-1")
+
+    async def test_memory_dream_reuses_registered_service(
+        self,
+        mock_memory_manager: MagicMock,
+        mock_llm_service: MagicMock,
+    ) -> None:
+        config = SimpleNamespace(memory=SimpleNamespace(dream=SimpleNamespace()))
+        service = MagicMock()
+        service.run = AsyncMock(return_value={"success": True, "run_id": "dream-1"})
+        service.status = AsyncMock(return_value={"success": True, "run": {"id": "dream-1"}})
+        service.revert = AsyncMock(return_value={"success": True, "run_id": "dream-1"})
+        registry = create_memory_registry(
+            mock_memory_manager,
+            llm_service=mock_llm_service,
+            config=config,
+        )
+
+        with patch(
+            "gobby.mcp_proxy.tools.memory_dream.MemoryDreamService",
+            return_value=service,
+        ) as service_factory:
+            run = await registry.call("memory_dream", {"wait": True})
+            status = await registry.call("memory_dream_status", {"run_id": "dream-1"})
+            revert = await registry.call("memory_dream_revert", {"run_id": "dream-1"})
+
+        assert run == {"success": True, "run_id": "dream-1"}
+        assert status == {"success": True, "run": {"id": "dream-1"}}
+        assert revert == {"success": True, "run_id": "dream-1"}
+        service_factory.assert_called_once()
+
+    async def test_memory_dream_background_start_respects_task_cap(
+        self,
+        mock_memory_manager: MagicMock,
+        mock_llm_service: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config = SimpleNamespace(memory=SimpleNamespace(dream=SimpleNamespace()))
+        service = MagicMock()
+        service.start_async = AsyncMock(return_value={"success": True, "run_id": "dream-1"})
+        registry = create_memory_registry(
+            mock_memory_manager,
+            llm_service=mock_llm_service,
+            config=config,
+        )
+        monkeypatch.setattr(memory_dream_tools, "MAX_BACKGROUND_DREAM_TASKS", 0)
+
+        with patch(
+            "gobby.mcp_proxy.tools.memory_dream.MemoryDreamService",
+            return_value=service,
+        ):
+            result = await registry.call("memory_dream", {"wait": False})
+
+        assert result["success"] is False
+        assert "limit reached" in result["error"].lower()
+        service.start_async.assert_not_called()

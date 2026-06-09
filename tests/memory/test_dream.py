@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -74,6 +75,25 @@ async def test_stale_candidate_discovery_reviews_high_access_old_memory() -> Non
 
     assert [candidate.id for candidate in result] == ["old-hot"]
     assert result[0].access_count == 99
+
+
+async def test_stale_candidate_discovery_times_out_page_fetch() -> None:
+    async def slow_list(*, limit: int | None, offset: int) -> list[Any]:
+        pending: asyncio.Future[list[Any]] = asyncio.Future()
+        return await pending
+
+    manager = MagicMock()
+    manager.alist_memories = slow_list
+    config = SimpleNamespace(
+        stale_age_days=30,
+        scan_limit=10,
+        max_scan_rows=100,
+        include_global_memories=True,
+        candidate_page_timeout_seconds=0.001,
+    )
+
+    with pytest.raises(TimeoutError, match="listing memory dream candidates at offset 0"):
+        await discover_stale_candidates(manager, config, project_id="proj-1")
 
 
 @pytest.mark.asyncio

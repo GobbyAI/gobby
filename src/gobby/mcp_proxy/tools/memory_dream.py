@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+MAX_BACKGROUND_DREAM_TASKS = 4
 _BACKGROUND_DREAM_TASKS: set[asyncio.Task[dict[str, Any]]] = set()
 
 
@@ -61,13 +62,19 @@ def register_memory_dream_tools(
 ) -> None:
     """Register memory dream tools on the gobby-memory registry."""
 
+    service: MemoryDreamService | None = None
+
     def _service() -> MemoryDreamService:
+        nonlocal service
+        if service is not None:
+            return service
         dream_config = getattr(getattr(config, "memory", None), "dream", None)
-        return MemoryDreamService(
+        service = MemoryDreamService(
             memory_manager=memory_manager,
             dream_config=dream_config,
             llm_service=llm_service,
         )
+        return service
 
     @registry.tool(
         name="memory_dream",
@@ -88,6 +95,11 @@ def register_memory_dream_tools(
         )
         if wait:
             return await service.run(options)
+        if len(_BACKGROUND_DREAM_TASKS) >= MAX_BACKGROUND_DREAM_TASKS:
+            return {
+                "success": False,
+                "error": f"Background memory dream limit reached ({MAX_BACKGROUND_DREAM_TASKS})",
+            }
         started = await service.start_async(options)
         if not started.get("success"):
             return started

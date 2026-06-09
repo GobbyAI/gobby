@@ -246,5 +246,7 @@ async def test_synthesis_rejects_unsupported_or_mutating_commands(tmp_path: Path
 def test_safe_validation_command_uses_complete_tokens_for_format_scripts() -> None:
     assert is_safe_validation_command("npm run format", slot="format") is False
     assert is_safe_validation_command("cd web && npm run format", slot="format") is False
+    assert is_safe_validation_command("eslint --fix=true src", slot="lint") is False
+    assert is_safe_validation_command("prettier --write=src", slot="format") is False
     assert is_safe_validation_command("npm run format:check", slot="format") is True
     assert is_safe_validation_command("yarn format:check", slot="format") is True

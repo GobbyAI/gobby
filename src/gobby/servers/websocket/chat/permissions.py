@@ -157,14 +157,15 @@ class ManagedWebChatPermissionsMixin:
         self._pending_plan_event = asyncio.Event()
         self._pending_plan_decision = None
         try:
-            await asyncio.wait_for(self._pending_plan_event.wait(), timeout=wait_timeout)
-        except TimeoutError:
-            self._pending_plan_decision = "deny"
-            logger.warning("Managed plan-decision gate timed out; defaulting to reject")
-        decision = self._pending_plan_decision or "deny"
-        self._pending_plan_event = None
-        self._pending_plan_decision = None
-        return decision
+            try:
+                await asyncio.wait_for(self._pending_plan_event.wait(), timeout=wait_timeout)
+            except TimeoutError:
+                self._pending_plan_decision = "deny"
+                logger.warning("Managed plan-decision gate timed out; defaulting to reject")
+            return self._pending_plan_decision or "deny"
+        finally:
+            self._pending_plan_event = None
+            self._pending_plan_decision = None
 
     @property
     def has_blocking_plan_decision(self) -> bool:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -16,6 +17,7 @@ class MemoryManagerProtocol(Protocol):
 
 
 class DreamConfigProtocol(Protocol):
+    candidate_page_timeout_seconds: float
     max_scan_rows: int
     scan_limit: int
     stale_age_days: int
@@ -43,6 +45,11 @@ async def discover_stale_candidates(
     page_size = min(500, max_scan_rows)
     scan_limit = _positive_int_value(dream_config.scan_limit, "scan_limit", 500)
     stale_age_days = _positive_int_value(dream_config.stale_age_days, "stale_age_days", 30)
+    page_timeout = _positive_float_value(
+        getattr(dream_config, "candidate_page_timeout_seconds", 10.0),
+        "candidate_page_timeout_seconds",
+        10.0,
+    )
     include_global = _bool_value(
         dream_config.include_global_memories,
         "include_global_memories",
@@ -51,7 +58,16 @@ async def discover_stale_candidates(
 
     while scanned < max_scan_rows and len(candidates) < scan_limit:
         page_limit = min(page_size, max_scan_rows - scanned)
-        page = await memory_manager.alist_memories(limit=page_limit, offset=offset)
+        try:
+            page = await asyncio.wait_for(
+                memory_manager.alist_memories(limit=page_limit, offset=offset),
+                timeout=page_timeout,
+            )
+        except TimeoutError as exc:
+            raise TimeoutError(
+                f"Timed out after {page_timeout:g}s listing memory dream candidates "
+                f"at offset {offset}"
+            ) from exc
         if not page:
             break
 
@@ -159,6 +175,21 @@ def _bool_value(value: Any, attr: str, default: bool) -> bool:
             return False
     logger.warning("Invalid memory dream %s=%r; using default %s", attr, value, default)
     return default
+
+
+def _positive_float_value(value: Any, attr: str, default: float) -> float:
+    if isinstance(value, bool):
+        logger.warning("Invalid memory dream %s=%r; using default %s", attr, value, default)
+        return default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        logger.warning("Invalid memory dream %s=%r; using default %s", attr, value, default)
+        return default
+    if parsed <= 0.0:
+        logger.warning("Invalid memory dream %s=%r; using default %s", attr, value, default)
+        return default
+    return parsed
 
 
 def _int_attr(obj: Any, attr: str) -> int:

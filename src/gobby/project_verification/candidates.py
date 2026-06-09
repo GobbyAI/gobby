@@ -147,7 +147,7 @@ def is_safe_validation_command(command: str, slot: str | None = None) -> bool:
     """Reject mutating forms that are inappropriate for verification."""
     lowered = command.lower()
     tokens = _command_tokens(lowered)
-    if _has_any_token(tokens, {"--fix", "--write"}):
+    if _has_mutating_option(tokens):
         return False
     if _has_token_sequence(tokens, ("npm", "run", "format")):
         return False
@@ -169,8 +169,11 @@ def _command_tokens(command: str) -> list[str]:
         return command.split()
 
 
-def _has_any_token(tokens: list[str], unsafe_tokens: set[str]) -> bool:
-    return any(token in unsafe_tokens for token in tokens)
+def _has_mutating_option(tokens: list[str]) -> bool:
+    return any(
+        token in {"--fix", "--write"} or token.startswith(("--fix=", "--write="))
+        for token in tokens
+    )
 
 
 def _has_token_sequence(tokens: list[str], unsafe_sequence: tuple[str, ...]) -> bool:

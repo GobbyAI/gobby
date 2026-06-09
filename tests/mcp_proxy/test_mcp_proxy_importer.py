@@ -350,7 +350,7 @@ class TestImportFromProject:
     """Tests for import_from_project method."""
 
     @pytest.mark.asyncio
-    async def test_returns_error_for_unknown_project(self, importer):
+    async def test_returns_error_for_unknown_project(self, importer) -> None:
         """Test returns error when project not found."""
         with patch.object(importer.project_manager, "get_by_name", return_value=None):
             with patch.object(importer.project_manager, "get", return_value=None):
@@ -361,7 +361,7 @@ class TestImportFromProject:
                     assert "not found" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_returns_error_for_empty_project(self, importer):
+    async def test_returns_error_for_empty_project(self, importer) -> None:
         """Test returns error when project has no servers."""
         mock_project = MagicMock()
         mock_project.id = "proj-123"
@@ -375,7 +375,7 @@ class TestImportFromProject:
                 assert "No MCP servers found" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_imports_servers_successfully(self, importer):
+    async def test_imports_servers_successfully(self, importer) -> None:
         """Test successfully imports servers."""
         mock_project = MagicMock()
         mock_project.id = "source-proj"
@@ -410,7 +410,7 @@ class TestImportFromProject:
                     assert "test-server" in result["imported"]
 
     @pytest.mark.asyncio
-    async def test_skips_existing_servers(self, importer):
+    async def test_skips_existing_servers(self, importer) -> None:
         """Test skips servers that already exist."""
         mock_project = MagicMock()
         mock_project.id = "source-proj"
@@ -438,7 +438,7 @@ class TestImportFromProject:
                 assert result["success"] is True
 
     @pytest.mark.asyncio
-    async def test_filters_by_server_names(self, importer):
+    async def test_filters_by_server_names(self, importer) -> None:
         """Test filters by specified server names."""
         mock_project = MagicMock()
         mock_project.id = "proj"
@@ -483,7 +483,7 @@ class TestImportFromGithub:
     """Tests for import_from_github method."""
 
     @pytest.mark.asyncio
-    async def test_returns_error_when_disabled(self, mock_config_disabled, mock_db):
+    async def test_returns_error_when_disabled(self, mock_config_disabled, mock_db) -> None:
         """Test returns error when import is disabled."""
         importer = MCPServerImporter(
             config=mock_config_disabled,
@@ -497,7 +497,7 @@ class TestImportFromGithub:
         assert "disabled" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_uses_feature_call(self, mock_config, mock_db):
+    async def test_uses_feature_call(self, mock_config, mock_db) -> None:
         """GitHub import routes synthesis through import_mcp_server feature config."""
         llm_service = MagicMock()
         llm_service.call_feature = AsyncMock(return_value='{"name": "example"}')
@@ -561,7 +561,7 @@ class TestGithubContextFetch:
     """Tests for deterministic GitHub context fetch helpers."""
 
     @pytest.mark.asyncio
-    async def test_fetches_repository_metadata_and_readme(self, importer, monkeypatch):
+    async def test_fetches_repository_metadata_and_readme(self, importer, monkeypatch) -> None:
         """Repository context uses GitHub API metadata plus README content."""
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
         client = FakeGitHubClient()
@@ -578,7 +578,7 @@ class TestGithubContextFetch:
         assert "Run with npx example-mcp." in context
 
     @pytest.mark.asyncio
-    async def test_fetches_repository_context_when_readme_unavailable(self, importer):
+    async def test_fetches_repository_context_when_readme_unavailable(self, importer) -> None:
         """Repository import falls back to metadata when README fetch fails."""
         client = FakeGitHubClient(readme_status_code=404)
 
@@ -593,7 +593,7 @@ class TestGithubContextFetch:
         assert "GitHub request failed" in context
 
     @pytest.mark.asyncio
-    async def test_fetches_search_candidates_and_readmes(self, importer, monkeypatch):
+    async def test_fetches_search_candidates_and_readmes(self, importer, monkeypatch) -> None:
         """Query import context uses GitHub repository search and candidate READMEs."""
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
         client = FakeGitHubClient()
@@ -618,7 +618,7 @@ class TestGithubContextFetch:
         assert "Run with npx example-mcp." in context
 
     @pytest.mark.asyncio
-    async def test_fetch_uses_github_token_auth_header(self, importer, monkeypatch):
+    async def test_fetch_uses_github_token_auth_header(self, importer, monkeypatch) -> None:
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_secret")
         client = FakeGitHubClient()
 
@@ -630,7 +630,7 @@ class TestGithubContextFetch:
         assert client.calls[0]["headers"]["Authorization"] == "Bearer ghp_secret"
 
     @pytest.mark.asyncio
-    async def test_fetch_retries_transient_github_failure(self, importer):
+    async def test_fetch_retries_transient_github_failure(self, importer) -> None:
         client = QueuedGitHubClient(
             [
                 FakeGitHubResponse(status_code=503, headers={"Retry-After": "0"}),
@@ -646,7 +646,7 @@ class TestGithubContextFetch:
         sleep.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_rate_limit_error_mentions_github_token(self, importer, monkeypatch):
+    async def test_rate_limit_error_mentions_github_token(self, importer, monkeypatch) -> None:
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
         client = QueuedGitHubClient(
             [
@@ -679,7 +679,7 @@ class TestImportFromQuery:
     """Tests for import_from_query method."""
 
     @pytest.mark.asyncio
-    async def test_returns_error_when_disabled(self, mock_config_disabled, mock_db):
+    async def test_returns_error_when_disabled(self, mock_config_disabled, mock_db) -> None:
         """Test returns error when import is disabled."""
         importer = MCPServerImporter(
             config=mock_config_disabled,
@@ -693,7 +693,7 @@ class TestImportFromQuery:
         assert "disabled" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_uses_feature_call(self, mock_config, mock_db):
+    async def test_uses_feature_call(self, mock_config, mock_db) -> None:
         """Query import routes synthesis through import_mcp_server feature config."""
         llm_service = MagicMock()
         llm_service.call_feature = AsyncMock(return_value='{"name": "example"}')
@@ -731,7 +731,7 @@ class TestParseAndAddConfig:
     """Tests for _parse_and_add_config method."""
 
     @pytest.mark.asyncio
-    async def test_returns_error_for_invalid_json(self, importer):
+    async def test_returns_error_for_invalid_json(self, importer) -> None:
         """Test returns error when JSON cannot be extracted."""
         result = await importer._parse_and_add_config("No JSON here")
 
@@ -739,7 +739,7 @@ class TestParseAndAddConfig:
         assert "Could not extract" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_returns_needs_configuration_for_secrets(self, importer):
+    async def test_returns_needs_configuration_for_secrets(self, importer) -> None:
         """Test returns needs_configuration when secrets are needed."""
         text = '{"name": "server", "transport": "http", "headers": {"key": "<YOUR_API_KEY>"}}'
 
@@ -749,7 +749,7 @@ class TestParseAndAddConfig:
         assert "<YOUR_API_KEY>" in result["missing"]
 
     @pytest.mark.asyncio
-    async def test_returns_approval_preview_without_secrets(self, importer):
+    async def test_returns_approval_preview_without_secrets(self, importer) -> None:
         """Test synthesized config is previewed when no secrets are needed."""
         text = '{"name": "no-secrets", "transport": "http", "url": "http://localhost"}'
 
@@ -763,7 +763,7 @@ class TestParseAndAddConfig:
         assert result["config"]["name"] == "no-secrets"
 
     @pytest.mark.asyncio
-    async def test_returns_error_for_missing_name(self, importer):
+    async def test_returns_error_for_missing_name(self, importer) -> None:
         """Test returns error when name is missing."""
         text = '{"transport": "http"}'
 
@@ -773,7 +773,7 @@ class TestParseAndAddConfig:
         assert "missing required fields" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_returns_error_for_missing_transport(self, importer):
+    async def test_returns_error_for_missing_transport(self, importer) -> None:
         """Test returns error when transport is missing."""
         text = '{"name": "server"}'
 
@@ -783,7 +783,7 @@ class TestParseAndAddConfig:
         assert "missing required fields" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_includes_instructions_when_present(self, importer):
+    async def test_includes_instructions_when_present(self, importer) -> None:
         """Test includes instructions in needs_configuration result."""
         text = '{"name": "s", "transport": "http", "headers": {"key": "<YOUR_KEY>"}, "instructions": "Get key from..."}'
 
@@ -797,7 +797,7 @@ class TestAddServer:
     """Tests for _add_server method."""
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_db_without_manager(self, importer):
+    async def test_falls_back_to_db_without_manager(self, importer) -> None:
         """Test falls back to DB when no manager available."""
         # importer fixture already has mocked mcp_db_manager
         result = await importer._add_server(
@@ -812,7 +812,7 @@ class TestAddServer:
         assert "restart daemon" in result["message"]
 
     @pytest.mark.asyncio
-    async def test_handles_add_failure(self, importer):
+    async def test_handles_add_failure(self, importer) -> None:
         """Test handles add server failure."""
         importer.mcp_db_manager.upsert.side_effect = Exception("DB error")
 

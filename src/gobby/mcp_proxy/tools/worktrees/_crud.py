@@ -79,8 +79,9 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             status: Filter by status (active, stale, merged, abandoned).
             agent_session_id: Session reference to filter by owning session.
             limit: Maximum results (default: 50).
-            project_id: Project ID to filter by. Defaults to current project context.
-            project_path: Project path to resolve when project_id is not provided.
+            project_id: Explicit project ID to filter by; takes precedence over project_path.
+            project_path: Project path to resolve when project_id is not provided. Current context
+                is used only when both project_id and project_path are omitted.
 
         Returns:
             Dict with list of worktrees.

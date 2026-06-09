@@ -66,6 +66,13 @@ def get_shutdown_marker_path(home: Path | None = None) -> Path:
     return home / "shutdown_intent_active.json"
 
 
+def get_shutdown_source_path(home: Path | None = None) -> Path:
+    """Return the persistent last-shutdown source path."""
+    if home is None:
+        home = Path(os.environ.get("GOBBY_HOME", str(Path.home() / ".gobby")))
+    return home / "shutdown_source.json"
+
+
 def get_active_shutdown_marker_path(home: Path | None = None) -> Path:
     """Return the shutdown marker path used by hook guards."""
     return get_shutdown_marker_path(home)
@@ -79,15 +86,15 @@ def write_shutdown_intent(
     home: Path | None = None,
 ) -> None:
     """Write a fresh shutdown marker with explicit intent and source."""
-    marker = get_shutdown_marker_path(home)
-    marker.parent.mkdir(parents=True, exist_ok=True)
     data = {
         "source": source,
         "intent": coerce_shutdown_intent(intent).value,
         "sender_pid": sender_pid or os.getpid(),
         "timestamp": time.time(),
     }
-    marker.write_text(json.dumps(data), encoding="utf-8")
+    for marker in (get_shutdown_source_path(home), get_shutdown_marker_path(home)):
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(json.dumps(data), encoding="utf-8")
 
 
 def write_stop_intent(source: str, sender_pid: int | None = None) -> None:
@@ -184,6 +191,44 @@ def read_active_shutdown_intent(
             raise TypeError("shutdown marker must be a JSON object")
     except (json.JSONDecodeError, TypeError) as exc:
         logger.debug("Malformed active shutdown marker at %s: %s", marker, exc)
+        return ShutdownIntentRecord(
+            intent=ShutdownIntent.STOP,
+            source="unknown",
+            sender_pid=None,
+            timestamp=None,
+            error=str(exc),
+        )
+
+    return _record_from_marker_data(data, max_age_seconds=max_age_seconds)
+
+
+def read_shutdown_source_record(
+    *,
+    max_age_seconds: float = float("inf"),
+    home: Path | None = None,
+) -> ShutdownIntentRecord | None:
+    """Read the persistent last-shutdown source marker without consuming it."""
+    marker = get_shutdown_source_path(home)
+    try:
+        raw = marker.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        logger.debug("Failed to read shutdown source marker %s: %s", marker, exc)
+        return ShutdownIntentRecord(
+            intent=ShutdownIntent.STOP,
+            source="unknown",
+            sender_pid=None,
+            timestamp=None,
+            error=str(exc),
+        )
+
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise TypeError("shutdown source marker must be a JSON object")
+    except (json.JSONDecodeError, TypeError) as exc:
+        logger.debug("Malformed shutdown source marker at %s: %s", marker, exc)
         return ShutdownIntentRecord(
             intent=ShutdownIntent.STOP,
             source="unknown",

@@ -130,6 +130,8 @@ class FeatureDefaultConfig(BaseModel):
         provider = values.pop("provider", None)
         model = values.pop("model", None)
         tier = values.pop("tier", None)
+        if (provider is None) != (model is None):
+            raise ValueError("legacy provider and model must be specified together")
         if provider is not None and model is not None:
             legacy_candidate = normalize_feature_candidate(f"{provider}/{model}")
             raw_candidates = values.get("candidates")

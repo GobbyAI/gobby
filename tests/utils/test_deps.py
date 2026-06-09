@@ -552,6 +552,17 @@ def test_check_config_mismatches() -> None:
         assert issues[1]["subsystem"] == "Ollama"
 
 
+def test_check_config_mismatches_ignores_non_string_chat_candidates() -> None:
+    config = MagicMock()
+    config.chat.candidates = [123, {"provider": "claude"}, "openai/gpt-5"]
+    config.embeddings.api_base = None
+
+    with patch("shutil.which", return_value=False):
+        issues = deps.check_config_mismatches(config)
+
+    assert issues == []
+
+
 def test_collect_all_deps() -> None:
     with (
         patch("gobby.utils.deps.get_gobby_version", return_value="1"),
