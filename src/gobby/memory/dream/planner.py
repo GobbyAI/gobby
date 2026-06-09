@@ -57,7 +57,7 @@ async def build_raw_plan(
                     logger.warning(
                         "Memory dream planner returned non-dict actions",
                         extra={
-                            "raw_actions": invalid_actions,
+                            "invalid_actions": invalid_actions,
                             "project_id": project_id,
                             "candidate_ids": [candidate.id for candidate in candidates],
                         },

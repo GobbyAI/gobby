@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 MAX_BACKGROUND_DREAM_TASKS = 4
 _BACKGROUND_DREAM_TASKS: set[asyncio.Task[dict[str, Any]]] = set()
+_BACKGROUND_DREAM_SEMAPHORE_LIMIT = MAX_BACKGROUND_DREAM_TASKS
+_BACKGROUND_DREAM_SEMAPHORE = asyncio.BoundedSemaphore(MAX_BACKGROUND_DREAM_TASKS)
 
 
 def get_background_tasks() -> tuple[asyncio.Task[dict[str, Any]], ...]:
@@ -37,7 +39,9 @@ async def cleanup_background_dream_tasks() -> None:
 
 
 def _handle_background_task(task: asyncio.Task[dict[str, Any]], run_id: str) -> None:
-    _BACKGROUND_DREAM_TASKS.discard(task)
+    if task in _BACKGROUND_DREAM_TASKS:
+        _BACKGROUND_DREAM_TASKS.discard(task)
+        _release_background_slot()
     try:
         exc = task.exception()
     except asyncio.CancelledError:
@@ -60,6 +64,29 @@ def _handle_background_task(task: asyncio.Task[dict[str, Any]], run_id: str) -> 
             task.get_name(),
             result.get("error"),
         )
+
+
+def _background_dream_semaphore() -> asyncio.BoundedSemaphore:
+    global _BACKGROUND_DREAM_SEMAPHORE, _BACKGROUND_DREAM_SEMAPHORE_LIMIT
+    if _BACKGROUND_DREAM_SEMAPHORE_LIMIT != MAX_BACKGROUND_DREAM_TASKS:
+        _BACKGROUND_DREAM_SEMAPHORE_LIMIT = MAX_BACKGROUND_DREAM_TASKS
+        _BACKGROUND_DREAM_SEMAPHORE = asyncio.BoundedSemaphore(MAX_BACKGROUND_DREAM_TASKS)
+    return _BACKGROUND_DREAM_SEMAPHORE
+
+
+async def _try_acquire_background_slot() -> bool:
+    semaphore = _background_dream_semaphore()
+    if semaphore.locked():
+        return False
+    await semaphore.acquire()
+    return True
+
+
+def _release_background_slot() -> None:
+    try:
+        _background_dream_semaphore().release()
+    except ValueError:
+        logger.debug("Background memory dream slot release skipped; semaphore is already full")
 
 
 def register_memory_dream_tools(
@@ -105,13 +132,14 @@ def register_memory_dream_tools(
         )
         if wait:
             return await service.run(options)
-        if len(_BACKGROUND_DREAM_TASKS) >= MAX_BACKGROUND_DREAM_TASKS:
+        if not await _try_acquire_background_slot():
             return {
                 "success": False,
                 "error": f"Background memory dream limit reached ({MAX_BACKGROUND_DREAM_TASKS})",
             }
         started = await service.start_async(options)
         if not started.get("success"):
+            _release_background_slot()
             return started
         run_id = str(started["run_id"])
         run_coro = service.execute_run(run_id, options)
@@ -127,6 +155,7 @@ def register_memory_dream_tools(
                 service.record_run_failure(run_id, error)
             except Exception:
                 logger.exception("Failed to record memory dream scheduling failure")
+            _release_background_slot()
             return {"success": False, "run_id": run_id, "status": "failed", "error": error}
         _BACKGROUND_DREAM_TASKS.add(task)
         task.add_done_callback(lambda completed: _handle_background_task(completed, run_id))

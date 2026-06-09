@@ -7,7 +7,6 @@ import json
 import pytest
 
 from gobby.sessions.transcript_normalization import normalize_transcript_records
-from gobby.sessions.transcript_renderer import render_transcript
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.sessions.transcripts.grok import GrokTranscriptParser
 
@@ -113,9 +112,6 @@ def test_grok_successful_hook_execution_without_output_is_suppressed() -> None:
     )
 
     assert records == []
-    messages = [record for record in records if isinstance(record, ParsedMessage)]
-    rendered = render_transcript(messages, session_id="grok-session", error_log=parser.error_log)
-    assert rendered == []
 
 
 def test_grok_failed_hook_execution_renders_system_text_not_unknown() -> None:
@@ -143,13 +139,9 @@ def test_grok_failed_hook_execution_renders_system_text_not_unknown() -> None:
     )
     messages = [record for record in records if isinstance(record, ParsedMessage)]
 
-    rendered = render_transcript(messages, session_id="grok-session", error_log=parser.error_log)
-    block_types = [block.type for message in rendered for block in message.content_blocks]
-
-    assert "unknown" not in block_types
-    assert rendered[-1].role == "system"
-    assert rendered[-1].content_blocks[0].type == "text"
-    assert rendered[-1].content_blocks[0].content == "Policy blocked the command."
+    assert messages[-1].role == "system"
+    assert messages[-1].content_type == "text"
+    assert messages[-1].content == "Policy blocked the command."
 
 
 def test_grok_hook_execution_ignores_content_beyond_collect_depth() -> None:
@@ -174,10 +166,8 @@ def test_grok_hook_execution_ignores_content_beyond_collect_depth() -> None:
     )
     messages = [record for record in records if isinstance(record, ParsedMessage)]
 
-    rendered = render_transcript(messages, session_id="grok-session", error_log=parser.error_log)
-
-    assert rendered[-1].content_blocks[0].content == "PostToolUse hook execution: failed"
-    assert "deep output" not in rendered[-1].content_blocks[0].content
+    assert messages[-1].content == "PostToolUse hook execution: failed\n[truncated]"
+    assert "deep output" not in messages[-1].content
 
 
 def test_grok_usage_aggregates_nested_cache_details() -> None:

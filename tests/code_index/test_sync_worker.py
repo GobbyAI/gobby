@@ -735,6 +735,7 @@ async def test_sync_file_ensures_missing_vector_collection_before_upsert(
     assert synced_file.vectors_synced is True
 
 
+@pytest.mark.asyncio
 async def test_sync_file_batches_vector_embedding_and_upsert(
     code_storage: CodeIndexStorage,
     sample_symbols: list[Symbol],
@@ -780,6 +781,7 @@ async def test_sync_file_batches_vector_embedding_and_upsert(
     assert synced_file.vectors_synced is True
 
 
+@pytest.mark.asyncio
 async def test_sync_file_does_not_mark_vectors_synced_when_later_vector_batch_fails(
     code_storage: CodeIndexStorage,
     sample_symbols: list[Symbol],

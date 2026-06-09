@@ -917,9 +917,13 @@ class SessionMessageProcessor:
             logger.warning(f"No GeminiTranscriptParser for JSON session {session_id}")
             return
 
+        source = getattr(parser, "cli_name", None)
         all_messages = [
             r
-            for r in normalize_transcript_records(parser.parse_session_json(data), "gemini")
+            for r in normalize_transcript_records(
+                parser.parse_session_json(data),
+                source if isinstance(source, str) else None,
+            )
             if isinstance(r, ParsedMessage)
         ]
         if not all_messages:

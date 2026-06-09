@@ -83,6 +83,7 @@ async def test_stale_candidate_discovery_reviews_high_access_old_memory() -> Non
         scan_limit=10,
         max_scan_rows=100,
         include_global_memories=True,
+        candidate_page_timeout_seconds=10.0,
     )
 
     result = await discover_stale_candidates(manager, config, project_id="proj-1")
@@ -126,6 +127,7 @@ async def test_stale_candidate_discovery_ties_by_created_at() -> None:
         scan_limit=10,
         max_scan_rows=100,
         include_global_memories=True,
+        candidate_page_timeout_seconds=10.0,
     )
 
     result = await discover_stale_candidates(
@@ -153,6 +155,7 @@ async def test_stale_candidate_discovery_sorts_invalid_created_at_last() -> None
         scan_limit=10,
         max_scan_rows=100,
         include_global_memories=True,
+        candidate_page_timeout_seconds=10.0,
     )
 
     result = await discover_stale_candidates(
@@ -192,7 +195,7 @@ async def test_build_raw_plan_logs_non_dict_actions(
         for item in caplog.records
         if item.message == "Memory dream planner returned non-dict actions"
     )
-    assert record.raw_actions == ["invalid"]
+    assert record.invalid_actions == ["invalid"]
     assert record.project_id == "proj-1"
     assert record.candidate_ids == ["memory-1"]
 
@@ -210,6 +213,7 @@ async def test_stale_candidate_discovery_uses_defaults_for_bad_config(
         scan_limit=False,
         max_scan_rows=0,
         include_global_memories="yes",
+        candidate_page_timeout_seconds="bad",
     )
 
     result = await discover_stale_candidates(
@@ -452,6 +456,28 @@ async def test_apply_dream_plan_dry_run_includes_planned_action_preview() -> Non
             "candidates": [_candidate("memory-1").to_prompt_dict()],
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_apply_dream_plan_records_error_for_empty_memory_id() -> None:
+    db = _FakeDreamDB()
+    manager = _FakeMemoryManager(db)
+    store = MemoryDreamStore(db)
+    run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
+
+    summary = await apply_dream_plan(
+        memory_manager=manager,
+        store=store,
+        run_id=run_id,
+        actions=[DreamAction(action="delete", memory_id="")],
+        candidates=[],
+        dry_run=False,
+        reconcile_after_apply=False,
+    )
+
+    assert summary["errors"] == 1
+    assert summary["mutations"] == 0
+    assert "requires non-empty memory_id" in summary["error_details"][0]["error"]
 
 
 @pytest.mark.asyncio

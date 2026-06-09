@@ -99,7 +99,7 @@ def write_shutdown_intent(
             marker.write_text(json.dumps(data), encoding="utf-8")
             written.append(marker)
             current_marker = None
-        except Exception:
+        except OSError:
             cleanup_targets = [*written]
             if current_marker is not None:
                 cleanup_targets.append(current_marker)

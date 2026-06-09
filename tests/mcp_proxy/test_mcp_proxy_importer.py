@@ -745,6 +745,7 @@ class TestParseAndAddConfig:
 
         result = await importer._parse_and_add_config(text)
 
+        assert result["success"] is True
         assert result["status"] == "needs_configuration"
         assert "<YOUR_API_KEY>" in result["missing"]
 
@@ -757,6 +758,7 @@ class TestParseAndAddConfig:
             result = await importer._parse_and_add_config(text)
 
             mock_add.assert_not_called()
+        assert result["success"] is True
         assert result["status"] == "requires_approval"
         assert result["requires_approval"] is True
         assert result["missing"] == []
@@ -789,6 +791,7 @@ class TestParseAndAddConfig:
 
         result = await importer._parse_and_add_config(text)
 
+        assert result["success"] is True
         assert result["status"] == "needs_configuration"
         assert result["instructions"] == "Get key from..."
 

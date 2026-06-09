@@ -167,13 +167,17 @@ async def _apply_action(
     action: DreamAction,
     candidate_map: dict[str, DreamCandidate],
 ) -> int:
-    if action.action == "delete" and action.memory_id:
-        return await _delete(memory_manager, store, run_id, action.memory_id, "delete")
-    if action.action == "refresh" and action.memory_id and action.content:
+    if action.action == "delete":
+        memory_id = _required_memory_id(action)
+        return await _delete(memory_manager, store, run_id, memory_id, "delete")
+    if action.action == "refresh":
+        _required_memory_id(action)
+    if action.action == "refresh" and action.content:
         return await _refresh(memory_manager, store, run_id, action)
     if action.action == "merge":
         return await _merge(memory_manager, store, run_id, action)
-    if action.action == "supersede" and action.memory_id:
+    if action.action == "supersede":
+        _required_memory_id(action)
         return await _supersede(memory_manager, store, run_id, action, candidate_map)
     return 0
 
@@ -187,6 +191,11 @@ async def _delete(
 ) -> int:
     before = await asyncio.to_thread(store.get_memory_row, memory_id)
     if before is None:
+        logger.warning(
+            "Memory dream %s action skipped empty before snapshot for memory_id=%s",
+            action_name,
+            memory_id,
+        )
         return 0
     snapshot_id = await asyncio.to_thread(
         store.insert_snapshot,
@@ -197,6 +206,11 @@ async def _delete(
     )
     deleted = await memory_manager.delete_memory(memory_id)
     if not deleted:
+        logger.warning(
+            "Memory dream %s action produced empty after snapshot for memory_id=%s",
+            action_name,
+            memory_id,
+        )
         return 0
     await asyncio.to_thread(store.complete_snapshot, snapshot_id, after_data=None)
     return 1
@@ -346,6 +360,13 @@ async def _reconcile(memory_manager: MemoryDreamManagerProtocol, summary: dict[s
     except Exception as exc:  # noqa: BLE001 - reconciliation must not hide applied snapshots
         summary["reconcile_error"] = str(exc)
         logger.warning("Memory dream reconcile failed: %s", exc)
+
+
+def _required_memory_id(action: DreamAction) -> str:
+    memory_id = action.memory_id
+    if not isinstance(memory_id, str) or not memory_id.strip():
+        raise ValueError(f"{action.action} action requires non-empty memory_id")
+    return memory_id
 
 
 def _empty_summary(dry_run: bool) -> dict[str, Any]:

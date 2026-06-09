@@ -87,35 +87,18 @@ class TestFeatureDefaultConfig:
         cfg = FeatureDefaultConfig(candidates=[candidate])
         assert cfg.candidates == [expected]
 
-    def test_migrates_legacy_feature_keys(self) -> None:
-        cfg = FeatureDefaultConfig(
-            **{"provider": "claude", "model": "claude-sonnet-4-5", "tier": "high"}
-        )
-
-        assert cfg.profile == FeatureProfile.HIGH
-        assert cfg.candidates[0] == "claude/sonnet"
-
     @pytest.mark.parametrize(
         "kwargs",
         [
             {"provider": "claude"},
             {"model": "claude-sonnet-4-5"},
+            {"tier": "high"},
+            {"provider": "claude", "model": "claude-sonnet-4-5", "tier": "high"},
         ],
     )
-    def test_rejects_half_specified_legacy_provider_model(self, kwargs: dict[str, str]) -> None:
-        with pytest.raises(ValidationError, match="provider and model"):
+    def test_rejects_removed_legacy_feature_keys(self, kwargs: dict[str, str]) -> None:
+        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
             FeatureDefaultConfig(**kwargs)
-
-    def test_appends_legacy_candidate_after_explicit_candidates(self) -> None:
-        cfg = FeatureDefaultConfig(
-            **{
-                "provider": "claude",
-                "model": "claude-sonnet-4-5",
-                "candidates": ["codex/gpt-5.3-codex", "claude/claude-haiku-4-5"],
-            }
-        )
-
-        assert cfg.candidates == ["codex/gpt-5.3-codex", "claude/haiku", "claude/sonnet"]
 
     @pytest.mark.parametrize("candidate", ["haiku", "claude/", "/sonnet"])
     def test_rejects_malformed_candidate(self, candidate: str) -> None:

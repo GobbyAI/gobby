@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 # we wait up to this long for it to drain before injecting the continuation so
 # the inject path does not cancel a still-streaming turn.
 _PLAN_TURN_DRAIN_TIMEOUT_SECONDS = 120.0
+_PLAN_TMUX_OPERATION_TIMEOUT_SECONDS = 10.0
 
 # Lines of the attached CLI's tmux pane to capture for native plan-menu detection
 # (Path B). The menu markers sit within the last few lines of the prompt; this is
@@ -295,8 +296,11 @@ async def handle_attached_plan_approval(
     pane_text = ""
     if registry.requires_pane(source):
         try:
-            captured = await tmux.capture_pane(tmux_pane, lines=_PLAN_MENU_CAPTURE_LINES)
-        except (OSError, RuntimeError, ValueError) as exc:
+            captured = await asyncio.wait_for(
+                tmux.capture_pane(tmux_pane, lines=_PLAN_MENU_CAPTURE_LINES),
+                timeout=_PLAN_TMUX_OPERATION_TIMEOUT_SECONDS,
+            )
+        except (TimeoutError, OSError, RuntimeError, ValueError) as exc:
             logger.warning("Failed to capture pane %s for plan-menu detection: %s", tmux_pane, exc)
             captured = None
         pane_text = captured or ""
@@ -312,8 +316,11 @@ async def handle_attached_plan_approval(
         return
 
     try:
-        dispatched = await dispatch_plan_keystrokes(tmux, tmux_pane, sequence)
-    except (OSError, RuntimeError, ValueError) as exc:
+        dispatched = await asyncio.wait_for(
+            dispatch_plan_keystrokes(tmux, tmux_pane, sequence),
+            timeout=_PLAN_TMUX_OPERATION_TIMEOUT_SECONDS,
+        )
+    except (TimeoutError, OSError, RuntimeError, ValueError) as exc:
         logger.warning(
             "tmux plan keystroke dispatch failed for pane %s: %s",
             tmux_pane,
@@ -375,7 +382,15 @@ async def handle_plan_approval_response(
     # Path B: an attached proxy-terminal session (CLI in a tmux pane) has no
     # in-memory ChatSession; its plan choice is a native TUI menu driven by
     # keystrokes. Mirror the set_mode/set_agent target_session_id convention.
-    target_session_id: str | None = data.get("target_session_id")
+    raw_target_session_id = data.get("target_session_id")
+    if raw_target_session_id is not None and not isinstance(raw_target_session_id, str):
+        await mixin._send_error(
+            websocket,
+            "plan_approval_response target_session_id must be a string",
+            code="INVALID_TARGET_SESSION_ID",
+        )
+        return
+    target_session_id = raw_target_session_id
     if target_session_id:
         await handle_attached_plan_approval(mixin, websocket, target_session_id, data)
         return

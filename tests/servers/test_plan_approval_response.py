@@ -493,3 +493,50 @@ async def test_unknown_option_id_falls_back_to_generic_approve() -> None:
     session.set_chat_mode.assert_called_once_with("normal")
     session.provide_plan_decision.assert_called_once_with("approve")
     assert session._pending_post_plan_mode == "normal"
+
+
+@pytest.mark.asyncio
+async def test_non_string_target_session_id_is_rejected() -> None:
+    host = _make_host()
+
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.sent_messages: list[str] = []
+
+        async def send(self, message: str) -> None:
+            self.sent_messages.append(message)
+
+    async def send_error(
+        websocket: FakeWebSocket,
+        message: str,
+        request_id: str | None = None,
+        code: str = "ERROR",
+    ) -> None:
+        await websocket.send(
+            json.dumps(
+                {
+                    "type": "error",
+                    "message": message,
+                    "request_id": request_id,
+                    "code": code,
+                }
+            )
+        )
+
+    host._send_error = send_error
+    websocket = FakeWebSocket()
+
+    await SessionControlMixin._handle_plan_approval_response(
+        host,
+        websocket,
+        {"target_session_id": 123, "decision": "approve"},
+    )
+
+    assert len(websocket.sent_messages) == 1
+    sent = json.loads(websocket.sent_messages[0])
+    assert sent == {
+        "type": "error",
+        "message": "plan_approval_response target_session_id must be a string",
+        "request_id": None,
+        "code": "INVALID_TARGET_SESSION_ID",
+    }

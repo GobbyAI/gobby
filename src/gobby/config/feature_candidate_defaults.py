@@ -62,20 +62,17 @@ def delete_stale_default_feature_candidate_rows(config_store: Any | None) -> Non
             f"config_store but cannot be deleted: {joined}."
         )
 
-    failed_keys: list[str] = []
-    for key in stale_keys:
-        try:
-            delete(key)
-        except Exception as exc:
-            logger.debug("Failed to delete stale feature candidate key %s: %s", key, exc)
-            failed_keys.append(key)
-
-    if failed_keys:
-        joined = ", ".join(failed_keys)
+    try:
+        with db.transaction():
+            for key in stale_keys:
+                delete(key)
+    except Exception as exc:
+        logger.debug("Failed to delete stale feature candidate keys %s: %s", stale_keys, exc)
+        joined = ", ".join(stale_keys)
         raise ValueError(
             "Failed to delete stale defaults-seeded Claude-only feature candidate rows "
             f"from config_store: {joined}."
-        )
+        ) from exc
 
     joined = ", ".join(stale_keys)
     logger.warning(

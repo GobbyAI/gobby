@@ -669,6 +669,7 @@ class MCPServerImporter:
         if missing:
             # Secrets needed - return config for user to fill in.
             result: dict[str, Any] = {
+                "success": True,
                 "status": "needs_configuration",
                 "requires_approval": True,
                 "config": config,
@@ -679,6 +680,7 @@ class MCPServerImporter:
             return result
 
         result = {
+            "success": True,
             "status": "requires_approval",
             "requires_approval": True,
             "config": config,

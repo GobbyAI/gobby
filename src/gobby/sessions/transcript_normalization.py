@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from dataclasses import replace
 from typing import Any, cast
 
 from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent
 
+logger = logging.getLogger(__name__)
+
 TranscriptRecord = ParsedMessage | ParsedToolEvent
 
 MAX_TEXT_COLLECT_DEPTH = 50
+TRUNCATED_TEXT_MARKER = "[truncated]"
 
 _SUCCESS_VALUES = frozenset(
     {"complete", "completed", "ok", "pass", "passed", "success", "successful", "succeeded"}
@@ -38,6 +42,14 @@ def normalize_transcript_records(
             continue
         feedback = _grok_hook_feedback_text(record, update)
         if feedback is None:
+            logger.debug(
+                "Dropped Grok hook execution feedback record with no user-visible output",
+                extra={
+                    "record_index": record.index,
+                    "tool_name": record.tool_name,
+                    "update_type": _update_type(update),
+                },
+            )
             continue
         normalized.append(
             replace(
@@ -91,17 +103,29 @@ def _update_type(update: dict[str, Any]) -> str:
 
 
 def _grok_hook_feedback_text(record: ParsedMessage, update: dict[str, Any]) -> str | None:
-    output = _hook_output_text(update)
+    output, truncated = _hook_output_text(update)
+    if truncated:
+        logger.warning(
+            "Grok hook execution output exceeded collection depth; appended truncation marker",
+            extra={
+                "record_index": record.index,
+                "tool_name": record.tool_name,
+                "update_type": _update_type(update),
+            },
+        )
     if output:
-        return output
+        return _append_truncated_marker(output, truncated)
     if _hook_succeeded(update):
         return None
 
     hook_name = _first_text(update.get("hook"), update.get("hookName"), record.tool_name) or "hook"
     status = _first_text(update.get("status"), update.get("state"), update.get("outcome"))
     if status:
-        return f"{hook_name} hook execution: {status}"
-    return f"{hook_name} hook execution produced no success status"
+        return _append_truncated_marker(f"{hook_name} hook execution: {status}", truncated)
+    return _append_truncated_marker(
+        f"{hook_name} hook execution produced no success status",
+        truncated,
+    )
 
 
 def _hook_succeeded(update: dict[str, Any]) -> bool:
@@ -129,39 +153,50 @@ def _hook_succeeded(update: dict[str, Any]) -> bool:
     return False
 
 
-def _hook_output_text(update: dict[str, Any]) -> str:
+def _hook_output_text(update: dict[str, Any]) -> tuple[str, bool]:
     parts: list[str] = []
+    truncated = False
     for key in ("output", "stdout", "stderr", "message", "error", "content"):
-        _collect_text(update.get(key), parts)
+        truncated = _collect_text(update.get(key), parts) or truncated
     result = update.get("result")
     if isinstance(result, dict):
         for key in ("output", "stdout", "stderr", "message", "error", "content"):
-            _collect_text(result.get(key), parts)
-    return "\n".join(part for part in parts if part).strip()
+            truncated = _collect_text(result.get(key), parts) or truncated
+    return "\n".join(part for part in parts if part).strip(), truncated
 
 
-def _collect_text(value: Any, parts: list[str], depth: int = 0) -> None:
+def _collect_text(value: Any, parts: list[str], depth: int = 0) -> bool:
     if value is None:
-        return
+        return False
+    # Grok hook payloads can include recursive/nested tool data; cap traversal
+    # so malformed payloads cannot exhaust recursion while extracting feedback.
     if depth > MAX_TEXT_COLLECT_DEPTH:
-        return
+        return True
     if isinstance(value, str):
         text = value.strip()
         if text:
             parts.append(text)
-        return
+        return False
     if isinstance(value, bool):
-        return
+        return False
     if isinstance(value, (int, float)):
         parts.append(str(value))
-        return
+        return False
+    truncated = False
     if isinstance(value, list):
         for item in value:
-            _collect_text(item, parts, depth + 1)
-        return
+            truncated = _collect_text(item, parts, depth + 1) or truncated
+        return truncated
     if isinstance(value, dict):
         for key in ("text", "output", "stdout", "stderr", "message", "error", "content"):
-            _collect_text(value.get(key), parts, depth + 1)
+            truncated = _collect_text(value.get(key), parts, depth + 1) or truncated
+    return truncated
+
+
+def _append_truncated_marker(text: str, truncated: bool) -> str:
+    if not truncated:
+        return text
+    return f"{text}\n{TRUNCATED_TEXT_MARKER}"
 
 
 def _first_text(*values: Any) -> str | None:

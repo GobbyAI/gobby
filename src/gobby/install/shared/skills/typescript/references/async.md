@@ -68,9 +68,6 @@ async function mapLimit<T, R>(
       const index = next;
       next += 1;
       const item = items[index];
-      if (item === undefined) {
-        break;
-      }
       results[index] = await worker(item);
     }
   }

@@ -91,6 +91,18 @@ def _remove_scalar_parent_keys(flat: dict[str, Any], key: str) -> None:
         flat.pop(".".join(parts[:index]), None)
 
 
+def _dependent_default_keys_to_remove(
+    remaining_key: str,
+    remaining_override_keys: set[str],
+) -> tuple[str, ...]:
+    if not remaining_key.endswith(".profile"):
+        return ()
+    candidates_key = f"{remaining_key.rsplit('.', 1)[0]}.candidates"
+    if candidates_key in remaining_override_keys:
+        return ()
+    return (candidates_key,)
+
+
 def create_config_registry(
     config: DaemonConfig,
     config_store: ConfigStore,
@@ -408,10 +420,11 @@ def create_config_registry(
             flat = dict(defaults_flat)
             for remaining_key in remaining_override_keys:
                 if remaining_key in current_flat:
-                    if remaining_key.endswith(".profile"):
-                        candidates_key = f"{remaining_key.rsplit('.', 1)[0]}.candidates"
-                        if candidates_key not in remaining_override_keys:
-                            flat.pop(candidates_key, None)
+                    for dependent_key in _dependent_default_keys_to_remove(
+                        remaining_key,
+                        remaining_override_keys,
+                    ):
+                        flat.pop(dependent_key, None)
                     _remove_scalar_parent_keys(flat, remaining_key)
                     flat[remaining_key] = current_flat[remaining_key]
             new_config = DaemonConfigCls(**unflatten_config(flat))

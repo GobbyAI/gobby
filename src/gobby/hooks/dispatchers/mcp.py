@@ -254,6 +254,7 @@ def _project_memory_next_line_budget(
     omitted_count: int,
     budget: int,
 ) -> int:
+    # Reserve room for the trailing blank separator included by _render_project_memory().
     return budget - _project_memory_render_len(body_lines + [""], omitted_count)
 
 

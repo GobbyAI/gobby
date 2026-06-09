@@ -66,7 +66,7 @@ class TestSetContextForRequest:
         kwargs = mock_helper.call_args.kwargs
         assert kwargs["session_ref"] == "#5"
         assert kwargs["project_ref"] == PROJECT_ID
-        assert kwargs["session_ref_origin"] == "explicit"
+        assert kwargs["session_ref_origin"] == "ambient"
         assert kwargs["project_ref_is_fallback"] is True
 
     def test_uuid_session_id_forwarded_verbatim_to_helper(self) -> None:
@@ -83,7 +83,7 @@ class TestSetContextForRequest:
 
         # Flip of the old lock-in: UUID-shaped refs no longer bypass resolution.
         assert mock_helper.call_args.kwargs["session_ref"] == external_uuid
-        assert mock_helper.call_args.kwargs["session_ref_origin"] == "explicit"
+        assert mock_helper.call_args.kwargs["session_ref_origin"] == "ambient"
 
     def test_hash_n_no_project_header_bootstraps_from_header_session(self) -> None:
         """#N ref without x-gobby-project-id derives project from x-gobby-session-id."""
@@ -230,6 +230,6 @@ class TestSetContextForRequest:
             tokens = _set_context_for_request(server, {"session_id": "bogus"}, request)
 
         assert mock_helper.called
-        assert mock_helper.call_args.kwargs["session_ref_origin"] == "explicit"
+        assert mock_helper.call_args.kwargs["session_ref_origin"] == "ambient"
         assert tokens.session_token is None
         assert tokens.resolved_session_id is None

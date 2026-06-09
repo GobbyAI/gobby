@@ -405,21 +405,33 @@ def _feature_candidate_models_by_provider(
     return {provider: tuple(models) for provider, models in models_by_provider.items()}
 
 
-def _iter_feature_default_configs(value: object) -> Iterable[FeatureDefaultConfig]:
+def _iter_feature_default_configs(
+    value: object,
+    visited: set[int] | None = None,
+) -> Iterable[FeatureDefaultConfig]:
+    if visited is None:
+        visited = set()
+    if isinstance(value, (FeatureDefaultConfig, BaseModel, Mapping, Sequence)) and not isinstance(
+        value, (str, bytes, bytearray)
+    ):
+        object_id = id(value)
+        if object_id in visited:
+            return
+        visited.add(object_id)
     if isinstance(value, FeatureDefaultConfig):
         yield value
         return
     if isinstance(value, BaseModel):
         for field_name in value.__class__.model_fields:
-            yield from _iter_feature_default_configs(getattr(value, field_name))
+            yield from _iter_feature_default_configs(getattr(value, field_name), visited)
         return
     if isinstance(value, Mapping):
         for item in value.values():
-            yield from _iter_feature_default_configs(item)
+            yield from _iter_feature_default_configs(item, visited)
         return
-    if isinstance(value, Sequence) and not isinstance(value, str):
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         for item in value:
-            yield from _iter_feature_default_configs(item)
+            yield from _iter_feature_default_configs(item, visited)
 
 
 def _embedding_binding(config: DaemonConfig | None) -> CapabilityBinding:

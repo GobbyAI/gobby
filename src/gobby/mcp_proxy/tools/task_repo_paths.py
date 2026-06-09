@@ -31,18 +31,17 @@ def resolve_task_repo_path(
     project_path: str | None,
 ) -> str | None:
     """Return a symlink-safe cwd validated for immediate task-scoped Git operations."""
-    default_repo = _project_repo_path(project_manager, task.project_id)
-    if not project_path:
-        return default_repo
+    if project_path:
+        candidate = _resolve_existing_dir(project_path, label="project_path")
+        roots = list(_task_allowed_roots(task_manager, project_manager, task))
+        if _is_under_any_root(candidate, roots):
+            return str(candidate)
+        raise RepoPathValidationError(
+            "project_path is outside the task project repo and registered "
+            "task/ancestor worktree or clone paths"
+        )
 
-    candidate = _resolve_existing_dir(project_path, label="project_path")
-    roots = list(_task_allowed_roots(task_manager, project_manager, task))
-    if _is_under_any_root(candidate, roots):
-        return str(candidate)
-    raise RepoPathValidationError(
-        "project_path is outside the task project repo and registered "
-        "task/ancestor worktree or clone paths"
-    )
+    return _project_repo_path(project_manager, task.project_id)
 
 
 def resolve_project_repo_path(
@@ -152,8 +151,7 @@ def _current_project_path() -> str | None:
 
 
 def _resolve_path(path: str) -> Path:
-    expanded = Path(path).expanduser()
-    return Path(os.path.abspath(os.fspath(expanded)))
+    return Path(path).expanduser().absolute()
 
 
 def _resolve_existing_dir(path: str, *, label: str) -> Path:
@@ -222,6 +220,9 @@ def _open_dir_no_symlinks(path: Path, *, label: str) -> int:
     try:
         for part in parts[1:]:
             current = current / part
+            # The stat/open pair is intentionally dir-fd relative: stat with
+            # follow_symlinks=False rejects symlink components, then O_NOFOLLOW
+            # keeps a swapped component from becoming the opened directory.
             try:
                 component_stat = os.stat(part, dir_fd=fd, follow_symlinks=False)
             except OSError as exc:

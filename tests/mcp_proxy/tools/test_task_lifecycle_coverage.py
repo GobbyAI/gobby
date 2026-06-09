@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -157,12 +158,16 @@ class TestCloseTask:
     # exercise it — seed a SessionContext so they continue to test the
     # non-audit-guard paths.
     @pytest.fixture(autouse=True)
-    def _seed_session_context(self):
+    def _seed_session_context(self) -> Iterator[None]:
         with session_context_for_test("legacy-test-session"):
             yield
 
     @pytest.mark.asyncio
-    async def test_close_task_get_returns_none(self, mock_task_manager, mock_sync_manager):
+    async def test_close_task_get_returns_none(
+        self,
+        mock_task_manager: MagicMock,
+        mock_sync_manager: MagicMock,
+    ) -> None:
         """Returns error when get_task returns None after resolve."""
         mock_task_manager.get_task.return_value = None
         registry = _create_registry(mock_task_manager, mock_sync_manager)
@@ -848,7 +853,7 @@ class TestEscalateTask:
     """Tests for escalate_task tool."""
 
     @pytest.fixture(autouse=True)
-    def _set_session_context(self):
+    def _set_session_context(self) -> Iterator[None]:
         with session_context_for_test("my-session"):
             yield
 
@@ -950,7 +955,7 @@ class TestMarkTaskReviewApproved:
     """Tests for approve_review tool."""
 
     @pytest.fixture(autouse=True)
-    def _set_session_context(self):
+    def _set_session_context(self) -> Iterator[None]:
         with session_context_for_test("sess-1"):
             yield
 
@@ -1064,7 +1069,7 @@ class TestMarkTaskNeedsReview:
     """Tests for submit_for_review tool."""
 
     @pytest.fixture(autouse=True)
-    def _set_session_context(self):
+    def _set_session_context(self) -> Iterator[None]:
         with session_context_for_test("sess-1"):
             yield
 

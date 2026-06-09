@@ -1,7 +1,9 @@
 """Tests for the configuration system."""
 
 import json
+import logging
 import os
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
@@ -544,8 +546,12 @@ class TestLoadConfig:
         config = load_config(config_file=str(config_file))
         assert config.daemon_port == 9000
 
-    def test_load_config_wraps_config_file_parse_failure(self, temp_dir: Path) -> None:
-        """Phase 2 config-file parse failures surface as contextual ValueError."""
+    def test_load_config_warns_and_ignores_config_file_parse_failure(
+        self,
+        temp_dir: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Phase 2 config-file parse failures do not block DB/default config loading."""
         config_file = temp_dir / "config.yaml"
         config_file.write_text("memory: [\n")
 
@@ -553,9 +559,11 @@ class TestLoadConfig:
             def get_all(self) -> dict[str, object]:
                 return {}
 
-        with pytest.raises(ValueError, match="Failed to read config file") as exc_info:
-            load_config(config_file=str(config_file), config_store=DummyConfigStore())
-        assert isinstance(exc_info.value.__cause__, yaml.YAMLError)
+        with caplog.at_level(logging.WARNING, logger="gobby.config.app"):
+            config = load_config(config_file=str(config_file), config_store=DummyConfigStore())
+
+        assert isinstance(config, DaemonConfig)
+        assert "Ignoring unreadable config file" in caplog.text
 
     def test_load_config_rejects_removed_llm_providers_file_section(self, temp_dir: Path) -> None:
         """Legacy llm_providers file config now fails loudly."""
@@ -718,6 +726,9 @@ class TestLoadConfig:
                         "value": json.dumps(["claude/sonnet"]),
                     },
                 ]
+
+            def transaction(self) -> AbstractContextManager[None]:
+                return nullcontext()
 
         class DummyConfigStore:
             db = DummyDB()
@@ -1072,8 +1083,11 @@ class TestSaveConfig:
 
         assert config_file.exists()
 
-def test_export_config_to_yaml_with_none_path_uses_default(
-        self, temp_dir: Path, default_config: DaemonConfig, monkeypatch
+    def test_export_config_to_yaml_with_none_path_uses_default(
+        self,
+        temp_dir: Path,
+        default_config: DaemonConfig,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Test saving config with config_file=None uses default path."""
         monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
@@ -1081,7 +1095,7 @@ def test_export_config_to_yaml_with_none_path_uses_default(
         # Patch expanduser to redirect ~/.gobby to temp_dir/.gobby
         original_expanduser = Path.expanduser
 
-        def mock_expanduser(self):
+        def mock_expanduser(self: Path) -> Path:
             path_str = str(self)
             if path_str.startswith("~/.gobby"):
                 return temp_dir / ".gobby" / path_str[9:]  # Remove ~/.gobby/

@@ -371,7 +371,7 @@ async def test_text_generation_service_json_fallback_for_degraded_claude() -> No
                 provider="codex",
                 adapter_style=AIAdapterStyle.DAEMON,
                 available=True,
-                models=("gpt-5.3-codex-spark",),
+                models=("gpt-5.4-mini",),
             ),
         ]
     )
@@ -388,9 +388,9 @@ async def test_text_generation_service_json_fallback_for_degraded_claude() -> No
         )
     )
 
-    assert result == {"provider": "codex", "model": "gpt-5.3-codex-spark"}
+    assert result == {"provider": "codex", "model": "gpt-5.4-mini"}
     assert claude.requests[0].model == "haiku"
-    assert codex.requests[0].model == "gpt-5.3-codex-spark"
+    assert codex.requests[0].model == "gpt-5.4-mini"
 
 
 @pytest.mark.asyncio

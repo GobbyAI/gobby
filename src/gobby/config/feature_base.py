@@ -2,7 +2,6 @@
 
 import re
 from enum import StrEnum
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -43,16 +42,6 @@ DEFAULT_PROFILE_CANDIDATES: dict[FeatureProfile, tuple[str, ...]] = {
 
 
 _CLAUDE_FAMILY_ALIASES = ("haiku", "sonnet", "opus")
-_LEGACY_TIER_PROFILE_ALIASES = {
-    "low": FeatureProfile.LOW,
-    "fast": FeatureProfile.LOW,
-    "haiku": FeatureProfile.LOW,
-    "mid": FeatureProfile.MID,
-    "medium": FeatureProfile.MID,
-    "sonnet": FeatureProfile.MID,
-    "high": FeatureProfile.HIGH,
-    "opus": FeatureProfile.HIGH,
-}
 
 
 def default_candidates_for_profile(profile: FeatureProfile | str) -> tuple[str, ...]:
@@ -88,20 +77,6 @@ def _dedupe_normalized_candidates(candidates: list[str]) -> list[str]:
     return normalized_candidates
 
 
-def _legacy_profile(value: Any) -> Any:
-    if isinstance(value, FeatureProfile):
-        return value
-    if not isinstance(value, str):
-        return value
-    stripped = value.strip()
-    if not stripped:
-        return value
-    try:
-        return FeatureProfile(stripped)
-    except ValueError:
-        return _LEGACY_TIER_PROFILE_ALIASES.get(stripped.lower(), value)
-
-
 class FeatureDefaultConfig(BaseModel):
     """Base config for LLM-backed features."""
 
@@ -118,35 +93,6 @@ class FeatureDefaultConfig(BaseModel):
             "['codex/gpt-5.4-mini', 'local/Qwen3-Coder-30B-A3B-Instruct']."
         ),
     )
-
-    @model_validator(mode="before")
-    @classmethod
-    def migrate_legacy_fields(cls, data: Any) -> Any:
-        """Translate legacy provider/model/tier config before extras are rejected."""
-        if not isinstance(data, dict):
-            return data
-        values = dict(data)
-        provider = values.pop("provider", None)
-        model = values.pop("model", None)
-        tier = values.pop("tier", None)
-        if (provider is None) != (model is None):
-            raise ValueError("legacy provider and model must be specified together")
-        if provider is not None and model is not None:
-            legacy_candidate = normalize_feature_candidate(f"{provider}/{model}")
-            raw_candidates = values.get("candidates")
-            existing = (
-                [
-                    normalize_feature_candidate(str(candidate))
-                    for candidate in raw_candidates
-                    if isinstance(candidate, str)
-                ]
-                if isinstance(raw_candidates, (list, tuple))
-                else []
-            )
-            values["candidates"] = _dedupe_normalized_candidates([*existing, legacy_candidate])
-        if tier is not None and "profile" not in values:
-            values["profile"] = _legacy_profile(tier)
-        return values
 
     @model_validator(mode="after")
     def populate_and_validate_candidates(self) -> "FeatureDefaultConfig":

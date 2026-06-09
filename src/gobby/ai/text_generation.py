@@ -127,44 +127,18 @@ class TextGenerationService:
     async def generate_result(self, request: TextGenerationRequest) -> LLMTextResult:
         """Select a text_generate binding and invoke its adapter with usage."""
         candidates = self._candidate_requests(request)
-        last_error: Exception | None = None
         attempted_candidates: list[str] = []
         candidate_errors: dict[str, str] = {}
         candidate_failures: list[Exception] = []
-        for candidate in candidates:
-            candidate_label = _candidate_debug_label(candidate)
-            attempted_candidates.append(candidate_label)
-            start = time.perf_counter()
-            binding: CapabilityBinding | None = None
-            try:
-                binding = self._select_binding(candidate)
-                adapter = self._adapter_for_provider(binding.provider)
-                result = await adapter.generate(candidate)
-                text_result = _coerce_text_result(result)
-                text_result = replace(
-                    text_result,
-                    provider=binding.provider,
-                    model=candidate.model or next(iter(binding.models), None),
-                    profile=candidate.profile,
-                )
-                self._log_generation_event(
-                    request=candidate,
-                    binding=binding,
-                    latency_ms=_elapsed_ms(start),
-                    success=True,
-                )
-                return text_result
-            except Exception as exc:
-                last_error = exc
-                candidate_failures.append(exc)
-                candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
-                self._log_generation_event(
-                    request=candidate,
-                    binding=binding,
-                    latency_ms=_elapsed_ms(start),
-                    success=False,
-                    error=exc,
-                )
+        text_result, last_error = await self._try_generate_result_candidates(
+            candidates,
+            attempted_candidates=attempted_candidates,
+            candidate_errors=candidate_errors,
+            candidate_failures=candidate_failures,
+        )
+        if text_result is not None:
+            return text_result
+
         fallback_candidates = self._profile_default_fallback_requests(
             request,
             attempted_candidate_labels=attempted_candidates,
@@ -176,39 +150,14 @@ class TextGenerationService:
                 failed_candidate_labels=attempted_candidates,
                 fallback_candidates=fallback_candidates,
             )
-            for candidate in fallback_candidates:
-                candidate_label = _candidate_debug_label(candidate)
-                attempted_candidates.append(candidate_label)
-                start = time.perf_counter()
-                fallback_binding: CapabilityBinding | None = None
-                try:
-                    fallback_binding = self._select_binding(candidate)
-                    adapter = self._adapter_for_provider(fallback_binding.provider)
-                    result = await adapter.generate(candidate)
-                    text_result = _coerce_text_result(result)
-                    text_result = replace(
-                        text_result,
-                        provider=fallback_binding.provider,
-                        model=candidate.model or next(iter(fallback_binding.models), None),
-                        profile=candidate.profile,
-                    )
-                    self._log_generation_event(
-                        request=candidate,
-                        binding=fallback_binding,
-                        latency_ms=_elapsed_ms(start),
-                        success=True,
-                    )
-                    return text_result
-                except Exception as exc:
-                    last_error = exc
-                    candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
-                    self._log_generation_event(
-                        request=candidate,
-                        binding=fallback_binding,
-                        latency_ms=_elapsed_ms(start),
-                        success=False,
-                        error=exc,
-                    )
+            text_result, fallback_error = await self._try_generate_result_candidates(
+                fallback_candidates,
+                attempted_candidates=attempted_candidates,
+                candidate_errors=candidate_errors,
+            )
+            if text_result is not None:
+                return text_result
+            last_error = fallback_error or last_error
         if len(candidates) == 1 and last_error is not None and not fallback_candidates:
             raise last_error
         raise RuntimeError(
@@ -219,10 +168,102 @@ class TextGenerationService:
     async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
         """Select a text_generate binding and return structured JSON."""
         candidates = self._candidate_requests(request)
-        last_error: Exception | None = None
         attempted_candidates: list[str] = []
         candidate_errors: dict[str, str] = {}
         candidate_failures: list[Exception] = []
+        result, last_error = await self._try_generate_json_candidates(
+            candidates,
+            attempted_candidates=attempted_candidates,
+            candidate_errors=candidate_errors,
+            candidate_failures=candidate_failures,
+        )
+        if result is not None:
+            return result
+
+        fallback_candidates = self._profile_default_fallback_requests(
+            request,
+            attempted_candidate_labels=attempted_candidates,
+            failures=candidate_failures,
+        )
+        if fallback_candidates:
+            self._log_profile_candidate_fallback(
+                request=request,
+                failed_candidate_labels=attempted_candidates,
+                fallback_candidates=fallback_candidates,
+            )
+            result, fallback_error = await self._try_generate_json_candidates(
+                fallback_candidates,
+                attempted_candidates=attempted_candidates,
+                candidate_errors=candidate_errors,
+            )
+            if result is not None:
+                return result
+            last_error = fallback_error or last_error
+        if len(candidates) == 1 and last_error is not None and not fallback_candidates:
+            raise last_error
+        raise RuntimeError(
+            "No JSON generation candidate succeeded; "
+            f"attempted candidates: {attempted_candidates}; errors: {candidate_errors}"
+        ) from last_error
+
+    async def _try_generate_result_candidates(
+        self,
+        candidates: tuple[TextGenerationRequest, ...],
+        *,
+        attempted_candidates: list[str],
+        candidate_errors: dict[str, str],
+        candidate_failures: list[Exception] | None = None,
+    ) -> tuple[LLMTextResult | None, Exception | None]:
+        last_error: Exception | None = None
+        for candidate in candidates:
+            candidate_label = _candidate_debug_label(candidate)
+            attempted_candidates.append(candidate_label)
+            start = time.perf_counter()
+            binding: CapabilityBinding | None = None
+            try:
+                binding = self._select_binding(candidate)
+                adapter = self._adapter_for_provider(binding.provider)
+                result = await adapter.generate(candidate)
+                text_result = _coerce_text_result(result)
+                self._log_generation_event(
+                    request=candidate,
+                    binding=binding,
+                    latency_ms=_elapsed_ms(start),
+                    success=True,
+                )
+                return (
+                    replace(
+                        text_result,
+                        provider=binding.provider,
+                        model=candidate.model or next(iter(binding.models), None),
+                        profile=candidate.profile,
+                    ),
+                    None,
+                )
+            except Exception as exc:
+                last_error = exc
+                if candidate_failures is not None:
+                    candidate_failures.append(exc)
+                candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
+                self._log_generation_event(
+                    request=candidate,
+                    binding=binding,
+                    latency_ms=_elapsed_ms(start),
+                    success=False,
+                    error=exc,
+                )
+                continue
+        return None, last_error
+
+    async def _try_generate_json_candidates(
+        self,
+        candidates: tuple[TextGenerationRequest, ...],
+        *,
+        attempted_candidates: list[str],
+        candidate_errors: dict[str, str],
+        candidate_failures: list[Exception] | None = None,
+    ) -> tuple[dict[str, Any] | None, Exception | None]:
+        last_error: Exception | None = None
         for candidate in candidates:
             candidate_label = _candidate_debug_label(candidate)
             attempted_candidates.append(candidate_label)
@@ -252,10 +293,11 @@ class TextGenerationService:
                     success=True,
                     json_parse_outcome=parse_outcome,
                 )
-                return result
+                return result, None
             except Exception as exc:
                 last_error = exc
-                candidate_failures.append(exc)
+                if candidate_failures is not None:
+                    candidate_failures.append(exc)
                 candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
                 if parse_outcome == "not_attempted" and isinstance(
                     exc, (ValueError, json.JSONDecodeError)
@@ -269,68 +311,7 @@ class TextGenerationService:
                     error=exc,
                     json_parse_outcome=parse_outcome,
                 )
-        fallback_candidates = self._profile_default_fallback_requests(
-            request,
-            attempted_candidate_labels=attempted_candidates,
-            failures=candidate_failures,
-        )
-        if fallback_candidates:
-            self._log_profile_candidate_fallback(
-                request=request,
-                failed_candidate_labels=attempted_candidates,
-                fallback_candidates=fallback_candidates,
-            )
-            for candidate in fallback_candidates:
-                candidate_label = _candidate_debug_label(candidate)
-                attempted_candidates.append(candidate_label)
-                start = time.perf_counter()
-                fallback_binding: CapabilityBinding | None = None
-                parse_outcome = "not_attempted"
-                try:
-                    fallback_binding = self._select_binding(candidate)
-                    adapter = self._adapter_for_provider(fallback_binding.provider)
-                    json_adapter = getattr(adapter, "generate_json", None)
-                    if callable(json_adapter):
-                        typed_json_adapter = cast(
-                            Callable[[TextGenerationRequest], Awaitable[dict[str, Any]]],
-                            json_adapter,
-                        )
-                        result = await typed_json_adapter(candidate)
-                        parse_outcome = "provider_structured"
-                    else:
-                        text = await adapter.generate(_json_request(candidate))
-                        raw = _coerce_text_result(text).text
-                        result = _parse_json_text(raw)
-                        parse_outcome = "parsed_text"
-                    self._log_generation_event(
-                        request=candidate,
-                        binding=fallback_binding,
-                        latency_ms=_elapsed_ms(start),
-                        success=True,
-                        json_parse_outcome=parse_outcome,
-                    )
-                    return result
-                except Exception as exc:
-                    last_error = exc
-                    candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
-                    if parse_outcome == "not_attempted" and isinstance(
-                        exc, (ValueError, json.JSONDecodeError)
-                    ):
-                        parse_outcome = "parse_failed"
-                    self._log_generation_event(
-                        request=candidate,
-                        binding=fallback_binding,
-                        latency_ms=_elapsed_ms(start),
-                        success=False,
-                        error=exc,
-                        json_parse_outcome=parse_outcome,
-                    )
-        if len(candidates) == 1 and last_error is not None and not fallback_candidates:
-            raise last_error
-        raise RuntimeError(
-            "No JSON generation candidate succeeded; "
-            f"attempted candidates: {attempted_candidates}; errors: {candidate_errors}"
-        ) from last_error
+        return None, last_error
 
     def _candidate_requests(
         self, request: TextGenerationRequest

@@ -46,7 +46,7 @@ async def discover_stale_candidates(
     scan_limit = _positive_int_value(dream_config.scan_limit, "scan_limit", 500)
     stale_age_days = _positive_int_value(dream_config.stale_age_days, "stale_age_days", 30)
     page_timeout = _positive_float_value(
-        getattr(dream_config, "candidate_page_timeout_seconds", 10.0),
+        dream_config.candidate_page_timeout_seconds,
         "candidate_page_timeout_seconds",
         10.0,
     )
