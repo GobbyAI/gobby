@@ -922,7 +922,7 @@ fn write_doc_rejects_symlinked_target() {
     assert!(!outside_target.exists());
 }
 
-fn test_symbol(
+pub fn test_symbol(
     file_path: &str,
     name: &str,
     kind: &str,
@@ -932,7 +932,7 @@ fn test_symbol(
     test_symbol_with_qualified(file_path, name, name, kind, line_start, signature)
 }
 
-fn test_component_id(file_path: &str, name: &str, kind: &str) -> String {
+pub fn test_component_id(file_path: &str, name: &str, kind: &str) -> String {
     Symbol::make_id("project-1", file_path, name, kind, 0)
 }
 

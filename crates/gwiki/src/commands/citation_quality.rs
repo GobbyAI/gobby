@@ -111,8 +111,7 @@ pub(crate) struct OutputConfidence {
 pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
     crate::support::postgres::require_attached_index("gwiki citation-quality")?;
     let resolved = resolve_selection_context(&selection)?;
-    let _postgres_index =
-        crate::support::postgres::require_postgres_index("gwiki citation-quality")?;
+    // Report construction is vault-backed; the command only needs attached gwiki schema validation.
     let report = build_report(
         resolved.scope.root(),
         resolved.output_scope,
@@ -558,6 +557,7 @@ mod tests {
     static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
+    #[serial_test::serial]
     fn citation_quality_execute_requires_postgresql_index() {
         let _guard = ENV_TEST_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");

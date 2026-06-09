@@ -175,17 +175,27 @@ fn codeowners_pattern_matches(pattern: &str, file: &str) -> bool {
     }
     if normalized.contains('*') || normalized.contains('?') || normalized.contains('[') {
         if pattern.starts_with('/') || normalized.contains('/') {
-            return glob::Pattern::new(normalized)
-                .map(|pattern| pattern.matches(file))
-                .unwrap_or(false);
+            return match glob::Pattern::new(normalized) {
+                Ok(glob) => glob.matches(file),
+                Err(error) => {
+                    log::warn!(
+                        "failed to parse CODEOWNERS pattern {pattern:?} as glob {normalized:?} for file {file:?}: {error}"
+                    );
+                    false
+                }
+            };
         }
         return Path::new(file)
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| {
-                glob::Pattern::new(normalized)
-                    .map(|pattern| pattern.matches(name))
-                    .unwrap_or(false)
+            .is_some_and(|name| match glob::Pattern::new(normalized) {
+                Ok(glob) => glob.matches(name),
+                Err(error) => {
+                    log::warn!(
+                        "failed to parse CODEOWNERS pattern {pattern:?} as basename glob {normalized:?} for file {file:?} name {name:?}: {error}"
+                    );
+                    false
+                }
             });
     }
     if normalized.contains('/') {

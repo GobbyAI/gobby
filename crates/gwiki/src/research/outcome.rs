@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -94,20 +94,33 @@ pub(crate) fn outcome_degradations(payload: &Value) -> Vec<String> {
 pub(crate) fn dedup_code_citations(
     citations: Vec<ResearchCodeCitation>,
 ) -> Vec<ResearchCodeCitation> {
-    let mut seen = HashSet::new();
+    let mut indexes = HashMap::new();
     let mut deduped = Vec::new();
-    for citation in citations {
+    for mut citation in citations {
+        dedup_code_citation_provenance(&mut citation.provenance);
         let key = (
             citation.file.clone(),
             citation.line,
             citation.symbol.clone(),
-            citation.provenance.clone(),
         );
-        if seen.insert(key) {
+        if let Some(index) = indexes.get(&key).copied() {
+            let existing: &mut ResearchCodeCitation = &mut deduped[index];
+            for provenance in citation.provenance.drain(..) {
+                if !existing.provenance.contains(&provenance) {
+                    existing.provenance.push(provenance);
+                }
+            }
+        } else {
+            indexes.insert(key, deduped.len());
             deduped.push(citation);
         }
     }
     deduped
+}
+
+fn dedup_code_citation_provenance(provenance: &mut Vec<String>) {
+    let mut seen = HashSet::new();
+    provenance.retain(|source| seen.insert(source.clone()));
 }
 
 pub(crate) fn collect_keyed_strings(value: &Value, keys: &[&str], out: &mut Vec<String>) {
@@ -331,10 +344,22 @@ mod tests {
             symbol: Some("service".to_string()),
             ..citation.clone()
         };
+        let reranked = ResearchCodeCitation {
+            provenance: vec![
+                "rerank".to_string(),
+                "search".to_string(),
+                "rerank".to_string(),
+            ],
+            ..citation.clone()
+        };
+        let merged = ResearchCodeCitation {
+            provenance: vec!["search".to_string(), "rerank".to_string()],
+            ..citation.clone()
+        };
 
         assert_eq!(
-            dedup_code_citations(vec![citation.clone(), other.clone(), citation.clone()]),
-            vec![citation, other]
+            dedup_code_citations(vec![citation, other.clone(), reranked]),
+            vec![merged, other]
         );
     }
 

@@ -700,7 +700,7 @@ mod tests {
             vec!["shared_code_graph_unavailable".to_string()]
         );
         assert!(output.related_pages.iter().any(|page| {
-            page.path == PathBuf::from("code/files/src/handler.rs.md")
+            page.path == Path::new("code/files/src/handler.rs.md")
                 && page.title.as_deref() == Some("Request handler")
         }));
         assert!(output.code_edges.iter().any(|edge| {

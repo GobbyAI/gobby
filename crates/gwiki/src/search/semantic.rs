@@ -330,7 +330,7 @@ fn embed_direct_queries(
     let embeddings = data
         .get("data")
         .and_then(Value::as_array)
-        .ok_or_else(|| SearchError::Backend("missing data array".to_string()))?
+        .ok_or_else(|| SearchError::Backend("embedding API returned empty data array".to_string()))?
         .iter()
         .enumerate()
         .map(|(index, item)| {
@@ -342,7 +342,7 @@ fn embed_direct_queries(
                 .iter()
                 .map(|value| {
                     value.as_f64().map(|value| value as f32).ok_or_else(|| {
-                        SearchError::Backend("embedding array contains a non-number".to_string())
+                        SearchError::Backend(format!("data[{index}].embedding has non-number"))
                     })
                 })
                 .collect()

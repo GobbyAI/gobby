@@ -16,6 +16,7 @@ use crate::search::{SearchError, SearchScope};
 use crate::support::text::slugify;
 
 pub const FALKORDB_GRAPH_NAME: &str = "gobby_wiki";
+const DEFAULT_CODE_GRAPH_EDGE_LIMIT: usize = 200;
 const CODE_FALKORDB_GRAPH_NAME: &str = "gobby_code";
 const CODE_GRAPH_PROVENANCE: &str = "shared_code_graph";
 
@@ -84,12 +85,14 @@ pub(crate) fn load_code_graph_edges(
         .collect::<Vec<_>>();
     let mut edges = Vec::new();
     for (scope, document_path, file_path) in code_documents {
+        let edge_limit = DEFAULT_CODE_GRAPH_EDGE_LIMIT;
         edges.extend(code_call_edges(
             &mut client,
             project_id,
             &scope,
             &document_path,
             &file_path,
+            edge_limit,
         )?);
         edges.extend(code_import_edges(
             &mut client,
@@ -97,6 +100,7 @@ pub(crate) fn load_code_graph_edges(
             &scope,
             &document_path,
             &file_path,
+            edge_limit,
         )?);
     }
     Ok(edges)
@@ -108,18 +112,20 @@ fn code_call_edges(
     scope: &SearchScope,
     document_path: &Path,
     file_path: &str,
+    limit: usize,
 ) -> anyhow::Result<Vec<WikiGraphCodeEdge>> {
     let query = "\
         MATCH (source:CodeSymbol {project: $project})-[r:CALLS]->(target {project: $project}) \
         WHERE source.file_path = $path OR (target:CodeSymbol AND target.file_path = $path) \
         RETURN source.file_path AS source_file_path, source.name AS source_name, \
                target.file_path AS target_file_path, target.name AS target_name, r.line AS line \
-        LIMIT 200";
+        LIMIT toInteger($limit)";
     let rows = client.query(
         query,
         Some(HashMap::from([
             ("project".to_string(), project_id.to_string()),
             ("path".to_string(), file_path.to_string()),
+            ("limit".to_string(), limit.to_string()),
         ])),
     )?;
     Ok(rows
@@ -154,16 +160,18 @@ fn code_import_edges(
     scope: &SearchScope,
     document_path: &Path,
     file_path: &str,
+    limit: usize,
 ) -> anyhow::Result<Vec<WikiGraphCodeEdge>> {
     let query = "\
         MATCH (file:CodeFile {path: $path, project: $project})-[r:IMPORTS]->(module:CodeModule {project: $project}) \
         RETURN file.path AS source_file_path, module.name AS target_name \
-        LIMIT 200";
+        LIMIT toInteger($limit)";
     let rows = client.query(
         query,
         Some(HashMap::from([
             ("project".to_string(), project_id.to_string()),
             ("path".to_string(), file_path.to_string()),
+            ("limit".to_string(), limit.to_string()),
         ])),
     )?;
     Ok(rows
