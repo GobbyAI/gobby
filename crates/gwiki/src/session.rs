@@ -37,6 +37,12 @@ impl ResearchScope {
             Self::Project { root, .. } | Self::Topic { root, .. } => root,
         }
     }
+
+    fn set_root(&mut self, new_root: PathBuf) {
+        match self {
+            Self::Project { root, .. } | Self::Topic { root, .. } => *root = new_root,
+        }
+    }
 }
 
 impl From<&ResolvedScope> for ResearchScope {
@@ -287,12 +293,14 @@ impl ResearchSession {
             path: Some(path.clone()),
             source: error,
         })?;
-        let session: Self = serde_json::from_str(&json).map_err(|error| WikiError::Json {
+        let mut session: Self = serde_json::from_str(&json).map_err(|error| WikiError::Json {
             action: "parse research checkpoint",
             path: Some(path.clone()),
             source: error,
         })?;
-        validate_checkpoint_scope_root(vault_root, session.scope.root(), &path)?;
+        let normalized_root =
+            validate_checkpoint_scope_root(vault_root, session.scope.root(), &path)?;
+        session.scope.set_root(normalized_root);
         Ok(session)
     }
 
@@ -306,12 +314,12 @@ fn validate_checkpoint_scope_root(
     expected_root: &Path,
     loaded_root: &Path,
     checkpoint_path: &Path,
-) -> Result<(), WikiError> {
+) -> Result<PathBuf, WikiError> {
     let expected = comparable_path(expected_root, None);
     let loaded_base = checkpoint_vault_root(checkpoint_path);
     let loaded = comparable_path(loaded_root, loaded_base.as_deref());
-    if expected == loaded {
-        return Ok(());
+    if expected == loaded || legacy_project_vault_root_matches(&expected, loaded_root) {
+        return Ok(expected);
     }
     Err(WikiError::InvalidScope {
         detail: format!(
@@ -321,6 +329,29 @@ fn validate_checkpoint_scope_root(
             expected_root.display()
         ),
     })
+}
+
+fn legacy_project_vault_root_matches(expected_root: &Path, loaded_root: &Path) -> bool {
+    if !is_legacy_project_vault_relative_root(loaded_root) {
+        return false;
+    }
+    let Some(project_root) = project_root_for_vault(expected_root) else {
+        return false;
+    };
+    comparable_path(&project_root.join(".gobby").join("wiki"), None) == expected_root
+}
+
+fn is_legacy_project_vault_relative_root(path: &Path) -> bool {
+    path == Path::new(".gobby").join("wiki")
+}
+
+fn project_root_for_vault(vault_root: &Path) -> Option<&Path> {
+    let wiki_dir = vault_root.file_name()?;
+    let gobby_dir = vault_root.parent()?.file_name()?;
+    if wiki_dir == "wiki" && gobby_dir == ".gobby" {
+        return vault_root.parent()?.parent();
+    }
+    None
 }
 
 fn comparable_path(path: &Path, relative_base: Option<&Path>) -> PathBuf {
@@ -438,6 +469,29 @@ mod tests {
     }
 
     #[test]
+    fn load_checkpoint_migrates_legacy_project_vault_relative_scope_root() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project = temp.path().join("repo");
+        let expected = project.join(".gobby").join("wiki");
+        fs::create_dir_all(expected.join(".gwiki")).expect("create checkpoint dir");
+        let expected = expected.canonicalize().expect("canonicalize expected root");
+        let session = ResearchSession::new(
+            "Which root?",
+            ResearchScope::project_for_id("project-1", PathBuf::from(".gobby").join("wiki")),
+            Vec::new(),
+            1,
+            None,
+        )
+        .expect("session created");
+        let json = serde_json::to_string_pretty(&session).expect("serialize session");
+        fs::write(ResearchSession::checkpoint_path(&expected), json).expect("write checkpoint");
+
+        let loaded = ResearchSession::load_checkpoint(&expected).expect("checkpoint loaded");
+
+        assert_eq!(loaded.scope.root(), expected);
+    }
+
+    #[test]
     fn load_checkpoint_rejects_mismatched_scope_root() {
         let temp = tempfile::tempdir().expect("tempdir");
         let expected = temp.path().join("expected");
@@ -462,7 +516,7 @@ mod tests {
     }
 
     #[test]
-    fn load_checkpoint_resolves_relative_scope_root_against_checkpoint_vault() {
+    fn load_checkpoint_normalizes_relative_scope_root_against_checkpoint_vault() {
         let temp = tempfile::tempdir().expect("tempdir");
         let expected = temp.path().join("expected");
         fs::create_dir_all(expected.join(".gwiki/research")).expect("create checkpoint dir");
@@ -479,6 +533,9 @@ mod tests {
 
         let loaded = ResearchSession::load_checkpoint(&expected).expect("checkpoint loaded");
 
-        assert_eq!(loaded.scope.root(), Path::new("."));
+        assert_eq!(
+            loaded.scope.root(),
+            expected.canonicalize().expect("canonicalize expected root")
+        );
     }
 }

@@ -103,7 +103,12 @@ pub fn resolve_with_source(
     }
 
     if let Some(project_root) = selection.project_root() {
-        return resolve_project_from_root(project_root);
+        let project_root = if project_root.is_relative() {
+            cwd.join(project_root)
+        } else {
+            project_root.to_path_buf()
+        };
+        return resolve_project_from_root(&project_root);
     }
 
     if let Some(project_root) = gobby_core::project::find_project_root(cwd) {
@@ -124,7 +129,15 @@ fn resolve_topic(topic: &str, source: &mut impl ConfigSource) -> Result<Resolved
 }
 
 fn resolve_project_from_root(project_root: &Path) -> Result<ResolvedScope, WikiError> {
-    let project_id = gobby_core::project::read_project_id(project_root).map_err(|error| {
+    let project_root = project_root
+        .canonicalize()
+        .map_err(|error| WikiError::InvalidScope {
+            detail: format!(
+                "failed to resolve project root {}: {error}",
+                project_root.display()
+            ),
+        })?;
+    let project_id = gobby_core::project::read_project_id(&project_root).map_err(|error| {
         WikiError::InvalidScope {
             detail: format!(
                 "failed to read project identity from {}: {error}",
@@ -135,11 +148,7 @@ fn resolve_project_from_root(project_root: &Path) -> Result<ResolvedScope, WikiE
     let project_id = validate_project_id(&project_id)?;
     let root = project_root.join(".gobby").join("wiki");
 
-    Ok(ResolvedScope::project(
-        project_id,
-        project_root.to_path_buf(),
-        root,
-    ))
+    Ok(ResolvedScope::project(project_id, project_root, root))
 }
 
 fn resolve_hub_path(source: &mut impl ConfigSource) -> Result<PathBuf, WikiError> {
@@ -199,6 +208,7 @@ fn expand_home(path: &str) -> Result<PathBuf, WikiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::support::test_env::EnvGuard;
     use gobby_core::config::ConfigSource;
     use std::collections::HashMap;
     use std::fs;
@@ -226,7 +236,9 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn resolves_global_topic() {
+        let _env = EnvGuard::unset(HUB_ENV);
         let tmp = tempfile::tempdir().expect("tempdir");
         let hub = tmp.path().join("knowledge");
         let mut config = TestConfig::with("wiki.hub_path", hub.display().to_string());
@@ -285,9 +297,10 @@ mod tests {
             &mut config,
         )
         .expect("project scope resolves");
+        let canonical_project = project.canonicalize().expect("canonicalize project root");
 
         assert_eq!(scope.identity(), "project:project-123");
-        assert_eq!(scope.root(), project.join(".gobby").join("wiki"));
+        assert_eq!(scope.root(), canonical_project.join(".gobby").join("wiki"));
         assert_eq!(
             fs::read_to_string(gcode_json).expect("read gcode json"),
             original_gcode_json
@@ -296,5 +309,34 @@ mod tests {
             !project.join(".gobby").join("wiki").exists(),
             "resolution must not initialize the vault"
         );
+    }
+
+    #[test]
+    fn project_dot_resolves_to_absolute_project_wiki_root() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let project = tmp.path().join("project");
+        fs::create_dir_all(project.join(".gobby")).expect("create .gobby");
+        fs::write(
+            project.join(".gobby").join("gcode.json"),
+            r#"{
+  "id": "project-123",
+  "name": "demo"
+}
+"#,
+        )
+        .expect("write gcode json");
+
+        let mut config = TestConfig::with(
+            "wiki.hub_path",
+            tmp.path().join("hub").display().to_string(),
+        );
+        let scope =
+            resolve_with_source(&crate::ScopeSelection::project("."), &project, &mut config)
+                .expect("project scope resolves");
+        let project = project.canonicalize().expect("canonicalize project root");
+
+        assert_eq!(scope.project_root(), Some(project.as_path()));
+        assert_eq!(scope.root(), project.join(".gobby").join("wiki"));
+        assert!(scope.root().is_absolute());
     }
 }

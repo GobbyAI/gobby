@@ -378,7 +378,8 @@ fn deterministic_audit_reports_untracked_completed_note() {
 #[test]
 fn deterministic_audit_uses_checkpoint_inventory() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let scope = ResearchScope::project_for_id("project-1", temp.path());
+    let root = temp.path().canonicalize().expect("canonicalize tempdir");
+    let scope = ResearchScope::project_for_id("project-1", root);
     write_test_source(scope.root());
     let mut options = default_options("Record accepted note", scope.clone());
     options.max_steps = 0;
