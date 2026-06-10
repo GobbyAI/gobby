@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import threading
 import time
 from typing import Any
 
@@ -13,12 +12,6 @@ from gobby.tasks.state_semantics import (
     get_claimed_session_id,
     is_task_actionable,
 )
-
-
-def _compat_module() -> Any:
-    import gobby.hooks.event_handlers._session_start as session_start
-
-    return session_start
 
 
 def find_parent_session(
@@ -111,7 +104,7 @@ def populate_handoff_session_variables(
     if not current_vars.get("auto_inject_handoff", True):
         return
 
-    parent = _refresh_parent_summary_for_handoff(handler, parent_session_id, session_source)
+    parent = _get_parent_summary_for_handoff(handler, parent_session_id)
 
     handoff_vars: dict[str, Any] = {}
     if parent and parent.summary_markdown:
@@ -179,48 +172,9 @@ def _preserve_compact_resume_required_skills(
         sv_mgr.merge_variables(session_id, {"compact_resume_required_skills": skills})
 
 
-def _refresh_parent_summary_for_handoff(
-    handler: Any,
-    parent_session_id: str,
-    session_source: str,
-) -> Any | None:
-    """Return parent with fresh summary for explicit handoff starts."""
-    parent = handler._session_manager.get(parent_session_id)
-    if not parent:
-        return None
-
-    should_refresh = session_source in ("compact", "clear") or not parent.summary_markdown
-    if not should_refresh:
-        return parent
-
-    summary_event = threading.Event()
-    max_wait_s = _compat_module().SUMMARY_GENERATION_TIMEOUT_S
-    dispatched = False
-    if handler._dispatch_session_summaries_fn:
-        try:
-            handler._dispatch_session_summaries_fn(
-                parent_session_id,
-                True,
-                summary_event,
-                False,
-            )
-            dispatched = True
-        except Exception as e:
-            handler.logger.warning(
-                f"Failed to dispatch session summaries for parent {parent_session_id}: {e}"
-            )
-
-    if dispatched:
-        if summary_event.wait(timeout=max_wait_s):
-            handler.logger.debug(f"Session summary signaled for parent {parent_session_id}")
-        else:
-            handler.logger.warning(
-                "Timed out waiting for session summary for parent "
-                f"{parent_session_id} after {max_wait_s:.0f}s"
-            )
-        parent = handler._session_manager.get(parent_session_id)
-
-    return parent
+def _get_parent_summary_for_handoff(handler: Any, parent_session_id: str) -> Any | None:
+    """Return the current parent session snapshot without blocking SessionStart."""
+    return handler._session_manager.get(parent_session_id)
 
 
 def _preserve_task_claim_state(

@@ -618,7 +618,10 @@ def register_terminal_tools(
             }
 
         required_skills = persist_compact_resume_required_skills(db, resolved_session_id)
-        continuation_prompt = build_compact_self_continue_prompt(required_skills)
+        continuation_prompt = build_compact_self_continue_prompt(
+            required_skills,
+            summary_session_id=resolved_session_id,
+        )
         ok, reason, continuation_pending = await _send_terminal_compaction_command(
             tmux,
             target,
@@ -628,6 +631,7 @@ def register_terminal_tools(
                 db,
                 resolved_session_id,
                 prompt=continuation_prompt,
+                summary_session_id=resolved_session_id,
             ),
             clear_continuation_pending=lambda: clear_compact_self_continuation_pending(
                 db,

@@ -5,6 +5,7 @@ This module contains MCP tools for setting and retrieving handoff context.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -293,3 +294,73 @@ def register_handoff_tools(
             "parent_status": parent_session.status,
             "linked_child": resolved_child_id or link_child_session_id,
         }
+
+    @registry.tool(
+        name="wait_for_summary",
+        description=(
+            "Wait for a specific session's summary_markdown to become available. "
+            "Accepts #N, N, UUID, or prefix for session_id."
+        ),
+    )
+    async def wait_for_summary(
+        session_id: str,
+        timeout_seconds: float = 60,
+        poll_interval_seconds: float = 1,
+    ) -> dict[str, Any]:
+        """Poll until summary_markdown is present for a resolved session reference."""
+        if session_manager is None:
+            return {"success": False, "error": "Session manager not available"}
+
+        try:
+            resolved_id = _resolve_session_id(session_id)
+        except ValueError as e:
+            return {
+                "success": False,
+                "completed": False,
+                "found": False,
+                "session_id": session_id,
+                "error": str(e),
+            }
+
+        try:
+            timeout = max(0.0, float(timeout_seconds))
+        except (TypeError, ValueError):
+            timeout = 60.0
+        try:
+            poll_interval = max(0.1, float(poll_interval_seconds))
+        except (TypeError, ValueError):
+            poll_interval = 1.0
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while True:
+            session = session_manager.get(resolved_id)
+            if session is None:
+                return {
+                    "success": False,
+                    "completed": False,
+                    "found": False,
+                    "session_id": resolved_id,
+                    "error": f"Session {session_id} not found",
+                }
+
+            context = getattr(session, "summary_markdown", None)
+            if isinstance(context, str) and context.strip():
+                return {
+                    "success": True,
+                    "completed": True,
+                    "session_id": resolved_id,
+                    "has_context": True,
+                    "context": context,
+                    "context_type": "summary_markdown",
+                }
+
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return {
+                    "success": True,
+                    "completed": False,
+                    "session_id": resolved_id,
+                    "timeout_seconds": timeout,
+                }
+            await asyncio.sleep(min(poll_interval, remaining))

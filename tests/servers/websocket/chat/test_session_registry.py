@@ -15,7 +15,7 @@ from gobby.servers.websocket.chat.session_registry import (
     WEB_CHAT_WAKE_PROMPT,
     WebChatSessionRegistry,
 )
-from gobby.sessions.compact_continuation import COMPACT_SELF_CONTINUE_PROMPT
+from gobby.sessions.compact_continuation import build_compact_self_continue_prompt
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.engine.core import RuleEngine
@@ -66,7 +66,7 @@ class TestWebChatSessionRegistry:
         }
         assert [call.args[0] for call in session.send_message.call_args_list] == [
             "/compact",
-            COMPACT_SELF_CONTINUE_PROMPT,
+            build_compact_self_continue_prompt(None, summary_session_id="db-id"),
         ]
 
     @pytest.mark.asyncio
@@ -130,7 +130,7 @@ class TestWebChatSessionRegistry:
         await queued_task
         assert [call.args[0] for call in session.send_message.call_args_list] == [
             "/compact",
-            COMPACT_SELF_CONTINUE_PROMPT,
+            build_compact_self_continue_prompt(None, summary_session_id="db-id"),
         ]
 
     @pytest.mark.asyncio
@@ -202,7 +202,7 @@ class TestWebChatSessionRegistry:
             await queued_task
         assert [call.args[0] for call in session.send_message.call_args_list] == [
             "/compact",
-            COMPACT_SELF_CONTINUE_PROMPT,
+            build_compact_self_continue_prompt(None, summary_session_id="db-id"),
             WEB_CHAT_WAKE_PROMPT,
         ]
 

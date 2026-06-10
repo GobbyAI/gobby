@@ -913,6 +913,34 @@ class TestDaemonProxy:
                     preflight=True,
                 )
 
+    async def test_call_tool_treats_wait_for_summary_as_wait_tool(self) -> None:
+        """wait_for_summary uses generic wait-tool proxying and timeout buffering."""
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        proxy = DaemonProxy(60887)
+        with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
+            mock_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
+            with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_request:
+                mock_request.return_value = {"success": True}
+
+                result = await proxy.call_tool(
+                    "gobby-sessions",
+                    "wait_for_summary",
+                    {"session_id": "s1", "timeout_seconds": 45},
+                )
+
+                assert result == {"success": True}
+                mock_request.assert_called_once()
+                args, kwargs = mock_request.call_args
+                assert args == ("POST", "/api/mcp/tools/call")
+                assert kwargs["json"] == {
+                    "server_name": "gobby-sessions",
+                    "tool_name": "wait_for_summary",
+                    "arguments": {"session_id": "s1", "timeout_seconds": 45},
+                }
+                assert kwargs["timeout"] == 75.0
+                assert kwargs["preflight"] is True
+
     @pytest.mark.asyncio
     async def test_call_tool_proxies_when_timeout_config_load_fails(self) -> None:
         """call_tool should not fail just because optional timeout config is unavailable."""
@@ -1434,7 +1462,13 @@ class TestMCPToolsWrapper:
         mock_proxy.call_tool.assert_called_with(
             "outer-server",
             "outer-tool",
-            {"session_id": "inner-session", "value": "ok"},
+            {
+                "server_name": "inner-server",
+                "tool_name": "inner-tool",
+                "session_id": "inner-session",
+                "project_id": "inner-project",
+                "value": "ok",
+            },
             project_id="outer-project",
             session_id="outer-session",
             preflight_enabled=True,
@@ -1582,6 +1616,53 @@ class TestMCPToolsWrapper:
             "gobby-agents",
             "wait_for_agent",
             {"run_id": "run-123", "timeout_seconds": 0.02},
+            preflight_enabled=True,
+        )
+        release_call.set()
+        await asyncio.wait_for(call_finished.wait(), timeout=0.2)
+
+    @pytest.mark.asyncio
+    async def test_call_tool_caps_wait_for_summary_timeout(self) -> None:
+        _, mock_proxy, run_tool = self._register_tools()
+        release_call = asyncio.Event()
+        call_finished = asyncio.Event()
+
+        async def _block_until_released(*_args: Any, **_kwargs: Any) -> dict[str, str]:
+            await release_call.wait()
+            call_finished.set()
+            return {"res": "ready"}
+
+        mock_proxy.call_tool.side_effect = _block_until_released
+
+        with (
+            patch("gobby.mcp_proxy.wait_tools.MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS", 0.02),
+            patch("gobby.mcp_proxy.wait_tools.WAIT_TOOL_WRAPPER_GRACE_SECONDS", 0.01),
+        ):
+            result = await asyncio.wait_for(
+                run_tool(
+                    "call_tool",
+                    server_name="gobby-sessions",
+                    tool_name="wait_for_summary",
+                    arguments={"session_id": "s1", "timeout_seconds": 600},
+                ),
+                timeout=0.2,
+            )
+
+        assert result == {
+            "success": True,
+            "completed": False,
+            "timeout_seconds": 0.02,
+            "effective_timeout_seconds": 0.02,
+            "mcp_wrapper_timeout": True,
+            "background_call_continues": True,
+            "tool_name": "wait_for_summary",
+            "requested_timeout_seconds": 600.0,
+            "wait_timeout_capped_by_mcp_wrapper": True,
+        }
+        mock_proxy.call_tool.assert_awaited_once_with(
+            "gobby-sessions",
+            "wait_for_summary",
+            {"session_id": "s1", "timeout_seconds": 0.02},
             preflight_enabled=True,
         )
         release_call.set()

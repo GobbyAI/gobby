@@ -15,6 +15,7 @@ WAIT_TOOL_NAMES = (
     "wait_for_any_task",
     "wait_for_all_tasks",
     "wait_for_agent",
+    "wait_for_summary",
 )
 WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS = 15.0
 WAIT_TOOL_HTTP_TIMEOUT_BUFFER_SECONDS = 30.0

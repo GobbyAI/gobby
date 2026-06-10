@@ -16,6 +16,7 @@ from gobby.hooks.event_handlers._session_start.handoff import (
 )
 from gobby.hooks.events import HookEventType
 from gobby.sessions.compact_continuation import (
+    COMPACT_SELF_CONTINUE_PROMPT,
     COMPACT_SELF_CONTINUE_VARIABLE,
     consume_compact_self_continuation_pending,
     mark_compact_self_continuation_pending,
@@ -330,10 +331,11 @@ class TestSessionStartHandoff:
         assert mock_sv_mgr.merge_variables.call_args is not None
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
-    def test_compact_handoff_refreshes_existing_parent_summary_before_injecting(
-        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+    @pytest.mark.parametrize("session_source", ["compact", "clear"])
+    def test_compact_and_clear_handoff_do_not_wait_for_summary_generation(
+        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict, session_source: str
     ) -> None:
-        """Existing parent summaries must be refreshed before /compact handoff injection."""
+        """Compact and clear SessionStart should return without summary refresh waits."""
         mock_sv_mgr = MagicMock()
         mock_sv_mgr.get_variables.return_value = {"auto_inject_handoff": True}
         mock_sv_mgr_cls.return_value = mock_sv_mgr
@@ -351,20 +353,12 @@ class TestSessionStartHandoff:
         stale_parent.summary_markdown = "# Old\nStale coordinator handoff"
         stale_parent.terminal_context = mock_parent_for_find.terminal_context
 
-        refreshed_parent = MagicMock()
-        refreshed_parent.id = "parent-sess-123"
-        refreshed_parent.seq_num = 42
-        refreshed_parent.summary_markdown = "# Fresh\nCurrent compact handoff"
-        refreshed_parent.terminal_context = mock_parent_for_find.terminal_context
-
         mock_new_session = MagicMock()
         mock_new_session.seq_num = 43
 
-        parent_gets = iter((stale_parent, refreshed_parent))
-
         def get_session(session_id: str) -> MagicMock | None:
             if session_id == "parent-sess-123":
-                return next(parent_gets, refreshed_parent)
+                return stale_parent
             if session_id == "new-sess-456":
                 return mock_new_session
             return None
@@ -373,24 +367,15 @@ class TestSessionStartHandoff:
         mock_dependencies["session_storage"].find_parent.return_value = mock_parent_for_find
         mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
 
-        dispatch_calls: list[tuple[str, bool, Any, bool]] = []
-
-        def dispatch_summary(
-            session_id: str,
-            background: bool,
-            done_event: Any,
-            set_handoff_ready: bool,
-        ) -> None:
-            dispatch_calls.append((session_id, background, done_event, set_handoff_ready))
-            done_event.set()
-
         handlers = EventHandlers(**mock_dependencies)
-        handlers._dispatch_session_summaries_fn = dispatch_summary
+        handlers._dispatch_session_summaries_fn = MagicMock(
+            side_effect=AssertionError("SessionStart must not wait for summary generation")
+        )
         event = make_event(
             HookEventType.SESSION_START,
             session_id="ext-123",
             data={
-                "source": "compact",
+                "source": session_source,
                 "cwd": "/some/dir",
                 "terminal_context": {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
             },
@@ -400,21 +385,18 @@ class TestSessionStartHandoff:
         response = handlers.handle_session_start(event)
 
         assert response.decision == "allow"
-        assert len(dispatch_calls) == 1
-        assert dispatch_calls[0][0] == "parent-sess-123"
-        assert dispatch_calls[0][1] is True
-        assert dispatch_calls[0][3] is False
+        handlers._dispatch_session_summaries_fn.assert_not_called()
         mock_sv_mgr.merge_variables.assert_any_call(
             "new-sess-456",
             {
-                "session_summary": "# Fresh\nCurrent compact handoff",
-                "full_session_summary": "# Fresh\nCurrent compact handoff",
-                "handoff_summary_injectable": "# Fresh\nCurrent compact handoff",
+                "session_summary": "# Old\nStale coordinator handoff",
+                "full_session_summary": "# Old\nStale coordinator handoff",
+                "handoff_summary_injectable": "# Old\nStale coordinator handoff",
             },
         )
         merged_payloads = [args[1] for args, _kwargs in mock_sv_mgr.merge_variables.call_args_list]
         assert all(
-            "# Old\nStale coordinator handoff" not in payload.values()
+            "# Fresh\nCurrent compact handoff" not in payload.values()
             for payload in merged_payloads
         )
 
@@ -860,11 +842,7 @@ class TestSessionStartHandoff:
         variables = SessionVariableManager(db).get_variables(session.id)
         assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
         mock_schedule.assert_called_once()
-        expected_prompt = (
-            "Continue where you last left off. If you need the full prior-session "
-            "summary, call get_handoff_context (gobby-sessions)."
-        )
-        assert scheduled == [(session, expected_prompt)]
+        assert scheduled == [(session, COMPACT_SELF_CONTINUE_PROMPT)]
 
     @pytest.mark.parametrize("cli_source", ["codex", "gemini", "qwen", "droid"])
     def test_pending_flag_schedules_continuation_without_compact_source(
@@ -901,11 +879,7 @@ class TestSessionStartHandoff:
         variables = SessionVariableManager(db).get_variables(session.id)
         assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
         mock_schedule.assert_called_once()
-        expected_prompt = (
-            "Continue where you last left off. If you need the full prior-session "
-            "summary, call get_handoff_context (gobby-sessions)."
-        )
-        assert scheduled == [(session, expected_prompt)]
+        assert scheduled == [(session, COMPACT_SELF_CONTINUE_PROMPT)]
 
     def test_manual_compact_without_pending_flag_does_not_schedule_continuation(
         self, hub_db: HubDatabase, mock_dependencies: dict

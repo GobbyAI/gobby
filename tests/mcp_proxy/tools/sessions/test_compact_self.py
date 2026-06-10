@@ -26,6 +26,7 @@ from gobby.mcp_proxy.tools.sessions._terminal import (
 )
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
+from gobby.sessions.compact_continuation import build_compact_self_continue_prompt
 from gobby.utils.session_context import session_context_for_test
 from tests._timing import drain_asyncio_tasks
 
@@ -258,9 +259,17 @@ class TestCompactSelfTerminalPath:
             events.append(("tmux", keys))
             return True
 
-        def mark_pending(_db: Any, session_id: str, *, prompt: str) -> bool:
+        def mark_pending(
+            _db: Any,
+            session_id: str,
+            *,
+            prompt: str,
+            summary_session_id: str | None = None,
+        ) -> bool:
             events.append(("mark", session_id))
             assert "Continue where you last left off." in prompt
+            assert 'wait_for_summary(session_id="s1")' in prompt
+            assert summary_session_id == "s1"
             return True
 
         tmux.send_keys.side_effect = send_keys
@@ -283,8 +292,15 @@ class TestCompactSelfTerminalPath:
         registry, tmux = _register_compact_self(session)
         captured_prompts: list[str] = []
 
-        def mark_pending(_db: Any, _session_id: str, *, prompt: str) -> bool:
+        def mark_pending(
+            _db: Any,
+            _session_id: str,
+            *,
+            prompt: str,
+            summary_session_id: str | None = None,
+        ) -> bool:
             captured_prompts.append(prompt)
+            assert summary_session_id == "s1"
             return True
 
         with (
@@ -303,9 +319,10 @@ class TestCompactSelfTerminalPath:
         assert result["compact_resume_required_skills"] == ["python", "development-discipline"]
         mock_persist.assert_called_once()
         assert len(captured_prompts) == 1
+        assert 'wait_for_summary(session_id="s1")' in captured_prompts[0]
         assert "progressive discovery" in captured_prompts[0]
-        assert 'get_skill(name="python")' in captured_prompts[0]
-        assert 'get_skill(name="development-discipline")' in captured_prompts[0]
+        assert '"name": "python"' in captured_prompts[0]
+        assert '"name": "development-discipline"' in captured_prompts[0]
 
     def test_terminal_session_clears_continuation_on_slash_command_failure(self) -> None:
         session = _make_terminal_session("claude")
@@ -647,7 +664,7 @@ class TestCompactSelfWebChatPath:
         }
         assert live_session.send_message.call_args_list == [
             call("/compact"),
-            call("Continue where you last left off."),
+            call(build_compact_self_continue_prompt(None, summary_session_id="db-id")),
         ]
         mock_mark.assert_not_called()
 
@@ -697,7 +714,7 @@ class TestCompactSelfWebChatPath:
         assert result["compacted"] is True
         assert live_session.send_message.call_args_list == [
             call("/compact"),
-            call("Continue where you last left off."),
+            call(build_compact_self_continue_prompt(None, summary_session_id="db-id")),
         ]
         live_session._on_pre_compact.assert_awaited_once_with({"trigger": "manual"})
         assert precompact_outputs == [{"decision": "allow", "context": "pipeline output"}]
@@ -726,7 +743,7 @@ class TestCompactSelfWebChatPath:
         assert result["command"] == "/compact"
         assert live_session.send_message.call_args_list == [
             call("/compact"),
-            call("Continue where you last left off."),
+            call(build_compact_self_continue_prompt(None, summary_session_id="db-id")),
         ]
 
     @pytest.mark.unit
@@ -774,7 +791,7 @@ class TestCompactSelfWebChatPath:
         await queued_task
         assert live_session.send_message.call_args_list == [
             call("/compact"),
-            call("Continue where you last left off."),
+            call(build_compact_self_continue_prompt(None, summary_session_id="db-id")),
         ]
 
     def test_web_chat_session_ref_resolves_before_registry_lookup(self) -> None:
@@ -802,7 +819,7 @@ class TestCompactSelfWebChatPath:
         assert result["compacted"] is True
         assert live_session.send_message.call_args_list == [
             call("/compact"),
-            call("Continue where you last left off."),
+            call(build_compact_self_continue_prompt(None, summary_session_id="resolved-db-id")),
         ]
 
     @pytest.mark.parametrize("lookup_id", ["db-id", "conv-1"])
@@ -849,7 +866,7 @@ class TestCompactSelfWebChatPath:
         }
         assert live_session.send_message.call_args_list == [
             call("/compact"),
-            call("Continue where you last left off."),
+            call(build_compact_self_continue_prompt(None, summary_session_id="db-id")),
         ]
 
     def test_web_chat_fallback_continues_after_registry_lookup_error(self) -> None:
@@ -895,7 +912,7 @@ class TestCompactSelfWebChatPath:
         assert result["compacted"] is True
         assert live_session.send_message.call_args_list == [
             call("/compact"),
-            call("Continue where you last left off."),
+            call(build_compact_self_continue_prompt(None, summary_session_id="db-id")),
         ]
 
     def test_web_chat_fallback_returns_original_error_after_registry_compact_error(

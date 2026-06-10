@@ -9,7 +9,7 @@ from typing import Any
 
 from gobby.llm.claude_models import DoneEvent
 from gobby.servers.chat_session_base import ChatSessionProtocol
-from gobby.sessions.compact_continuation import COMPACT_SELF_CONTINUE_PROMPT
+from gobby.sessions.compact_continuation import build_compact_self_continue_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -121,10 +121,17 @@ class WebChatSessionRegistry:
                 "queued": True,
             }
 
+        summary_session_id = getattr(session, "db_session_id", None)
+        if not isinstance(summary_session_id, str) or not summary_session_id:
+            summary_session_id = session_id
+
         result = await self._drain_compaction(
             session,
             command,
-            continuation_prompt=COMPACT_SELF_CONTINUE_PROMPT,
+            continuation_prompt=build_compact_self_continue_prompt(
+                None,
+                summary_session_id=summary_session_id,
+            ),
         )
         if not result.get("compacted"):
             return result

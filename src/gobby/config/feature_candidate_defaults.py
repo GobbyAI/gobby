@@ -37,6 +37,8 @@ _FEATURE_CANDIDATE_PROFILES: dict[str, FeatureProfile] = {
 def delete_stale_default_feature_candidate_rows(config_store: Any | None) -> None:
     """Delete old defaults-seeded Claude-only candidates so profile defaults apply."""
     db = getattr(config_store, "db", None)
+    if db is None:
+        return
     fetchall = getattr(db, "fetchall", None)
     if not callable(fetchall):
         return

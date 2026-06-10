@@ -20,8 +20,10 @@ logger = logging.getLogger(__name__)
 COMPACT_SELF_CONTINUE_VARIABLE = "compact_self_continue_pending"
 COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE = "compact_resume_required_skills"
 COMPACT_SELF_CONTINUE_PROMPT = (
-    "Continue where you last left off. If you need the full prior-session "
-    "summary, call get_handoff_context."
+    "Continue where you last left off. Before continuing, call "
+    "`gobby-sessions.wait_for_summary` for the compacted session. If it returns "
+    "`completed=false`, repeat the wait call. Once complete, use the returned "
+    "`context` and continue."
 )
 COMPACT_SELF_CONTINUE_FRESH_SECONDS = 600
 COMPACT_SELF_CONTINUE_SEND_DELAY_SECONDS = 1.0
@@ -40,6 +42,7 @@ def mark_compact_self_continuation_pending(
     session_id: str,
     *,
     prompt: str = COMPACT_SELF_CONTINUE_PROMPT,
+    summary_session_id: str | None = None,
     now: datetime | None = None,
 ) -> bool:
     """Store the pending continuation marker on the compacting session."""
@@ -47,6 +50,8 @@ def mark_compact_self_continuation_pending(
         "prompt": prompt,
         "created_at": _format_timestamp(now or datetime.now(UTC)),
     }
+    if summary_session_id:
+        payload["summary_session_id"] = summary_session_id
     try:
         _merge_session_variable(db, session_id, COMPACT_SELF_CONTINUE_VARIABLE, payload)
         return True
@@ -77,16 +82,22 @@ def persist_compact_resume_required_skills(
     return skills
 
 
-def build_compact_self_continue_prompt(required_skills: list[str] | None) -> str:
+def build_compact_self_continue_prompt(
+    required_skills: list[str] | None,
+    *,
+    summary_session_id: str | None = None,
+) -> str:
     """Build the post-compact continuation prompt with skill reload directives."""
+    wait_directive = _build_wait_for_summary_directive(summary_session_id)
     skills = _prepare_compact_resume_skills(required_skills or [])
     if not skills:
-        return COMPACT_SELF_CONTINUE_PROMPT
+        return wait_directive
 
     directives = skill_fetch_batch_directive(skills)
     return (
-        "Continue where you last left off. Before continuing the task, use progressive "
-        "discovery to reload these required skills in order:\n\n"
+        f"{wait_directive}\n\n"
+        "Before continuing the task, use progressive discovery to reload these required "
+        "skills in order:\n\n"
         f"{directives}"
     )
 
@@ -369,6 +380,18 @@ def _prepare_compact_resume_skills(values: list[str]) -> list[str]:
         return skills
 
     return [LOADING_SKILLS_NAME, *(skill for skill in skills if skill != LOADING_SKILLS_NAME)]
+
+
+def _build_wait_for_summary_directive(summary_session_id: str | None) -> str:
+    if summary_session_id:
+        return (
+            "Continue where you last left off. Before continuing, call "
+            "`gobby-sessions.wait_for_summary("
+            f'session_id="{summary_session_id}"'
+            ")`. If it returns `completed=false`, repeat the same wait call. "
+            "Once complete, use the returned `context` and continue."
+        )
+    return COMPACT_SELF_CONTINUE_PROMPT
 
 
 def _extend_unique_strings(target: list[str], values: Any) -> None:

@@ -64,6 +64,17 @@ async def test_fallback_consumes_pending_marker_and_sends_prompt(
     assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
 
 
+def test_pending_marker_stores_summary_session_id(hub_db: HubDatabase) -> None:
+    assert mark_compact_self_continuation_pending(
+        hub_db,
+        "sess-1",
+        summary_session_id="sess-source",
+    )
+
+    variables = SessionVariableManager(hub_db).get_variables("sess-1")
+    assert variables[COMPACT_SELF_CONTINUE_VARIABLE]["summary_session_id"] == "sess-source"
+
+
 def test_persist_compact_resume_required_skills_excludes_loaded_skills(
     hub_db: HubDatabase,
 ) -> None:
@@ -86,8 +97,13 @@ def test_persist_compact_resume_required_skills_excludes_loaded_skills(
 
 
 def test_build_compact_self_continue_prompt_includes_skill_fetch_directives() -> None:
-    prompt = build_compact_self_continue_prompt(["python", "python", "development-discipline"])
+    prompt = build_compact_self_continue_prompt(
+        ["python", "python", "development-discipline"],
+        summary_session_id="sess-source",
+    )
 
+    assert 'gobby-sessions.wait_for_summary(session_id="sess-source")' in prompt
+    assert "`completed=false`" in prompt
     assert "progressive discovery" in prompt
     assert prompt.count("list_mcp_servers") == 1
     assert (

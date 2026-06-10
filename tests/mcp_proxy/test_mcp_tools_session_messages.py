@@ -282,6 +282,7 @@ def test_full_registry_has_session_tools(full_sessions_registry) -> None:
         "session_stats",
         "get_handoff_context",
         "set_handoff_context",
+        "wait_for_summary",
         "get_session_commits",
     ]
 
@@ -574,6 +575,124 @@ async def test_get_handoff_context_no_session_found(mock_session_manager, full_s
     result = await full_sessions_registry.call("get_handoff_context", {"session_id": "nonexistent"})
 
     assert result["success"] is False
+
+
+@pytest.mark.asyncio
+async def test_wait_for_summary_returns_ready_context(mock_session_manager, full_sessions_registry):
+    """wait_for_summary returns context once summary_markdown is available."""
+    empty_session = _make_mock_session("sess-wait")
+    empty_session.summary_markdown = ""
+    ready_session = _make_mock_session("sess-wait")
+    ready_session.summary_markdown = "## Summary\n\nReady now"
+    mock_session_manager.resolve_session_reference.return_value = "sess-wait"
+    mock_session_manager.get.side_effect = [empty_session, ready_session]
+
+    result = await full_sessions_registry.call(
+        "wait_for_summary",
+        {
+            "session_id": "sess-wait",
+            "timeout_seconds": 0.05,
+            "poll_interval_seconds": 0.001,
+        },
+    )
+
+    mock_session_manager.resolve_session_reference.assert_called_with("sess-wait", ANY)
+    assert mock_session_manager.get.call_count == 2
+    assert result == {
+        "success": True,
+        "completed": True,
+        "session_id": "sess-wait",
+        "has_context": True,
+        "context": "## Summary\n\nReady now",
+        "context_type": "summary_markdown",
+    }
+
+
+@pytest.mark.asyncio
+async def test_wait_for_summary_times_out(mock_session_manager, full_sessions_registry):
+    """wait_for_summary returns completed=false when summary stays empty."""
+    session = _make_mock_session("sess-empty")
+    session.summary_markdown = ""
+    mock_session_manager.resolve_session_reference.return_value = "sess-empty"
+    mock_session_manager.get.return_value = session
+
+    result = await full_sessions_registry.call(
+        "wait_for_summary",
+        {
+            "session_id": "sess-empty",
+            "timeout_seconds": 0,
+            "poll_interval_seconds": 0.001,
+        },
+    )
+
+    assert result == {
+        "success": True,
+        "completed": False,
+        "session_id": "sess-empty",
+        "timeout_seconds": 0.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_wait_for_summary_missing_session(mock_session_manager, full_sessions_registry):
+    """wait_for_summary reports unresolved sessions as missing."""
+    mock_session_manager.resolve_session_reference.side_effect = ValueError("Not found")
+
+    result = await full_sessions_registry.call(
+        "wait_for_summary",
+        {"session_id": "missing", "timeout_seconds": 0},
+    )
+
+    assert result["success"] is False
+    assert result["completed"] is False
+    assert result["found"] is False
+    assert result["session_id"] == "missing"
+    assert result["error"] == "Not found"
+
+
+@pytest.mark.asyncio
+async def test_wait_for_summary_missing_resolved_session(
+    mock_session_manager, full_sessions_registry
+):
+    """wait_for_summary reports a resolved ref whose session row is absent."""
+    mock_session_manager.resolve_session_reference.side_effect = None
+    mock_session_manager.resolve_session_reference.return_value = "missing-uuid"
+    mock_session_manager.get.return_value = None
+
+    result = await full_sessions_registry.call(
+        "wait_for_summary",
+        {"session_id": "#77", "timeout_seconds": 0},
+    )
+
+    assert result == {
+        "success": False,
+        "completed": False,
+        "found": False,
+        "session_id": "missing-uuid",
+        "error": "Session #77 not found",
+    }
+
+
+@pytest.mark.asyncio
+async def test_wait_for_summary_resolves_seq_ref(mock_session_manager, full_sessions_registry):
+    """wait_for_summary resolves #N refs before polling."""
+    session = _make_mock_session("uuid-42")
+    session.summary_markdown = "Resolved context"
+    mock_session_manager.resolve_session_reference.side_effect = None
+    mock_session_manager.resolve_session_reference.return_value = "uuid-42"
+    mock_session_manager.get.return_value = session
+
+    result = await full_sessions_registry.call(
+        "wait_for_summary",
+        {"session_id": "#42", "timeout_seconds": 0},
+    )
+
+    mock_session_manager.resolve_session_reference.assert_called_with("#42", ANY)
+    mock_session_manager.get.assert_called_with("uuid-42")
+    assert result["success"] is True
+    assert result["completed"] is True
+    assert result["session_id"] == "uuid-42"
+    assert result["context"] == "Resolved context"
 
 
 @pytest.mark.asyncio
