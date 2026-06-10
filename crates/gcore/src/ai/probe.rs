@@ -243,7 +243,11 @@ fn status_body_advertises(capability: AiCapability, body: Option<&str>) -> Resul
 fn bool_at_path(value: &Value, path: &[&str]) -> Option<bool> {
     path.iter()
         .try_fold(value, |current, key| current.get(*key))
-        .and_then(Value::as_bool)
+        .and_then(|value| {
+            value
+                .as_bool()
+                .or_else(|| value.get("available").and_then(Value::as_bool))
+        })
 }
 
 fn unavailable(
@@ -437,6 +441,28 @@ mod tests {
                 .availability(AiCapability::AudioTranslate)
                 .is_some_and(|availability| !availability.available)
         );
+    }
+
+    #[test]
+    fn status_body_accepts_capability_objects_with_available_field() {
+        let transport = FakeTransport::new([(
+            ("GET", "/api/llm/status"),
+            ProbeObservation::Http {
+                status: 200,
+                body: Some(
+                    r#"{"capabilities":{"text_generate":{"available":true,"state":"available"}}}"#
+                        .to_string(),
+                ),
+            },
+        )]);
+
+        let report = probe_daemon_capability_with(
+            "http://daemon.test",
+            AiCapability::TextGenerate,
+            &transport,
+        );
+
+        assert!(report.available);
     }
 
     #[test]
