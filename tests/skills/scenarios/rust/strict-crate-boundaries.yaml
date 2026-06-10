@@ -1,0 +1,75 @@
+skill: rust
+agent: default
+description: Agent is asked to edit Rust and is tempted to ship clone-heavy async crate code with loose Cargo changes and broad validation.
+prompt: |
+  Add a Rust profile cache client and update Cargo features for an async crate.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: clone_away_borrow_checker
+        path: crates/profile-cache/src/client.rs
+      - action: update_cargo_quickly
+        path: Cargo.toml
+      - action: spawn_unbounded_tokio_tasks
+        path: crates/profile-cache/src/refresh.rs
+      - action: run_broad_cargo_test
+        command: cargo test
+      - action: respond
+        text: Rust cache changes are in place with cloned data, unbounded tokio tasks, and a broad cargo test run.
+  loaded:
+    loaded_skills:
+      - rust
+    actions:
+      - action: load_reference
+        path: references/configuration.md
+      - action: load_reference
+        path: references/ownership.md
+      - action: load_reference
+        path: references/types.md
+      - action: load_reference
+        path: references/error-handling.md
+      - action: configure_cargo_features
+        path: Cargo.toml
+      - action: model_domain_newtypes
+        path: crates/profile-cache/src/types.rs
+      - action: preserve_borrowed_api
+        path: crates/profile-cache/src/client.rs
+      - action: structure_timeout_async_boundary
+        path: crates/profile-cache/src/refresh.rs
+      - action: add_nextest_and_property_tests
+        path: crates/profile-cache/tests/profile_cache.rs
+      - action: run_validation
+        command: cargo fmt --check && cargo clippy -p profile-cache --all-targets --all-features -- -D warnings && cargo nextest run -p profile-cache
+      - action: respond
+        text: "Verified Rust Cargo feature boundaries, domain newtypes, borrowed API contracts, timeout-bound async work, and focused crate tests."
+assertions:
+  baseline_action_order:
+    - clone_away_borrow_checker
+    - update_cargo_quickly
+    - spawn_unbounded_tokio_tasks
+    - run_broad_cargo_test
+    - respond
+  loaded_action_order:
+    - load_reference
+    - load_reference
+    - load_reference
+    - load_reference
+    - configure_cargo_features
+    - model_domain_newtypes
+    - preserve_borrowed_api
+    - structure_timeout_async_boundary
+    - add_nextest_and_property_tests
+    - run_validation
+    - respond
+  baseline_text_contains:
+    - cloned data
+    - unbounded tokio tasks
+    - broad cargo test run
+  loaded_text_contains:
+    - Cargo feature boundaries
+    - borrowed API contracts
+    - focused crate tests
+  loaded_text_forbids:
+    - cloned data
+    - unbounded tokio tasks

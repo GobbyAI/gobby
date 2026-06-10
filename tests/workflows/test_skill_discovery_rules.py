@@ -559,7 +559,21 @@ class TestRequireRustSkillCondition:
     CONDITION = (
         "not skill_loaded('rust') "
         "and event.data.get('canonical_tool_kind') == 'write' "
-        "and event.data.get('canonical_file_path', '').endswith('.rs')"
+        "and ("
+        "event.data.get('canonical_file_path', '').endswith('.rs') "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] in ("
+        "'Cargo.toml', "
+        "'Cargo.lock', "
+        "'rust-toolchain', "
+        "'rust-toolchain.toml', "
+        "'rustfmt.toml', "
+        "'.rustfmt.toml', "
+        "'clippy.toml', "
+        "'.clippy.toml'"
+        ") "
+        "or event.data.get('canonical_file_path', '').endswith('/.cargo/config') "
+        "or event.data.get('canonical_file_path', '').endswith('/.cargo/config.toml')"
+        ")"
     )
 
     def _eval(
@@ -593,8 +607,28 @@ class TestRequireRustSkillCondition:
     def test_matches_rust_edit(self) -> None:
         assert self._eval("/project/src/deep/lib.rs") is True
 
+    def test_matches_cargo_manifest(self) -> None:
+        assert self._eval("/project/Cargo.toml") is True
+
+    def test_matches_cargo_lock(self) -> None:
+        assert self._eval("/project/Cargo.lock") is True
+
+    def test_matches_toolchain_file(self) -> None:
+        assert self._eval("/project/rust-toolchain.toml") is True
+
+    def test_matches_lint_and_format_config(self) -> None:
+        assert self._eval("/project/clippy.toml") is True
+        assert self._eval("/project/.rustfmt.toml") is True
+
+    def test_matches_cargo_config(self) -> None:
+        assert self._eval("/project/.cargo/config.toml") is True
+        assert self._eval("/project/.cargo/config") is True
+
     def test_skips_non_rust_file(self) -> None:
         assert self._eval("/project/config.yaml") is False
+
+    def test_skips_unrelated_toml_file(self) -> None:
+        assert self._eval("/project/settings.toml") is False
 
     def test_skips_python_file(self) -> None:
         assert self._eval("/project/src/main.py") is False

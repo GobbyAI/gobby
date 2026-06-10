@@ -257,6 +257,37 @@ def test_go_skill_loads_strict_module_boundary_pattern() -> None:
     assert result.has_behavioral_delta
 
 
+def test_rust_skill_loads_strict_crate_boundary_pattern() -> None:
+    """Verify Rust work loads references before crate, Cargo, and async changes."""
+    result = run_recorded_skill_scenario(SCENARIOS / "rust/strict-crate-boundaries.yaml")
+
+    assert result.baseline.action_names == (
+        "clone_away_borrow_checker",
+        "update_cargo_quickly",
+        "spawn_unbounded_tokio_tasks",
+        "run_broad_cargo_test",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "configure_cargo_features",
+        "model_domain_newtypes",
+        "preserve_borrowed_api",
+        "structure_timeout_async_boundary",
+        "add_nextest_and_property_tests",
+        "run_validation",
+        "respond",
+    )
+    assert result.loaded.actions[0]["path"] == "references/configuration.md"
+    assert result.loaded.actions[1]["path"] == "references/ownership.md"
+    assert result.loaded.actions[2]["path"] == "references/types.md"
+    assert result.loaded.actions[3]["path"] == "references/error-handling.md"
+    assert result.has_behavioral_delta
+
+
 def test_java_skill_loads_strict_service_boundary_pattern() -> None:
     """Verify Java work loads references before service and build changes."""
     result = run_recorded_skill_scenario(SCENARIOS / "java/strict-service-boundaries.yaml")

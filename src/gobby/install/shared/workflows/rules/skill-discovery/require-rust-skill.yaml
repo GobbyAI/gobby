@@ -9,7 +9,21 @@ rules:
     when: >
       not skill_loaded('rust')
       and event.data.get('canonical_tool_kind') == 'write'
-      and event.data.get('canonical_file_path', '').endswith('.rs')
+      and (
+        event.data.get('canonical_file_path', '').endswith('.rs')
+        or event.data.get('canonical_file_path', '').rpartition('/')[2] in (
+          'Cargo.toml',
+          'Cargo.lock',
+          'rust-toolchain',
+          'rust-toolchain.toml',
+          'rustfmt.toml',
+          '.rustfmt.toml',
+          'clippy.toml',
+          '.clippy.toml'
+        )
+        or event.data.get('canonical_file_path', '').endswith('/.cargo/config')
+        or event.data.get('canonical_file_path', '').endswith('/.cargo/config.toml')
+      )
     effects:
       - type: block
         reason: 'Call get_skill(name="rust") on gobby-skills through mcp__gobby__ progressive discovery: list_mcp_servers -> list_tools("gobby-skills") -> get_tool_schema("gobby-skills", "get_skill") -> call_tool("gobby-skills", "get_skill", {"name": "rust"}). Then continue.'

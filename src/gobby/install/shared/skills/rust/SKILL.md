@@ -1,9 +1,9 @@
 ---
 name: rust
-description: "Enforces default Rust coding standards for agents writing or refactoring Rust: ownership, error handling, types, testing, async, and API design. Use before editing Rust unless the repo provides stricter local rules."
-version: "1.1.0"
+description: "Enforces default Rust coding standards for agents writing or refactoring Rust: Cargo and toolchain configuration, ownership, error handling, types, testing, async, and API design. Use before editing Rust unless the repo provides stricter local rules."
+version: "1.2.0"
 category: development
-triggers: rust, cargo, clippy, rustfmt, tokio, async rust, lifetime, borrow checker
+triggers: rust, cargo, cargo.toml, rust-toolchain, clippy, rustfmt, tokio, async rust, lifetime, borrow checker
 ---
 
 # Rust
@@ -22,6 +22,16 @@ Run the repo's configured lint, format, and test commands before finishing. If n
 - **Bench**: `cargo bench` if performance-sensitive code changed
 
 Don't suppress clippy lints with `#[allow(...)]` without a documented reason.
+
+## Configuration
+
+- Preserve workspace and package boundaries in `Cargo.toml`; do not move dependency, feature, or resolver settings without checking all affected crates
+- Keep feature flags additive and composable; avoid mutually exclusive features unless the crate already documents that pattern
+- Respect `rust-toolchain.toml`, MSRV, edition, target triples, and platform-specific `.cargo/config.toml` settings before choosing language features
+- Keep `rustfmt.toml` and `clippy.toml` aligned with the repository; do not relax lint or formatting settings to make a local change pass
+- Validate the smallest affected crate and feature combination with `-p <package>` and explicit feature flags when applicable
+
+For Cargo, toolchain, feature, and lint configuration patterns: `get_skill_file(name="rust", path="references/configuration.md")`
 
 ## Ownership & Borrowing
 
