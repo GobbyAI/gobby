@@ -92,7 +92,11 @@ pub(crate) fn build_module_docs(
             prompts::MODULE_SYSTEM,
         )
         .unwrap_or(fallback);
-        let summary = ground_text(&generated, &source_spans, &citation_list(&source_spans));
+        let summary = ground_text(
+            &generated,
+            &source_spans,
+            Some(&citation_list(&source_spans)),
+        );
 
         module_summaries.insert(module.clone(), summary.clone());
         module_sources.insert(module.clone(), source_spans.clone());

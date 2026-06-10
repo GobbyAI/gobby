@@ -232,15 +232,18 @@ pub(crate) fn write_references(doc: &mut String, spans: &[SourceSpan]) {
 pub(crate) fn ground_text(
     text: &str,
     valid_spans: &[SourceSpan],
-    fallback_citation: &str,
+    fallback_citation: Option<&str>,
 ) -> String {
     let cleaned = strip_invalid_citations(text, valid_spans);
-    if fallback_citation.is_empty() || contains_valid_citation(&cleaned, valid_spans) {
-        cleaned
-    } else if fallback_citation.contains('\n') {
-        format!("{cleaned}\n{fallback_citation}")
-    } else {
-        format!("{cleaned} {fallback_citation}")
+    match fallback_citation {
+        Some(fallback_citation) if !contains_valid_citation(&cleaned, valid_spans) => {
+            if fallback_citation.contains('\n') {
+                format!("{cleaned}\n{fallback_citation}")
+            } else {
+                format!("{cleaned} {fallback_citation}")
+            }
+        }
+        _ => cleaned,
     }
 }
 

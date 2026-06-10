@@ -433,14 +433,14 @@ mod tests {
     #[test]
     fn forwards_provider_model_and_optional_project_id() {
         let (port, request) = spawn_server(
-            r#"{"text":"ok","model":"daemon-model","usage":{"input_tokens":3,"output_tokens":4,"total_tokens":7}}"#,
+            r#"{"text":"ok","model":"qwen/qwen3.6-35b-a3b","usage":{"input_tokens":3,"output_tokens":4,"total_tokens":7}}"#,
         );
         let home = temp_home();
         let _env = EnvGuard::set_home(home.path());
         write_daemon_files(home.path(), port, "text-token");
         let mut cfg = test_context(Some("project-123"));
         cfg.bindings.text_generate.provider = Some("local:lm-studio".to_string());
-        cfg.bindings.text_generate.model = Some("Qwen3-Coder-30B-A3B-Instruct".to_string());
+        cfg.bindings.text_generate.model = Some("qwen/qwen3.6-35b-a3b".to_string());
 
         let result =
             generate_via_daemon_with_max_tokens(&cfg, "Write a title", Some("Be brief"), Some(64))
@@ -450,7 +450,7 @@ mod tests {
 
         assert!(request.starts_with("POST /api/llm/generate HTTP/1.1"));
         assert_eq!(body["provider"], "local:lm-studio");
-        assert_eq!(body["model"], "Qwen3-Coder-30B-A3B-Instruct");
+        assert_eq!(body["model"], "qwen/qwen3.6-35b-a3b");
         assert_eq!(body["project_id"], "project-123");
         assert_eq!(body["prompt"], "Write a title");
         assert_eq!(body["system_prompt"], "Be brief");
@@ -467,14 +467,14 @@ mod tests {
         write_daemon_files(home.path(), port, "text-token");
         let mut cfg = test_context(None);
         cfg.bindings.text_generate.provider = Some("local:lm-studio".to_string());
-        cfg.bindings.text_generate.model = Some("Qwen3-Coder-30B-A3B-Instruct".to_string());
+        cfg.bindings.text_generate.model = Some("qwen/qwen3.6-35b-a3b".to_string());
 
         generate_via_daemon(&cfg, "No project", None).unwrap();
         let request = request.join().unwrap().unwrap();
         let body = request_body_json(&request);
 
         assert_eq!(body["provider"], "local:lm-studio");
-        assert_eq!(body["model"], "Qwen3-Coder-30B-A3B-Instruct");
+        assert_eq!(body["model"], "qwen/qwen3.6-35b-a3b");
         assert!(body.get("project_id").is_none());
         assert!(body.get("profile").is_none());
     }

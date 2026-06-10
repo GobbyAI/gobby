@@ -87,30 +87,6 @@ fn codewiki_architecture_overview_page_uses_subsystems_and_degradation_metadata(
 }
 
 #[test]
-fn repo_structural_fallback_omits_marker_wall_but_generated_text_stays_grounded() {
-    let fallback_docs = generate_hierarchical_docs(&repo_marker_input(), None);
-    let fallback_repo = rendered_doc(&fallback_docs, "code/repo.md");
-    let fallback_overview = markdown_section(fallback_repo, "## Overview");
-
-    assert!(fallback_overview.contains("Repository code documentation covers 6 files"));
-    assert_eq!(inline_marker_count(fallback_overview), 0);
-
-    let mut generator = |_prompt: &str, system: &str| {
-        if system == prompts::REPO_SYSTEM {
-            Some("Generated repository overview.".to_string())
-        } else {
-            None
-        }
-    };
-    let generated_docs = generate_hierarchical_docs(&repo_marker_input(), Some(&mut generator));
-    let generated_repo = rendered_doc(&generated_docs, "code/repo.md");
-    let generated_overview = markdown_section(generated_repo, "## Overview");
-
-    assert!(generated_overview.contains("Generated repository overview."));
-    assert_eq!(inline_marker_count(generated_overview), 6);
-}
-
-#[test]
 fn architecture_prompt_formats_component_labels_with_raw_ids() {
     let handle_id = test_component_id("src/api/handler.rs", "handle", "function");
     let route_id = test_component_id("src/api/router.rs", "route", "function");
@@ -159,50 +135,6 @@ fn architecture_prompt_formats_component_labels_with_raw_ids() {
     assert!(prompt.contains(&format!("- route [function] ({route_id})")));
     assert!(!prompt.contains(&format!("- {handle_id}\n")));
     assert!(!prompt.contains(&format!("- {route_id}\n")));
-}
-
-fn repo_marker_input() -> CodewikiInput {
-    let files = [
-        "alpha.rs",
-        "beta.rs",
-        "gamma.rs",
-        "delta.rs",
-        "epsilon.rs",
-        "zeta.rs",
-    ];
-    CodewikiInput {
-        files: files.iter().map(|file| (*file).to_string()).collect(),
-        graph_edges: Vec::new(),
-        graph_availability: CodewikiGraphAvailability::Available,
-        symbols: files
-            .iter()
-            .enumerate()
-            .map(|(index, file)| {
-                test_symbol(
-                    file,
-                    &format!("item_{index}"),
-                    "function",
-                    1,
-                    "pub fn item()",
-                )
-            })
-            .collect(),
-    }
-}
-
-fn rendered_doc<'a>(docs: &'a [(String, String)], path: &str) -> &'a str {
-    docs.iter()
-        .find(|(doc_path, _)| doc_path == path)
-        .map(|(_, content)| content.as_str())
-        .expect("rendered doc")
-}
-
-fn markdown_section<'a>(rendered: &'a str, heading: &str) -> &'a str {
-    let (_, after_heading) = rendered.split_once(heading).expect("section heading");
-    after_heading
-        .split_once("\n## ")
-        .map(|(section, _)| section)
-        .unwrap_or(after_heading)
 }
 
 fn inline_marker_count(text: &str) -> usize {

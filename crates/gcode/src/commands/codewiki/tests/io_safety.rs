@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+#[cfg(unix)]
 fn write_doc_rejects_symlinked_parent() {
     use std::os::unix::fs::symlink;
 

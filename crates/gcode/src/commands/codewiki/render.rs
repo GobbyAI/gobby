@@ -383,8 +383,12 @@ pub(crate) fn build_repo_doc(
         &prompts::repo_prompt(&module_summaries, &file_summaries),
         prompts::REPO_SYSTEM,
     ) {
-        Some(generated) => ground_text(&generated, &source_spans, &citation_markers(&source_spans)),
-        None => ground_text(&fallback, &source_spans, ""),
+        Some(generated) => ground_text(
+            &generated,
+            &source_spans,
+            Some(&citation_markers(&source_spans)),
+        ),
+        None => ground_text(&fallback, &source_spans, None),
     };
 
     render_repo_doc(&summary, &top_modules, &root_files, &source_spans)

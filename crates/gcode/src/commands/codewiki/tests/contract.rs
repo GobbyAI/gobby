@@ -104,6 +104,30 @@ fn codewiki_unified_vault_emits_code_paths_frontmatter_and_wikilinks() {
 }
 
 #[test]
+fn repo_structural_fallback_omits_marker_wall_but_generated_text_stays_grounded() {
+    let fallback_docs = generate_hierarchical_docs(&repo_marker_input(), None);
+    let fallback_repo = rendered_doc(&fallback_docs, "code/repo.md");
+    let fallback_overview = markdown_section(fallback_repo, "## Overview");
+
+    assert!(fallback_overview.contains("Repository code documentation covers 6 files"));
+    assert_eq!(inline_marker_count(fallback_overview), 0);
+
+    let mut generator = |_prompt: &str, system: &str| {
+        if system == prompts::REPO_SYSTEM {
+            Some("Generated repository overview.".to_string())
+        } else {
+            None
+        }
+    };
+    let generated_docs = generate_hierarchical_docs(&repo_marker_input(), Some(&mut generator));
+    let generated_repo = rendered_doc(&generated_docs, "code/repo.md");
+    let generated_overview = markdown_section(generated_repo, "## Overview");
+
+    assert!(generated_overview.contains("Generated repository overview."));
+    assert_eq!(inline_marker_count(generated_overview), 6);
+}
+
+#[test]
 fn inline_code_uses_commonmark_backtick_delimiters() {
     assert_eq!(inline_code(""), "``");
     assert_eq!(inline_code("plain"), "`plain`");
@@ -146,4 +170,59 @@ fn component_id_uses_stored_symbol_id() {
     let mut symbol = test_symbol("src/lib.rs", "Client", "class", 1, "pub struct Client;");
     symbol.id = "stored-symbol-id".to_string();
     assert_eq!(symbol.id, "stored-symbol-id");
+}
+
+fn repo_marker_input() -> CodewikiInput {
+    let files = [
+        "alpha.rs",
+        "beta.rs",
+        "gamma.rs",
+        "delta.rs",
+        "epsilon.rs",
+        "zeta.rs",
+    ];
+    CodewikiInput {
+        files: files.iter().map(|file| (*file).to_string()).collect(),
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: files
+            .iter()
+            .enumerate()
+            .map(|(index, file)| {
+                test_symbol(
+                    file,
+                    &format!("item_{index}"),
+                    "function",
+                    1,
+                    "pub fn item()",
+                )
+            })
+            .collect(),
+    }
+}
+
+fn rendered_doc<'a>(docs: &'a [(String, String)], path: &str) -> &'a str {
+    docs.iter()
+        .find(|(doc_path, _)| doc_path == path)
+        .map(|(_, content)| content.as_str())
+        .expect("rendered doc")
+}
+
+fn markdown_section<'a>(rendered: &'a str, heading: &str) -> &'a str {
+    let (_, after_heading) = rendered.split_once(heading).expect("section heading");
+    after_heading
+        .split_once("\n## ")
+        .map(|(section, _)| section)
+        .unwrap_or(after_heading)
+}
+
+fn inline_marker_count(text: &str) -> usize {
+    text.split_whitespace()
+        .filter(|token| {
+            token
+                .strip_prefix('[')
+                .and_then(|value| value.strip_suffix(']'))
+                .is_some_and(|value| value.chars().all(|ch| ch.is_ascii_digit()))
+        })
+        .count()
 }

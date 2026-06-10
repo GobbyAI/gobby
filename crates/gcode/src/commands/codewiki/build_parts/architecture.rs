@@ -69,12 +69,14 @@ pub(crate) fn build_architecture_doc(
             prompts::ARCHITECTURE_SYSTEM,
         );
         let responsibility = match generated {
-            Some(generated) => {
-                ground_text(&generated, &source_spans, &citation_list(&source_spans))
-            }
+            Some(generated) => ground_text(
+                &generated,
+                &source_spans,
+                Some(&citation_list(&source_spans)),
+            ),
             None => {
                 degraded_sources.insert("model-unavailable".to_string());
-                ground_text(&fallback, &source_spans, "")
+                ground_text(&fallback, &source_spans, None)
             }
         };
 

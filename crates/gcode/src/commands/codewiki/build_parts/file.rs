@@ -60,7 +60,7 @@ pub(crate) fn build_file_doc(
             let purpose = ground_text(
                 &generated,
                 std::slice::from_ref(&source_span),
-                &source_span.citation(),
+                Some(&source_span.citation()),
             );
             SymbolDoc {
                 symbol,
@@ -102,7 +102,11 @@ pub(crate) fn build_file_doc(
         None
     }
     .unwrap_or(fallback);
-    let summary = ground_text(&generated, &source_spans, &citation_list(&source_spans));
+    let summary = ground_text(
+        &generated,
+        &source_spans,
+        Some(&citation_list(&source_spans)),
+    );
 
     FileDoc {
         path: file.to_string(),
