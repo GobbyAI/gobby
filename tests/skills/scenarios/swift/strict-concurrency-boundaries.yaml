@@ -1,0 +1,74 @@
+skill: swift
+agent: default
+description: Agent is asked to edit Swift and is tempted to ship force-unwrapped platform code with detached tasks and broad validation.
+prompt: |
+  Add a Swift profile refresh flow for an iOS app package and update Package.swift so the client can be tested.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: write_force_unwrapped_service
+        path: Sources/ProfileFeature/ProfileRefresh.swift
+      - action: update_package_quickly
+        path: Package.swift
+      - action: launch_detached_task
+        path: Sources/ProfileFeature/ProfileViewModel.swift
+      - action: run_broad_swift_test
+        command: swift test
+      - action: respond
+        text: Swift refresh changes are in place with force-unwrapped JSON, Task.detached, and a broad swift test run.
+  loaded:
+    loaded_skills:
+      - swift
+    actions:
+      - action: load_reference
+        path: references/configuration.md
+      - action: load_reference
+        path: references/types-and-api-design.md
+      - action: load_reference
+        path: references/concurrency-and-error-handling.md
+      - action: load_reference
+        path: references/framework-and-platform-boundaries.md
+      - action: configure_swift_package
+        path: Package.swift
+      - action: model_validated_profile_contract
+        path: Sources/ProfileCore/Profile.swift
+      - action: structure_actor_owned_refresh
+        path: Sources/ProfileFeature/ProfileRefresh.swift
+      - action: isolate_main_actor_view_model
+        path: Sources/ProfileFeature/ProfileViewModel.swift
+      - action: add_concurrency_boundary_tests
+        path: Tests/ProfileFeatureTests/ProfileRefreshTests.swift
+      - action: run_validation
+        command: swift test --filter ProfileRefreshTests
+      - action: respond
+        text: "Verified Swift package config, typed optional contracts, structured cancellation, MainActor boundary isolation, and focused Swift tests."
+assertions:
+  baseline_action_order:
+    - write_force_unwrapped_service
+    - update_package_quickly
+    - launch_detached_task
+    - run_broad_swift_test
+    - respond
+  loaded_action_order:
+    - load_reference
+    - load_reference
+    - load_reference
+    - load_reference
+    - configure_swift_package
+    - model_validated_profile_contract
+    - structure_actor_owned_refresh
+    - isolate_main_actor_view_model
+    - add_concurrency_boundary_tests
+    - run_validation
+    - respond
+  baseline_text_contains:
+    - force-unwrapped JSON
+    - Task.detached
+  loaded_text_contains:
+    - typed optional contracts
+    - structured cancellation
+    - focused Swift tests
+  loaded_text_forbids:
+    - force-unwrapped JSON
+    - Task.detached

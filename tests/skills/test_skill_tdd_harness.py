@@ -466,3 +466,34 @@ def test_kotlin_skill_loads_strict_coroutine_boundary_pattern() -> None:
     assert result.loaded.actions[2]["path"] == "references/coroutines-and-error-handling.md"
     assert result.loaded.actions[3]["path"] == "references/framework-and-platform-boundaries.md"
     assert result.has_behavioral_delta
+
+
+def test_swift_skill_loads_strict_concurrency_boundary_pattern() -> None:
+    """Verify Swift work loads references before package and concurrency changes."""
+    result = run_recorded_skill_scenario(SCENARIOS / "swift/strict-concurrency-boundaries.yaml")
+
+    assert result.baseline.action_names == (
+        "write_force_unwrapped_service",
+        "update_package_quickly",
+        "launch_detached_task",
+        "run_broad_swift_test",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "configure_swift_package",
+        "model_validated_profile_contract",
+        "structure_actor_owned_refresh",
+        "isolate_main_actor_view_model",
+        "add_concurrency_boundary_tests",
+        "run_validation",
+        "respond",
+    )
+    assert result.loaded.actions[0]["path"] == "references/configuration.md"
+    assert result.loaded.actions[1]["path"] == "references/types-and-api-design.md"
+    assert result.loaded.actions[2]["path"] == "references/concurrency-and-error-handling.md"
+    assert result.loaded.actions[3]["path"] == "references/framework-and-platform-boundaries.md"
+    assert result.has_behavioral_delta

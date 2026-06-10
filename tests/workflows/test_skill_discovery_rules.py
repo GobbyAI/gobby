@@ -70,6 +70,7 @@ SKILL_DISCOVERY_RULES = {
     "require-python-skill",
     "require-ruby-skill",
     "require-rust-skill",
+    "require-swift-skill",
     "require-typescript-skill",
     "reset-skill-injection",
 }
@@ -1926,6 +1927,145 @@ class TestRequireKotlinSkillCondition:
         assert (
             self._eval("/project/src/main/kotlin/Profile.kt", canonical_tool_kind="read") is False
         )
+
+    def test_skips_empty_file_path(self) -> None:
+        assert self._eval("") is False
+
+
+# --- require-swift-skill structure ---
+
+
+class TestRequireSwiftSkillStructure:
+    """Verify require-swift-skill rule structure."""
+
+    def test_is_before_tool_event(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-swift-skill")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.when is not None
+        assert "not skill_loaded('swift')" in body.when
+
+    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-swift-skill")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert len(body.effects) == 1
+        assert body.effects[0].type == "block"
+        assert body.effects[0].reason == skill_fetch_directive("swift")
+
+
+# --- require-swift-skill condition evaluation ---
+
+
+class TestRequireSwiftSkillCondition:
+    """Test the require-swift-skill condition evaluates correctly."""
+
+    CONDITION = (
+        "not skill_loaded('swift') "
+        "and event.data.get('canonical_tool_kind') == 'write' "
+        "and ("
+        "event.data.get('canonical_file_path', '').endswith('.swift') "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
+        "in ('Package.swift', 'Package.resolved', '.swift-version', '.swiftlint.yml', "
+        "'.swiftlint.yaml', 'swiftlint.yml', 'swiftlint.yaml', '.swiftformat', "
+        "'.swift-format', 'swift-format.json', '.swift-format.json') "
+        "or ("
+        "'.xcodeproj/' in event.data.get('canonical_file_path', '') "
+        "and event.data.get('canonical_file_path', '').rpartition('/')[2] == 'project.pbxproj'"
+        ")"
+        ")"
+    )
+
+    def _eval(
+        self,
+        file_path: str,
+        *,
+        canonical_tool_kind: str = "write",
+        loaded_skills: list[str] | None = None,
+        injected_skills: list[str] | None = None,
+    ) -> bool:
+        variables = {"loaded_skills": loaded_skills or []}
+        if injected_skills is not None:
+            variables["injected_skills"] = injected_skills
+        context = {
+            "variables": variables,
+            "event": SimpleNamespace(
+                data={
+                    "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_file_path": file_path,
+                }
+            ),
+            "tool_input": {},
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        return evaluator.evaluate(self.CONDITION)
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/Sources/ProfileCore/Profile.swift",
+            "/project/Tests/ProfileCoreTests/ProfileTests.swift",
+            "/project/Sources/ProfileFeature/ProfileViewModel.swift",
+            "/project/Plugins/ProfilePlugin/plugin.swift",
+        ],
+    )
+    def test_matches_swift_source_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/Package.swift",
+            "/project/Package.resolved",
+            "/project/.swift-version",
+            "/project/.swiftlint.yml",
+            "/project/config/.swiftlint.yaml",
+            "/project/swiftlint.yml",
+            "/project/config/swiftlint.yaml",
+            "/project/.swiftformat",
+            "/project/.swift-format",
+            "/project/swift-format.json",
+            "/project/.swift-format.json",
+            "/project/ProfileApp.xcodeproj/project.pbxproj",
+        ],
+    )
+    def test_matches_swift_package_tooling_and_xcode_config_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/Sources/ProfileCore/Profile.m",
+            "/project/Sources/ProfileCore/Profile.mm",
+            "/project/Sources/ProfileCore/Profile.h",
+            "/project/Info.plist",
+            "/project/ProfileApp.xcworkspace/contents.xcworkspacedata",
+            "/project/project.pbxproj",
+            "/project/Package.swift.bak",
+            "/project/.swiftlint.json",
+            "/project/tsconfig.json",
+            "/project/src/main.kt",
+        ],
+    )
+    def test_skips_non_swift_targets(self, file_path: str) -> None:
+        assert self._eval(file_path) is False
+
+    def test_skips_when_already_loaded(self) -> None:
+        assert self._eval("/project/Sources/Profile.swift", loaded_skills=["swift"]) is False
+
+    def test_kotlin_skill_does_not_count_as_swift_loaded(self) -> None:
+        assert self._eval("/project/Sources/Profile.swift", loaded_skills=["kotlin"]) is True
+
+    def test_does_not_skip_when_legacy_injected(self) -> None:
+        assert self._eval("/project/Sources/Profile.swift", injected_skills=["swift"]) is True
+
+    def test_skips_non_edit_write_tool(self) -> None:
+        assert self._eval("/project/Sources/Profile.swift", canonical_tool_kind="read") is False
 
     def test_skips_empty_file_path(self) -> None:
         assert self._eval("") is False
