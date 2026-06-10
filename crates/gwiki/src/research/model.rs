@@ -95,13 +95,50 @@ impl ResearchModel for GcoreResearchModel {
     }
 }
 
-pub(crate) fn research_ai_config_source() -> Result<AiConfigSource, WikiError> {
+/// Hub-backed primary AI config layer for research.
+///
+/// Research runs daemon-independent, but `$secret:` references (the canonical
+/// api_key pattern) resolve through the PostgreSQL hub when it is reachable;
+/// without a hub, plain values still resolve and secrets degrade explicitly.
+pub(crate) struct ResearchHubPrimary {
+    conn: Option<postgres::Client>,
+}
+
+impl gobby_core::config::ConfigSource for ResearchHubPrimary {
+    fn config_value(&mut self, key: &str) -> Option<String> {
+        let conn = self.conn.as_mut()?;
+        gobby_core::postgres::read_config_value(conn, key)
+            .ok()
+            .flatten()
+            .and_then(|raw| gobby_core::config::decode_config_value(&raw))
+    }
+
+    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+        match self.conn.as_mut() {
+            Some(conn) => gobby_core::secrets::resolve_config_value(value, conn),
+            None => {
+                if value.trim_start().starts_with("$secret:") {
+                    anyhow::bail!(
+                        "secret resolution requires the PostgreSQL hub; configure the hub or use a literal api_key"
+                    );
+                }
+                Ok(value.to_string())
+            }
+        }
+    }
+}
+
+pub(crate) fn research_ai_config_source() -> Result<AiConfigSource<ResearchHubPrimary>, WikiError> {
     let gobby_home = gobby_core::gobby_home().map_err(|error| WikiError::Config {
         detail: format!("failed to resolve Gobby home for gwiki research config: {error}"),
     })?;
-    AiConfigSource::from_gobby_home(&gobby_home).map_err(|error| WikiError::Config {
-        detail: format!("failed to resolve AI config for gwiki research: {error}"),
-    })
+    let conn = crate::support::env::database_url_for("gwiki research")?
+        .and_then(|url| gobby_core::postgres::connect_readwrite(&url).ok());
+    AiConfigSource::with_primary_from_gobby_home(ResearchHubPrimary { conn }, &gobby_home).map_err(
+        |error| WikiError::Config {
+            detail: format!("failed to resolve AI config for gwiki research: {error}"),
+        },
+    )
 }
 
 pub(crate) struct CommandAsk {
