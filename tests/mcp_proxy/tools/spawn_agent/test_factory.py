@@ -582,6 +582,26 @@ class TestSpawnAgentParamOverrides:
         assert spawn_request.model == "claude-sonnet-4-6"
 
     @pytest.mark.asyncio
+    async def test_claude_fable_model_prefix_infers_provider(self, mock_runner) -> None:
+        agent_body = AgentDefinitionBody(
+            name="merge-worker",
+            provider="gemini",
+            model="gemini-3.1-pro-preview",
+        )
+
+        spawn_request = await self._spawn_request_for(
+            mock_runner,
+            agent_body,
+            {
+                "agent": "merge-worker",
+                "model": "claude/fable-5",
+            },
+        )
+
+        assert spawn_request.provider == "claude"
+        assert spawn_request.model == "claude-fable-5"
+
+    @pytest.mark.asyncio
     async def test_explicit_provider_rejects_mismatched_model_prefix(self, mock_runner) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 

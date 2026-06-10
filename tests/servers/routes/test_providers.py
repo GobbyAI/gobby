@@ -142,13 +142,16 @@ class TestProviderModelsRoute:
             "agy",
         }
 
-        # Claude should have opus, sonnet, haiku
+        # Claude should expose explicit shorthand choices.
         claude_values = [m["value"] for m in providers["claude"]["models"]]
-        assert claude_values == ["opus", "sonnet", "haiku"]
+        assert claude_values == ["opus", "sonnet", "haiku", "fable"]
         assert providers["claude"]["models"][0]["reasoning"] == {
             "supported_efforts": ["low", "medium", "high", "xhigh", "max"]
         }
         assert providers["claude"]["models"][0]["context_length"] == 1_000_000
+        claude_by_id = {m["value"]: m for m in providers["claude"]["models"]}
+        assert claude_by_id["fable"]["label"] == "Fable"
+        assert claude_by_id["fable"]["context_length"] == 1_000_000
 
         # Gemini should expose the hardcoded web-chat defaults
         gemini = providers["gemini"]["models"]
@@ -203,12 +206,19 @@ class TestProviderModelsRoute:
         assert {m["context_length_source"] for m in codex} == {"static_default"}
 
         droid_values = [m["value"] for m in providers["droid"]["models"]]
-        assert len(droid_values) == 24
+        assert len(droid_values) == 25
+        assert "claude-fable-5" in droid_values
         assert "claude-opus-4-7" in droid_values
         assert "gpt-5.4" in droid_values
         assert "gemini-3-flash-preview" in droid_values
         assert "minimax-m2.7" in droid_values
         droid_by_id = {m["value"]: m for m in providers["droid"]["models"]}
+        assert droid_by_id["claude-fable-5"]["label"] == "Claude Fable 5"
+        assert droid_by_id["claude-fable-5"]["context_length"] == 1_000_000
+        assert droid_by_id["claude-fable-5"]["reasoning"] == {
+            "supported_efforts": ["off", "low", "medium", "high", "xhigh", "max"],
+            "default_effort": "high",
+        }
         assert droid_by_id["claude-opus-4-7"]["context_length"] == 1_000_000
         assert droid_by_id["gpt-5.4"]["context_length"] == 200_000
 
@@ -327,16 +337,19 @@ class TestProviderModelsRoute:
         assert providers["agy"]["source"] == "unsupported"
         assert providers["codex"]["source"] == "live"
 
-    def test_includes_local_claude_model_when_configured(self) -> None:
-        """Claude model catalog exposes a local option for local generation config."""
+    def test_includes_named_local_generation_provider_when_configured(self) -> None:
+        """Provider model catalog exposes named local generation endpoints."""
         app = FastAPI()
         config = DaemonConfig(
             ai=AIConfig(
                 generation=GenerationConfig(
                     local=LocalGenerationConfig(
-                        enabled=True,
-                        api_base="http://localhost:1234/v1",
-                        model="qwen-coder-32b",
+                        endpoints={
+                            "lm-studio": {
+                                "api_base": "http://localhost:1234/v1",
+                                "model": "qwen-coder-32b",
+                            }
+                        }
                     )
                 )
             ),
@@ -347,9 +360,12 @@ class TestProviderModelsRoute:
 
         response = client.get("/api/providers/models")
         providers = {p["provider"]: p for p in response.json()["providers"]}
-        claude_models = {m["value"]: m["label"] for m in providers["claude"]["models"]}
+        local = providers["local:lm-studio"]
 
-        assert claude_models["local"] == "Local (qwen-coder-32b)"
+        assert local["available"] is True
+        assert local["display_name"] == "Local (lm-studio)"
+        assert local["source"] == "config"
+        assert local["models"] == [{"value": "qwen-coder-32b", "label": "qwen-coder-32b"}]
 
     def test_current_catalog_uses_static_catalog_without_provider_config(self) -> None:
         """Provider model lists come from the catalog without daemon provider config."""
@@ -372,6 +388,7 @@ class TestProviderModelsRoute:
             "opus",
             "sonnet",
             "haiku",
+            "fable",
         ]
         assert [m["value"] for m in providers["codex"]["models"]] == [
             "gpt-5.5",

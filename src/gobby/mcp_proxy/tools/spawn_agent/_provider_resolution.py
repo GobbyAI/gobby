@@ -27,7 +27,7 @@ def provider_prefixed_model(value: str | None) -> tuple[str, str] | None:
     model = model.strip()
     if not provider or not model:
         return None
-    if provider == "claude" and model.startswith(("opus-", "sonnet-", "haiku-")):
+    if provider == "claude" and model.startswith(("opus-", "sonnet-", "haiku-", "fable-")):
         model = f"claude-{model}"
     return provider, model
 

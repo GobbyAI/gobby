@@ -39,7 +39,7 @@ class _FakeVisionService:
         return VisionExtractResult(
             text="Screen text",
             capability=AICapability.VISION_EXTRACT,
-            provider=request.provider or "local",
+            provider=request.provider or "local:lm-studio",
             model=request.model or "llava",
             ocr_text="Button label",
         )
@@ -175,14 +175,14 @@ def test_generate_rejects_partial_explicit_routing(
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local",
+                provider="local:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("qwen/qwen3.6-35b-a3b",),
             ),
         ]
     )
-    service = TextGenerationService(registry, {"droid": droid, "local": local})
+    service = TextGenerationService(registry, {"droid": droid, "local:lm-studio": local})
 
     with patch(
         "gobby.servers.routes.llm.build_daemon_text_generation_service",
@@ -215,14 +215,14 @@ def test_generate_defaults_to_feature_low_and_accepts_system_alias(
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local",
+                provider="local:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("Qwen3-Coder-30B-A3B-Instruct",),
             ),
         ]
     )
-    service = TextGenerationService(registry, {"codex": codex, "local": local})
+    service = TextGenerationService(registry, {"codex": codex, "local:lm-studio": local})
 
     with patch(
         "gobby.servers.routes.llm.build_daemon_text_generation_service",
@@ -270,14 +270,14 @@ def test_generate_explicit_candidates_bypass_default_profile_and_provider(
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local",
+                provider="local:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("Qwen3-Coder-30B-A3B-Instruct",),
             ),
         ]
     )
-    service = TextGenerationService(registry, {"codex": codex, "local": local})
+    service = TextGenerationService(registry, {"codex": codex, "local:lm-studio": local})
 
     with patch(
         "gobby.servers.routes.llm.build_daemon_text_generation_service",
@@ -289,7 +289,7 @@ def test_generate_explicit_candidates_bypass_default_profile_and_provider(
                 "prompt": "Summarize this",
                 "provider": "codex",
                 "model": "gpt-5.3-codex-spark",
-                "candidates": ["local/Qwen3-Coder-30B-A3B-Instruct"],
+                "candidates": ["local:lm-studio/Qwen3-Coder-30B-A3B-Instruct"],
             },
         )
 
@@ -297,15 +297,15 @@ def test_generate_explicit_candidates_bypass_default_profile_and_provider(
     assert response.json() == {
         "text": "Generated text",
         "capability": "text_generate",
-        "provider": "local",
+        "provider": "local:lm-studio",
         "model": "Qwen3-Coder-30B-A3B-Instruct",
     }
     assert codex.requests == []
     assert local.requests == [
         TextGenerationRequest(
             prompt="Summarize this",
-            provider="local",
-            candidates=("local/Qwen3-Coder-30B-A3B-Instruct",),
+            provider="local:lm-studio",
+            candidates=("local:lm-studio/Qwen3-Coder-30B-A3B-Instruct",),
             model="Qwen3-Coder-30B-A3B-Instruct",
             caller="llm-generate-route",
         )
@@ -328,14 +328,14 @@ def test_generate_candidates_override_partial_top_level_provider(
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local",
+                provider="local:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("Qwen3-Coder-30B-A3B-Instruct",),
             ),
         ]
     )
-    service = TextGenerationService(registry, {"droid": droid, "local": local})
+    service = TextGenerationService(registry, {"droid": droid, "local:lm-studio": local})
 
     with patch(
         "gobby.servers.routes.llm.build_daemon_text_generation_service",
@@ -346,7 +346,7 @@ def test_generate_candidates_override_partial_top_level_provider(
             json={
                 "prompt": "Summarize this",
                 "provider": "droid",
-                "candidates": ["local/Qwen3-Coder-30B-A3B-Instruct"],
+                "candidates": ["local:lm-studio/Qwen3-Coder-30B-A3B-Instruct"],
             },
         )
 
@@ -354,15 +354,15 @@ def test_generate_candidates_override_partial_top_level_provider(
     assert response.json() == {
         "text": "Generated text",
         "capability": "text_generate",
-        "provider": "local",
+        "provider": "local:lm-studio",
         "model": "Qwen3-Coder-30B-A3B-Instruct",
     }
     assert droid.requests == []
     assert local.requests == [
         TextGenerationRequest(
             prompt="Summarize this",
-            provider="local",
-            candidates=("local/Qwen3-Coder-30B-A3B-Instruct",),
+            provider="local:lm-studio",
+            candidates=("local:lm-studio/Qwen3-Coder-30B-A3B-Instruct",),
             model="Qwen3-Coder-30B-A3B-Instruct",
             caller="llm-generate-route",
         )
@@ -379,14 +379,14 @@ def test_generate_includes_usage_when_available(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local",
+                provider="local:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("local-model",),
             )
         ]
     )
-    service = TextGenerationService(registry, {"local": adapter})
+    service = TextGenerationService(registry, {"local:lm-studio": adapter})
 
     with patch(
         "gobby.servers.routes.llm.build_daemon_text_generation_service",
@@ -394,7 +394,11 @@ def test_generate_includes_usage_when_available(
     ) as build_service:
         response = client.post(
             "/api/llm/generate",
-            json={"prompt": "Summarize this", "provider": "local", "model": "local-model"},
+            json={
+                "prompt": "Summarize this",
+                "provider": "local:lm-studio",
+                "model": "local-model",
+            },
         )
 
     assert response.status_code == 200
@@ -402,7 +406,7 @@ def test_generate_includes_usage_when_available(
     assert response.json() == {
         "text": "Generated text",
         "capability": "text_generate",
-        "provider": "local",
+        "provider": "local:lm-studio",
         "model": "local-model",
         "usage": usage,
     }

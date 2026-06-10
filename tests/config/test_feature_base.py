@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from gobby.config.app import DaemonConfig
 from gobby.config.feature_base import (
     DEFAULT_PROFILE_CANDIDATES,
     FeatureDefaultConfig,
@@ -31,18 +32,17 @@ class TestFeatureProfile:
         assert DEFAULT_PROFILE_CANDIDATES[FeatureProfile.LOW] == (
             "codex/gpt-5.4-mini",
             "claude/haiku",
-            "local/Qwen3-Coder-30B-A3B-Instruct",
         )
         assert DEFAULT_PROFILE_CANDIDATES[FeatureProfile.MID] == (
             "codex/gpt-5.3-codex-spark",
             "claude/sonnet",
-            "local/Qwen3-Coder-Next",
         )
         assert DEFAULT_PROFILE_CANDIDATES[FeatureProfile.HIGH] == (
             "codex/gpt-5.3-codex",
             "claude/opus",
-            "local/Qwen3-Coder-Next",
         )
+        for candidates in DEFAULT_PROFILE_CANDIDATES.values():
+            assert "claude/fable" not in candidates
 
 
 class TestFeatureDefaultConfig:
@@ -80,6 +80,8 @@ class TestFeatureDefaultConfig:
             ("claude/claude-haiku-4-5-20251001", "claude/haiku"),
             ("claude/claude-sonnet-4-5", "claude/sonnet"),
             ("claude/claude-opus-4-1", "claude/opus"),
+            ("claude/fable", "claude/fable"),
+            ("claude/claude-fable-5", "claude/fable"),
             ("codex/claude-haiku-4-5", "codex/claude-haiku-4-5"),
         ],
     )
@@ -104,6 +106,43 @@ class TestFeatureDefaultConfig:
     def test_rejects_malformed_candidate(self, candidate: str) -> None:
         with pytest.raises(ValidationError, match="provider/model"):
             FeatureDefaultConfig(candidates=[candidate])
+
+
+class TestGenerationProfileDefaults:
+    def test_daemon_config_applies_profile_defaults_when_candidates_omitted(self) -> None:
+        config = DaemonConfig(
+            ai={
+                "generation": {
+                    "profile_defaults": {
+                        "feature_low": [
+                            "local:lm-studio/Qwen3-Coder-30B-A3B-Instruct",
+                            "claude/haiku",
+                        ],
+                    }
+                }
+            }
+        )
+
+        assert config.session_summary.candidates == [
+            "local:lm-studio/Qwen3-Coder-30B-A3B-Instruct",
+            "claude/haiku",
+        ]
+
+    def test_daemon_config_keeps_explicit_feature_candidates_authoritative(self) -> None:
+        config = DaemonConfig(
+            session_summary={
+                "candidates": ["codex/gpt-5.4-mini"],
+            },
+            ai={
+                "generation": {
+                    "profile_defaults": {
+                        "feature_low": ["local:lm-studio/Qwen3-Coder-30B-A3B-Instruct"],
+                    }
+                }
+            },
+        )
+
+        assert config.session_summary.candidates == ["codex/gpt-5.4-mini"]
 
 
 class TestFeatureConfigInheritance:

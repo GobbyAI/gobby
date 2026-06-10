@@ -379,10 +379,10 @@ class ClaudeTextGenerateAdapter:
 class LocalTextGenerateAdapter:
     """Native text_generate adapter backed by a local OpenAI-compatible endpoint."""
 
-    def __init__(self, config: DaemonConfig) -> None:
+    def __init__(self, config: DaemonConfig, endpoint_name: str) -> None:
         from gobby.llm.local import LocalLLMProvider
 
-        self._provider = LocalLLMProvider(config)
+        self._provider = LocalLLMProvider(config, endpoint_name=endpoint_name)
 
     async def generate(self, request: TextGenerationRequest) -> LLMTextResult:
         return await self._provider.generate_text_result(
@@ -570,17 +570,28 @@ def _daemon_text_generation_adapter_factories(
         "qwen": lambda: ACPTextGenerateAdapter(_qwen_acp_client),
         "droid": DroidCLITextGenerateAdapter,
     }
-    if config.ai.generation.local.enabled:
-        factories["local"] = lambda: _local_text_generate_adapter(config)
+    for endpoint_name in config.ai.generation.local.endpoints:
+        provider = f"local:{endpoint_name}"
+        factories[provider] = _local_text_generate_adapter_factory(config, endpoint_name)
     return factories
+
+
+def _local_text_generate_adapter_factory(
+    config: DaemonConfig,
+    endpoint_name: str,
+) -> TextGenerateAdapterFactory:
+    def create_adapter() -> TextGenerateAdapter:
+        return _local_text_generate_adapter(config, endpoint_name)
+
+    return create_adapter
 
 
 def _claude_text_generate_adapter(config: DaemonConfig) -> TextGenerateAdapter:
     return ClaudeTextGenerateAdapter(config)
 
 
-def _local_text_generate_adapter(config: DaemonConfig) -> TextGenerateAdapter:
-    return LocalTextGenerateAdapter(config)
+def _local_text_generate_adapter(config: DaemonConfig, endpoint_name: str) -> TextGenerateAdapter:
+    return LocalTextGenerateAdapter(config, endpoint_name)
 
 
 def _codex_app_server_client() -> CodexAppServerClientLike:

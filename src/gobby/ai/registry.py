@@ -13,9 +13,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel
-
-from gobby.config.feature_base import FeatureDefaultConfig, normalize_feature_candidate
+from gobby.config.feature_base import iter_feature_default_configs, normalize_feature_candidate
 from gobby.providers import AGY_UNAVAILABLE_REASON, ProviderMetadata, provider_metadata
 from gobby.search.embeddings import is_embedding_configured
 
@@ -362,6 +360,7 @@ def build_daemon_ai_capability_registry(
         _local_text_generate_binding(config),
         _local_vision_extract_binding(config),
     ]
+    bindings.extend(_local_text_generate_endpoint_bindings(config, feature_models_by_provider))
     bindings.extend(_audio_bindings(config))
 
     for entry in provider_metadata():
@@ -392,7 +391,7 @@ def _feature_candidate_models_by_provider(
     if config is None:
         return {}
     models_by_provider: dict[str, list[str]] = {}
-    for feature_config in _iter_feature_default_configs(config):
+    for feature_config in iter_feature_default_configs(config):
         for candidate in feature_config.candidates:
             provider, separator, model = normalize_feature_candidate(candidate).partition("/")
             if not separator or not provider.strip() or not model.strip():
@@ -403,35 +402,6 @@ def _feature_candidate_models_by_provider(
             if normalized_model not in provider_models:
                 provider_models.append(normalized_model)
     return {provider: tuple(models) for provider, models in models_by_provider.items()}
-
-
-def _iter_feature_default_configs(
-    value: object,
-    visited: set[int] | None = None,
-) -> Iterable[FeatureDefaultConfig]:
-    if visited is None:
-        visited = set()
-    if isinstance(value, (FeatureDefaultConfig, BaseModel, Mapping, Sequence)) and not isinstance(
-        value, (str, bytes, bytearray)
-    ):
-        object_id = id(value)
-        if object_id in visited:
-            return
-        visited.add(object_id)
-    if isinstance(value, FeatureDefaultConfig):
-        yield value
-        return
-    if isinstance(value, BaseModel):
-        for field_name in value.__class__.model_fields:
-            yield from _iter_feature_default_configs(getattr(value, field_name), visited)
-        return
-    if isinstance(value, Mapping):
-        for item in value.values():
-            yield from _iter_feature_default_configs(item, visited)
-        return
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        for item in value:
-            yield from _iter_feature_default_configs(item, visited)
 
 
 def _embedding_binding(config: DaemonConfig | None) -> CapabilityBinding:
@@ -616,28 +586,53 @@ def _text_generate_binding(
 
 
 def _local_text_generate_binding(config: DaemonConfig | None) -> CapabilityBinding:
-    ai_config = getattr(config, "ai", None)
-    generation_config = getattr(ai_config, "generation", None)
-    local_config = getattr(generation_config, "local", None)
-    metadata: dict[str, object] = {"display_name": "Local"}
-    if local_config and local_config.enabled:
-        metadata["api_base"] = local_config.api_base or ""
-        return CapabilityBinding(
-            capability=AICapability.TEXT_GENERATE,
-            provider="local",
-            adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
-            available=True,
-            models=(local_config.model,) if local_config.model else (),
-            metadata=metadata,
-        )
-
     return CapabilityBinding.unavailable(
         AICapability.TEXT_GENERATE,
         "local",
         adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
-        reason="Local text_generate binding is not configured.",
-        metadata=metadata,
+        reason="Use a named local generation endpoint provider such as local:lm-studio.",
+        metadata={"display_name": "Local"},
     )
+
+
+def _local_text_generate_endpoint_bindings(
+    config: DaemonConfig | None,
+    feature_models_by_provider: Mapping[str, tuple[str, ...]],
+) -> tuple[CapabilityBinding, ...]:
+    if config is None:
+        return ()
+    endpoints = config.ai.generation.local.endpoints
+    bindings: list[CapabilityBinding] = []
+    for name, endpoint in endpoints.items():
+        provider = f"local:{name}"
+        models = _local_endpoint_models(provider, endpoint.model, feature_models_by_provider)
+        bindings.append(
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider=provider,
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=models,
+                metadata={
+                    "display_name": f"Local ({name})",
+                    "api_base": endpoint.api_base,
+                    "endpoint": name,
+                },
+            )
+        )
+    return tuple(bindings)
+
+
+def _local_endpoint_models(
+    provider: str,
+    default_model: str,
+    feature_models_by_provider: Mapping[str, tuple[str, ...]],
+) -> tuple[str, ...]:
+    models = list(feature_models_by_provider.get(_normalize_provider(provider), ()))
+    normalized_default = _normalize_binding_model(provider, default_model)
+    if normalized_default not in models:
+        models.append(normalized_default)
+    return tuple(models)
 
 
 def _vision_extract_binding(

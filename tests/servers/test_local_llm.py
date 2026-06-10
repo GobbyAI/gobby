@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import ValidationError
 
-from gobby.config.ai import LocalGenerationConfig
+from gobby.config.ai import LocalGenerationConfig, LocalGenerationEndpointConfig
 from gobby.config.app import DaemonConfig, LocalConfig
 
 pytestmark = pytest.mark.unit
@@ -19,40 +19,52 @@ class TestLocalGenerationConfig:
     def test_defaults(self) -> None:
         cfg = LocalGenerationConfig()
 
-        assert cfg.enabled is False
-        assert cfg.api_base is None
-        assert cfg.model is None
-        assert cfg.api_key is None
+        assert cfg.endpoints == {}
 
-    def test_enabled_with_endpoint_and_model(self) -> None:
+    def test_endpoint_with_api_base_and_model(self) -> None:
         cfg = LocalGenerationConfig(
-            enabled=True,
-            api_base="http://localhost:1234/v1",
-            model="qwen-coder",
-            api_key="local-key",
+            endpoints={
+                "lm-studio": LocalGenerationEndpointConfig(
+                    api_base="http://localhost:1234/v1",
+                    model="qwen-coder",
+                    api_key="local-key",
+                ),
+                "ollama": {
+                    "api_base": "http://localhost:11434/v1",
+                    "model": "qwen2.5-coder",
+                },
+            }
         )
 
-        assert cfg.enabled is True
-        assert cfg.api_base == "http://localhost:1234/v1"
-        assert cfg.model == "qwen-coder"
-        assert cfg.api_key == "local-key"
+        assert cfg.endpoints["lm-studio"].api_base == "http://localhost:1234/v1"
+        assert cfg.endpoints["lm-studio"].model == "qwen-coder"
+        assert cfg.endpoints["lm-studio"].api_key == "local-key"
+        assert cfg.endpoints["ollama"].model == "qwen2.5-coder"
 
-    def test_enabled_requires_endpoint(self) -> None:
+    def test_endpoint_requires_api_base(self) -> None:
         with pytest.raises(ValidationError, match="api_base"):
-            LocalGenerationConfig(enabled=True, model="qwen-coder")
+            LocalGenerationEndpointConfig(api_base="", model="qwen-coder")
 
-    def test_enabled_requires_model(self) -> None:
+    def test_endpoint_requires_model(self) -> None:
         with pytest.raises(ValidationError, match="model"):
-            LocalGenerationConfig(enabled=True, api_base="http://localhost:1234/v1")
+            LocalGenerationEndpointConfig(api_base="http://localhost:1234/v1", model="")
+
+    @pytest.mark.parametrize("name", ["", "lm/studio", "lm:studio", "LmStudio"])
+    def test_endpoint_names_must_be_lowercase_slugs(self, name: str) -> None:
+        with pytest.raises(ValidationError, match="endpoint names"):
+            LocalGenerationConfig(
+                endpoints={
+                    name: {
+                        "api_base": "http://localhost:1234/v1",
+                        "model": "qwen-coder",
+                    }
+                }
+            )
 
     def test_daemon_config_has_ai_generation_local(self) -> None:
         config = DaemonConfig()
 
-        assert config.ai.generation.local.enabled is False
-
-    def test_daemon_config_rejects_removed_local_llm(self) -> None:
-        with pytest.raises(ValidationError, match="local_llm config has been removed"):
-            DaemonConfig(local_llm={"enabled": True, "endpoint": "http://localhost:1234/v1"})
+        assert config.ai.generation.local.endpoints == {}
 
 
 class TestChatSessionLocalModel:

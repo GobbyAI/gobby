@@ -31,6 +31,7 @@ from gobby.config.embedding_keys import (
     storage_embedding_config_entries_to_runtime,
 )
 from gobby.config.extensions import HookExtensionsConfig
+from gobby.config.feature_base import iter_feature_default_configs
 from gobby.config.feature_candidate_defaults import delete_stale_default_feature_candidate_rows
 from gobby.config.features import (
     ChatConfig,
@@ -216,10 +217,6 @@ class DaemonConfig(BaseModel):
             if "memory_recall_helper" in data:
                 raise ValueError(
                     "memory_recall_helper config has been removed. Use memory_recall instead."
-                )
-            if "local_llm" in data:
-                raise ValueError(
-                    "local_llm config has been removed. Use ai.generation.local instead."
                 )
         return data
 
@@ -538,6 +535,20 @@ class DaemonConfig(BaseModel):
         if not (1.0 <= v <= 300.0):
             raise ValueError("daemon_health_check_interval must be between 1.0 and 300.0 seconds")
         return v
+
+    @model_validator(mode="after")
+    def apply_generation_profile_defaults(self) -> DaemonConfig:
+        """Apply global profile defaults to feature configs with omitted candidates."""
+        profile_defaults = self.ai.generation.profile_defaults
+        if not profile_defaults:
+            return self
+        for feature_config in iter_feature_default_configs(self):
+            if not feature_config._candidates_omitted:
+                continue
+            candidates = profile_defaults.get(feature_config.profile)
+            if candidates is not None:
+                feature_config.candidates = list(candidates)
+        return self
 
     @model_validator(mode="after")
     def validate_collection_prefix_consistency(self) -> DaemonConfig:

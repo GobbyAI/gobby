@@ -47,6 +47,42 @@ class TestLocalLLMProviderInit:
         assert p._default_model == "qwen2.5-coder-7b"
         assert p._url == "http://localhost:1234/v1"
 
+    def test_init_with_named_generation_endpoint(self) -> None:
+        config = DaemonConfig(
+            ai={
+                "generation": {
+                    "local": {
+                        "endpoints": {
+                            "lm-studio": {
+                                "api_base": "http://localhost:1234/v1",
+                                "model": "qwen-coder",
+                                "api_key": "test-key",
+                            },
+                            "ollama": {
+                                "api_base": "http://localhost:11434/v1",
+                                "model": "qwen2.5-coder",
+                            },
+                        }
+                    }
+                }
+            }
+        )
+
+        with patch("openai.AsyncOpenAI") as mock_cls:
+            p = LocalLLMProvider(config, endpoint_name="lm-studio")
+
+        assert p.provider_name == "local:lm-studio"
+        assert p._default_model == "qwen-coder"
+        assert p._url == "http://localhost:1234/v1"
+        mock_cls.assert_called_once_with(
+            base_url="http://localhost:1234/v1",
+            api_key="test-key",
+        )
+
+    def test_unknown_named_generation_endpoint_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unknown local generation endpoint"):
+            LocalLLMProvider(DaemonConfig(), endpoint_name="lm-studio")
+
     def test_init_without_local_config_raises(self) -> None:
         config = DaemonConfig(local=None)
         with pytest.raises(ValueError, match="local"):
@@ -93,7 +129,7 @@ class TestModelResolution:
         assert provider._resolve_model("llama3.1-8b") == "llama3.1-8b"
 
     def test_cloud_alias_warns_and_falls_back(self, provider: LocalLLMProvider) -> None:
-        for alias in ("haiku", "sonnet", "opus", "gpt-4o", "o3-mini"):
+        for alias in ("haiku", "sonnet", "opus", "fable", "gpt-4o", "o3-mini"):
             assert alias.lower() in _CLOUD_MODEL_ALIASES
             result = provider._resolve_model(alias)
             assert result == "qwen2.5-coder-7b"
@@ -101,6 +137,7 @@ class TestModelResolution:
     def test_cloud_alias_case_insensitive(self, provider: LocalLLMProvider) -> None:
         assert provider._resolve_model("Haiku") == "qwen2.5-coder-7b"
         assert provider._resolve_model("SONNET") == "qwen2.5-coder-7b"
+        assert provider._resolve_model("FABLE") == "qwen2.5-coder-7b"
 
 
 # ═══════════════════════════════════════════════════════════════════════

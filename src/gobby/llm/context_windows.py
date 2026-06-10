@@ -45,13 +45,14 @@ _KNOWN_PROVIDER_PREFIXES = (
     "minimax/",
 )
 # Long-form Claude IDs (e.g. ``claude-opus-4-8``) neither start with the bare
-# ``opus``/``sonnet``/``haiku`` aliases nor get enumerated per dated version, so
+# ``opus``/``sonnet``/``haiku``/``fable`` aliases nor get enumerated per dated version, so
 # map them to their family's window by substring. Order is longest-token-first;
-# all three tokens are mutually exclusive in practice.
+# family tokens are mutually exclusive in practice.
 _CLAUDE_FAMILY_TOKENS: tuple[tuple[str, str], ...] = (
     ("claude-opus", "opus"),
     ("claude-sonnet", "sonnet"),
     ("claude-haiku", "haiku"),
+    ("claude-fable", "fable"),
 )
 # Trailing long-context markers select the 1M tier of an existing family rather
 # than naming a distinct model: ``[1m]``, ``-1m``, ``-context-1m``. Strip them so
@@ -73,6 +74,8 @@ _STATIC_CONTEXT_LENGTHS: dict[str, int] = {
     "opus": 1_000_000,
     "sonnet": 200_000,
     "haiku": 200_000,
+    "fable": 1_000_000,
+    "claude-fable-5": 1_000_000,
     "claude-opus-4-7": 1_000_000,
     "claude-opus-4-6": 1_000_000,
     "claude-opus-4-6-fast": 1_000_000,
@@ -109,6 +112,7 @@ _DROID_PROVIDER_CATALOG_CONTEXT_LENGTHS: dict[str, int] = {
     "claude-sonnet-4-6": 200_000,
     "claude-sonnet-4-5": 200_000,
     "claude-haiku-4-5": 200_000,
+    "claude-fable-5": 1_000_000,
     "gpt-5.4": 200_000,
     "gpt-5.4-fast": 200_000,
     "gpt-5.4-mini": 200_000,
@@ -209,7 +213,7 @@ def normalize_model_lookup_id(value: str) -> str:
 
 def context_key_allowed_for_provider(provider: str | None, key: str) -> bool:
     """Avoid letting family aliases leak across unrelated providers."""
-    if key in {"opus", "sonnet", "haiku"}:
+    if key in {"opus", "sonnet", "haiku", "fable"} or key.startswith("claude-fable"):
         return provider in {None, "claude", "droid"}
     if key.startswith("qwen3-coder"):
         return provider in {None, "qwen"}

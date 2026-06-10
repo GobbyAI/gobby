@@ -7,6 +7,14 @@ from typing import Any
 # Mirrors `droid exec --help` from Factory Droid 0.106.0 and docs.factory.ai/cli.
 DROID_MODEL_CATALOG: list[dict[str, Any]] = [
     {
+        "value": "claude-fable-5",
+        "label": "Claude Fable 5",
+        "reasoning": {
+            "supported_efforts": ["off", "low", "medium", "high", "xhigh", "max"],
+            "default_effort": "high",
+        },
+    },
+    {
         "value": "claude-opus-4-7",
         "label": "Claude Opus 4.7",
         "reasoning": {

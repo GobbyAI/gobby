@@ -179,7 +179,6 @@ class TestTaskExpansionConfigDefaults:
         assert config.enabled is True
         assert config.profile == FeatureProfile.HIGH
         assert "codex/gpt-5.3-codex" in config.candidates
-        assert "local/Qwen3-Coder-Next" in config.candidates
         assert "claude/opus" in config.candidates
         assert config.prompt_path is None
         assert config.codebase_research_enabled is True
@@ -261,9 +260,8 @@ class TestTaskValidationConfigDefaults:
         assert config.profile == FeatureProfile.MID
         assert "codex/gpt-5.3-codex-spark" in config.candidates
         assert "codex/gpt-5.4-mini" not in config.candidates
-        assert "local/Qwen3-Coder-Next" in config.candidates
         assert "claude/sonnet" in config.candidates
-        assert config.candidates[-1] == "local/Qwen3-Coder-Next"
+        assert config.candidates[-1] == "claude/sonnet"
         assert config.prompt_path is None
         assert config.max_iterations == 10
         assert config.max_consecutive_errors == 3

@@ -4,9 +4,9 @@ Local LLM provider implementation.
 Routes LLM calls to a local OpenAI-compatible endpoint (LM Studio, Ollama,
 vLLM, llama.cpp server, etc.) via the ``openai`` Python SDK.
 
-Used when feature candidate routing selects a ``local/<model>`` candidate,
-giving lightweight, zero-cost inference while preserving profile fallback to
-the next configured candidate when the local server is down.
+Used when feature candidate routing selects a ``local:<endpoint>/<model>``
+candidate, giving lightweight, zero-cost inference while preserving profile
+fallback to the next configured candidate when the local server is down.
 """
 
 import json
@@ -25,6 +25,7 @@ _CLOUD_MODEL_ALIASES: frozenset[str] = frozenset(
         "haiku",
         "sonnet",
         "opus",
+        "fable",
         # OpenAI
         "gpt-4o",
         "gpt-4o-mini",
@@ -69,9 +70,9 @@ class LocalLLMProvider:
     Talks to any server that implements the ``/v1/chat/completions``
     endpoint (LM Studio, Ollama, vLLM, etc.) using the ``openai`` SDK.
 
-    Configuration is read from ``DaemonConfig.ai.generation.local`` for
-    feature text generation, with ``DaemonConfig.local`` retained for local
-    vision/local-agent paths:
+    Feature text generation passes a named ``DaemonConfig.ai.generation.local``
+    endpoint. ``DaemonConfig.local`` is retained for local vision/local-agent
+    paths:
     - ``api_base``/``url``: Base URL (e.g. ``http://localhost:1234/v1``)
     - ``model``: Default model name to request
     - ``api_key``: Optional API key (some local servers require one)
@@ -79,34 +80,35 @@ class LocalLLMProvider:
 
     @property
     def provider_name(self) -> str:
-        return "local"
+        return self._provider_name
 
     @property
     def auth_mode(self) -> AuthMode:
         return "api_key"
 
-    def __init__(self, config: Any) -> None:
+    def __init__(self, config: Any, endpoint_name: str | None = None) -> None:
         """Initialise from DaemonConfig.
 
         Args:
-            config: DaemonConfig instance with local generation or local endpoint config.
+            config: DaemonConfig instance with local endpoint config.
+            endpoint_name: Named generation endpoint, or None for config.local paths.
 
         Raises:
             ValueError: If no local endpoint is configured.
         """
-        ai_cfg = getattr(config, "ai", None)
-        generation_cfg = getattr(ai_cfg, "generation", None)
-        local_generation_cfg = getattr(generation_cfg, "local", None)
         local_cfg = None
-        if local_generation_cfg and getattr(local_generation_cfg, "enabled", False):
-            local_cfg = local_generation_cfg
-        elif getattr(config, "local", None):
-            local_cfg = config.local
+        if endpoint_name is not None:
+            endpoints = config.ai.generation.local.endpoints
+            try:
+                local_cfg = endpoints[endpoint_name]
+            except KeyError as exc:
+                raise ValueError(f"Unknown local generation endpoint: {endpoint_name}") from exc
+            self._provider_name = f"local:{endpoint_name}"
+        else:
+            local_cfg = getattr(config, "local", None)
+            self._provider_name = "local"
         if not local_cfg:
-            raise ValueError(
-                "Provider 'local' requires ai.generation.local or local endpoint config. "
-                "Configure ai.generation.local for feature generation."
-            )
+            raise ValueError("Provider 'local' requires a local endpoint config")
 
         url = getattr(local_cfg, "api_base", None) or getattr(local_cfg, "url", None)
         model = getattr(local_cfg, "model", None)

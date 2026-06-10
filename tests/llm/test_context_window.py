@@ -120,6 +120,7 @@ class TestResolveContextWindow:
             assert resolve_context_window("claude-opus-4-6", None) == 1_000_000
             assert resolve_context_window("claude-sonnet-4-6", None) == 200_000
             assert resolve_context_window("claude-haiku-4-5", None) == 200_000
+            assert resolve_context_window("claude-fable-5", None) == 1_000_000
 
     def test_claude_name_variations(self) -> None:
         """Various Claude model name formats resolve correctly."""
@@ -135,6 +136,11 @@ class TestResolveContextWindow:
             ("opus", "claude", 1_000_000),
             ("sonnet", None, 200_000),
             ("haiku", None, 200_000),
+            ("fable", None, 1_000_000),
+            ("fable", "claude", 1_000_000),
+            ("claude-fable-5", None, 1_000_000),
+            ("claude-fable-5", "claude", 1_000_000),
+            ("claude-fable-5", "droid", 1_000_000),
             # Long-form Opus not enumerated in the static table — the
             # claude-opus-4-8 regression — resolves via the family-substring
             # fallback rather than falling through to a smaller default.
@@ -159,9 +165,11 @@ class TestResolveContextWindow:
             assert resolve_context_window(model, provider=provider) == expected
 
     def test_family_fallback_scoped_to_claude_providers(self) -> None:
-        """The opus/sonnet/haiku family keys stay scoped to Claude-ish providers."""
+        """Claude family keys stay scoped to Claude-compatible providers."""
         with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
             assert resolve_context_window("claude-opus-4-8", provider="openai") is None
+            assert resolve_context_window("fable", provider="local") is None
+            assert resolve_context_window("claude-fable-5", provider="openai") is None
 
     def test_family_fallback_ignores_unknown_claude_model(self) -> None:
         """A Claude id with no family token still returns None (no false 200k)."""

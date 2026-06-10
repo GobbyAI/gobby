@@ -67,6 +67,33 @@ class TestProviderModelCatalog:
         }
 
     @pytest.mark.asyncio
+    async def test_probe_claude_fable_model_records_context(self, temp_dir: Path) -> None:
+        """Claude Fable probes should preserve the alias and report 1M context."""
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
+        process = AsyncMock()
+        process.communicate = AsyncMock(
+            return_value=(
+                json.dumps(
+                    {"modelUsage": {"claude-fable-5": {"inputTokens": 1, "outputTokens": 1}}}
+                ).encode(),
+                b"",
+            )
+        )
+        process.returncode = 0
+
+        with patch("asyncio.create_subprocess_exec", return_value=process):
+            result = await catalog._probe_claude_model("fable", "Fable")
+
+        assert result == {
+            "value": "fable",
+            "label": "Fable",
+            "canonical_id": "claude-fable-5",
+            "context_length": 1_000_000,
+            "context_length_source": "static_default",
+            "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
+        }
+
+    @pytest.mark.asyncio
     async def test_discover_claude_models_keeps_successful_alias_probes(
         self, temp_dir: Path
     ) -> None:
@@ -89,6 +116,7 @@ class TestProviderModelCatalog:
         assert models == [
             {"value": "sonnet", "label": "Sonnet", "canonical_id": "claude-sonnet"},
             {"value": "opus", "label": "Opus", "canonical_id": "claude-opus"},
+            {"value": "fable", "label": "Fable", "canonical_id": "claude-fable"},
         ]
 
     @pytest.mark.asyncio
@@ -236,7 +264,12 @@ class TestProviderModelCatalog:
                         "value": "sonnet",
                         "canonical_id": "claude-sonnet-4-6-20260410",
                         "context_length": 200_000,
-                    }
+                    },
+                    {
+                        "value": "fable",
+                        "canonical_id": "claude-fable-5",
+                        "context_length": 1_000_000,
+                    },
                 ]
             },
             "qwen": {
@@ -262,12 +295,15 @@ class TestProviderModelCatalog:
         }
 
         assert catalog.get_context_window("claude", "sonnet") == 200_000
+        assert catalog.get_context_window("claude", "fable") == 1_000_000
+        assert catalog.get_context_window("claude", "claude-fable-5") == 1_000_000
         assert catalog.get_context_window("claude", "claude-sonnet-4-6-20260410") == 200_000
         assert catalog.get_context_window("claude", "claude-sonnet-4-6-20241022") == 200_000
         assert catalog.get_context_window("qwen", "qwen3-coder(openai)") == 262_144
         assert catalog.get_context_window("qwen", "qwen3-coder") == 262_144
         assert catalog.get_context_window("droid", "gpt-5.5") == 321_000
         assert catalog.get_context_window("droid", "gpt-5.4") == 333_000
+        assert catalog.get_context_window("droid", "claude-fable-5") == 1_000_000
         assert catalog.get_context_window("droid", "z-ai/glm-5") == 128_000
         assert catalog.get_context_window("droid", "custom/byok-model") is None
 
@@ -568,6 +604,7 @@ class TestProviderModelCatalog:
         models = await catalog._discover_provider_models("droid")
 
         assert {model["value"] for model in models} == {
+            "claude-fable-5",
             "claude-opus-4-7",
             "claude-opus-4-6",
             "claude-opus-4-6-fast",
@@ -593,9 +630,16 @@ class TestProviderModelCatalog:
             "glm-4.7",
             "gpt-5.1-codex-max",
         }
-        assert len(models) == 24
+        assert len(models) == 25
 
         by_id = {model["value"]: model for model in models}
+        assert by_id["claude-fable-5"]["label"] == "Claude Fable 5"
+        assert by_id["claude-fable-5"]["context_length"] == 1_000_000
+        assert by_id["claude-fable-5"]["context_length_source"] == "provider_catalog"
+        assert by_id["claude-fable-5"]["reasoning"] == {
+            "supported_efforts": ["off", "low", "medium", "high", "xhigh", "max"],
+            "default_effort": "high",
+        }
         assert "xhigh" in by_id["claude-opus-4-7"]["reasoning"]["supported_efforts"]
         assert "max" in by_id["claude-opus-4-7"]["reasoning"]["supported_efforts"]
         assert "minimal" in by_id["gemini-3-flash-preview"]["reasoning"]["supported_efforts"]

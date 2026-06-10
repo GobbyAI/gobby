@@ -7,9 +7,37 @@ their external form; for task features that is `gobby-tasks`, matching the MCP s
 
 | Profile | Default candidates |
 | --- | --- |
-| `feature_low` | `codex/gpt-5.4-mini`, `claude/haiku`, `local/Qwen3-Coder-30B-A3B-Instruct` |
-| `feature_mid` | `codex/gpt-5.3-codex-spark`, `claude/sonnet`, `local/Qwen3-Coder-Next` |
-| `feature_high` | `codex/gpt-5.3-codex`, `claude/opus`, `local/Qwen3-Coder-Next` |
+| `feature_low` | `codex/gpt-5.4-mini`, `claude/haiku` |
+| `feature_mid` | `codex/gpt-5.3-codex-spark`, `claude/sonnet` |
+| `feature_high` | `codex/gpt-5.3-codex`, `claude/opus` |
+
+Built-in defaults use stable provider namespaces only. Local OpenAI-compatible runtimes
+are opt-in named endpoints:
+
+```yaml
+ai:
+  generation:
+    local:
+      endpoints:
+        lm-studio:
+          api_base: http://localhost:1234/v1
+          model: Qwen3-Coder-30B-A3B-Instruct
+          api_key: $secret:LM_STUDIO_KEY
+        ollama:
+          api_base: http://localhost:11434/v1
+          model: qwen2.5-coder
+    profile_defaults:
+      feature_low:
+        - local:lm-studio/Qwen3-Coder-30B-A3B-Instruct
+        - claude/haiku
+      feature_mid:
+        - codex/gpt-5.3-codex-spark
+        - local:ollama/qwen2.5-coder
+```
+
+Feature candidates use `local:<endpoint>/<model>`. Direct HTTP text generation uses
+`provider="local:<endpoint>"` with `model="<model>"`. Bare `local` is a reserved provider
+family and is unavailable for text generation.
 
 ## `call_feature` Features
 

@@ -39,7 +39,7 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
             {
                 "memory_recall": {
                     "enabled": False,
-                    "candidates": ["local/llama"],
+                    "candidates": ["local:lm-studio/llama"],
                     "timeout": 12,
                     "candidate_limit": 5,
                     "selected_limit": 2,
@@ -50,7 +50,7 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
     )
     disabled_config = DaemonConfig(**load_yaml(str(disabled_config_file)))
     assert disabled_config.memory_recall.enabled is False
-    assert disabled_config.memory_recall.candidates == ["local/llama"]
+    assert disabled_config.memory_recall.candidates == ["local:lm-studio/llama"]
     assert disabled_config.memory_recall.timeout == 12
     assert disabled_config.memory_recall.candidate_limit == 5
     assert disabled_config.memory_recall.selected_limit == 2

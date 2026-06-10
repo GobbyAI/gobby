@@ -106,9 +106,16 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
             ai=AIConfig(
                 generation=GenerationConfig(
                     local=LocalGenerationConfig(
-                        enabled=True,
-                        api_base="http://localhost:1234/v1",
-                        model="llama",
+                        endpoints={
+                            "lm-studio": {
+                                "api_base": "http://localhost:1234/v1",
+                                "model": "llama",
+                            },
+                            "ollama": {
+                                "api_base": "http://localhost:11434/v1",
+                                "model": "qwen2.5-coder",
+                            },
+                        }
                     )
                 )
             ),
@@ -119,7 +126,8 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
     expected_styles = {
         "claude": AIAdapterStyle.LLM_PROVIDER,
         "codex": AIAdapterStyle.DAEMON,
-        "local": AIAdapterStyle.OPENAI_COMPATIBLE,
+        "local:lm-studio": AIAdapterStyle.OPENAI_COMPATIBLE,
+        "local:ollama": AIAdapterStyle.OPENAI_COMPATIBLE,
         "gemini": AIAdapterStyle.ACP,
         "grok": AIAdapterStyle.ACP,
         "qwen": AIAdapterStyle.ACP,
@@ -133,11 +141,18 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
 
     local = registry.binding(AICapability.TEXT_GENERATE, "local")
     assert local is not None
-    assert local.models == ("llama",)
+    assert local.available is False
+    assert local.models == ()
+
+    lm_studio = registry.binding(AICapability.TEXT_GENERATE, "local:lm-studio")
+    assert lm_studio is not None
+    assert lm_studio.models == ("llama",)
+    assert lm_studio.metadata["endpoint"] == "lm-studio"
 
     claude = registry.binding(AICapability.TEXT_GENERATE, "claude")
     assert claude is not None
     assert claude.models == ("haiku", "opus", "sonnet")
+    assert "fable" not in claude.models
     assert "default_model" not in claude.metadata
     assert "auth_mode" not in claude.metadata
 
@@ -172,6 +187,7 @@ def test_daemon_registry_matches_configured_claude_model_aliases() -> None:
     assert haiku.models == ("haiku", "opus", "sonnet")
     assert full_model.models == ("haiku", "opus", "sonnet")
     assert provider_scoped.models == ("haiku", "opus", "sonnet")
+    assert "fable" not in haiku.models
     assert "default_model" not in haiku.metadata
 
 
@@ -191,6 +207,7 @@ def test_daemon_registry_applies_feature_models_to_provider_capabilities() -> No
     assert vision.models == ("haiku", "opus", "sonnet")
     assert agent.models == ("haiku", "opus", "sonnet")
     assert web.models == ("haiku", "opus", "sonnet")
+    assert "fable" not in vision.models
 
 
 def test_daemon_registry_reports_only_proven_vision_extract_bindings_available() -> None:

@@ -43,7 +43,12 @@ _CACHE_VERSION = 5
 _DEFAULT_CACHE_FILE = "provider-model-catalog.json"
 _MODEL_DISCOVERY_CWD_NAME = "provider-model-discovery"
 _MODEL_DISCOVERY_REQUEST_TIMEOUT_SECONDS = 90.0
-_CLAUDE_ALIASES = (("haiku", "Haiku"), ("sonnet", "Sonnet"), ("opus", "Opus"))
+_CLAUDE_ALIASES = (
+    ("haiku", "Haiku"),
+    ("sonnet", "Sonnet"),
+    ("opus", "Opus"),
+    ("fable", "Fable"),
+)
 _CLAUDE_REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 _QWEN_AUTH_TYPES = frozenset({"qwen-oauth", "openai", "anthropic", "gemini", "vertex-ai"})
 
@@ -430,17 +435,19 @@ class ProviderModelCatalog:
                     candidates.add("sonnet")
                 elif candidate.startswith("claude-haiku"):
                     candidates.add("haiku")
+                elif candidate.startswith("claude-fable"):
+                    candidates.add("fable")
         return candidates
 
     def _alias_matches(self, provider: str, candidate: str, target: str) -> bool:
-        families = {"opus", "sonnet", "haiku"}
+        families = {"opus", "sonnet", "haiku", "fable"}
         return provider in {"claude", "droid"} and candidate in families and candidate in target
 
     @staticmethod
     def _droid_underlying_providers(model: str) -> tuple[str, ...]:
         normalized = normalize_model_lookup_id(model)
         if normalized.startswith("claude-") or any(
-            family in normalized for family in ("opus", "sonnet", "haiku")
+            family in normalized for family in ("opus", "sonnet", "haiku", "fable")
         ):
             return ("claude",)
         if normalized.startswith(("gpt-", "o1-", "o3-", "o4-")):

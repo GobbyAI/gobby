@@ -1,16 +1,19 @@
 """Base configuration for LLM-backed feature routing."""
 
 import re
+from collections.abc import Iterable, Mapping, Sequence
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 __all__ = [
     "DEFAULT_PROFILE_CANDIDATES",
     "FeatureDefaultConfig",
     "FeatureProfile",
     "default_candidates_for_profile",
+    "iter_feature_default_configs",
     "normalize_feature_candidate",
+    "validate_feature_candidates",
 ]
 
 
@@ -26,22 +29,19 @@ DEFAULT_PROFILE_CANDIDATES: dict[FeatureProfile, tuple[str, ...]] = {
     FeatureProfile.LOW: (
         "codex/gpt-5.4-mini",
         "claude/haiku",
-        "local/Qwen3-Coder-30B-A3B-Instruct",
     ),
     FeatureProfile.MID: (
         "codex/gpt-5.3-codex-spark",
         "claude/sonnet",
-        "local/Qwen3-Coder-Next",
     ),
     FeatureProfile.HIGH: (
         "codex/gpt-5.3-codex",
         "claude/opus",
-        "local/Qwen3-Coder-Next",
     ),
 }
 
 
-_CLAUDE_FAMILY_ALIASES = ("haiku", "sonnet", "opus")
+_CLAUDE_FAMILY_ALIASES = ("haiku", "sonnet", "opus", "fable")
 
 
 def default_candidates_for_profile(profile: FeatureProfile | str) -> tuple[str, ...]:
@@ -77,10 +77,24 @@ def _dedupe_normalized_candidates(candidates: list[str]) -> list[str]:
     return normalized_candidates
 
 
+def validate_feature_candidates(candidates: Sequence[str]) -> list[str]:
+    """Validate and deduplicate provider-scoped feature candidates."""
+    invalid = []
+    for candidate in candidates:
+        provider, separator, model = candidate.partition("/")
+        if not separator or not provider.strip() or not model.strip():
+            invalid.append(candidate)
+    if invalid:
+        joined = ", ".join(repr(candidate) for candidate in invalid)
+        raise ValueError(f"feature candidates must use provider/model format: {joined}")
+    return _dedupe_normalized_candidates(list(candidates))
+
+
 class FeatureDefaultConfig(BaseModel):
     """Base config for LLM-backed features."""
 
     model_config = ConfigDict(extra="forbid")
+    _candidates_omitted: bool = PrivateAttr(default=False)
 
     profile: FeatureProfile = Field(
         default=FeatureProfile.LOW,
@@ -90,22 +104,45 @@ class FeatureDefaultConfig(BaseModel):
         default_factory=list,
         description=(
             "Ordered provider/model candidates, for example "
-            "['codex/gpt-5.4-mini', 'local/Qwen3-Coder-30B-A3B-Instruct']."
+            "['codex/gpt-5.4-mini', 'local:lm-studio/Qwen3-Coder-30B-A3B-Instruct']."
         ),
     )
 
     @model_validator(mode="after")
     def populate_and_validate_candidates(self) -> "FeatureDefaultConfig":
         """Fill profile defaults and validate provider-scoped candidate labels."""
+        self._candidates_omitted = "candidates" not in self.model_fields_set
         if not self.candidates:
             self.candidates = list(default_candidates_for_profile(self.profile))
-        invalid = []
-        for candidate in self.candidates:
-            provider, separator, model = candidate.partition("/")
-            if not separator or not provider.strip() or not model.strip():
-                invalid.append(candidate)
-        if invalid:
-            joined = ", ".join(repr(candidate) for candidate in invalid)
-            raise ValueError(f"feature candidates must use provider/model format: {joined}")
-        self.candidates = _dedupe_normalized_candidates(self.candidates)
+        self.candidates = validate_feature_candidates(self.candidates)
         return self
+
+
+def iter_feature_default_configs(
+    value: object,
+    visited: set[int] | None = None,
+) -> Iterable[FeatureDefaultConfig]:
+    """Yield feature config models from nested config structures."""
+    if visited is None:
+        visited = set()
+    if isinstance(value, (FeatureDefaultConfig, BaseModel, Mapping, Sequence)) and not isinstance(
+        value, (str, bytes, bytearray)
+    ):
+        object_id = id(value)
+        if object_id in visited:
+            return
+        visited.add(object_id)
+    if isinstance(value, FeatureDefaultConfig):
+        yield value
+        return
+    if isinstance(value, BaseModel):
+        for field_name in value.__class__.model_fields:
+            yield from iter_feature_default_configs(getattr(value, field_name), visited)
+        return
+    if isinstance(value, Mapping):
+        for item in value.values():
+            yield from iter_feature_default_configs(item, visited)
+        return
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        for item in value:
+            yield from iter_feature_default_configs(item, visited)

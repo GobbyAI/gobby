@@ -34,6 +34,11 @@ _BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
                 "label": "Haiku",
                 "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
             },
+            {
+                "value": "fable",
+                "label": "Fable",
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
+            },
         ],
     ),
     "gemini": with_context_lengths(
@@ -139,16 +144,32 @@ def _build_model_catalog(
             for provider, models in _BASE_MODEL_CATALOG.items()
         }
 
+    return catalog
+
+
+def _local_generation_provider_entries(server: HTTPServer | None) -> list[dict[str, Any]]:
     config = getattr(getattr(server, "services", None), "config", None)
     ai_cfg = getattr(config, "ai", None) if config is not None else None
     generation_cfg = getattr(ai_cfg, "generation", None)
     local_cfg = getattr(generation_cfg, "local", None)
-    if local_cfg and local_cfg.enabled and local_cfg.model:
-        claude_entries, source = catalog["claude"]
-        if not any(entry["value"] == "local" for entry in claude_entries):
-            claude_entries.append({"value": "local", "label": f"Local ({local_cfg.model})"})
-        catalog["claude"] = (claude_entries, source)
-    return catalog
+    endpoints = getattr(local_cfg, "endpoints", {})
+    return [
+        {
+            "provider": f"local:{name}",
+            "available": True,
+            "models": [{"value": endpoint.model, "label": endpoint.model}],
+            "source": "config",
+            "startup_error": None,
+            "display_name": f"Local ({name})",
+            "installed": True,
+            "deprecated": False,
+            "deprecation_message": None,
+            "supports_web_chat": True,
+            "supports_agent_spawn": False,
+            "unavailable_reason": None,
+        }
+        for name, endpoint in endpoints.items()
+    ]
 
 
 def _provider_health(
@@ -256,6 +277,7 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
                     **_provider_metadata_fields(name, path),
                 }
             )
+        result.extend(_local_generation_provider_entries(server))
         return {"providers": result}
 
     return router
