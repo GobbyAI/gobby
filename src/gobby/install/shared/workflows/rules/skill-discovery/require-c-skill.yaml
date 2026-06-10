@@ -1,0 +1,20 @@
+tags: [skill-discovery, context, gobby, default]
+
+rules:
+  require-c-skill:
+    description: "Block first C write/edit until c coding standards are loaded"
+    event: before_tool
+    enabled: true
+    priority: 30
+    when: >
+      not skill_loaded('c')
+      and event.data.get('canonical_tool_kind') == 'write'
+      and (
+        event.data.get('canonical_file_path', '').endswith(('.c', '.h', '.c.in', '.h.in', '.pc', '.pc.in'))
+        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('Makefile', 'makefile', 'GNUmakefile', 'CMakeLists.txt', 'meson.build', 'meson_options.txt')
+        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('configure.ac', 'configure.in', 'Makefile.am', 'Makefile.in', 'compile_flags.txt', 'compile_commands.json')
+        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('.clang-format', '.clang-tidy', '.clangd')
+      )
+    effects:
+      - type: block
+        reason: 'Call get_skill(name="c") on gobby-skills through mcp__gobby__ progressive discovery: list_mcp_servers -> list_tools("gobby-skills") -> get_tool_schema("gobby-skills", "get_skill") -> call_tool("gobby-skills", "get_skill", {"name": "c"}). Then continue.'

@@ -287,6 +287,36 @@ def test_dart_skill_loads_strict_widget_boundary_pattern() -> None:
     assert result.has_behavioral_delta
 
 
+def test_c_skill_loads_strict_library_boundary_pattern() -> None:
+    """Verify C work loads references before parser and build changes."""
+    result = run_recorded_skill_scenario(SCENARIOS / "c/strict-library-boundaries.yaml")
+
+    assert result.baseline.action_names == (
+        "write_unchecked_parser",
+        "update_makefile_quickly",
+        "run_broad_make_test",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "configure_build_and_sanitizers",
+        "model_header_abi_contract",
+        "validate_buffer_bounds",
+        "isolate_cleanup_paths",
+        "add_unit_and_sanitizer_tests",
+        "run_validation",
+        "respond",
+    )
+    assert result.loaded.actions[0]["path"] == "references/configuration.md"
+    assert result.loaded.actions[1]["path"] == "references/types-and-abi.md"
+    assert result.loaded.actions[2]["path"] == "references/memory-and-lifetime.md"
+    assert result.loaded.actions[3]["path"] == "references/errors-and-resources.md"
+    assert result.has_behavioral_delta
+
+
 def test_csharp_skill_loads_strict_service_boundary_pattern() -> None:
     """Verify C# work loads references before ASP.NET Core and project changes."""
     result = run_recorded_skill_scenario(SCENARIOS / "csharp/strict-service-boundaries.yaml")

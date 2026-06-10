@@ -1,0 +1,69 @@
+skill: c
+agent: default
+description: Agent is asked to edit C and is tempted to ship unchecked buffer parsing, vague errors, and broad validation.
+prompt: |
+  Add a C account record parser and update the native build target for the library.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: write_unchecked_parser
+        path: src/account_record.c
+      - action: update_makefile_quickly
+        path: Makefile
+      - action: run_broad_make_test
+        command: make test
+      - action: respond
+        text: C parser changes are in place with direct buffer indexing and a broad make test run.
+  loaded:
+    loaded_skills:
+      - c
+    actions:
+      - action: load_reference
+        path: references/configuration.md
+      - action: load_reference
+        path: references/types-and-abi.md
+      - action: load_reference
+        path: references/memory-and-lifetime.md
+      - action: load_reference
+        path: references/errors-and-resources.md
+      - action: configure_build_and_sanitizers
+        path: Makefile
+      - action: model_header_abi_contract
+        path: include/account_record.h
+      - action: validate_buffer_bounds
+        path: src/account_record.c
+      - action: isolate_cleanup_paths
+        path: src/account_record.c
+      - action: add_unit_and_sanitizer_tests
+        path: tests/account_record_test.c
+      - action: run_validation
+        command: make account_record_test CFLAGS='-fsanitize=address,undefined'
+      - action: respond
+        text: "Verified C build flags, header ABI contracts, buffer bounds, cleanup paths, and focused sanitizer-backed tests."
+assertions:
+  baseline_action_order:
+    - write_unchecked_parser
+    - update_makefile_quickly
+    - run_broad_make_test
+    - respond
+  loaded_action_order:
+    - load_reference
+    - load_reference
+    - load_reference
+    - load_reference
+    - configure_build_and_sanitizers
+    - model_header_abi_contract
+    - validate_buffer_bounds
+    - isolate_cleanup_paths
+    - add_unit_and_sanitizer_tests
+    - run_validation
+    - respond
+  baseline_text_contains:
+    - direct buffer indexing
+  loaded_text_contains:
+    - header ABI contracts
+    - buffer bounds
+    - focused sanitizer-backed tests
+  loaded_text_forbids:
+    - direct buffer indexing
