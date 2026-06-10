@@ -614,6 +614,60 @@ fn parses_fenced_json_action() {
 }
 
 #[test]
+fn parses_action_with_trailing_model_prose() {
+    let action = parse_model_action(
+        "{\"action\":\"finish\",\"reason\":\"done\"}\nNow I will summarize what I found.",
+    )
+    .expect("action parsed despite trailing prose");
+    assert_eq!(
+        action,
+        ResearchAction::Finish {
+            reason: Some("done".to_string())
+        }
+    );
+}
+
+#[test]
+fn parses_action_with_trailing_prose_containing_braces() {
+    let action = parse_model_action(
+        "Thinking aloud first.\n{\"action\":\"finish\",\"reason\":\"done\"}\nNext I could emit {\"action\":\"search\"} instead.",
+    )
+    .expect("first complete object wins");
+    assert_eq!(
+        action,
+        ResearchAction::Finish {
+            reason: Some("done".to_string())
+        }
+    );
+}
+
+#[test]
+fn parses_fenced_action_with_text_after_closing_fence() {
+    let action = parse_model_action(
+        "```json\n{\"action\":\"finish\",\"reason\":\"done\"}\n```\nThat completes the step.",
+    )
+    .expect("fenced action with trailing text parsed");
+    assert_eq!(
+        action,
+        ResearchAction::Finish {
+            reason: Some("done".to_string())
+        }
+    );
+}
+
+#[test]
+fn rejects_response_without_json_object() {
+    let error = parse_model_action("no structured action here").expect_err("must error");
+    assert!(error.contains("did not include a JSON object"));
+}
+
+#[test]
+fn rejects_malformed_json_object() {
+    let error = parse_model_action("{\"action\":\"finish\",\"reason\":}").expect_err("must error");
+    assert!(error.contains("failed to parse action JSON"));
+}
+
+#[test]
 fn file_url_source_references_use_path_scope_validation() {
     let root = tempfile::tempdir().expect("wiki root");
     let inside = root.path().join("raw/source.md");

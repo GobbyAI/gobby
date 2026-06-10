@@ -6,8 +6,16 @@ use crate::research::ResearchStopReason;
 use super::types::{ModelRequest, ResearchAction};
 
 pub(crate) fn parse_model_action(response: &str) -> Result<ResearchAction, String> {
-    let json = extract_json_object(response)?;
-    serde_json::from_str(json).map_err(|error| format!("failed to parse action JSON: {error}"))
+    let candidate = json_candidate(response)?;
+    // Local reasoning models routinely append prose after the action object;
+    // stream deserialization stops at the first complete top-level value, so
+    // trailing text (including text containing braces) is ignored.
+    let mut stream = serde_json::Deserializer::from_str(candidate).into_iter::<ResearchAction>();
+    match stream.next() {
+        Some(Ok(action)) => Ok(action),
+        Some(Err(error)) => Err(format!("failed to parse action JSON: {error}")),
+        None => Err("model response did not include a JSON object".to_string()),
+    }
 }
 
 pub(crate) fn render_model_prompt(request: &ModelRequest<'_>) -> String {
@@ -76,7 +84,10 @@ pub(crate) fn model_system_prompt() -> &'static str {
      Do not write accepted notes until cited sources have been observed."
 }
 
-fn extract_json_object(response: &str) -> Result<&str, String> {
+/// Slice from the first `{` (after stripping a leading code fence) so the
+/// stream deserializer reads the first complete top-level object; everything
+/// after that object — closing fences, prose, even stray braces — is ignored.
+fn json_candidate(response: &str) -> Result<&str, String> {
     let trimmed = response.trim();
     let trimmed = trimmed
         .strip_prefix("```json")
@@ -84,19 +95,10 @@ fn extract_json_object(response: &str) -> Result<&str, String> {
         .unwrap_or(trimmed)
         .trim();
     let trimmed = trimmed.strip_suffix("```").unwrap_or(trimmed).trim();
-    if trimmed.starts_with('{') && trimmed.ends_with('}') {
-        return Ok(trimmed);
-    }
     let start = trimmed
         .find('{')
         .ok_or_else(|| "model response did not include a JSON object".to_string())?;
-    let end = trimmed
-        .rfind('}')
-        .ok_or_else(|| "model response did not include a complete JSON object".to_string())?;
-    if start >= end {
-        return Err("model response JSON object is empty".to_string());
-    }
-    Ok(&trimmed[start..=end])
+    Ok(&trimmed[start..])
 }
 
 pub(crate) fn action_fingerprint(action: &ResearchAction) -> String {
