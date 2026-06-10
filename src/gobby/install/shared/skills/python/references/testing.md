@@ -1,4 +1,8 @@
-# Testing — Reference
+# Testing - Reference
+
+## Test Ownership
+
+Use the repo's existing pytest stack. Respect local markers, daemon isolation rules, fixture style, and wrapper commands. Target changed behavior first; broaden only when the blast radius justifies it.
 
 ## Fixtures with Yield
 
@@ -10,6 +14,8 @@ def db() -> Generator[Database, None, None]:
     yield database
     database.disconnect()
 ```
+
+Keep fixtures narrow. Prefer fixture factories when each test needs slightly different setup.
 
 ## Parameterized Tests
 
@@ -35,6 +41,8 @@ def test_is_positive(val: int, expected: bool) -> None:
     assert (val > 0) == expected
 ```
 
+Use parameterization for cases that share the same behavior. Split tests when setup, behavior, or assertions diverge.
+
 ## Mocking External Dependencies
 
 Patch where the thing is **used**, not where it's defined:
@@ -52,6 +60,8 @@ def test_fetch_user(mock_get: Mock) -> None:
     assert user["name"] == "Test"
     mock_get.assert_called_once()
 ```
+
+Prefer fakes or boundary adapters when mocks become large. Do not mock the helper being tested.
 
 ## Testing Error Paths
 
@@ -75,15 +85,19 @@ def test_fetch_raises_after_max_retries() -> None:
         service.fetch()
 ```
 
+Assert the error type and the important message or machine-readable fields. Test validation failures and cleanup behavior explicitly.
+
 ## Async Tests
 
 ```python
 @pytest.mark.asyncio
 async def test_async_fetch() -> None:
     async with AsyncClient(app=app) as client:
-        response = await client.get("/users/1")
+    response = await client.get("/users/1")
     assert response.status_code == 200
 ```
+
+Await every async operation under test. Use fake clocks, controlled events, or short explicit timeouts instead of real sleeps.
 
 ## Markers
 
@@ -96,6 +110,8 @@ async def test_async_fetch() -> None:
 # Run integration:       pytest -m integration
 ```
 
+Do not hide slow or environment-dependent tests under ordinary unit markers. Tests that need daemons, network, or databases should use isolated fixtures.
+
 ## Freezing Time
 
 ```python
@@ -106,3 +122,29 @@ def test_token_expiry() -> None:
     token = create_token(expires_in=3600)
     assert token.expires_at == datetime(2026, 1, 15, 11, 0, 0)
 ```
+
+## Filesystem And Paths
+
+Use `tmp_path` for filesystem writes:
+
+```python
+def test_writes_config(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    write_config(path, {"enabled": True})
+    assert path.read_text(encoding="utf-8")
+```
+
+Avoid touching the user's real home directory, daemon state, cache, credentials, or global temp paths.
+
+## Validation Commands
+
+Use repo wrappers first. Common focused commands:
+
+```bash
+uv run ruff format --check <files>
+uv run ruff check <files>
+uv run mypy <package-or-files>
+GOBBY_TEST_PROTECT=1 uv run pytest <tests> -q
+```
+
+Match the repo's validation gates before closing work. If you changed tests, run any configured test-quality audit for those files.

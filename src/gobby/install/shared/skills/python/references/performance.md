@@ -1,4 +1,18 @@
-# Performance — Reference
+# Performance - Reference
+
+## Measure First
+
+Identify the actual bottleneck before changing code:
+
+- CPU profile
+- memory profile
+- database/query timing
+- network latency
+- serialization/parsing cost
+- event-loop blocking
+- import/startup time
+
+Do not trade clarity or type safety for speculative speed.
 
 ## Profiling Tools
 
@@ -21,6 +35,8 @@
 | Priority queue | `heapq` | Sorted list |
 | Counting | `collections.Counter` | Manual dict |
 
+Avoid repeated linear scans inside loops over large collections. Normalize once, then look up by key.
+
 ## Caching
 
 ```python
@@ -37,6 +53,8 @@ def expensive_lookup(key: str) -> Result:
     return database.query(key)
 ```
 
+Cache pure functions or stable lookups. Do not cache values tied to permissions, request state, environment variables, or external resources without an invalidation plan.
+
 ## Generators for Large Data
 
 ```python
@@ -52,6 +70,8 @@ def error_lines(path: Path) -> Generator[str, None, None]:
                 yield line
 ```
 
+Prefer `pathlib.Path.open(encoding="utf-8")` or repo wrappers for file I/O. Stream large JSONL, CSV, logs, and exports instead of loading all rows at once.
+
 ## String Building
 
 ```python
@@ -63,6 +83,8 @@ for item in items:
 # Good: O(n)
 result = "".join(str(item) for item in items)
 ```
+
+For repeated regex work, compile patterns once when profiling shows it matters.
 
 ## Comprehensions vs Loops
 
@@ -76,3 +98,25 @@ mapping = {k: v.strip() for k, v in pairs}
 
 # But don't nest 3+ deep — use a loop for readability
 ```
+
+Use explicit loops when there is branching, error handling, logging, or non-trivial transformation.
+
+## I/O And Database Loops
+
+Most Python "performance" bugs are boundary bugs:
+
+- batch database writes instead of one query per row
+- page large reads and stream responses
+- avoid unbounded concurrent network calls
+- reuse clients and connection pools according to their lifecycle rules
+- push filtering to the database when it keeps behavior clear
+
+Keep transactions, retries, and idempotency visible.
+
+## Serialization
+
+For parsers and serializers, measure realistic payloads. Avoid repeated parse/dump cycles, repeated schema compilation, and unnecessary conversion between dicts and models in hot paths.
+
+## Benchmarks
+
+Use benchmarks for pure algorithms, parsers, serializers, and transforms. Include representative and worst-case inputs. Keep benchmarks separate from ordinary unit tests unless the repo already has a performance-test convention.

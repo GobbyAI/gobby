@@ -9,7 +9,14 @@ rules:
     when: >
       not skill_loaded('python')
       and event.data.get('canonical_tool_kind') == 'write'
-      and event.data.get('canonical_file_path', '').endswith('.py')
+      and (
+        event.data.get('canonical_file_path', '').endswith(('.py', '.pyi'))
+        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('pyproject.toml', 'setup.cfg', 'setup.py', 'tox.ini', 'noxfile.py', 'pytest.ini', 'mypy.ini', 'ruff.toml', '.python-version', 'Pipfile', 'py.typed')
+        or (
+          event.data.get('canonical_file_path', '').rpartition('/')[2].startswith('requirements')
+          and event.data.get('canonical_file_path', '').rpartition('/')[2].endswith(('.txt', '.in'))
+        )
+      )
     effects:
       - type: block
         reason: 'Call get_skill(name="python") on gobby-skills through mcp__gobby__ progressive discovery: list_mcp_servers -> list_tools("gobby-skills") -> get_tool_schema("gobby-skills", "get_skill") -> call_tool("gobby-skills", "get_skill", {"name": "python"}). Then continue.'

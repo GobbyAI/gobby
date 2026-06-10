@@ -1,4 +1,4 @@
-# Error Handling — Reference
+# Error Handling - Reference
 
 ## Exception Hierarchy
 
@@ -24,6 +24,8 @@ class ExternalServiceError(AppError):
         self.service = service
 ```
 
+Add machine-readable fields when callers need to branch. Avoid forcing callers to parse error text.
+
 ## Exception Chaining
 
 Always chain when wrapping:
@@ -34,6 +36,8 @@ try:
 except httpx.HTTPError as e:
     raise ExternalServiceError("payments", e) from e
 ```
+
+Use `from None` only when hiding implementation details is intentional and the original exception would confuse users.
 
 ## Guard Clauses
 
@@ -52,6 +56,42 @@ def process_order(order: Order) -> Receipt:
     return receipt
 ```
 
+Validate early at boundaries. Keep core logic working with already-typed domain values.
+
+## Boundary Validation
+
+Untrusted input includes CLI args, environment variables, JSON/YAML/TOML files, HTTP payloads, database rows, queue messages, and subprocess output:
+
+```python
+def parse_retry_count(raw: str | None) -> int:
+    if raw is None:
+        return 3
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValidationError("RETRY_COUNT must be an integer") from exc
+    if value < 0:
+        raise ValidationError("RETRY_COUNT must be non-negative")
+    return value
+```
+
+Keep validators small and tested. Return typed values, not loosely validated dictionaries.
+
+## Expected Failures
+
+For expected domain outcomes, use explicit return types when exceptions would make normal control flow noisy:
+
+```python
+@dataclass(frozen=True)
+class LookupFailure:
+    code: Literal["not_found", "permission_denied"]
+    user_id: str
+
+type LookupResult = User | LookupFailure
+```
+
+Use exceptions for broken invariants, dependency failures, unavailable services, or unexpected third-party behavior.
+
 ## Process Boundary Pattern
 
 Top-level handlers catch broadly for cleanup — this is the one place `except Exception` is appropriate:
@@ -69,3 +109,26 @@ def main() -> int:
         logger.exception("Unhandled error — shutting down")
         return 1
 ```
+
+The same boundary rule applies to web handlers, worker loops, scheduler jobs, and CLI commands. Lower layers should catch specific exceptions or let them propagate.
+
+## Async And ExceptionGroup
+
+When using `asyncio.TaskGroup`, multiple failures may be grouped. Handle the specific exception group at the boundary that can decide retry, cleanup, or reporting:
+
+```python
+try:
+    async with asyncio.TaskGroup() as group:
+        group.create_task(sync_users())
+        group.create_task(sync_orders())
+except* ExternalServiceError as group:
+    for error in group.exceptions:
+        logger.warning("external_sync_failed", extra={"service": error.service})
+    raise
+```
+
+Do not swallow `CancelledError`; clean up and re-raise.
+
+## Logging
+
+Log once at the boundary that owns the failure. Include stable fields such as IDs, operation names, and dependency names. Never log secrets, raw tokens, cookies, or full credentials.

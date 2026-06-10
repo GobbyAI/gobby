@@ -1,4 +1,15 @@
-# Type System — Reference
+# Type System - Reference
+
+## Baseline Rules
+
+Every function signature should declare parameter and return types. Prefer modern built-in generic syntax:
+
+```python
+def normalize_names(values: list[str]) -> dict[str, str]:
+    return {value.casefold(): value for value in values}
+```
+
+Use `str | None` instead of `Optional[str]` in Python versions that support it. Keep exported functions explicit even when inference inside the function is obvious.
 
 ## TYPE_CHECKING Pattern
 
@@ -11,6 +22,8 @@ if TYPE_CHECKING:
 
 def get_user(user_id: int) -> User: ...
 ```
+
+Use this for imports needed only by the type checker. Do not put imports under `TYPE_CHECKING` when runtime code needs the object for validation, decorators, or subclass checks.
 
 ## Protocol vs ABC
 
@@ -42,9 +55,9 @@ class BaseProcessor(ABC):
     def transform(self, data: bytes) -> bytes: ...
 ```
 
-## Narrowing `Any` at Boundaries
+## Boundary Types
 
-When an external library returns `Any`, narrow it immediately:
+External data should enter as `object`, `Any`, or a library-specific raw type only at the boundary, then narrow immediately:
 
 ```python
 def get_config_value(key: str) -> str:
@@ -53,6 +66,26 @@ def get_config_value(key: str) -> str:
         raise TypeError(f"Expected str for {key}, got {type(raw).__name__}")
     return raw
 ```
+
+Prefer validation functions, Pydantic models, attrs/dataclasses with validators, or small parser functions over casts. A cast documents belief; a validator proves shape at runtime.
+
+## Dataclasses And Value Objects
+
+Use dataclasses for small immutable domain values:
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True, slots=True)
+class UserId:
+    value: str
+
+    def __post_init__(self) -> None:
+        if not self.value.startswith("usr_"):
+            raise ValueError(f"Invalid user id: {self.value}")
+```
+
+Keep validation at construction boundaries. Avoid passing raw strings for IDs, tokens, paths, or units when mixing them up would be costly.
 
 ## Generic Types
 
@@ -64,6 +97,8 @@ T = TypeVar("T")
 def first_or_none(items: list[T]) -> T | None:
     return items[0] if items else None
 ```
+
+Use generics when they preserve caller-specific types. Avoid abstract generic helpers that make simple code harder to read.
 
 ## TypedDict for Structured Dicts
 
@@ -77,3 +112,26 @@ class UserResponse(TypedDict):
     name: str
     email: str | None
 ```
+
+Use `NotRequired` or separate TypedDict variants when optionality matters. For richer behavior or validation, graduate to a dataclass or model.
+
+## Enums And Literals
+
+Use `Literal` for small closed sets used in a few places:
+
+```python
+type Status = Literal["pending", "running", "failed", "complete"]
+```
+
+Use `Enum` or `StrEnum` when values are public, reused widely, serialized, or need methods.
+
+## Avoiding `Any`
+
+- Do not add `Any` to quiet mypy without explaining the boundary.
+- Prefer `object` for values that must be narrowed before use.
+- Add local stubs or wrapper functions for third-party APIs with poor typing.
+- Keep `cast()` close to the proof that makes it true.
+
+## Public API Surface
+
+Export public types deliberately through package `__init__.py` or documented modules. Do not expose private helper types because tests or downstream code reached into internals.

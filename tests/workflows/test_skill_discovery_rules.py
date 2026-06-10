@@ -393,6 +393,8 @@ class TestRequirePythonSkillStructure:
         assert body.event.value == "before_tool"
         assert body.when is not None
         assert "not skill_loaded('python')" in body.when
+        assert ".pyi" in body.when
+        assert "pyproject.toml" in body.when
 
     def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
         _sync_bundled(db)
@@ -413,7 +415,21 @@ class TestRequirePythonSkillCondition:
     CONDITION = (
         "not skill_loaded('python') "
         "and event.data.get('canonical_tool_kind') == 'write' "
-        "and event.data.get('canonical_file_path', '').endswith('.py')"
+        "and ("
+        "event.data.get('canonical_file_path', '').endswith(('.py', '.pyi')) "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
+        "in ('pyproject.toml', 'setup.cfg', 'setup.py', 'tox.ini', 'noxfile.py', "
+        "'pytest.ini', 'mypy.ini', 'ruff.toml', '.python-version', 'Pipfile', "
+        "'py.typed') "
+        "or ("
+        "event.data.get('canonical_file_path', '').rpartition('/')[2].startswith("
+        "'requirements'"
+        ") "
+        "and event.data.get('canonical_file_path', '').rpartition('/')[2].endswith("
+        "('.txt', '.in')"
+        ")"
+        ")"
+        ")"
     )
 
     def _eval(
@@ -441,14 +457,53 @@ class TestRequirePythonSkillCondition:
         evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
         return evaluator.evaluate(self.CONDITION)
 
-    def test_matches_python_write(self) -> None:
-        assert self._eval("/project/src/main.py") is True
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/src/main.py",
+            "/project/src/gobby/deep/module.py",
+            "/project/src/package/__init__.py",
+            "/project/src/package/models.pyi",
+        ],
+    )
+    def test_matches_python_source_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
 
-    def test_matches_python_edit(self) -> None:
-        assert self._eval("/project/src/gobby/deep/module.py") is True
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/pyproject.toml",
+            "/project/setup.cfg",
+            "/project/setup.py",
+            "/project/tox.ini",
+            "/project/noxfile.py",
+            "/project/pytest.ini",
+            "/project/mypy.ini",
+            "/project/ruff.toml",
+            "/project/.python-version",
+            "/project/Pipfile",
+            "/project/src/package/py.typed",
+            "/project/requirements.txt",
+            "/project/requirements-dev.txt",
+            "/project/requirements-dev.in",
+        ],
+    )
+    def test_matches_python_config_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
 
-    def test_skips_non_python_file(self) -> None:
-        assert self._eval("/project/config.yaml") is False
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/config.yaml",
+            "/project/src/main.js",
+            "/project/package.json",
+            "/project/pyproject.yaml",
+            "/project/requirements.json",
+            "/project/not_python.py.txt",
+        ],
+    )
+    def test_skips_non_python_file(self, file_path: str) -> None:
+        assert self._eval(file_path) is False
 
     def test_skips_rust_file(self) -> None:
         assert self._eval("/project/src/main.rs") is False

@@ -1,12 +1,16 @@
-# Async — Reference
+# Async - Reference
+
+## Choose Async Deliberately
+
+Use `async def` when the work is I/O-bound and the libraries are async-aware. Keep CPU-heavy work synchronous or move it to an executor/process pool. Do not call blocking HTTP, database, subprocess, or filesystem clients directly inside the event loop.
 
 ## TaskGroup (Python 3.11+)
 
 Prefer `TaskGroup` over manual `create_task()` — it handles cancellation and error propagation:
 
 ```python
-async def fetch_all(urls: list[str]) -> list[Response]:
-    results: list[Response] = []
+async def fetch_all(urls: list[str]) -> list[bytes]:
+    results: list[bytes] = []
     async with asyncio.TaskGroup() as tg:
         for url in urls:
             tg.create_task(fetch_one(url, results))
@@ -15,7 +19,7 @@ async def fetch_all(urls: list[str]) -> list[Response]:
 
 If any task raises, `TaskGroup` cancels the remaining tasks and propagates as `ExceptionGroup`.
 
-## Concurrent I/O with gather
+## Concurrent I/O With gather
 
 When you don't need lifecycle management:
 
@@ -36,6 +40,8 @@ for r in results:
         logger.error("Task failed", exc_info=r)
 ```
 
+Convert partial failures to typed results before returning from a public API.
+
 ## Rate Limiting with Semaphore
 
 ```python
@@ -46,6 +52,8 @@ async def rate_limited_fetch(url: str) -> Response:
         return await client.get(url)
 ```
 
+Use a queue or worker pool when work arrives continuously. Keep ordering guarantees explicit.
+
 ## Timeouts
 
 ```python
@@ -54,6 +62,15 @@ try:
 except TimeoutError:
     logger.warning("Operation timed out after 30s")
 ```
+
+Prefer `asyncio.timeout()` for scoped timeout blocks in modern Python:
+
+```python
+async with asyncio.timeout(30):
+    return await client.fetch_user(user_id)
+```
+
+Set timeouts at the boundary that understands retry and cancellation policy.
 
 ## Cancellation Handling
 
@@ -67,6 +84,8 @@ async def long_running_worker() -> None:
         raise  # always re-raise CancelledError
 ```
 
+Do not convert cancellation into success unless the caller explicitly defines that behavior.
+
 ## Offloading CPU Work
 
 ```python
@@ -79,3 +98,26 @@ async def compute_heavy(data: bytes) -> Result:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(executor, cpu_bound_fn, data)
 ```
+
+Use `asyncio.to_thread()` for small blocking calls when a thread is acceptable:
+
+```python
+content = await asyncio.to_thread(path.read_text, encoding="utf-8")
+```
+
+Prefer async-native libraries for high-volume I/O.
+
+## Background Tasks
+
+Detached tasks need explicit ownership:
+
+```python
+task = asyncio.create_task(refresh_cache())
+task.add_done_callback(log_background_failure)
+```
+
+Store the task, handle failures, and cancel it during shutdown. Do not create untracked tasks from request handlers.
+
+## Async Tests
+
+Use pytest's configured async plugin. Test cancellation, timeout, retries, and partial failure with controlled tasks or fake timers. Avoid real sleeps; they make tests flaky and slow.

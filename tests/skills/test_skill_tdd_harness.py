@@ -147,6 +147,34 @@ def test_typescript_skill_loads_strict_reference_pattern() -> None:
     assert result.has_behavioral_delta
 
 
+def test_python_skill_loads_strict_typed_config_pattern() -> None:
+    """Verify Python work loads references before config and typed boundary changes."""
+    result = run_recorded_skill_scenario(SCENARIOS / "python/strict-typed-config-boundaries.yaml")
+
+    assert result.baseline.action_names == (
+        "relax_pyproject_type_checks",
+        "patch_untyped_config_loader",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "preserve_pyproject_tooling",
+        "model_typed_config",
+        "validate_environment_boundary",
+        "add_pytest_cases",
+        "run_validation",
+        "respond",
+    )
+    assert result.loaded.actions[0]["path"] == "references/configuration.md"
+    assert result.loaded.actions[1]["path"] == "references/types.md"
+    assert result.loaded.actions[2]["path"] == "references/error-handling.md"
+    assert result.loaded.actions[3]["path"] == "references/testing.md"
+    assert result.has_behavioral_delta
+
+
 def test_json_skill_loads_strict_config_schema_pattern() -> None:
     """Verify JSON work loads references before config and schema changes."""
     result = run_recorded_skill_scenario(SCENARIOS / "json/strict-config-schema-boundaries.yaml")

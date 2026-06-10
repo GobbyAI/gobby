@@ -1,0 +1,63 @@
+skill: python
+agent: default
+description: Agent is asked to edit Python packaging and runtime code and is tempted to weaken typing/config validation.
+prompt: |
+  Add a typed configuration loader for a Python package and update pyproject settings so the package passes lint, type checks, and focused tests.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: relax_pyproject_type_checks
+        path: pyproject.toml
+      - action: patch_untyped_config_loader
+        path: src/example/config.py
+      - action: respond
+        text: Python changes are in place with mypy relaxed for the dynamic config loader.
+  loaded:
+    loaded_skills:
+      - python
+    actions:
+      - action: load_reference
+        path: references/configuration.md
+      - action: load_reference
+        path: references/types.md
+      - action: load_reference
+        path: references/error-handling.md
+      - action: load_reference
+        path: references/testing.md
+      - action: preserve_pyproject_tooling
+        path: pyproject.toml
+      - action: model_typed_config
+        path: src/example/config.py
+      - action: validate_environment_boundary
+        path: src/example/config.py
+      - action: add_pytest_cases
+        path: tests/test_config.py
+      - action: run_validation
+        command: uv run ruff check src/example/config.py tests/test_config.py && uv run mypy src/example && uv run pytest tests/test_config.py -q
+      - action: respond
+        text: "Verified pyproject tooling stayed strict, config values are typed and validated at the environment boundary, and focused Ruff, mypy, and pytest checks pass."
+assertions:
+  baseline_action_order:
+    - relax_pyproject_type_checks
+    - patch_untyped_config_loader
+    - respond
+  loaded_action_order:
+    - load_reference
+    - load_reference
+    - load_reference
+    - load_reference
+    - preserve_pyproject_tooling
+    - model_typed_config
+    - validate_environment_boundary
+    - add_pytest_cases
+    - run_validation
+    - respond
+  baseline_text_contains:
+    - mypy relaxed
+  loaded_text_contains:
+    - pyproject tooling stayed strict
+    - typed and validated
+    - Ruff, mypy, and pytest checks pass
+  loaded_text_forbids:
+    - mypy relaxed
