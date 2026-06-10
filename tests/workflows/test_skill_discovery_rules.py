@@ -61,6 +61,7 @@ SKILL_DISCOVERY_RULES = {
     "require-cpp-skill",
     "require-csharp-skill",
     "require-dart-skill",
+    "require-elixir-skill",
     "require-go-skill",
     "require-java-skill",
     "require-javascript-skill",
@@ -1102,6 +1103,147 @@ class TestRequireCppSkillCondition:
 
     def test_skips_non_edit_write_tool(self) -> None:
         assert self._eval("/project/src/account_record.cpp", canonical_tool_kind="read") is False
+
+    def test_skips_empty_file_path(self) -> None:
+        assert self._eval("") is False
+
+
+# --- require-elixir-skill structure ---
+
+
+class TestRequireElixirSkillStructure:
+    """Verify require-elixir-skill rule structure."""
+
+    def test_is_before_tool_event(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-elixir-skill")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.when is not None
+        assert "not skill_loaded('elixir')" in body.when
+
+    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-elixir-skill")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert len(body.effects) == 1
+        assert body.effects[0].type == "block"
+        assert body.effects[0].reason == skill_fetch_directive("elixir")
+
+
+# --- require-elixir-skill condition evaluation ---
+
+
+class TestRequireElixirSkillCondition:
+    """Test the require-elixir-skill condition evaluates correctly."""
+
+    CONDITION = (
+        "not skill_loaded('elixir') "
+        "and event.data.get('canonical_tool_kind') == 'write' "
+        "and ("
+        "event.data.get('canonical_file_path', '').endswith(("
+        "'.ex', '.exs', '.eex', '.heex', '.leex', '.sface', '.livemd'"
+        ")) "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
+        "in ('mix.exs', 'mix.lock', '.formatter.exs', '.credo.exs', "
+        "'.dialyzer_ignore.exs', '.iex.exs') "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
+        "in ('config.exs', 'runtime.exs', 'dev.exs', 'test.exs', 'prod.exs', "
+        "'releases.exs', 'seeds.exs')"
+        ")"
+    )
+
+    def _eval(
+        self,
+        file_path: str,
+        *,
+        canonical_tool_kind: str = "write",
+        loaded_skills: list[str] | None = None,
+        injected_skills: list[str] | None = None,
+    ) -> bool:
+        variables = {"loaded_skills": loaded_skills or []}
+        if injected_skills is not None:
+            variables["injected_skills"] = injected_skills
+        context = {
+            "variables": variables,
+            "event": SimpleNamespace(
+                data={
+                    "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_file_path": file_path,
+                }
+            ),
+            "tool_input": {},
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        return evaluator.evaluate(self.CONDITION)
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/lib/accounts/notification_worker.ex",
+            "/project/test/accounts/notification_worker_test.exs",
+            "/project/lib/app_web/live/dashboard_live.html.heex",
+            "/project/lib/app_web/templates/page/index.html.eex",
+            "/project/lib/app_web/templates/page/index.html.leex",
+            "/project/lib/app_web/components/button.sface",
+            "/project/notebooks/reconciliation.livemd",
+        ],
+    )
+    def test_matches_elixir_source_template_and_notebook_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/mix.exs",
+            "/project/mix.lock",
+            "/project/.formatter.exs",
+            "/project/.credo.exs",
+            "/project/.dialyzer_ignore.exs",
+            "/project/.iex.exs",
+            "/project/config/config.exs",
+            "/project/config/runtime.exs",
+            "/project/config/dev.exs",
+            "/project/config/test.exs",
+            "/project/config/prod.exs",
+            "/project/rel/releases.exs",
+            "/project/priv/repo/seeds.exs",
+        ],
+    )
+    def test_matches_elixir_mix_and_config_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/src/accounts.erl",
+            "/project/include/accounts.hrl",
+            "/project/lib/accounts.exs.bak",
+            "/project/mix.exs.bak",
+            "/project/package.json",
+            "/project/appsettings.json",
+            "/project/.editorconfig",
+            "/project/config.yaml",
+        ],
+    )
+    def test_skips_non_elixir_targets(self, file_path: str) -> None:
+        assert self._eval(file_path) is False
+
+    def test_skips_when_already_loaded(self) -> None:
+        assert self._eval("/project/lib/accounts.ex", loaded_skills=["elixir"]) is False
+
+    def test_erlang_skill_does_not_count_as_elixir_loaded(self) -> None:
+        assert self._eval("/project/lib/accounts.ex", loaded_skills=["erlang"]) is True
+
+    def test_does_not_skip_when_legacy_injected(self) -> None:
+        assert self._eval("/project/lib/accounts.ex", injected_skills=["elixir"]) is True
+
+    def test_skips_non_edit_write_tool(self) -> None:
+        assert self._eval("/project/lib/accounts.ex", canonical_tool_kind="read") is False
 
     def test_skips_empty_file_path(self) -> None:
         assert self._eval("") is False

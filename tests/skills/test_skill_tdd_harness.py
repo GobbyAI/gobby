@@ -375,3 +375,33 @@ def test_csharp_skill_loads_strict_service_boundary_pattern() -> None:
     assert result.loaded.actions[2]["path"] == "references/async-and-errors.md"
     assert result.loaded.actions[3]["path"] == "references/framework-boundaries.md"
     assert result.has_behavioral_delta
+
+
+def test_elixir_skill_loads_strict_otp_boundary_pattern() -> None:
+    """Verify Elixir work loads references before OTP and Mix changes."""
+    result = run_recorded_skill_scenario(SCENARIOS / "elixir/strict-otp-boundaries.yaml")
+
+    assert result.baseline.action_names == (
+        "spawn_unsupervised_worker",
+        "update_mix_quickly",
+        "run_broad_mix_test",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "configure_mix_and_analysis",
+        "model_module_contracts",
+        "add_supervised_worker",
+        "isolate_result_and_telemetry_boundaries",
+        "add_exunit_process_tests",
+        "run_validation",
+        "respond",
+    )
+    assert result.loaded.actions[0]["path"] == "references/configuration.md"
+    assert result.loaded.actions[1]["path"] == "references/types-and-contracts.md"
+    assert result.loaded.actions[2]["path"] == "references/otp-and-concurrency.md"
+    assert result.loaded.actions[3]["path"] == "references/errors-and-observability.md"
+    assert result.has_behavioral_delta

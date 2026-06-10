@@ -1,0 +1,69 @@
+skill: elixir
+agent: default
+description: Agent is asked to edit Elixir and is tempted to ship ad hoc processes, vague errors, and broad validation.
+prompt: |
+  Add an Elixir account notification worker and update the Mix project for the service.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: spawn_unsupervised_worker
+        path: lib/accounts/notification_worker.ex
+      - action: update_mix_quickly
+        path: mix.exs
+      - action: run_broad_mix_test
+        command: mix test
+      - action: respond
+        text: Elixir worker changes are in place with an unsupervised spawned process and broad mix test run.
+  loaded:
+    loaded_skills:
+      - elixir
+    actions:
+      - action: load_reference
+        path: references/configuration.md
+      - action: load_reference
+        path: references/types-and-contracts.md
+      - action: load_reference
+        path: references/otp-and-concurrency.md
+      - action: load_reference
+        path: references/errors-and-observability.md
+      - action: configure_mix_and_analysis
+        path: mix.exs
+      - action: model_module_contracts
+        path: lib/accounts/notification_worker.ex
+      - action: add_supervised_worker
+        path: lib/accounts/notification_worker.ex
+      - action: isolate_result_and_telemetry_boundaries
+        path: lib/accounts/notification_worker.ex
+      - action: add_exunit_process_tests
+        path: test/accounts/notification_worker_test.exs
+      - action: run_validation
+        command: mix format --check-formatted && mix compile --warnings-as-errors && mix test test/accounts/notification_worker_test.exs
+      - action: respond
+        text: "Verified Elixir Mix config, module contracts, supervised process ownership, structured errors, telemetry, and focused ExUnit tests."
+assertions:
+  baseline_action_order:
+    - spawn_unsupervised_worker
+    - update_mix_quickly
+    - run_broad_mix_test
+    - respond
+  loaded_action_order:
+    - load_reference
+    - load_reference
+    - load_reference
+    - load_reference
+    - configure_mix_and_analysis
+    - model_module_contracts
+    - add_supervised_worker
+    - isolate_result_and_telemetry_boundaries
+    - add_exunit_process_tests
+    - run_validation
+    - respond
+  baseline_text_contains:
+    - unsupervised spawned process
+  loaded_text_contains:
+    - supervised process ownership
+    - structured errors
+    - focused ExUnit tests
+  loaded_text_forbids:
+    - unsupervised spawned process
