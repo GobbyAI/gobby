@@ -405,3 +405,33 @@ def test_elixir_skill_loads_strict_otp_boundary_pattern() -> None:
     assert result.loaded.actions[2]["path"] == "references/otp-and-concurrency.md"
     assert result.loaded.actions[3]["path"] == "references/errors-and-observability.md"
     assert result.has_behavioral_delta
+
+
+def test_ruby_skill_loads_strict_rails_boundary_pattern() -> None:
+    """Verify Ruby work loads references before Rails and Bundler changes."""
+    result = run_recorded_skill_scenario(SCENARIOS / "ruby/strict-rails-boundaries.yaml")
+
+    assert result.baseline.action_names == (
+        "add_model_callback",
+        "update_gemfile_quickly",
+        "run_broad_rspec",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "configure_bundler_and_analysis",
+        "model_service_contract",
+        "isolate_rails_boundary",
+        "preserve_result_and_observability_boundaries",
+        "add_rspec_boundary_tests",
+        "run_validation",
+        "respond",
+    )
+    assert result.loaded.actions[0]["path"] == "references/configuration.md"
+    assert result.loaded.actions[1]["path"] == "references/object-model-and-contracts.md"
+    assert result.loaded.actions[2]["path"] == "references/data-and-framework-boundaries.md"
+    assert result.loaded.actions[3]["path"] == "references/errors-and-observability.md"
+    assert result.has_behavioral_delta

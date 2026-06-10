@@ -67,6 +67,7 @@ SKILL_DISCOVERY_RULES = {
     "require-javascript-skill",
     "require-php-skill",
     "require-python-skill",
+    "require-ruby-skill",
     "require-rust-skill",
     "require-typescript-skill",
     "reset-skill-injection",
@@ -1244,6 +1245,167 @@ class TestRequireElixirSkillCondition:
 
     def test_skips_non_edit_write_tool(self) -> None:
         assert self._eval("/project/lib/accounts.ex", canonical_tool_kind="read") is False
+
+    def test_skips_empty_file_path(self) -> None:
+        assert self._eval("") is False
+
+
+# --- require-ruby-skill structure ---
+
+
+class TestRequireRubySkillStructure:
+    """Verify require-ruby-skill rule structure."""
+
+    def test_is_before_tool_event(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-ruby-skill")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.when is not None
+        assert "not skill_loaded('ruby')" in body.when
+
+    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-ruby-skill")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert len(body.effects) == 1
+        assert body.effects[0].type == "block"
+        assert body.effects[0].reason == skill_fetch_directive("ruby")
+
+
+# --- require-ruby-skill condition evaluation ---
+
+
+class TestRequireRubySkillCondition:
+    """Test the require-ruby-skill condition evaluates correctly."""
+
+    CONDITION = (
+        "not skill_loaded('ruby') "
+        "and event.data.get('canonical_tool_kind') == 'write' "
+        "and ("
+        "event.data.get('canonical_file_path', '').endswith(("
+        "'.rb', '.rake', '.gemspec', '.ru', '.erb', '.rbs', '.jbuilder', "
+        "'.builder', '.haml', '.slim'"
+        ")) "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
+        "in ('Gemfile', 'Gemfile.lock', 'gems.rb', 'gems.locked', 'Rakefile', "
+        "'Guardfile', 'Capfile', 'Dangerfile', 'Podfile', 'Brewfile', 'Fastfile', "
+        "'Appfile', 'Pluginfile', 'Deliverfile', 'Matchfile', 'Snapfile', "
+        "'Scanfile', 'Gymfile', 'config.ru', '.ruby-version', '.ruby-gemset', "
+        "'.rspec', '.rubocop.yml', '.rubocop_todo.yml', '.standard.yml', "
+        "'Steepfile') "
+        "or event.data.get('canonical_file_path', '').endswith('/sorbet/config')"
+        ")"
+    )
+
+    def _eval(
+        self,
+        file_path: str,
+        *,
+        canonical_tool_kind: str = "write",
+        loaded_skills: list[str] | None = None,
+        injected_skills: list[str] | None = None,
+    ) -> bool:
+        variables = {"loaded_skills": loaded_skills or []}
+        if injected_skills is not None:
+            variables["injected_skills"] = injected_skills
+        context = {
+            "variables": variables,
+            "event": SimpleNamespace(
+                data={
+                    "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_file_path": file_path,
+                }
+            ),
+            "tool_input": {},
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        return evaluator.evaluate(self.CONDITION)
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/app/models/account.rb",
+            "/project/lib/tasks/backfill.rake",
+            "/project/my_gem.gemspec",
+            "/project/config.ru",
+            "/project/app/views/accounts/show.html.erb",
+            "/project/sig/account.rbs",
+            "/project/app/views/accounts/show.json.jbuilder",
+            "/project/app/views/accounts/show.builder",
+            "/project/app/views/accounts/show.html.haml",
+            "/project/app/views/accounts/show.html.slim",
+        ],
+    )
+    def test_matches_ruby_source_template_and_signature_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/Gemfile",
+            "/project/Gemfile.lock",
+            "/project/gems.rb",
+            "/project/gems.locked",
+            "/project/Rakefile",
+            "/project/Guardfile",
+            "/project/Capfile",
+            "/project/Dangerfile",
+            "/project/Podfile",
+            "/project/Brewfile",
+            "/project/fastlane/Fastfile",
+            "/project/fastlane/Appfile",
+            "/project/fastlane/Pluginfile",
+            "/project/fastlane/Deliverfile",
+            "/project/fastlane/Matchfile",
+            "/project/fastlane/Snapfile",
+            "/project/fastlane/Scanfile",
+            "/project/fastlane/Gymfile",
+            "/project/.ruby-version",
+            "/project/.ruby-gemset",
+            "/project/.rspec",
+            "/project/.rubocop.yml",
+            "/project/.rubocop_todo.yml",
+            "/project/.standard.yml",
+            "/project/Steepfile",
+            "/project/sorbet/config",
+        ],
+    )
+    def test_matches_ruby_tooling_and_dsl_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/app/models/account.rb.bak",
+            "/project/Gemfile.bak",
+            "/project/package.json",
+            "/project/go.mod",
+            "/project/mix.exs",
+            "/project/config/database.yml",
+            "/project/config/settings.yaml",
+            "/project/.editorconfig",
+            "/project/Dockerfile",
+        ],
+    )
+    def test_skips_non_ruby_targets(self, file_path: str) -> None:
+        assert self._eval(file_path) is False
+
+    def test_skips_when_already_loaded(self) -> None:
+        assert self._eval("/project/app/models/account.rb", loaded_skills=["ruby"]) is False
+
+    def test_rails_skill_does_not_count_as_ruby_loaded(self) -> None:
+        assert self._eval("/project/app/models/account.rb", loaded_skills=["rails"]) is True
+
+    def test_does_not_skip_when_legacy_injected(self) -> None:
+        assert self._eval("/project/app/models/account.rb", injected_skills=["ruby"]) is True
+
+    def test_skips_non_edit_write_tool(self) -> None:
+        assert self._eval("/project/app/models/account.rb", canonical_tool_kind="read") is False
 
     def test_skips_empty_file_path(self) -> None:
         assert self._eval("") is False

@@ -1,0 +1,69 @@
+skill: ruby
+agent: default
+description: Agent is asked to edit Ruby/Rails and is tempted to ship callback-heavy code, vague errors, and broad validation.
+prompt: |
+  Add a Ruby account notification flow and update the Rails project for the service.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: add_model_callback
+        path: app/models/account.rb
+      - action: update_gemfile_quickly
+        path: Gemfile
+      - action: run_broad_rspec
+        command: bundle exec rspec
+      - action: respond
+        text: Ruby notification changes are in place with a model callback and broad RSpec run.
+  loaded:
+    loaded_skills:
+      - ruby
+    actions:
+      - action: load_reference
+        path: references/configuration.md
+      - action: load_reference
+        path: references/object-model-and-contracts.md
+      - action: load_reference
+        path: references/data-and-framework-boundaries.md
+      - action: load_reference
+        path: references/errors-and-observability.md
+      - action: configure_bundler_and_analysis
+        path: Gemfile
+      - action: model_service_contract
+        path: app/services/accounts/notification_flow.rb
+      - action: isolate_rails_boundary
+        path: app/controllers/accounts_controller.rb
+      - action: preserve_result_and_observability_boundaries
+        path: app/services/accounts/notification_flow.rb
+      - action: add_rspec_boundary_tests
+        path: spec/services/accounts/notification_flow_spec.rb
+      - action: run_validation
+        command: bundle exec rubocop app/services/accounts/notification_flow.rb spec/services/accounts/notification_flow_spec.rb && bundle exec rspec spec/services/accounts/notification_flow_spec.rb
+      - action: respond
+        text: "Verified Ruby Bundler config, service object contract, Rails boundary isolation, structured errors, instrumentation, and focused RSpec tests."
+assertions:
+  baseline_action_order:
+    - add_model_callback
+    - update_gemfile_quickly
+    - run_broad_rspec
+    - respond
+  loaded_action_order:
+    - load_reference
+    - load_reference
+    - load_reference
+    - load_reference
+    - configure_bundler_and_analysis
+    - model_service_contract
+    - isolate_rails_boundary
+    - preserve_result_and_observability_boundaries
+    - add_rspec_boundary_tests
+    - run_validation
+    - respond
+  baseline_text_contains:
+    - model callback
+  loaded_text_contains:
+    - service object contract
+    - structured errors
+    - focused RSpec tests
+  loaded_text_forbids:
+    - model callback
