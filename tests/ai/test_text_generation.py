@@ -280,6 +280,49 @@ async def test_text_generation_service_falls_back_across_profile_candidates() ->
     assert claude.requests[0].model == "haiku"
 
 
+async def test_text_generation_service_falls_back_between_named_local_endpoints() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local:lm-studio",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("qwen-lm",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local:ollama",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("qwen-ollama",),
+            ),
+        ]
+    )
+    lm_studio = FailingAdapter("lm studio offline")
+    ollama = RecordingAdapter("local:ollama")
+    service = TextGenerationService(
+        registry,
+        {"local:lm-studio": lm_studio, "local:ollama": ollama},
+    )
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="summarize",
+            profile="feature_low",
+            candidates=("local:lm-studio/qwen-lm", "local:ollama/qwen-ollama"),
+        )
+    )
+
+    assert result.text == "local:ollama:summarize"
+    assert result.provider == "local:ollama"
+    assert result.model == "qwen-ollama"
+    assert lm_studio.requests[0].provider == "local:lm-studio"
+    assert lm_studio.requests[0].model == "qwen-lm"
+    assert ollama.requests[0].provider == "local:ollama"
+    assert ollama.requests[0].model == "qwen-ollama"
+
+
 @pytest.mark.asyncio
 async def test_text_generation_service_explicit_provider_model_bypasses_profile_defaults() -> None:
     registry = AICapabilityRegistry(
