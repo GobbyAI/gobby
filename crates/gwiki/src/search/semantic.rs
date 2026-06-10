@@ -88,15 +88,14 @@ where
             degradation: None,
         });
     }
-    if matches!(request.scope, SearchScope::Global) {
+    let Some(collection) = collection_for_scope(&request.scope) else {
         return Ok(degraded(
             "qdrant",
             gobby_core::degradation::ServiceState::Unreachable {
                 message: "global semantic search requires collection fan-out".to_string(),
             },
         ));
-    }
-
+    };
     let Some(embedding) = embedding else {
         return Err(required_service_error(
             "embeddings",
@@ -138,14 +137,6 @@ where
         }
     };
 
-    let Some(collection) = collection_for_scope(&request.scope) else {
-        return Ok(degraded(
-            "qdrant",
-            gobby_core::degradation::ServiceState::Unreachable {
-                message: "global semantic search requires collection fan-out".to_string(),
-            },
-        ));
-    };
     let filter = payload_filter(&request.scope);
     let qdrant_request = SearchRequest {
         vector,
@@ -180,8 +171,7 @@ fn semantic_embedding_query(config: &EmbeddingConfig, query: &str) -> String {
 }
 
 pub fn collection_for_scope(scope: &SearchScope) -> Option<String> {
-    qdrant_collection_scope(scope)
-        .map(|scope| collection_name("gwiki", scope).expect("project and topic scopes are valid"))
+    qdrant_collection_scope(scope).and_then(|scope| collection_name("gwiki", scope).ok())
 }
 
 fn qdrant_collection_scope(scope: &SearchScope) -> Option<CollectionScope<'_>> {

@@ -1,6 +1,6 @@
 use std::fmt;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::ValueEnum;
 
@@ -143,12 +143,41 @@ pub struct AskCodeCitationOutput {
     pub symbol: Option<String>,
 }
 
+/// Whether a search hit resolves to a derived code document or wiki content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchResultType {
+    Code,
+    Wiki,
+}
+
+impl SearchResultType {
+    /// Classify a vault-relative wiki page path. Derived docs for indexed
+    /// source files live under `code/files/`; everything else is wiki content.
+    pub fn from_wiki_page(path: &Path) -> Self {
+        if path
+            .to_string_lossy()
+            .replace('\\', "/")
+            .starts_with("code/files/")
+        {
+            Self::Code
+        } else {
+            Self::Wiki
+        }
+    }
+
+    pub fn is_code(self) -> bool {
+        matches!(self, Self::Code)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct SearchResultOutput {
     pub title: Option<String>,
     pub fusion_key: String,
     pub wiki_page: PathBuf,
     pub source_path: PathBuf,
+    pub result_type: SearchResultType,
     pub snippet: String,
     pub score: f64,
     pub sources: Vec<String>,
@@ -292,6 +321,7 @@ mod tests {
                 fusion_key: "topic:rust:knowledge/topics/ownership.md".to_string(),
                 wiki_page: "knowledge/topics/ownership.md".into(),
                 source_path: "raw/INDEX.md".into(),
+                result_type: SearchResultType::Wiki,
                 snippet: "Ownership rules move values.".to_string(),
                 score: 0.91,
                 sources: vec!["bm25".to_string()],
@@ -333,6 +363,7 @@ mod tests {
                     "fusion_key": "topic:rust:knowledge/topics/ownership.md",
                     "wiki_page": "knowledge/topics/ownership.md",
                     "source_path": "raw/INDEX.md",
+                    "result_type": "wiki",
                     "snippet": "Ownership rules move values.",
                     "score": 0.91,
                     "sources": ["bm25"],

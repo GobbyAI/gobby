@@ -99,7 +99,7 @@ fn resolve_config_value_with(
         return Ok(resolved);
     }
 
-    bail!("unresolved environment pattern in `{output}`")
+    bail!("unresolved environment pattern in config value")
 }
 
 fn validate_secret_name(name: &str) -> anyhow::Result<()> {
@@ -280,7 +280,7 @@ mod tests {
     }
 
     #[test]
-    fn unresolved_environment_reports_expanded_secret_output() {
+    fn unresolved_environment_omits_expanded_secret_output() {
         let error = resolve_config_value_with(
             "https://$secret:USER@${GOBBY_SECRET_TEST_MISSING}",
             test_secret_resolver,
@@ -288,7 +288,8 @@ mod tests {
         .expect_err("error");
         let message = error.to_string();
 
-        assert!(message.contains("secret-user"));
+        assert!(message.contains("unresolved environment pattern in config value"));
+        assert!(!message.contains("secret-user"));
         assert!(!message.contains("$secret:USER"));
     }
 

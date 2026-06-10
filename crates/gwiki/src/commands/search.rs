@@ -8,7 +8,7 @@ use gobby_core::config::{
     resolve_qdrant_config,
 };
 
-use crate::output::{SearchOutput, SearchResultOutput};
+use crate::output::{SearchOutput, SearchResultOutput, SearchResultType};
 use crate::search as wiki_search;
 use crate::support::config::qdrant_config_has_url;
 use crate::support::env::database_url_for;
@@ -266,6 +266,7 @@ where
         results.push(SearchResultOutput {
             title: result.title,
             fusion_key,
+            result_type: SearchResultType::from_wiki_page(&result.path),
             wiki_page: result.path,
             source_path: result.source_path,
             snippet: result.snippet,

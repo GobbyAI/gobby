@@ -131,7 +131,7 @@ pub(super) fn dependency_topology(
     module_names: &BTreeSet<String>,
     module_edges: &BTreeSet<(String, String)>,
 ) -> BTreeMap<String, usize> {
-    let mut incoming = module_names
+    let mut dependency_count = module_names
         .iter()
         .map(|module| (module.clone(), 0usize))
         .collect::<BTreeMap<_, _>>();
@@ -141,7 +141,7 @@ pub(super) fn dependency_topology(
         .collect::<BTreeMap<_, _>>();
 
     for (source, target) in module_edges {
-        if let Some(count) = incoming.get_mut(source) {
+        if let Some(count) = dependency_count.get_mut(source) {
             *count += 1;
         }
         dependents
@@ -150,7 +150,7 @@ pub(super) fn dependency_topology(
             .insert(source.clone());
     }
 
-    let mut ready = incoming
+    let mut ready = dependency_count
         .iter()
         .filter_map(|(module, count)| (*count == 0).then_some(module.clone()))
         .collect::<VecDeque<_>>();
@@ -161,7 +161,7 @@ pub(super) fn dependency_topology(
         }
         rank.insert(module.clone(), rank.len());
         for dependent in dependents.get(&module).into_iter().flatten() {
-            let Some(count) = incoming.get_mut(dependent) else {
+            let Some(count) = dependency_count.get_mut(dependent) else {
                 continue;
             };
             *count = count.saturating_sub(1);

@@ -6,6 +6,7 @@ use super::{
     mermaid_label, mermaid_node_id, source_node, source_node_id, unresolved_target_id,
     unresolved_target_node,
 };
+use crate::graph::WikiGraphDocument;
 
 impl WikiGraphFacts {
     pub fn export_graph(
@@ -51,7 +52,18 @@ impl WikiGraphFacts {
 
         for link in &self.links {
             let target = match &link.target {
-                WikiGraphLinkTarget::Resolved(path) => document_id(&link.scope, path),
+                WikiGraphLinkTarget::Resolved(path) => {
+                    let node = document_node(&WikiGraphDocument {
+                        scope: link.scope.clone(),
+                        path: path.clone(),
+                        title: None,
+                    });
+                    let node_id = node.id.clone();
+                    if node_ids.insert(node_id.clone()) {
+                        nodes.push(node);
+                    }
+                    document_id(&link.scope, path)
+                }
                 WikiGraphLinkTarget::Unresolved(target) => {
                     let node = unresolved_target_node(&link.scope, target);
                     let node_id = node.id.clone();
@@ -73,7 +85,11 @@ impl WikiGraphFacts {
             let (kind, output_edges) = match edge.kind.as_str() {
                 "imports" => ("imports", &mut edges.imports),
                 "callers" => ("callers", &mut edges.callers),
-                _ => ("calls", &mut edges.calls),
+                "calls" => ("calls", &mut edges.calls),
+                other => {
+                    log::warn!("unknown gwiki graph code edge kind `{other}`; exporting as calls");
+                    ("calls", &mut edges.calls)
+                }
             };
             output_edges.push(GraphExportEdge {
                 source: code_endpoint_id(&edge.scope, &edge.source),
@@ -298,5 +314,37 @@ mod tests {
             mermaid_node_id(&export.edges.callers[0].target)
         )));
         assert!(report.contains("- callers: 1"));
+    }
+
+    #[test]
+    fn export_graph_adds_placeholder_for_missing_resolved_target() {
+        let scope = SearchScope::project("project-1");
+        let facts = WikiGraphFacts {
+            documents: vec![WikiGraphDocument {
+                scope: scope.clone(),
+                path: "knowledge/topics/a.md".into(),
+                title: Some("A".to_string()),
+            }],
+            links: vec![WikiGraphLink {
+                scope: scope.clone(),
+                source_path: "knowledge/topics/a.md".into(),
+                raw_target: "B".to_string(),
+                target: WikiGraphLinkTarget::Resolved("knowledge/topics/b.md".into()),
+            }],
+            sources: Vec::new(),
+            code_edges: Vec::new(),
+        };
+
+        let export = facts
+            .export_graph(GraphExportOptions::available())
+            .expect("graph export");
+        let target_id = document_id(&scope, &PathBuf::from("knowledge/topics/b.md"));
+
+        assert!(export.nodes.iter().any(|node| {
+            node.id == target_id
+                && node.kind == "wiki_page"
+                && node.path == "knowledge/topics/b.md"
+                && node.title.is_none()
+        }));
     }
 }

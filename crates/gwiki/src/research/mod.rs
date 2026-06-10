@@ -371,6 +371,7 @@ mod outcome;
 mod storage;
 
 pub(crate) use model::*;
+pub(crate) use outcome::sanitize_code_path;
 pub use outcome::*;
 pub(crate) use storage::*;
 

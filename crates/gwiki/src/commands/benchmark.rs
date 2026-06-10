@@ -4,9 +4,20 @@ use crate::benchmark;
 use crate::commands::run_analysis_command;
 use crate::support::env::database_url_for;
 use crate::support::search as search_support;
-use crate::{CommandOutcome, ScopeIdentity, ScopeKind, ScopeSelection, WikiError};
+use crate::{
+    BenchmarkOptions, CommandOutcome, ScopeIdentity, ScopeKind, ScopeSelection, WikiError,
+};
 
-pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
+pub(crate) fn execute(
+    selection: ScopeSelection,
+    options: BenchmarkOptions,
+) -> Result<CommandOutcome, WikiError> {
+    if options.retrieval_candidates == 0 {
+        return Err(WikiError::InvalidInput {
+            field: "retrieval_candidates",
+            message: "must be greater than zero".to_string(),
+        });
+    }
     let Some(database_url) = database_url_for("gwiki benchmark")? else {
         return Err(WikiError::Config {
             detail: "gwiki benchmark requires PostgreSQL and a seeded indexed project".to_string(),
@@ -26,7 +37,7 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
                     }
                 })?;
             let search_scope = search_scope_for_identity(&output_scope);
-            run_attached(&mut conn, output_scope, search_scope)
+            run_attached(&mut conn, output_scope, search_scope, options)
         },
         benchmark_text,
     )
@@ -36,6 +47,7 @@ fn run_attached(
     conn: &mut postgres::Client,
     output_scope: ScopeIdentity,
     search_scope: crate::search::SearchScope,
+    options: BenchmarkOptions,
 ) -> Result<benchmark::BenchmarkReport, WikiError> {
     let optional = {
         let gobby_home = gobby_core::gobby_home().map_err(|error| WikiError::Config {
@@ -51,7 +63,13 @@ fn run_attached(
         let ai_context = AiContext::resolve(None, &mut source);
         benchmark::resolve_optional_sources(&ai_context, &mut source)
     };
-    benchmark::report_from_postgres(conn, output_scope, search_scope, optional)
+    benchmark::report_from_postgres(
+        conn,
+        output_scope,
+        search_scope,
+        optional,
+        options.retrieval_candidates,
+    )
 }
 
 fn search_scope_for_identity(scope: &ScopeIdentity) -> crate::search::SearchScope {

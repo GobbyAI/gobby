@@ -1,7 +1,7 @@
 use super::*;
 
 pub(crate) fn inline_code(value: &str) -> String {
-    let value = value.replace('\n', " ");
+    let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
     if value.is_empty() {
         return "``".to_string();
     }

@@ -98,6 +98,8 @@ pub struct OptionalBenchmarkSources {
     pub model_provider_available: bool,
 }
 
+pub const DEFAULT_RETRIEVAL_PRECISION_CANDIDATES: usize = 3;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct BenchmarkRows {
     document_paths: Vec<String>,
@@ -122,12 +124,14 @@ pub fn report_from_postgres(
     scope: ScopeIdentity,
     search_scope: SearchScope,
     optional: OptionalBenchmarkSources,
+    retrieval_candidates: usize,
 ) -> Result<BenchmarkReport, WikiError> {
     let rows = load_benchmark_rows(conn, &search_scope)?;
     let token_compression = token_compression(&rows);
     let source_mix = source_mix(&rows);
     let graph_coverage = graph_coverage(&rows, &search_scope, optional.falkor.as_ref());
-    let retrieval_precision = retrieval_precision(&rows, &search_scope, &optional);
+    let retrieval_precision =
+        retrieval_precision(&rows, &search_scope, &optional, retrieval_candidates);
     let model_provider = model_provider(&optional);
     Ok(build_report(
         scope,
@@ -376,16 +380,25 @@ fn retrieval_precision(
     rows: &BenchmarkRows,
     scope: &SearchScope,
     optional: &OptionalBenchmarkSources,
+    max_candidates: usize,
 ) -> RetrievalPrecisionReport {
     let mut embedder = OpenAiEmbeddingBackend::new();
     let mut vector_backend = GobbyQdrantBackend;
-    retrieval_precision_with_backends(rows, scope, optional, &mut embedder, &mut vector_backend)
+    retrieval_precision_with_backends(
+        rows,
+        scope,
+        optional,
+        max_candidates,
+        &mut embedder,
+        &mut vector_backend,
+    )
 }
 
 fn retrieval_precision_with_backends<E, V>(
     rows: &BenchmarkRows,
     scope: &SearchScope,
     optional: &OptionalBenchmarkSources,
+    max_candidates: usize,
     embedder: &mut E,
     vector_backend: &mut V,
 ) -> RetrievalPrecisionReport
@@ -409,7 +422,7 @@ where
             vec![DEGRADE_EMBEDDINGS.to_string()],
         );
     };
-    let candidates = seeded_retrieval_candidates(rows);
+    let candidates = seeded_retrieval_candidates(rows, max_candidates);
     if candidates.is_empty() {
         return unavailable_retrieval_precision(
             "seeded project has no path-backed chunks for retrieval precision",
@@ -516,11 +529,14 @@ fn resolve_benchmark_embedding(
             }
         }
         AiRouting::Direct => resolve_embedding_config(source).map(SemanticEmbedding::Direct),
-        AiRouting::Auto => unreachable!("effective benchmark route resolves Auto"),
+        AiRouting::Auto => None,
     }
 }
 
-fn seeded_retrieval_candidates(rows: &BenchmarkRows) -> Vec<RetrievalPrecisionCandidate> {
+fn seeded_retrieval_candidates(
+    rows: &BenchmarkRows,
+    max_candidates: usize,
+) -> Vec<RetrievalPrecisionCandidate> {
     rows.document_paths
         .iter()
         .filter_map(|expected_path| {
@@ -533,7 +549,7 @@ fn seeded_retrieval_candidates(rows: &BenchmarkRows) -> Vec<RetrievalPrecisionCa
                     expected_path: expected_path.clone(),
                 })
         })
-        .take(3)
+        .take(max_candidates)
         .collect()
 }
 
@@ -563,7 +579,7 @@ fn model_provider_available(context: &AiContext) -> bool {
             binding.api_base.as_deref().is_some_and(non_empty)
                 && binding.model.as_deref().is_some_and(non_empty)
         }
-        AiRouting::Auto => unreachable!("effective benchmark route resolves Auto"),
+        AiRouting::Auto => false,
     }
 }
 
@@ -728,6 +744,7 @@ mod tests {
             &rows(),
             &SearchScope::topic("rust"),
             &configured_optional_sources(),
+            DEFAULT_RETRIEVAL_PRECISION_CANDIDATES,
             &mut embedder,
             &mut vector_backend,
         );
@@ -765,7 +782,12 @@ mod tests {
             ScopeIdentity::topic("rust"),
             token_compression(&rows()),
             graph_coverage(&rows(), &SearchScope::topic("rust"), None),
-            retrieval_precision(&rows(), &SearchScope::topic("rust"), &optional),
+            retrieval_precision(
+                &rows(),
+                &SearchScope::topic("rust"),
+                &optional,
+                DEFAULT_RETRIEVAL_PRECISION_CANDIDATES,
+            ),
             source_mix(&rows()),
             &optional,
             AvailabilityReport {
@@ -815,6 +837,7 @@ mod tests {
             &rows,
             &SearchScope::topic("rust"),
             &optional,
+            DEFAULT_RETRIEVAL_PRECISION_CANDIDATES,
             &mut embedder,
             &mut vector_backend,
         );
@@ -833,6 +856,19 @@ mod tests {
         assert_eq!(
             report.retrieval_precision.reason.as_deref(),
             Some("seeded project has no path-backed chunks for retrieval precision")
+        );
+    }
+
+    #[test]
+    fn retrieval_precision_candidate_count_is_configurable() {
+        let candidates = seeded_retrieval_candidates(&rows(), 1);
+
+        assert_eq!(
+            candidates,
+            vec![RetrievalPrecisionCandidate {
+                query: "one two".to_string(),
+                expected_path: "ownership.md".to_string(),
+            }]
         );
     }
 

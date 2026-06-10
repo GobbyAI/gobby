@@ -68,7 +68,7 @@ pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
         Command::Read { target, scope } => read::execute(target, scope),
         Command::Backlinks { page, scope } => backlinks::execute(page, scope),
         Command::LinkSuggest { scope, limit } => backlinks::execute_link_suggest(scope, limit),
-        Command::Benchmark { scope } => benchmark::execute(scope),
+        Command::Benchmark { scope, options } => benchmark::execute(scope, options),
         Command::Research(options) => research::execute(options),
         Command::Compile {
             topic,

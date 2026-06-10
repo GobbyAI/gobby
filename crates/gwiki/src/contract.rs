@@ -48,6 +48,7 @@ pub fn contract() -> CliContract {
                     "results",
                     "degradations",
                     "fusion_key",
+                    "result_type",
                     "path",
                     "title",
                     "summary",

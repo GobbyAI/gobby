@@ -18,8 +18,6 @@ use crate::research_loop::{
 use crate::session::ResearchCodeCitation;
 use crate::{IngestFileOptions, ReadTarget, ScopeSelection, WikiError};
 
-const CODE_FILES_PREFIX: &str = "code/files/";
-
 pub(crate) struct GcoreResearchModel {
     pub(crate) requested_route: AiRouting,
     pub(crate) require_ai: bool,
@@ -140,17 +138,17 @@ impl WikiSearch for CommandSearch {
             format!("{} search hit(s) for {query}", output.results.len()),
         )
         .with_sources(dedup_strings(sources))
-        .with_code_citations(code_citations_from_search_results(&output.results))
+        .with_code_citations(code_citations_from_search_results(&output.results)?)
         .with_degradations(output.degradations))
     }
 }
 
 fn code_citations_from_search_results(
     results: &[crate::output::SearchResultOutput],
-) -> Vec<ResearchCodeCitation> {
+) -> Result<Vec<ResearchCodeCitation>, WikiError> {
     let mut citations = Vec::new();
     for hit in results {
-        if !is_code_result(&hit.wiki_page) {
+        if !hit.result_type.is_code() {
             continue;
         }
         let provenance = if hit.sources.is_empty() {
@@ -158,25 +156,14 @@ fn code_citations_from_search_results(
         } else {
             hit.sources.clone()
         };
-        citations.push(
-            ResearchCodeCitation::new(
-                hit.source_path.display().to_string(),
-                None,
-                hit.title.clone(),
-                provenance,
-            )
-            .expect("search result code citations have provenance"),
-        );
+        citations.push(ResearchCodeCitation::new(
+            hit.source_path.display().to_string(),
+            None,
+            hit.title.clone(),
+            provenance,
+        )?);
     }
-    dedup_code_citations(citations)
-}
-
-fn is_code_result(path: &Path) -> bool {
-    normalized_path(path).starts_with(CODE_FILES_PREFIX)
-}
-
-fn normalized_path(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+    Ok(dedup_code_citations(citations))
 }
 
 pub(crate) struct CommandRead {

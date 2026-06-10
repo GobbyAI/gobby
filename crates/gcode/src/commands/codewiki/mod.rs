@@ -421,7 +421,7 @@ pub fn run(
     progress.emit("generating changes docs");
     docs.push((
         "code/_changes.md".to_string(),
-        build_codewiki_changes_doc(previous_meta.index_snapshot.as_ref(), &index_snapshot),
+        build_codewiki_changes_doc(previous_meta.index_snapshot.as_ref(), &index_snapshot)?,
     ));
     let module_count = docs
         .iter()

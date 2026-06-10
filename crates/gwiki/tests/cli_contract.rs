@@ -6,7 +6,7 @@ use gobby_wiki::{
     ScopeIdentity,
     output::{
         AskAiOutput, AskCodeCitationOutput, AskCodeEdgeOutput, AskOutput, AskRelatedPageOutput,
-        AskSynthesisOutput, SearchResultOutput, SearchSourceExplanationOutput,
+        AskSynthesisOutput, SearchResultOutput, SearchResultType, SearchSourceExplanationOutput,
     },
 };
 use serde_json::Value;
@@ -122,6 +122,7 @@ fn representative_ask_output() -> AskOutput {
             fusion_key: "wiki:contract-guardrails".to_string(),
             wiki_page: PathBuf::from("knowledge/topics/contract-guardrails.md"),
             source_path: PathBuf::from("crates/gwiki/src/contract.rs"),
+            result_type: SearchResultType::Wiki,
             snippet: "Contracts must describe serialized command output.".to_string(),
             score: 0.98,
             sources: vec!["fts".to_string(), "semantic".to_string()],

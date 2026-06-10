@@ -5,10 +5,10 @@ use std::collections::BTreeSet;
 pub(crate) fn build_codewiki_changes_doc(
     previous: Option<&CodewikiIndexSnapshot>,
     current: &CodewikiIndexSnapshot,
-) -> String {
+) -> anyhow::Result<String> {
     let baseline = previous.is_none();
     let degraded = !current.degraded_sources.is_empty();
-    let mut doc = changes_frontmatter(baseline, degraded, &current.degraded_sources);
+    let mut doc = changes_frontmatter(baseline, degraded, &current.degraded_sources)?;
     doc.push_str("# Index Changes\n\n");
     doc.push_str("## Current Snapshot\n\n");
     doc.push_str(&format!("- Files: {}\n", current.files.len()));
@@ -24,7 +24,7 @@ pub(crate) fn build_codewiki_changes_doc(
     let Some(previous) = previous else {
         doc.push_str("No previous index snapshot was available.\n");
         doc.push_str("This page is the baseline for future index changes.\n");
-        return doc;
+        return Ok(doc);
     };
 
     let added_files = current
@@ -97,7 +97,7 @@ pub(crate) fn build_codewiki_changes_doc(
         );
     }
 
-    doc
+    Ok(doc)
 }
 
 #[derive(Serialize)]
@@ -112,7 +112,11 @@ struct ChangesFrontmatter<'a> {
     degraded_sources: Vec<&'a str>,
 }
 
-fn changes_frontmatter(baseline: bool, degraded: bool, degraded_sources: &[String]) -> String {
+fn changes_frontmatter(
+    baseline: bool,
+    degraded: bool,
+    degraded_sources: &[String],
+) -> anyhow::Result<String> {
     let data = ChangesFrontmatter {
         title: "Index Changes",
         kind: "code_changes",
@@ -123,16 +127,14 @@ fn changes_frontmatter(baseline: bool, degraded: bool, degraded_sources: &[Strin
         degraded,
         degraded_sources: degraded_sources.iter().map(String::as_str).collect(),
     };
-    let yaml = serde_yaml::to_string(&data)
-        .expect("codewiki changes frontmatter only contains YAML-serializable data");
-    let yaml = yaml.strip_prefix("---\n").unwrap_or(&yaml);
+    let yaml = serde_yaml::to_string(&data)?;
     let mut out = String::from("---\n");
-    out.push_str(yaml);
+    out.push_str(&yaml);
     if !out.ends_with('\n') {
         out.push('\n');
     }
     out.push_str("---\n\n");
-    out
+    Ok(out)
 }
 
 fn write_bullet_section(

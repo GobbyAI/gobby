@@ -387,10 +387,7 @@ fn code_citation_key(citation: &AskCodeCitationOutput) -> CodeCitationKey {
 }
 
 fn is_code_result(hit: &SearchResultOutput) -> bool {
-    hit.wiki_page
-        .to_string_lossy()
-        .replace('\\', "/")
-        .starts_with("code/files/")
+    hit.result_type.is_code()
 }
 
 fn synthesize(
@@ -637,7 +634,7 @@ mod tests {
         WikiGraphCodeEdge, WikiGraphDocument, WikiGraphFacts, WikiGraphLink, WikiGraphLinkTarget,
         WikiGraphSource,
     };
-    use crate::output::SearchResultOutput;
+    use crate::output::{SearchResultOutput, SearchResultType};
     use crate::search::SearchScope;
 
     use super::*;
@@ -653,6 +650,7 @@ mod tests {
                 fusion_key: "topic:docs:wiki/hooks.md".to_string(),
                 wiki_page: PathBuf::from("wiki/hooks.md"),
                 source_path: PathBuf::from("raw/hooks.md"),
+                result_type: SearchResultType::Wiki,
                 snippet: "Hooks run at turn boundaries.".to_string(),
                 score: 0.9,
                 sources: vec!["bm25".to_string()],
@@ -698,6 +696,7 @@ mod tests {
                     fusion_key: "project:project-1:code/files/src/handler.rs.md".to_string(),
                     wiki_page: PathBuf::from("code/files/src/handler.rs.md"),
                     source_path: PathBuf::from("src/handler.rs"),
+                    result_type: SearchResultType::Code,
                     snippet: "fn handle() calls route().".to_string(),
                     score: 0.95,
                     sources: vec!["bm25".to_string(), "graph".to_string()],
@@ -708,6 +707,7 @@ mod tests {
                     fusion_key: "project:project-1:wiki/architecture.md".to_string(),
                     wiki_page: PathBuf::from("wiki/architecture.md"),
                     source_path: PathBuf::from("raw/architecture.md"),
+                    result_type: SearchResultType::Wiki,
                     snippet: "The handler delegates routing.".to_string(),
                     score: 0.85,
                     sources: vec!["graph".to_string()],
@@ -749,6 +749,7 @@ mod tests {
                 fusion_key: "project:project-1:wiki/architecture.md".to_string(),
                 wiki_page: PathBuf::from("wiki/architecture.md"),
                 source_path: PathBuf::from("raw/architecture.md"),
+                result_type: SearchResultType::Wiki,
                 snippet: "The handler delegates routing.".to_string(),
                 score: 0.85,
                 sources: vec!["bm25".to_string()],

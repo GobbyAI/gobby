@@ -12,7 +12,11 @@ use std::path::PathBuf;
 use super::{
     CodeVectorConfigError, CodeVectorSettings, FALKORDB_GRAPH_NAME, FalkorConfig, QdrantConfig,
 };
-use crate::config::context::IndexingSettings;
+use crate::config::context::{
+    FALKORDB_HOST_CONFIG_KEY, FALKORDB_PASSWORD_CONFIG_KEY, FALKORDB_PORT_CONFIG_KEY,
+    GOBBY_FALKORDB_HOST_ENV, GOBBY_FALKORDB_PASSWORD_ENV, GOBBY_FALKORDB_PORT_ENV,
+    IndexingSettings,
+};
 use crate::{db, secrets};
 
 struct PostgresConfigSource<'a> {
@@ -26,9 +30,9 @@ trait ServiceConfigSource {
 
 fn service_env_value(key: &str) -> Option<String> {
     let env_key = match key {
-        "databases.falkordb.host" => "GOBBY_FALKORDB_HOST",
-        "databases.falkordb.port" => "GOBBY_FALKORDB_PORT",
-        "databases.falkordb.password" => "GOBBY_FALKORDB_PASSWORD",
+        FALKORDB_HOST_CONFIG_KEY => GOBBY_FALKORDB_HOST_ENV,
+        FALKORDB_PORT_CONFIG_KEY => GOBBY_FALKORDB_PORT_ENV,
+        FALKORDB_PASSWORD_CONFIG_KEY => GOBBY_FALKORDB_PASSWORD_ENV,
         "databases.qdrant.url" => "GOBBY_QDRANT_URL",
         "databases.qdrant.api_key" => "GOBBY_QDRANT_API_KEY",
         _ => return None,
@@ -350,11 +354,11 @@ pub(super) fn resolve_falkordb_config(
 fn resolve_falkordb_config_from_source(
     source: &mut impl ServiceConfigSource,
 ) -> anyhow::Result<Option<FalkorConfig>> {
-    let Some(host) = resolve_service_setting(source, "databases.falkordb.host")? else {
+    let Some(host) = resolve_service_setting(source, FALKORDB_HOST_CONFIG_KEY)? else {
         return Ok(None);
     };
-    let port = resolve_service_port(source, "databases.falkordb.port", 16379)?;
-    let password = resolve_service_setting(source, "databases.falkordb.password")?;
+    let port = resolve_service_port(source, FALKORDB_PORT_CONFIG_KEY, 16379)?;
+    let password = resolve_service_setting(source, FALKORDB_PASSWORD_CONFIG_KEY)?;
 
     Ok(Some(FalkorConfig {
         host,

@@ -72,6 +72,7 @@ pub enum Command {
     },
     Benchmark {
         scope: ScopeSelection,
+        options: BenchmarkOptions,
     },
     Research(research::ResearchOptions),
     Compile {
@@ -140,6 +141,24 @@ pub struct SetupOptions {
     pub embedding_query_prefix: Option<String>,
     pub embedding_vector_dim: Option<usize>,
     pub embedding_api_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BenchmarkOptions {
+    pub retrieval_candidates: usize,
+}
+
+impl BenchmarkOptions {
+    pub const DEFAULT_RETRIEVAL_CANDIDATES: usize =
+        crate::benchmark::DEFAULT_RETRIEVAL_PRECISION_CANDIDATES;
+}
+
+impl Default for BenchmarkOptions {
+    fn default() -> Self {
+        Self {
+            retrieval_candidates: Self::DEFAULT_RETRIEVAL_CANDIDATES,
+        }
+    }
 }
 
 /// AI and media policy options for `ingest-file`.

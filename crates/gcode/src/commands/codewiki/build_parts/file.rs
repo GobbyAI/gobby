@@ -1,4 +1,8 @@
-use super::super::*;
+use super::super::{
+    CodewikiProgress, FileDoc, SourceSpan, SymbolDoc, TextGenerator, citation_list,
+    component_label, ground_text, maybe_generate, prompts, structural_file_summary,
+    structural_symbol_purpose,
+};
 use crate::models::Symbol;
 
 pub(crate) fn build_file_doc(

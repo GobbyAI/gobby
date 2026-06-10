@@ -120,6 +120,8 @@ fn inline_code_uses_commonmark_backtick_delimiters() {
     assert_eq!(inline_code("a``b"), "```a``b```");
     assert_eq!(inline_code("`edge`"), "`` `edge` ``");
     assert_eq!(inline_code("two\nlines"), "`two lines`");
+    assert_eq!(inline_code("two\n\t  lines"), "`two lines`");
+    assert_eq!(inline_code("  padded  value  "), "`padded value`");
 }
 
 #[test]

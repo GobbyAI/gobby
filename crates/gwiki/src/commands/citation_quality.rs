@@ -335,10 +335,16 @@ fn contradiction_section(
         };
     }
 
+    // TODO: implement AI-assisted contradiction detection over the provenance
+    // graph (compare claims that share sections across sources). Until then
+    // this section is an explicit placeholder: it runs no detection, never
+    // reports findings, and repeated support is not treated as contradiction
+    // evidence.
     ContradictionSection {
-        available: true,
+        available: false,
         note: Some(
-            "AI-assisted pass completed; repeated support is not treated as contradiction evidence."
+            "placeholder — AI-assisted contradiction detection not yet implemented; \
+             no findings reported."
                 .to_string(),
         ),
         findings: Vec::new(),
@@ -690,7 +696,7 @@ mod tests {
         let report = build_report(temp.path(), ScopeIdentity::global(), true).expect("report");
 
         assert!(report.markdown.contains("## Contradictions"));
-        assert!(report.markdown.contains("available: true"));
+        assert!(report.markdown.contains("available: false"));
         assert!(!report.markdown.contains("Shared claim."));
         assert!(!report.markdown.contains("src-1, src-2"));
         assert!(report.markdown.contains("No contradictions reported."));

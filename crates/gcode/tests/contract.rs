@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
 
+use pulldown_cmark::{Event, HeadingLevel, Parser, Tag, TagEnd};
 use serde_json::Value;
+use syn::{Expr, ExprLit, Item, Lit};
 
 fn pinned_contract() -> Value {
     serde_json::from_str(include_str!("../contract/gcode.contract.json")).expect("pinned contract")
@@ -78,6 +80,12 @@ struct RelationshipShape {
     target: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SchemaSection {
+    Labels,
+    Relationships,
+}
+
 #[derive(Debug, Default)]
 struct CypherSnippets {
     node_merges: BTreeMap<String, Vec<BTreeSet<String>>>,
@@ -86,34 +94,16 @@ struct CypherSnippets {
 
 fn schema_node_identities(docs: &str) -> BTreeMap<String, BTreeSet<String>> {
     let mut identities = BTreeMap::new();
-    let mut in_labels = false;
     let mut active_label = None::<String>;
-    let mut text = String::new();
 
-    for line in docs.lines() {
-        let trimmed = line.trim();
-        if trimmed == "## Labels" {
-            in_labels = true;
-            continue;
-        }
-        if in_labels && trimmed.starts_with("## ") {
-            break;
-        }
-        if !in_labels {
-            continue;
-        }
-        if let Some(label) = single_backtick_token(trimmed) {
-            active_label = Some(label.to_string());
-            text.clear();
-            continue;
-        }
-        if active_label.is_some() {
-            text.push(' ');
-            text.push_str(trimmed);
-            if let Some(props) = identity_props(&text) {
-                identities.insert(active_label.take().expect("active label"), props);
-                text.clear();
-            }
+    for span in markdown_section_code_spans(docs, SchemaSection::Labels) {
+        if let Some(props) = identity_props(&span) {
+            let label = active_label
+                .take()
+                .unwrap_or_else(|| panic!("identity props {props:?} missing active label"));
+            identities.insert(label, props);
+        } else {
+            active_label = Some(span);
         }
     }
 
@@ -122,63 +112,94 @@ fn schema_node_identities(docs: &str) -> BTreeMap<String, BTreeSet<String>> {
 
 fn schema_relationship_shapes(docs: &str) -> BTreeSet<RelationshipShape> {
     let mut shapes = BTreeSet::new();
-    let mut in_relationships = false;
     let mut active_relationship = None::<String>;
-    let mut text = String::new();
 
-    for line in docs.lines() {
-        let trimmed = line.trim();
-        if trimmed == "## Relationships" {
-            in_relationships = true;
-            continue;
-        }
-        if in_relationships && trimmed.starts_with("## ") {
-            break;
-        }
-        if !in_relationships {
-            continue;
-        }
-        if let Some(name) = single_backtick_token(trimmed) {
-            collect_relationship_shapes(&mut shapes, active_relationship.take(), &text);
-            active_relationship = Some(name.to_string());
-            text.clear();
-            continue;
-        }
-        if active_relationship.is_some() {
-            text.push(' ');
-            text.push_str(trimmed);
+    for span in markdown_section_code_spans(docs, SchemaSection::Relationships) {
+        if let Some((source, target)) = span.split_once(" -> ") {
+            let name = active_relationship
+                .as_ref()
+                .unwrap_or_else(|| panic!("relationship span `{span}` missing active name"));
+            shapes.insert(RelationshipShape {
+                name: name.clone(),
+                source: source.to_string(),
+                target: target.to_string(),
+            });
+        } else {
+            active_relationship = Some(span);
         }
     }
-    collect_relationship_shapes(&mut shapes, active_relationship, &text);
 
     shapes
 }
 
-fn collect_relationship_shapes(
-    shapes: &mut BTreeSet<RelationshipShape>,
-    relationship: Option<String>,
-    text: &str,
-) {
-    let Some(name) = relationship else {
-        return;
-    };
-    for span in backtick_spans(text) {
-        let Some((source, target)) = span.split_once(" -> ") else {
-            continue;
-        };
-        shapes.insert(RelationshipShape {
-            name: name.clone(),
-            source: source.to_string(),
-            target: target.to_string(),
-        });
+fn markdown_section_code_spans(docs: &str, target: SchemaSection) -> Vec<String> {
+    let mut active_section = None;
+    let mut heading_level = None;
+    let mut heading_text = String::new();
+    let mut spans = Vec::new();
+
+    for event in Parser::new(docs) {
+        match event {
+            Event::Start(Tag::Heading { level, .. }) => {
+                heading_level = Some(level);
+                heading_text.clear();
+            }
+            Event::End(TagEnd::Heading(_)) => {
+                active_section = if heading_level == Some(HeadingLevel::H2) {
+                    section_from_heading(&heading_text)
+                } else {
+                    active_section
+                };
+                heading_level = None;
+            }
+            Event::Text(text) | Event::Code(text) if heading_level.is_some() => {
+                heading_text.push_str(&text);
+            }
+            Event::Code(code) if active_section == Some(target) => spans.push(code.to_string()),
+            _ => {}
+        }
+    }
+
+    spans
+}
+
+fn section_from_heading(heading: &str) -> Option<SchemaSection> {
+    match heading.trim() {
+        "Labels" => Some(SchemaSection::Labels),
+        "Relationships" => Some(SchemaSection::Relationships),
+        _ => None,
     }
 }
 
 fn parse_cypher_snippets(writer: &str) -> CypherSnippets {
+    let syntax = syn::parse_file(writer).expect("code graph writer must parse as Rust");
     let mut snippets = CypherSnippets::default();
     let mut aliases = BTreeMap::new();
 
-    for line in writer.lines().map(str::trim) {
+    for item in syntax.items {
+        let Item::Const(item) = item else {
+            continue;
+        };
+        let Expr::Lit(ExprLit {
+            lit: Lit::Str(cypher),
+            ..
+        }) = item.expr.as_ref()
+        else {
+            continue;
+        };
+        parse_cypher_text(&cypher.value(), &mut snippets, &mut aliases);
+    }
+
+    snippets
+}
+
+fn parse_cypher_text(
+    cypher: &str,
+    snippets: &mut CypherSnippets,
+    aliases: &mut BTreeMap<String, String>,
+) {
+    aliases.clear();
+    for line in cypher.lines().map(str::trim) {
         if line.starts_with("const ") {
             aliases.clear();
         }
@@ -203,12 +224,6 @@ fn parse_cypher_snippets(writer: &str) -> CypherSnippets {
             });
         }
     }
-
-    snippets
-}
-
-fn single_backtick_token(text: &str) -> Option<&str> {
-    text.strip_prefix('`')?.strip_suffix('`')
 }
 
 fn identity_props(text: &str) -> Option<BTreeSet<String>> {
@@ -222,20 +237,6 @@ fn identity_props(text: &str) -> Option<BTreeSet<String>> {
             .map(str::to_string)
             .collect(),
     )
-}
-
-fn backtick_spans(text: &str) -> Vec<String> {
-    let mut spans = Vec::new();
-    let mut rest = text;
-    while let Some(start) = rest.find('`') {
-        let after_start = &rest[start + 1..];
-        let Some(end) = after_start.find('`') else {
-            break;
-        };
-        spans.push(after_start[..end].to_string());
-        rest = &after_start[end + 1..];
-    }
-    spans
 }
 
 fn parse_node_merge(line: &str) -> Option<(String, String, BTreeSet<String>)> {
@@ -271,4 +272,61 @@ fn parse_relationship_merge(line: &str) -> Option<(String, String, String)> {
         .to_string();
     let target_alias = rest.split_once(')')?.0.to_string();
     Some((source_alias.to_string(), relationship, target_alias))
+}
+
+#[test]
+fn markdown_schema_parser_reads_code_spans_from_target_sections() {
+    let docs = r#"
+# Contract
+
+## Labels
+
+`CodeFile`
+: Identity is
+`(project, path)`.
+
+## Relationships
+
+`IMPORTS`
+: `CodeFile -> CodeModule`.
+
+## Consumer Contract
+
+`ignored`
+"#;
+
+    assert_eq!(
+        schema_node_identities(docs)["CodeFile"],
+        BTreeSet::from(["project".to_string(), "path".to_string()])
+    );
+    assert!(
+        schema_relationship_shapes(docs).contains(&RelationshipShape {
+            name: "IMPORTS".to_string(),
+            source: "CodeFile".to_string(),
+            target: "CodeModule".to_string(),
+        })
+    );
+}
+
+#[test]
+fn cypher_parser_reads_rust_string_constants() {
+    let writer = r#"
+const TEST_CYPHER: &str = "MERGE (f:CodeFile {path: $path, project: $project})
+MERGE (m:CodeModule {name: $name, project: $project})
+MERGE (f)-[r:IMPORTS]->(m)";
+"#;
+
+    let snippets = parse_cypher_snippets(writer);
+
+    assert!(
+        snippets.node_merges["CodeFile"]
+            .contains(&BTreeSet::from(
+                ["path".to_string(), "project".to_string(),]
+            ))
+    );
+    assert!(snippets.relationship_shapes.contains(&RelationshipShape {
+        name: "IMPORTS".to_string(),
+        source: "CodeFile".to_string(),
+        target: "CodeModule".to_string(),
+    }));
 }

@@ -12,6 +12,7 @@ use serde_json::json;
 
 use crate::code_graph::{AffectedPage, CodeChangeSet, CodeGraphEdge, CodeGraphQuery};
 use crate::provenance::ProvenanceGraph;
+use crate::research::sanitize_code_path;
 use crate::search::SearchScope;
 use crate::support::env::database_url_for;
 use crate::support::scope::resolve_selection_context;
@@ -492,6 +493,15 @@ fn changed_files_from_diff(path: &Path) -> Result<Vec<String>, WikiError> {
 
 fn parse_unified_diff_files(contents: &str) -> Vec<String> {
     let mut files = BTreeSet::new();
+    // Diff headers are attacker-influenced input (review diffs can come from
+    // arbitrary branches), so every candidate path is validated through
+    // sanitize_code_path before it can scope downstream graph queries:
+    // absolute paths, parent-directory traversal, and empty paths are dropped.
+    let mut insert_sanitized = |candidate: &str| {
+        if let Some(path) = sanitize_code_path(candidate) {
+            files.insert(path);
+        }
+    };
     for line in contents.lines() {
         if let Some(path) = line
             .strip_prefix("+++ b/")
@@ -500,7 +510,7 @@ fn parse_unified_diff_files(contents: &str) -> Vec<String> {
             // `+++ b/` is the new path; `--- a/` keeps deleted files visible when
             // the right side is `/dev/null`.
             if path != "/dev/null" {
-                files.insert(path.to_string());
+                insert_sanitized(path);
             }
         } else if let Some(rest) = line.strip_prefix("diff --git a/")
             && let Some((left, right)) = rest.split_once(" b/")
@@ -508,14 +518,18 @@ fn parse_unified_diff_files(contents: &str) -> Vec<String> {
             if right.trim().is_empty() {
                 // Malformed or truncated diff headers have no right side; keep the
                 // left path so the report still scopes the affected deleted file.
-                files.insert(left.trim().trim_matches('"').to_string());
+                insert_sanitized(trim_diff_path(left));
             } else {
                 // Rename headers carry old and new paths; review impact follows the new path.
-                files.insert(right.trim().trim_matches('"').to_string());
+                insert_sanitized(trim_diff_path(right));
             }
         }
     }
     files.into_iter().collect()
+}
+
+fn trim_diff_path(path: &str) -> &str {
+    path.trim().trim_matches('"')
 }
 
 fn review_affected_page(page: AffectedPage) -> ReviewAffectedPage {
@@ -727,6 +741,22 @@ mod tests {
         assert_eq!(
             files,
             vec!["src/deleted.rs".to_string(), "src/new.rs".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_unified_diff_files_sanitizes_unsafe_paths() {
+        let files = parse_unified_diff_files(
+            "diff --git a/src/./safe.rs b/src/./safe.rs\n\
+             +++ b/../escape.rs\n\
+             diff --git a/src/old.rs b//tmp/absolute.rs\n\
+             --- a/src/./deleted.rs\n\
+             +++ /dev/null\n",
+        );
+
+        assert_eq!(
+            files,
+            vec!["src/deleted.rs".to_string(), "src/safe.rs".to_string()]
         );
     }
 }

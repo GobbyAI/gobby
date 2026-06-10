@@ -128,6 +128,7 @@
         "results",
         "degradations",
         "fusion_key",
+        "result_type",
         "path",
         "title",
         "summary",

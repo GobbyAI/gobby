@@ -316,13 +316,21 @@ fn setup_cli_flags_map_to_command_options() {
 
 #[test]
 fn benchmark_cli_maps_to_command_options() {
-    let command = command_from_cli(CliCommand::Benchmark, ScopeSelection::topic("rust"))
-        .expect("benchmark command maps");
+    let command = command_from_cli(
+        CliCommand::Benchmark(BenchmarkArgs {
+            retrieval_candidates: 5,
+        }),
+        ScopeSelection::topic("rust"),
+    )
+    .expect("benchmark command maps");
 
     assert_eq!(
         command,
         Command::Benchmark {
-            scope: ScopeSelection::topic("rust")
+            scope: ScopeSelection::topic("rust"),
+            options: BenchmarkOptions {
+                retrieval_candidates: 5,
+            }
         }
     );
 }

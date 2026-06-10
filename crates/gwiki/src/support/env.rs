@@ -36,8 +36,11 @@ pub(crate) fn database_url() -> anyhow::Result<Option<String>> {
 
     let home = gobby_core::gobby_home()?;
     let bootstrap_path = home.join("bootstrap.yaml");
-    if let Ok(database_url) = resolve_brokered_database_url_at(&home, &bootstrap_path) {
-        return Ok(Some(database_url));
+    match resolve_brokered_database_url_at(&home, &bootstrap_path) {
+        Ok(database_url) => return Ok(Some(database_url)),
+        Err(error) => {
+            log::debug!("failed to resolve brokered gwiki database URL: {error}");
+        }
     }
     if let Some(database_url) = resolve_database_url_from_bootstrap_file(&bootstrap_path)? {
         return Ok(Some(database_url));

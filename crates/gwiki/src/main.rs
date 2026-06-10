@@ -4,7 +4,9 @@ use std::process::ExitCode;
 
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use gobby_core::config::AiRouting;
-use gobby_wiki::{Command, IngestFileOptions, ReadTarget, ScopeSelection, WikiError, output};
+use gobby_wiki::{
+    BenchmarkOptions, Command, IngestFileOptions, ReadTarget, ScopeSelection, WikiError, output,
+};
 use serde_json::json;
 
 const CLI_SUBCOMMANDS: &[&str] = &[
@@ -118,7 +120,7 @@ enum CliCommand {
     /// Suggest unresolved wiki links in the selected scope.
     LinkSuggest(LinkSuggestArgs),
     /// Report benchmark metrics for an indexed seeded project.
-    Benchmark,
+    Benchmark(BenchmarkArgs),
     /// Dispatch research workers and checkpoint wiki research state.
     Research(ResearchArgs),
     /// Compile accepted research notes into wiki articles.
@@ -238,6 +240,30 @@ struct AskArgs {
     /// Fail if synthesis is requested but no AI route succeeds.
     #[arg(long = "require-ai")]
     require_ai: bool,
+}
+
+#[derive(Debug, Args)]
+struct BenchmarkArgs {
+    /// Seeded retrieval precision probes to run.
+    #[arg(
+        long = "retrieval-candidates",
+        default_value_t = BenchmarkOptions::DEFAULT_RETRIEVAL_CANDIDATES,
+        value_parser = parse_positive_usize
+    )]
+    retrieval_candidates: usize,
+}
+
+fn parse_positive_usize(value: &str) -> Result<usize, String> {
+    value
+        .parse::<usize>()
+        .map_err(|error| error.to_string())
+        .and_then(|value| {
+            if value > 0 {
+                Ok(value)
+            } else {
+                Err("must be greater than zero".to_string())
+            }
+        })
 }
 
 #[derive(Debug, Args)]
@@ -576,7 +602,12 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             scope,
             limit: args.limit,
         }),
-        CliCommand::Benchmark => Ok(Command::Benchmark { scope }),
+        CliCommand::Benchmark(args) => Ok(Command::Benchmark {
+            scope,
+            options: BenchmarkOptions {
+                retrieval_candidates: args.retrieval_candidates,
+            },
+        }),
         CliCommand::Research(args) => {
             let question = match (args.audit, args.question) {
                 (_, Some(question)) => question,

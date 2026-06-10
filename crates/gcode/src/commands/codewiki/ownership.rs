@@ -347,6 +347,15 @@ where
             Some(value)
         }
         WorkerRecv::TimedOut => {
+            cancelled.store(true, Ordering::Relaxed);
+            // recv_with_timeout has already set `cancelled`, so the worker exits
+            // at its next cooperative cancellation check. Rust threads cannot be
+            // forcibly killed, so a worker blocked inside a long-running gix
+            // blame operation may keep running past this timeout; joining it
+            // here could stall ownership reporting indefinitely, which is why
+            // the handle is intentionally leaked via mem::forget instead.
+            // TODO: restructure blame work into cancellable tasks or a child
+            // process so timed-out work can be reaped rather than leaked.
             std::mem::forget(handle);
             None
         }

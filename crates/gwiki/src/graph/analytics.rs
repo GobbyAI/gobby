@@ -132,7 +132,11 @@ pub fn analytics_graph_from_facts(
 
     for link in &facts.links {
         let target = match &link.target {
-            WikiGraphLinkTarget::Resolved(path) => document_id(&link.scope, path),
+            WikiGraphLinkTarget::Resolved(path) => {
+                let node_id = document_id(&link.scope, path);
+                insert_node(&mut nodes, node_id.clone(), document_kind(path), 1.0)?;
+                node_id
+            }
             WikiGraphLinkTarget::Unresolved(target) => {
                 let node_id = unresolved_target_id(&link.scope, target);
                 insert_node(&mut nodes, node_id.clone(), "unresolved_target", 0.25)?;
@@ -267,6 +271,8 @@ impl From<EdgeRef> for GraphExportEdgeRef {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use crate::graph::{
         MemoryWikiGraph, WikiGraphDocument, WikiGraphFacts, WikiGraphLink, WikiGraphLinkTarget,
     };
@@ -306,6 +312,34 @@ mod tests {
         assert_eq!(analytics_graph.nodes.len(), 2);
         assert_eq!(analytics_graph.edges.len(), 1);
         assert_eq!(analytics_graph.edges[0].kind, "links");
+    }
+
+    #[test]
+    fn graph_analytics_adds_placeholder_for_missing_resolved_target() {
+        let scope = SearchScope::project("project-1");
+        let mut graph = MemoryWikiGraph::default();
+        graph.replace_facts(WikiGraphFacts {
+            documents: vec![WikiGraphDocument {
+                scope: scope.clone(),
+                path: "knowledge/topics/a.md".into(),
+                title: None,
+            }],
+            links: vec![WikiGraphLink {
+                scope: scope.clone(),
+                source_path: "knowledge/topics/a.md".into(),
+                raw_target: "B".to_string(),
+                target: WikiGraphLinkTarget::Resolved("knowledge/topics/b.md".into()),
+            }],
+            sources: Vec::new(),
+            code_edges: Vec::new(),
+        });
+
+        let analytics_graph = analytics_graph_from_memory(&graph).expect("analytics graph");
+        let target_id = document_id(&scope, &PathBuf::from("knowledge/topics/b.md"));
+
+        assert!(analytics_graph.nodes.iter().any(|node| {
+            node.id == target_id && node.kind == "wiki_page" && node.weight == 1.0
+        }));
     }
 
     #[test]

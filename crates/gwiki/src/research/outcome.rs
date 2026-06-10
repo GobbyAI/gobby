@@ -126,7 +126,7 @@ pub(crate) fn dedup_code_citations(
     deduped
 }
 
-fn sanitize_code_path(path: &str) -> Option<String> {
+pub(crate) fn sanitize_code_path(path: &str) -> Option<String> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
         return None;
@@ -135,15 +135,15 @@ fn sanitize_code_path(path: &str) -> Option<String> {
     if path.is_absolute() {
         return None;
     }
-    let mut has_normal_component = false;
+    let mut components = Vec::new();
     for component in path.components() {
         match component {
-            Component::Normal(_) => has_normal_component = true,
+            Component::Normal(value) => components.push(value.to_string_lossy().to_string()),
             Component::CurDir => {}
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
         }
     }
-    has_normal_component.then(|| trimmed.to_string())
+    (!components.is_empty()).then(|| components.join("/"))
 }
 
 fn dedup_code_citation_provenance(provenance: &mut Vec<String>) {
@@ -417,6 +417,19 @@ mod tests {
 
         assert_eq!(citations.len(), 1);
         assert_eq!(citations[0].file(), "src/lib.rs");
+    }
+
+    #[test]
+    fn sanitize_code_path_strips_current_dir_components() {
+        assert_eq!(
+            sanitize_code_path("./src/./lib.rs"),
+            Some("src/lib.rs".to_string())
+        );
+        assert_eq!(
+            sanitize_code_path("src//nested/./mod.rs"),
+            Some("src/nested/mod.rs".to_string())
+        );
+        assert_eq!(sanitize_code_path("./"), None);
     }
 
     #[test]

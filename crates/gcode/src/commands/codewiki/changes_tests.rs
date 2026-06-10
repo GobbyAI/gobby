@@ -25,7 +25,7 @@ fn codewiki_changes_baseline_persists_snapshot_and_degrades_without_graph() {
     };
 
     let snapshot = build_codewiki_index_snapshot(project.path(), &input).expect("snapshot");
-    let changes = build_codewiki_changes_doc(None, &snapshot);
+    let changes = build_codewiki_changes_doc(None, &snapshot).expect("changes doc");
     assert!(changes.contains("baseline: true"));
     assert!(changes.contains("degraded: true"));
     assert!(changes.contains("graph-unavailable"));
@@ -92,7 +92,7 @@ fn codewiki_changes_lists_index_diff_against_previous_snapshot() {
     let current =
         build_codewiki_index_snapshot(project.path(), &current_input).expect("current snapshot");
 
-    let changes = build_codewiki_changes_doc(Some(&previous), &current);
+    let changes = build_codewiki_changes_doc(Some(&previous), &current).expect("changes doc");
     assert!(changes.contains("baseline: false"));
     assert!(changes.contains("degraded: false"));
     assert!(changes.contains("- `src/new.rs`"));
