@@ -35,6 +35,87 @@ fn incremental_write_always_rewrites_docs_without_provenance() {
 }
 
 #[test]
+fn degraded_doc_is_rewritten_once_generation_succeeds() {
+    let project = tempfile::tempdir().expect("project tempdir");
+    std::fs::create_dir_all(project.path().join("src")).expect("source dirs");
+    std::fs::write(project.path().join("src/lib.rs"), "pub struct Client;\n").expect("write lib");
+    let out_dir = project.path().join("codewiki");
+    let input = CodewikiInput {
+        files: vec!["src/lib.rs".to_string()],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![test_symbol(
+            "src/lib.rs",
+            "Client",
+            "class",
+            1,
+            "pub struct Client;",
+        )],
+    };
+    let file_doc = "code/files/src/lib.rs.md".to_string();
+    let build = |generator: Option<&mut TextGenerator<'_>>| {
+        let mut progress = CodewikiProgress::silent();
+        generate_hierarchical_docs_with_progress(&input, generator, AiDepth::Symbols, &mut progress)
+    };
+
+    // Run 1: every generation fails, so the docs land degraded.
+    let mut failing = |_prompt: &str, _system: &str| None;
+    let degraded_docs = build(Some(&mut failing));
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &degraded_docs,
+        None,
+        "symbols",
+    )
+    .expect("degraded write");
+
+    // Run 2: generation succeeds and sources are unchanged — the recorded
+    // degradation must force a rewrite where hash equality alone would skip.
+    let mut succeeding =
+        |_prompt: &str, _system: &str| Some("Healthy generated prose.".to_string());
+    let healthy_docs = build(Some(&mut succeeding));
+    let repaired = write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &healthy_docs,
+        None,
+        "symbols",
+    )
+    .expect("repair write");
+    assert!(repaired.contains(&file_doc), "degraded doc is repaired");
+    let on_disk = std::fs::read_to_string(out_dir.join(&file_doc)).expect("repaired content");
+    assert!(on_disk.contains("Healthy generated prose."));
+
+    // Run 3: healthy and unchanged — skipped again.
+    let skipped = write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &healthy_docs,
+        None,
+        "symbols",
+    )
+    .expect("healthy rewrite");
+    assert!(!skipped.contains(&file_doc), "healthy unchanged doc skips");
+
+    // Run 4: a later failed run must not displace healthy prose for
+    // unchanged sources.
+    let mut failing_again = |_prompt: &str, _system: &str| None;
+    let degraded_again = build(Some(&mut failing_again));
+    let preserved = write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &degraded_again,
+        None,
+        "symbols",
+    )
+    .expect("failed rerun write");
+    assert!(!preserved.contains(&file_doc), "healthy doc is preserved");
+    let on_disk = std::fs::read_to_string(out_dir.join(&file_doc)).expect("preserved content");
+    assert!(on_disk.contains("Healthy generated prose."));
+}
+
+#[test]
 fn incremental_regenerates_only_changed() {
     let project = tempfile::tempdir().expect("project tempdir");
     std::fs::create_dir_all(project.path().join("src/nested")).expect("source dirs");

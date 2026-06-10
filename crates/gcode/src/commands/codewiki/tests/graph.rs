@@ -171,6 +171,7 @@ fn mermaid_labels_escape_label_metacharacters() {
             source_spans: Vec::new(),
             symbols: Vec::new(),
             component_ids: vec!["api".to_string()],
+            degraded: false,
         },
         FileDoc {
             path: "src/domain.rs".to_string(),
@@ -179,6 +180,7 @@ fn mermaid_labels_escape_label_metacharacters() {
             source_spans: Vec::new(),
             symbols: Vec::new(),
             component_ids: vec!["domain".to_string()],
+            degraded: false,
         },
     ];
     let graph = vec![CodewikiGraphEdge::import("api", "domain")];

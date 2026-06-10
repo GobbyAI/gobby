@@ -1,8 +1,15 @@
 use std::fmt::Write as _;
+use std::time::Duration;
+
+use gobby_core::ai_types::AiError;
 
 use super::*;
 
 const FALLBACK_CITATION_LINE_WIDTH: usize = 240;
+
+/// Backoff between generation attempts; the array length bounds the retries.
+const GENERATION_RETRY_BACKOFF: [Duration; 2] =
+    [Duration::from_millis(200), Duration::from_millis(500)];
 
 #[derive(serde::Serialize)]
 struct Frontmatter<'a> {
@@ -38,24 +45,56 @@ pub(crate) fn resolve_text_generator(
     let mut warned = false;
     let quiet = ctx.quiet;
     Some(Box::new(move |prompt, system| {
-        let result = match route {
+        let result = generate_with_bounded_retry(|| match route {
             AiRouting::Daemon => generate_via_daemon(&ai_context, prompt, Some(system)),
             AiRouting::Direct => generate_text(&ai_context, prompt, Some(system)),
             AiRouting::Off | AiRouting::Auto => {
                 unreachable!("non-generating routes returned above")
             }
-        };
+        });
         match result {
             Ok(result) => clean_generated(result.text),
             Err(error) => {
                 if !quiet && !warned {
-                    eprintln!("text generation unavailable; using AST-only codewiki docs: {error}");
+                    eprintln!(
+                        "text generation failed; affected codewiki docs fall back to AST-only \
+                         content and record degraded: true: {error}"
+                    );
                     warned = true;
                 }
                 None
             }
         }
     }))
+}
+
+/// Retries transient generation failures with a short backoff so one dropped
+/// connection does not cost a doc its prose for the whole run. Non-transient
+/// errors (bad config, parse failures, 4xx) fail immediately.
+pub(crate) fn generate_with_bounded_retry<T>(
+    mut call: impl FnMut() -> Result<T, AiError>,
+) -> Result<T, AiError> {
+    let mut result = call();
+    for backoff in GENERATION_RETRY_BACKOFF {
+        match &result {
+            Err(error) if retryable_generation_error(error) => {
+                std::thread::sleep(backoff);
+                result = call();
+            }
+            _ => break,
+        }
+    }
+    result
+}
+
+fn retryable_generation_error(error: &AiError) -> bool {
+    match error {
+        AiError::TransportFailure { .. } | AiError::RateLimited { .. } => true,
+        AiError::HttpStatus { status, .. } => *status >= 500,
+        AiError::CapabilityUnavailable { .. }
+        | AiError::NotConfigured { .. }
+        | AiError::ParseFailure { .. } => false,
+    }
 }
 
 pub(crate) fn resolve_ai_context(
@@ -76,14 +115,48 @@ pub(crate) fn resolve_ai_context(
     ))
 }
 
+/// Outcome of one optional generation attempt. `Failed` means a generator ran
+/// and produced no usable text — the doc is degraded relative to what the run
+/// intended. `Skipped` means no generator ran (AI off, or gated by depth), so
+/// structural output is the intent, not a degradation.
+#[derive(Debug)]
+pub(crate) enum Generation {
+    Generated(String),
+    Failed,
+    Skipped,
+}
+
+impl Generation {
+    pub(crate) fn failed(&self) -> bool {
+        matches!(self, Generation::Failed)
+    }
+
+    /// Returns generated text, or `fallback` while flagging `degraded` when
+    /// the generator attempted and failed.
+    pub(crate) fn unwrap_or_record(self, fallback: String, degraded: &mut bool) -> String {
+        match self {
+            Generation::Generated(text) => text,
+            Generation::Failed => {
+                *degraded = true;
+                fallback
+            }
+            Generation::Skipped => fallback,
+        }
+    }
+}
+
 pub(crate) fn maybe_generate(
     generate: &mut Option<&mut TextGenerator<'_>>,
     prompt: &str,
     system: &str,
-) -> Option<String> {
-    generate
-        .as_deref_mut()
-        .and_then(|generate| generate(prompt, system))
+) -> Generation {
+    match generate.as_deref_mut() {
+        None => Generation::Skipped,
+        Some(generate) => match generate(prompt, system) {
+            Some(text) => Generation::Generated(text),
+            None => Generation::Failed,
+        },
+    }
 }
 
 pub(crate) fn clean_generated(text: String) -> Option<String> {
@@ -309,6 +382,7 @@ pub(crate) fn citation_parts(value: &str) -> Option<(&str, usize, usize)> {
     (line_start > 0 && line_start <= line_end).then_some((file, line_start, line_end))
 }
 
+#[cfg(test)]
 pub(crate) fn frontmatter(title: &str, kind: &str, source_spans: &[SourceSpan]) -> String {
     frontmatter_with_degradation(title, kind, source_spans, &[])
 }
@@ -418,5 +492,56 @@ mod tests {
                 .all(|line| line.len() <= FALLBACK_CITATION_LINE_WIDTH),
             "{markers}"
         );
+    }
+
+    fn transport_failure() -> AiError {
+        AiError::TransportFailure {
+            status: None,
+            body: None,
+            source: "connection reset".to_string(),
+        }
+    }
+
+    #[test]
+    fn bounded_retry_recovers_from_transient_transport_failure() {
+        let mut calls = 0_usize;
+        let result = generate_with_bounded_retry(|| {
+            calls += 1;
+            if calls == 1 {
+                Err(transport_failure())
+            } else {
+                Ok("generated".to_string())
+            }
+        });
+
+        assert_eq!(result.expect("retry recovers"), "generated");
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn bounded_retry_gives_up_after_bounded_attempts() {
+        let mut calls = 0_usize;
+        let result: Result<String, AiError> = generate_with_bounded_retry(|| {
+            calls += 1;
+            Err(transport_failure())
+        });
+
+        assert!(result.is_err());
+        assert_eq!(calls, 1 + GENERATION_RETRY_BACKOFF.len());
+    }
+
+    #[test]
+    fn bounded_retry_fails_fast_on_non_transient_errors() {
+        let mut calls = 0_usize;
+        let result: Result<String, AiError> = generate_with_bounded_retry(|| {
+            calls += 1;
+            Err(AiError::NotConfigured {
+                capability: None,
+                message: "no provider".to_string(),
+            })
+        });
+
+        assert!(result.is_err());
+        assert_eq!(calls, 1);
     }
 }

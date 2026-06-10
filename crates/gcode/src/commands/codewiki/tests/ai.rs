@@ -1,3 +1,5 @@
+use gobby_core::ai_types::AiError;
+
 use super::support::*;
 use super::*;
 
@@ -80,7 +82,10 @@ fn ai_mode_change_invalidates_unchanged_docs() {
             "pub struct Client;",
         )],
     };
-    let docs = generate_hierarchical_docs(&input, None);
+    let docs = generate_hierarchical_docs(&input, None)
+        .into_iter()
+        .map(|(path, content)| BuiltDoc::healthy(path, content))
+        .collect::<Vec<_>>();
     let file_doc = "code/files/src/lib.rs.md".to_string();
 
     write_incremental_doc_set_with_snapshot(project.path(), &out_dir, &docs, None, "off")
@@ -94,4 +99,109 @@ fn ai_mode_change_invalidates_unchanged_docs() {
         write_incremental_doc_set_with_snapshot(project.path(), &out_dir, &docs, None, "sections")
             .expect("same mode write");
     assert!(!same_mode.contains(&file_doc));
+}
+
+fn doc<'a>(docs: &'a [BuiltDoc], path: &str) -> &'a BuiltDoc {
+    docs.iter()
+        .find(|doc| doc.path == path)
+        .unwrap_or_else(|| panic!("doc {path} is generated"))
+}
+
+#[test]
+fn generation_failure_records_degradation_in_frontmatter_and_meta() {
+    let project = tempfile::tempdir().expect("project tempdir");
+    std::fs::create_dir_all(project.path().join("src/nested")).expect("source dirs");
+    std::fs::write(project.path().join("src/lib.rs"), "pub struct Client;\n").expect("write lib");
+    std::fs::write(
+        project.path().join("src/nested/api.rs"),
+        "pub fn serve() {}\n",
+    )
+    .expect("write api");
+    let out_dir = project.path().join("codewiki");
+
+    let mut failing_generator = |_prompt: &str, _system: &str| None;
+    let mut progress = CodewikiProgress::silent();
+    let docs = generate_hierarchical_docs_with_progress(
+        &depth_probe_input(),
+        Some(&mut failing_generator),
+        AiDepth::Symbols,
+        &mut progress,
+    );
+
+    for path in ["code/repo.md", "code/modules/src.md"] {
+        let built = doc(&docs, path);
+        assert!(built.degraded, "{path} records the failed generation");
+        assert!(built.content.contains("degraded: true"), "{path}");
+        assert!(built.content.contains("- model-unavailable"), "{path}");
+    }
+    assert!(!doc(&docs, "code/_onboarding.md").degraded);
+
+    write_incremental_doc_set_with_snapshot(project.path(), &out_dir, &docs, None, "symbols")
+        .expect("write docs");
+    let meta = std::fs::read_to_string(out_dir.join("_meta/codewiki.json")).expect("read meta");
+    let meta: serde_json::Value = serde_json::from_str(&meta).expect("parse meta");
+    for path in ["code/repo.md", "code/modules/src.md"] {
+        assert_eq!(
+            meta["docs"][path]["degraded"],
+            serde_json::Value::Bool(true),
+            "{path} degradation lands in _meta/codewiki.json"
+        );
+    }
+    assert!(
+        meta["docs"]["code/_onboarding.md"]
+            .get("degraded")
+            .is_none()
+    );
+}
+
+#[test]
+fn ast_only_generation_records_no_degradation() {
+    let mut progress = CodewikiProgress::silent();
+    let docs = generate_hierarchical_docs_with_progress(
+        &depth_probe_input(),
+        None,
+        AiDepth::Symbols,
+        &mut progress,
+    );
+
+    for built in &docs {
+        assert!(!built.degraded, "{} is structural by intent", built.path);
+        assert!(
+            !built.content.contains("- model-unavailable"),
+            "{} must not claim model degradation when AI is off",
+            built.path
+        );
+    }
+}
+
+#[test]
+fn transient_generation_failure_retries_to_healthy_doc() {
+    let mut calls = 0_usize;
+    let mut flaky_transport = || {
+        calls += 1;
+        if calls == 1 {
+            Err(AiError::TransportFailure {
+                status: None,
+                body: None,
+                source: "connection reset".to_string(),
+            })
+        } else {
+            Ok("Generated prose.".to_string())
+        }
+    };
+    let mut generator =
+        |_prompt: &str, _system: &str| generate_with_bounded_retry(&mut flaky_transport).ok();
+
+    let mut progress = CodewikiProgress::silent();
+    let docs = generate_hierarchical_docs_with_progress(
+        &depth_probe_input(),
+        Some(&mut generator),
+        AiDepth::Sections,
+        &mut progress,
+    );
+
+    let repo = doc(&docs, "code/repo.md");
+    assert!(!repo.degraded, "retried generation produces a healthy doc");
+    assert!(repo.content.contains("Generated prose."));
+    assert!(docs.iter().all(|doc| !doc.degraded));
 }

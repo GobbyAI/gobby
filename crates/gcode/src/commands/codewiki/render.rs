@@ -342,7 +342,7 @@ pub(crate) fn build_repo_doc(
     modules: &[ModuleDoc],
     generate: &mut Option<&mut TextGenerator<'_>>,
     progress: &mut CodewikiProgress,
-) -> String {
+) -> (String, bool) {
     let top_modules = modules
         .iter()
         .filter(|module| parent_module(&module.module).is_none())
@@ -378,20 +378,23 @@ pub(crate) fn build_repo_doc(
     let fallback = structural_repo_summary(files.len(), modules.len());
     let source_spans = collect_link_spans(&root_files, &top_modules);
     progress.emit("generating repo overview");
-    let summary = match maybe_generate(
+    let generation = maybe_generate(
         generate,
         &prompts::repo_prompt(&module_summaries, &file_summaries),
         prompts::REPO_SYSTEM,
-    ) {
-        Some(generated) => ground_text(
+    );
+    let degraded = generation.failed();
+    let summary = match generation {
+        Generation::Generated(generated) => ground_text(
             &generated,
             &source_spans,
             Some(&citation_markers(&source_spans)),
         ),
-        None => ground_text(&fallback, &source_spans, None),
+        Generation::Failed | Generation::Skipped => ground_text(&fallback, &source_spans, None),
     };
 
-    render_repo_doc(&summary, &top_modules, &root_files, &source_spans)
+    let doc = render_repo_doc(&summary, &top_modules, &root_files, &source_spans, degraded);
+    (doc, degraded)
 }
 
 pub(crate) fn render_repo_doc(
@@ -399,8 +402,14 @@ pub(crate) fn render_repo_doc(
     modules: &[ModuleLink],
     files: &[FileLink],
     source_spans: &[SourceSpan],
+    degraded: bool,
 ) -> String {
-    let mut doc = frontmatter("Repository Overview", "code_repo", source_spans);
+    let mut doc = frontmatter_with_degradation(
+        "Repository Overview",
+        "code_repo",
+        source_spans,
+        &model_degraded_sources(degraded),
+    );
     doc.push_str("# Repository Overview\n\n");
     let summary = replace_citations_with_markers(summary, source_spans);
     write_section(&mut doc, "Overview", &summary);
@@ -600,8 +609,22 @@ fn write_hotspot_section_with_cross_refs(
     doc.push('\n');
 }
 
+/// Frontmatter degradation sources for a doc whose model generation failed.
+pub(crate) fn model_degraded_sources(degraded: bool) -> Vec<String> {
+    if degraded {
+        vec!["model-unavailable".to_string()]
+    } else {
+        Vec::new()
+    }
+}
+
 pub(crate) fn render_module_doc(module: &ModuleDoc) -> String {
-    let mut doc = frontmatter(&module.module, "code_module", &module.source_spans);
+    let mut doc = frontmatter_with_degradation(
+        &module.module,
+        "code_module",
+        &module.source_spans,
+        &model_degraded_sources(module.degraded),
+    );
     let _ = writeln!(doc, "# {}\n", module.module);
     match parent_module(&module.module) {
         Some(parent) => {
@@ -662,7 +685,12 @@ pub(crate) fn render_module_doc(module: &ModuleDoc) -> String {
 }
 
 pub(crate) fn render_file_doc(file: &FileDoc) -> String {
-    let mut doc = frontmatter(&file.path, "code_file", &file.source_spans);
+    let mut doc = frontmatter_with_degradation(
+        &file.path,
+        "code_file",
+        &file.source_spans,
+        &model_degraded_sources(file.degraded),
+    );
     let _ = writeln!(doc, "# {}\n", file.path);
     if file.module.is_empty() {
         doc.push_str("Module: [[code/repo|Repository Overview]]\n\n");

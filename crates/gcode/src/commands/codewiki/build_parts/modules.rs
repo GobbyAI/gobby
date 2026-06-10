@@ -81,6 +81,7 @@ pub(crate) fn build_module_docs(
             module_total,
             module
         ));
+        let mut degraded = false;
         let generated = maybe_generate(
             generate,
             &prompts::module_prompt(
@@ -91,7 +92,7 @@ pub(crate) fn build_module_docs(
             ),
             prompts::MODULE_SYSTEM,
         )
-        .unwrap_or(fallback);
+        .unwrap_or_record(fallback, &mut degraded);
         let summary = ground_text(
             &generated,
             &source_spans,
@@ -110,6 +111,7 @@ pub(crate) fn build_module_docs(
             dependency_diagram,
             call_diagram,
             graph_availability,
+            degraded,
         });
     }
 

@@ -69,11 +69,13 @@ pub(crate) use render::{
 };
 // AI and structural text helpers.
 pub(crate) use text::{
-    citation_list, citation_markers, collect_link_spans, frontmatter, frontmatter_with_degradation,
+    Generation, citation_list, citation_markers, collect_link_spans, frontmatter_with_degradation,
     ground_text, maybe_generate, replace_citations_with_markers, resolve_text_generator,
     structural_file_summary, structural_module_summary, structural_repo_summary,
     structural_symbol_purpose, write_references, write_section,
 };
+#[cfg(test)]
+pub(crate) use text::{frontmatter, generate_with_bounded_retry};
 
 pub(crate) use io::{
     read_ownership_meta, write_incremental_doc_set_with_snapshot, write_ownership_meta,
@@ -169,6 +171,8 @@ pub(crate) struct FileDoc {
     source_spans: Vec<SourceSpan>,
     symbols: Vec<SymbolDoc>,
     component_ids: Vec<String>,
+    /// True when AI generation was attempted for this doc and failed.
+    degraded: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -191,6 +195,8 @@ pub(crate) struct ModuleDoc {
     dependency_diagram: Option<String>,
     call_diagram: Option<String>,
     graph_availability: CodewikiGraphAvailability,
+    /// True when AI generation was attempted for this doc and failed.
+    degraded: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -308,6 +314,30 @@ pub(crate) struct CodewikiMeta {
 #[derive(Debug, Clone, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct CodewikiDocMeta {
     source_hashes: BTreeMap<String, String>,
+    /// True when the doc on disk was written from a failed generation
+    /// fallback. Source hashes cannot see generation failures, so this flag
+    /// is what lets a later successful run repair the doc (#687).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    degraded: bool,
+}
+
+/// One rendered doc plus the degradation outcome of its generation, carried
+/// to the incremental writer so `_meta/codewiki.json` can record it.
+#[derive(Debug, Clone)]
+pub(crate) struct BuiltDoc {
+    pub(crate) path: String,
+    pub(crate) content: String,
+    pub(crate) degraded: bool,
+}
+
+impl BuiltDoc {
+    pub(crate) fn healthy(path: impl Into<String>, content: String) -> Self {
+        Self {
+            path: path.into(),
+            content,
+            degraded: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -468,17 +498,17 @@ pub fn run(
         &mut progress,
     )?;
     progress.emit("generating changes docs");
-    docs.push((
-        "code/_changes.md".to_string(),
+    docs.push(BuiltDoc::healthy(
+        "code/_changes.md",
         build_codewiki_changes_doc(previous_meta.index_snapshot.as_ref(), &index_snapshot)?,
     ));
     let module_count = docs
         .iter()
-        .filter(|(path, _)| path.starts_with("code/modules/"))
+        .filter(|doc| doc.path.starts_with("code/modules/"))
         .count();
     let file_count = docs
         .iter()
-        .filter(|(path, _)| path.starts_with("code/files/"))
+        .filter(|doc| doc.path.starts_with("code/files/"))
         .count();
     let symbol_count = input
         .symbols
@@ -531,7 +561,7 @@ fn validate_edge_limit(edge_limit: usize) -> anyhow::Result<()> {
 fn write_codewiki_docs(
     project_root: &Path,
     out_path: &Path,
-    docs: &[(String, String)],
+    docs: &[BuiltDoc],
     index_snapshot: Option<CodewikiIndexSnapshot>,
     ai_mode: &str,
     ownership_meta: &OwnershipMeta,
@@ -558,12 +588,15 @@ pub fn generate_hierarchical_docs(
     generate: Option<&mut TextGenerator<'_>>,
 ) -> Vec<(String, String)> {
     generate_hierarchical_docs_with_graph_availability(input, generate)
+        .into_iter()
+        .map(|doc| (doc.path, doc.content))
+        .collect()
 }
 
 fn generate_hierarchical_docs_with_graph_availability(
     input: &CodewikiInput,
     mut generate: Option<&mut TextGenerator<'_>>,
-) -> Vec<(String, String)> {
+) -> Vec<BuiltDoc> {
     let mut progress = CodewikiProgress::silent();
     match generate_hierarchical_docs_core(
         input,
@@ -587,7 +620,7 @@ fn generate_hierarchical_docs_with_ownership(
     mut generate: Option<&mut TextGenerator<'_>>,
     ai_depth: AiDepth,
     progress: &mut CodewikiProgress,
-) -> anyhow::Result<Vec<(String, String)>> {
+) -> anyhow::Result<Vec<BuiltDoc>> {
     generate_hierarchical_docs_core(
         input,
         Some((project_root, ownership_meta)),
@@ -603,7 +636,7 @@ fn generate_hierarchical_docs_with_progress(
     mut generate: Option<&mut TextGenerator<'_>>,
     ai_depth: AiDepth,
     progress: &mut CodewikiProgress,
-) -> Vec<(String, String)> {
+) -> Vec<BuiltDoc> {
     match generate_hierarchical_docs_core(input, None, &mut generate, ai_depth, progress) {
         Ok(docs) => docs,
         Err(error) => {
@@ -619,7 +652,7 @@ fn generate_hierarchical_docs_core(
     generate: &mut Option<&mut TextGenerator<'_>>,
     ai_depth: AiDepth,
     progress: &mut CodewikiProgress,
-) -> anyhow::Result<Vec<(String, String)>> {
+) -> anyhow::Result<Vec<BuiltDoc>> {
     let mut files = input
         .files
         .iter()
@@ -684,7 +717,7 @@ fn generate_hierarchical_docs_core(
         generate,
         progress,
     );
-    let repo_doc = build_repo_doc(&file_docs, &module_docs, generate, progress);
+    let (repo_doc, repo_degraded) = build_repo_doc(&file_docs, &module_docs, generate, progress);
     progress.emit("generating architecture docs");
     let architecture_doc = build_architecture_doc(
         &file_docs,
@@ -705,24 +738,29 @@ fn generate_hierarchical_docs_core(
     let hotspots_doc = build_hotspots_doc(&file_docs, &input.graph_edges, input.graph_availability);
 
     let mut docs = vec![
-        ("code/repo.md".to_string(), repo_doc),
-        (
-            "code/_onboarding.md".to_string(),
+        BuiltDoc {
+            path: "code/repo.md".to_string(),
+            content: repo_doc,
+            degraded: repo_degraded,
+        },
+        BuiltDoc::healthy(
+            "code/_onboarding.md",
             render_onboarding_doc(&onboarding_doc),
         ),
-        (
-            "code/_architecture.md".to_string(),
-            render_architecture_doc(&architecture_doc),
-        ),
-        (
-            "code/_hotspots.md".to_string(),
-            render_hotspots_doc(&hotspots_doc),
-        ),
+        BuiltDoc {
+            path: "code/_architecture.md".to_string(),
+            content: render_architecture_doc(&architecture_doc),
+            degraded: architecture_doc
+                .degraded_sources
+                .iter()
+                .any(|source| source == "model-unavailable"),
+        },
+        BuiltDoc::healthy("code/_hotspots.md", render_hotspots_doc(&hotspots_doc)),
     ];
     if let Some((project_root, ownership_meta)) = ownership {
         progress.emit("generating ownership docs");
-        docs.push((
-            "code/_ownership.md".to_string(),
+        docs.push(BuiltDoc::healthy(
+            "code/_ownership.md",
             build_ownership_doc(
                 project_root,
                 &files,
@@ -733,10 +771,18 @@ fn generate_hierarchical_docs_core(
         ));
     }
     for module in &module_docs {
-        docs.push((module_doc_path(&module.module), render_module_doc(module)));
+        docs.push(BuiltDoc {
+            path: module_doc_path(&module.module),
+            content: render_module_doc(module),
+            degraded: module.degraded,
+        });
     }
     for file in &file_docs {
-        docs.push((file_doc_path(&file.path), render_file_doc(file)));
+        docs.push(BuiltDoc {
+            path: file_doc_path(&file.path),
+            content: render_file_doc(file),
+            degraded: file.degraded,
+        });
     }
     Ok(docs)
 }

@@ -13,13 +13,17 @@ pub fn write_incremental_doc_set(
     out_dir: &Path,
     docs: &[(String, String)],
 ) -> anyhow::Result<Vec<String>> {
-    write_incremental_doc_set_with_snapshot(project_root, out_dir, docs, None, "off")
+    let docs = docs
+        .iter()
+        .map(|(path, content)| BuiltDoc::healthy(path.clone(), content.clone()))
+        .collect::<Vec<_>>();
+    write_incremental_doc_set_with_snapshot(project_root, out_dir, &docs, None, "off")
 }
 
 pub(crate) fn write_incremental_doc_set_with_snapshot(
     project_root: &Path,
     out_dir: &Path,
-    docs: &[(String, String)],
+    docs: &[BuiltDoc],
     index_snapshot: Option<CodewikiIndexSnapshot>,
     ai_mode: &str,
 ) -> anyhow::Result<Vec<String>> {
@@ -31,27 +35,36 @@ pub(crate) fn write_incremental_doc_set_with_snapshot(
     let mut next_docs = BTreeMap::new();
     let mut generated_docs = Vec::new();
 
-    for (relative_path, content) in docs {
-        let doc_meta = CodewikiDocMeta {
-            source_hashes: source_hashes_for_doc(project_root, content)?,
-        };
-        let target = safe_doc_path(out_dir, relative_path)?;
+    for doc in docs {
+        let source_hashes = source_hashes_for_doc(project_root, &doc.content)?;
+        let target = safe_doc_path(out_dir, &doc.path)?;
+        let previous_meta = previous.docs.get(&doc.path);
         // Docs without provenance frontmatter have no source hashes to compare,
         // so hash equality is vacuous; always rewrite them so generator changes
-        // propagate (e.g. code/_ownership.md).
+        // propagate (e.g. code/_ownership.md). A doc recorded degraded is also
+        // always rewritten: hash equality cannot see generation failures, and
+        // skipping would preserve the degraded page forever.
         let unchanged = !ai_mode_changed
             && target.exists()
-            && !doc_meta.source_hashes.is_empty()
-            && previous
-                .docs
-                .get(relative_path)
-                .is_some_and(|previous_meta| previous_meta == &doc_meta);
+            && !source_hashes.is_empty()
+            && previous_meta
+                .is_some_and(|meta| !meta.degraded && meta.source_hashes == source_hashes);
 
+        // A skip keeps the previous healthy content on disk, so the meta entry
+        // stays healthy even when this run's generation failed — degraded
+        // fallback never displaces healthy prose for unchanged sources.
+        let degraded = !unchanged && doc.degraded;
         if !unchanged {
-            write_doc(out_dir, relative_path, content)?;
-            generated_docs.push(relative_path.clone());
+            write_doc(out_dir, &doc.path, &doc.content)?;
+            generated_docs.push(doc.path.clone());
         }
-        next_docs.insert(relative_path.clone(), doc_meta);
+        next_docs.insert(
+            doc.path.clone(),
+            CodewikiDocMeta {
+                source_hashes,
+                degraded,
+            },
+        );
     }
 
     for stale_path in previous

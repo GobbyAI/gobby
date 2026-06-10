@@ -31,7 +31,7 @@ fn codewiki_changes_baseline_persists_snapshot_and_degrades_without_graph() {
     write_incremental_doc_set_with_snapshot(
         project.path(),
         &out_dir,
-        &[("code/_changes.md".to_string(), changes)],
+        &[BuiltDoc::healthy("code/_changes.md", changes)],
         Some(snapshot),
         "off",
     )

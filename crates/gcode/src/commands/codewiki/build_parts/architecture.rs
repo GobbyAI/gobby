@@ -69,13 +69,17 @@ pub(crate) fn build_architecture_doc(
             prompts::ARCHITECTURE_SYSTEM,
         );
         let responsibility = match generated {
-            Some(generated) => ground_text(
+            Generation::Generated(generated) => ground_text(
                 &generated,
                 &source_spans,
                 Some(&citation_list(&source_spans)),
             ),
-            None => {
-                degraded_sources.insert("model-unavailable".to_string());
+            fallback_generation => {
+                // Only an attempted-and-failed generation is a degradation;
+                // structural output is the intent when no generator runs.
+                if fallback_generation.failed() {
+                    degraded_sources.insert("model-unavailable".to_string());
+                }
                 ground_text(&fallback, &source_spans, None)
             }
         };

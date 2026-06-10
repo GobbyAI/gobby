@@ -9,6 +9,7 @@ fn module_docs_include_physical_direct_files_for_ancestor_modules() {
         source_spans: Vec::new(),
         symbols: Vec::new(),
         component_ids: Vec::new(),
+        degraded: false,
     }];
     let mut generate = None;
     let mut progress = CodewikiProgress::silent();
@@ -58,5 +59,6 @@ fn file_doc(path: &str, module: &str, component_id: &str) -> FileDoc {
         source_spans: Vec::new(),
         symbols: Vec::new(),
         component_ids: vec![component_id.to_string()],
+        degraded: false,
     }
 }

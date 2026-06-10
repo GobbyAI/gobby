@@ -1,6 +1,6 @@
 use super::super::{
-    AiDepth, CodewikiProgress, FileDoc, SourceSpan, SymbolDoc, TextGenerator, citation_list,
-    component_label, ground_text, maybe_generate, prompts, structural_file_summary,
+    AiDepth, CodewikiProgress, FileDoc, Generation, SourceSpan, SymbolDoc, TextGenerator,
+    citation_list, component_label, ground_text, maybe_generate, prompts, structural_file_summary,
     structural_symbol_purpose,
 };
 use crate::models::Symbol;
@@ -31,6 +31,7 @@ pub(crate) fn build_file_doc(
         position.index, position.total, file
     ));
     let symbol_total = symbols.len();
+    let mut degraded = false;
     let symbol_docs = symbols
         .into_iter()
         .enumerate()
@@ -51,9 +52,9 @@ pub(crate) fn build_file_doc(
                     prompts::SYMBOL_SYSTEM,
                 )
             } else {
-                None
+                Generation::Skipped
             }
-            .unwrap_or(fallback);
+            .unwrap_or_record(fallback, &mut degraded);
             let component_id = symbol.id.clone();
             let component_label = component_label(&symbol);
             let source_span = SourceSpan::from_symbol(&symbol);
@@ -99,9 +100,9 @@ pub(crate) fn build_file_doc(
             prompts::FILE_SYSTEM,
         )
     } else {
-        None
+        Generation::Skipped
     }
-    .unwrap_or(fallback);
+    .unwrap_or_record(fallback, &mut degraded);
     let summary = ground_text(
         &generated,
         &source_spans,
@@ -115,5 +116,6 @@ pub(crate) fn build_file_doc(
         source_spans,
         symbols: symbol_docs,
         component_ids,
+        degraded,
     }
 }
