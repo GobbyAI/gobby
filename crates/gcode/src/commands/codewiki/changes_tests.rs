@@ -37,6 +37,7 @@ fn codewiki_changes_baseline_persists_snapshot_and_degrades_without_graph() {
         &out_dir,
         &[("code/_changes.md".to_string(), changes)],
         Some(snapshot),
+        "off",
     )
     .expect("write snapshot");
     let meta = read_codewiki_meta(&out_dir).expect("read meta");

@@ -31,13 +31,18 @@ fn codewiki_verbose_progress_captures_generation_order() {
         }
     };
 
-    let docs =
-        generate_hierarchical_docs_with_progress(&input, Some(&mut generator), &mut progress);
+    let docs = generate_hierarchical_docs_with_progress(
+        &input,
+        Some(&mut generator),
+        AiDepth::Symbols,
+        &mut progress,
+    );
     let changed = write_codewiki_docs(
         project.path(),
         &project.path().join("codewiki"),
         &docs,
         None,
+        "symbols",
         &OwnershipMeta::default(),
         &mut progress,
     )

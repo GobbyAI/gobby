@@ -36,8 +36,9 @@ mod text;
 
 // Document builders.
 pub(crate) use build::{
-    build_architecture_doc, build_codewiki_changes_doc, build_codewiki_index_snapshot,
-    build_file_doc, build_hotspots_doc, build_module_docs, build_onboarding_doc,
+    FileDocPosition, build_architecture_doc, build_codewiki_changes_doc,
+    build_codewiki_index_snapshot, build_file_doc, build_hotspots_doc, build_module_docs,
+    build_onboarding_doc,
 };
 // Module clustering and graph-to-file helpers.
 pub(crate) use cluster::{
@@ -298,6 +299,8 @@ pub(crate) struct CodewikiMeta {
     generated_docs: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     index_snapshot: Option<CodewikiIndexSnapshot>,
+    #[serde(default)]
+    ai_mode: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -332,6 +335,43 @@ pub(crate) struct CodewikiSymbolSnapshot {
 
 pub type TextGenerator<'a> = dyn FnMut(&str, &str) -> Option<String> + 'a;
 
+/// How deep AI prose generation reaches. Deeper tiers include shallower ones;
+/// gated tiers fall back to structural summaries.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AiDepth {
+    /// Architecture, module, and repo prose only.
+    Sections,
+    /// Sections plus per-file summaries.
+    #[default]
+    Files,
+    /// Files plus per-symbol purposes (one LLM call per symbol).
+    Symbols,
+}
+
+impl AiDepth {
+    pub(crate) fn includes_files(self) -> bool {
+        self >= AiDepth::Files
+    }
+
+    pub(crate) fn includes_symbols(self) -> bool {
+        self >= AiDepth::Symbols
+    }
+
+    fn mode_label(self) -> &'static str {
+        match self {
+            AiDepth::Sections => "sections",
+            AiDepth::Files => "files",
+            AiDepth::Symbols => "symbols",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CodewikiAiOptions {
+    pub routing: Option<AiRouting>,
+    pub depth: AiDepth,
+}
+
 impl SourceSpan {
     fn from_symbol(symbol: &Symbol) -> Self {
         Self {
@@ -358,12 +398,13 @@ pub fn run(
     ctx: &Context,
     out: Option<String>,
     scope_args: Vec<String>,
-    ai: Option<AiRouting>,
+    ai: CodewikiAiOptions,
     edge_limit: usize,
     format: Format,
     verbose: bool,
 ) -> anyhow::Result<()> {
     validate_edge_limit(edge_limit)?;
+    let ai_depth = ai.depth;
 
     let mut progress = CodewikiProgress::stderr(verbose && !ctx.quiet);
 
@@ -403,8 +444,13 @@ pub fn run(
         graph_availability: graph.availability,
         symbols,
     };
-    let mut generator = resolve_text_generator(ctx, ai);
+    let mut generator = resolve_text_generator(ctx, ai.routing);
     let ai_enabled = generator.is_some();
+    let ai_mode = if ai_enabled {
+        ai_depth.mode_label()
+    } else {
+        "off"
+    };
     let out_dir = out.unwrap_or_else(|| DEFAULT_OUT_DIR.to_string());
     let out_path = Path::new(&out_dir);
     progress.emit("reading metadata and hashing snapshot");
@@ -416,6 +462,7 @@ pub fn run(
         &ctx.project_root,
         &mut ownership_meta,
         generator.as_deref_mut(),
+        ai_depth,
         &mut progress,
     )?;
     progress.emit("generating changes docs");
@@ -441,6 +488,7 @@ pub fn run(
         out_path,
         &docs,
         Some(index_snapshot),
+        ai_mode,
         &ownership_meta,
         &mut progress,
     )?;
@@ -483,6 +531,7 @@ fn write_codewiki_docs(
     out_path: &Path,
     docs: &[(String, String)],
     index_snapshot: Option<CodewikiIndexSnapshot>,
+    ai_mode: &str,
     ownership_meta: &OwnershipMeta,
     progress: &mut CodewikiProgress,
 ) -> anyhow::Result<Vec<String>> {
@@ -491,8 +540,13 @@ fn write_codewiki_docs(
         docs.len(),
         out_path.display()
     ));
-    let changed_paths =
-        write_incremental_doc_set_with_snapshot(project_root, out_path, docs, index_snapshot)?;
+    let changed_paths = write_incremental_doc_set_with_snapshot(
+        project_root,
+        out_path,
+        docs,
+        index_snapshot,
+        ai_mode,
+    )?;
     write_ownership_meta(out_path, ownership_meta)?;
     Ok(changed_paths)
 }
@@ -509,7 +563,13 @@ fn generate_hierarchical_docs_with_graph_availability(
     mut generate: Option<&mut TextGenerator<'_>>,
 ) -> Vec<(String, String)> {
     let mut progress = CodewikiProgress::silent();
-    match generate_hierarchical_docs_core(input, None, &mut generate, &mut progress) {
+    match generate_hierarchical_docs_core(
+        input,
+        None,
+        &mut generate,
+        AiDepth::Symbols,
+        &mut progress,
+    ) {
         Ok(docs) => docs,
         Err(error) => {
             log::warn!("codewiki generation failed without ownership metadata: {error}");
@@ -523,12 +583,14 @@ fn generate_hierarchical_docs_with_ownership(
     project_root: &Path,
     ownership_meta: &mut OwnershipMeta,
     mut generate: Option<&mut TextGenerator<'_>>,
+    ai_depth: AiDepth,
     progress: &mut CodewikiProgress,
 ) -> anyhow::Result<Vec<(String, String)>> {
     generate_hierarchical_docs_core(
         input,
         Some((project_root, ownership_meta)),
         &mut generate,
+        ai_depth,
         progress,
     )
 }
@@ -537,9 +599,10 @@ fn generate_hierarchical_docs_with_ownership(
 fn generate_hierarchical_docs_with_progress(
     input: &CodewikiInput,
     mut generate: Option<&mut TextGenerator<'_>>,
+    ai_depth: AiDepth,
     progress: &mut CodewikiProgress,
 ) -> Vec<(String, String)> {
-    match generate_hierarchical_docs_core(input, None, &mut generate, progress) {
+    match generate_hierarchical_docs_core(input, None, &mut generate, ai_depth, progress) {
         Ok(docs) => docs,
         Err(error) => {
             log::warn!("codewiki generation failed without ownership metadata: {error}");
@@ -552,6 +615,7 @@ fn generate_hierarchical_docs_core(
     input: &CodewikiInput,
     ownership: Option<(&Path, &mut OwnershipMeta)>,
     generate: &mut Option<&mut TextGenerator<'_>>,
+    ai_depth: AiDepth,
     progress: &mut CodewikiProgress,
 ) -> anyhow::Result<Vec<(String, String)>> {
     let mut files = input
@@ -596,9 +660,12 @@ fn generate_hierarchical_docs_core(
                     .unwrap_or_else(|| module_for_file(file)),
                 symbols_by_file.remove(file).unwrap_or_default(),
                 generate,
+                ai_depth,
                 progress,
-                index + 1,
-                file_total,
+                FileDocPosition {
+                    index: index + 1,
+                    total: file_total,
+                },
             )
         })
         .collect::<Vec<_>>();

@@ -15,7 +15,7 @@ mod snapshot;
 
 pub(crate) use architecture::build_architecture_doc;
 pub(crate) use changes::build_codewiki_changes_doc;
-pub(crate) use file::build_file_doc;
+pub(crate) use file::{FileDocPosition, build_file_doc};
 pub(crate) use hotspots::build_hotspots_doc;
 pub(crate) use modules::build_module_docs;
 pub(crate) use onboarding::build_onboarding_doc;

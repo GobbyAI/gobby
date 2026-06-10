@@ -62,6 +62,24 @@ impl From<AiRouteArg> for AiRouting {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub(crate) enum AiDepthArg {
+    Sections,
+    #[default]
+    Files,
+    Symbols,
+}
+
+impl From<AiDepthArg> for gobby_code::commands::codewiki::AiDepth {
+    fn from(value: AiDepthArg) -> Self {
+        match value {
+            AiDepthArg::Sections => Self::Sections,
+            AiDepthArg::Files => Self::Files,
+            AiDepthArg::Symbols => Self::Symbols,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 pub(crate) enum Command {
     /// Emit the CLI contract for daemon conformance tests
@@ -306,6 +324,10 @@ pub(crate) enum Command {
         /// Override AI routing for generated summaries
         #[arg(long, value_enum)]
         ai: Option<AiRouteArg>,
+        /// AI prose depth: sections (architecture/modules/repo), files (+ per-file
+        /// summaries), symbols (+ one call per symbol — expensive on large repos)
+        #[arg(long, value_enum, default_value_t = AiDepthArg::Files)]
+        ai_depth: AiDepthArg,
         /// Maximum graph edges to fetch from FalkorDB
         #[arg(long, default_value_t = DEFAULT_CODEWIKI_GRAPH_EDGE_LIMIT, value_parser = positive_usize)]
         edge_limit: usize,

@@ -1,22 +1,29 @@
 use super::super::{
-    CodewikiProgress, FileDoc, SourceSpan, SymbolDoc, TextGenerator, citation_list,
+    AiDepth, CodewikiProgress, FileDoc, SourceSpan, SymbolDoc, TextGenerator, citation_list,
     component_label, ground_text, maybe_generate, prompts, structural_file_summary,
     structural_symbol_purpose,
 };
 use crate::models::Symbol;
+
+/// 1-based position of a file within the generation run, for progress output.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FileDocPosition {
+    pub(crate) index: usize,
+    pub(crate) total: usize,
+}
 
 pub(crate) fn build_file_doc(
     file: &str,
     module: String,
     symbols: Vec<Symbol>,
     generate: &mut Option<&mut TextGenerator<'_>>,
+    ai_depth: AiDepth,
     progress: &mut CodewikiProgress,
-    file_index: usize,
-    file_total: usize,
+    position: FileDocPosition,
 ) -> FileDoc {
     progress.emit(format!(
         "generating file doc file {}/{} {}",
-        file_index, file_total, file
+        position.index, position.total, file
     ));
     let symbol_total = symbols.len();
     let symbol_docs = symbols
@@ -26,17 +33,21 @@ pub(crate) fn build_file_doc(
             let fallback = structural_symbol_purpose(&symbol);
             progress.emit(format!(
                 "generating symbol doc file {}/{} symbol {}/{} {}",
-                file_index,
-                file_total,
+                position.index,
+                position.total,
                 index + 1,
                 symbol_total,
                 symbol.qualified_name
             ));
-            let generated = maybe_generate(
-                generate,
-                &prompts::symbol_prompt(&symbol),
-                prompts::SYMBOL_SYSTEM,
-            )
+            let generated = if ai_depth.includes_symbols() {
+                maybe_generate(
+                    generate,
+                    &prompts::symbol_prompt(&symbol),
+                    prompts::SYMBOL_SYSTEM,
+                )
+            } else {
+                None
+            }
             .unwrap_or(fallback);
             let component_id = symbol.id.clone();
             let component_label = component_label(&symbol);
@@ -76,11 +87,15 @@ pub(crate) fn build_file_doc(
         .map(|symbol| symbol.component_id.clone())
         .collect::<Vec<_>>();
     let fallback = structural_file_summary(file, &symbol_docs);
-    let generated = maybe_generate(
-        generate,
-        &prompts::file_prompt(file, &prompt_symbols),
-        prompts::FILE_SYSTEM,
-    )
+    let generated = if ai_depth.includes_files() {
+        maybe_generate(
+            generate,
+            &prompts::file_prompt(file, &prompt_symbols),
+            prompts::FILE_SYSTEM,
+        )
+    } else {
+        None
+    }
     .unwrap_or(fallback);
     let summary = ground_text(&generated, &source_spans, &citation_list(&source_spans));
 

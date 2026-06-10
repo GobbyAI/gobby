@@ -469,6 +469,7 @@ fn run() -> anyhow::Result<()> {
             out,
             scope,
             ai,
+            ai_depth,
             edge_limit,
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
@@ -476,7 +477,10 @@ fn run() -> anyhow::Result<()> {
                 &ctx,
                 out,
                 scope,
-                ai.map(AiRouteArg::into),
+                commands::codewiki::CodewikiAiOptions {
+                    routing: ai.map(AiRouteArg::into),
+                    depth: ai_depth.into(),
+                },
                 edge_limit,
                 format,
                 cli.verbose,

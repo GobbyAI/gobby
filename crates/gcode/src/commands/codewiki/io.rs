@@ -13,7 +13,7 @@ pub fn write_incremental_doc_set(
     out_dir: &Path,
     docs: &[(String, String)],
 ) -> anyhow::Result<Vec<String>> {
-    write_incremental_doc_set_with_snapshot(project_root, out_dir, docs, None)
+    write_incremental_doc_set_with_snapshot(project_root, out_dir, docs, None, "off")
 }
 
 pub(crate) fn write_incremental_doc_set_with_snapshot(
@@ -21,9 +21,13 @@ pub(crate) fn write_incremental_doc_set_with_snapshot(
     out_dir: &Path,
     docs: &[(String, String)],
     index_snapshot: Option<CodewikiIndexSnapshot>,
+    ai_mode: &str,
 ) -> anyhow::Result<Vec<String>> {
     std::fs::create_dir_all(out_dir)?;
     let previous = read_codewiki_meta(out_dir)?;
+    // Doc content depends on the AI generation mode, which source hashes cannot
+    // capture; a mode change invalidates every doc.
+    let ai_mode_changed = previous.ai_mode != ai_mode;
     let mut next_docs = BTreeMap::new();
     let mut generated_docs = Vec::new();
 
@@ -35,7 +39,8 @@ pub(crate) fn write_incremental_doc_set_with_snapshot(
         // Docs without provenance frontmatter have no source hashes to compare,
         // so hash equality is vacuous; always rewrite them so generator changes
         // propagate (e.g. code/_ownership.md).
-        let unchanged = target.exists()
+        let unchanged = !ai_mode_changed
+            && target.exists()
             && !doc_meta.source_hashes.is_empty()
             && previous
                 .docs
@@ -67,6 +72,7 @@ pub(crate) fn write_incremental_doc_set_with_snapshot(
         docs: next_docs,
         generated_docs: generated_docs.clone(),
         index_snapshot,
+        ai_mode: ai_mode.to_string(),
     };
     write_codewiki_meta(out_dir, &meta)?;
     Ok(generated_docs)
