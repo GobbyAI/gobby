@@ -31,9 +31,10 @@ pub fn gobby_home() -> anyhow::Result<std::path::PathBuf> {
         .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))
 }
 
+// Feature-gated modules.
+#[cfg(feature = "ai")]
 pub mod ai;
 
-// Feature-gated modules.
 #[cfg(feature = "postgres")]
 pub mod postgres;
 
