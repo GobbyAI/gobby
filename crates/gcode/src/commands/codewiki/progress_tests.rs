@@ -114,6 +114,59 @@ fn codewiki_verbose_progress_not_serialized_in_summary_json() {
     assert_eq!(value["ai_enabled"], true);
 }
 
+#[test]
+fn codewiki_verbose_progress_reflects_ai_depth_gating() {
+    let mut progress = CodewikiProgress::capture();
+    let mut generator = |_prompt: &str, _system: &str| None;
+    let docs = generate_hierarchical_docs_with_progress(
+        &progress_input(),
+        Some(&mut generator),
+        AiDepth::Sections,
+        &mut progress,
+    );
+    assert!(!docs.is_empty());
+    let lines = progress.into_lines();
+    assert!(
+        lines.iter().any(|line| line.contains("building file doc")),
+        "sections depth should report structural file assembly: {lines:#?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .all(|line| !line.contains("generating file doc")),
+        "sections depth must not claim file generation: {lines:#?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .all(|line| !line.contains("generating symbol doc")),
+        "sections depth must not claim symbol generation: {lines:#?}"
+    );
+
+    let mut progress = CodewikiProgress::capture();
+    let mut generator = |_prompt: &str, _system: &str| None;
+    let docs = generate_hierarchical_docs_with_progress(
+        &progress_input(),
+        Some(&mut generator),
+        AiDepth::Files,
+        &mut progress,
+    );
+    assert!(!docs.is_empty());
+    let lines = progress.into_lines();
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("generating file doc")),
+        "files depth should claim file generation: {lines:#?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .all(|line| !line.contains("generating symbol doc")),
+        "files depth must not claim symbol generation: {lines:#?}"
+    );
+}
+
 fn progress_input() -> CodewikiInput {
     CodewikiInput {
         files: vec!["src/lib.rs".to_string()],

@@ -648,7 +648,12 @@ fn generate_hierarchical_docs_core(
     }
 
     let file_modules = cluster_file_modules(&files, &symbols_by_file, &input.graph_edges);
-    progress.emit(format!("generating file docs for {} files", files.len()));
+    let file_verb = if ai_depth.includes_files() {
+        "generating"
+    } else {
+        "building"
+    };
+    progress.emit(format!("{file_verb} file docs for {} files", files.len()));
     let file_total = files.len();
     let file_docs = files
         .iter()

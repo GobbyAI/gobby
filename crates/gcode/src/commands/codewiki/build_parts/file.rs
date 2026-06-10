@@ -21,8 +21,13 @@ pub(crate) fn build_file_doc(
     progress: &mut CodewikiProgress,
     position: FileDocPosition,
 ) -> FileDoc {
+    let file_verb = if ai_depth.includes_files() {
+        "generating"
+    } else {
+        "building"
+    };
     progress.emit(format!(
-        "generating file doc file {}/{} {}",
+        "{file_verb} file doc file {}/{} {}",
         position.index, position.total, file
     ));
     let symbol_total = symbols.len();
@@ -31,15 +36,15 @@ pub(crate) fn build_file_doc(
         .enumerate()
         .map(|(index, symbol)| {
             let fallback = structural_symbol_purpose(&symbol);
-            progress.emit(format!(
-                "generating symbol doc file {}/{} symbol {}/{} {}",
-                position.index,
-                position.total,
-                index + 1,
-                symbol_total,
-                symbol.qualified_name
-            ));
             let generated = if ai_depth.includes_symbols() {
+                progress.emit(format!(
+                    "generating symbol doc file {}/{} symbol {}/{} {}",
+                    position.index,
+                    position.total,
+                    index + 1,
+                    symbol_total,
+                    symbol.qualified_name
+                ));
                 maybe_generate(
                     generate,
                     &prompts::symbol_prompt(&symbol),
