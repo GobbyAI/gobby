@@ -211,6 +211,16 @@ mod tests {
     }
 
     #[test]
+    fn resolve_config_value_expands_leading_whole_value_secret() {
+        // The canonical config_store pattern: the entire value is a single
+        // `$secret:NAME` reference (e.g. databases.falkordb.password).
+        let resolved = resolve_config_value_with("$secret:DB_PASS", test_secret_resolver)
+            .expect("leading whole-value secret resolves");
+
+        assert_eq!(resolved, "secret-db-pass");
+    }
+
+    #[test]
     fn resolve_config_value_expands_multiple_secrets() {
         let resolved = resolve_config_value_with(
             "$secret:USER:$secret:PASSWORD@localhost",
