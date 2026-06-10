@@ -246,7 +246,7 @@ fn code_call_edges_query() -> &'static str {
         RETURN source.file_path AS source_file_path, source.name AS source_name, \
                target.file_path AS target_file_path, target.name AS target_name, r.line AS line \
         ORDER BY source.file_path, source.name, target.file_path, target.name, r.line \
-        LIMIT toInteger($limit)"
+        LIMIT $limit"
 }
 
 fn code_import_edges(
@@ -292,7 +292,7 @@ fn code_import_edges_query() -> &'static str {
         MATCH (file:CodeFile {path: $path, project: $project})-[r:IMPORTS]->(module:CodeModule {project: $project}) \
         RETURN file.path AS source_file_path, module.name AS target_name \
         ORDER BY file.path, module.name \
-        LIMIT toInteger($limit)"
+        LIMIT $limit"
 }
 
 fn code_edge_query_params(
@@ -859,8 +859,8 @@ mod tests {
         let call_query = code_call_edges_query();
         let import_query = code_import_edges_query();
 
-        assert!(call_query.contains("LIMIT toInteger($limit)"));
-        assert!(import_query.contains("LIMIT toInteger($limit)"));
+        assert!(call_query.contains("LIMIT $limit"));
+        assert!(import_query.contains("LIMIT $limit"));
         assert!(call_query.contains(
             "ORDER BY source.file_path, source.name, target.file_path, target.name, r.line"
         ));
