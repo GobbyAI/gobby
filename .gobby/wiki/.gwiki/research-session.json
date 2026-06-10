@@ -5,7 +5,7 @@
   "scope": {
     "kind": "project",
     "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
-    "root": ".gobby/wiki"
+    "root": "/Users/josh/Projects/gobby/.gobby/wiki"
   },
   "source_constraints": [],
   "agent_count": 1,
