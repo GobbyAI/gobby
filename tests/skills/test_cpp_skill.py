@@ -1,0 +1,65 @@
+"""Contract tests for the bundled C++ language skill."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from gobby.search.models import SearchConfig
+from gobby.skills.loader import SkillLoader
+from gobby.skills.manager import SkillManager
+from gobby.skills.search import SkillSearch
+from gobby.skills.sync import sync_bundled_skills
+from gobby.storage.hub.protocol import HubDatabase
+
+pytestmark = pytest.mark.unit
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SKILL_DIR = REPO_ROOT / "src/gobby/install/shared/skills/cpp"
+
+
+def test_cpp_skill_parses_with_references() -> None:
+    """Verify the bundled C++ skill has expected metadata and reference files."""
+    parsed = SkillLoader().load_skill(SKILL_DIR, validate=False)
+
+    assert parsed.name == "cpp"
+    assert parsed.version == "1.0.0"
+    assert parsed.get_category() == "development"
+    assert parsed.triggers is not None
+    assert {"cpp", "c++", "cmake", "conan", "vcpkg", "sanitizer"}.issubset(parsed.triggers)
+    assert 'get_skill_file(name="cpp", path="references/configuration.md")' in parsed.content
+    assert 'get_skill_file(name="cpp", path="references/ownership-and-lifetime.md")' in (
+        parsed.content
+    )
+
+    assert parsed.loaded_files is not None
+    reference_paths = {file.path for file in parsed.loaded_files if file.file_type == "reference"}
+    assert reference_paths == {
+        "references/concurrency.md",
+        "references/configuration.md",
+        "references/errors-and-resources.md",
+        "references/ownership-and-lifetime.md",
+        "references/portability-and-performance.md",
+        "references/testing.md",
+        "references/types-templates-and-abi.md",
+    }
+
+
+def test_synced_cpp_skill_is_searchable(temp_db: HubDatabase) -> None:
+    """Verify bundled sync makes C++ discoverable through skill search."""
+    result = sync_bundled_skills(temp_db)
+    assert result["success"] is True
+
+    manager = SkillManager(temp_db)
+    skill = manager.get_by_name("cpp")
+    assert skill is not None
+    assert skill.source == "installed"
+    assert skill.source_type == "filesystem"
+
+    search = SkillSearch(db=temp_db, config=SearchConfig(mode="keyword"))
+    search.index_skills([skill])
+
+    results = search.search("cpp cmake conan vcpkg raii template abi sanitizer", top_k=3)
+    assert results
+    assert results[0].skill_name == "cpp"

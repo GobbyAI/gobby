@@ -58,6 +58,7 @@ def _sync_bundled(db):
 SKILL_DISCOVERY_RULES = {
     "discover-skill-hubs-on-turn-start",
     "require-c-skill",
+    "require-cpp-skill",
     "require-csharp-skill",
     "require-dart-skill",
     "require-go-skill",
@@ -938,6 +939,169 @@ class TestRequireCSkillCondition:
 
     def test_skips_non_edit_write_tool(self) -> None:
         assert self._eval("/project/src/account_record.c", canonical_tool_kind="read") is False
+
+    def test_skips_empty_file_path(self) -> None:
+        assert self._eval("") is False
+
+
+# --- require-cpp-skill structure ---
+
+
+class TestRequireCppSkillStructure:
+    """Verify require-cpp-skill rule structure."""
+
+    def test_is_before_tool_event(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-cpp-skill")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.when is not None
+        assert "not skill_loaded('cpp')" in body.when
+
+    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-cpp-skill")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert len(body.effects) == 1
+        assert body.effects[0].type == "block"
+        assert body.effects[0].reason == skill_fetch_directive("cpp")
+
+
+# --- require-cpp-skill condition evaluation ---
+
+
+class TestRequireCppSkillCondition:
+    """Test the require-cpp-skill condition evaluates correctly."""
+
+    CONDITION = (
+        "not skill_loaded('cpp') "
+        "and event.data.get('canonical_tool_kind') == 'write' "
+        "and ("
+        "event.data.get('canonical_file_path', '').endswith(("
+        "'.cpp', '.cc', '.cxx', '.c++', '.hpp', '.hh', '.hxx', '.h++', "
+        "'.ipp', '.ixx', '.tpp', '.inl', '.cu', '.cuh', '.C'"
+        ")) "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
+        "in ('CMakeLists.txt', 'CMakePresets.json', 'CMakeUserPresets.json', "
+        "'meson.build', 'meson_options.txt', 'conanfile.txt', 'conanfile.py', "
+        "'vcpkg.json', 'vcpkg-configuration.json') "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
+        "in ('compile_flags.txt', 'compile_commands.json', 'BUILD', "
+        "'BUILD.bazel', 'WORKSPACE', 'MODULE.bazel') "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
+        "in ('.clang-format', '.clang-tidy', '.clangd')"
+        ")"
+    )
+
+    def _eval(
+        self,
+        file_path: str,
+        *,
+        canonical_tool_kind: str = "write",
+        loaded_skills: list[str] | None = None,
+        injected_skills: list[str] | None = None,
+    ) -> bool:
+        variables = {"loaded_skills": loaded_skills or []}
+        if injected_skills is not None:
+            variables["injected_skills"] = injected_skills
+        context = {
+            "variables": variables,
+            "event": SimpleNamespace(
+                data={
+                    "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_file_path": file_path,
+                }
+            ),
+            "tool_input": {},
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        return evaluator.evaluate(self.CONDITION)
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/src/account_record.cpp",
+            "/project/src/account_record.cc",
+            "/project/src/account_record.cxx",
+            "/project/src/account_record.c++",
+            "/project/include/account_record.hpp",
+            "/project/include/account_record.hh",
+            "/project/include/account_record.hxx",
+            "/project/include/account_record.h++",
+            "/project/include/account_record.ipp",
+            "/project/modules/account_record.ixx",
+            "/project/include/account_record.tpp",
+            "/project/include/account_record.inl",
+            "/project/cuda/account_record.cu",
+            "/project/cuda/account_record.cuh",
+            "/project/src/account_record.C",
+        ],
+    )
+    def test_matches_cpp_source_header_module_and_cuda_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/CMakeLists.txt",
+            "/project/CMakePresets.json",
+            "/project/CMakeUserPresets.json",
+            "/project/meson.build",
+            "/project/meson_options.txt",
+            "/project/conanfile.txt",
+            "/project/conanfile.py",
+            "/project/vcpkg.json",
+            "/project/vcpkg-configuration.json",
+            "/project/compile_flags.txt",
+            "/project/compile_commands.json",
+            "/project/BUILD",
+            "/project/BUILD.bazel",
+            "/project/WORKSPACE",
+            "/project/MODULE.bazel",
+            "/project/.clang-format",
+            "/project/.clang-tidy",
+            "/project/.clangd",
+        ],
+    )
+    def test_matches_cpp_build_package_and_analysis_config_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/src/account_record.c",
+            "/project/include/account_record.h",
+            "/project/generated/config.h.in",
+            "/project/pkg/libaccounts.pc.in",
+            "/project/src/AccountRecord.cs",
+            "/project/package.json",
+            "/project/appsettings.json",
+            "/project/.editorconfig",
+            "/project/config.yaml",
+            "/project/CMakeLists.txt.bak",
+        ],
+    )
+    def test_skips_non_cpp_targets(self, file_path: str) -> None:
+        assert self._eval(file_path) is False
+
+    def test_skips_when_already_loaded(self) -> None:
+        assert self._eval("/project/src/account_record.cpp", loaded_skills=["cpp"]) is False
+
+    def test_c_skill_does_not_count_as_cpp_loaded(self) -> None:
+        assert self._eval("/project/src/account_record.cpp", loaded_skills=["c"]) is True
+
+    def test_csharp_skill_does_not_count_as_cpp_loaded(self) -> None:
+        assert self._eval("/project/src/account_record.cpp", loaded_skills=["csharp"]) is True
+
+    def test_does_not_skip_when_legacy_injected(self) -> None:
+        assert self._eval("/project/src/account_record.cpp", injected_skills=["cpp"]) is True
+
+    def test_skips_non_edit_write_tool(self) -> None:
+        assert self._eval("/project/src/account_record.cpp", canonical_tool_kind="read") is False
 
     def test_skips_empty_file_path(self) -> None:
         assert self._eval("") is False

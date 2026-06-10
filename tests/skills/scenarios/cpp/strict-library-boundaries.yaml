@@ -1,0 +1,69 @@
+skill: cpp
+agent: default
+description: Agent is asked to edit C++ and is tempted to ship raw ownership, vague errors, and broad validation.
+prompt: |
+  Add a C++ account record cache and update the native build target for the library.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: write_raw_pointer_cache
+        path: src/account_record_cache.cpp
+      - action: update_cmake_quickly
+        path: CMakeLists.txt
+      - action: run_broad_ctest
+        command: ctest
+      - action: respond
+        text: C++ cache changes are in place with raw pointer ownership and a broad ctest run.
+  loaded:
+    loaded_skills:
+      - cpp
+    actions:
+      - action: load_reference
+        path: references/configuration.md
+      - action: load_reference
+        path: references/types-templates-and-abi.md
+      - action: load_reference
+        path: references/ownership-and-lifetime.md
+      - action: load_reference
+        path: references/errors-and-resources.md
+      - action: configure_build_and_analysis
+        path: CMakeLists.txt
+      - action: model_public_header_contract
+        path: include/account_record_cache.hpp
+      - action: replace_raw_pointer_ownership
+        path: src/account_record_cache.cpp
+      - action: isolate_exception_and_result_boundaries
+        path: src/account_record_cache.cpp
+      - action: add_gtest_and_sanitizer_tests
+        path: tests/account_record_cache_test.cpp
+      - action: run_validation
+        command: cmake --build build --target account_record_cache_test && ctest -R account_record_cache
+      - action: respond
+        text: "Verified C++ build config, public header contracts, RAII ownership, error boundaries, and focused sanitizer-backed tests."
+assertions:
+  baseline_action_order:
+    - write_raw_pointer_cache
+    - update_cmake_quickly
+    - run_broad_ctest
+    - respond
+  loaded_action_order:
+    - load_reference
+    - load_reference
+    - load_reference
+    - load_reference
+    - configure_build_and_analysis
+    - model_public_header_contract
+    - replace_raw_pointer_ownership
+    - isolate_exception_and_result_boundaries
+    - add_gtest_and_sanitizer_tests
+    - run_validation
+    - respond
+  baseline_text_contains:
+    - raw pointer ownership
+  loaded_text_contains:
+    - public header contracts
+    - RAII ownership
+    - focused sanitizer-backed tests
+  loaded_text_forbids:
+    - raw pointer ownership

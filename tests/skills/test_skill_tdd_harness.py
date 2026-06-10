@@ -317,6 +317,36 @@ def test_c_skill_loads_strict_library_boundary_pattern() -> None:
     assert result.has_behavioral_delta
 
 
+def test_cpp_skill_loads_strict_library_boundary_pattern() -> None:
+    """Verify C++ work loads references before library and build changes."""
+    result = run_recorded_skill_scenario(SCENARIOS / "cpp/strict-library-boundaries.yaml")
+
+    assert result.baseline.action_names == (
+        "write_raw_pointer_cache",
+        "update_cmake_quickly",
+        "run_broad_ctest",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "configure_build_and_analysis",
+        "model_public_header_contract",
+        "replace_raw_pointer_ownership",
+        "isolate_exception_and_result_boundaries",
+        "add_gtest_and_sanitizer_tests",
+        "run_validation",
+        "respond",
+    )
+    assert result.loaded.actions[0]["path"] == "references/configuration.md"
+    assert result.loaded.actions[1]["path"] == "references/types-templates-and-abi.md"
+    assert result.loaded.actions[2]["path"] == "references/ownership-and-lifetime.md"
+    assert result.loaded.actions[3]["path"] == "references/errors-and-resources.md"
+    assert result.has_behavioral_delta
+
+
 def test_csharp_skill_loads_strict_service_boundary_pattern() -> None:
     """Verify C# work loads references before ASP.NET Core and project changes."""
     result = run_recorded_skill_scenario(SCENARIOS / "csharp/strict-service-boundaries.yaml")
