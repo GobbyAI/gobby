@@ -1,0 +1,143 @@
+use super::support::*;
+use super::*;
+
+#[test]
+fn incremental_write_always_rewrites_docs_without_provenance() {
+    let project = tempfile::tempdir().expect("project dir");
+    std::fs::create_dir_all(project.path().join("src")).expect("source dir");
+    std::fs::write(project.path().join("src/lib.rs"), "pub struct Client;\n").expect("write lib");
+    let out_dir = project.path().join("codewiki");
+
+    let provenance_doc =
+        "---\ntitle: Lib\nprovenance:\n- file: src/lib.rs\n  ranges:\n  - '1'\n---\n# Lib\n"
+            .to_string();
+    let first = vec![
+        ("code/_special.md".to_string(), "# Special v1\n".to_string()),
+        (
+            "code/files/src/lib.rs.md".to_string(),
+            provenance_doc.clone(),
+        ),
+    ];
+    write_incremental_doc_set(project.path(), &out_dir, &first).expect("first write");
+
+    let second = vec![
+        ("code/_special.md".to_string(), "# Special v2\n".to_string()),
+        ("code/files/src/lib.rs.md".to_string(), provenance_doc),
+    ];
+    let written =
+        write_incremental_doc_set(project.path(), &out_dir, &second).expect("second write");
+
+    // No provenance => always rewritten; matching non-empty hashes => preserved.
+    assert_eq!(written, vec!["code/_special.md".to_string()]);
+    let special =
+        std::fs::read_to_string(out_dir.join("code/_special.md")).expect("special content");
+    assert!(special.contains("Special v2"));
+}
+
+#[test]
+fn incremental_regenerates_only_changed() {
+    let project = tempfile::tempdir().expect("project tempdir");
+    std::fs::create_dir_all(project.path().join("src/nested")).expect("source dirs");
+    std::fs::write(project.path().join("src/lib.rs"), "pub struct Client;\n").expect("write lib");
+    std::fs::write(
+        project.path().join("src/nested/api.rs"),
+        "pub fn serve() {}\n",
+    )
+    .expect("write api");
+    let out_dir = project.path().join("codewiki");
+
+    let input = CodewikiInput {
+        files: vec!["src/lib.rs".to_string(), "src/nested/api.rs".to_string()],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![
+            test_symbol("src/lib.rs", "Client", "class", 1, "pub struct Client;"),
+            test_symbol(
+                "src/nested/api.rs",
+                "serve",
+                "function",
+                1,
+                "pub fn serve()",
+            ),
+        ],
+    };
+
+    let first_docs = generate_hierarchical_docs(&input, None);
+    let first_written =
+        write_incremental_doc_set(project.path(), &out_dir, &first_docs).expect("first write");
+    assert!(first_written.contains(&"code/repo.md".to_string()));
+    assert!(first_written.contains(&"code/modules/src.md".to_string()));
+    assert!(first_written.contains(&"code/files/src/lib.rs.md".to_string()));
+    assert!(first_written.contains(&"code/files/src/nested/api.rs.md".to_string()));
+
+    let unchanged_file_doc = out_dir.join("code/files/src/nested/api.rs.md");
+    let mut unchanged_content =
+        std::fs::read_to_string(&unchanged_file_doc).expect("unchanged doc content");
+    unchanged_content.push_str("\n<!-- preserve unchanged doc -->\n");
+    std::fs::write(&unchanged_file_doc, unchanged_content).expect("write unchanged marker");
+
+    std::fs::write(
+        project.path().join("src/lib.rs"),
+        "pub struct Client;\npub fn connect() {}\n",
+    )
+    .expect("modify lib");
+    let changed_docs = generate_hierarchical_docs(&input, None);
+    let changed_written = write_incremental_doc_set(project.path(), &out_dir, &changed_docs)
+        .expect("incremental write");
+    let unchanged_after =
+        std::fs::read_to_string(&unchanged_file_doc).expect("unchanged doc after content");
+
+    assert!(unchanged_after.contains("preserve unchanged doc"));
+    // _hotspots.md carries no provenance frontmatter, so it is always
+    // rewritten (empty source-hash sets cannot prove the doc unchanged).
+    assert_eq!(
+        changed_written,
+        vec![
+            "code/repo.md".to_string(),
+            "code/_onboarding.md".to_string(),
+            "code/_architecture.md".to_string(),
+            "code/_hotspots.md".to_string(),
+            "code/modules/src.md".to_string(),
+            "code/files/src/lib.rs.md".to_string()
+        ]
+    );
+    let meta = std::fs::read_to_string(out_dir.join("_meta/codewiki.json")).expect("read meta log");
+    let meta: serde_json::Value = serde_json::from_str(&meta).expect("parse meta log");
+    let generated_docs = meta["generated_docs"].as_array().expect("generated docs");
+    assert_eq!(
+        generated_docs,
+        &vec![
+            serde_json::Value::String("code/repo.md".to_string()),
+            serde_json::Value::String("code/_onboarding.md".to_string()),
+            serde_json::Value::String("code/_architecture.md".to_string()),
+            serde_json::Value::String("code/_hotspots.md".to_string()),
+            serde_json::Value::String("code/modules/src.md".to_string()),
+            serde_json::Value::String("code/files/src/lib.rs.md".to_string())
+        ]
+    );
+
+    let reduced_input = CodewikiInput {
+        files: vec!["src/lib.rs".to_string()],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![test_symbol(
+            "src/lib.rs",
+            "Client",
+            "class",
+            1,
+            "pub struct Client;",
+        )],
+    };
+    let reduced_docs = generate_hierarchical_docs(&reduced_input, None);
+    write_incremental_doc_set(project.path(), &out_dir, &reduced_docs).expect("stale docs removed");
+
+    assert!(!unchanged_file_doc.exists());
+    let meta =
+        std::fs::read_to_string(out_dir.join("_meta/codewiki.json")).expect("read final meta");
+    let meta: serde_json::Value = serde_json::from_str(&meta).expect("parse final meta");
+    assert!(
+        meta["docs"]
+            .get("code/files/src/nested/api.rs.md")
+            .is_none()
+    );
+}

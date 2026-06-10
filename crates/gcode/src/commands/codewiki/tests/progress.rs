@@ -1,4 +1,4 @@
-use super::test_utils::test_symbol;
+use super::support::*;
 use super::*;
 
 #[test]

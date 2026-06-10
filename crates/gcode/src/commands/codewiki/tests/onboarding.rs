@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use super::test_utils::{test_component_id, test_symbol};
+use super::support::*;
 use super::*;
 
 #[test]

@@ -1,9 +1,5 @@
-use super::super::io::read_codewiki_meta;
-use super::super::test_utils::test_symbol;
-use super::super::{
-    CodewikiGraphAvailability, CodewikiGraphEdge, CodewikiInput, build_codewiki_changes_doc,
-    build_codewiki_index_snapshot, write_incremental_doc_set_with_snapshot,
-};
+use super::support::*;
+use super::*;
 
 #[test]
 fn codewiki_changes_baseline_persists_snapshot_and_degrades_without_graph() {
