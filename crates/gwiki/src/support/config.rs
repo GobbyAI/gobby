@@ -9,6 +9,57 @@ use crate::{WikiError, indexer};
 
 use super::search::PostgresConfigSource;
 
+/// Hub-backed primary AI config layer with an owned, optional connection.
+///
+/// Commands that synthesize daemon-independently still need `$secret:`
+/// references (the canonical api_key pattern) to resolve through the
+/// PostgreSQL hub when it is reachable; without a hub, plain values resolve
+/// and secrets degrade explicitly.
+pub(crate) struct HubPrimary {
+    conn: Option<Client>,
+}
+
+impl ConfigSource for HubPrimary {
+    fn config_value(&mut self, key: &str) -> Option<String> {
+        let conn = self.conn.as_mut()?;
+        gobby_core::postgres::read_config_value(conn, key)
+            .ok()
+            .flatten()
+            .and_then(|raw| gobby_core::config::decode_config_value(&raw))
+    }
+
+    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+        match self.conn.as_mut() {
+            Some(conn) => gobby_core::secrets::resolve_config_value(value, conn),
+            None => {
+                if value.trim_start().starts_with("$secret:") {
+                    anyhow::bail!(
+                        "secret resolution requires the PostgreSQL hub; configure the hub or use a literal api_key"
+                    );
+                }
+                Ok(value.to_string())
+            }
+        }
+    }
+}
+
+pub(crate) fn hub_ai_config_source(
+    command: &str,
+) -> Result<gobby_core::ai_context::AiConfigSource<HubPrimary>, WikiError> {
+    let gobby_home = gobby_core::gobby_home().map_err(|error| WikiError::Config {
+        detail: format!("failed to resolve Gobby home for {command} config: {error}"),
+    })?;
+    let conn = super::env::database_url_for(command)?
+        .and_then(|url| gobby_core::postgres::connect_readwrite(&url).ok());
+    gobby_core::ai_context::AiConfigSource::with_primary_from_gobby_home(
+        HubPrimary { conn },
+        &gobby_home,
+    )
+    .map_err(|error| WikiError::Config {
+        detail: format!("failed to resolve AI config for {command}: {error}"),
+    })
+}
+
 pub(crate) const DEFAULT_SHARED_CODE_GRAPH_EDGE_LIMIT: usize = 200;
 const SHARED_CODE_CALL_EDGE_LIMIT_KEY: &str = "gwiki.shared_code.call_edge_limit";
 const SHARED_CODE_IMPORT_EDGE_LIMIT_KEY: &str = "gwiki.shared_code.import_edge_limit";

@@ -395,7 +395,7 @@ fn synthesize(
     requested_mode: AiRouting,
     require_ai: bool,
 ) -> Result<(), WikiError> {
-    let mut source = ai_config_source()?;
+    let mut source = crate::support::config::hub_ai_config_source("gwiki ask")?;
     let context = AiContext::resolve_with_options(
         None,
         &mut source,
@@ -419,15 +419,6 @@ fn synthesize(
         AiRouting::Daemon => generate_daemon(output, &context, require_ai),
         AiRouting::Auto | AiRouting::Off => mark_ai_unavailable(output, require_ai, None),
     }
-}
-
-fn ai_config_source() -> Result<AiConfigSource, WikiError> {
-    let gobby_home = gobby_core::gobby_home().map_err(|error| WikiError::Config {
-        detail: format!("failed to resolve Gobby home for gwiki ask config: {error}"),
-    })?;
-    AiConfigSource::from_gobby_home(&gobby_home).map_err(|error| WikiError::Config {
-        detail: format!("failed to resolve AI config for gwiki ask: {error}"),
-    })
 }
 
 fn generate_direct(

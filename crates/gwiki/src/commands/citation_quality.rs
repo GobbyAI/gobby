@@ -4,9 +4,8 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use gobby_core::ai::effective_route;
-use gobby_core::ai_context::{AiConfigSource, AiContext, AiContextOptions};
+use gobby_core::ai_context::{AiContext, AiContextOptions};
 use gobby_core::config::{AiCapability, AiRouting};
-use gobby_core::gobby_home;
 use serde::Serialize;
 
 use crate::credibility::{CredibilityInput, CredibilityScore, CredibilitySourceType};
@@ -141,7 +140,7 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
 }
 
 fn text_generation_available() -> Result<bool, WikiError> {
-    let mut source = ai_config_source()?;
+    let mut source = crate::support::config::hub_ai_config_source("gwiki citation-quality")?;
     let context = AiContext::resolve_with_options(
         None,
         &mut source,
@@ -154,15 +153,6 @@ fn text_generation_available() -> Result<bool, WikiError> {
         effective_route(&context, AiCapability::TextGenerate),
         AiRouting::Direct | AiRouting::Daemon
     ))
-}
-
-fn ai_config_source() -> Result<AiConfigSource, WikiError> {
-    let gobby_home = gobby_home().map_err(|error| WikiError::Config {
-        detail: format!("failed to resolve Gobby home for gwiki citation-quality config: {error}"),
-    })?;
-    AiConfigSource::from_gobby_home(&gobby_home).map_err(|error| WikiError::Config {
-        detail: format!("failed to resolve AI config for gwiki citation-quality: {error}"),
-    })
 }
 
 pub(crate) fn build_report(
