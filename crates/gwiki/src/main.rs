@@ -414,6 +414,44 @@ enum CompileKind {
     Topic,
 }
 
+/// Minimal stderr logger so crate-wide `log::warn!` diagnostics are visible.
+///
+/// `RUST_LOG` is parsed as a plain level (`error|warn|info|debug|trace`);
+/// unset keeps logging off so default invocations stay quiet, and `--quiet`
+/// forces it off regardless.
+struct StderrLogger;
+
+static STDERR_LOGGER: StderrLogger = StderrLogger;
+
+impl log::Log for StderrLogger {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        metadata.level() <= log::max_level()
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if self.enabled(record.metadata()) {
+            eprintln!("gwiki: {}: {}", record.level(), record.args());
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+fn log_level(quiet: bool, rust_log: Option<&str>) -> log::LevelFilter {
+    if quiet {
+        return log::LevelFilter::Off;
+    }
+    rust_log
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(log::LevelFilter::Off)
+}
+
+fn init_logger(quiet: bool) {
+    let rust_log = std::env::var("RUST_LOG").ok();
+    let _ = log::set_logger(&STDERR_LOGGER);
+    log::set_max_level(log_level(quiet, rust_log.as_deref()));
+}
+
 fn main() -> ExitCode {
     let Cli {
         scope,
@@ -421,6 +459,7 @@ fn main() -> ExitCode {
         quiet,
         command,
     } = Cli::parse_from(normalize_project_flag_args(std::env::args_os()));
+    init_logger(quiet);
 
     if matches!(&command, CliCommand::Contract) {
         let mut stdout = std::io::stdout().lock();
