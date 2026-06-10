@@ -1,0 +1,27 @@
+tags: [skill-discovery, context, gobby, default]
+
+rules:
+  require-yaml-skill:
+    description: "Block first YAML write/edit until yaml coding standards are loaded"
+    event: before_tool
+    enabled: true
+    priority: 30
+    when: >
+      not skill_loaded('yaml')
+      and event.data.get('canonical_tool_kind') == 'write'
+      and (
+        event.data.get('canonical_file_path', '').endswith('.yaml')
+        or event.data.get('canonical_file_path', '').endswith('.yml')
+        or event.data.get('canonical_file_path', '').endswith('.yaml.j2')
+        or event.data.get('canonical_file_path', '').endswith('.yml.j2')
+        or event.data.get('canonical_file_path', '').endswith('.yaml.tpl')
+        or event.data.get('canonical_file_path', '').endswith('.yml.tpl')
+        or event.data.get('canonical_file_path', '').endswith('.yaml.tmpl')
+        or event.data.get('canonical_file_path', '').endswith('.yml.tmpl')
+        or event.data.get('canonical_file_path', '').endswith('.yaml.template')
+        or event.data.get('canonical_file_path', '').endswith('.yml.template')
+        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('.yamllint', '.clang-format', '.clang-tidy')
+      )
+    effects:
+      - type: block
+        reason: 'Call get_skill(name="yaml") on gobby-skills through mcp__gobby__ progressive discovery: list_mcp_servers -> list_tools("gobby-skills") -> get_tool_schema("gobby-skills", "get_skill") -> call_tool("gobby-skills", "get_skill", {"name": "yaml"}). Then continue.'

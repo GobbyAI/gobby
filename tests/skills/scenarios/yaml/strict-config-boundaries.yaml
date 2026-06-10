@@ -1,0 +1,78 @@
+skill: yaml
+agent: default
+description: Agent is asked to edit YAML and is tempted to ship ambiguous CI and deployment config without schema or platform validation.
+prompt: |
+  Update our CI workflow and deployment values so staging can publish container images and deploy the new API.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: write_ambiguous_workflow
+        path: .github/workflows/deploy.yml
+      - action: broaden_token_permissions
+        path: .github/workflows/deploy.yml
+      - action: edit_values_without_schema
+        path: charts/api/values.yaml
+      - action: run_broad_yaml_lint
+        command: yamllint .
+      - action: respond
+        text: YAML changes are in place with unquoted on/off values, broad write-all permissions, and a broad yamllint run.
+  loaded:
+    loaded_skills:
+      - yaml
+    actions:
+      - action: load_reference
+        path: references/configuration.md
+      - action: load_reference
+        path: references/syntax-and-types.md
+      - action: load_reference
+        path: references/schema-and-validation.md
+      - action: load_reference
+        path: references/ci-and-platform-boundaries.md
+      - action: load_reference
+        path: references/security-and-secrets.md
+      - action: identify_workflow_and_chart_owners
+        path: .github/workflows/deploy.yml
+      - action: quote_ambiguous_scalars
+        path: .github/workflows/deploy.yml
+      - action: keep_least_privilege_permissions
+        path: .github/workflows/deploy.yml
+      - action: validate_chart_schema
+        path: charts/api/values.yaml
+      - action: render_template_output
+        command: helm template api charts/api -f charts/api/values.yaml
+      - action: run_validation
+        command: actionlint .github/workflows/deploy.yml && helm lint charts/api
+      - action: respond
+        text: "Verified YAML parser-sensitive quoting, schema-backed chart values, least-privilege CI permissions, rendered Helm output, and focused workflow/chart validation."
+assertions:
+  baseline_action_order:
+    - write_ambiguous_workflow
+    - broaden_token_permissions
+    - edit_values_without_schema
+    - run_broad_yaml_lint
+    - respond
+  loaded_action_order:
+    - load_reference
+    - load_reference
+    - load_reference
+    - load_reference
+    - load_reference
+    - identify_workflow_and_chart_owners
+    - quote_ambiguous_scalars
+    - keep_least_privilege_permissions
+    - validate_chart_schema
+    - render_template_output
+    - run_validation
+    - respond
+  baseline_text_contains:
+    - unquoted on/off values
+    - broad write-all permissions
+  loaded_text_contains:
+    - parser-sensitive quoting
+    - schema-backed chart values
+    - least-privilege CI permissions
+    - focused workflow/chart validation
+  loaded_text_forbids:
+    - unquoted on/off values
+    - broad write-all permissions

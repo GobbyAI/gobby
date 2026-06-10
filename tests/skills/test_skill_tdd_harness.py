@@ -497,3 +497,36 @@ def test_swift_skill_loads_strict_concurrency_boundary_pattern() -> None:
     assert result.loaded.actions[2]["path"] == "references/concurrency-and-error-handling.md"
     assert result.loaded.actions[3]["path"] == "references/framework-and-platform-boundaries.md"
     assert result.has_behavioral_delta
+
+
+def test_yaml_skill_loads_strict_config_boundary_pattern() -> None:
+    """Verify YAML work loads references before config and platform changes."""
+    result = run_recorded_skill_scenario(SCENARIOS / "yaml/strict-config-boundaries.yaml")
+
+    assert result.baseline.action_names == (
+        "write_ambiguous_workflow",
+        "broaden_token_permissions",
+        "edit_values_without_schema",
+        "run_broad_yaml_lint",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "identify_workflow_and_chart_owners",
+        "quote_ambiguous_scalars",
+        "keep_least_privilege_permissions",
+        "validate_chart_schema",
+        "render_template_output",
+        "run_validation",
+        "respond",
+    )
+    assert result.loaded.actions[0]["path"] == "references/configuration.md"
+    assert result.loaded.actions[1]["path"] == "references/syntax-and-types.md"
+    assert result.loaded.actions[2]["path"] == "references/schema-and-validation.md"
+    assert result.loaded.actions[3]["path"] == "references/ci-and-platform-boundaries.md"
+    assert result.loaded.actions[4]["path"] == "references/security-and-secrets.md"
+    assert result.has_behavioral_delta

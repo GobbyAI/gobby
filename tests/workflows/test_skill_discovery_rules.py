@@ -2071,6 +2071,152 @@ class TestRequireSwiftSkillCondition:
         assert self._eval("") is False
 
 
+# --- require-yaml-skill structure ---
+
+
+class TestRequireYamlSkillStructure:
+    """Verify require-yaml-skill rule structure."""
+
+    def test_is_before_tool_event(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-yaml-skill")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.when is not None
+        assert "not skill_loaded('yaml')" in body.when
+
+    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-yaml-skill")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert len(body.effects) == 1
+        assert body.effects[0].type == "block"
+        assert body.effects[0].reason == skill_fetch_directive("yaml")
+
+
+class TestRequireYamlSkillCondition:
+    """Test the require-yaml-skill condition evaluates correctly."""
+
+    CONDITION = (
+        "not skill_loaded('yaml') "
+        "and event.data.get('canonical_tool_kind') == 'write' "
+        "and ("
+        "event.data.get('canonical_file_path', '').endswith('.yaml') "
+        "or event.data.get('canonical_file_path', '').endswith('.yml') "
+        "or event.data.get('canonical_file_path', '').endswith('.yaml.j2') "
+        "or event.data.get('canonical_file_path', '').endswith('.yml.j2') "
+        "or event.data.get('canonical_file_path', '').endswith('.yaml.tpl') "
+        "or event.data.get('canonical_file_path', '').endswith('.yml.tpl') "
+        "or event.data.get('canonical_file_path', '').endswith('.yaml.tmpl') "
+        "or event.data.get('canonical_file_path', '').endswith('.yml.tmpl') "
+        "or event.data.get('canonical_file_path', '').endswith('.yaml.template') "
+        "or event.data.get('canonical_file_path', '').endswith('.yml.template') "
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
+        "in ('.yamllint', '.clang-format', '.clang-tidy')"
+        ")"
+    )
+
+    def _eval(
+        self,
+        file_path: str,
+        *,
+        canonical_tool_kind: str = "write",
+        loaded_skills: list[str] | None = None,
+        injected_skills: list[str] | None = None,
+    ) -> bool:
+        variables = {"loaded_skills": loaded_skills or []}
+        if injected_skills is not None:
+            variables["injected_skills"] = injected_skills
+        context = {
+            "variables": variables,
+            "event": SimpleNamespace(
+                data={
+                    "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_file_path": file_path,
+                }
+            ),
+            "tool_input": {},
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        return evaluator.evaluate(self.CONDITION)
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/config/app.yaml",
+            "/project/config/app.yml",
+            "/project/.github/workflows/deploy.yml",
+            "/project/charts/api/values.yaml",
+            "/project/openapi/spec.yaml",
+            "/project/docker-compose.yml",
+        ],
+    )
+    def test_matches_yaml_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/templates/deployment.yaml.j2",
+            "/project/templates/deployment.yml.j2",
+            "/project/templates/config.yaml.tpl",
+            "/project/templates/config.yml.tpl",
+            "/project/templates/values.yaml.tmpl",
+            "/project/templates/values.yml.tmpl",
+            "/project/templates/workflow.yaml.template",
+            "/project/templates/workflow.yml.template",
+        ],
+    )
+    def test_matches_yaml_template_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/.yamllint",
+            "/project/config/.yamllint",
+            "/project/.clang-format",
+            "/project/src/.clang-tidy",
+        ],
+    )
+    def test_matches_yaml_tool_config_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/config/app.yaml.bak",
+            "/project/config/app.yml.disabled",
+            "/project/config/app.json",
+            "/project/config/app.toml",
+            "/project/.prettierrc",
+            "/project/src/main.py",
+            "/project/src/App.tsx",
+        ],
+    )
+    def test_skips_non_yaml_targets(self, file_path: str) -> None:
+        assert self._eval(file_path) is False
+
+    def test_skips_when_already_loaded(self) -> None:
+        assert self._eval("/project/config/app.yaml", loaded_skills=["yaml"]) is False
+
+    def test_json_skill_does_not_count_as_yaml_loaded(self) -> None:
+        assert self._eval("/project/config/app.yaml", loaded_skills=["json"]) is True
+
+    def test_does_not_skip_when_legacy_injected(self) -> None:
+        assert self._eval("/project/config/app.yaml", injected_skills=["yaml"]) is True
+
+    def test_skips_non_edit_write_tool(self) -> None:
+        assert self._eval("/project/config/app.yaml", canonical_tool_kind="read") is False
+
+    def test_skips_empty_file_path(self) -> None:
+        assert self._eval("") is False
+
+
 # --- require-php-skill structure ---
 
 
