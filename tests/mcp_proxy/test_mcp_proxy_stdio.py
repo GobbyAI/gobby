@@ -29,6 +29,19 @@ from gobby.mcp_proxy.wait_tools import (
 pytestmark = pytest.mark.unit
 
 
+def test_extended_timeout_tools_excludes_stale_apply_tdd() -> None:
+    from gobby.mcp_proxy import wait_tools
+
+    assert wait_tools.EXTENDED_TIMEOUT_TOOL_NAMES == (
+        "close_task",
+        "expand_task",
+        "merge_resolve",
+        "suggest_next_task",
+        "compact_self",
+        "recall_review_context",
+    )
+
+
 def test_wait_tool_source_stale_result_detects_changed_file(tmp_path: Path) -> None:
     from gobby.mcp_proxy import wait_tools
 
@@ -1790,7 +1803,7 @@ class TestMCPToolsWrapper:
             await asyncio.wait_for(heartbeat_seen.wait(), timeout=0.2)
             assert ctx.report_progress.await_count >= 1
             progress_kwargs = ctx.report_progress.await_args.kwargs
-            assert progress_kwargs["total"] == 90.0
+            assert progress_kwargs["total"] == 300.0
             release_call.set()
             result = await asyncio.wait_for(task, timeout=0.2)
 
