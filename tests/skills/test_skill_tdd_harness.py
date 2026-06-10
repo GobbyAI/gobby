@@ -435,3 +435,34 @@ def test_ruby_skill_loads_strict_rails_boundary_pattern() -> None:
     assert result.loaded.actions[2]["path"] == "references/data-and-framework-boundaries.md"
     assert result.loaded.actions[3]["path"] == "references/errors-and-observability.md"
     assert result.has_behavioral_delta
+
+
+def test_kotlin_skill_loads_strict_coroutine_boundary_pattern() -> None:
+    """Verify Kotlin work loads references before Gradle and coroutine changes."""
+    result = run_recorded_skill_scenario(SCENARIOS / "kotlin/strict-coroutine-boundaries.yaml")
+
+    assert result.baseline.action_names == (
+        "write_nullable_platform_service",
+        "update_gradle_quickly",
+        "launch_global_coroutine",
+        "run_broad_gradle_test",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "configure_kotlin_toolchain",
+        "model_null_safe_contract",
+        "structure_coroutine_scope",
+        "isolate_android_boundary",
+        "add_coroutine_boundary_tests",
+        "run_validation",
+        "respond",
+    )
+    assert result.loaded.actions[0]["path"] == "references/configuration.md"
+    assert result.loaded.actions[1]["path"] == "references/type-system-and-api-contracts.md"
+    assert result.loaded.actions[2]["path"] == "references/coroutines-and-error-handling.md"
+    assert result.loaded.actions[3]["path"] == "references/framework-and-platform-boundaries.md"
+    assert result.has_behavioral_delta

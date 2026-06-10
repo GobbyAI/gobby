@@ -1,0 +1,18 @@
+tags: [skill-discovery, context, gobby, default]
+
+rules:
+  require-kotlin-skill:
+    description: "Block first Kotlin write/edit until kotlin coding standards are loaded"
+    event: before_tool
+    enabled: true
+    priority: 30
+    when: >
+      not skill_loaded('kotlin')
+      and event.data.get('canonical_tool_kind') == 'write'
+      and (
+        event.data.get('canonical_file_path', '').endswith(('.kt', '.kts'))
+        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('.kotlin-version', 'detekt.yml', 'detekt.yaml', '.detekt.yml', '.detekt.yaml', 'ktlint.yml', 'ktlint.yaml', '.ktlint.yml', '.ktlint.yaml')
+      )
+    effects:
+      - type: block
+        reason: 'Call get_skill(name="kotlin") on gobby-skills through mcp__gobby__ progressive discovery: list_mcp_servers -> list_tools("gobby-skills") -> get_tool_schema("gobby-skills", "get_skill") -> call_tool("gobby-skills", "get_skill", {"name": "kotlin"}). Then continue.'

@@ -1,0 +1,74 @@
+skill: kotlin
+agent: default
+description: Agent is asked to edit Kotlin and is tempted to ship nullable platform code with GlobalScope and broad Gradle validation.
+prompt: |
+  Add a Kotlin profile sync flow for an Android/KMP project and update the Gradle build so the client can be tested.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: write_nullable_platform_service
+        path: shared/src/commonMain/kotlin/com/acme/profile/ProfileSync.kt
+      - action: update_gradle_quickly
+        path: shared/build.gradle.kts
+      - action: launch_global_coroutine
+        path: androidApp/src/main/kotlin/com/acme/profile/ProfileViewModel.kt
+      - action: run_broad_gradle_test
+        command: ./gradlew test
+      - action: respond
+        text: Kotlin sync changes are in place with nullable response maps, GlobalScope, and a broad Gradle test run.
+  loaded:
+    loaded_skills:
+      - kotlin
+    actions:
+      - action: load_reference
+        path: references/configuration.md
+      - action: load_reference
+        path: references/type-system-and-api-contracts.md
+      - action: load_reference
+        path: references/coroutines-and-error-handling.md
+      - action: load_reference
+        path: references/framework-and-platform-boundaries.md
+      - action: configure_kotlin_toolchain
+        path: shared/build.gradle.kts
+      - action: model_null_safe_contract
+        path: shared/src/commonMain/kotlin/com/acme/profile/Profile.kt
+      - action: structure_coroutine_scope
+        path: shared/src/commonMain/kotlin/com/acme/profile/ProfileSync.kt
+      - action: isolate_android_boundary
+        path: androidApp/src/main/kotlin/com/acme/profile/ProfileViewModel.kt
+      - action: add_coroutine_boundary_tests
+        path: shared/src/commonTest/kotlin/com/acme/profile/ProfileSyncTest.kt
+      - action: run_validation
+        command: ./gradlew :shared:compileKotlinJvm :shared:jvmTest --tests com.acme.profile.ProfileSyncTest
+      - action: respond
+        text: "Verified Kotlin toolchain config, null-safe contracts, structured coroutine cancellation, Android boundary isolation, and focused Kotlin tests."
+assertions:
+  baseline_action_order:
+    - write_nullable_platform_service
+    - update_gradle_quickly
+    - launch_global_coroutine
+    - run_broad_gradle_test
+    - respond
+  loaded_action_order:
+    - load_reference
+    - load_reference
+    - load_reference
+    - load_reference
+    - configure_kotlin_toolchain
+    - model_null_safe_contract
+    - structure_coroutine_scope
+    - isolate_android_boundary
+    - add_coroutine_boundary_tests
+    - run_validation
+    - respond
+  baseline_text_contains:
+    - nullable response maps
+    - GlobalScope
+  loaded_text_contains:
+    - null-safe contracts
+    - structured coroutine cancellation
+    - focused Kotlin tests
+  loaded_text_forbids:
+    - nullable response maps
+    - GlobalScope
