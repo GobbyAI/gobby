@@ -16,7 +16,11 @@ pub mod text;
 pub mod transcription;
 pub mod vision;
 
-const TEXT_VISION_TIMEOUT: Duration = Duration::from_secs(60);
+// Local reasoning models decode long, large-prompt generations at tens of
+// tokens per second; a shared 60s budget timed out the biggest codewiki
+// prompts (repo overview, top-level subsystems) while vision stays snappy.
+const TEXT_GENERATE_TIMEOUT: Duration = Duration::from_secs(300);
+const VISION_TIMEOUT: Duration = Duration::from_secs(60);
 const EMBEDDINGS_TIMEOUT: Duration = Duration::from_secs(10);
 const STT_CHUNK_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_RETRIES: usize = 2;
@@ -207,7 +211,8 @@ fn timeout_for(capability: AiCapability) -> Duration {
     match capability {
         AiCapability::AudioTranscribe | AiCapability::AudioTranslate => STT_CHUNK_TIMEOUT,
         AiCapability::Embed => EMBEDDINGS_TIMEOUT,
-        AiCapability::VisionExtract | AiCapability::TextGenerate => TEXT_VISION_TIMEOUT,
+        AiCapability::VisionExtract => VISION_TIMEOUT,
+        AiCapability::TextGenerate => TEXT_GENERATE_TIMEOUT,
     }
 }
 
@@ -457,6 +462,16 @@ mod tests {
         assert_eq!(timeout_for(AiCapability::Embed), EMBEDDINGS_TIMEOUT);
         assert!(timeout_for(AiCapability::Embed) < timeout_for(AiCapability::TextGenerate));
         assert!(timeout_for(AiCapability::Embed) < timeout_for(AiCapability::VisionExtract));
+    }
+
+    #[test]
+    fn text_generation_outlasts_vision_for_local_reasoning_models() {
+        assert_eq!(
+            timeout_for(AiCapability::TextGenerate),
+            TEXT_GENERATE_TIMEOUT
+        );
+        assert_eq!(timeout_for(AiCapability::VisionExtract), VISION_TIMEOUT);
+        assert!(timeout_for(AiCapability::VisionExtract) < timeout_for(AiCapability::TextGenerate));
     }
 
     #[test]
