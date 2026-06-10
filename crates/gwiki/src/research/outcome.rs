@@ -201,7 +201,16 @@ pub(crate) fn dedup_strings(values: Vec<String>) -> Vec<String> {
 
 pub(crate) fn scope_selection_from_research_scope(scope: &ResearchScope) -> ScopeSelection {
     match scope {
-        ResearchScope::Project { root, .. } => ScopeSelection::project(root.clone()),
+        ResearchScope::Project { root, .. } => {
+            // ResearchScope stores the vault root (<project>/.gobby/wiki) for
+            // checkpoint paths; the scope selection needs the project root.
+            let project_root = root
+                .ancestors()
+                .nth(2)
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| root.clone());
+            ScopeSelection::project(project_root)
+        }
         ResearchScope::Topic { name, .. } => ScopeSelection::topic(name.clone()),
     }
 }
@@ -346,6 +355,21 @@ pub fn research_scope_from_resolved(scope: &scope::ResolvedScope) -> ResearchSco
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_research_scope_selection_uses_project_root() {
+        let scope = ResearchScope::project_for_id(
+            "project-1".to_string(),
+            PathBuf::from("/repo/.gobby/wiki"),
+        );
+
+        let selection = scope_selection_from_research_scope(&scope);
+
+        assert_eq!(
+            selection.project_root().map(Path::to_path_buf),
+            Some(PathBuf::from("/repo"))
+        );
+    }
 
     #[test]
     fn dedup_strings_preserves_first_seen_order() {

@@ -75,7 +75,9 @@ research_status: completed
 fn research_reloads_checkpoint_without_daemon_dispatch() {
     let temp = tempfile::tempdir().expect("tempdir");
     write_project_identity(temp.path(), "project-1");
-    let scope = ResearchScope::project_for_id("project-1", temp.path());
+    // ResearchScope stores the vault root (<project>/.gobby/wiki), not the
+    // project root.
+    let scope = ResearchScope::project_for_id("project-1", temp.path().join(".gobby/wiki"));
     let checkpoint = ResearchSession {
         session_id: "research-existing".to_string(),
         question: "What changed in the parser?".to_string(),
