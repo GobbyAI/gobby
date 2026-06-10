@@ -30,7 +30,7 @@ gobby-core = { path = "../gcore", version = "0.4.0", features = ["postgres", "fa
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-postgres = "0.19"
+postgres = { version = "0.19", features = ["with-serde_json-1"] }
 # ureq handles daemon/research calls; optional reqwest is kept for direct embedding requests.
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }
 serde = { version = "1", features = ["derive", "rc"] }

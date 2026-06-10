@@ -137,7 +137,13 @@ impl std::error::Error for StoreError {}
 
 impl From<postgres::Error> for StoreError {
     fn from(error: postgres::Error) -> Self {
-        StoreError::Postgres(error.to_string())
+        // `postgres::Error::to_string()` is just "db error"; the server's
+        // message/detail lives on the DbError in the source chain.
+        let message = match error.as_db_error() {
+            Some(db_error) => db_error.to_string(),
+            None => error.to_string(),
+        };
+        StoreError::Postgres(message)
     }
 }
 
@@ -310,8 +316,10 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
         let id = scoped_id("document", &self.scope, &document.path, None);
         let path = display_path(&document.path);
         let source_kind = document_kind_name(document.kind);
-        let provenance = json!({ "source_path": path }).to_string();
-        let frontmatter = "{}";
+        // serde_json::Value params map natively to JSONB; string params would fail
+        // ToSql type checks against jsonb columns (parameter serialization error).
+        let provenance = json!({ "source_path": path });
+        let frontmatter = json!({});
         let (scope_kind, scope_id, project_id, topic_name) = self.scope_params();
 
         self.conn.execute(
@@ -321,7 +329,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
              )
              VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8,
-                $9, $10::jsonb, $11::jsonb, $12, NOW(), NOW()
+                $9, $10, $11, $12, NOW(), NOW()
              )
              ON CONFLICT (scope_kind, scope_id, path)
              DO UPDATE SET
@@ -413,9 +421,8 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
                 "byte_start": chunk.byte_start,
                 "byte_end": chunk.byte_end,
                 "heading": chunk.heading,
-            })
-            .to_string();
-            let frontmatter = "{}";
+            });
+            let frontmatter = json!({});
             let (scope_kind, scope_id, project_id, topic_name) = (
                 scope.scope_kind().to_string(),
                 scope.scope_id().to_string(),
@@ -431,7 +438,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
                  )
                  VALUES (
                     $1, $2, $3, $4, $5, $6, $7,
-                    $8, $9, $10, $11::jsonb, $12::jsonb,
+                    $8, $9, $10, $11, $12,
                     $13, $14, NOW()
                  )",
                 &[
@@ -490,8 +497,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
                 "byte_start": link.byte_start,
                 "byte_end": link.byte_end,
                 "alias": link.alias,
-            })
-            .to_string();
+            });
             let (scope_kind, scope_id, project_id, topic_name) = (
                 scope.scope_kind().to_string(),
                 scope.scope_id().to_string(),
@@ -504,7 +510,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
                     id, scope_kind, scope_id, project_id, topic_name, path,
                     target_path, link_text, link_kind, provenance, created_at
                  )
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, NOW())
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
              ON CONFLICT (scope_kind, scope_id, path, target_path, link_text, link_kind)
              DO UPDATE SET
                     id = EXCLUDED.id,
@@ -541,9 +547,8 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
         let provenance = json!({
             "source_path": &path,
             "document_path": &document_path,
-        })
-        .to_string();
-        let frontmatter = "{}";
+        });
+        let frontmatter = json!({});
         let (scope_kind, scope_id, project_id, topic_name) = self.scope_params();
 
         self.conn.execute(
@@ -551,7 +556,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
 				id, scope_kind, scope_id, project_id, topic_name, path, document_path, source_kind,
 				content_hash, frontmatter, provenance, captured_at
 			 )
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, NOW())
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
 			 ON CONFLICT (scope_kind, scope_id, document_path)
 			 DO UPDATE SET
 				id = EXCLUDED.id,
@@ -590,8 +595,8 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
             .get(&ingestion.path)
             .map(|document| document.source_kind.as_str())
             .unwrap_or("unknown");
-        let provenance = json!({ "event": status }).to_string();
-        let frontmatter = "{}";
+        let provenance = json!({ "event": status });
+        let frontmatter = json!({});
         let (scope_kind, scope_id, project_id, topic_name) = self.scope_params();
 
         self.conn.execute(
@@ -599,7 +604,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
                 id, scope_kind, scope_id, project_id, topic_name, path, source_kind,
                 content_hash, frontmatter, provenance, status, ingested_at
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, NOW())
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
              ON CONFLICT (id)
              DO UPDATE SET
                 project_id = EXCLUDED.project_id,

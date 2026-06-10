@@ -179,7 +179,8 @@ impl GwikiStandaloneSetup {
     topic_name TEXT,
     path TEXT NOT NULL,
     source_kind TEXT NOT NULL,
-    content_hash TEXT NOT NULL,
+    -- Nullable: Deleted/Skipped ingestion events have no current content to hash.
+    content_hash TEXT,
     frontmatter JSONB NOT NULL DEFAULT '{{}}'::jsonb,
     provenance JSONB NOT NULL DEFAULT '{{}}'::jsonb,
     status TEXT NOT NULL,
