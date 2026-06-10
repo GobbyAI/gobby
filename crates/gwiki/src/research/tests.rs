@@ -96,8 +96,9 @@ fn research_reloads_checkpoint_without_daemon_dispatch() {
     };
     checkpoint.save_checkpoint().expect("checkpoint saved");
 
-    let outcome = run(default_options("What should be refreshed?", scope))
-        .expect("research checkpoint loaded");
+    let mut options = default_options("What should be refreshed?", scope);
+    options.ai = AiRouting::Off;
+    let outcome = run(options).expect("research checkpoint loaded");
 
     assert_eq!(outcome.session.session_id, "research-existing");
     assert_eq!(outcome.session.agent_count, 1);
