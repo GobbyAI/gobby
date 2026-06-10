@@ -151,6 +151,53 @@ def test_generate_selects_acp_backed_provider(
     ]
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"prompt": "Summarize this", "provider": "droid"},
+        {"prompt": "Summarize this", "model": "qwen/qwen3.6-35b-a3b"},
+    ],
+)
+def test_generate_rejects_partial_explicit_routing(
+    client: TestClient,
+    payload: dict[str, str],
+) -> None:
+    droid = _FakeTextAdapter()
+    local = _FakeTextAdapter()
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="droid",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("qwen/qwen3.6-35b-a3b",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("qwen/qwen3.6-35b-a3b",),
+            ),
+        ]
+    )
+    service = TextGenerationService(registry, {"droid": droid, "local": local})
+
+    with patch(
+        "gobby.servers.routes.llm.build_daemon_text_generation_service",
+        return_value=service,
+    ):
+        response = client.post("/api/llm/generate", json=payload)
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": "provider and model must be supplied together for explicit text generation routing"
+    }
+    assert droid.requests == []
+    assert local.requests == []
+
+
 def test_generate_defaults_to_feature_low_and_accepts_system_alias(
     client: TestClient,
     server_with_llm: MagicMock,
@@ -189,10 +236,10 @@ def test_generate_defaults_to_feature_low_and_accepts_system_alias(
     assert response.status_code == 200
     build_service.assert_called_once_with(server_with_llm.config)
     assert response.json() == {
-            "text": "Generated text",
-            "capability": "text_generate",
-            "provider": "codex",
-            "model": "gpt-5.4-mini",
+        "text": "Generated text",
+        "capability": "text_generate",
+        "provider": "codex",
+        "model": "gpt-5.4-mini",
     }
     assert codex.requests == [
         TextGenerationRequest(
@@ -265,6 +312,63 @@ def test_generate_explicit_candidates_bypass_default_profile_and_provider(
     ]
 
 
+def test_generate_candidates_override_partial_top_level_provider(
+    client: TestClient,
+) -> None:
+    droid = _FakeTextAdapter()
+    local = _FakeTextAdapter()
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="droid",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("qwen/qwen3.6-35b-a3b",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("Qwen3-Coder-30B-A3B-Instruct",),
+            ),
+        ]
+    )
+    service = TextGenerationService(registry, {"droid": droid, "local": local})
+
+    with patch(
+        "gobby.servers.routes.llm.build_daemon_text_generation_service",
+        return_value=service,
+    ):
+        response = client.post(
+            "/api/llm/generate",
+            json={
+                "prompt": "Summarize this",
+                "provider": "droid",
+                "candidates": ["local/Qwen3-Coder-30B-A3B-Instruct"],
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "text": "Generated text",
+        "capability": "text_generate",
+        "provider": "local",
+        "model": "Qwen3-Coder-30B-A3B-Instruct",
+    }
+    assert droid.requests == []
+    assert local.requests == [
+        TextGenerationRequest(
+            prompt="Summarize this",
+            provider="local",
+            candidates=("local/Qwen3-Coder-30B-A3B-Instruct",),
+            model="Qwen3-Coder-30B-A3B-Instruct",
+            caller="llm-generate-route",
+        )
+    ]
+
+
 def test_generate_includes_usage_when_available(
     client: TestClient,
     server_with_llm: MagicMock,
@@ -290,7 +394,7 @@ def test_generate_includes_usage_when_available(
     ) as build_service:
         response = client.post(
             "/api/llm/generate",
-            json={"prompt": "Summarize this", "provider": "local"},
+            json={"prompt": "Summarize this", "provider": "local", "model": "local-model"},
         )
 
     assert response.status_code == 200
@@ -335,7 +439,12 @@ def test_generate_returns_real_usage_for_claude_path(
     ):
         response = client.post(
             "/api/llm/generate",
-            json={"prompt": "Summarize this", "provider": "claude", "max_tokens": 64},
+            json={
+                "prompt": "Summarize this",
+                "provider": "claude",
+                "model": "claude-sonnet-4-5",
+                "max_tokens": 64,
+            },
         )
 
     assert response.status_code == 200
@@ -365,7 +474,7 @@ def test_generate_returns_deterministic_unavailable_error(client: TestClient) ->
     ):
         response = client.post(
             "/api/llm/generate",
-            json={"prompt": "Summarize this", "provider": "gemini"},
+            json={"prompt": "Summarize this", "provider": "gemini", "model": "gemini-pro"},
         )
 
     assert response.status_code == 400
@@ -373,7 +482,7 @@ def test_generate_returns_deterministic_unavailable_error(client: TestClient) ->
         "code": "capability_unavailable",
         "capability": "text_generate",
         "provider": "gemini",
-        "model": None,
+        "model": "gemini-pro",
         "reason": "Gemini CLI is not installed.",
     }
 

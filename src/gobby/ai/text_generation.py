@@ -18,7 +18,6 @@ from gobby.ai.registry import (
     AICapability,
     AICapabilityRegistry,
     CapabilityBinding,
-    CapabilityUnavailableError,
     build_daemon_ai_capability_registry,
 )
 from gobby.config.app import DaemonConfig
@@ -129,36 +128,15 @@ class TextGenerationService:
         candidates = self._candidate_requests(request)
         attempted_candidates: list[str] = []
         candidate_errors: dict[str, str] = {}
-        candidate_failures: list[Exception] = []
         text_result, last_error = await self._try_generate_result_candidates(
             candidates,
             attempted_candidates=attempted_candidates,
             candidate_errors=candidate_errors,
-            candidate_failures=candidate_failures,
         )
         if text_result is not None:
             return text_result
 
-        fallback_candidates = self._profile_default_fallback_requests(
-            request,
-            attempted_candidate_labels=attempted_candidates,
-            failures=candidate_failures,
-        )
-        if fallback_candidates:
-            self._log_profile_candidate_fallback(
-                request=request,
-                failed_candidate_labels=attempted_candidates,
-                fallback_candidates=fallback_candidates,
-            )
-            text_result, fallback_error = await self._try_generate_result_candidates(
-                fallback_candidates,
-                attempted_candidates=attempted_candidates,
-                candidate_errors=candidate_errors,
-            )
-            if text_result is not None:
-                return text_result
-            last_error = fallback_error or last_error
-        if len(candidates) == 1 and last_error is not None and not fallback_candidates:
+        if len(candidates) == 1 and last_error is not None:
             raise last_error
         raise RuntimeError(
             "No text generation candidate succeeded "
@@ -170,36 +148,15 @@ class TextGenerationService:
         candidates = self._candidate_requests(request)
         attempted_candidates: list[str] = []
         candidate_errors: dict[str, str] = {}
-        candidate_failures: list[Exception] = []
         result, last_error = await self._try_generate_json_candidates(
             candidates,
             attempted_candidates=attempted_candidates,
             candidate_errors=candidate_errors,
-            candidate_failures=candidate_failures,
         )
         if result is not None:
             return result
 
-        fallback_candidates = self._profile_default_fallback_requests(
-            request,
-            attempted_candidate_labels=attempted_candidates,
-            failures=candidate_failures,
-        )
-        if fallback_candidates:
-            self._log_profile_candidate_fallback(
-                request=request,
-                failed_candidate_labels=attempted_candidates,
-                fallback_candidates=fallback_candidates,
-            )
-            result, fallback_error = await self._try_generate_json_candidates(
-                fallback_candidates,
-                attempted_candidates=attempted_candidates,
-                candidate_errors=candidate_errors,
-            )
-            if result is not None:
-                return result
-            last_error = fallback_error or last_error
-        if len(candidates) == 1 and last_error is not None and not fallback_candidates:
+        if len(candidates) == 1 and last_error is not None:
             raise last_error
         raise RuntimeError(
             "No JSON generation candidate succeeded; "
@@ -212,7 +169,6 @@ class TextGenerationService:
         *,
         attempted_candidates: list[str],
         candidate_errors: dict[str, str],
-        candidate_failures: list[Exception] | None = None,
     ) -> tuple[LLMTextResult | None, Exception | None]:
         last_error: Exception | None = None
         for candidate in candidates:
@@ -242,8 +198,6 @@ class TextGenerationService:
                 )
             except Exception as exc:
                 last_error = exc
-                if candidate_failures is not None:
-                    candidate_failures.append(exc)
                 candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
                 self._log_generation_event(
                     request=candidate,
@@ -261,7 +215,6 @@ class TextGenerationService:
         *,
         attempted_candidates: list[str],
         candidate_errors: dict[str, str],
-        candidate_failures: list[Exception] | None = None,
     ) -> tuple[dict[str, Any] | None, Exception | None]:
         last_error: Exception | None = None
         for candidate in candidates:
@@ -296,8 +249,6 @@ class TextGenerationService:
                 return result, None
             except Exception as exc:
                 last_error = exc
-                if candidate_failures is not None:
-                    candidate_failures.append(exc)
                 candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
                 if parse_outcome == "not_attempted" and isinstance(
                     exc, (ValueError, json.JSONDecodeError)
@@ -324,7 +275,13 @@ class TextGenerationService:
                     for candidate in request.candidates
                 )
             )
-        if request.provider or request.model:
+        has_provider = request.provider is not None
+        has_model = request.model is not None
+        if has_provider != has_model:
+            raise ValueError(
+                "provider and model must be supplied together for explicit text generation routing"
+            )
+        if has_provider and has_model:
             return (request,)
         if request.profile:
             candidates = default_candidates_for_profile(request.profile)
@@ -336,50 +293,6 @@ class TextGenerationService:
                 )
             )
         return (request,)
-
-    def _profile_default_fallback_requests(
-        self,
-        request: TextGenerationRequest,
-        *,
-        attempted_candidate_labels: list[str],
-        failures: list[Exception],
-    ) -> tuple[TextGenerationRequest, ...]:
-        if not request.candidates or not request.profile or not failures:
-            return ()
-        if not all(_is_recoverable_candidate_failure(failure) for failure in failures):
-            return ()
-
-        attempted_labels = set(attempted_candidate_labels)
-        fallback_labels: list[str] = []
-        for candidate in default_candidates_for_profile(request.profile):
-            fallback_label = normalize_feature_candidate(candidate)
-            if fallback_label in attempted_labels or fallback_label in fallback_labels:
-                continue
-            fallback_labels.append(fallback_label)
-
-        return tuple(
-            replace(request, provider=provider, model=model, candidates=())
-            for provider, model in (_parse_candidate(candidate) for candidate in fallback_labels)
-        )
-
-    def _log_profile_candidate_fallback(
-        self,
-        *,
-        request: TextGenerationRequest,
-        failed_candidate_labels: list[str],
-        fallback_candidates: tuple[TextGenerationRequest, ...],
-    ) -> None:
-        logger.warning(
-            "feature_llm_candidate_fallback",
-            extra={
-                "feature": request.caller,
-                "profile": request.profile,
-                "failed_candidates": list(failed_candidate_labels),
-                "fallback_candidates": [
-                    _candidate_debug_label(candidate) for candidate in fallback_candidates
-                ],
-            },
-        )
 
     def _select_binding(self, request: TextGenerationRequest) -> CapabilityBinding:
         return self._registry.select(
@@ -718,16 +631,6 @@ def _parse_candidate(candidate: str) -> tuple[str, str]:
     if not separator or not provider.strip() or not model.strip():
         raise ValueError(f"Feature candidate must use provider/model format: {candidate!r}")
     return provider.strip(), model.strip()
-
-
-def _is_recoverable_candidate_failure(error: Exception) -> bool:
-    if isinstance(error, CapabilityUnavailableError):
-        return True
-    try:
-        from gobby.llm.claude import ClaudeSDKProviderFailure
-    except ImportError:
-        return False
-    return isinstance(error, ClaudeSDKProviderFailure)
 
 
 def _elapsed_ms(start: float) -> float:

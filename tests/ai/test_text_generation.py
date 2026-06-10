@@ -15,6 +15,7 @@ from gobby.ai import (
     AICapability,
     AICapabilityRegistry,
     CapabilityBinding,
+    CapabilityUnavailableError,
     ClaudeTextGenerateAdapter,
     CodexAppServerTextGenerateAdapter,
     DroidCLITextGenerateAdapter,
@@ -117,10 +118,15 @@ async def test_text_generation_service_selects_available_registry_binding() -> N
 
     for provider in providers:
         response = await service.generate(
-            TextGenerationRequest(prompt="summarize", provider=provider)
+            TextGenerationRequest(
+                prompt="summarize",
+                provider=provider,
+                model=f"{provider}-model",
+            )
         )
         assert response == f"{provider}:summarize"
         assert adapters[provider].requests[-1].provider == provider
+        assert adapters[provider].requests[-1].model == f"{provider}-model"
 
 
 @pytest.mark.asyncio
@@ -139,12 +145,13 @@ async def test_text_generation_service_generate_result_preserves_usage() -> None
     service = TextGenerationService(registry, {"local": adapter})
 
     result = await service.generate_result(
-        TextGenerationRequest(prompt="summarize", provider="local")
+        TextGenerationRequest(prompt="summarize", provider="local", model="local-model")
     )
 
     assert result.text == "Generated text"
     assert result.usage == {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}
     assert result.provider == "local"
+    assert result.model == "local-model"
     assert adapter.requests[-1].prompt == "summarize"
 
 
@@ -165,7 +172,9 @@ async def test_successful_text_generation_omits_feature_llm_call_at_info(
     service = TextGenerationService(registry, {"local": RecordingAdapter("local")})
     caplog.set_level(logging.INFO, logger=TEXT_GENERATION_LOGGER)
 
-    await service.generate_result(TextGenerationRequest(prompt="summarize", provider="local"))
+    await service.generate_result(
+        TextGenerationRequest(prompt="summarize", provider="local", model="local-model")
+    )
 
     assert [record for record in caplog.records if record.getMessage() == "feature_llm_call"] == []
 
@@ -187,7 +196,9 @@ async def test_successful_text_generation_logs_feature_llm_call_at_debug(
     service = TextGenerationService(registry, {"local": RecordingAdapter("local")})
     caplog.set_level(logging.DEBUG, logger=TEXT_GENERATION_LOGGER)
 
-    await service.generate_result(TextGenerationRequest(prompt="summarize", provider="local"))
+    await service.generate_result(
+        TextGenerationRequest(prompt="summarize", provider="local", model="local-model")
+    )
 
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
     assert len(records) == 1
@@ -213,7 +224,9 @@ async def test_failed_text_generation_logs_feature_llm_call_at_info(
     caplog.set_level(logging.INFO, logger=TEXT_GENERATION_LOGGER)
 
     with pytest.raises(RuntimeError, match="boom"):
-        await service.generate_result(TextGenerationRequest(prompt="summarize", provider="local"))
+        await service.generate_result(
+            TextGenerationRequest(prompt="summarize", provider="local", model="local-model")
+        )
 
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
     assert len(records) == 1
@@ -302,9 +315,105 @@ async def test_text_generation_service_explicit_provider_model_bypasses_profile_
 
 
 @pytest.mark.asyncio
-async def test_text_generation_service_falls_back_to_profile_defaults_for_unavailable_override(
-    caplog: pytest.LogCaptureFixture,
+@pytest.mark.parametrize(
+    ("provider", "model"),
+    [
+        ("local", None),
+        (None, "qwen/qwen3.6-35b-a3b"),
+    ],
+)
+async def test_text_generation_service_rejects_partial_explicit_routing(
+    provider: str | None,
+    model: str | None,
 ) -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("qwen/qwen3.6-35b-a3b",),
+            )
+        ]
+    )
+    local = RecordingAdapter("local")
+    service = TextGenerationService(registry, {"local": local})
+
+    with pytest.raises(ValueError, match="provider and model must be supplied together"):
+        await service.generate_result(
+            TextGenerationRequest(prompt="summarize", provider=provider, model=model)
+        )
+
+    assert local.requests == []
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_model_only_qwen_never_initializes_droid() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="droid",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("qwen/qwen3.6-35b-a3b",),
+            )
+        ]
+    )
+    initialized: list[str] = []
+
+    def droid_factory() -> RecordingAdapter:
+        initialized.append("droid")
+        return RecordingAdapter("droid")
+
+    service = TextGenerationService(registry, adapter_factories={"droid": droid_factory})
+
+    with pytest.raises(ValueError, match="provider and model must be supplied together"):
+        await service.generate_result(
+            TextGenerationRequest(prompt="summarize", model="qwen/qwen3.6-35b-a3b")
+        )
+
+    assert initialized == []
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_profile_only_expands_profile_defaults() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.4-mini",),
+            ),
+        ]
+    )
+    codex = RecordingAdapter("codex")
+    service = TextGenerationService(registry, {"codex": codex})
+
+    result = await service.generate_result(
+        TextGenerationRequest(prompt="summarize", profile="feature_low")
+    )
+
+    assert result.text == "codex:summarize"
+    assert result.provider == "codex"
+    assert result.model == "gpt-5.4-mini"
+    assert codex.requests == [
+        TextGenerationRequest(
+            prompt="summarize",
+            provider="codex",
+            profile="feature_low",
+            model="gpt-5.4-mini",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_candidate_list_is_exhaustive_for_unavailable_override() -> (
+    None
+):
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
@@ -326,8 +435,8 @@ async def test_text_generation_service_falls_back_to_profile_defaults_for_unavai
     codex = RecordingAdapter("codex")
     service = TextGenerationService(registry, {"codex": codex})
 
-    with caplog.at_level(logging.WARNING, logger=TEXT_GENERATION_LOGGER):
-        result = await service.generate_result(
+    with pytest.raises(CapabilityUnavailableError, match="provider=claude"):
+        await service.generate_result(
             TextGenerationRequest(
                 prompt="summarize",
                 profile="feature_low",
@@ -336,25 +445,13 @@ async def test_text_generation_service_falls_back_to_profile_defaults_for_unavai
             )
         )
 
-    assert result.text == "codex:summarize"
-    assert result.provider == "codex"
-    assert result.model == "gpt-5.4-mini"
-    assert codex.requests[0].model == "gpt-5.4-mini"
-    [fallback_record] = [
-        record
-        for record in caplog.records
-        if record.name == TEXT_GENERATION_LOGGER
-        and record.message == "feature_llm_candidate_fallback"
-    ]
-    assert fallback_record.feature == "session_summary"
-    assert fallback_record.profile == "feature_low"
-    assert fallback_record.failed_candidates == ["claude/haiku"]
-    assert fallback_record.fallback_candidates[0] == "codex/gpt-5.4-mini"
-    assert "claude/haiku" not in fallback_record.fallback_candidates
+    assert codex.requests == []
 
 
 @pytest.mark.asyncio
-async def test_text_generation_service_json_fallback_for_degraded_claude() -> None:
+async def test_text_generation_service_json_candidates_do_not_fallback_to_profile_defaults() -> (
+    None
+):
     from gobby.llm.claude import ClaudeSDKProviderFailure
 
     registry = AICapabilityRegistry(
@@ -379,18 +476,18 @@ async def test_text_generation_service_json_fallback_for_degraded_claude() -> No
     codex = JSONAdapter("codex")
     service = TextGenerationService(registry, {"claude": claude, "codex": codex})
 
-    result = await service.generate_json(
-        TextGenerationRequest(
-            prompt="classify",
-            profile="feature_low",
-            candidates=("claude/haiku",),
-            caller="session_summary",
+    with pytest.raises(ClaudeSDKProviderFailure, match="provider degraded"):
+        await service.generate_json(
+            TextGenerationRequest(
+                prompt="classify",
+                profile="feature_low",
+                candidates=("claude/haiku",),
+                caller="session_summary",
+            )
         )
-    )
 
-    assert result == {"provider": "codex", "model": "gpt-5.4-mini"}
     assert claude.requests[0].model == "haiku"
-    assert codex.requests[0].model == "gpt-5.4-mini"
+    assert codex.requests == []
 
 
 @pytest.mark.asyncio
@@ -535,9 +632,15 @@ async def test_text_generation_service_resolves_only_selected_adapter() -> None:
         },
     )
 
-    response = await service.generate(TextGenerationRequest(prompt="summarize", provider="codex"))
+    response = await service.generate(
+        TextGenerationRequest(prompt="summarize", provider="codex", model="codex-model")
+    )
     second_response = await service.generate(
-        TextGenerationRequest(prompt="summarize again", provider="codex")
+        TextGenerationRequest(
+            prompt="summarize again",
+            provider="codex",
+            model="codex-model",
+        )
     )
 
     assert response == "codex:summarize"
@@ -568,7 +671,9 @@ async def test_text_generation_service_rejects_none_factory_result() -> None:
 
     for _ in range(2):
         with pytest.raises(RuntimeError, match="returned None"):
-            await service.generate(TextGenerationRequest(prompt="summarize", provider="codex"))
+            await service.generate(
+                TextGenerationRequest(prompt="summarize", provider="codex", model="codex-model")
+            )
 
     assert calls == 2
 
