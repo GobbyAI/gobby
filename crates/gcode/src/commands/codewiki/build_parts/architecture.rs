@@ -69,17 +69,14 @@ pub(crate) fn build_architecture_doc(
             prompts::ARCHITECTURE_SYSTEM,
         );
         let responsibility = match generated {
-            Some(generated) => generated,
+            Some(generated) => {
+                ground_text(&generated, &source_spans, &citation_list(&source_spans))
+            }
             None => {
                 degraded_sources.insert("model-unavailable".to_string());
-                fallback
+                ground_text(&fallback, &source_spans, "")
             }
         };
-        let responsibility = ground_text(
-            &responsibility,
-            &source_spans,
-            &citation_list(&source_spans),
-        );
 
         subsystems.push(ArchitectureSubsystem {
             module: module.module.clone(),

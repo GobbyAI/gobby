@@ -378,13 +378,14 @@ pub(crate) fn build_repo_doc(
     let fallback = structural_repo_summary(files.len(), modules.len());
     let source_spans = collect_link_spans(&root_files, &top_modules);
     progress.emit("generating repo overview");
-    let generated = maybe_generate(
+    let summary = match maybe_generate(
         generate,
         &prompts::repo_prompt(&module_summaries, &file_summaries),
         prompts::REPO_SYSTEM,
-    )
-    .unwrap_or(fallback);
-    let summary = ground_text(&generated, &source_spans, &citation_markers(&source_spans));
+    ) {
+        Some(generated) => ground_text(&generated, &source_spans, &citation_markers(&source_spans)),
+        None => ground_text(&fallback, &source_spans, ""),
+    };
 
     render_repo_doc(&summary, &top_modules, &root_files, &source_spans)
 }
