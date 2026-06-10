@@ -86,7 +86,7 @@ fn parse_wikilink(
         return None;
     }
 
-    let (normalized_target, anchor) = normalized_target_parts(target);
+    let (normalized_target, anchor) = wikilink_target_parts(target);
     let resolved = known_targets.contains(&normalized_target);
     Some((
         WikiLink {
@@ -338,6 +338,21 @@ fn matching_backtick_run(markdown: &str, start: usize, tick_count: usize) -> Opt
 }
 
 fn normalized_target_parts(target: &str) -> (String, Option<String>) {
+    normalized_target_parts_with(target, true)
+}
+
+/// Wikilink targets name pages, never page-file extensions, so a trailing
+/// `.md` is part of the page name (codewiki emits `[[code/files/X.md]]` for
+/// the doc file `code/files/X.md.md`). Only markdown links and document
+/// paths strip the page-file extension.
+fn wikilink_target_parts(target: &str) -> (String, Option<String>) {
+    normalized_target_parts_with(target, false)
+}
+
+fn normalized_target_parts_with(
+    target: &str,
+    strip_page_extension: bool,
+) -> (String, Option<String>) {
     let target = target.trim();
     let (path, anchor) = target
         .split_once('#')
@@ -354,11 +369,13 @@ fn normalized_target_parts(target: &str) -> (String, Option<String>) {
         normalized = collapse_repeated_slashes(&normalized);
         normalized = normalized.trim_matches('/').to_string();
 
-        let lower = normalized.to_ascii_lowercase();
-        if lower.ends_with(".markdown") {
-            normalized.truncate(normalized.len() - ".markdown".len());
-        } else if lower.ends_with(".md") {
-            normalized.truncate(normalized.len() - ".md".len());
+        if strip_page_extension {
+            let lower = normalized.to_ascii_lowercase();
+            if lower.ends_with(".markdown") {
+                normalized.truncate(normalized.len() - ".markdown".len());
+            } else if lower.ends_with(".md") {
+                normalized.truncate(normalized.len() - ".md".len());
+            }
         }
     }
 
@@ -448,6 +465,26 @@ mod tests {
         assert_eq!(links[3].normalized_target, "missing/page");
         assert_eq!(links[3].alias.as_deref(), Some("gone"));
         assert!(!links[3].resolved);
+    }
+
+    #[test]
+    fn wikilink_targets_keep_md_suffix_as_page_name() {
+        // codewiki emits [[code/files/AGENTS.md]] for the doc file
+        // code/files/AGENTS.md.md; the doc-path key normalizes to
+        // code/files/AGENTS.md, which the wikilink must match.
+        let links = extract_links(
+            "[[code/files/AGENTS.md|AGENTS.md]] and [readme](code/files/README.md.md)",
+            ["code/files/AGENTS.md.md", "code/files/README.md.md"],
+        );
+
+        assert_eq!(links.len(), 2);
+        assert_eq!(links[0].kind, LinkKind::Wikilink);
+        assert_eq!(links[0].normalized_target, "code/files/AGENTS.md");
+        assert!(links[0].resolved);
+
+        assert_eq!(links[1].kind, LinkKind::Markdown);
+        assert_eq!(links[1].normalized_target, "code/files/README.md");
+        assert!(links[1].resolved);
     }
 
     #[test]
