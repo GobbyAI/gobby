@@ -81,6 +81,63 @@ def test_select_reports_unavailable_provider_reason() -> None:
         registry.select(AICapability.VISION_EXTRACT, provider="agy")
 
 
+def _local_family_registry() -> AICapabilityRegistry:
+    return AICapabilityRegistry(
+        [
+            CapabilityBinding.unavailable(
+                AICapability.TEXT_GENERATE,
+                "local",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                reason="Use a named local generation endpoint provider such as local:lm-studio.",
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local:lm-studio",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("qwen-lm",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local:ollama",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("qwen-ollama",),
+            ),
+        ]
+    )
+
+
+def test_select_bare_local_resolves_to_named_endpoint_serving_model() -> None:
+    registry = _local_family_registry()
+
+    binding = registry.select(AICapability.TEXT_GENERATE, provider="local", model="qwen-ollama")
+
+    assert binding.provider == "local:ollama"
+
+
+def test_select_bare_local_without_model_uses_first_available_endpoint() -> None:
+    registry = _local_family_registry()
+
+    binding = registry.select(AICapability.TEXT_GENERATE, provider="local")
+
+    assert binding.provider == "local:lm-studio"
+
+
+def test_select_bare_local_unserved_model_raises_unavailable() -> None:
+    registry = _local_family_registry()
+
+    with pytest.raises(CapabilityUnavailableError):
+        registry.select(AICapability.TEXT_GENERATE, provider="local", model="missing-model")
+
+
+def test_select_named_local_provider_does_not_match_other_endpoints() -> None:
+    registry = _local_family_registry()
+
+    with pytest.raises(CapabilityUnavailableError):
+        registry.select(AICapability.TEXT_GENERATE, provider="local:lm-studio", model="qwen-ollama")
+
+
 def test_daemon_registry_keeps_web_chat_and_text_generate_separate() -> None:
     registry = build_daemon_ai_capability_registry(
         DaemonConfig(),

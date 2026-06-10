@@ -261,7 +261,7 @@ class TestTaskValidationConfigDefaults:
         assert "codex/gpt-5.3-codex-spark" in config.candidates
         assert "codex/gpt-5.4-mini" not in config.candidates
         assert "claude/sonnet" in config.candidates
-        assert config.candidates[-1] == "claude/sonnet"
+        assert config.candidates[-1] == "local/Qwen3-Coder-Next"
         assert config.prompt_path is None
         assert config.max_iterations == 10
         assert config.max_consecutive_errors == 3

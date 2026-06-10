@@ -25,18 +25,24 @@ class FeatureProfile(StrEnum):
     HIGH = "feature_high"
 
 
+# Bare "local/<model>" candidates resolve across named local endpoints
+# ("local:<name>") at selection time; they are skipped cleanly when no
+# configured endpoint serves the model.
 DEFAULT_PROFILE_CANDIDATES: dict[FeatureProfile, tuple[str, ...]] = {
     FeatureProfile.LOW: (
         "codex/gpt-5.4-mini",
         "claude/haiku",
+        "local/Qwen3-Coder-30B-A3B-Instruct",
     ),
     FeatureProfile.MID: (
         "codex/gpt-5.3-codex-spark",
         "claude/sonnet",
+        "local/Qwen3-Coder-Next",
     ),
     FeatureProfile.HIGH: (
         "codex/gpt-5.3-codex",
         "claude/opus",
+        "local/Qwen3-Coder-Next",
     ),
 }
 

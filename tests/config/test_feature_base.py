@@ -32,17 +32,26 @@ class TestFeatureProfile:
         assert DEFAULT_PROFILE_CANDIDATES[FeatureProfile.LOW] == (
             "codex/gpt-5.4-mini",
             "claude/haiku",
+            "local/Qwen3-Coder-30B-A3B-Instruct",
         )
         assert DEFAULT_PROFILE_CANDIDATES[FeatureProfile.MID] == (
             "codex/gpt-5.3-codex-spark",
             "claude/sonnet",
+            "local/Qwen3-Coder-Next",
         )
         assert DEFAULT_PROFILE_CANDIDATES[FeatureProfile.HIGH] == (
             "codex/gpt-5.3-codex",
             "claude/opus",
+            "local/Qwen3-Coder-Next",
         )
         for candidates in DEFAULT_PROFILE_CANDIDATES.values():
             assert "claude/fable" not in candidates
+
+    def test_profiles_mix_cloud_and_local_candidates(self) -> None:
+        for candidates in DEFAULT_PROFILE_CANDIDATES.values():
+            providers = {candidate.split("/", 1)[0] for candidate in candidates}
+            assert "local" in providers
+            assert providers - {"local"}
 
 
 class TestFeatureDefaultConfig:

@@ -11,8 +11,8 @@ their external form; for task features that is `gobby-tasks`, matching the MCP s
 | `feature_mid` | `codex/gpt-5.3-codex-spark`, `claude/sonnet` |
 | `feature_high` | `codex/gpt-5.3-codex`, `claude/opus` |
 
-Built-in defaults use stable provider namespaces only. Local OpenAI-compatible runtimes
-are opt-in named endpoints:
+Built-in defaults mix cloud providers with bare `local/<model>` candidates. Local
+OpenAI-compatible runtimes are opt-in named endpoints:
 
 ```yaml
 ai:
@@ -35,9 +35,11 @@ ai:
         - local:ollama/qwen2.5-coder
 ```
 
-Feature candidates use `local:<endpoint>/<model>`. Direct HTTP text generation uses
-`provider="local:<endpoint>"` with `model="<model>"`. Bare `local` is a reserved provider
-family and is unavailable for text generation.
+Feature candidates use `local:<endpoint>/<model>` to pin a specific endpoint, or bare
+`local/<model>` to resolve across named endpoints: selection picks the first available
+endpoint that serves the model and skips to the next candidate when none does. Direct
+HTTP text generation uses `provider="local:<endpoint>"` (or `provider="local"` for
+family resolution) with `model="<model>"`.
 
 ## `call_feature` Features
 

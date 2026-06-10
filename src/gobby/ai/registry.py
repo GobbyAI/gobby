@@ -320,6 +320,15 @@ class AICapabilityRegistry:
             for binding in self.bindings_for(normalized, provider=provider)
             if binding.supports_model(model)
         )
+        if provider is not None and _normalize_provider(provider) == "local":
+            # Bare "local" is a family alias: the exact "local" binding is an
+            # unavailable placeholder, so also consider named local endpoint
+            # bindings ("local:<name>") that can serve the requested model.
+            candidates += tuple(
+                binding
+                for binding in self.bindings_for(normalized)
+                if binding.provider.startswith("local:") and binding.supports_model(model)
+            )
         for binding in candidates:
             if binding.available:
                 return binding
