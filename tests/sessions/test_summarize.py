@@ -72,6 +72,69 @@ def _mock_llm(summary: str) -> MagicMock:
     return service
 
 
+class _RevisionAwareSummaryManager:
+    def __init__(self, session: MagicMock):
+        self.session = session
+        self.persist_calls: list[dict[str, object]] = []
+        self.status_updates: list[tuple[str, str]] = []
+        self.update_summary_calls: list[dict[str, object]] = []
+
+    def get(self, session_id: str) -> MagicMock | None:
+        return self.session if session_id == self.session.id else None
+
+    def update_status(self, session_id: str, status: str) -> MagicMock | None:
+        self.status_updates.append((session_id, status))
+        self.session.status = status
+        return self.session
+
+    def update_summary(
+        self,
+        session_id: str,
+        summary_path: str | None = None,
+        summary_markdown: str | None = None,
+    ) -> MagicMock | None:
+        self.update_summary_calls.append(
+            {
+                "session_id": session_id,
+                "summary_path": summary_path,
+                "summary_markdown": summary_markdown,
+            }
+        )
+        self.session.summary_markdown = summary_markdown
+        return self.session
+
+    def persist_summary_state(
+        self,
+        session_id: str,
+        *,
+        summary_markdown: str,
+        generation_mode: str,
+        source_context_hash: str | None = None,
+        source_digest_turn_count: int | None = None,
+        metadata_json: dict[str, object] | None = None,
+        summary_path: str | None = None,
+    ) -> MagicMock | None:
+        call = {
+            "session_id": session_id,
+            "summary_markdown": summary_markdown,
+            "generation_mode": generation_mode,
+            "source_context_hash": source_context_hash,
+            "source_digest_turn_count": source_digest_turn_count,
+            "metadata_json": metadata_json or {},
+            "summary_path": summary_path,
+        }
+        self.persist_calls.append(call)
+        self.session.summary_markdown = summary_markdown
+        self.session.summary_source_context_hash = source_context_hash
+        self.session.summary_digest_turn_count = source_digest_turn_count
+        self.session.summary_generation_mode = generation_mode
+        return self.session
+
+
+def _digest_turns(count: int) -> str:
+    return "\n\n".join(f"### Turn {index}\nDigest turn {index}." for index in range(1, count + 1))
+
+
 class TestGenerateSessionSummaries:
     """Tests for generate_session_summaries()."""
 
@@ -153,6 +216,212 @@ class TestGenerateSessionSummaries:
                 assert connection_count <= 1 + executor.max_workers
         finally:
             executor.shutdown(wait=True)
+
+    @pytest.mark.asyncio
+    async def test_full_generation_persists_revision_metadata_without_existing_watermark(
+        self,
+    ) -> None:
+        session = _make_session(
+            session_id="sess-refresh",
+            digest_markdown="### Turn 1\nInitial digest.",
+        )
+        manager = _RevisionAwareSummaryManager(session)
+
+        with (
+            patch("gobby.sessions.summarize._enrich_git_context"),
+            patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
+            patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
+            patch(
+                "gobby.workflows.summary_actions._format_structured_context",
+                return_value="structured",
+            ),
+            patch(
+                "gobby.sessions.summarize._generate_full_summary",
+                return_value=("# Full Summary", None),
+            ) as mock_full,
+        ):
+            result = await generate_session_summaries(
+                session_id="sess-refresh",
+                session_manager=manager,
+                llm_service=_mock_llm("# Full Summary"),
+                session_summary_config=_summary_config(),
+            )
+
+        assert result["success"] is True
+        assert result["generation_mode"] == "full"
+        assert mock_full.call_count == 1
+        assert manager.persist_calls == [
+            {
+                "session_id": "sess-refresh",
+                "summary_markdown": "# Full Summary",
+                "generation_mode": "full",
+                "source_context_hash": result["source_context_hash"],
+                "source_digest_turn_count": 1,
+                "metadata_json": {
+                    "reason": "missing_summary_metadata",
+                    "delta_error": None,
+                    "full_error": None,
+                },
+                "summary_path": None,
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_source_hash_match_returns_existing_summary_without_regeneration(self) -> None:
+        session = _make_session(
+            session_id="sess-noop",
+            digest_markdown="### Turn 1\nStable digest.",
+        )
+        manager = _RevisionAwareSummaryManager(session)
+
+        with (
+            patch("gobby.sessions.summarize._enrich_git_context"),
+            patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
+            patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
+            patch(
+                "gobby.workflows.summary_actions._format_structured_context",
+                return_value="structured",
+            ),
+            patch(
+                "gobby.sessions.summarize._generate_full_summary",
+                return_value=("# Full Summary", None),
+            ) as mock_full,
+        ):
+            first = await generate_session_summaries(
+                session_id="sess-noop",
+                session_manager=manager,
+                llm_service=_mock_llm("# Full Summary"),
+                session_summary_config=_summary_config(),
+            )
+            second = await generate_session_summaries(
+                session_id="sess-noop",
+                session_manager=manager,
+                llm_service=_mock_llm("# Full Summary"),
+                session_summary_config=_summary_config(),
+            )
+
+        assert first["generation_mode"] == "full"
+        assert second["generation_mode"] == "noop"
+        assert second["refresh_reason"] == "source_context_hash_match"
+        assert mock_full.call_count == 1
+        assert len(manager.persist_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_delta_merge_receives_only_digest_turns_since_watermark(self) -> None:
+        session = _make_session(
+            session_id="sess-delta",
+            summary_markdown="# Previous Summary",
+            digest_markdown=_digest_turns(3),
+        )
+        session.summary_source_context_hash = "old-hash"
+        session.summary_digest_turn_count = 1
+        manager = _RevisionAwareSummaryManager(session)
+
+        with (
+            patch("gobby.sessions.summarize._enrich_git_context"),
+            patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
+            patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
+            patch(
+                "gobby.workflows.summary_actions._format_structured_context",
+                return_value="structured",
+            ),
+            patch(
+                "gobby.sessions.summarize._generate_delta_summary",
+                new=AsyncMock(return_value=("# Merged Summary", None)),
+            ) as mock_delta,
+            patch("gobby.sessions.summarize._generate_full_summary") as mock_full,
+        ):
+            result = await generate_session_summaries(
+                session_id="sess-delta",
+                session_manager=manager,
+                llm_service=_mock_llm("# Merged Summary"),
+                session_summary_config=_summary_config(),
+            )
+
+        assert result["generation_mode"] == "delta"
+        assert manager.persist_calls[-1]["generation_mode"] == "delta"
+        assert mock_full.call_count == 0
+        new_digest_turns = mock_delta.await_args.kwargs["new_digest_turns"]
+        assert "### Turn 1" not in new_digest_turns
+        assert "### Turn 2" in new_digest_turns
+        assert "### Turn 3" in new_digest_turns
+
+    @pytest.mark.asyncio
+    async def test_digest_delta_threshold_uses_full_rebuild(self) -> None:
+        session = _make_session(
+            session_id="sess-threshold",
+            summary_markdown="# Previous Summary",
+            digest_markdown=_digest_turns(21),
+        )
+        session.summary_source_context_hash = "old-hash"
+        session.summary_digest_turn_count = 1
+        manager = _RevisionAwareSummaryManager(session)
+
+        with (
+            patch("gobby.sessions.summarize._enrich_git_context"),
+            patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
+            patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
+            patch(
+                "gobby.workflows.summary_actions._format_structured_context",
+                return_value="structured",
+            ),
+            patch("gobby.sessions.summarize._generate_delta_summary") as mock_delta,
+            patch(
+                "gobby.sessions.summarize._generate_full_summary",
+                return_value=("# Rebuilt Summary", None),
+            ) as mock_full,
+        ):
+            result = await generate_session_summaries(
+                session_id="sess-threshold",
+                session_manager=manager,
+                llm_service=_mock_llm("# Rebuilt Summary"),
+                session_summary_config=_summary_config(),
+            )
+
+        assert result["generation_mode"] == "full"
+        assert result["refresh_reason"] == "digest_delta_threshold_reached"
+        assert mock_delta.call_count == 0
+        assert mock_full.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_invalid_delta_output_falls_back_to_full_generation(self) -> None:
+        session = _make_session(
+            session_id="sess-delta-invalid",
+            summary_markdown="# Previous Summary",
+            digest_markdown=_digest_turns(2),
+        )
+        session.summary_source_context_hash = "old-hash"
+        session.summary_digest_turn_count = 1
+        manager = _RevisionAwareSummaryManager(session)
+
+        with (
+            patch("gobby.sessions.summarize._enrich_git_context"),
+            patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
+            patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
+            patch(
+                "gobby.workflows.summary_actions._format_structured_context",
+                return_value="structured",
+            ),
+            patch(
+                "gobby.sessions.summarize._generate_delta_summary",
+                new=AsyncMock(return_value=(None, "delta failed")),
+            ),
+            patch(
+                "gobby.sessions.summarize._generate_full_summary",
+                return_value=("# Rebuilt Summary", None),
+            ) as mock_full,
+        ):
+            result = await generate_session_summaries(
+                session_id="sess-delta-invalid",
+                session_manager=manager,
+                llm_service=_mock_llm("# Rebuilt Summary"),
+                session_summary_config=_summary_config(),
+            )
+
+        assert result["generation_mode"] == "full"
+        assert result["delta_error"] == "delta failed"
+        assert mock_full.call_count == 1
+        assert manager.persist_calls[-1]["summary_markdown"] == "# Rebuilt Summary"
 
     @pytest.mark.asyncio
     async def test_no_transcript_path(self) -> None:

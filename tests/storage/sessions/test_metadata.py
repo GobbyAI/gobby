@@ -595,6 +595,116 @@ class TestSessionManagerMetadata:
         assert updated is not None
         assert updated.summary_path == "/path/to/summary.md"
         assert updated.summary_markdown == "# Summary\nThis is a test."
+        assert updated.summary_revision_id is not None
+        assert updated.summary_generation_mode == "agent_authored"
+        assert updated.summary_source_context_hash is None
+        assert updated.summary_digest_turn_count is None
+
+        revisions = session_manager.list_summary_revisions(session.id)
+        assert len(revisions) == 1
+        assert revisions[0]["id"] == updated.summary_revision_id
+        assert revisions[0]["generation_mode"] == "agent_authored"
+        assert revisions[0]["summary_markdown"] == "# Summary\nThis is a test."
+        assert revisions[0]["metadata_json"] == {"source": "update_summary"}
+
+    def test_persist_summary_state_updates_revision_and_session_atomically(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Summary state persistence writes the revision and session metadata together."""
+        session = session_manager.register(
+            external_id="summary-state-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        first = session_manager.persist_summary_state(
+            session.id,
+            summary_markdown="# First",
+            generation_mode="full",
+            source_context_hash="hash-1",
+            source_digest_turn_count=3,
+            metadata_json={"reason": "missing_summary_metadata"},
+        )
+        second = session_manager.persist_summary_state(
+            session.id,
+            summary_markdown="# Second",
+            generation_mode="delta",
+            source_context_hash="hash-2",
+            source_digest_turn_count=4,
+            metadata_json={"reason": "safe_digest_watermark"},
+        )
+
+        assert first is not None
+        assert second is not None
+        assert first.summary_revision_id is not None
+        assert second.summary_revision_id is not None
+        assert second.summary_revision_id != first.summary_revision_id
+        assert second.summary_markdown == "# Second"
+        assert second.summary_source_context_hash == "hash-2"
+        assert second.summary_digest_turn_count == 4
+        assert second.summary_generation_mode == "delta"
+        assert second.summary_generated_at is not None
+
+        revisions = session_manager.list_summary_revisions(session.id)
+        assert [revision["generation_mode"] for revision in revisions] == ["delta", "full"]
+        assert revisions[0]["previous_revision_id"] == first.summary_revision_id
+        assert revisions[0]["metadata_json"] == {"reason": "safe_digest_watermark"}
+        fetched = session_manager.get_summary_revision(second.summary_revision_id)
+        assert fetched == revisions[0]
+
+    def test_persist_summary_state_rolls_back_revision_on_update_failure(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """A failed session update leaves no orphaned summary revision."""
+        session = session_manager.register(
+            external_id="summary-state-rollback-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        session_manager.db.execute(
+            """
+            CREATE OR REPLACE FUNCTION fail_summary_state_update_fn()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                IF NEW.summary_markdown = 'boom' THEN
+                    RAISE EXCEPTION 'summary boom';
+                END IF;
+                RETURN NEW;
+            END;
+            $$
+            """
+        )
+        session_manager.db.execute(
+            """
+            CREATE TRIGGER fail_summary_state_update
+            BEFORE UPDATE OF summary_markdown ON sessions
+            FOR EACH ROW
+            EXECUTE FUNCTION fail_summary_state_update_fn()
+            """
+        )
+
+        with pytest.raises(RaiseException, match="summary boom"):
+            session_manager.persist_summary_state(
+                session.id,
+                summary_markdown="boom",
+                generation_mode="full",
+                source_context_hash="hash-1",
+                source_digest_turn_count=1,
+            )
+
+        reloaded = session_manager.get(session.id)
+        assert reloaded is not None
+        assert reloaded.summary_markdown is None
+        assert reloaded.summary_revision_id is None
+        assert session_manager.list_summary_revisions(session.id) == []
 
     def test_update_resume_metadata_fields(
         self,
@@ -786,6 +896,8 @@ class TestSessionManagerMetadata:
         assert updated is not None
         assert updated.summary_path == "/path/to/summary.md"
         assert updated.summary_markdown is None
+        assert updated.summary_revision_id is None
+        assert session_manager.list_summary_revisions(session.id) == []
 
     def test_update_summary_markdown_only(
         self,

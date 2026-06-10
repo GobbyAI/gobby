@@ -178,6 +178,7 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
         "275_drop_memory_media.sql",
         "276_memory_dream_constraints.sql",
         "277_drop_llm_providers_config.sql",
+        "278_session_summary_revisions.sql",
     ]
 
 
@@ -242,6 +243,46 @@ def test_llm_providers_cleanup_migration_removes_dead_prefix() -> None:
     assert "DELETE FROM config_store" in migration
     assert "key = 'llm_providers'" in migration
     assert "key LIKE 'llm_providers.%'" in migration
+
+
+def test_session_summary_revisions_migration_and_baseline_define_schema() -> None:
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "278_session_summary_revisions.sql"
+    ).read_text(encoding="utf-8")
+    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
+    session_columns = (
+        "summary_revision_id",
+        "summary_source_context_hash",
+        "summary_digest_turn_count",
+        "summary_generation_mode",
+        "summary_generated_at",
+    )
+    revision_snippets = (
+        "CREATE TABLE IF NOT EXISTS session_summary_revisions",
+        "summary_markdown TEXT NOT NULL",
+        "generation_mode TEXT NOT NULL",
+        "source_context_hash TEXT",
+        "source_digest_turn_count INTEGER",
+        "previous_revision_id TEXT REFERENCES session_summary_revisions(id)",
+        "metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb",
+        "session_summary_revisions_digest_turn_count_nonnegative",
+        "sessions_summary_revision_fk",
+        "idx_session_summary_revisions_session_created",
+        "idx_sessions_summary_revision",
+    )
+
+    for column in session_columns:
+        assert f"ADD COLUMN IF NOT EXISTS {column}" in migration
+        assert column in baseline
+
+    for snippet in revision_snippets:
+        assert snippet in migration
+
+    _assert_contains_all(
+        "session summary revision baseline",
+        baseline,
+        tuple(snippet.replace("IF NOT EXISTS ", "") for snippet in revision_snippets),
+    )
 
 
 def test_removed_migration_baseline_and_import_files_are_absent() -> None:

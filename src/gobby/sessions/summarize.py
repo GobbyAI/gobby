@@ -19,6 +19,11 @@ from typing import Any, Protocol
 
 import aiofiles
 
+from gobby.sessions.summary_refresh import (
+    choose_summary_refresh,
+    digest_turn_count,
+    source_context_hash,
+)
 from gobby.sessions.summary_validity import is_summary_markdown_valid
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -37,6 +42,17 @@ class SessionManagerProtocol(Protocol):
         session_id: str,
         summary_path: str | None = ...,
         summary_markdown: str | None = ...,
+    ) -> Any: ...
+    def persist_summary_state(
+        self,
+        session_id: str,
+        *,
+        summary_markdown: str,
+        generation_mode: str,
+        source_context_hash: str | None = ...,
+        source_digest_turn_count: int | None = ...,
+        metadata_json: dict[str, Any] | None = ...,
+        summary_path: str | None = ...,
     ) -> Any: ...
     def update_status(self, session_id: str, status: str) -> Any: ...
 
@@ -186,32 +202,105 @@ async def generate_session_summaries(
     cwd = path.parent if path and path.exists() else Path.cwd()
     await _enrich_git_context(handoff_ctx, cwd)
 
-    # Generate full summary
-    full_markdown, full_error = await _generate_full_summary(
+    summary_context = await _build_summary_prompt_context(
         session=session,
         turns=turns,
         handoff_ctx=handoff_ctx,
-        llm_service=llm_service,
-        session_summary_config=session_summary_config,
         db=db,
         session_manager=session_manager,
         run_db=db_runner,
     )
+    full_prompt_template = _load_summary_prompt_template(
+        path="handoff/session_end",
+        session_summary_config=session_summary_config,
+        db=db,
+        session_manager=session_manager,
+        allow_runtime_db=False,
+    )
+    source_hash = source_context_hash(
+        _source_hash_payload(
+            session=session,
+            digest_markdown=digest_markdown,
+            summary_context=summary_context,
+            prompt_template=full_prompt_template,
+        )
+    )
+    current_digest_turn_count = digest_turn_count(digest_markdown)
+    decision = choose_summary_refresh(
+        current_source_hash=source_hash,
+        current_digest_turn_count=current_digest_turn_count,
+        previous_source_hash=getattr(session, "summary_source_context_hash", None),
+        previous_digest_turn_count=getattr(session, "summary_digest_turn_count", None),
+        previous_summary_valid=is_summary_markdown_valid(
+            getattr(session, "summary_markdown", None)
+        ),
+        digest_markdown=digest_markdown,
+    )
 
-    if not is_summary_markdown_valid(full_markdown):
-        # Fallback to code-only renderer when LLM is unavailable
+    full_error: str | None = None
+    delta_error: str | None = None
+    generation_mode = decision.mode
+    full_markdown = getattr(session, "summary_markdown", None) if decision.mode == "noop" else None
+
+    if decision.mode == "delta":
+        full_markdown, delta_error = await _generate_delta_summary(
+            session=session,
+            previous_summary=getattr(session, "summary_markdown", "") or "",
+            new_digest_turns=decision.new_digest_turns,
+            summary_context=summary_context,
+            llm_service=llm_service,
+            session_summary_config=session_summary_config,
+            db=db,
+            session_manager=session_manager,
+        )
+        if not is_summary_markdown_valid(full_markdown):
+            logger.warning(
+                "Delta summary merge failed for %s (%s), falling back to full generation",
+                session_id,
+                delta_error,
+            )
+            generation_mode = "full"
+
+    if decision.mode == "full" or (
+        generation_mode == "full" and not is_summary_markdown_valid(full_markdown)
+    ):
+        full_markdown, full_error = await _generate_full_summary(
+            session=session,
+            turns=turns,
+            handoff_ctx=handoff_ctx,
+            llm_service=llm_service,
+            session_summary_config=session_summary_config,
+            db=db,
+            session_manager=session_manager,
+            run_db=db_runner,
+            summary_context=summary_context,
+            prompt_template=full_prompt_template,
+        )
+
+    if decision.mode != "noop" and not is_summary_markdown_valid(full_markdown):
         logger.warning(
             f"Full LLM summary failed ({full_error}), falling back to code-only",
         )
         full_markdown = _format_deterministic_summary(handoff_ctx, digest_markdown)
+        generation_mode = "digest_fallback"
 
     # Persist to database
-    if is_summary_markdown_valid(full_markdown):
-        await _run_db(
-            db_runner,
-            session_manager.update_summary,
-            session_id,
-            summary_markdown=full_markdown,
+    if decision.mode != "noop" and is_summary_markdown_valid(full_markdown):
+        summary_text = full_markdown if isinstance(full_markdown, str) else ""
+        metadata = {
+            "reason": decision.reason,
+            "delta_error": delta_error,
+            "full_error": full_error,
+        }
+        await _persist_summary_markdown(
+            session_id=session_id,
+            session_manager=session_manager,
+            db_runner=db_runner,
+            summary_markdown=summary_text,
+            generation_mode=generation_mode,
+            source_hash=source_hash,
+            digest_turns=current_digest_turn_count,
+            metadata=metadata,
         )
 
     # Set handoff_ready status
@@ -254,6 +343,11 @@ async def generate_session_summaries(
         "compact_length": 0,  # Kept for API compatibility
         "full_length": len(full_markdown) if full_markdown else 0,
         "full_error": full_error,
+        "delta_error": delta_error,
+        "generation_mode": generation_mode,
+        "refresh_reason": decision.reason,
+        "source_context_hash": source_hash,
+        "source_digest_turn_count": current_digest_turn_count,
         "files_written": files_written,
         "context_summary": {
             "has_active_task": bool(handoff_ctx.active_gobby_task),
@@ -427,6 +521,182 @@ async def _enrich_git_context(handoff_ctx: Any, cwd: Path) -> None:
         logger.debug(f"Failed to get git log for {cwd}: {e}")
 
 
+def _looks_like_mock(value: Any) -> bool:
+    return type(value).__module__.startswith("unittest.mock")
+
+
+def _summary_context_db(
+    db: HubDatabase | None,
+    session_manager: SessionManagerProtocol,
+) -> HubDatabase | None:
+    if db is not None:
+        return db
+    resolved_db = getattr(session_manager, "db", None)
+    return None if _looks_like_mock(resolved_db) else resolved_db
+
+
+def _load_summary_prompt_template(
+    *,
+    path: str,
+    session_summary_config: SessionSummaryConfigProtocol | None,
+    db: HubDatabase | None,
+    session_manager: SessionManagerProtocol,
+    allow_runtime_db: bool = True,
+) -> str | None:
+    prompt_template = getattr(session_summary_config, "prompt", None)
+    resolved_db = _summary_context_db(db, session_manager)
+    if resolved_db is None and not allow_runtime_db:
+        return prompt_template
+
+    try:
+        from gobby.prompts.loader import PromptLoader
+
+        loader = PromptLoader(db=resolved_db)
+        prompt_obj = loader.load(path)
+        prompt_template = prompt_obj.content
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        logger.debug("Failed to load summary prompt %s: %s", path, e)
+
+    return prompt_template
+
+
+async def _build_summary_prompt_context(
+    *,
+    session: Any,
+    turns: list[dict[str, Any]],
+    handoff_ctx: Any,
+    db: HubDatabase | None,
+    session_manager: SessionManagerProtocol,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
+) -> dict[str, Any]:
+    from gobby.workflows.git_utils import get_file_changes, get_git_diff_summary
+    from gobby.workflows.summary_actions import (
+        _format_structured_context,
+        format_turns_for_llm,
+    )
+
+    digest_markdown = _digest_markdown_for_summary(session)
+    source = getattr(session, "source", None) or "claude"
+    first_digest_turn, recent_digest_turns = _extract_digest_turns(digest_markdown)
+    if digest_markdown:
+        transcript_summary = _truncate_markdown(
+            digest_markdown,
+            TRANSCRIPT_FALLBACK_MAX_CHARS,
+        )
+        last_messages_str = recent_digest_turns
+    else:
+        parser: Any
+        if source == "gemini":
+            from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
+
+            parser = GeminiTranscriptParser()
+        elif source == "grok":
+            from gobby.sessions.transcripts.grok import GrokTranscriptParser
+
+            parser = GrokTranscriptParser()
+        elif source == "codex":
+            from gobby.sessions.transcripts.codex import CodexTranscriptParser
+
+            parser = CodexTranscriptParser()
+        elif source == "droid":
+            from gobby.sessions.transcripts.droid import DroidTranscriptParser
+
+            parser = DroidTranscriptParser(
+                session_id=getattr(session, "id", None),
+                transcript_path=getattr(session, "transcript_path", None),
+            )
+        else:
+            from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
+
+            parser = ClaudeTranscriptParser()
+
+        last_turns = parser.extract_turns_since_clear(turns)
+        transcript_summary = _format_transcript_fallback_summary(
+            last_turns,
+            format_turns_for_llm,
+        )
+        last_messages = parser.extract_last_messages(turns, num_pairs=2)
+        last_messages_str = format_turns_for_llm(last_messages) if last_messages else ""
+
+    resolved_db = _summary_context_db(db, session_manager)
+    claimed_tasks = (
+        await _run_db(run_db, _get_claimed_tasks, session.id, resolved_db) if resolved_db else ""
+    )
+    session_memories = (
+        await _run_db(run_db, _get_session_memories, session.id, resolved_db) if resolved_db else ""
+    )
+
+    return {
+        "transcript_summary": transcript_summary,
+        "last_messages": last_messages_str,
+        "git_status": handoff_ctx.git_status or "",
+        "file_changes": get_file_changes(),
+        "git_diff_summary": get_git_diff_summary(),
+        "structured_context": _format_structured_context(handoff_ctx),
+        "claimed_tasks": claimed_tasks,
+        "session_memories": session_memories,
+        "first_digest_turn": first_digest_turn,
+        "recent_digest_turns": recent_digest_turns,
+        "external_id": session.id[:12],
+        "session_id": session.id,
+        "session_source": source,
+    }
+
+
+def _source_hash_payload(
+    *,
+    session: Any,
+    digest_markdown: str,
+    summary_context: dict[str, Any],
+    prompt_template: str | None,
+) -> dict[str, Any]:
+    return {
+        "digest_markdown": digest_markdown,
+        "last_turn_markdown": _summary_source_text(getattr(session, "last_turn_markdown", None)),
+        "last_assistant_content": _summary_source_text(
+            getattr(session, "last_assistant_content", None)
+        ),
+        "prompt_template": prompt_template or "",
+        "summary_context": summary_context,
+    }
+
+
+async def _persist_summary_markdown(
+    *,
+    session_id: str,
+    session_manager: SessionManagerProtocol,
+    db_runner: Callable[..., Awaitable[Any]] | None,
+    summary_markdown: str,
+    generation_mode: str,
+    source_hash: str,
+    digest_turns: int,
+    metadata: dict[str, Any],
+) -> None:
+    persist_summary_state = getattr(session_manager, "persist_summary_state", None)
+    has_concrete_persist = callable(getattr(type(session_manager), "persist_summary_state", None))
+    if callable(persist_summary_state) and has_concrete_persist:
+        await _run_db(
+            db_runner,
+            persist_summary_state,
+            session_id,
+            summary_markdown=summary_markdown,
+            generation_mode=generation_mode,
+            source_context_hash=source_hash,
+            source_digest_turn_count=digest_turns,
+            metadata_json=metadata,
+        )
+        return
+
+    await _run_db(
+        db_runner,
+        session_manager.update_summary,
+        session_id,
+        summary_markdown=summary_markdown,
+    )
+
+
 async def _generate_full_summary(
     session: Any,
     turns: list[dict[str, Any]],
@@ -436,6 +706,8 @@ async def _generate_full_summary(
     db: HubDatabase | None,
     session_manager: SessionManagerProtocol,
     run_db: Callable[..., Awaitable[Any]] | None = None,
+    summary_context: dict[str, Any] | None = None,
+    prompt_template: str | None = None,
 ) -> tuple[str | None, str | None]:
     """Generate the full LLM-based archival summary.
 
@@ -446,106 +718,30 @@ async def _generate_full_summary(
         if llm_service is None or session_summary_config is None:
             return None, "Session summary LLM feature config not available"
 
-        # Load prompt template
-        prompt_template = getattr(session_summary_config, "prompt", None)
-        try:
-            from gobby.prompts.loader import PromptLoader
-
-            loader = PromptLoader(db=db or getattr(session_manager, "db", None))
-            prompt_obj = loader.load("handoff/session_end")
-            prompt_template = prompt_obj.content
-        except FileNotFoundError:
-            pass
+        if prompt_template is None:
+            prompt_template = _load_summary_prompt_template(
+                path="handoff/session_end",
+                session_summary_config=session_summary_config,
+                db=db,
+                session_manager=session_manager,
+            )
 
         if not prompt_template:
             return None, "Missing prompt template: handoff/session_end"
 
-        # Prepare context for LLM
-        from gobby.workflows.git_utils import get_file_changes, get_git_diff_summary
-        from gobby.workflows.summary_actions import (
-            _format_structured_context,
-            format_turns_for_llm,
-        )
-
-        digest_markdown = _digest_markdown_for_summary(session)
-        source = getattr(session, "source", None) or "claude"
-        first_digest_turn, recent_digest_turns = _extract_digest_turns(digest_markdown)
-        if digest_markdown:
-            transcript_summary = _truncate_markdown(
-                digest_markdown,
-                TRANSCRIPT_FALLBACK_MAX_CHARS,
+        if summary_context is None:
+            summary_context = await _build_summary_prompt_context(
+                session=session,
+                turns=turns,
+                handoff_ctx=handoff_ctx,
+                db=db,
+                session_manager=session_manager,
+                run_db=run_db,
             )
-            last_messages_str = recent_digest_turns
-        else:
-            # Get transcript parser — use the right one for this session's source
-            parser: Any
-            if source == "gemini":
-                from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
-
-                parser = GeminiTranscriptParser()
-            elif source == "grok":
-                from gobby.sessions.transcripts.grok import GrokTranscriptParser
-
-                parser = GrokTranscriptParser()
-            elif source == "codex":
-                from gobby.sessions.transcripts.codex import CodexTranscriptParser
-
-                parser = CodexTranscriptParser()
-            elif source == "droid":
-                from gobby.sessions.transcripts.droid import DroidTranscriptParser
-
-                parser = DroidTranscriptParser(
-                    session_id=getattr(session, "id", None),
-                    transcript_path=getattr(session, "transcript_path", None),
-                )
-            else:
-                from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
-
-                parser = ClaudeTranscriptParser()
-
-            last_turns = parser.extract_turns_since_clear(turns)
-            transcript_summary = _format_transcript_fallback_summary(
-                last_turns,
-                format_turns_for_llm,
-            )
-            last_messages = parser.extract_last_messages(turns, num_pairs=2)
-            last_messages_str = format_turns_for_llm(last_messages) if last_messages else ""
-
-        file_changes = get_file_changes()
-        git_diff_summary = get_git_diff_summary()
-        structured_context = _format_structured_context(handoff_ctx)
-
-        # Enrich with DB context
-        resolved_db = db or getattr(session_manager, "db", None)
-        claimed_tasks = (
-            await _run_db(run_db, _get_claimed_tasks, session.id, resolved_db)
-            if resolved_db
-            else ""
-        )
-        session_memories = (
-            await _run_db(run_db, _get_session_memories, session.id, resolved_db)
-            if resolved_db
-            else ""
-        )
-        context = {
-            "transcript_summary": transcript_summary,
-            "last_messages": last_messages_str,
-            "git_status": handoff_ctx.git_status or "",
-            "file_changes": file_changes,
-            "git_diff_summary": git_diff_summary,
-            "structured_context": structured_context,
-            "claimed_tasks": claimed_tasks,
-            "session_memories": session_memories,
-            "first_digest_turn": first_digest_turn,
-            "recent_digest_turns": recent_digest_turns,
-            "external_id": session.id[:12],
-            "session_id": session.id,
-            "session_source": source,
-        }
 
         from gobby.llm.prompt_rendering import render_summary_prompt
 
-        prompt = render_summary_prompt(prompt_template, context)
+        prompt = render_summary_prompt(prompt_template, summary_context)
         full_markdown = await llm_service.call_feature(
             session_summary_config,
             prompt,
@@ -563,6 +759,63 @@ async def _generate_full_summary(
     except Exception as e:
         logger.error(
             f"Failed to generate full summary for session {session.id}: {e}",
+            exc_info=True,
+        )
+        return None, str(e)
+
+
+async def _generate_delta_summary(
+    *,
+    session: Any,
+    previous_summary: str,
+    new_digest_turns: str,
+    summary_context: dict[str, Any],
+    llm_service: LLMServiceProtocol | None,
+    session_summary_config: SessionSummaryConfigProtocol | None,
+    db: HubDatabase | None,
+    session_manager: SessionManagerProtocol,
+) -> tuple[str | None, str | None]:
+    """Merge new digest/context into an existing complete summary."""
+    try:
+        if llm_service is None or session_summary_config is None:
+            return None, "Session summary LLM feature config not available"
+
+        prompt_template = _load_summary_prompt_template(
+            path="handoff/session_delta_merge",
+            session_summary_config=None,
+            db=db,
+            session_manager=session_manager,
+        )
+        if not prompt_template:
+            return None, "Missing prompt template: handoff/session_delta_merge"
+
+        context = dict(summary_context)
+        context.update(
+            {
+                "previous_summary": previous_summary,
+                "new_digest_turns": new_digest_turns,
+            }
+        )
+
+        from gobby.llm.prompt_rendering import render_summary_prompt
+
+        prompt = render_summary_prompt(prompt_template, context)
+        merged_markdown = await llm_service.call_feature(
+            session_summary_config,
+            prompt,
+            system_prompt=(
+                "You are a session summary merger. Return one complete replacement handoff."
+            ),
+            caller="sessions.summary.delta",
+        )
+        if not is_summary_markdown_valid(merged_markdown):
+            if merged_markdown and merged_markdown.strip():
+                return None, "Generated delta session summary was invalid"
+            return None, "Generated delta session summary was empty"
+        return merged_markdown, None
+    except Exception as e:
+        logger.error(
+            f"Failed to merge summary delta for session {session.id}: {e}",
             exc_info=True,
         )
         return None, str(e)

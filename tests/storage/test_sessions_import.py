@@ -34,7 +34,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "clear_had_edits": "(self, session_id: 'str') -> 'None'",
     "count": "(self, project_id: 'str | None' = None, status: 'str | None' = None, "
     "source: 'str | None' = None) -> 'int'",
-    "count_by_status": "(self) -> 'dict[str, int]'",
+    "count_by_status": "(self, project_id: 'str | None' = None) -> 'dict[str, int]'",
     "create_web_chat_session": "(self, *, machine_id: 'str', project_id: 'str', "
     "source: 'str', title: 'str | None' = None, model: 'str | None' = None, "
     "is_local: 'bool' = False, chat_mode: 'str | None' = None, sandbox_enabled: 'bool', "
@@ -46,6 +46,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "fetch_task_refs_by_session": "(self, session_ids: 'Sequence[str]') -> "
     "'dict[str, _TaskRefsByRole]'",
     "find_active_by_external_id": "(self, external_id: 'str', source: 'str') -> 'Session | None'",
+    "find_active_by_terminal_context": "(self, project_id: 'str | None', parent_pid: 'Any', "
+    "terminal_context: 'dict[str, Any] | str | None' = None) -> 'Session | None'",
     "find_by_external_id": "(self, external_id: 'str', machine_id: 'str', "
     "project_id: 'str | None', source: 'str', session_type: 'str | None' = None) "
     "-> 'Session | None'",
@@ -61,6 +63,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "project_id: 'str', max_attempts: 'int' = 30) -> 'tuple[str, str | None] | None'",
     "get": "(self, session_id: 'str') -> 'Session | None'",
     "get_pending_transcript_sessions": "(self, limit: 'int' = 10) -> 'list[Session]'",
+    "get_summary_revision": "(self, revision_id: 'str') -> 'dict[str, Any] | None'",
     "get_session_id": "(self, external_id: 'str', source: 'str') -> 'str | None'",
     "get_sessions_since": "(self, since: 'datetime', project_id: 'str | None' = None) "
     "-> 'list[Session]'",
@@ -77,6 +80,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "'list[Session]'",
     "lookup_session_id": "(self, external_id: 'str', source: 'str', machine_id: 'str', "
     "project_id: 'str | None') -> 'str | None'",
+    "list_summary_revisions": "(self, session_id: 'str', *, limit: 'int' = 20) -> "
+    "'list[dict[str, Any]]'",
     "mark_had_edits": "(self, session_id: 'str') -> 'Session | None'",
     "mark_session_expired": "(self, session_id: 'str') -> 'bool'",
     "mark_transcript_processed": "(self, session_id: 'str') -> 'Session | None'",
@@ -85,6 +90,12 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "'str', digest_markdown: 'str', last_digest_input_hash: 'str', "
     "title: 'str | None' = None, title_source: 'str | None' = None) -> "
     "'Session | None'",
+    "persist_summary_state": "(self, session_id: 'str', *, summary_markdown: 'str', "
+    "generation_mode: 'str', source_context_hash: 'str | None' = None, "
+    "source_digest_turn_count: 'int | None' = None, "
+    "previous_revision_id: 'str | None' = None, "
+    "metadata_json: 'Mapping[str, Any] | None' = None, "
+    "summary_path: 'str | None' = None) -> 'Session | None'",
     "prune_empty_sessions": "(self, min_age_hours: 'int' = 1) -> 'int'",
     "recalculate_stats": "(self, session_id: 'str') -> 'Session | None'",
     "record_skills_used": "(self, session_id: 'str', skill_names: 'list[str]') -> 'int'",
@@ -106,6 +117,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "is_local: 'bool' = False, sandbox_enabled: 'bool | None' = None) -> 'str'",
     "register_session_change_listener": "(self, listener: 'SessionChangeCallback') -> 'None'",
     "register_title_listener": "(self, listener: 'TitleChangeCallback') -> 'None'",
+    "renumber_project_sessions": "(self, project_id: 'str', *, dry_run: 'bool' = True) -> "
+    "'list[SessionRenumberMapping]'",
     "reset_transcript_processed": "(self, session_id: 'str') -> 'Session | None'",
     "recover_session": "(self, external_id: 'str', source: 'str', machine_id: 'str', "
     "project_id: 'str | None', session_type: 'str | None' = None) -> 'Session | None'",
@@ -124,6 +137,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "sandbox_policy_hash: 'str | None' = None) -> 'Session | None'",
     "update_approved_tools": "(self, session_id: 'str', tools: 'set[str]') -> 'None'",
     "update_chat_mode": "(self, session_id: 'str', chat_mode: 'str') -> 'None'",
+    "update_context_usage": "(self, session_id: 'str', snapshot: 'ContextUsageSnapshot') -> 'bool'",
     "update_digest_markdown": "(self, session_id: 'str', digest_markdown: 'str') -> "
     "'Session | None'",
     "update_last_digest_input_hash": "(self, session_id: 'str', hash_value: 'str') -> 'None'",

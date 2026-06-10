@@ -36,6 +36,11 @@ class Session:
     parent_session_id: str | None
     created_at: str
     updated_at: str
+    summary_revision_id: str | None = None
+    summary_source_context_hash: str | None = None
+    summary_digest_turn_count: int | None = None
+    summary_generation_mode: str | None = None
+    summary_generated_at: str | None = None
     title_source: str | None = None
     agent_depth: int = 0  # 0 = human-initiated, 1+ = agent-spawned
     spawned_by_agent_id: str | None = None  # ID of agent that spawned this session
@@ -123,6 +128,11 @@ class Session:
             parent_session_id=row["parent_session_id"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            summary_revision_id=cls._get_optional(row, "summary_revision_id"),
+            summary_source_context_hash=cls._get_optional(row, "summary_source_context_hash"),
+            summary_digest_turn_count=cls._get_optional(row, "summary_digest_turn_count"),
+            summary_generation_mode=cls._get_optional(row, "summary_generation_mode"),
+            summary_generated_at=cls._get_optional(row, "summary_generated_at"),
             agent_depth=row["agent_depth"] or 0,
             spawned_by_agent_id=row["spawned_by_agent_id"],
             workflow_name=row["workflow_name"],
@@ -255,6 +265,11 @@ class Session:
             "transcript_path": self.transcript_path,
             "summary_path": self.summary_path,
             "summary_markdown": self.summary_markdown,
+            "summary_revision_id": self.summary_revision_id,
+            "summary_source_context_hash": self.summary_source_context_hash,
+            "summary_digest_turn_count": self.summary_digest_turn_count,
+            "summary_generation_mode": self.summary_generation_mode,
+            "summary_generated_at": self.summary_generated_at,
             "git_branch": self.git_branch,
             "parent_session_id": self.parent_session_id,
             "agent_depth": self.agent_depth,
@@ -315,6 +330,9 @@ class Session:
             "title_source": self.title_source,
             "status": self.status,
             "git_branch": self.git_branch,
+            "summary_revision_id": self.summary_revision_id,
+            "summary_generation_mode": self.summary_generation_mode,
+            "summary_generated_at": self.summary_generated_at,
             "model": self.model,
             "is_local": self.is_local,
             "had_edits": self.had_edits,

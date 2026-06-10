@@ -322,7 +322,25 @@ async def _persist_compact_handoff_fallback(
         }
 
     try:
-        session_manager.update_summary(session_id, summary_markdown=fallback)
+        persist_summary_state = getattr(session_manager, "persist_summary_state", None)
+        has_concrete_persist = callable(
+            getattr(type(session_manager), "persist_summary_state", None)
+        )
+        if callable(persist_summary_state) and has_concrete_persist:
+            from gobby.sessions.summary_refresh import digest_turn_count
+
+            persist_summary_state(
+                session_id,
+                summary_markdown=fallback,
+                generation_mode="digest_fallback",
+                source_context_hash=None,
+                source_digest_turn_count=digest_turn_count(
+                    getattr(session, "digest_markdown", None)
+                ),
+                metadata_json={"reason": reason, "source": "compact_self"},
+            )
+        else:
+            session_manager.update_summary(session_id, summary_markdown=fallback)
         session_manager.update_status(session_id, "handoff_ready")
     except Exception as exc:
         detail = str(exc) or type(exc).__name__

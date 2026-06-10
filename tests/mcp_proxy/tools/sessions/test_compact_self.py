@@ -425,24 +425,55 @@ class TestCompactSelfTerminalPath:
         session.digest_markdown = "### Turn 8\nLatest coordinator state for #15156."
         session.transcript_path = None
         session.summary_markdown = "stale pre-compaction summary"
+        persist_calls: list[dict[str, Any]] = []
 
         registry = _TestRegistry(name="test", description="test")
-        session_manager = MagicMock()
-        session_manager.get.return_value = session
-        session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
 
-        def update_summary(session_id: str, *, summary_markdown: str) -> None:
-            assert session_id == "s1"
-            events.append("update_summary")
-            session.summary_markdown = summary_markdown
+        class RevisionAwareSessionManager:
+            def get(self, session_id: str) -> MagicMock | None:
+                return session if session_id == "s1" else None
 
-        def update_status(session_id: str, status: str) -> None:
-            assert session_id == "s1"
-            events.append(f"status:{status}")
-            session.status = status
+            def resolve_session_reference(
+                self,
+                ref: str,
+                project_id: str | None = None,
+            ) -> str:
+                return ref
 
-        session_manager.update_summary.side_effect = update_summary
-        session_manager.update_status.side_effect = update_status
+            def persist_summary_state(
+                self,
+                session_id: str,
+                *,
+                summary_markdown: str,
+                generation_mode: str,
+                source_context_hash: str | None = None,
+                source_digest_turn_count: int | None = None,
+                metadata_json: dict[str, Any] | None = None,
+            ) -> MagicMock:
+                assert session_id == "s1"
+                events.append("persist_summary_state")
+                persist_calls.append(
+                    {
+                        "generation_mode": generation_mode,
+                        "source_context_hash": source_context_hash,
+                        "source_digest_turn_count": source_digest_turn_count,
+                        "metadata_json": metadata_json or {},
+                    }
+                )
+                session.summary_markdown = summary_markdown
+                return session
+
+            def update_summary(self, session_id: str, *, summary_markdown: str) -> None:
+                assert session_id == "s1"
+                events.append("update_summary")
+                session.summary_markdown = summary_markdown
+
+            def update_status(self, session_id: str, status: str) -> None:
+                assert session_id == "s1"
+                events.append(f"status:{status}")
+                session.status = status
+
+        session_manager = RevisionAwareSessionManager()
         db = MagicMock()
         agent_run_manager = MagicMock()
         agent_run_manager.get_by_session.return_value = None
@@ -497,10 +528,18 @@ class TestCompactSelfTerminalPath:
         assert result["handoff_context_refresh_timed_out"] is True
         assert events == [
             "refresh_start",
-            "update_summary",
+            "persist_summary_state",
             "status:handoff_ready",
             "tmux:Escape",
             "tmux:/compact\n",
+        ]
+        assert persist_calls == [
+            {
+                "generation_mode": "digest_fallback",
+                "source_context_hash": None,
+                "source_digest_turn_count": 1,
+                "metadata_json": {"reason": "timed out", "source": "compact_self"},
+            }
         ]
         mock_refresh.assert_awaited_once()
         assert "Latest coordinator state for #15156." in handoff["context"]

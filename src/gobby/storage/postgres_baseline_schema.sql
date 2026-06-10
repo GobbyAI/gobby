@@ -161,6 +161,11 @@ CREATE TABLE sessions (
     transcript_path TEXT,
     summary_path TEXT,
     summary_markdown TEXT,
+    summary_revision_id TEXT,
+    summary_source_context_hash TEXT,
+    summary_digest_turn_count INTEGER,
+    summary_generation_mode TEXT,
+    summary_generated_at TIMESTAMPTZ,
     git_branch TEXT,
     parent_session_id TEXT REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
     transcript_processed BOOLEAN DEFAULT FALSE,
@@ -248,6 +253,35 @@ CREATE INDEX idx_sessions_pending_transcript ON sessions(status, transcript_proc
 CREATE INDEX idx_sessions_prune_status_updated_at ON sessions(status, updated_at);
 
 CREATE INDEX idx_sessions_parent_session ON sessions(parent_session_id);
+
+CREATE TABLE session_summary_revisions (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    summary_markdown TEXT NOT NULL,
+    generation_mode TEXT NOT NULL,
+    source_context_hash TEXT,
+    source_digest_turn_count INTEGER,
+    previous_revision_id TEXT REFERENCES session_summary_revisions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+CONSTRAINT session_summary_revisions_digest_turn_count_nonnegative
+CHECK (source_digest_turn_count IS NULL OR source_digest_turn_count >= 0)
+);
+
+ALTER TABLE sessions
+    ADD CONSTRAINT sessions_summary_revision_fk
+    FOREIGN KEY (summary_revision_id)
+    REFERENCES session_summary_revisions(id)
+    ON DELETE SET NULL
+    DEFERRABLE INITIALLY IMMEDIATE;
+
+CREATE INDEX idx_session_summary_revisions_session_created
+    ON session_summary_revisions(session_id, created_at DESC);
+
+CREATE INDEX idx_session_summary_revisions_previous
+    ON session_summary_revisions(previous_revision_id);
+
+CREATE INDEX idx_sessions_summary_revision ON sessions(summary_revision_id);
 
 CREATE INDEX idx_sessions_agent_depth ON sessions(agent_depth);
 
