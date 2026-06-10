@@ -223,7 +223,9 @@ pub fn graph_write_statements(facts: &WikiGraphFacts) -> Vec<GraphStatement> {
         }
         statements.push(GraphStatement {
             cypher: format!(
-                "MERGE (source:{} {{{}}}) MATCH (doc:{} {{{}}}) MERGE (source)-[:{}]->(doc)",
+                // Cypher requires WITH to reintroduce MATCH after an updating
+                // clause such as MERGE.
+                "MERGE (source:{} {{{}}}) WITH source MATCH (doc:{} {{{}}}) MERGE (source)-[:{}]->(doc)",
                 label(WIKI_SOURCE_LABEL),
                 scoped_path_properties(&source.scope, &source.source_path),
                 label(WIKI_DOC_LABEL),

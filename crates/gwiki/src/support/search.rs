@@ -51,16 +51,10 @@ impl ConfigSource for PostgresConfigSource<'_> {
     }
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
-        reject_daemon_secret_reference(value)?;
+        // Leading and embedded `$secret:` references both resolve through the
+        // shared resolver (CLI-side Fernet decryption, same as gcode).
         gobby_core::secrets::resolve_config_value(value, self.conn)
     }
-}
-
-fn reject_daemon_secret_reference(value: &str) -> anyhow::Result<()> {
-    if value.trim_start().starts_with("$secret:") {
-        anyhow::bail!("gwiki CLI config cannot resolve daemon secret references");
-    }
-    Ok(())
 }
 
 pub(crate) fn store_search_hits(
@@ -164,23 +158,4 @@ pub(crate) fn store_search_hits(
             .then_with(|| left.id.cmp(&right.id))
     });
     ranked.into_iter().map(|(_, result)| result).collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rejects_leading_daemon_secret_reference() {
-        let error = reject_daemon_secret_reference("  $secret:POSTGRES_DSN")
-            .expect_err("leading daemon secret reference is rejected");
-
-        assert!(
-            error
-                .to_string()
-                .contains("cannot resolve daemon secret references")
-        );
-        reject_daemon_secret_reference("postgresql://user:$secret:password@localhost/db")
-            .expect("embedded secret references continue through shared resolver");
-    }
 }

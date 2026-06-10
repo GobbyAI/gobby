@@ -301,8 +301,14 @@ fn code_edge_query_params(
     limit: usize,
 ) -> anyhow::Result<HashMap<String, String>> {
     Ok(HashMap::from([
-        ("project".to_string(), project_id.to_string()),
-        ("path".to_string(), file_path.to_string()),
+        (
+            "project".to_string(),
+            gobby_core::falkor::escape_string(project_id),
+        ),
+        (
+            "path".to_string(),
+            gobby_core::falkor::escape_string(file_path),
+        ),
         ("limit".to_string(), sentinel_limit(limit)?.to_string()),
     ]))
 }
@@ -674,10 +680,18 @@ fn is_external_target(target: &str) -> bool {
 }
 
 fn scope_params(scope: &SearchScope) -> Option<HashMap<String, String>> {
+    // falkordb 0.2 interpolates params as raw `CYPHER key=value` text, so
+    // string values must be encoded as Cypher string literals by the caller.
     scope.scope_filter().map(|(scope_kind, scope_id)| {
         HashMap::from([
-            ("scope_kind".to_string(), scope_kind.to_string()),
-            ("scope_id".to_string(), scope_id.to_string()),
+            (
+                "scope_kind".to_string(),
+                gobby_core::falkor::escape_string(scope_kind),
+            ),
+            (
+                "scope_id".to_string(),
+                gobby_core::falkor::escape_string(scope_id),
+            ),
         ])
     })
 }
@@ -791,13 +805,16 @@ mod tests {
     }
 
     #[test]
-    fn graph_scope_params_are_raw_parameter_values() {
+    fn graph_scope_params_are_cypher_string_literals() {
         let params = scope_params(&SearchScope::topic("rust'async")).expect("scoped params");
 
-        assert_eq!(params.get("scope_kind").map(String::as_str), Some("topic"));
+        assert_eq!(
+            params.get("scope_kind").map(String::as_str),
+            Some("'topic'")
+        );
         assert_eq!(
             params.get("scope_id").map(String::as_str),
-            Some("rust'async")
+            Some("'rust\\'async'")
         );
     }
 
