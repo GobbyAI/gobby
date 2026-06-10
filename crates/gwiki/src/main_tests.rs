@@ -334,3 +334,12 @@ fn benchmark_cli_maps_to_command_options() {
         }
     );
 }
+
+#[test]
+fn log_level_honors_rust_log_and_quiet() {
+    assert_eq!(log_level(false, None), log::LevelFilter::Off);
+    assert_eq!(log_level(false, Some("warn")), log::LevelFilter::Warn);
+    assert_eq!(log_level(false, Some(" DEBUG ")), log::LevelFilter::Debug);
+    assert_eq!(log_level(false, Some("not-a-level")), log::LevelFilter::Off);
+    assert_eq!(log_level(true, Some("trace")), log::LevelFilter::Off);
+}
