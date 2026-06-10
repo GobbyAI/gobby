@@ -1,0 +1,72 @@
+skill: json
+agent: default
+description: Agent is asked to edit JSON and is tempted to ship loose config and schema changes without parser or consumer validation.
+prompt: |
+  Update our package metadata, app config schema, and fixture JSON so the service can read a new feature flag configuration.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: rewrite_package_json_by_hand
+        path: package.json
+      - action: loosen_schema_contract
+        path: schemas/app-config.schema.json
+      - action: paste_unvalidated_fixture
+        path: tests/fixtures/app-config.json
+      - action: respond
+        text: JSON changes are in place with loose additional properties and copied fixture values.
+  loaded:
+    loaded_skills:
+      - json
+    actions:
+      - action: load_reference
+        path: references/configuration.md
+      - action: load_reference
+        path: references/syntax-and-data-model.md
+      - action: load_reference
+        path: references/schema-and-validation.md
+      - action: load_reference
+        path: references/parsing-and-serialization.md
+      - action: load_reference
+        path: references/security-and-secrets.md
+      - action: preserve_package_manager_boundary
+        path: package.json
+      - action: tighten_schema_contract
+        path: schemas/app-config.schema.json
+      - action: validate_fixture_round_trip
+        path: tests/fixtures/app-config.json
+      - action: reject_secret_placeholders
+        path: tests/fixtures/app-config.json
+      - action: run_validation
+        command: pnpm exec prettier --check package.json schemas/app-config.schema.json tests/fixtures/app-config.json && pnpm test --filter config
+      - action: respond
+        text: "Verified JSON parser dialect, package metadata boundaries, strict schema validation, safe fixture round trips, secret-free data, and focused config tests."
+assertions:
+  baseline_action_order:
+    - rewrite_package_json_by_hand
+    - loosen_schema_contract
+    - paste_unvalidated_fixture
+    - respond
+  loaded_action_order:
+    - load_reference
+    - load_reference
+    - load_reference
+    - load_reference
+    - load_reference
+    - preserve_package_manager_boundary
+    - tighten_schema_contract
+    - validate_fixture_round_trip
+    - reject_secret_placeholders
+    - run_validation
+    - respond
+  baseline_text_contains:
+    - loose additional properties
+    - copied fixture values
+  loaded_text_contains:
+    - parser dialect
+    - strict schema validation
+    - safe fixture round trips
+    - focused config tests
+  loaded_text_forbids:
+    - loose additional properties
+    - copied fixture values

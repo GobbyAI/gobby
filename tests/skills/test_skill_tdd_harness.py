@@ -147,6 +147,37 @@ def test_typescript_skill_loads_strict_reference_pattern() -> None:
     assert result.has_behavioral_delta
 
 
+def test_json_skill_loads_strict_config_schema_pattern() -> None:
+    """Verify JSON work loads references before config and schema changes."""
+    result = run_recorded_skill_scenario(SCENARIOS / "json/strict-config-schema-boundaries.yaml")
+
+    assert result.baseline.action_names == (
+        "rewrite_package_json_by_hand",
+        "loosen_schema_contract",
+        "paste_unvalidated_fixture",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "load_reference",
+        "preserve_package_manager_boundary",
+        "tighten_schema_contract",
+        "validate_fixture_round_trip",
+        "reject_secret_placeholders",
+        "run_validation",
+        "respond",
+    )
+    assert result.loaded.actions[0]["path"] == "references/configuration.md"
+    assert result.loaded.actions[1]["path"] == "references/syntax-and-data-model.md"
+    assert result.loaded.actions[2]["path"] == "references/schema-and-validation.md"
+    assert result.loaded.actions[3]["path"] == "references/parsing-and-serialization.md"
+    assert result.loaded.actions[4]["path"] == "references/security-and-secrets.md"
+    assert result.has_behavioral_delta
+
+
 def test_javascript_skill_loads_strict_runtime_boundary_pattern() -> None:
     """Verify JavaScript work loads references before runtime and config changes."""
     result = run_recorded_skill_scenario(SCENARIOS / "javascript/strict-runtime-boundaries.yaml")
