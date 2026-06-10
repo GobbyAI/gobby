@@ -349,14 +349,49 @@ fn mermaid_labels_escape_label_metacharacters() {
 
 #[test]
 fn graph_queries_use_requested_edge_limit() {
-    let symbol_ids = vec!["symbol-a".to_string(), "symbol-b".to_string()];
-    let files = vec!["src/a.rs".to_string(), "src/b.rs".to_string()];
-
-    let (call_query, _) = codewiki_call_edges_query("project-1", &symbol_ids, 17);
-    let (import_query, _) = codewiki_import_edges_query("project-1", &files, 17);
+    let (call_query, _) = codewiki_call_edges_query("project-1", 17);
+    let (import_query, _) = codewiki_import_edges_query("project-1", 17);
 
     assert!(call_query.contains("LIMIT 17"));
     assert!(import_query.contains("LIMIT 17"));
+}
+
+#[test]
+fn import_edges_drop_non_core_source_files() {
+    let file_symbols = BTreeMap::from([
+        ("src/api.rs".to_string(), vec!["comp-api".to_string()]),
+        ("src/domain.rs".to_string(), vec!["comp-domain".to_string()]),
+        (
+            "tests/api_test.rs".to_string(),
+            vec!["comp-test".to_string()],
+        ),
+    ]);
+    let core_files = vec!["src/api.rs".to_string(), "src/domain.rs".to_string()];
+    let pairs = vec![
+        ("tests/api_test.rs".to_string(), "domain".to_string()),
+        ("src/api.rs".to_string(), "domain".to_string()),
+    ];
+
+    let edges = import_edges_from_pairs(&pairs, &core_files, &file_symbols);
+
+    assert_eq!(
+        edges,
+        vec![CodewikiGraphEdge::import("comp-api", "comp-domain")]
+    );
+}
+
+#[test]
+fn graph_queries_stay_small_and_carry_no_id_lists() {
+    // Embedding the core symbol-id/file lists in the Cypher text produced
+    // ~633KB payloads on this repo, which intermittently failed at the socket
+    // layer; core filtering is client-side now.
+    let (call_query, _) = codewiki_call_edges_query("project-1", 5000);
+    let (import_query, _) = codewiki_import_edges_query("project-1", 5000);
+
+    assert!(!call_query.contains(" IN ["));
+    assert!(!import_query.contains(" IN ["));
+    assert!(call_query.len() < 1024);
+    assert!(import_query.len() < 1024);
 }
 
 #[test]

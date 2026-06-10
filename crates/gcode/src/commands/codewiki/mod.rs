@@ -50,7 +50,9 @@ pub(crate) use cluster::{common_module_for_files, find_file_root};
 // Optional FalkorDB graph queries.
 pub(crate) use graph::fetch_codewiki_graph_edges;
 #[cfg(test)]
-pub(crate) use graph::{codewiki_call_edges_query, codewiki_import_edges_query};
+pub(crate) use graph::{
+    codewiki_call_edges_query, codewiki_import_edges_query, import_edges_from_pairs,
+};
 pub(crate) use ownership::{OwnershipMeta, OwnershipOptions, build_ownership_doc};
 pub(crate) use progress::CodewikiProgress;
 // Markdown path and wikilink helpers.
