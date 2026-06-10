@@ -438,7 +438,9 @@ mod tests {
         let home = temp_home();
         let _env = EnvGuard::set_home(home.path());
         write_daemon_files(home.path(), port, "text-token");
-        let cfg = test_context(Some("project-123"));
+        let mut cfg = test_context(Some("project-123"));
+        cfg.bindings.text_generate.provider = Some("local:lm-studio".to_string());
+        cfg.bindings.text_generate.model = Some("Qwen3-Coder-30B-A3B-Instruct".to_string());
 
         let result =
             generate_via_daemon_with_max_tokens(&cfg, "Write a title", Some("Be brief"), Some(64))
@@ -447,8 +449,8 @@ mod tests {
         let body = request_body_json(&request);
 
         assert!(request.starts_with("POST /api/llm/generate HTTP/1.1"));
-        assert_eq!(body["provider"], "daemon-provider");
-        assert_eq!(body["model"], "daemon-model");
+        assert_eq!(body["provider"], "local:lm-studio");
+        assert_eq!(body["model"], "Qwen3-Coder-30B-A3B-Instruct");
         assert_eq!(body["project_id"], "project-123");
         assert_eq!(body["prompt"], "Write a title");
         assert_eq!(body["system_prompt"], "Be brief");
@@ -463,14 +465,16 @@ mod tests {
 
         let (port, request) = spawn_server(r#"{"text":"ok"}"#);
         write_daemon_files(home.path(), port, "text-token");
-        let cfg = test_context(None);
+        let mut cfg = test_context(None);
+        cfg.bindings.text_generate.provider = Some("local:lm-studio".to_string());
+        cfg.bindings.text_generate.model = Some("Qwen3-Coder-30B-A3B-Instruct".to_string());
 
         generate_via_daemon(&cfg, "No project", None).unwrap();
         let request = request.join().unwrap().unwrap();
         let body = request_body_json(&request);
 
-        assert_eq!(body["provider"], "daemon-provider");
-        assert_eq!(body["model"], "daemon-model");
+        assert_eq!(body["provider"], "local:lm-studio");
+        assert_eq!(body["model"], "Qwen3-Coder-30B-A3B-Instruct");
         assert!(body.get("project_id").is_none());
         assert!(body.get("profile").is_none());
     }
