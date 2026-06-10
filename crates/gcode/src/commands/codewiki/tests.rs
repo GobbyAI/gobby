@@ -245,6 +245,21 @@ fn core_file_filter_excludes_specs_mocks_and_test_prefixes() {
 }
 
 #[test]
+fn core_file_filter_excludes_hidden_metadata_paths() {
+    for file in [
+        ".gobby/wiki/code/files/crates/gcode/src/cli.rs.md",
+        ".gobby/plans/goal.md",
+        ".github/workflows/ci.yml",
+        ".claude/settings.json",
+        ".gitignore",
+    ] {
+        assert!(!is_core_file(file), "{file} should be filtered out");
+    }
+
+    assert!(is_core_file("docs/guides/codewiki.md"));
+}
+
+#[test]
 fn import_targets_match_exact_path_or_module_components() {
     let files = vec![
         "src/domain/service.rs".to_string(),
