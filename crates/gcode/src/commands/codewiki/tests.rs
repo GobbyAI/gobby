@@ -245,6 +245,39 @@ fn core_file_filter_excludes_specs_mocks_and_test_prefixes() {
 }
 
 #[test]
+fn incremental_write_always_rewrites_docs_without_provenance() {
+    let project = tempfile::tempdir().expect("project dir");
+    std::fs::create_dir_all(project.path().join("src")).expect("source dir");
+    std::fs::write(project.path().join("src/lib.rs"), "pub struct Client;\n").expect("write lib");
+    let out_dir = project.path().join("codewiki");
+
+    let provenance_doc =
+        "---\ntitle: Lib\nprovenance:\n- file: src/lib.rs\n  ranges:\n  - '1'\n---\n# Lib\n"
+            .to_string();
+    let first = vec![
+        ("code/_special.md".to_string(), "# Special v1\n".to_string()),
+        (
+            "code/files/src/lib.rs.md".to_string(),
+            provenance_doc.clone(),
+        ),
+    ];
+    write_incremental_doc_set(project.path(), &out_dir, &first).expect("first write");
+
+    let second = vec![
+        ("code/_special.md".to_string(), "# Special v2\n".to_string()),
+        ("code/files/src/lib.rs.md".to_string(), provenance_doc),
+    ];
+    let written =
+        write_incremental_doc_set(project.path(), &out_dir, &second).expect("second write");
+
+    // No provenance => always rewritten; matching non-empty hashes => preserved.
+    assert_eq!(written, vec!["code/_special.md".to_string()]);
+    let special =
+        std::fs::read_to_string(out_dir.join("code/_special.md")).expect("special content");
+    assert!(special.contains("Special v2"));
+}
+
+#[test]
 fn core_file_filter_excludes_hidden_metadata_paths() {
     for file in [
         ".gobby/wiki/code/files/crates/gcode/src/cli.rs.md",
@@ -838,12 +871,15 @@ fn incremental_regenerates_only_changed() {
         std::fs::read_to_string(&unchanged_file_doc).expect("unchanged doc after content");
 
     assert!(unchanged_after.contains("preserve unchanged doc"));
+    // _hotspots.md carries no provenance frontmatter, so it is always
+    // rewritten (empty source-hash sets cannot prove the doc unchanged).
     assert_eq!(
         changed_written,
         vec![
             "code/repo.md".to_string(),
             "code/_onboarding.md".to_string(),
             "code/_architecture.md".to_string(),
+            "code/_hotspots.md".to_string(),
             "code/modules/src.md".to_string(),
             "code/files/src/lib.rs.md".to_string()
         ]
@@ -857,6 +893,7 @@ fn incremental_regenerates_only_changed() {
             serde_json::Value::String("code/repo.md".to_string()),
             serde_json::Value::String("code/_onboarding.md".to_string()),
             serde_json::Value::String("code/_architecture.md".to_string()),
+            serde_json::Value::String("code/_hotspots.md".to_string()),
             serde_json::Value::String("code/modules/src.md".to_string()),
             serde_json::Value::String("code/files/src/lib.rs.md".to_string())
         ]

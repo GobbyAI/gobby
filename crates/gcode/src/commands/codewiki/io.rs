@@ -32,7 +32,11 @@ pub(crate) fn write_incremental_doc_set_with_snapshot(
             source_hashes: source_hashes_for_doc(project_root, content)?,
         };
         let target = safe_doc_path(out_dir, relative_path)?;
+        // Docs without provenance frontmatter have no source hashes to compare,
+        // so hash equality is vacuous; always rewrite them so generator changes
+        // propagate (e.g. code/_ownership.md).
         let unchanged = target.exists()
+            && !doc_meta.source_hashes.is_empty()
             && previous
                 .docs
                 .get(relative_path)
