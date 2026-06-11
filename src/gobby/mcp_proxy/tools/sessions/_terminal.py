@@ -285,25 +285,115 @@ def _compact_handoff_refresh_timeout_seconds() -> float:
         return _DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS
 
 
-def _compact_handoff_fallback_markdown(session: Any, *, reason: str) -> str | None:
-    """Build a bounded handoff fallback when LLM summary refresh cannot finish."""
+def _summary_digest_metadata_matches(session: Any) -> bool:
+    from gobby.sessions.summary_refresh import coerce_digest_turn_count, digest_turn_count
+    from gobby.sessions.summary_validity import is_summary_markdown_valid
+
+    if not is_summary_markdown_valid(getattr(session, "summary_markdown", None)):
+        return False
+
     digest_markdown = getattr(session, "digest_markdown", None)
-    if isinstance(digest_markdown, str) and digest_markdown.strip():
-        digest = digest_markdown.strip()
-        if len(digest) > _COMPACT_HANDOFF_FALLBACK_MAX_CHARS:
-            digest = digest[-_COMPACT_HANDOFF_FALLBACK_MAX_CHARS:].lstrip()
-            digest = "[older digest content truncated]\n\n" + digest
-        return (
-            "# Compact Handoff\n\n"
-            f"LLM handoff refresh did not complete before compaction ({reason}). "
-            "Continuing with the latest session digest.\n\n"
-            f"{digest}"
-        )
+    if not isinstance(digest_markdown, str) or not digest_markdown.strip():
+        return False
+
+    source_hash = getattr(session, "summary_source_context_hash", None)
+    if not isinstance(source_hash, str) or not source_hash.strip():
+        return False
+
+    current_count = digest_turn_count(digest_markdown)
+    if current_count <= 0:
+        return False
+    previous_count = coerce_digest_turn_count(getattr(session, "summary_digest_turn_count", None))
+    return previous_count == current_count
+
+
+def _compact_handoff_digest_fallback_markdown(session: Any, *, reason: str) -> str | None:
+    """Build a bounded digest handoff fallback."""
+    digest_markdown = getattr(session, "digest_markdown", None)
+    if not isinstance(digest_markdown, str) or not digest_markdown.strip():
+        return None
+
+    digest = digest_markdown.strip()
+    if len(digest) > _COMPACT_HANDOFF_FALLBACK_MAX_CHARS:
+        digest = digest[-_COMPACT_HANDOFF_FALLBACK_MAX_CHARS:].lstrip()
+        digest = "[older digest content truncated]\n\n" + digest
+    return (
+        "# Compact Handoff\n\n"
+        f"Archival handoff refresh is running in the background ({reason}). "
+        "Continuing with the latest session digest.\n\n"
+        f"{digest}"
+    )
+
+
+async def _compact_handoff_transcript_tail_markdown(session: Any, *, reason: str) -> str | None:
+    """Build a bounded transcript-tail fallback when no digest is available."""
+    transcript_path = getattr(session, "transcript_path", None)
+    if not isinstance(transcript_path, str) or not transcript_path.strip():
+        return None
+
+    path = Path(transcript_path)
+    if not path.is_file():
+        return None
+
+    try:
+        tail_lines = await asyncio.to_thread(_read_transcript_tail_lines, path, 80)
+    except OSError as exc:
+        logger.debug("Failed reading compact_self transcript tail for %s: %s", path, exc)
+        return None
+
+    tail = "\n".join(tail_lines).strip()
+    if not tail:
+        return None
+    if len(tail) > _COMPACT_HANDOFF_FALLBACK_MAX_CHARS:
+        tail = tail[-_COMPACT_HANDOFF_FALLBACK_MAX_CHARS:].lstrip()
+        tail = "[older transcript content truncated]\n\n" + tail
+
+    return (
+        "# Compact Handoff\n\n"
+        f"Archival handoff refresh is running in the background ({reason}). "
+        "No digest was available, so this handoff uses a bounded transcript tail.\n\n"
+        "```text\n"
+        f"{tail}\n"
+        "```"
+    )
+
+
+def _valid_existing_summary_markdown(session: Any) -> str | None:
+    from gobby.sessions.summary_validity import is_summary_markdown_valid
 
     summary_markdown = getattr(session, "summary_markdown", None)
-    if isinstance(summary_markdown, str) and summary_markdown.strip():
+    if is_summary_markdown_valid(summary_markdown):
         return summary_markdown.strip()
     return None
+
+
+def _mark_compact_handoff_ready(
+    session_id: str,
+    session: Any,
+    session_manager: SessionManager,
+    *,
+    fallback: bool,
+) -> dict[str, Any]:
+    summary_markdown = getattr(session, "summary_markdown", None)
+    summary_length = len(summary_markdown) if isinstance(summary_markdown, str) else 0
+    try:
+        session_manager.update_status(session_id, "handoff_ready")
+    except Exception as exc:
+        detail = str(exc) or type(exc).__name__
+        logger.warning(
+            "Failed marking compact_self handoff ready for %s: %s",
+            session_id,
+            detail,
+            exc_info=True,
+        )
+        return {"success": False, "error": detail}
+
+    return {
+        "success": True,
+        "refreshed": False,
+        "fallback": fallback,
+        "summary_length": summary_length,
+    }
 
 
 async def _persist_compact_handoff_fallback(
@@ -313,19 +403,20 @@ async def _persist_compact_handoff_fallback(
     *,
     reason: str,
 ) -> dict[str, Any]:
-    fallback = _compact_handoff_fallback_markdown(session, reason=reason)
+    from gobby.sessions.summary_refresh import digest_turn_count
+
+    fallback = _compact_handoff_digest_fallback_markdown(session, reason=reason)
+    if fallback is None:
+        fallback = await _compact_handoff_transcript_tail_markdown(session, reason=reason)
     if not fallback:
         return {
             "success": False,
-            "error": f"handoff refresh {reason} and no digest/summary fallback exists",
-            "timed_out": reason == "timed out",
+            "error": f"handoff refresh {reason} and no digest/summary/transcript fallback exists",
         }
 
     try:
         persist_summary_state = getattr(session_manager, "persist_summary_state", None)
         if callable(persist_summary_state):
-            from gobby.sessions.summary_refresh import digest_turn_count
-
             persist_summary_state(
                 session_id,
                 summary_markdown=fallback,
@@ -347,29 +438,24 @@ async def _persist_compact_handoff_fallback(
             detail,
             exc_info=True,
         )
-        return {"success": False, "error": detail, "timed_out": reason == "timed out"}
+        return {"success": False, "error": detail}
 
     return {
         "success": True,
         "refreshed": True,
         "fallback": True,
-        "timed_out": reason == "timed out",
         "summary_length": len(fallback),
+        "background_refresh_needed": _has_summary_refresh_source(session),
     }
 
 
-async def _refresh_compact_handoff_context(
+async def _run_compact_handoff_background_refresh(
     session_id: str,
-    session: Any,
     session_manager: SessionManager,
     db: HubDatabase,
     llm_service: Any | None,
     session_summary_config: Any | None,
-) -> dict[str, Any]:
-    """Refresh summary_markdown before compact_self can trigger same-session resume."""
-    if not _has_summary_refresh_source(session):
-        return {"success": True, "refreshed": False, "reason": "no_summary_refresh_source"}
-
+) -> None:
     from gobby.sessions.summarize import generate_session_summaries
 
     timeout_seconds = _compact_handoff_refresh_timeout_seconds()
@@ -386,42 +472,103 @@ async def _refresh_compact_handoff_context(
             timeout=timeout_seconds,
         )
     except TimeoutError:
-        logger.warning(
-            "Timed out refreshing compact_self handoff context for %s after %.1fs; "
-            "using digest fallback",
+        logger.debug(
+            "Timed out refreshing compact_self archival handoff context for %s after %.1fs",
             session_id,
             timeout_seconds,
         )
-        return await _persist_compact_handoff_fallback(
-            session_id,
-            session,
-            session_manager,
-            reason="timed out",
-        )
+        return
+    except asyncio.CancelledError:
+        raise
     except Exception as exc:
         detail = str(exc) or type(exc).__name__
-        logger.warning(
-            "Failed refreshing compact_self handoff context for %s: %s",
+        logger.debug(
+            "Failed refreshing compact_self archival handoff context for %s: %s",
             session_id,
             detail,
             exc_info=True,
         )
-        return {"success": False, "error": detail}
+        return
 
     if not result.get("success"):
-        error = str(result.get("error") or result.get("full_error") or "unknown error")
-        return {"success": False, "error": error}
+        logger.debug(
+            "compact_self archival handoff refresh for %s did not succeed: %s",
+            session_id,
+            result.get("error") or result.get("full_error") or "unknown error",
+        )
 
-    refreshed_session = session_manager.get(session_id)
-    summary_markdown = getattr(refreshed_session, "summary_markdown", None)
-    if not isinstance(summary_markdown, str) or not summary_markdown.strip():
-        return {"success": False, "error": "summary refresh produced no summary_markdown"}
 
-    return {
-        "success": True,
-        "refreshed": True,
-        "summary_length": len(summary_markdown),
-    }
+def _schedule_compact_handoff_background_refresh(
+    session_id: str,
+    session_manager: SessionManager,
+    db: HubDatabase,
+    llm_service: Any | None,
+    session_summary_config: Any | None,
+) -> bool:
+    coro = _run_compact_handoff_background_refresh(
+        session_id,
+        session_manager,
+        db,
+        llm_service,
+        session_summary_config,
+    )
+    try:
+        asyncio.create_task(coro, name=f"compact-handoff-refresh-{session_id[:8]}")
+    except RuntimeError as exc:
+        coro.close()
+        logger.debug(
+            "Failed scheduling compact_self archival handoff refresh for %s: %s",
+            session_id,
+            exc,
+        )
+        return False
+    return True
+
+
+async def _refresh_compact_handoff_context(
+    session_id: str,
+    session: Any,
+    session_manager: SessionManager,
+    db: HubDatabase,
+    llm_service: Any | None,
+    session_summary_config: Any | None,
+) -> dict[str, Any]:
+    """Prepare summary_markdown quickly before compact_self sends /compact."""
+    if _summary_digest_metadata_matches(session):
+        return _mark_compact_handoff_ready(
+            session_id,
+            session,
+            session_manager,
+            fallback=False,
+        )
+
+    digest_markdown = getattr(session, "digest_markdown", None)
+    if isinstance(digest_markdown, str) and digest_markdown.strip():
+        return await _persist_compact_handoff_fallback(
+            session_id,
+            session,
+            session_manager,
+            reason="summary metadata stale or missing",
+        )
+
+    existing_summary = _valid_existing_summary_markdown(session)
+    if existing_summary:
+        result = _mark_compact_handoff_ready(
+            session_id,
+            session,
+            session_manager,
+            fallback=True,
+        )
+        if result.get("success"):
+            result["background_refresh_needed"] = _has_summary_refresh_source(session)
+        return result
+
+    return await _persist_compact_handoff_fallback(
+        session_id,
+        session,
+        session_manager,
+        reason="digest missing",
+    )
 
 
 async def _capture_transcript_tail(
@@ -665,6 +812,15 @@ def register_terminal_tools(
                 pending_session_id=resolved_session_id,
                 target_session=session,
             )
+        background_refresh_scheduled = False
+        if refresh_result.get("background_refresh_needed"):
+            background_refresh_scheduled = _schedule_compact_handoff_background_refresh(
+                resolved_session_id,
+                session_manager,
+                db,
+                llm_service,
+                session_summary_config,
+            )
         result = {
             "compacted": True,
             "command": command,
@@ -682,6 +838,8 @@ def register_terminal_tools(
             result["handoff_context_fallback"] = True
         if refresh_result.get("timed_out"):
             result["handoff_context_refresh_timed_out"] = True
+        if background_refresh_scheduled:
+            result["handoff_context_background_refresh_scheduled"] = True
         return result
 
     @registry.tool(

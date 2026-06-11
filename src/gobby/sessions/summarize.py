@@ -25,6 +25,12 @@ from gobby.sessions.summary_refresh import (
     source_context_hash,
 )
 from gobby.sessions.summary_validity import is_summary_markdown_valid
+from gobby.sessions.workspace_context import (
+    enrich_git_context as _enrich_git_context,
+)
+from gobby.sessions.workspace_context import (
+    resolve_session_workspace,
+)
 from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
@@ -199,7 +205,7 @@ async def generate_session_summaries(
     handoff_ctx = analyzer.extract_handoff_context(turns)
 
     # Enrich with real-time git status
-    cwd = path.parent if path and path.exists() else Path.cwd()
+    cwd = resolve_session_workspace(session, transcript_path)
     await _enrich_git_context(handoff_ctx, cwd)
 
     summary_context = await _build_summary_prompt_context(
@@ -209,6 +215,7 @@ async def generate_session_summaries(
         db=db,
         session_manager=session_manager,
         run_db=db_runner,
+        project_path=str(cwd),
     )
     full_prompt_template = _load_summary_prompt_template(
         path="handoff/session_end",
@@ -275,6 +282,7 @@ async def generate_session_summaries(
             run_db=db_runner,
             summary_context=summary_context,
             prompt_template=full_prompt_template,
+            project_path=str(cwd),
         )
 
     if decision.mode != "noop" and not is_summary_markdown_valid(full_markdown):
@@ -480,47 +488,6 @@ async def async_enumerate(aiter: Any, start: int = 0) -> Any:
         idx += 1
 
 
-async def _enrich_git_context(handoff_ctx: Any, cwd: Path) -> None:
-    """Enrich HandoffContext with real-time git status and commits."""
-    if not handoff_ctx.git_status:
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "git",
-                "status",
-                "--short",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=cwd,
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
-            handoff_ctx.git_status = stdout.decode().strip() if proc.returncode == 0 else ""
-        except Exception as e:
-            logger.debug(f"Failed to get git status for {cwd}: {e}")
-
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "git",
-            "log",
-            "--oneline",
-            "-10",
-            "--format=%H|%s",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=cwd,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
-        if proc.returncode == 0:
-            commits = []
-            for line in stdout.decode().strip().split("\n"):
-                if "|" in line:
-                    hash_val, message = line.split("|", 1)
-                    commits.append({"hash": hash_val, "message": message})
-            if commits:
-                handoff_ctx.git_commits = commits
-    except Exception as e:
-        logger.debug(f"Failed to get git log for {cwd}: {e}")
-
-
 def _looks_like_mock(value: Any) -> bool:
     return type(value).__module__.startswith("unittest.mock")
 
@@ -570,6 +537,7 @@ async def _build_summary_prompt_context(
     db: HubDatabase | None,
     session_manager: SessionManagerProtocol,
     run_db: Callable[..., Awaitable[Any]] | None = None,
+    project_path: str | None = None,
 ) -> dict[str, Any]:
     from gobby.workflows.git_utils import get_file_changes, get_git_diff_summary
     from gobby.workflows.summary_actions import (
@@ -636,8 +604,8 @@ async def _build_summary_prompt_context(
         "transcript_summary": transcript_summary,
         "last_messages": last_messages_str,
         "git_status": handoff_ctx.git_status or "",
-        "file_changes": get_file_changes(),
-        "git_diff_summary": get_git_diff_summary(),
+        "file_changes": get_file_changes(project_path=project_path),
+        "git_diff_summary": get_git_diff_summary(project_path=project_path),
         "structured_context": _format_structured_context(handoff_ctx),
         "claimed_tasks": claimed_tasks,
         "session_memories": session_memories,
@@ -712,6 +680,7 @@ async def _generate_full_summary(
     run_db: Callable[..., Awaitable[Any]] | None = None,
     summary_context: dict[str, Any] | None = None,
     prompt_template: str | None = None,
+    project_path: str | None = None,
 ) -> tuple[str | None, str | None]:
     """Generate the full LLM-based archival summary.
 
@@ -741,6 +710,7 @@ async def _generate_full_summary(
                 db=db,
                 session_manager=session_manager,
                 run_db=run_db,
+                project_path=project_path,
             )
 
         from gobby.llm.prompt_rendering import render_summary_prompt

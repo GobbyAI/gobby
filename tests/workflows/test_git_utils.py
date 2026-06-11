@@ -305,6 +305,7 @@ class TestGetFileChanges:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                cwd=None,
             )
             # Second call: git ls-files --others --exclude-standard
             mock_run.assert_any_call(
@@ -312,6 +313,30 @@ class TestGetFileChanges:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                cwd=None,
+            )
+
+    def test_passes_project_path_to_git_commands(self) -> None:
+        """Test that file changes can be collected from a specific project path."""
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(stdout="")
+
+            get_file_changes(project_path="/workspace/project")
+
+            assert mock_run.call_count == 2
+            mock_run.assert_any_call(
+                ["git", "diff", "HEAD", "--name-status"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                cwd="/workspace/project",
+            )
+            mock_run.assert_any_call(
+                ["git", "ls-files", "--others", "--exclude-standard"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                cwd="/workspace/project",
             )
 
     def test_returns_no_changes_when_both_empty(self) -> None:

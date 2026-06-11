@@ -65,8 +65,12 @@ def get_recent_git_commits(max_commits: int = 10) -> list[dict[str, str]]:
         return []
 
 
-def get_file_changes() -> str:
+def get_file_changes(project_path: str | None = None) -> str:
     """Get detailed file changes from git.
+
+    Args:
+        project_path: Optional path to the project directory. When provided,
+            git commands run in this directory instead of the current working directory.
 
     Returns:
         Formatted string with modified/deleted and untracked files.
@@ -78,6 +82,7 @@ def get_file_changes() -> str:
             capture_output=True,
             text=True,
             timeout=5,
+            cwd=project_path,
         )
 
         # Get untracked files
@@ -86,6 +91,7 @@ def get_file_changes() -> str:
             capture_output=True,
             text=True,
             timeout=5,
+            cwd=project_path,
         )
 
         # Combine results

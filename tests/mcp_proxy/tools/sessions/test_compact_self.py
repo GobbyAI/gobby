@@ -49,7 +49,23 @@ def _make_terminal_session(source: str, tmux_pane: str | None = "%12") -> MagicM
     session.terminal_context = (
         {"tmux_pane": tmux_pane, "tmux_socket_path": "/tmp/tmux"} if tmux_pane else {}
     )
+    session.digest_markdown = "### Turn 1\nInitial handoff digest."
+    session.summary_markdown = "# Cached Handoff\n\nReady."
+    session.summary_source_context_hash = "source-context-hash"
+    session.summary_digest_turn_count = 1
+    session.transcript_path = None
     return session
+
+
+def _record_background_task(scheduled: list[dict[str, Any]]) -> Callable[..., MagicMock]:
+    def create_task(coro: Any, *, name: str | None = None) -> MagicMock:
+        scheduled.append({"name": name})
+        coro.close()
+        task = MagicMock()
+        task.get_name.return_value = name
+        return task
+
+    return create_task
 
 
 async def _done_stream() -> AsyncIterator[DoneEvent]:
@@ -346,7 +362,7 @@ class TestCompactSelfTerminalPath:
         mock_mark.assert_called_once()
         mock_clear.assert_called_once()
 
-    def test_terminal_session_refreshes_handoff_context_before_compacting(self) -> None:
+    def test_terminal_session_reuses_fresh_cached_handoff_before_compacting(self) -> None:
         events: list[str] = []
         session = _make_terminal_session("codex")
         session.id = "s1"
@@ -354,12 +370,21 @@ class TestCompactSelfTerminalPath:
         session.status = "active"
         session.digest_markdown = "### Turn 4\nFresh transcript digest for #15040."
         session.transcript_path = None
-        session.summary_markdown = "stale pre-compaction summary"
+        session.summary_markdown = "# Fresh Compact Handoff\n\nReady."
+        session.summary_source_context_hash = "existing-source-hash"
+        session.summary_digest_turn_count = 1
 
         registry = _TestRegistry(name="test", description="test")
         session_manager = MagicMock()
         session_manager.get.return_value = session
         session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
+
+        def update_status(session_id: str, status: str) -> None:
+            assert session_id == "s1"
+            events.append(f"status:{status}")
+            session.status = status
+
+        session_manager.update_status.side_effect = update_status
         db = MagicMock()
         agent_run_manager = MagicMock()
         agent_run_manager.get_by_session.return_value = None
@@ -371,13 +396,6 @@ class TestCompactSelfTerminalPath:
             return True
 
         tmux.send_keys = AsyncMock(side_effect=send_keys)
-
-        async def refresh_summary(**kwargs: Any) -> dict[str, Any]:
-            assert kwargs["session_id"] == "s1"
-            events.append("refresh")
-            session.summary_markdown = "fresh compact handoff summary"
-            session.status = "handoff_ready"
-            return {"success": True, "full_length": len(session.summary_markdown)}
 
         with patch(
             "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
@@ -399,7 +417,7 @@ class TestCompactSelfTerminalPath:
             patch("gobby.mcp_proxy.tools.sessions._terminal._CODEX_INTERRUPT_SETTLE_SECONDS", 0),
             patch(
                 "gobby.sessions.summarize.generate_session_summaries",
-                side_effect=refresh_summary,
+                new_callable=AsyncMock,
             ) as mock_refresh,
             session_context_for_test("s1"),
         ):
@@ -407,17 +425,19 @@ class TestCompactSelfTerminalPath:
             handoff = get_handoff_context(session_id="s1")
 
         assert result["compacted"] is True
-        assert result["handoff_context_refreshed"] is True
-        assert events == ["refresh", "tmux:Escape", "tmux:/compact\n"]
-        mock_refresh.assert_awaited_once()
+        assert "handoff_context_refreshed" not in result
+        assert "handoff_context_fallback" not in result
+        assert "handoff_context_background_refresh_scheduled" not in result
+        assert events == ["status:handoff_ready", "tmux:Escape", "tmux:/compact\n"]
+        mock_refresh.assert_not_called()
         assert handoff["context_type"] == "summary_markdown"
-        assert handoff["context"] == "fresh compact handoff summary"
-        assert "stale pre-compaction" not in handoff["context"]
+        assert handoff["context"] == "# Fresh Compact Handoff\n\nReady."
 
-    def test_terminal_session_compacts_with_digest_fallback_when_refresh_times_out(
+    def test_terminal_session_compacts_with_digest_fallback_without_waiting_for_refresh(
         self,
     ) -> None:
         events: list[str] = []
+        scheduled: list[dict[str, Any]] = []
         session = _make_terminal_session("codex")
         session.id = "s1"
         session.title = "Coordinator"
@@ -425,6 +445,8 @@ class TestCompactSelfTerminalPath:
         session.digest_markdown = "### Turn 8\nLatest coordinator state for #15156."
         session.transcript_path = None
         session.summary_markdown = "stale pre-compaction summary"
+        session.summary_source_context_hash = None
+        session.summary_digest_turn_count = None
         persist_calls: list[dict[str, Any]] = []
 
         registry = _TestRegistry(name="test", description="test")
@@ -486,10 +508,128 @@ class TestCompactSelfTerminalPath:
 
         tmux.send_keys = AsyncMock(side_effect=send_keys)
 
-        async def slow_refresh(**_kwargs: Any) -> dict[str, Any]:
-            events.append("refresh_start")
-            await asyncio.Event().wait()
-            return {"success": True}
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            return_value=agent_run_manager,
+        ):
+            register_terminal_tools(registry, session_manager, db, llm_service=MagicMock())
+            register_handoff_tools(registry, session_manager)
+
+        compact_self = registry.get_tool("compact_self")
+        get_handoff_context = registry.get_tool("get_handoff_context")
+        assert compact_self is not None
+        assert get_handoff_context is not None
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+                return_value=tmux,
+            ),
+            patch("gobby.mcp_proxy.tools.sessions._terminal._CODEX_INTERRUPT_SETTLE_SECONDS", 0),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal.asyncio.create_task",
+                side_effect=_record_background_task(scheduled),
+            ),
+            patch(
+                "gobby.sessions.summarize.generate_session_summaries",
+                new_callable=AsyncMock,
+            ) as mock_refresh,
+            session_context_for_test("s1"),
+        ):
+            result = asyncio.run(compact_self())
+            handoff = get_handoff_context(session_id="s1")
+
+        assert result["compacted"] is True
+        assert result["handoff_context_refreshed"] is True
+        assert result["handoff_context_fallback"] is True
+        assert result["handoff_context_background_refresh_scheduled"] is True
+        assert "handoff_context_refresh_timed_out" not in result
+        assert events == [
+            "persist_summary_state",
+            "status:handoff_ready",
+            "tmux:Escape",
+            "tmux:/compact\n",
+        ]
+        assert persist_calls == [
+            {
+                "generation_mode": "digest_fallback",
+                "source_context_hash": None,
+                "source_digest_turn_count": 1,
+                "metadata_json": {
+                    "reason": "summary metadata stale or missing",
+                    "source": "compact_self",
+                },
+            }
+        ]
+        assert scheduled == [{"name": "compact-handoff-refresh-s1"}]
+        mock_refresh.assert_not_called()
+        assert "Latest coordinator state for #15156." in handoff["context"]
+        assert "stale pre-compaction" not in handoff["context"]
+
+    def test_terminal_session_uses_transcript_tail_fallback_when_digest_missing(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        events: list[str] = []
+        scheduled: list[dict[str, Any]] = []
+        transcript_path = tmp_path / "transcript.jsonl"
+        transcript_path.write_text("\n".join(f"transcript line {index}" for index in range(90)))
+
+        session = _make_terminal_session("codex")
+        session.id = "s1"
+        session.title = "Coordinator"
+        session.status = "active"
+        session.digest_markdown = None
+        session.transcript_path = str(transcript_path)
+        session.summary_markdown = None
+        persist_calls: list[dict[str, Any]] = []
+
+        registry = _TestRegistry(name="test", description="test")
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+        session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
+
+        def persist_summary_state(
+            session_id: str,
+            *,
+            summary_markdown: str,
+            generation_mode: str,
+            source_context_hash: str | None = None,
+            source_digest_turn_count: int | None = None,
+            metadata_json: dict[str, Any] | None = None,
+        ) -> MagicMock:
+            assert session_id == "s1"
+            events.append("persist_summary_state")
+            persist_calls.append(
+                {
+                    "summary_markdown": summary_markdown,
+                    "generation_mode": generation_mode,
+                    "source_context_hash": source_context_hash,
+                    "source_digest_turn_count": source_digest_turn_count,
+                    "metadata_json": metadata_json or {},
+                }
+            )
+            session.summary_markdown = summary_markdown
+            return session
+
+        def update_status(session_id: str, status: str) -> None:
+            assert session_id == "s1"
+            events.append(f"status:{status}")
+            session.status = status
+
+        session_manager.persist_summary_state.side_effect = persist_summary_state
+        session_manager.update_status.side_effect = update_status
+        db = MagicMock()
+        agent_run_manager = MagicMock()
+        agent_run_manager.get_by_session.return_value = None
+
+        tmux = MagicMock()
+
+        async def send_keys(_target: str, keys: str, *, literal: bool) -> bool:
+            events.append(f"tmux:{keys}")
+            return True
+
+        tmux.send_keys = AsyncMock(side_effect=send_keys)
 
         with patch(
             "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
@@ -510,12 +650,12 @@ class TestCompactSelfTerminalPath:
             ),
             patch("gobby.mcp_proxy.tools.sessions._terminal._CODEX_INTERRUPT_SETTLE_SECONDS", 0),
             patch(
-                "gobby.mcp_proxy.tools.sessions._terminal._compact_handoff_refresh_timeout_seconds",
-                return_value=0.01,
+                "gobby.mcp_proxy.tools.sessions._terminal.asyncio.create_task",
+                side_effect=_record_background_task(scheduled),
             ),
             patch(
                 "gobby.sessions.summarize.generate_session_summaries",
-                side_effect=slow_refresh,
+                new_callable=AsyncMock,
             ) as mock_refresh,
             session_context_for_test("s1"),
         ):
@@ -525,25 +665,24 @@ class TestCompactSelfTerminalPath:
         assert result["compacted"] is True
         assert result["handoff_context_refreshed"] is True
         assert result["handoff_context_fallback"] is True
-        assert result["handoff_context_refresh_timed_out"] is True
+        assert result["handoff_context_background_refresh_scheduled"] is True
         assert events == [
-            "refresh_start",
             "persist_summary_state",
             "status:handoff_ready",
             "tmux:Escape",
             "tmux:/compact\n",
         ]
-        assert persist_calls == [
-            {
-                "generation_mode": "digest_fallback",
-                "source_context_hash": None,
-                "source_digest_turn_count": 1,
-                "metadata_json": {"reason": "timed out", "source": "compact_self"},
-            }
-        ]
-        mock_refresh.assert_awaited_once()
-        assert "Latest coordinator state for #15156." in handoff["context"]
-        assert "stale pre-compaction" not in handoff["context"]
+        assert scheduled == [{"name": "compact-handoff-refresh-s1"}]
+        mock_refresh.assert_not_called()
+        assert persist_calls[0]["generation_mode"] == "digest_fallback"
+        assert persist_calls[0]["source_context_hash"] is None
+        assert persist_calls[0]["source_digest_turn_count"] == 0
+        assert persist_calls[0]["metadata_json"] == {
+            "reason": "digest missing",
+            "source": "compact_self",
+        }
+        assert "transcript line 89" in handoff["context"]
+        assert "transcript line 0" not in handoff["context"]
 
 
 class TestCompactSelfFailureModes:

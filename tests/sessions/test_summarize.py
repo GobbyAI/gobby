@@ -852,6 +852,43 @@ class TestGenerateSessionSummaries:
         assert "Memories:\nmemory context" in prompt
 
     @pytest.mark.asyncio
+    async def test_summary_git_context_uses_session_terminal_cwd(self) -> None:
+        session = _make_session(
+            session_id="sess-cwd",
+            digest_markdown="### Turn 1\nDigest source.",
+        )
+        session.terminal_context = {"cwd": "/workspace/project"}
+        manager = _RevisionAwareSummaryManager(session)
+
+        with (
+            patch("gobby.sessions.summarize._enrich_git_context", new_callable=AsyncMock) as enrich,
+            patch(
+                "gobby.workflows.git_utils.get_file_changes", return_value="file changes"
+            ) as files,
+            patch("gobby.workflows.git_utils.get_git_diff_summary", return_value="diff") as diff,
+            patch(
+                "gobby.workflows.summary_actions._format_structured_context",
+                return_value="structured",
+            ),
+            patch(
+                "gobby.sessions.summarize._generate_full_summary",
+                return_value=("# Workspace Summary", None),
+            ),
+        ):
+            result = await generate_session_summaries(
+                session_id="sess-cwd",
+                session_manager=manager,
+                llm_service=_mock_llm("# Workspace Summary"),
+                session_summary_config=_summary_config(),
+            )
+
+        assert result["success"] is True
+        enrich.assert_awaited_once()
+        assert enrich.await_args.args[1] == Path("/workspace/project")
+        files.assert_called_once_with(project_path="/workspace/project")
+        diff.assert_called_once_with(project_path="/workspace/project")
+
+    @pytest.mark.asyncio
     async def test_missing_digest_uses_bounded_transcript_fallback(self) -> None:
         session = _make_session(session_id="sess-fallback", transcript_path="/tmp/transcript.jsonl")
         handoff_ctx = MagicMock()
