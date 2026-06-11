@@ -226,7 +226,7 @@ pub struct AiTuning {
     pub keep_alive: Option<String>,
 }
 
-/// Canonical home for embedding config keys during namespace migration.
+/// Canonical embedding config keys shared by gcore and consumer crates.
 pub mod embedding_keys {
     pub const AI_NAMESPACE: &str = "ai.embeddings";
 

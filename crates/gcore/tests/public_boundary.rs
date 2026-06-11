@@ -109,7 +109,7 @@ fn development_guide_documents_foundation_boundary() {
     let guide = repo_file("docs/guides/gcore-development-guide.md");
 
     for expected in [
-        "shared Rust migration substrate",
+        "shared Rust foundation crate",
         "Feature Gates",
         "`postgres`",
         "`falkor`",

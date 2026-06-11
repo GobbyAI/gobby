@@ -1,7 +1,6 @@
 //! Project-root discovery and project-id reading.
 //!
-//! Kept in lockstep with `gcode/src/project.rs` until PR 4 (R2-08) migrates
-//! gcode to import from here.
+//! Shared helpers for crates that read Gobby project metadata without mutating it.
 
 use anyhow::Context;
 use std::path::{Path, PathBuf};
