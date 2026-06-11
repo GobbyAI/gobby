@@ -81,6 +81,7 @@ class BuildControlRequest(BaseModel):
     project_explicit: bool = False
     dry_run: bool = False
     force: bool = False
+    delete_dirty_worktrees: bool = False
     yes: bool = False
     no_resume: bool = False
     profile: str | None = None
@@ -424,6 +425,7 @@ def create_build_router(server: HTTPServer) -> APIRouter:
                 project_id=project_id,
                 dry_run=request_data.dry_run,
                 force=request_data.force,
+                delete_dirty_worktrees=request_data.delete_dirty_worktrees,
                 yes=request_data.yes,
                 services=server.services,
             )

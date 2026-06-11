@@ -181,6 +181,7 @@ async def build_clean_target(
     project_id: str,
     dry_run: bool = False,
     force: bool = False,
+    delete_dirty_worktrees: bool = False,
     yes: bool = False,
     services: object | None = None,
 ) -> BuildTargetControlResult:
@@ -217,13 +218,27 @@ async def build_clean_target(
     if force and agents:
         await _cancel_active_agents(db, agents, services=services)
 
-    delete_artifacts(db, project_id, artifacts, force=force)
+    if delete_dirty_worktrees:
+        artifacts_to_delete = artifacts
+    else:
+        artifacts_to_delete = classify_dirty_descendant_worktree_artifacts(
+            db,
+            artifacts,
+            root=root,
+            tasks=tasks,
+            project_path=get_project_path(db, project_id),
+        )
+    delete_artifacts(db, project_id, artifacts_to_delete, force=force)
     delete_errors = [artifact.error for artifact in artifacts if artifact.error]
-    branches_deleted, branch_errors = delete_orphan_build_branches(
-        db,
-        project_id,
-        tasks,
-    )
+    if any(artifact.deferred for artifact in artifacts):
+        branches_deleted = 0
+        branch_errors: list[str] = []
+    else:
+        branches_deleted, branch_errors = delete_orphan_build_branches(
+            db,
+            project_id,
+            tasks,
+        )
     cleanup_errors = [*delete_errors, *branch_errors]
     if cleanup_errors:
         raise ValueError("; ".join(cleanup_errors))

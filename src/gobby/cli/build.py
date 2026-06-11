@@ -255,6 +255,12 @@ def _make_build_options(
 )
 @click.option("--project", "project_ref", help="Project name or UUID to build.")
 @click.option("--force", is_flag=True, default=False, help="Force destructive cleanup.")
+@click.option(
+    "--delete-dirty-worktrees",
+    is_flag=True,
+    default=False,
+    help="Allow clean to delete dirty descendant worktrees.",
+)
 @click.option("--yes", is_flag=True, default=False, help="Confirm destructive clean/restart.")
 @click.option(
     "--no-resume",
@@ -286,6 +292,7 @@ def build_command(
     coordinator: str | None,
     project_ref: str | None,
     force: bool,
+    delete_dirty_worktrees: bool,
     yes: bool,
     no_resume: bool,
 ) -> None:
@@ -297,7 +304,14 @@ def build_command(
         _run_build_resume(target_ref, project_ref=project_ref)
         return
     if input_ref == "clean":
-        _run_build_clean(target_ref, dry_run=dry_run, force=force, yes=yes, project_ref=project_ref)
+        _run_build_clean(
+            target_ref,
+            dry_run=dry_run,
+            force=force,
+            delete_dirty_worktrees=delete_dirty_worktrees,
+            yes=yes,
+            project_ref=project_ref,
+        )
         return
     if input_ref is None:
         invoke_build_skill()
@@ -499,6 +513,7 @@ def _run_build_clean(
     *,
     dry_run: bool,
     force: bool,
+    delete_dirty_worktrees: bool = False,
     yes: bool,
     project_ref: str | None = None,
 ) -> None:
@@ -516,6 +531,7 @@ def _run_build_clean(
         cwd=cwd,
         dry_run=dry_run,
         force=force,
+        delete_dirty_worktrees=delete_dirty_worktrees,
         yes=True,
     )
     if daemon_payload is not None:
@@ -530,6 +546,7 @@ def _run_build_clean(
                 project_id=project_id,
                 dry_run=dry_run,
                 force=force,
+                delete_dirty_worktrees=delete_dirty_worktrees,
                 yes=True,
             )
         )

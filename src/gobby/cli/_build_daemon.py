@@ -211,6 +211,7 @@ def _try_daemon_build_control(
     cwd: str | None = None,
     dry_run: bool = False,
     force: bool = False,
+    delete_dirty_worktrees: bool = False,
     yes: bool = False,
     no_resume: bool = False,
     opts: BuildOptions | None = None,
@@ -235,6 +236,8 @@ def _try_daemon_build_control(
             "yes": yes,
             "no_resume": no_resume,
         }
+        if action == "clean":
+            payload["delete_dirty_worktrees"] = delete_dirty_worktrees
         if opts is not None:
             payload.update(_restart_options_payload(opts))
         response = client.call_http_api(

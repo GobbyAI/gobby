@@ -186,6 +186,7 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         input_ref: str,
         dry_run: bool = False,
         force: bool = False,
+        delete_dirty_worktrees: bool = False,
         yes: bool = False,
         project_id: str | None = None,
     ) -> dict[str, Any]:
@@ -200,6 +201,7 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
             project_id=resolved_project_id,
             dry_run=dry_run,
             force=force,
+            delete_dirty_worktrees=delete_dirty_worktrees,
             yes=yes,
             services=get_app_context(),
         )
@@ -305,7 +307,10 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
     }
     target_control_schema = {
         "type": "object",
-        "properties": target_control_properties,
+        "properties": {
+            **target_control_properties,
+            "delete_dirty_worktrees": {"type": "boolean", "default": False},
+        },
         "required": ["input_ref"],
     }
     restart_schema = {

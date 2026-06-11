@@ -932,6 +932,42 @@ def test_build_clean_cli_requires_task_ref() -> None:
     assert "requires a task ref" in result.output
 
 
+def test_build_clean_cli_forwards_dirty_worktree_override() -> None:
+    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+    from gobby.cli import cli
+
+    control_result = BuildTargetControlResult(
+        action="clean",
+        project_id="project-1",
+        root_task_id="task-1",
+        affected_tasks=[
+            BuildTaskSummary("task-1", "#1", "Task", "task"),
+        ],
+        force=True,
+    )
+
+    with (
+        patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
+        patch("gobby.cli.build._open_database") as open_db,
+        patch("gobby.cli.build._try_daemon_build_control", return_value=None),
+        patch("gobby.cli.build.asyncio.run", return_value=control_result) as run,
+        patch("gobby.cli.build.build_clean_target", new=AsyncMock()) as clean_target,
+    ):
+        result = CliRunner().invoke(
+            cli,
+            ["build", "clean", "#1", "--yes", "--force", "--delete-dirty-worktrees"],
+        )
+
+    assert result.exit_code == 0
+    run.assert_called_once()
+    call = clean_target.call_args
+    assert call.args[0] == "#1"
+    assert call.kwargs["force"] is True
+    assert call.kwargs["delete_dirty_worktrees"] is True
+    assert call.kwargs["yes"] is True
+    open_db.return_value.close.assert_called_once_with()
+
+
 def test_build_restart_cli_forwards_dry_run_force_and_confirmation() -> None:
     from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
     from gobby.cli import cli
