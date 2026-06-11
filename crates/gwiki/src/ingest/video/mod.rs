@@ -22,7 +22,7 @@ use crate::video::{
     VideoMarkdownRequest, VideoMarkdownResult, VideoMediaDegradation, VideoMediaMetadata,
     write_video_derived_markdown,
 };
-use crate::vision::VisionEndpoint;
+use crate::vision::{VisionDegradation, VisionEndpoint};
 use crate::{ScopeIdentity, WikiError};
 
 pub const DEFAULT_FRAME_INTERVAL_SECONDS: u32 = 5;
@@ -210,7 +210,10 @@ pub(crate) fn ingest_video_file_with_production_processing_without_index(
             scope,
             snapshot,
             transcription_endpoint,
-            VisionEndpoint::Unavailable(vision_degradation(route)),
+            VisionEndpoint::Unavailable(VisionDegradation::for_routing(
+                route,
+                "Keep raw video assets and skip frame vision.",
+            )),
             &media,
         )
     }
@@ -222,8 +225,9 @@ pub(crate) fn ingest_video_file_with_production_processing_without_index(
             scope,
             snapshot,
             transcription_endpoint,
-            VisionEndpoint::Unavailable(vision_degradation(
+            VisionEndpoint::Unavailable(VisionDegradation::for_routing(
                 ai_context.binding(AiCapability::VisionExtract).routing,
+                "Keep raw video assets and skip frame vision.",
             )),
             &media,
         )

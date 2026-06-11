@@ -3,6 +3,7 @@ use std::path::Path;
 use gobby_core::ai_context::AiContext;
 #[cfg(all(feature = "documents", feature = "ai"))]
 use gobby_core::config::AiCapability;
+#[cfg(feature = "documents")]
 use gobby_core::config::AiRouting;
 
 #[cfg(all(feature = "documents", feature = "ai"))]
@@ -191,8 +192,9 @@ pub(crate) fn ingest_path_without_index(
                         VisionEndpoint::Available(client as &dyn crate::vision::VisionClient)
                     })
                     .unwrap_or_else(|| {
-                        VisionEndpoint::Unavailable(vision_degradation(
+                        VisionEndpoint::Unavailable(VisionDegradation::for_routing(
                             ai_context.binding(AiCapability::VisionExtract).routing,
+                            "Keep PDF text layer only; skip page raster vision.",
                         ))
                     });
                 let result = ingest_pdf_file_without_index(
@@ -213,7 +215,10 @@ pub(crate) fn ingest_path_without_index(
                     vault_root,
                     scope,
                     snapshot,
-                    VisionEndpoint::Unavailable(vision_degradation(AiRouting::Off)),
+                    VisionEndpoint::Unavailable(VisionDegradation::for_routing(
+                        AiRouting::Off,
+                        "Keep PDF text layer only; skip page raster vision.",
+                    )),
                     PdfIngestOptions::default(),
                 )?;
                 LocalFileIngestResult {
@@ -500,20 +505,6 @@ fn render_file_markdown(
     }
 
     markdown
-}
-
-#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
-fn vision_degradation(routing: AiRouting) -> VisionDegradation {
-    let reason = match routing {
-        AiRouting::Off => gobby_core::degradation::ModalityDegradationReason::Disabled,
-        AiRouting::Auto | AiRouting::Daemon | AiRouting::Direct => {
-            gobby_core::degradation::ModalityDegradationReason::MissingEndpoint
-        }
-    };
-    VisionDegradation {
-        reason,
-        fallback: "Keep PDF text layer only; skip page raster vision.".to_string(),
-    }
 }
 
 #[cfg(test)]

@@ -1,13 +1,12 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use gobby_core::config::AiRouting;
 use tempfile::NamedTempFile;
 
 use crate::ingest::{index_after_ingest, path_to_string};
 use crate::store::WikiIndexStore;
 use crate::transcribe::{TranscriptionEndpoint, TranscriptionMarkdownInput, TranscriptionRequest};
-use crate::vision::{VisionDegradation, VisionEndpoint, VisionRequest};
+use crate::vision::{VisionEndpoint, VisionRequest};
 use crate::{ScopeIdentity, WikiError};
 
 use super::{
@@ -332,18 +331,5 @@ pub(crate) fn describe_frame_images(
 pub(crate) fn cleanup_kept_temp_frames(paths: &[PathBuf]) {
     for path in paths {
         let _ = std::fs::remove_file(path);
-    }
-}
-
-pub(crate) fn vision_degradation(routing: AiRouting) -> VisionDegradation {
-    let reason = match routing {
-        AiRouting::Off => gobby_core::degradation::ModalityDegradationReason::Disabled,
-        AiRouting::Auto | AiRouting::Daemon | AiRouting::Direct => {
-            gobby_core::degradation::ModalityDegradationReason::MissingEndpoint
-        }
-    };
-    VisionDegradation {
-        reason,
-        fallback: "Keep raw video assets and skip frame vision.".to_string(),
     }
 }

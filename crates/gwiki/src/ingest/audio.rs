@@ -71,12 +71,18 @@ pub fn production_transcription_endpoint(
         {
             available_production_transcription_endpoint(context, route, translate)
         } else {
-            TranscriptionEndpoint::Unavailable(transcription_degradation(route, translate))
+            TranscriptionEndpoint::Unavailable(TranscriptionDegradation::for_routing(
+                route,
+                transcription_fallback(translate),
+            ))
         }
     } else if matches!(route, AiRouting::Daemon | AiRouting::Direct) {
         available_production_transcription_endpoint(context, route, translate)
     } else {
-        TranscriptionEndpoint::Unavailable(transcription_degradation(route, translate))
+        TranscriptionEndpoint::Unavailable(TranscriptionDegradation::for_routing(
+            route,
+            transcription_fallback(translate),
+        ))
     }
 }
 
@@ -124,7 +130,18 @@ fn available_production_transcription_endpoint(
     route: AiRouting,
     translate: bool,
 ) -> TranscriptionEndpoint<'static> {
-    TranscriptionEndpoint::Unavailable(transcription_degradation(route, translate))
+    TranscriptionEndpoint::Unavailable(TranscriptionDegradation::for_routing(
+        route,
+        transcription_fallback(translate),
+    ))
+}
+
+fn transcription_fallback(translate: bool) -> &'static str {
+    if translate {
+        "Keep raw audio assets and skip daemon translation."
+    } else {
+        "Keep raw audio assets and skip daemon transcription."
+    }
 }
 
 #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
@@ -305,24 +322,6 @@ fn is_english_target(target_lang: &str) -> bool {
         .next()
         .unwrap_or("")
         .eq_ignore_ascii_case("en")
-}
-
-fn transcription_degradation(routing: AiRouting, translate: bool) -> TranscriptionDegradation {
-    let action = if translate {
-        "translation"
-    } else {
-        "transcription"
-    };
-    let reason = match routing {
-        AiRouting::Off => gobby_core::degradation::ModalityDegradationReason::Disabled,
-        AiRouting::Auto | AiRouting::Daemon | AiRouting::Direct => {
-            gobby_core::degradation::ModalityDegradationReason::MissingEndpoint
-        }
-    };
-    TranscriptionDegradation {
-        reason,
-        fallback: format!("Keep raw audio assets and skip daemon {action}."),
-    }
 }
 
 impl From<AudioIngestResult> for IngestResult {

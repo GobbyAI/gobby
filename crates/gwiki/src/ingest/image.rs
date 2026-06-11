@@ -84,15 +84,20 @@ pub(crate) fn ingest_image_with_production_vision_without_index(
             .then(|| ProductionVisionClient::new(ai_context.clone()));
         let endpoint = match client.as_ref() {
             Some(client) => VisionEndpoint::Available(client),
-            None => VisionEndpoint::Unavailable(vision_degradation(routing)),
+            None => VisionEndpoint::Unavailable(VisionDegradation::for_routing(
+                routing,
+                "Keep raw image assets and surface filename/metadata only.",
+            )),
         };
         ingest_image_with_vision_without_index(vault_root, scope, snapshot, endpoint)
     }
 
     #[cfg(not(feature = "ai"))]
     {
-        let endpoint =
-            VisionEndpoint::Unavailable(vision_degradation(ai_context.binding(capability).routing));
+        let endpoint = VisionEndpoint::Unavailable(VisionDegradation::for_routing(
+            ai_context.binding(capability).routing,
+            "Keep raw image assets and surface filename/metadata only.",
+        ));
         ingest_image_with_vision_without_index(vault_root, scope, snapshot, endpoint)
     }
 }
@@ -206,25 +211,10 @@ fn render_raw_image_markdown(
 
 #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn default_vision_degradation() -> VisionDegradation {
-    VisionDegradation {
-        reason: gobby_core::degradation::ModalityDegradationReason::MissingEndpoint,
-        fallback:
-            "Keep raw image assets and surface filename/metadata only; skip visual extraction."
-                .to_string(),
-    }
-}
-
-fn vision_degradation(routing: AiRouting) -> VisionDegradation {
-    let reason = match routing {
-        AiRouting::Off => gobby_core::degradation::ModalityDegradationReason::Disabled,
-        AiRouting::Auto | AiRouting::Daemon | AiRouting::Direct => {
-            gobby_core::degradation::ModalityDegradationReason::MissingEndpoint
-        }
-    };
-    VisionDegradation {
-        reason,
-        fallback: "Keep raw image assets and surface filename/metadata only.".to_string(),
-    }
+    VisionDegradation::for_routing(
+        AiRouting::Auto,
+        "Keep raw image assets and surface filename/metadata only; skip visual extraction.",
+    )
 }
 
 #[cfg(test)]

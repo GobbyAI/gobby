@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use gobby_core::config::AiRouting;
 use gobby_core::degradation::ModalityDegradationReason;
 use tempfile::{Builder, NamedTempFile};
 
@@ -25,6 +26,21 @@ pub struct VisionExtraction {
 pub struct VisionDegradation {
     pub reason: ModalityDegradationReason,
     pub fallback: String,
+}
+
+impl VisionDegradation {
+    pub(crate) fn for_routing(routing: AiRouting, fallback: &str) -> Self {
+        let reason = match routing {
+            AiRouting::Off => ModalityDegradationReason::Disabled,
+            AiRouting::Auto | AiRouting::Daemon | AiRouting::Direct => {
+                ModalityDegradationReason::MissingEndpoint
+            }
+        };
+        Self {
+            reason,
+            fallback: fallback.to_string(),
+        }
+    }
 }
 
 #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
