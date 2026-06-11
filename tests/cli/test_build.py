@@ -641,6 +641,15 @@ def test_daemon_profile_error_detection_uses_strict_message_fallback() -> None:
     assert _is_profile_error("Task description mentions build profile but is unrelated") is False
 
 
+def test_daemon_build_control_rejects_legacy_bare_payload() -> None:
+    from gobby.cli._build_daemon import _control_payload_from_daemon
+
+    assert _control_payload_from_daemon({"action": "stop", "enabled": False}) is None
+    assert _control_payload_from_daemon(
+        {"success": True, "result": {"action": "stop", "enabled": False}, "error": None}
+    ) == {"action": "stop", "enabled": False}
+
+
 def test_build_cli_without_input_invokes_interactive_build_skill() -> None:
     from gobby.cli import cli
 

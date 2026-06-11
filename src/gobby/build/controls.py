@@ -791,8 +791,9 @@ def _reset_restart_stage_manifests_from_options(
         )
         if not specs:
             continue
-        db.execute("DELETE FROM task_stage_states WHERE task_id = %s", (task.id,))
-        task_manager.stage_states.initialize_manifest(task.id, specs, by_session_id=None)
+        with db.transaction() as conn:
+            conn.execute("DELETE FROM task_stage_states WHERE task_id = %s", (task.id,))
+            task_manager.stage_states.initialize_manifest(task.id, specs, by_session_id=None)
         reset += 1
     if input_kind == "plan_file":
         _seed_restart_plan_file_stage_state(task_manager, root.id, opts)

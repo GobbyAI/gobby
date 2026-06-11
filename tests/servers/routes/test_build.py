@@ -252,7 +252,10 @@ def test_post_api_build_stop_preserves_project_wide_control() -> None:
         response = _client().post("/api/build/stop", json={})
 
     assert response.status_code == 200
-    assert response.json()["enabled"] is False
+    data = response.json()
+    assert data["success"] is True
+    assert data["error"] is None
+    assert data["result"]["enabled"] is False
     stop.assert_called_once()
 
 
@@ -407,7 +410,10 @@ def test_post_api_build_stop_accepts_task_ref() -> None:
         response = _client().post("/api/build/stop", json={"input_ref": "#1"})
 
     assert response.status_code == 200
-    assert response.json()["action"] == "stop"
+    data = response.json()
+    assert data["success"] is True
+    assert data["error"] is None
+    assert data["result"]["action"] == "stop"
     stop.assert_called_once()
 
 
@@ -415,7 +421,39 @@ def test_post_api_build_clean_requires_ref() -> None:
     response = _client().post("/api/build/clean", json={"yes": True})
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "input_ref is required"
+    assert response.json() == {
+        "success": False,
+        "result": None,
+        "error": "input_ref is required",
+        "error_code": "BUILD_CLEAN_ERROR",
+    }
+
+
+def test_post_api_build_clean_returns_success_envelope() -> None:
+    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+
+    target_result = BuildTargetControlResult(
+        action="clean",
+        project_id="project-1",
+        root_task_id="task-1",
+        affected_tasks=[
+            BuildTaskSummary("task-1", "#1", "Task", "task"),
+        ],
+        dry_run=True,
+    )
+
+    with patch(
+        "gobby.servers.routes.build.build_clean_target",
+        new=AsyncMock(return_value=target_result),
+    ) as clean:
+        response = _client().post("/api/build/clean", json={"input_ref": "#1", "dry_run": True})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["error"] is None
+    assert data["result"]["action"] == "clean"
+    clean.assert_awaited_once()
 
 
 def test_post_api_build_restart_forwards_destructive_flags() -> None:
@@ -452,7 +490,10 @@ def test_post_api_build_restart_forwards_destructive_flags() -> None:
         )
 
     assert response.status_code == 200
-    assert response.json()["action"] == "restart"
+    data = response.json()
+    assert data["success"] is True
+    assert data["error"] is None
+    assert data["result"]["action"] == "restart"
     call = restart.call_args
     assert call.kwargs["dry_run"] is True
     assert call.kwargs["force"] is True

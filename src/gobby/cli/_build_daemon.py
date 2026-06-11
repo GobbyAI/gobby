@@ -279,7 +279,7 @@ def _control_payload_from_daemon(payload: dict[str, object]) -> dict[str, object
         return None
     if payload.get("success") is False:
         raise click.ClickException(_daemon_error_message(payload))
-    return payload
+    return None
 
 
 def _daemon_error_detail(response: Any) -> Any:

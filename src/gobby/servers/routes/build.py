@@ -369,22 +369,26 @@ def create_build_router(server: HTTPServer) -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
-    @router.post("/stop")
-    async def post_build_stop(request_data: BuildControlRequest) -> dict[str, Any]:
+    @router.post("/stop", response_model=None)
+    async def post_build_stop(request_data: BuildControlRequest) -> dict[str, Any] | JSONResponse:
         """Stop project-wide dispatcher ticks or task-scoped automation."""
         try:
             project_id = _resolve_request_project_id(server, request_data)
             if request_data.input_ref is None:
-                return _result_json(build_stop(db=server.services.database, project_id=project_id))
-            result = await build_stop_target(
+                result = build_stop(db=server.services.database, project_id=project_id)
+                return _success_envelope(_result_json(result))
+            target_result = await build_stop_target(
                 request_data.input_ref,
                 db=server.services.database,
                 project_id=project_id,
                 services=server.services,
             )
-            return _result_json(result)
+            return _success_envelope(_result_json(target_result))
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse(
+                status_code=400,
+                content=_error_envelope(str(e), "BUILD_STOP_ERROR"),
+            )
 
     @router.post("/resume", response_model=None)
     async def post_build_resume(request_data: BuildControlRequest) -> dict[str, Any] | JSONResponse:
@@ -412,11 +416,14 @@ def create_build_router(server: HTTPServer) -> APIRouter:
                 content=_error_envelope(str(e), "BUILD_RESUME_ERROR"),
             )
 
-    @router.post("/clean")
-    async def post_build_clean(request_data: BuildControlRequest) -> dict[str, Any]:
+    @router.post("/clean", response_model=None)
+    async def post_build_clean(request_data: BuildControlRequest) -> dict[str, Any] | JSONResponse:
         """Delete failed build artifacts for a task ref."""
         if request_data.input_ref is None:
-            raise HTTPException(status_code=400, detail="input_ref is required")
+            return JSONResponse(
+                status_code=400,
+                content=_error_envelope("input_ref is required", "BUILD_CLEAN_ERROR"),
+            )
         try:
             project_id = _resolve_request_project_id(server, request_data)
             result = await build_clean_target(
@@ -429,15 +436,23 @@ def create_build_router(server: HTTPServer) -> APIRouter:
                 yes=request_data.yes,
                 services=server.services,
             )
-            return result.to_dict()
+            return _success_envelope(result.to_dict())
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse(
+                status_code=400,
+                content=_error_envelope(str(e), "BUILD_CLEAN_ERROR"),
+            )
 
-    @router.post("/restart")
-    async def post_build_restart(request_data: BuildControlRequest) -> dict[str, Any]:
+    @router.post("/restart", response_model=None)
+    async def post_build_restart(
+        request_data: BuildControlRequest,
+    ) -> dict[str, Any] | JSONResponse:
         """Stop, clean, and resume task-scoped build automation."""
         if request_data.input_ref is None:
-            raise HTTPException(status_code=400, detail="input_ref is required")
+            return JSONResponse(
+                status_code=400,
+                content=_error_envelope("input_ref is required", "BUILD_RESTART_ERROR"),
+            )
         try:
             project_id = _resolve_request_project_id(server, request_data)
             result = await build_restart_target(
@@ -455,9 +470,12 @@ def create_build_router(server: HTTPServer) -> APIRouter:
                 ),
                 services=server.services,
             )
-            return result.to_dict()
+            return _success_envelope(result.to_dict())
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse(
+                status_code=400,
+                content=_error_envelope(str(e), "BUILD_RESTART_ERROR"),
+            )
 
     @router.get("/status")
     async def get_status(

@@ -852,6 +852,45 @@ def test_epic_integration_workspace_refresh_aborts_timeout_merge(
     assert ("merge", "--abort") in calls
 
 
+def test_epic_integration_workspace_refuses_dirty_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "integration"
+    workspace.mkdir()
+    calls: list[tuple[str, ...]] = []
+
+    def completed(
+        args: list[str],
+        *,
+        returncode: int = 0,
+        stdout: str = "",
+        stderr: str = "",
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, returncode, stdout, stderr)
+
+    def fake_git(
+        repo_path: Path,
+        args: list[str],
+        *,
+        timeout: int,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        assert repo_path == workspace
+        assert env is None
+        calls.append(tuple(args))
+        if args == ["status", "--porcelain"]:
+            return completed(args, stdout=" M src/gobby/build/workspace_git.py\n")
+        raise AssertionError(f"unexpected git args: {args}")
+
+    monkeypatch.setattr("gobby.build.workspace_git._git", fake_git)
+
+    with pytest.raises(BuildWorkspaceError, match="dirty"):
+        _refresh_clean_git_dir(workspace, "gobby/integration/phase", "main")
+
+    assert calls == [("status", "--porcelain")]
+
+
 def test_epic_integration_workspace_clears_stale_task_worktree_artifacts(
     temp_db,
     tmp_path: Path,
