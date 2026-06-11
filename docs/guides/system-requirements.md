@@ -4,13 +4,13 @@ Gobby runs as a local Python daemon with optional local services for semantic se
 graph-augmented memory. The daemon is small; the optional stack is what drives most hardware
 and Docker requirements.
 
-Use this guide to decide what has to be installed before running Gobby 0.4.0.
+Use this guide to decide what has to be installed before running Gobby.
 
 ## Quick Matrix
 
 | Setup | Required | Good default |
 |-------|----------|--------------|
-| Daemon only | Python 3.13+, `uv`, 1 GB free disk, localhost ports 60887 and 60888 | 4+ CPU cores, 8 GB RAM |
+| Daemon only | Python 3.13+, `uv`, 1 GB free disk, localhost ports 60887 and 60888, PostgreSQL hub (installer-managed via Docker on port 60891, or an external `database_url`) | 4+ CPU cores, 8 GB RAM |
 | Daemon + web UI | Daemon requirements; installed UI is served on port 60887 | 8 GB RAM |
 | Full local search stack | Docker with Compose v2, Qdrant, FalkorDB, embedding endpoint | 16 GB RAM minimum, 32 GB RAM preferred, SSD/NVMe storage |
 | Local embedding model | LM Studio with `lms` or Ollama with `ollama` | 16 GB RAM, GPU or unified memory when also running a chat model |
@@ -34,12 +34,14 @@ provider you choose.
 
 | Platform | Notes |
 |----------|-------|
-| macOS | Docker Desktop provides the Linux VM for Qdrant and FalkorDB. Apple Silicon is a practical target for the local full stack. |
+| macOS | Docker Desktop provides the Linux VM for the PostgreSQL hub, Qdrant, and FalkorDB. Apple Silicon is a practical target for the local full stack. |
 | Linux | Use Docker Engine plus the Docker Compose plugin. Linux avoids the Docker Desktop VM memory allocation step. |
 | Windows | Use Windows 10/11 with WSL2 for Docker-based services. Local shell tooling and filesystem paths should be verified in the target environment. |
 
-The daemon can run without Docker. Docker is only required for the local Qdrant and FalkorDB
-services installed by the Gobby installer.
+Docker is required for the installer-managed local PostgreSQL hub (Docker is
+the only supported install mode for it) as well as the optional Qdrant and
+FalkorDB services. The daemon itself runs without Docker only when
+`database_url` points at an externally provided PostgreSQL.
 
 ## Daemon
 
@@ -65,11 +67,12 @@ database and is managed by the UI or `gobby-config` MCP tools.
 
 ## Optional Services
 
-Gobby 0.4.0 ships a unified Docker Compose service template with two local datastore profiles.
+Gobby ships a unified Docker Compose service template with three local
+datastore profiles (PostgreSQL, Qdrant, FalkorDB).
 The default interactive installer offers an embedding provider first. When the selected provider
 is not `none` and Docker is available, the installer configures Qdrant and
-FalkorDB; `--no-ext-services` skips this Docker step. FalkorDB is Docker-only in
-Gobby 0.4.0; native local-install support is planned for a later release.
+FalkorDB; `--no-ext-services` skips this Docker step. FalkorDB is Docker-only;
+native local-install support is planned for a later release.
 
 | Service | Image | Default endpoint | Purpose |
 |---------|-------|------------------|---------|
@@ -140,6 +143,7 @@ Default ports are chosen to avoid common development-server conflicts.
 | 60887 | Gobby HTTP API and installed web UI |
 | 60888 | Gobby WebSocket server |
 | 60889 | Gobby dev web UI |
+| 60891 | Gobby PostgreSQL hub (Docker, mapped from container port 5432) |
 | 6333 | Qdrant HTTP |
 | 6334 | Qdrant gRPC |
 | 13000 | FalkorDB Browser |
@@ -162,6 +166,8 @@ volumes:
 |--------|---------|
 | `gobby_qdrant_data` | Qdrant vector storage |
 | `gobby_falkordb_data` | FalkorDB graph data |
+| `gobby_postgres_data` | PostgreSQL hub data |
+| `gobby_pgaudit_log` | pgaudit logs |
 
 ## Troubleshooting
 
@@ -203,4 +209,4 @@ more RAM or VRAM than the embedding model.
 - [memory.md](./memory.md) - Memory backend configuration
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) - Development environment setup
 
-_Last verified: 2026-05-23_
+_Last verified: 2026-06-11_

@@ -86,7 +86,7 @@ Worktrees have four persisted status values:
 | Status | Meaning |
 |--------|---------|
 | `active` | Created and available for work. |
-| `stale` | Marked inactive by maintenance or stale detection. |
+| `stale` | Reserved status; current stale detection reports inactive active worktrees without changing status. |
 | `merged` | Branch was merged and a cleanup window was scheduled. |
 | `abandoned` | Stale or intentionally abandoned work. |
 
@@ -96,10 +96,9 @@ Ownership is separate from status. `claim_worktree` sets `agent_session_id`;
 ```mermaid
 stateDiagram-v2
     [*] --> active: create_worktree
-    active --> stale: mark stale
     active --> merged: mark_worktree_merged or successful merge
     active --> abandoned: abandon_worktree
-    stale --> abandoned: cleanup_stale_worktrees
+    active --> abandoned: cleanup_stale_worktrees (inactive > threshold)
     abandoned --> active: reactivate_worktree
     merged --> [*]: cleanup after grace window
 ```
@@ -121,7 +120,7 @@ reference accept a full ID or an unambiguous ID prefix.
 | `gobby worktrees delete WORKTREE` | Delete git worktree and record through MCP. | `--force`, `--yes` |
 | `gobby worktrees claim WORKTREE SESSION` | Assign worktree ownership to a session. | none |
 | `gobby worktrees release WORKTREE` | Clear worktree ownership. | none |
-| `gobby worktrees sync WORKTREE` | Sync with the worktree's base branch. | `--source SOURCE`, `--json` |
+| `gobby worktrees sync WORKTREE` | Sync with the worktree's base branch. | `--source SOURCE` (currently non-functional, see below), `--json` |
 | `gobby worktrees stale` | Detect inactive worktrees. | `--days N`, `--json` |
 | `gobby worktrees cleanup` | Mark stale worktrees abandoned after confirmation. | `--days N`, `--dry-run`, `--yes` |
 | `gobby worktrees stats` | Count worktrees by status. | `--json` |
@@ -131,14 +130,16 @@ reference accept a full ID or an unambiguous ID prefix.
 those commands report a connection error.
 
 The CLI exposes `gobby worktrees sync --source`, while the current MCP
-`sync_worktree` schema exposes `strategy` and `project_path`; automation should
-prefer the MCP schema when calling the tool directly.
+`sync_worktree` schema exposes `strategy` and `project_path`; the proxy drops
+the unknown `source_branch` argument, so `--source` is currently a silent
+no-op and sync always runs against the worktree's base branch. Automation
+should prefer the MCP schema when calling the tool directly.
 
 ## MCP Reference
 
 `gobby-worktrees` exposes 17 tools. Fetch live schemas with
-`get_tool_schema(server="gobby-worktrees", tool="<name>")` before automating
-against them.
+`get_tool_schema(server_name="gobby-worktrees", tool_name="<name>")` before
+automating against them.
 
 | Tool | Required arguments | Important optional arguments |
 |------|--------------------|------------------------------|
@@ -155,7 +156,7 @@ against them.
 | `reactivate_worktree` | `worktree_id` | none |
 | `link_task_to_worktree` | `worktree_id`, `task_id` | none |
 | `sync_worktree` | `worktree_id` | `strategy`, `project_path` |
-| `merge_worktree` | `worktree_id` | `source_branch`, `target_branch`, `push`, `prefer_remote`, `project_path` |
+| `merge_worktree` | `worktree_id` | `source_branch`, `target_branch`, `project_path` (`push`/`prefer_remote` are rejected if true — local-only) |
 | `push_branch` | `worktree_id` | `branch`, `remote`, `target_branch`, `force_with_lease`, `project_path` |
 | `detect_stale_worktrees` | none | `project_path`, `hours`, `limit` |
 | `cleanup_stale_worktrees` | none | `project_path`, `hours`, `dry_run`, `delete_git` |
@@ -198,10 +199,15 @@ call_tool(
 )
 ```
 
-`merge_worktree` performs the merge inside the isolated worktree. It fetches
-latest refs, merges the target into the source branch, auto-resolves trivial
-`.gobby/` conflicts when possible, and can push the source branch to the target
-branch. It does not check out or mutate the main repository.
+`merge_worktree` is local-only delivery. It merges the worktree's source
+branch into the local target branch (defaulting to the worktree's base
+branch), operating in the target branch's checkout — the main repository or
+the target's own worktree. It temporarily checks out the target branch in
+that checkout and restores the original branch afterward. It never fetches
+or pushes; `push=True` and `prefer_remote=True` return errors, and remote
+`origin/` target refs are rejected. Trivial `.gobby/` conflicts are
+auto-resolved. Remote publication goes through `push_branch` or the PR
+delivery flow.
 
 ```python
 call_tool(
@@ -210,7 +216,6 @@ call_tool(
     arguments={
         "worktree_id": "wt-abc123",
         "target_branch": "main",
-        "push": True,
         "project_path": "/path/to/repo",
     },
 )
@@ -387,4 +392,4 @@ call_tool(
 - [mcp-tools.md](./mcp-tools.md) - MCP server and tool reference
 - [dispatch.md](./dispatch.md) - Stage manifests, automation, and workspace delivery
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-06-11_

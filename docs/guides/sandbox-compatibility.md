@@ -90,11 +90,13 @@ These tests cover the local hook binary contract:
 | Web chat | Codex | Codex app-server sandbox policy derived from daemon config | Default daemon-owned sandbox stays enabled |
 | Web chat | Gemini | Shared ACP backend; daemon policy is tracked, but the ACP process is not wrapped in Gobby Seatbelt | ACP startup remains reliable on macOS |
 | Web chat | Qwen | Same ACP caveat as Gemini | ACP startup remains reliable on macOS |
+| Web chat | Grok | Shared ACP backend; same caveat as Gemini/Qwen | ACP startup remains reliable on macOS |
 | Web chat | Droid | Per-session stream-jsonrpc backend; daemon policy is tracked, but no Gobby sandbox translation is applied | Droid availability and session metadata stay consistent |
 | Spawned agents | Claude | `--settings` sandbox JSON | Sandbox stays enabled without unsandboxed fallback |
 | Spawned agents | Codex | `--sandbox <mode>`, `sandbox_workspace_write.network_access`, plus `--add-dir` for extra write paths | Workspace boundary follows repo/worktree/clone root and loopback services stay reachable when network is enabled |
 | Spawned agents | Gemini | `-s` plus `SEATBELT_PROFILE`; external write paths use repeated `--include-directories` | Workspace boundary follows repo/worktree/clone root |
 | Spawned agents | Qwen | Same Gemini-compatible `-s`, `SEATBELT_PROFILE`, and `--include-directories` contract | Workspace boundary follows repo/worktree/clone root |
+| Spawned agents | Grok | `--sandbox strict` for restrictive/no-network policies, otherwise `--sandbox workspace` | Workspace boundary follows repo/worktree/clone root |
 | Spawned agents | Droid | No daemon sandbox resolver; Droid uses its own `droid exec --auto high` permission path | Sandbox state is recorded, but no provider sandbox flags are emitted |
 
 Claude's sandbox payload is intentionally conservative: Gobby enables the
@@ -182,4 +184,4 @@ If the Rust-side diagnose schema changes:
 2. Update the runner expectations in `tests/integration/sandbox/runner.py`.
 3. Re-run `uv run pytest tests/integration/sandbox/ -v --run-sandbox`.
 
-_Last verified: 2026-05-19_
+_Last verified: 2026-06-11_

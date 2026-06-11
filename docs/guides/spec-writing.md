@@ -272,4 +272,4 @@ the task-expansion CLI path itself.
 - [MCP Tools Reference](./mcp-tools.md) - MCP tool API documentation
 - [Plan-Coverage Contract](../contracts/plan-coverage.md) - Canonical parser and coverage contract
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-06-11_

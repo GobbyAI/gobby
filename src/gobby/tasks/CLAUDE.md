@@ -14,12 +14,10 @@ This directory implements task expansion, validation, and related utilities.
 
 ## Prompts
 
-The `prompts/` directory contains LLM prompts used during expansion:
-
-| File | Purpose |
-|------|---------|
-| `prompts/expand-task.md` | Main expansion prompt: spec format, rules, validation criteria guidelines |
-| `prompts/expand-task-tdd.md` | TDD mode instructions: skill-backed evidence, category rules |
+Runtime expansion prompts are DB-backed records named `expansion/user` and
+`expansion/system`, synced from `src/gobby/install/shared/prompts/expansion/`.
+The local `prompts/` directory files (`expand-task.md`, `expand-task-tdd.md`)
+are orphaned reference copies that nothing loads at runtime.
 
 ## Expansion Flow
 

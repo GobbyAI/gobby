@@ -59,7 +59,7 @@ The main Python CI job excludes `tests/voice` and
 the focused voice suite.
 
 The project pre-push verification in `.gobby/project.json` runs backend lint,
-format, and type checks plus frontend lint, type checks, and Vitest. It does not
+format, and type checks plus frontend type checks and Vitest. It does not
 run backend pytest by default, so run focused backend pytest yourself when a
 change touches Python behavior.
 
@@ -162,4 +162,4 @@ production-resource fence that agent runs require.
 When a test fails, keep the rerun focused on the failing file or marker until
 the failure is understood. Broaden only when the change touches shared behavior.
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-06-11_

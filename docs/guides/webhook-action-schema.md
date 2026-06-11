@@ -2,7 +2,7 @@
 
 This guide documents the webhook action model implemented by
 `src/gobby/workflows/webhook.py` and the request executor implemented by
-`src/gobby/workflows/webhook_executor.py` for Gobby 0.4.0.
+`src/gobby/workflows/webhook_executor.py`.
 
 The webhook action schema is a workflow helper model. It is separate from:
 
@@ -57,8 +57,10 @@ Valid methods are:
 
 ## Retry Configuration
 
-`retry` is optional. If it is omitted, the executor performs one request attempt.
-If `retry: {}` is provided, these model defaults apply:
+`retry` is optional. If it is omitted — or provided as an empty `retry: {}`,
+which is treated the same as omitting it — the executor performs one request
+attempt. When `retry` contains at least one field, unspecified fields default
+to:
 
 ```yaml
 retry:
@@ -219,4 +221,4 @@ stored `method` and `timeout`.
 - [Rules](./rules.md)
 - [Configuration](./configuration.md)
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-06-11_

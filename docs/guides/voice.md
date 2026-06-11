@@ -129,7 +129,7 @@ ignored by the shipped provider.
 
 ### Chatterbox
 
-Chatterbox Turbo is the only registered TTS provider in 0.4.0.
+Chatterbox Turbo is the only registered TTS provider.
 
 ```yaml
 voice:
@@ -155,11 +155,12 @@ Notes:
 ## Web Chat Usage
 
 1. Open the web chat at `http://localhost:60887`.
-2. Open Settings and enable Speech to Text, Text to Speech, or both.
-3. For STT, choose Push to Talk or VAD.
-4. Use the microphone button for push-to-talk recording, or let VAD detect
-   speech start/end automatically.
-5. Use the speaker button to enable TTS playback for assistant responses.
+2. Use the microphone button in the chat input to enable STT — each click
+   cycles off → Push to Talk → VAD → off.
+3. In Push to Talk mode, hold the microphone button to record; in VAD mode,
+   speech start/end is detected automatically.
+4. Use the speaker button in the chat input to toggle TTS playback for
+   assistant responses.
 
 When either STT or TTS is enabled, the browser sends `voice_prepare` to warm the
 models. `/api/voice/status` reports `voice_loading=true` while warmup is in
@@ -243,4 +244,4 @@ add_vocab(terms="Kubernetes, FastAPI")
 | Chatterbox is unstable on your machine | Try `tts_device: cpu` |
 | Technical terms transcribe poorly | Add them with the `gobby-voice` vocabulary tools |
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-06-11_

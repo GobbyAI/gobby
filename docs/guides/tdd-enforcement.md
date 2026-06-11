@@ -118,4 +118,4 @@ When auditing this guide, verify:
 - [Variables](./variables.md)
 - [Orchestration](./orchestration.md)
 
-_Last verified: 2026-05-28_
+_Last verified: 2026-06-11_

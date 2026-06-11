@@ -85,14 +85,19 @@ summarize during lifecycle processing.
 | `gemini` | Gemini CLI hooks |
 | `qwen` | Qwen CLI hooks |
 | `droid` | Droid CLI hooks |
+| `grok` | Grok CLI hooks |
+| `agy` | AGY CLI hooks |
 | `pipeline` | Pipeline automation |
 | `system` | Bootstrapped root session for cron and pipeline work without a caller |
 
-The public `get_current_session` helper accepts `claude`, `gemini`, `qwen`,
-`codex`, and `droid`. Pipeline and system sessions are created by internal
-automation.
+The public `get_current_session` helper accepts `claude`, `gemini`, `grok`,
+`qwen`, `codex`, `droid`, and `agy`. Pipeline and system sessions are created
+by internal automation.
 
 ## CLI Commands
+
+This section covers the day-to-day subset; `gobby sessions renumber` and
+`gobby sessions backfill-context-windows` also exist for maintenance.
 
 ### `gobby sessions list`
 
@@ -199,6 +204,8 @@ with `get_tool_schema` before writing examples or automating calls.
 | `search_session_messages` | Search rendered transcript messages by substring. |
 | `set_handoff_context` | Set or generate handoff context for the current session. |
 | `get_handoff_context` | Retrieve handoff context directly or from the latest `handoff_ready` session. |
+| `wait_for_summary` | Wait for a session's `summary_markdown` to become available. |
+| `record_verification_evidence` | Record non-command verification evidence for completion readiness. |
 | `register_session` | Register hookless clients such as SDK-driven agents. |
 | `get_session_commits` | List commits made during a session timeframe. |
 | `mark_loop_complete` | Mark an autonomous loop complete to prevent session chaining. |
@@ -392,4 +399,4 @@ stop or turn-end event does not release the agent run.
 - [rules.md](./rules.md) - Semantic workflow events
 - [hook-schemas.md](./hook-schemas.md) - Raw hook mappings
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-06-11_

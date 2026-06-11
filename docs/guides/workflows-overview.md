@@ -182,4 +182,4 @@ waiting for approval", that is runtime state.
 - [Orchestration](./orchestration.md) for the current task/agent coordination model
 - [Rule Authoring Guide](./workflow-rules.md) for engine caveats and safety rules
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-06-11_

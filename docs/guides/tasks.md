@@ -75,7 +75,7 @@ call_tool(server_name="gobby-tasks", tool_name="create_task", arguments={
 
 | Category | Use for |
 | :--- | :--- |
-| `code` | Implementation work. Requires `validation_criteria`. |
+| `code` | Implementation work. Requires `validation_criteria` and `implementation_domain` (`backend`, `frontend`, or `fullstack`). |
 | `config` | Configuration changes. |
 | `docs` | Documentation changes. |
 | `manual` | Manual verification. |
@@ -383,14 +383,14 @@ The canonical task data lives in Gobby's PostgreSQL hub. Tasks can also export
 to JSONL for git-friendly synchronization:
 
 - Project task export: `.gobby/tasks.jsonl`
-- Stealth-mode export: user-level Gobby task storage
+- Fallback export: the legacy default path when no project resolves
 - Manual sync: `gobby tasks sync`
 - Git hook sync: installed by `gobby install`
 
 The human-friendly task reference is `#N` within a project. Hierarchical task
 paths are dotted `seq_num` chains such as `14370.14390`. MCP tools accept `#N`,
-plain sequence numbers where the project is known, path refs, UUIDs, and
-unambiguous UUID prefixes.
+plain sequence numbers where the project is known, path refs, and UUIDs. The
+CLI additionally accepts unambiguous UUID prefixes.
 
 ## Automation Notes
 
@@ -413,4 +413,4 @@ requirements.
 - [Workflows Overview](./workflows-overview.md) for lifecycle events.
 - [Worktrees](./worktrees.md) for isolation behavior.
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-06-11_

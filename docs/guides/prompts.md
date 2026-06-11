@@ -47,11 +47,13 @@ uv run gobby import prompt --from-project /path/to/project
 Use the Configuration page for browser editing:
 
 ```text
-http://localhost:<ui_port>/#configuration
+http://localhost:<daemon_port>/#configuration
 ```
 
-`ui_port` defaults to `60889` and is configurable. Check config/bootstrap output or
-daemon startup logs for the active value.
+`daemon_port` defaults to `60887` and is configurable; the daemon serves the
+Web UI (proxying the Vite dev server on `ui_port`, default `60889`, in dev
+mode). Check config/bootstrap output or daemon startup logs for the active
+value.
 
 ## Precedence And Scope
 
@@ -124,7 +126,7 @@ GET    /api/config/prompts
 GET    /api/config/prompts/{path}
 PUT    /api/config/prompts/{path}
 DELETE /api/config/prompts/{path}
-GET    /api/config/export
+POST   /api/config/export
 POST   /api/config/import
 ```
 
@@ -148,7 +150,9 @@ the relevant owning server, such as `gobby-config`, `gobby-workflows`, or
 - `src/gobby/servers/routes/configuration.py`: prompt override HTTP routes.
 - `src/gobby/cli/sync.py`: bundled content sync CLI.
 - `src/gobby/cli/export_import.py`: resource export/import CLI.
-- `.gobby/prompts/`: project prompt override files.
+- `.gobby/prompts/`: export/import transport directory only; active
+  project/global overrides are DB records managed via the Configuration page
+  or `PUT /api/config/prompts/{path}`.
 
 ## See Also
 
@@ -157,4 +161,4 @@ the relevant owning server, such as `gobby-config`, `gobby-workflows`, or
 - [skills.md](skills.md)
 - [mcp-tools.md](mcp-tools.md)
 
-_Last verified: 2026-05-08_
+_Last verified: 2026-06-11_

@@ -71,7 +71,7 @@ gobby pipelines history NAME [--limit N] [--offset N] [--json]
 gobby pipelines search QUERY [--status STATUS] [--no-errors] [--limit N] [--offset N] [--json]
 ```
 
-`gobby pipelines status RUN` is an alias for `gobby pipelines runs show RUN`.
+Use `gobby pipelines runs show RUN` to inspect a specific execution.
 Use `get_pipeline_status` when an MCP caller already has a specific
 `execution_id`.
 
@@ -364,10 +364,11 @@ Use dispatch for:
   manifest
 - bounded worker spawning under the global agent-slot cap
 
-Dispatch rules are authored against semantic workflow events such as
-`turn_start` and `turn_end`. Provider/runtime hook names are compatibility
-details, while agent termination remains a separate lifecycle step through
-`gobby-agents:end_agent_run`.
+Hook and workflow rules are authored against semantic workflow events such as
+`turn_start` and `turn_end`; dispatch rules are deterministic manifest-state
+rules evaluated on heartbeat ticks. Provider/runtime hook names are
+compatibility details, while agent termination remains a separate lifecycle
+step through `gobby-agents:end_agent_run`.
 
 ## Related Guides
 
@@ -377,4 +378,4 @@ details, while agent termination remains a separate lifecycle step through
 - [Workflows Overview](./workflows-overview.md) for the complete workflow model
 - [MCP Tools](./mcp-tools.md) for current server and tool signatures
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-06-11_

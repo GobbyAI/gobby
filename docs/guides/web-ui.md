@@ -18,9 +18,10 @@ The app is a hash-routed shell. `web/src/App.tsx` reads the active hash, renders
 the matching page, and keeps shared state for the selected project, chat session,
 providers, MCP servers, skills, settings, and voice status. The header exposes
 the current project and connection state. The left navigation exposes the main
-work surfaces: Chat, Project, Tasks, Workflows, Cron Jobs, Reports, Traces,
-Memory, Skills, MCP, Integrations, and Configuration. The dashboard is available
-at `/#dashboard`.
+work surfaces: Chat, Project, Workflows, Cron Jobs, Reports, Traces,
+Memory, Skills, Integrations, and Configuration. The dashboard is available
+at `/#dashboard`. Task and MCP views are reached through the chat Activity
+panel rather than the left navigation.
 
 Chrome DevTools MCP was used to inspect the running local UI while preparing this
 guide. The inspection verified top-level navigation, Chat, Dashboard, Project
@@ -62,16 +63,14 @@ The application shell lives in `web/src/App.tsx` and
 |---------|-------|---------------|
 | Chat | `/#chat` | `web/src/components/chat/ChatPage.tsx` |
 | Project | `/#projects` | `web/src/components/projects/ProjectsPage.tsx` |
-| Tasks | `/#tasks` | `web/src/components/tasks/TasksPage.tsx` |
 | Workflows | `/#workflows` | `web/src/components/workflows/WorkflowsPage.tsx` |
-| Cron Jobs | `/#cron` | `web/src/components/cron/CronJobsPage.tsx` |
-| Reports | `/#reports` | `web/src/components/reports/ReportsPage.tsx` |
+| Cron Jobs | `/#cron` | `web/src/components/CronJobsPage.tsx` |
+| Reports | `/#reports` | `web/src/components/workflows/ReportsPage.tsx` |
 | Traces | `/#traces` | `web/src/components/traces/TracesPage.tsx` |
 | Memory | `/#memory` | `web/src/components/memory/MemoryPage.tsx` |
 | Skills | `/#skills` | `web/src/components/skills/SkillsPage.tsx` |
-| MCP | `/#mcp` | `web/src/components/mcp/McpPage.tsx` |
 | Integrations | `/#integrations` | `web/src/components/integrations/IntegrationsPage.tsx` |
-| Configuration | `/#configuration` | `web/src/components/configuration/ConfigurationPage.tsx` |
+| Configuration | `/#configuration` | `web/src/components/ConfigurationPage.tsx` |
 | Dashboard | `/#dashboard` | `web/src/components/dashboard/DashboardPage.tsx` |
 
 Project-scoped pages should read the active project from the shell rather than
@@ -216,4 +215,4 @@ For product behavior, prefer native Gobby MCP servers such as `gobby-tasks`,
 - [observability.md](observability.md)
 - [http-endpoints.md](http-endpoints.md)
 
-_Last verified: 2026-05-08_
+_Last verified: 2026-06-11_

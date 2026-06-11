@@ -151,4 +151,4 @@ or pytest run exposes a failure, fix it before closing the task.
 - [tasks.md](tasks.md)
 - [observability.md](observability.md)
 
-_Last verified: 2026-05-28_
+_Last verified: 2026-06-11_

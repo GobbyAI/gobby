@@ -149,4 +149,4 @@ discovery and prefer explicit provider fields over model-name parsing.
 - [configuration.md](configuration.md)
 - [observability.md](observability.md)
 
-_Last verified: 2026-05-08_
+_Last verified: 2026-06-11_

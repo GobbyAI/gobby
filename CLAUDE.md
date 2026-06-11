@@ -327,7 +327,7 @@ Build state is resolved before dispatch:
 
 - `allow_automation` is the opt-in gate. Backlog tasks stay invisible until `gobby build`
   enables them.
-- `yolo` means rules choose deterministic fallbacks instead of escalating when possible.
+- `unattended` means rules choose deterministic fallbacks instead of escalating when possible.
 - `isolation` is explicit task state: `none`, `worktree`, or `clone`.
 - `stages` is the ordered manifest materialized in `task_stage_states` from the
   stage registry. The current stage is the first row whose state is not `done`.
@@ -341,7 +341,7 @@ Build state is resolved before dispatch:
   falls back to `backend-developer` with an audit marker.
 
 `gobby build` is the single entry point for turning a plan, epic, or leaf task into
-dispatchable state. The CLI command, MCP tool (`gobby-build:build_task`), and HTTP
+dispatchable state. The CLI command, MCP tool (`gobby-tasks-ops:build_task`), and HTTP
 route (`POST /api/build`) must all call the shared build service in
 `src/gobby/build/service.py`, returning the same `BuildResult`.
 `gobby build stop <ref> [--yes]` is the task-scoped CLI inverse for an

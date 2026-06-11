@@ -3,7 +3,7 @@
 This guide covers the engine behaviors that matter when writing rules. For the
 full reference for fields, events, and effects, see [rules.md](./rules.md).
 
-Gobby 0.4.0 treats `turn_start` and `turn_end` as the primary rule-authoring
+Gobby treats `turn_start` and `turn_end` as the primary rule-authoring
 events for agent turns. Raw events such as `before_agent`, `after_agent`, and
 `stop` are normalized provider/runtime details that remain available for
 escape-hatch rules.
@@ -11,7 +11,8 @@ escape-hatch rules.
 ## Variable Safety In `when`
 
 Rule conditions are evaluated against session variables. If you reference a
-missing variable directly, the expression can raise `NameError`.
+missing variable directly, the expression fails with an evaluation error
+(`ValueError: Unknown variable`).
 
 That matters most for `block` rules because a condition failure there can fail
 closed and block the session unexpectedly.
@@ -187,4 +188,4 @@ evaluated separately from the rule-level `when`.
 - Treat hard-coded engine safety as part of the contract when debugging rule
   interactions.
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-06-11_

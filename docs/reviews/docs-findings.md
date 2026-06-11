@@ -1,16 +1,18 @@
 # Review: docs accuracy — code bugs surfaced by guide verification
 
-- **Scope:** `docs/guides/*.md`, first half alphabetical — `README.md` through
-  `memory.md` (20 of 47 guides, 7,196 of 14,314 lines). Split boundary for the
-  sibling task: guides B starts at `observability.md`. Entries here are cases
+- **Scope:** `docs/guides/*.md`, both halves alphabetical. Guides A:
+  `README.md` through `memory.md` (20 of 47 guides, 7,196 lines, reviewed at
+  `07db2d036`). Guides B: `observability.md` through `worktrees.md` (27
+  guides, 7,118 lines, reviewed at `f2a540306`). Entries here are cases
   where the doc states the clearly-intended contract and the CODE violates it;
-  pure doc drift was fixed directly in the guides in the same commit.
-- **Reviewer:** Claude Fable 5 (7 parallel verifier agents; every finding
-  re-verified against source by the synthesizer)
-- **Commit / branch:** `0.5.0` @ `07db2d036` (state reviewed)
-- **Summary:** 0 Blocker · 5 Important · 2 Nit — the guides were largely
+  pure doc drift was fixed directly in the guides in the same commits.
+- **Reviewer:** Claude Fable 5 (7 parallel verifier agents per half; every
+  MAJOR finding re-verified against source by the synthesizer)
+- **Commit / branch:** `0.5.0` @ `07db2d036` (guides A) / `f2a540306`
+  (guides B)
+- **Summary:** 0 Blocker · 8 Important · 3 Nit — the guides were largely
   honest; where doc and code disagree on intent, the code is the drifted side
-  in these seven cases.
+  in these cases.
 
 ## Findings
 
@@ -116,6 +118,70 @@
   Telegram (polling is the default); the constructed registration URL would
   not match the served route. Documented in the guide as a limitation.
 
+## Findings — guides B (observability.md → worktrees.md)
+
+### [IMPORTANT] `/#integrations` deep link silently falls back to chat
+
+- **Where:** `web/src/components/app/appNavigation.tsx:32-42`
+  (`APP_VALID_TABS` set); nav item registered at `appNavigation.tsx:60` and
+  rendered/hash-written by `web/src/App.tsx:211-213, 916-917`; hash fallback
+  at `web/src/App.tsx:204-208`
+- **Failure mode:** `"integrations"` is missing from `APP_VALID_TABS`, so
+  loading or refreshing `/#integrations` falls back to the chat tab even
+  though the Integrations nav item exists, renders the page, and writes
+  `#integrations` to the hash. Deep links and refreshes silently lose the
+  page; web-ui.md documents the route as the intent.
+- **Why it matters:** The documented route works only via in-app clicks; any
+  bookmark, refresh, or shared link lands on chat with no error.
+- **Minimal fix:** Add `"integrations"` to the `APP_VALID_TABS` set.
+- **Confidence:** high
+
+### [IMPORTANT] `gobby worktrees sync --source` is a silent no-op
+
+- **Where:** `src/gobby/cli/worktrees.py:297-300` sends `source_branch`;
+  `src/gobby/mcp_proxy/tools/worktrees/_sync.py:84-88` (`sync_worktree`
+  accepts only `worktree_id`, `strategy`, `project_path`);
+  `src/gobby/mcp_proxy/tools/internal.py:307-317` silently drops unknown
+  kwargs
+- **Failure mode:** The CLI help promises "Source branch to sync from
+  (default: base branch)", but the proxy filters the unknown
+  `source_branch` argument before dispatch, so sync always runs against
+  `worktree.base_branch` regardless of `--source` — no warning, no error.
+- **Why it matters:** An operator syncing from a non-base branch gets a
+  successful-looking sync against the wrong branch.
+- **Minimal fix:** Add `source_branch: str | None = None` to `sync_worktree`
+  and thread it into the sync path, or remove `--source` from the CLI.
+  (worktrees.md now discloses the no-op.)
+- **Confidence:** high
+
+### [IMPORTANT] `gobby qdrant install --port` cannot produce a working install
+
+- **Where:** `src/gobby/cli/qdrant.py:20` (flag);
+  `src/gobby/cli/installers/qdrant.py:65-82` (compose up without env
+  override), `:96-101` (health check on the custom port);
+  `src/gobby/data/docker-compose.services.yml:33`
+  (`"${GOBBY_QDRANT_HTTP_PORT:-6333}:6333"`)
+- **Failure mode:** Nothing ever sets `GOBBY_QDRANT_HTTP_PORT` (repo-wide,
+  the only reference is the compose default), so the container always binds
+  host 6333 while the installer health-checks `http://localhost:<port>` and
+  persists a `qdrant_url` the container does not listen on. Any non-default
+  `--port` value fails install and leaves broken config; `gobby start`
+  likewise never sets the env var.
+- **Why it matters:** The documented remedy for a 6333 port conflict
+  (system-requirements.md troubleshooting) cannot work.
+- **Minimal fix:** Pass `env={**os.environ, "GOBBY_QDRANT_HTTP_PORT":
+  str(port)}` to the compose subprocess in `install_qdrant` and persist the
+  value (e.g. `~/.gobby/services/.env`) so restarts honor it.
+- **Confidence:** high
+
+### [NIT] `NamedRule.to_rule_definition_body` is dead code that can only raise
+
+- **Where:** `src/gobby/workflows/definitions.py:51-65`
+- **Note:** It passes `effect=` to `RuleDefinitionBody`, which has no such
+  field, so any call would fail the "'effects' is required" validator — but
+  it has zero callers in `src/` and `tests/`. Delete it or fix the field
+  name if it is meant to be public API.
+
 ## Systemic patterns
 
 Two recur. First, **aspirational contracts written as present tense**: the
@@ -128,3 +194,10 @@ not valid; `?status=true` is sent but never read. In each case two layers
 disagree about an enum or surface and nothing forces them to converge —
 shared constants (transport map, category set) imported by both sides would
 close the class.
+
+Guides B adds a third: **surface accepts, plumbing drops**. The CLI accepts
+`--source` but the proxy filters the argument; the installer accepts `--port`
+but never exports the env var the compose template reads; the nav registers
+Integrations but the hash whitelist omits it. Each is an interface that
+accepts input no downstream layer consumes — a contract test from flag/route
+to effect would catch all three.

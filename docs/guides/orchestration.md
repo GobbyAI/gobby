@@ -189,4 +189,4 @@ heartbeat scans the same task state and tries again.
   tools
 - [MCP Tools](./mcp-tools.md) for current server and tool signatures
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-06-11_

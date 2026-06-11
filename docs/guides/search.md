@@ -56,7 +56,7 @@ call_tool(server_name="gobby-tasks", tool_name="search_tasks", arguments={
 | Surface | Tool or command | Index | Best for |
 |---------|-----------------|-------|----------|
 | Memories | `gobby-memory.search_memories`, `gobby memory recall` | Memory content, tags, project scope | Persistent project facts and preferences |
-| Tasks | `gobby-tasks.search_tasks`, `gobby tasks search` | Title, description, labels, task type, category | Finding work by intent or topic |
+| Tasks | `gobby-tasks.search_tasks`, `gobby tasks search` | Title, description (BM25); filters: stage state, type, priority, category | Finding work by intent or topic |
 | Installed skills | `gobby-skills.search_skills` | Skill names, descriptions, metadata | Finding local workflow guidance |
 | Skill hubs | `gobby-skills.search_hub`, `gobby skills search` | Configured external skill hubs | Finding installable skills |
 | MCP tools | `search_tools`, `recommend_tools` | Registered MCP tools | Tool discovery during agent work |
@@ -172,8 +172,9 @@ memory:
 
 ## Task Search
 
-Task search is pg_search BM25 over task title, description, labels, task type,
-and category. MCP supports more filters than the CLI:
+Task search is pg_search BM25 over task title and description, with filters
+for stage state, task type, priority, parent task, category, and project. MCP
+supports more filters than the CLI:
 
 ```python
 call_tool(server_name="gobby-tasks", tool_name="search_tasks", arguments={
@@ -326,4 +327,4 @@ and `ranking_mode`.
 - [code-index.md](./code-index.md) - Source code search
 - [configuration.md](./configuration.md) - Full config reference
 
-_Last verified: 2026-05-23_
+_Last verified: 2026-06-11_

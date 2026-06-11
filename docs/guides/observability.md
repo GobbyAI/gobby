@@ -138,7 +138,6 @@ Other useful admin routes include:
 /api/admin/health
 /api/admin/startup-progress
 /api/admin/status
-/api/admin/setup-state
 ```
 
 `/api/admin/status` is the richest single diagnostic endpoint. It reports daemon
@@ -186,8 +185,8 @@ Follow progressive discovery before each new tool family.
 
 - `src/gobby/mcp_proxy/metrics.py`: MCP metrics collection.
 - `src/gobby/mcp_proxy/tools/metrics.py`: `gobby-metrics` MCP tools.
-- `src/gobby/telemetry/tracing.py`: tracing helpers and exporter.
-- `src/gobby/telemetry/span_store.py`: persisted span storage.
+- `src/gobby/telemetry/tracing.py`: `@traced` decorator and span helpers.
+- `src/gobby/telemetry/span_store.py`: `GobbySpanExporter` and persisted span storage.
 - `src/gobby/servers/routes/admin/_health.py`: health, status, Prometheus.
 - `src/gobby/servers/routes/admin/_usage.py`: token usage routes.
 - `src/gobby/servers/routes/admin/_savings.py`: savings routes.
@@ -202,4 +201,4 @@ Follow progressive discovery before each new tool family.
 - [mcp-tools.md](mcp-tools.md)
 - [testing.md](testing.md)
 
-_Last verified: 2026-05-08_
+_Last verified: 2026-06-11_

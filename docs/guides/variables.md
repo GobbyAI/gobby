@@ -284,8 +284,8 @@ These functions are available in `when` conditions and provide higher-level chec
 
 | Function | Description |
 |----------|-------------|
-| `task_tree_complete(task_id)` | Check if a task and all subtasks are recursively complete. A task is complete if `closed` or `needs_review` (without `requires_user_review`). |
-| `task_needs_human_review(task_id)` | Check if task is in `needs_review` status AND has the `requires_user_review` flag set. |
+| `task_tree_complete(task_id)` | Check if a task and all subtasks are recursively complete. A leaf is complete only when its closure metadata projects to `closed`; a parent with subtasks is complete when all subtasks are recursively complete. |
+| `task_needs_human_review(task_id)` | Check if a task has been escalated for human review (projected state is `escalated`). |
 
 ```yaml
 when: "task_tree_complete(variables.get('session_task'))"
@@ -349,8 +349,12 @@ These are the bundled default variables (from `gobby-default-variables.yaml`):
 |----------|---------|------|---------|
 | `task_claimed` | `false` | bool | Whether a task is claimed in this session |
 | `claimed_tasks` | `{}` | dict | Map of claimed task UUIDs to refs (`{uuid: '#N'}`) |
+| `active_task_id` | `null` | string | Task UUID receiving new edit attribution when multiple tasks are claimed |
+| `task_edited_files` | `{}` | dict | Map of claimed task UUIDs to repo-relative files edited this session |
 | `require_task_before_edit` | `true` | bool | Enforce task-before-edit gate |
 | `require_commit_before_status` | `true` | bool | Enforce commit-before-status gate |
+| `verification_evidence_recorded` | `false` | bool | Whether verification evidence was recorded this session |
+| `verification_evidence` | `[]` | list | Structured verification evidence (newest 50 entries retained) |
 | `stop_attempts` | `0` | int | Consecutive turn-end attempts (auto-managed) |
 | `max_stop_attempts` | `8` | int | Threshold before escape hatch allows stop |
 | `max_consecutive_blocked_tool_attempts` | `5` | int | Retry threshold for repeated blocked tool calls |
@@ -367,12 +371,14 @@ These are the bundled default variables (from `gobby-default-variables.yaml`):
 | `unlocked_tools` | `[]` | list | Tools unlocked via `get_tool_schema` |
 | `is_subagent` | `false` | bool | Whether a native subagent is currently active |
 | `loaded_skills` | `[]` | list | Skills loaded through `gobby-skills:get_skill` |
+| `code_index_navigation_used_this_turn` | `false` | bool | True after successful gcode navigation in the current turn |
 | `memory_nudge_fired` | `false` | bool | Whether the memory capture nudge fired this session |
 | `skill_discovery_instructions_shown` | `false` | bool | Whether skill discovery instructions were shown |
 | `brevity_disabled` | `false` | bool | Whether brevity reinforcement is disabled |
 | `brevity_last_violation` | `""` | string | Last response fragment that violated brevity rules |
 | `brevity_last_violation_rule` | `""` | string | Brevity rule matched by the last violation |
 | `_agent_context_injected` | `false` | bool | Whether agent identity was injected on first pre-turn event |
+| `_startup_context_injected` | `false` | bool | True after full SessionStart startup context has been sent |
 | `_agent_identity_reinject` | `false` | bool | Whether persona identity should be reinjected |
 | `edit_write_pending` | `false` | bool | Whether a write-like tool call is pending |
 | `edit_write_stop_blocks` | `0` | int | Circuit breaker for write-pending stop gate |
@@ -401,7 +407,7 @@ These are set during execution, not initialized from definitions:
 | `session_edited_files` | list | Files edited by this session |
 | `full_session_summary` | string | Previous session summary (for handoff), full untruncated text |
 | `handoff_summary_injectable` | string | Budget-bounded copy of the handoff summary for inline `additionalContext` injection; carries a `get_handoff_context` breadcrumb when truncated. Rules inject this rather than `full_session_summary` to avoid Claude Code's ~10K char hard truncation. |
-| `compact_session_summary` | string | Compact session summary |
+| `session_summary` | string | Session summary set alongside `full_session_summary` on handoff/compact |
 
 ---
 
@@ -451,4 +457,4 @@ gobby workflows set-var <name> <value> --session <ID>
 - [Rules](./rules.md) — Rules that read and write variables
 - [Agents](./agents.md) — Agent selectors that control variable loading
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-06-11_

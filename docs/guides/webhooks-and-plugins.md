@@ -1,12 +1,12 @@
 # Webhooks And Plugin Extension Guide
 
-Gobby 0.4.0 has two shipped webhook surfaces:
+Gobby has two shipped webhook surfaces:
 
 1. Hook extension webhooks that POST normalized hook events to external services.
 2. Pipeline webhooks that notify external services when pipeline approval,
    completion, or failure events occur.
 
-Gobby 0.4.0 does not expose a custom Python plugin workflow action API. Treat
+Gobby does not expose a custom Python plugin workflow action API. Treat
 older plugin-action examples as retired documentation patterns.
 
 ## Choosing A Webhook Surface
@@ -44,8 +44,11 @@ hook_extensions:
 ```
 
 Config values are expanded when configuration loads. Supported references are
-`${VAR}`, `${VAR:-default}`, and `$secret:NAME`; secret references resolve
-through the encrypted secrets store before environment fallback.
+`${VAR}`, `${VAR:-default}`, and `$secret:NAME`. `${VAR}` references resolve
+through the encrypted secrets store before environment fallback;
+`$secret:NAME` resolves exclusively from the secrets store with no
+environment fallback (unresolved references are left unchanged with a
+warning).
 
 ### Endpoint Fields
 
@@ -122,8 +125,10 @@ send identical raw hook data.
 ### Blocking Webhooks
 
 Set `can_block: true` only for endpoints that are allowed to affect hook
-decisions. Blocking endpoints are evaluated before normal handler execution. A
-blocking endpoint can deny the action with a 2xx JSON response:
+decisions. Blocking endpoints are evaluated before normal handler execution
+(for `session_start`, the session bootstrap handler runs first and blocking
+webhooks are evaluated after it). A blocking endpoint can deny the action
+with a 2xx JSON response:
 
 ```json
 {
@@ -212,12 +217,12 @@ The source tree still contains webhook action support models:
 
 Those files are useful source references for contributors, but this guide should
 not imply that arbitrary workflow YAML can currently run `action: webhook`
-through a shipped action dispatcher. For user-facing automation in 0.4.0, use
+through a shipped action dispatcher. For user-facing automation, use
 hook extension webhooks or pipeline webhooks.
 
 ## Plugin Development Status
 
-Python plugin actions are not a supported 0.4.0 extension surface. The current
+Python plugin actions are not a supported extension surface. The current
 CLI registers `hooks` and `webhooks` extension commands, but the runtime hook
 plugin API described in older docs is not present in the active source tree.
 
@@ -253,4 +258,4 @@ Use these supported extension points instead:
 - [HTTP Endpoints](./http-endpoints.md) - Webhook management routes.
 - [Configuration](./configuration.md) - Daemon config shape and expansion rules.
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-06-11_

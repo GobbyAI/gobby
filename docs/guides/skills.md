@@ -1,7 +1,7 @@
 # Skills Guide
 
-This guide covers how to create, install, discover, and load skills in Gobby
-0.4.0. Skills follow the [Agent Skills specification](https://agentskills.io)
+This guide covers how to create, install, discover, and load skills in Gobby.
+Skills follow the [Agent Skills specification](https://agentskills.io)
 with Gobby-specific metadata for routing and context-aware injection.
 
 ## What a Skill Is
@@ -173,7 +173,8 @@ gobby skills validate ./my-skill/SKILL.md --json
 # Install through the daemon
 gobby skills install ./my-skill
 gobby skills install --project ./my-skill
-gobby skills install github:owner/repo/path/to/skill
+gobby skills install github:owner/repo
+gobby skills install https://github.com/owner/repo/tree/main/path/to/skill
 gobby skills install clawdhub:commit-message
 
 # Search hubs and manage hub config
@@ -268,7 +269,7 @@ call_tool(
 
 ## Skill Hubs
 
-Gobby 0.4.0 configures these hub types by default:
+Gobby configures these hub types by default:
 
 | Hub | Type |
 |-----|------|
@@ -342,4 +343,4 @@ GOBBY_TEST_PROTECT=1 uv run pytest tests/skills/ -m skill_tdd
 - [MCP Tools Guide](./mcp-tools.md)
 - [Variables Guide](./variables.md)
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-06-11_

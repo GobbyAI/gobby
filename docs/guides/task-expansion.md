@@ -6,7 +6,7 @@ structure. The current system is **run-based**: `start_expansion_run` creates an
 expansion run, `ExpansionService` compiles a normalized spec, and the same run
 stores compile, apply, validation, and QA checkpoints.
 
-This guide covers the current 0.4.0 flow: how plans feed expansion, what gets
+This guide covers the current flow: how plans feed expansion, what gets
 stored on the run, how validation works, and how lifecycle automation picks up
 the expanded tree.
 
@@ -517,8 +517,8 @@ Use:
 | `src/gobby/tasks/expansion/_apply.py` | Task-tree apply logic |
 | `src/gobby/tasks/expansion/_validate.py` | Plan and compiled-spec validation |
 | `src/gobby/mcp_proxy/tools/tasks/_expansion.py` | Expansion MCP tools and run lifecycle |
-| `src/gobby/tasks/prompts/expand-task.md` | Expansion prompt |
-| `src/gobby/tasks/prompts/expand-task-tdd.md` | TDD-specific expansion guidance |
+| `src/gobby/install/shared/prompts/expansion/user.md` | Expansion prompt (DB-synced as `expansion/user`) |
+| `src/gobby/install/shared/prompts/expansion/system.md` | Expansion system prompt incl. TDD mode (DB-synced as `expansion/system`) |
 | `src/gobby/install/shared/skills/expand/SKILL.md` | `/gobby expand` skill |
 | `src/gobby/install/shared/skills/plan-draft/SKILL.md` | Typed plan authoring skill |
 | `docs/contracts/plan-coverage.md` | Plan-Coverage Contract reference |
@@ -532,4 +532,4 @@ Use:
 - [Pipelines](./pipelines.md) — Pipeline system reference
 - [Agents](./agents.md) — Agent definitions and step workflows
 
-_Last verified: 2026-05-28_
+_Last verified: 2026-06-11_

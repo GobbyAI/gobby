@@ -23,10 +23,10 @@ and deletion.
 
 ## Quick Start
 
-Validate registered plans:
+Validate a plan file:
 
 ```bash
-uv run gobby plans validate
+uv run gobby plans validate PLAN_FILE
 ```
 
 List plan records:
@@ -141,10 +141,14 @@ The plans CLI includes:
 uv run gobby plans list
 uv run gobby plans show PLAN_ID
 uv run gobby plans register PATH
-uv run gobby plans validate
+uv run gobby plans validate PLAN_FILE
 uv run gobby plans archive PLAN_ID
-uv run gobby plans review-runs PLAN_ID
+uv run gobby plans review-runs PLANNING_TASK_REF
 ```
+
+`review-runs` prints the expansion-QA handoff pointer
+(`gobby-tasks-ops:run_expansion_qa_coverage`) for the planning task rather
+than listing review runs.
 
 Use the CLI for operator inspection. Agents should use the MCP tools for plan
 lifecycle writes.
@@ -153,7 +157,7 @@ lifecycle writes.
 
 Plan mode is visible in chat/session behavior rather than a single public plan
 route. The Web UI receives plan-mode state through session and chat state, then
-renders plan approval controls such as `PlanApprovalBar`.
+renders plan approval controls such as `PlanApprovalActions`.
 
 When debugging plan mode from the browser, inspect session requests, chat events,
 and plan approval state rather than only static plan files.
@@ -180,8 +184,8 @@ override plan-mode restrictions on unrelated files.
 - `src/gobby/cli/plans.py`: operator CLI.
 - `src/gobby/storage/plans.py`: plan persistence.
 - `src/gobby/install/shared/workflows/rules/plan-mode/`: plan-mode rules.
-- `web/src/components/chat/PlanApprovalBar.tsx`: UI approval control.
-- `web/src/hooks/useSessionReconciliation.ts`: chat/session reconciliation.
+- `web/src/components/chat/PlanApprovalActions.tsx`: UI approval controls.
+- `web/src/components/app/useSessionReconciliation.ts`: chat/session reconciliation.
 - `.gobby/plans/`: project plan artifacts and completed plans.
 
 ## See Also
@@ -192,4 +196,4 @@ override plan-mode restrictions on unrelated files.
 - [workflow-rules.md](workflow-rules.md)
 - [tdd-enforcement.md](tdd-enforcement.md)
 
-_Last verified: 2026-05-08_
+_Last verified: 2026-06-11_

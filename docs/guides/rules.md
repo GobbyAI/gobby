@@ -234,9 +234,10 @@ effect options include:
 
 ### `rewrite_input`
 
-`rewrite_input` changes the pending tool input before it runs. Current bundled
-rules use this for behaviors such as forcing `uv run` or stripping disallowed
-flags.
+`rewrite_input` changes the pending tool input before it runs. The bundled
+`compress-bash-output` rule uses this to route verbose Bash commands through
+the gsqz output compressor; uv enforcement is implemented as a `block` rule,
+not a rewrite.
 
 For MCP `call_tool` events, rewrite updates are merged into the inner
 `arguments` object so routing fields stay intact.
@@ -259,7 +260,7 @@ hard-coding it into a single CLI.
 group: tool-hygiene
 
 rules:
-  require-uv:
+  prefer-uv-rewrite:
     event: before_tool
     when: "event.data.get('tool_name') == 'Bash'"
     effects:
@@ -267,12 +268,16 @@ rules:
         input_updates:
           command: >-
             {{
-              event.data.get('command', '')
+              tool_input.get('command', '')
               | regex_replace('^python\\s+', 'uv run python ')
             }}
       - type: inject_context
         template: "Prefer `uv run ...` for Python commands in this repo."
 ```
+
+For `before_tool` events the command lives under `tool_input`, which the
+template context exposes unwrapped; `event.data.get('command', '')` would
+resolve to an empty string.
 
 ## Evaluation Rules
 
@@ -330,4 +335,4 @@ The CLI also exposes operator commands under `gobby rules`, including `list`,
 For authoring caveats and engine behavior that matters when designing rules,
 see [Rule Authoring Guide](./workflow-rules.md).
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-06-11_

@@ -187,8 +187,9 @@ result = spawn_agent(
 `spawn_agent` inherits `agent_sandbox` from the daemon config. The current MCP
 schema does not accept per-call sandbox parameters; the exposed parameters are
 for the prompt, agent selection, isolation, branch/workspace selection,
-workflow, provider/model overrides, reasoning, timeout, parent session, and
-project path.
+workflow, provider/model overrides, reasoning, timeout, parent session,
+project path, task linkage (`task_id`), turn limits (`max_turns`), and
+completion notification (`notify_parent_on_completion`).
 
 Sandbox policy is independent from agent lifecycle. A spawned agent that has
 finished its workflow must still call `gobby-agents:end_agent_run` to release
@@ -197,7 +198,9 @@ its agent-run resources.
 ## Limitations And Caveats
 
 1. **Provider support varies**: Gobby has resolvers for Claude, Codex, Gemini,
-   and Qwen. Each provider exposes different sandbox knobs.
+   Qwen, and Grok. Each provider exposes different sandbox knobs (Grok maps
+   restrictive/no-network policies to `--sandbox strict`, otherwise
+   `--sandbox workspace`).
 
 2. **Platform behavior varies**: Gemini and Qwen Seatbelt profiles are macOS
    behavior. Other platforms depend on the upstream CLI's sandbox support.
@@ -210,4 +213,4 @@ its agent-run resources.
    accidental damage. They are not a complete defense against malicious code or
    hostile prompts.
 
-_Last verified: 2026-05-19_
+_Last verified: 2026-06-11_
