@@ -82,7 +82,7 @@ pub(crate) use text::{frontmatter, generate_with_bounded_retry};
 
 #[cfg(test)]
 pub(crate) use io::write_incremental_doc_set_with_snapshot;
-pub(crate) use io::{DocSink, read_ownership_meta, write_ownership_meta};
+pub(crate) use io::{DocPruneScope, DocSink, read_ownership_meta, write_ownership_meta};
 pub use io::{write_doc_set, write_incremental_doc_set};
 // Reuse of unchanged docs without regeneration.
 pub(crate) use reuse::{ReusePlan, span_files};
@@ -534,7 +534,12 @@ pub fn run(
     let mut ownership_meta = read_ownership_meta(out_path)?;
     let mut reuse_plan = ReusePlan::load(&ctx.project_root, out_path, ai_mode)?;
     let mut reuse = Some(&mut reuse_plan);
-    let mut sink = DocSink::open(&ctx.project_root, out_path, ai_mode)?;
+    let mut sink = DocSink::open_with_prune_scope(
+        &ctx.project_root,
+        out_path,
+        ai_mode,
+        DocPruneScope::from_scopes(&scopes),
+    )?;
     let mut generated_pages = 0_usize;
     let mut module_count = 0_usize;
     let mut file_count = 0_usize;

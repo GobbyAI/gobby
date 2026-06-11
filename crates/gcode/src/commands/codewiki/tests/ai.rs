@@ -134,16 +134,35 @@ fn ai_mode_change_invalidates_unchanged_docs() {
         .collect::<Vec<_>>();
     let file_doc = "code/files/src/lib.rs.md".to_string();
 
-    write_incremental_doc_set_with_snapshot(project.path(), &out_dir, &docs, None, "off")
-        .expect("first write");
-    let rewritten =
-        write_incremental_doc_set_with_snapshot(project.path(), &out_dir, &docs, None, "sections")
-            .expect("mode change write");
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &docs,
+        None,
+        "off",
+        DocPruneScope::unscoped(),
+    )
+    .expect("first write");
+    let rewritten = write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &docs,
+        None,
+        "sections",
+        DocPruneScope::unscoped(),
+    )
+    .expect("mode change write");
     assert!(rewritten.contains(&file_doc));
 
-    let same_mode =
-        write_incremental_doc_set_with_snapshot(project.path(), &out_dir, &docs, None, "sections")
-            .expect("same mode write");
+    let same_mode = write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &docs,
+        None,
+        "sections",
+        DocPruneScope::unscoped(),
+    )
+    .expect("same mode write");
     assert!(!same_mode.contains(&file_doc));
 }
 
@@ -182,8 +201,15 @@ fn generation_failure_records_degradation_in_frontmatter_and_meta() {
     }
     assert!(!doc(&docs, "code/_onboarding.md").degraded);
 
-    write_incremental_doc_set_with_snapshot(project.path(), &out_dir, &docs, None, "symbols")
-        .expect("write docs");
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &docs,
+        None,
+        "symbols",
+        DocPruneScope::unscoped(),
+    )
+    .expect("write docs");
     let meta = std::fs::read_to_string(out_dir.join("_meta/codewiki.json")).expect("read meta");
     let meta: serde_json::Value = serde_json::from_str(&meta).expect("parse meta");
     for path in ["code/repo.md", "code/modules/src.md"] {

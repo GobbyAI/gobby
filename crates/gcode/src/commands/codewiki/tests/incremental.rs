@@ -67,6 +67,7 @@ fn degraded_doc_is_rewritten_once_generation_succeeds() {
         &degraded_docs,
         None,
         "symbols",
+        DocPruneScope::unscoped(),
     )
     .expect("degraded write");
 
@@ -82,6 +83,7 @@ fn degraded_doc_is_rewritten_once_generation_succeeds() {
         &healthy_docs,
         None,
         "symbols",
+        DocPruneScope::unscoped(),
     )
     .expect("repair write");
     assert!(repaired.contains(&file_doc), "degraded doc is repaired");
@@ -95,6 +97,7 @@ fn degraded_doc_is_rewritten_once_generation_succeeds() {
         &healthy_docs,
         None,
         "symbols",
+        DocPruneScope::unscoped(),
     )
     .expect("healthy rewrite");
     assert!(!skipped.contains(&file_doc), "healthy unchanged doc skips");
@@ -109,6 +112,7 @@ fn degraded_doc_is_rewritten_once_generation_succeeds() {
         &degraded_again,
         None,
         "symbols",
+        DocPruneScope::unscoped(),
     )
     .expect("failed rerun write");
     assert!(!preserved.contains(&file_doc), "healthy doc is preserved");
@@ -224,4 +228,91 @@ fn incremental_regenerates_only_changed() {
             .get("code/files/src/nested/api.rs.md")
             .is_none()
     );
+}
+
+#[test]
+fn scoped_incremental_write_preserves_out_of_scope_docs_and_meta() {
+    let project = tempfile::tempdir().expect("project tempdir");
+    std::fs::create_dir_all(project.path().join("src")).expect("source dir");
+    std::fs::create_dir_all(project.path().join("tools")).expect("tools dir");
+    std::fs::write(project.path().join("src/lib.rs"), "pub struct Client;\n").expect("write lib");
+    std::fs::write(project.path().join("src/old.rs"), "pub struct OldClient;\n")
+        .expect("write old");
+    std::fs::write(
+        project.path().join("tools/helper.rs"),
+        "pub fn helper() {}\n",
+    )
+    .expect("write helper");
+    let out_dir = project.path().join("codewiki");
+
+    let input = CodewikiInput {
+        files: vec![
+            "src/lib.rs".to_string(),
+            "src/old.rs".to_string(),
+            "tools/helper.rs".to_string(),
+        ],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![
+            test_symbol("src/lib.rs", "Client", "class", 1, "pub struct Client;"),
+            test_symbol(
+                "src/old.rs",
+                "OldClient",
+                "class",
+                1,
+                "pub struct OldClient;",
+            ),
+            test_symbol(
+                "tools/helper.rs",
+                "helper",
+                "function",
+                1,
+                "pub fn helper()",
+            ),
+        ],
+    };
+    let first_docs = generate_hierarchical_docs(&input, None);
+    write_incremental_doc_set(project.path(), &out_dir, &first_docs).expect("first write");
+
+    let out_of_scope_file_doc = out_dir.join("code/files/tools/helper.rs.md");
+    let out_of_scope_module_doc = out_dir.join("code/modules/tools.md");
+    let stale_in_scope_file_doc = out_dir.join("code/files/src/old.rs.md");
+    assert!(out_of_scope_file_doc.exists());
+    assert!(out_of_scope_module_doc.exists());
+    assert!(stale_in_scope_file_doc.exists());
+
+    let scoped_input = CodewikiInput {
+        files: vec!["src/lib.rs".to_string()],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![test_symbol(
+            "src/lib.rs",
+            "Client",
+            "class",
+            1,
+            "pub struct Client;",
+        )],
+    };
+    let scoped_docs = generate_hierarchical_docs(&scoped_input, None)
+        .into_iter()
+        .map(|(path, content)| BuiltDoc::healthy(path, content))
+        .collect::<Vec<_>>();
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &scoped_docs,
+        None,
+        "off",
+        DocPruneScope::from_scopes(&["src".to_string()]),
+    )
+    .expect("scoped write");
+
+    assert!(out_of_scope_file_doc.exists());
+    assert!(out_of_scope_module_doc.exists());
+    assert!(!stale_in_scope_file_doc.exists());
+    let meta = std::fs::read_to_string(out_dir.join("_meta/codewiki.json")).expect("read meta");
+    let meta: serde_json::Value = serde_json::from_str(&meta).expect("parse meta");
+    assert!(meta["docs"].get("code/files/tools/helper.rs.md").is_some());
+    assert!(meta["docs"].get("code/modules/tools.md").is_some());
+    assert!(meta["docs"].get("code/files/src/old.rs.md").is_none());
 }

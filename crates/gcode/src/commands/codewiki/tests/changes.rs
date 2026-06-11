@@ -34,6 +34,7 @@ fn codewiki_changes_baseline_persists_snapshot_and_degrades_without_graph() {
         &[BuiltDoc::healthy("code/_changes.md", changes)],
         Some(snapshot),
         "off",
+        DocPruneScope::unscoped(),
     )
     .expect("write snapshot");
     let meta = read_codewiki_meta(&out_dir).expect("read meta");

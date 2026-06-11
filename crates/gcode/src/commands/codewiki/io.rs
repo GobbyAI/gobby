@@ -17,7 +17,14 @@ pub fn write_incremental_doc_set(
         .iter()
         .map(|(path, content)| BuiltDoc::healthy(path.clone(), content.clone()))
         .collect::<Vec<_>>();
-    write_incremental_doc_set_with_snapshot(project_root, out_dir, &docs, None, "off")
+    write_incremental_doc_set_with_snapshot(
+        project_root,
+        out_dir,
+        &docs,
+        None,
+        "off",
+        DocPruneScope::unscoped(),
+    )
 }
 
 pub(crate) fn write_incremental_doc_set_with_snapshot(
@@ -26,12 +33,47 @@ pub(crate) fn write_incremental_doc_set_with_snapshot(
     docs: &[BuiltDoc],
     index_snapshot: Option<CodewikiIndexSnapshot>,
     ai_mode: &str,
+    prune_scope: DocPruneScope,
 ) -> anyhow::Result<Vec<String>> {
-    let mut sink = DocSink::open(project_root, out_dir, ai_mode)?;
+    let mut sink = DocSink::open_with_prune_scope(project_root, out_dir, ai_mode, prune_scope)?;
     for doc in docs {
         sink.persist(doc)?;
     }
     sink.finish(index_snapshot)
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DocPruneScope {
+    scopes: Vec<String>,
+}
+
+impl DocPruneScope {
+    pub(crate) fn unscoped() -> Self {
+        Self { scopes: Vec::new() }
+    }
+
+    pub(crate) fn from_scopes(scopes: &[String]) -> Self {
+        if scopes.is_empty() || scopes.iter().any(|scope| scope.is_empty()) {
+            Self::unscoped()
+        } else {
+            Self {
+                scopes: scopes.to_vec(),
+            }
+        }
+    }
+
+    fn should_prune(&self, doc_path: &str) -> bool {
+        if self.scopes.is_empty() {
+            return true;
+        }
+        if let Some(file) = scoped_file_doc(doc_path) {
+            return in_scope(file, &self.scopes);
+        }
+        if let Some(module) = scoped_module_doc(doc_path) {
+            return in_scope(module, &self.scopes);
+        }
+        true
+    }
 }
 
 /// Incremental doc writer that persists each doc and its meta entry the
@@ -47,13 +89,24 @@ pub(crate) struct DocSink<'a> {
     seen: BTreeSet<String>,
     generated_docs: Vec<String>,
     previous_snapshot: Option<CodewikiIndexSnapshot>,
+    prune_scope: DocPruneScope,
 }
 
 impl<'a> DocSink<'a> {
+    #[cfg(test)]
     pub(crate) fn open(
         project_root: &'a Path,
         out_dir: &'a Path,
         ai_mode: &str,
+    ) -> anyhow::Result<Self> {
+        Self::open_with_prune_scope(project_root, out_dir, ai_mode, DocPruneScope::unscoped())
+    }
+
+    pub(crate) fn open_with_prune_scope(
+        project_root: &'a Path,
+        out_dir: &'a Path,
+        ai_mode: &str,
+        prune_scope: DocPruneScope,
     ) -> anyhow::Result<Self> {
         std::fs::create_dir_all(out_dir)?;
         let previous = read_codewiki_meta(out_dir)?;
@@ -69,6 +122,7 @@ impl<'a> DocSink<'a> {
             seen: BTreeSet::new(),
             generated_docs: Vec::new(),
             previous_snapshot: previous.index_snapshot,
+            prune_scope,
         })
     }
 
@@ -146,7 +200,7 @@ impl<'a> DocSink<'a> {
         let stale = self
             .next_docs
             .keys()
-            .filter(|key| !self.seen.contains(*key))
+            .filter(|key| !self.seen.contains(*key) && self.prune_scope.should_prune(key))
             .cloned()
             .collect::<Vec<_>>();
         for stale_path in stale {
@@ -168,6 +222,18 @@ impl<'a> DocSink<'a> {
         write_codewiki_meta(self.out_dir, &meta)?;
         Ok(self.generated_docs)
     }
+}
+
+fn scoped_file_doc(doc_path: &str) -> Option<&str> {
+    doc_path
+        .strip_prefix("code/files/")
+        .and_then(|path| path.strip_suffix(".md"))
+}
+
+fn scoped_module_doc(doc_path: &str) -> Option<&str> {
+    doc_path
+        .strip_prefix("code/modules/")
+        .and_then(|path| path.strip_suffix(".md"))
 }
 
 pub(crate) fn write_doc(out_dir: &Path, relative_path: &str, content: &str) -> anyhow::Result<()> {

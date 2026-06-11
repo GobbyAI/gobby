@@ -42,8 +42,15 @@ fn unchanged_sources_are_reused_without_any_generation_call() {
         AiDepth::Symbols,
         &mut progress,
     );
-    write_incremental_doc_set_with_snapshot(project.path(), &out_dir, &first, None, "symbols")
-        .expect("first write");
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &first,
+        None,
+        "symbols",
+        DocPruneScope::unscoped(),
+    )
+    .expect("first write");
 
     let mut calls = 0_usize;
     let mut counting_generator = |_prompt: &str, _system: &str, _tier: PromptTier| {
@@ -71,9 +78,15 @@ fn unchanged_sources_are_reused_without_any_generation_call() {
     assert_eq!(repo.content, on_disk);
     assert!(repo.content.contains("Generated prose."));
 
-    let changed =
-        write_incremental_doc_set_with_snapshot(project.path(), &out_dir, &second, None, "symbols")
-            .expect("second write");
+    let changed = write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &second,
+        None,
+        "symbols",
+        DocPruneScope::unscoped(),
+    )
+    .expect("second write");
     assert!(
         changed.iter().all(|path| {
             !path.starts_with("code/files/")
@@ -104,8 +117,15 @@ fn reused_docs_feed_recorded_summaries_into_parent_prompts() {
         AiDepth::Sections,
         &mut progress,
     );
-    write_incremental_doc_set_with_snapshot(project.path(), &out_dir, &first, None, "sections")
-        .expect("first write");
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &first,
+        None,
+        "sections",
+        DocPruneScope::unscoped(),
+    )
+    .expect("first write");
 
     std::fs::write(
         project.path().join("src/lib.rs"),
@@ -147,6 +167,7 @@ fn reused_docs_feed_recorded_summaries_into_parent_prompts() {
         &second,
         None,
         "sections",
+        DocPruneScope::unscoped(),
     )
     .expect("second write");
     assert!(changed.contains(&"code/files/src/lib.rs.md".to_string()));
@@ -169,8 +190,15 @@ fn degraded_docs_are_never_reused() {
         AiDepth::Sections,
         &mut progress,
     );
-    write_incremental_doc_set_with_snapshot(project.path(), &out_dir, &degraded, None, "sections")
-        .expect("degraded write");
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &degraded,
+        None,
+        "sections",
+        DocPruneScope::unscoped(),
+    )
+    .expect("degraded write");
 
     let mut calls = 0_usize;
     let mut repairing_generator = |_prompt: &str, _system: &str, _tier: PromptTier| {
@@ -195,6 +223,7 @@ fn degraded_docs_are_never_reused() {
         &repaired,
         None,
         "sections",
+        DocPruneScope::unscoped(),
     )
     .expect("repair write");
     assert!(changed.contains(&"code/modules/src.md".to_string()));
@@ -300,8 +329,15 @@ fn metas_without_recorded_summaries_rewrite_once_to_backfill() {
     for doc in &mut first {
         doc.summary = None;
     }
-    write_incremental_doc_set_with_snapshot(project.path(), &out_dir, &first, None, "sections")
-        .expect("legacy-shaped write");
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &first,
+        None,
+        "sections",
+        DocPruneScope::unscoped(),
+    )
+    .expect("legacy-shaped write");
 
     let mut calls = 0_usize;
     let mut second_generator = |_prompt: &str, _system: &str, _tier: PromptTier| {
@@ -325,6 +361,7 @@ fn metas_without_recorded_summaries_rewrite_once_to_backfill() {
         &second,
         None,
         "sections",
+        DocPruneScope::unscoped(),
     )
     .expect("backfill write");
     // Summary-carrying docs rewrite once so the recorded summary matches the
@@ -365,8 +402,15 @@ fn missing_page_on_disk_regenerates_that_doc() {
         AiDepth::Sections,
         &mut progress,
     );
-    write_incremental_doc_set_with_snapshot(project.path(), &out_dir, &first, None, "sections")
-        .expect("first write");
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &first,
+        None,
+        "sections",
+        DocPruneScope::unscoped(),
+    )
+    .expect("first write");
 
     std::fs::remove_file(out_dir.join("code/modules/src/nested.md")).expect("drop module page");
 
@@ -398,6 +442,7 @@ fn missing_page_on_disk_regenerates_that_doc() {
         &second,
         None,
         "sections",
+        DocPruneScope::unscoped(),
     )
     .expect("second write");
     assert!(changed.contains(&"code/modules/src/nested.md".to_string()));

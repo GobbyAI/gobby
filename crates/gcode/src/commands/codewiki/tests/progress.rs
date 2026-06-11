@@ -43,6 +43,7 @@ fn codewiki_verbose_progress_captures_generation_order() {
         &docs,
         None,
         "symbols",
+        DocPruneScope::unscoped(),
     )
     .expect("write docs");
     assert!(!changed.is_empty());
