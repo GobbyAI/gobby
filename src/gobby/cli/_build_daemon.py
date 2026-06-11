@@ -62,6 +62,12 @@ def _build_payload(
         "completed_plan_review_rounds": opts.completed_plan_review_rounds,
         "dry_run": opts.dry_run,
     }
+    if opts.profile_explicit:
+        payload["profile"] = opts.profile
+    if opts.delivery_mode_explicit:
+        payload["delivery_mode"] = opts.delivery_mode
+    if opts.delivery_target_repo_explicit:
+        payload["delivery_target_repo"] = opts.delivery_target_repo
     if opts.coordinator_session_ref:
         payload["coordinator"] = opts.coordinator_session_ref
     if opts.isolation_explicit:
@@ -78,6 +84,12 @@ def _restart_options_payload(opts: BuildOptions) -> dict[str, object]:
         "completed_plan_review_rounds": opts.completed_plan_review_rounds,
         "project_explicit": opts.project_explicit,
     }
+    if opts.profile_explicit:
+        payload["profile"] = opts.profile
+    if opts.delivery_mode_explicit:
+        payload["delivery_mode"] = opts.delivery_mode
+    if opts.delivery_target_repo_explicit:
+        payload["delivery_target_repo"] = opts.delivery_target_repo
     if opts.pr is not None:
         payload["pr"] = opts.pr
     if opts.target_branch is not None:
