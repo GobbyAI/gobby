@@ -728,7 +728,7 @@ class CodexAdapter(BaseAdapter):
         if response.decision == "deny":
             decision = "decline"
         elif response.decision == "block":
-            decision = "cancel"
+            decision = "decline"
         elif response.auto_approve:
             decision = "acceptForSession"
         elif response.metadata.get("exec_policy_amendment"):

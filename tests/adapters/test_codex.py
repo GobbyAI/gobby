@@ -4172,19 +4172,39 @@ class TestCodexApprovalDeclineFormat:
     """
 
     @pytest.mark.asyncio
-    async def test_blocked_tool_produces_decline(self) -> None:
-        """HookManager deny → adapter decline for Codex."""
+    @pytest.mark.parametrize(
+        ("method", "params"),
+        [
+            (
+                "item/commandExecution/requestApproval",
+                {"threadId": "thr-blocked", "parsedCmd": "rm -rf /"},
+            ),
+            (
+                "item/fileChange/requestApproval",
+                {"threadId": "thr-blocked", "changes": [{"path": "secrets.txt"}]},
+            ),
+            (
+                "item/mcpToolCall/requestApproval",
+                {
+                    "threadId": "thr-blocked",
+                    "toolName": "gobby-tasks:claim_task",
+                    "arguments": {"task_id": "#1"},
+                },
+            ),
+        ],
+    )
+    async def test_blocked_approval_shapes_produce_decline(
+        self, method: str, params: dict[str, Any]
+    ) -> None:
+        """HookManager block -> adapter decline for Codex approval requests."""
         mock_hm = MagicMock()
         mock_hm.handle.return_value = HookResponse(
-            decision="deny",
+            decision="block",
             reason="Bash is blocked in this workflow step.",
         )
         adapter = CodexAdapter(hook_manager=mock_hm)
 
-        result = await adapter.handle_approval_request(
-            "item/commandExecution/requestApproval",
-            {"threadId": "thr-blocked", "parsedCmd": "rm -rf /"},
-        )
+        result = await adapter.handle_approval_request(method, params)
 
         assert result == {"decision": "decline"}
 
@@ -4269,8 +4289,7 @@ class TestCodexApprovalDeclineFormat:
         """translate_from_hook_response maps 'block' decision correctly."""
         adapter = CodexAdapter()
 
-        # 'deny' maps to 'decline'
-        response = HookResponse(decision="deny")
+        response = HookResponse(decision="block")
         result = adapter.translate_from_hook_response(response)
         assert result["decision"] == "decline"
 
