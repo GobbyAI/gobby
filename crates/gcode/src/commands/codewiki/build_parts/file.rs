@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use super::super::{
-    AiDepth, CodewikiProgress, FileDoc, Generation, ReusePlan, SourceSpan, SymbolDoc,
+    AiDepth, CodewikiProgress, FileDoc, Generation, PromptTier, ReusePlan, SourceSpan, SymbolDoc,
     TextGenerator, citation_list, component_label, file_doc_path, ground_text, maybe_generate,
     prompts, structural_file_summary, structural_symbol_purpose,
 };
@@ -63,6 +63,7 @@ pub(crate) fn build_file_doc(
                     generate,
                     &prompts::symbol_prompt(&symbol),
                     prompts::SYMBOL_SYSTEM,
+                    PromptTier::Standard,
                 )
             } else {
                 Generation::Skipped
@@ -114,6 +115,7 @@ pub(crate) fn build_file_doc(
                     generate,
                     &prompts::file_prompt(file, &prompt_symbols),
                     prompts::FILE_SYSTEM,
+                    PromptTier::Standard,
                 )
             } else {
                 Generation::Skipped

@@ -33,7 +33,8 @@ fn unchanged_sources_are_reused_without_any_generation_call() {
     let (project, input) = reuse_project();
     let out_dir = project.path().join("codewiki");
 
-    let mut first_generator = |_prompt: &str, _system: &str| Some("Generated prose.".to_string());
+    let mut first_generator =
+        |_prompt: &str, _system: &str, _tier: PromptTier| Some("Generated prose.".to_string());
     let mut progress = CodewikiProgress::silent();
     let first = generate_hierarchical_docs_with_progress(
         &input,
@@ -45,7 +46,7 @@ fn unchanged_sources_are_reused_without_any_generation_call() {
         .expect("first write");
 
     let mut calls = 0_usize;
-    let mut counting_generator = |_prompt: &str, _system: &str| {
+    let mut counting_generator = |_prompt: &str, _system: &str, _tier: PromptTier| {
         calls += 1;
         Some("Second-run prose.".to_string())
     };
@@ -89,7 +90,7 @@ fn reused_docs_feed_recorded_summaries_into_parent_prompts() {
     let (project, input) = reuse_project();
     let out_dir = project.path().join("codewiki");
 
-    let mut first_generator = |prompt: &str, system: &str| {
+    let mut first_generator = |prompt: &str, system: &str, _tier: PromptTier| {
         if system == prompts::MODULE_SYSTEM && prompt.contains("src/nested") {
             Some("Nested module marker prose.".to_string())
         } else {
@@ -113,7 +114,7 @@ fn reused_docs_feed_recorded_summaries_into_parent_prompts() {
     .expect("modify lib");
 
     let mut module_prompts = Vec::new();
-    let mut second_generator = |prompt: &str, system: &str| {
+    let mut second_generator = |prompt: &str, system: &str, _tier: PromptTier| {
         if system == prompts::MODULE_SYSTEM {
             module_prompts.push(prompt.to_string());
         }
@@ -160,7 +161,7 @@ fn degraded_docs_are_never_reused() {
     let (project, input) = reuse_project();
     let out_dir = project.path().join("codewiki");
 
-    let mut failing_generator = |_prompt: &str, _system: &str| None;
+    let mut failing_generator = |_prompt: &str, _system: &str, _tier: PromptTier| None;
     let mut progress = CodewikiProgress::silent();
     let degraded = generate_hierarchical_docs_with_progress(
         &input,
@@ -172,7 +173,7 @@ fn degraded_docs_are_never_reused() {
         .expect("degraded write");
 
     let mut calls = 0_usize;
-    let mut repairing_generator = |_prompt: &str, _system: &str| {
+    let mut repairing_generator = |_prompt: &str, _system: &str, _tier: PromptTier| {
         calls += 1;
         Some("Repaired prose.".to_string())
     };
@@ -209,7 +210,8 @@ fn interrupted_run_resumes_from_persisted_docs() {
 
     // Run 1 dies before any module doc lands: every file doc must already be
     // on disk with a matching meta entry, because the sink flushes per doc.
-    let mut first_generator = |_prompt: &str, _system: &str| Some("Generated prose.".to_string());
+    let mut first_generator =
+        |_prompt: &str, _system: &str, _tier: PromptTier| Some("Generated prose.".to_string());
     let mut generate = Some::<&mut TextGenerator<'_>>(&mut first_generator);
     let mut progress = CodewikiProgress::silent();
     let mut sink = DocSink::open(project.path(), &out_dir, "symbols").expect("sink opens");
@@ -242,7 +244,7 @@ fn interrupted_run_resumes_from_persisted_docs() {
     // Run 2 resumes: persisted file docs are reused without symbol or file
     // generation calls, and only the missing aggregates are generated.
     let mut systems = Vec::new();
-    let mut second_generator = |_prompt: &str, system: &str| {
+    let mut second_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
         systems.push(system.to_string());
         Some("Recovered prose.".to_string())
     };
@@ -286,7 +288,8 @@ fn metas_without_recorded_summaries_rewrite_once_to_backfill() {
 
     // Simulate a meta written before summaries existed (#681): same pages on
     // disk, healthy entries, but nothing recorded to reuse.
-    let mut first_generator = |_prompt: &str, _system: &str| Some("Generated prose.".to_string());
+    let mut first_generator =
+        |_prompt: &str, _system: &str, _tier: PromptTier| Some("Generated prose.".to_string());
     let mut progress = CodewikiProgress::silent();
     let mut first = generate_hierarchical_docs_with_progress(
         &input,
@@ -301,7 +304,7 @@ fn metas_without_recorded_summaries_rewrite_once_to_backfill() {
         .expect("legacy-shaped write");
 
     let mut calls = 0_usize;
-    let mut second_generator = |_prompt: &str, _system: &str| {
+    let mut second_generator = |_prompt: &str, _system: &str, _tier: PromptTier| {
         calls += 1;
         Some("Backfilled prose.".to_string())
     };
@@ -329,7 +332,7 @@ fn metas_without_recorded_summaries_rewrite_once_to_backfill() {
     assert!(changed.contains(&"code/modules/src.md".to_string()));
 
     let mut third_calls = 0_usize;
-    let mut third_generator = |_prompt: &str, _system: &str| {
+    let mut third_generator = |_prompt: &str, _system: &str, _tier: PromptTier| {
         third_calls += 1;
         Some("Third prose.".to_string())
     };
@@ -353,7 +356,8 @@ fn missing_page_on_disk_regenerates_that_doc() {
     let (project, input) = reuse_project();
     let out_dir = project.path().join("codewiki");
 
-    let mut first_generator = |_prompt: &str, _system: &str| Some("Generated prose.".to_string());
+    let mut first_generator =
+        |_prompt: &str, _system: &str, _tier: PromptTier| Some("Generated prose.".to_string());
     let mut progress = CodewikiProgress::silent();
     let first = generate_hierarchical_docs_with_progress(
         &input,
@@ -367,7 +371,7 @@ fn missing_page_on_disk_regenerates_that_doc() {
     std::fs::remove_file(out_dir.join("code/modules/src/nested.md")).expect("drop module page");
 
     let mut module_prompts = Vec::new();
-    let mut second_generator = |prompt: &str, system: &str| {
+    let mut second_generator = |prompt: &str, system: &str, _tier: PromptTier| {
         if system == prompts::MODULE_SYSTEM {
             module_prompts.push(prompt.to_string());
         }

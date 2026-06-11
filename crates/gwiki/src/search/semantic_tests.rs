@@ -319,6 +319,7 @@ fn test_ai_context() -> AiContext {
         task: None,
         language: None,
         target_lang: None,
+        profile: None,
     };
 
     AiContext {

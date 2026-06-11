@@ -108,6 +108,7 @@ pub(crate) fn build_module_docs(
                         &prompt_component_ids,
                     ),
                     prompts::MODULE_SYSTEM,
+                    PromptTier::Aggregate,
                 )
                 .unwrap_or_record(fallback, &mut degraded);
                 let summary = ground_text(

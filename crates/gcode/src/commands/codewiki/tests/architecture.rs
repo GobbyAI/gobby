@@ -59,7 +59,7 @@ fn codewiki_architecture_overview_page_uses_subsystems_and_degradation_metadata(
 
     // A generator that attempts and fails marks model degradation; a missing
     // generator (AI off) is structural by intent and records nothing.
-    let mut failing_generator = |_prompt: &str, _system: &str| None;
+    let mut failing_generator = |_prompt: &str, _system: &str, _tier: PromptTier| None;
     let docs = generate_hierarchical_docs(&input, Some(&mut failing_generator));
     let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
     let rendered = docs_by_path
@@ -119,7 +119,7 @@ fn architecture_prompt_formats_component_labels_with_raw_ids() {
     };
     let mut architecture_prompts = Vec::new();
     {
-        let mut generator = |prompt: &str, system: &str| {
+        let mut generator = |prompt: &str, system: &str, _tier: PromptTier| {
             if system == prompts::ARCHITECTURE_SYSTEM {
                 architecture_prompts.push(prompt.to_string());
             }

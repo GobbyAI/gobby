@@ -328,6 +328,10 @@ pub(crate) enum Command {
         /// summaries), symbols (+ one call per symbol — expensive on large repos)
         #[arg(long, value_enum, default_value_t = AiDepthArg::Files)]
         ai_depth: AiDepthArg,
+        /// Daemon feature profile for aggregate docs (architecture/modules/repo)
+        /// [default: feature_mid]
+        #[arg(long, value_name = "PROFILE")]
+        ai_aggregate_profile: Option<String>,
         /// Maximum graph edges to fetch from FalkorDB
         #[arg(long, default_value_t = DEFAULT_CODEWIKI_GRAPH_EDGE_LIMIT, value_parser = positive_usize)]
         edge_limit: usize,

@@ -470,6 +470,7 @@ fn run() -> anyhow::Result<()> {
             scope,
             ai,
             ai_depth,
+            ai_aggregate_profile,
             edge_limit,
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
@@ -480,6 +481,7 @@ fn run() -> anyhow::Result<()> {
                 commands::codewiki::CodewikiAiOptions {
                     routing: ai.map(AiRouteArg::into),
                     depth: ai_depth.into(),
+                    aggregate_profile: ai_aggregate_profile,
                 },
                 edge_limit,
                 format,

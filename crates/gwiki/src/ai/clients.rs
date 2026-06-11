@@ -479,6 +479,7 @@ mod tests {
             task: None,
             language: None,
             target_lang: None,
+            profile: None,
         }
     }
 }

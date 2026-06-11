@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
-use gobby_core::ai::{daemon::generate_via_daemon, effective_route, text::generate_text};
+use gobby_core::ai::{
+    daemon::generate_via_daemon_with_max_tokens, effective_route, text::generate_text,
+};
 use gobby_core::ai_context::{AiConfigSource, AiContext, AiContextOptions, PostgresAiConfigSource};
 use gobby_core::config::{AiCapability, AiRouting};
 use serde::{Deserialize, Serialize};
@@ -387,7 +389,23 @@ pub(crate) struct CodewikiSymbolSnapshot {
     line_start: usize,
 }
 
-pub type TextGenerator<'a> = dyn FnMut(&str, &str) -> Option<String> + 'a;
+pub type TextGenerator<'a> = dyn FnMut(&str, &str, PromptTier) -> Option<String> + 'a;
+
+/// Default daemon feature profile for aggregate (module/repo/architecture)
+/// prose, which synthesizes 10k+-token grounded prompts; file and symbol
+/// docs stay on the daemon's default low-tier profile.
+pub(crate) const DEFAULT_AGGREGATE_PROFILE: &str = "feature_mid";
+
+/// Weight tier of one codewiki generation call. Aggregate docs roll up many
+/// child summaries into one long grounded synthesis and route to a heavier
+/// daemon profile; standard calls (file summaries, symbol purposes) are
+/// high-volume and stay on the default profile.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PromptTier {
+    #[default]
+    Standard,
+    Aggregate,
+}
 
 /// How deep AI prose generation reaches. Deeper tiers include shallower ones;
 /// gated tiers fall back to structural summaries.
@@ -420,10 +438,13 @@ impl AiDepth {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct CodewikiAiOptions {
     pub routing: Option<AiRouting>,
     pub depth: AiDepth,
+    /// Daemon feature profile for aggregate docs; `None` means
+    /// [`DEFAULT_AGGREGATE_PROFILE`].
+    pub aggregate_profile: Option<String>,
 }
 
 impl SourceSpan {
@@ -498,7 +519,7 @@ pub fn run(
         graph_availability: graph.availability,
         symbols,
     };
-    let mut generator = resolve_text_generator(ctx, ai.routing);
+    let mut generator = resolve_text_generator(ctx, &ai);
     let ai_enabled = generator.is_some();
     let ai_mode = if ai_enabled {
         ai_depth.mode_label()

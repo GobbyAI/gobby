@@ -24,7 +24,7 @@ fn depth_probe_input() -> CodewikiInput {
 fn generation_systems_at_depth(ai_depth: AiDepth) -> Vec<String> {
     let input = depth_probe_input();
     let mut systems = Vec::new();
-    let mut generator = |_prompt: &str, system: &str| {
+    let mut generator = |_prompt: &str, system: &str, _tier: PromptTier| {
         systems.push(system.to_string());
         None
     };
@@ -62,6 +62,52 @@ fn ai_depth_symbols_generates_symbol_purposes() {
     let systems = generation_systems_at_depth(AiDepth::Symbols);
     assert!(systems.iter().any(|s| s == prompts::SYMBOL_SYSTEM));
     assert!(systems.iter().any(|s| s == prompts::FILE_SYSTEM));
+}
+
+#[test]
+fn aggregate_docs_use_heavier_prompt_tier_than_file_docs() {
+    let input = depth_probe_input();
+    let mut tiers = Vec::new();
+    let mut generator = |_prompt: &str, system: &str, tier: PromptTier| {
+        tiers.push((system.to_string(), tier));
+        None
+    };
+    let mut progress = CodewikiProgress::silent();
+    let docs = generate_hierarchical_docs_with_progress(
+        &input,
+        Some(&mut generator),
+        AiDepth::Symbols,
+        &mut progress,
+    );
+    assert!(!docs.is_empty());
+
+    let tier_for = |target: &str| {
+        tiers
+            .iter()
+            .filter(|(system, _)| system == target)
+            .map(|(_, tier)| *tier)
+            .collect::<Vec<_>>()
+    };
+    for aggregate in [
+        prompts::MODULE_SYSTEM,
+        prompts::REPO_SYSTEM,
+        prompts::ARCHITECTURE_SYSTEM,
+    ] {
+        let seen = tier_for(aggregate);
+        assert!(!seen.is_empty(), "{aggregate} generates");
+        assert!(
+            seen.iter().all(|tier| *tier == PromptTier::Aggregate),
+            "{aggregate} routes to the aggregate tier"
+        );
+    }
+    for standard in [prompts::FILE_SYSTEM, prompts::SYMBOL_SYSTEM] {
+        let seen = tier_for(standard);
+        assert!(!seen.is_empty(), "{standard} generates");
+        assert!(
+            seen.iter().all(|tier| *tier == PromptTier::Standard),
+            "{standard} stays on the standard tier"
+        );
+    }
 }
 
 #[test]
@@ -119,7 +165,7 @@ fn generation_failure_records_degradation_in_frontmatter_and_meta() {
     .expect("write api");
     let out_dir = project.path().join("codewiki");
 
-    let mut failing_generator = |_prompt: &str, _system: &str| None;
+    let mut failing_generator = |_prompt: &str, _system: &str, _tier: PromptTier| None;
     let mut progress = CodewikiProgress::silent();
     let docs = generate_hierarchical_docs_with_progress(
         &depth_probe_input(),
@@ -189,8 +235,9 @@ fn transient_generation_failure_retries_to_healthy_doc() {
             Ok("Generated prose.".to_string())
         }
     };
-    let mut generator =
-        |_prompt: &str, _system: &str| generate_with_bounded_retry(&mut flaky_transport).ok();
+    let mut generator = |_prompt: &str, _system: &str, _tier: PromptTier| {
+        generate_with_bounded_retry(&mut flaky_transport).ok()
+    };
 
     let mut progress = CodewikiProgress::silent();
     let docs = generate_hierarchical_docs_with_progress(

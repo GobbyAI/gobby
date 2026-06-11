@@ -393,6 +393,7 @@ pub(crate) fn build_repo_doc(
         generate,
         &prompts::repo_prompt(&module_summaries, &file_summaries),
         prompts::REPO_SYSTEM,
+        PromptTier::Aggregate,
     );
     let degraded = generation.failed();
     let summary = match generation {

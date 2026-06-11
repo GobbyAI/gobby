@@ -59,7 +59,7 @@ fn degraded_doc_is_rewritten_once_generation_succeeds() {
     };
 
     // Run 1: every generation fails, so the docs land degraded.
-    let mut failing = |_prompt: &str, _system: &str| None;
+    let mut failing = |_prompt: &str, _system: &str, _tier: PromptTier| None;
     let degraded_docs = build(Some(&mut failing));
     write_incremental_doc_set_with_snapshot(
         project.path(),
@@ -72,8 +72,9 @@ fn degraded_doc_is_rewritten_once_generation_succeeds() {
 
     // Run 2: generation succeeds and sources are unchanged — the recorded
     // degradation must force a rewrite where hash equality alone would skip.
-    let mut succeeding =
-        |_prompt: &str, _system: &str| Some("Healthy generated prose.".to_string());
+    let mut succeeding = |_prompt: &str, _system: &str, _tier: PromptTier| {
+        Some("Healthy generated prose.".to_string())
+    };
     let healthy_docs = build(Some(&mut succeeding));
     let repaired = write_incremental_doc_set_with_snapshot(
         project.path(),
@@ -100,7 +101,7 @@ fn degraded_doc_is_rewritten_once_generation_succeeds() {
 
     // Run 4: a later failed run must not displace healthy prose for
     // unchanged sources.
-    let mut failing_again = |_prompt: &str, _system: &str| None;
+    let mut failing_again = |_prompt: &str, _system: &str, _tier: PromptTier| None;
     let degraded_again = build(Some(&mut failing_again));
     let preserved = write_incremental_doc_set_with_snapshot(
         project.path(),

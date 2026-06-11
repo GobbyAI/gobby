@@ -23,7 +23,7 @@ fn codewiki_verbose_progress_captures_generation_order() {
         ],
     };
     let mut progress = CodewikiProgress::capture();
-    let mut generator = |prompt: &str, _system: &str| {
+    let mut generator = |prompt: &str, _system: &str, _tier: PromptTier| {
         if prompt.contains("src/api.rs") {
             Some("Documents API entry points [src/api.rs:1].".to_string())
         } else {
@@ -120,7 +120,7 @@ fn codewiki_verbose_progress_not_serialized_in_summary_json() {
 #[test]
 fn codewiki_verbose_progress_reflects_ai_depth_gating() {
     let mut progress = CodewikiProgress::capture();
-    let mut generator = |_prompt: &str, _system: &str| None;
+    let mut generator = |_prompt: &str, _system: &str, _tier: PromptTier| None;
     let docs = generate_hierarchical_docs_with_progress(
         &progress_input(),
         Some(&mut generator),
@@ -147,7 +147,7 @@ fn codewiki_verbose_progress_reflects_ai_depth_gating() {
     );
 
     let mut progress = CodewikiProgress::capture();
-    let mut generator = |_prompt: &str, _system: &str| None;
+    let mut generator = |_prompt: &str, _system: &str, _tier: PromptTier| None;
     let docs = generate_hierarchical_docs_with_progress(
         &progress_input(),
         Some(&mut generator),

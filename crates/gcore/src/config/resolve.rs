@@ -307,6 +307,12 @@ fn resolve_base_capability_binding(
             }
             _ => None,
         },
+        profile: match capability {
+            AiCapability::TextGenerate => {
+                resolve_ai_config_value(source, ai_keys::TEXT_GENERATE_PROFILE)
+            }
+            _ => None,
+        },
     }
 }
 
@@ -330,6 +336,7 @@ fn resolve_audio_translate_binding(source: &mut impl ConfigSource) -> Capability
         task: None,
         language: None,
         target_lang,
+        profile: None,
     }
 }
 

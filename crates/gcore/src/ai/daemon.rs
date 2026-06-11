@@ -140,14 +140,18 @@ pub fn generate_via_daemon(
     prompt: &str,
     system: Option<&str>,
 ) -> Result<TextResult, AiError> {
-    generate_via_daemon_with_max_tokens(cfg, prompt, system, None)
+    generate_via_daemon_with_max_tokens(cfg, prompt, system, None, None)
 }
 
+/// `profile` overrides the binding's configured daemon feature profile for
+/// this call; both are sent only when provider/model are unset (explicit
+/// provider/model > profile > daemon feature_low default).
 pub fn generate_via_daemon_with_max_tokens(
     cfg: &AiContext,
     prompt: &str,
     system: Option<&str>,
     max_tokens: Option<usize>,
+    profile: Option<&str>,
 ) -> Result<TextResult, AiError> {
     let capability = AiCapability::TextGenerate;
     let binding = cfg.binding(capability);
@@ -161,6 +165,7 @@ pub fn generate_via_daemon_with_max_tokens(
         binding.model.as_deref(),
         cfg.project_id.as_deref(),
         max_tokens,
+        profile.or(binding.profile.as_deref()),
     );
     let _permit = cfg.limiter.acquire();
 
@@ -306,6 +311,7 @@ fn text_request_body(
     model: Option<&str>,
     project_id: Option<&str>,
     max_tokens: Option<usize>,
+    profile: Option<&str>,
 ) -> Value {
     let mut body = Map::new();
     let provider = non_empty(provider);
@@ -315,10 +321,8 @@ fn text_request_body(
     insert_optional(&mut body, "provider", provider);
     insert_optional(&mut body, "model", model);
     if provider.is_none() && model.is_none() {
-        body.insert(
-            "profile".to_string(),
-            Value::String(TEXT_GENERATE_DEFAULT_PROFILE.to_string()),
-        );
+        let profile = non_empty(profile).unwrap_or(TEXT_GENERATE_DEFAULT_PROFILE);
+        body.insert("profile".to_string(), Value::String(profile.to_string()));
     }
     insert_optional(&mut body, "project_id", project_id);
     if let Some(max_tokens) = max_tokens.filter(|value| *value > 0) {
@@ -442,9 +446,14 @@ mod tests {
         cfg.bindings.text_generate.provider = Some("local:lm-studio".to_string());
         cfg.bindings.text_generate.model = Some("qwen/qwen3.6-35b-a3b".to_string());
 
-        let result =
-            generate_via_daemon_with_max_tokens(&cfg, "Write a title", Some("Be brief"), Some(64))
-                .unwrap();
+        let result = generate_via_daemon_with_max_tokens(
+            &cfg,
+            "Write a title",
+            Some("Be brief"),
+            Some(64),
+            None,
+        )
+        .unwrap();
         let request = request.join().unwrap().unwrap();
         let body = request_body_json(&request);
 
@@ -499,6 +508,75 @@ mod tests {
         assert!(body.get("provider").is_none());
         assert!(body.get("model").is_none());
         assert_eq!(body["project_id"], "project-123");
+    }
+
+    #[test]
+    fn configured_binding_profile_replaces_feature_low_default() {
+        let (port, request) = spawn_server(r#"{"text":"ok"}"#);
+        let home = temp_home();
+        let _env = EnvGuard::set_home(home.path());
+        write_daemon_files(home.path(), port, "text-token");
+        let mut cfg = test_context(None);
+        cfg.bindings.text_generate.provider = None;
+        cfg.bindings.text_generate.model = None;
+        cfg.bindings.text_generate.profile = Some("feature_high".to_string());
+
+        generate_via_daemon(&cfg, "Configured profile", None).unwrap();
+        let request = request.join().unwrap().unwrap();
+        let body = request_body_json(&request);
+
+        assert_eq!(body["profile"], "feature_high");
+        assert!(body.get("provider").is_none());
+        assert!(body.get("model").is_none());
+    }
+
+    #[test]
+    fn per_call_profile_overrides_configured_binding_profile() {
+        let (port, request) = spawn_server(r#"{"text":"ok"}"#);
+        let home = temp_home();
+        let _env = EnvGuard::set_home(home.path());
+        write_daemon_files(home.path(), port, "text-token");
+        let mut cfg = test_context(None);
+        cfg.bindings.text_generate.provider = None;
+        cfg.bindings.text_generate.model = None;
+        cfg.bindings.text_generate.profile = Some("feature_high".to_string());
+
+        generate_via_daemon_with_max_tokens(
+            &cfg,
+            "Override profile",
+            None,
+            None,
+            Some("feature_mid"),
+        )
+        .unwrap();
+        let request = request.join().unwrap().unwrap();
+        let body = request_body_json(&request);
+
+        assert_eq!(body["profile"], "feature_mid");
+    }
+
+    #[test]
+    fn explicit_provider_model_suppresses_profile_override() {
+        let (port, request) = spawn_server(r#"{"text":"ok"}"#);
+        let home = temp_home();
+        let _env = EnvGuard::set_home(home.path());
+        write_daemon_files(home.path(), port, "text-token");
+        let cfg = test_context(None);
+
+        generate_via_daemon_with_max_tokens(
+            &cfg,
+            "Explicit routing",
+            None,
+            None,
+            Some("feature_mid"),
+        )
+        .unwrap();
+        let request = request.join().unwrap().unwrap();
+        let body = request_body_json(&request);
+
+        assert_eq!(body["provider"], "daemon-provider");
+        assert_eq!(body["model"], "daemon-model");
+        assert!(body.get("profile").is_none());
     }
 
     #[test]
@@ -746,6 +824,7 @@ mod tests {
             task: None,
             language: None,
             target_lang: None,
+            profile: None,
         }
     }
 

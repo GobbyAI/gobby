@@ -214,6 +214,9 @@ pub struct CapabilityBinding {
     pub task: Option<String>,
     pub language: Option<String>,
     pub target_lang: Option<String>,
+    /// Daemon feature profile (text_generate only); ignored when an explicit
+    /// provider/model pair routes the call.
+    pub profile: Option<String>,
 }
 
 /// Shared AI tuning values.
@@ -287,6 +290,7 @@ pub mod ai_keys {
     pub const TEXT_GENERATE_API_KEY: &str = "ai.text_generate.api_key";
     pub const TEXT_GENERATE_MODEL: &str = "ai.text_generate.model";
     pub const TEXT_GENERATE_PROVIDER: &str = "ai.text_generate.provider";
+    pub const TEXT_GENERATE_PROFILE: &str = "ai.text_generate.profile";
 
     const ALL_KEYS: &[&str] = &[
         ROUTING,
@@ -328,6 +332,7 @@ pub mod ai_keys {
         TEXT_GENERATE_API_KEY,
         TEXT_GENERATE_MODEL,
         TEXT_GENERATE_PROVIDER,
+        TEXT_GENERATE_PROFILE,
     ];
 
     pub fn all() -> &'static [&'static str] {

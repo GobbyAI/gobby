@@ -34,19 +34,33 @@ struct FrontmatterSourceFile<'a> {
 
 pub(crate) fn resolve_text_generator(
     ctx: &Context,
-    ai: Option<AiRouting>,
+    ai: &CodewikiAiOptions,
 ) -> Option<Box<TextGenerator<'static>>> {
-    let ai_context = resolve_ai_context(ctx, ai).ok()?;
+    let ai_context = resolve_ai_context(ctx, ai.routing).ok()?;
     let route = effective_route(&ai_context, AiCapability::TextGenerate);
     if matches!(route, AiRouting::Off | AiRouting::Auto) {
         return None;
     }
 
+    let aggregate_profile = ai
+        .aggregate_profile
+        .clone()
+        .unwrap_or_else(|| DEFAULT_AGGREGATE_PROFILE.to_string());
     let mut warned = false;
     let quiet = ctx.quiet;
-    Some(Box::new(move |prompt, system| {
+    Some(Box::new(move |prompt, system, tier| {
+        let profile = match tier {
+            PromptTier::Aggregate => Some(aggregate_profile.as_str()),
+            PromptTier::Standard => None,
+        };
         let result = generate_with_bounded_retry(|| match route {
-            AiRouting::Daemon => generate_via_daemon(&ai_context, prompt, Some(system)),
+            AiRouting::Daemon => generate_via_daemon_with_max_tokens(
+                &ai_context,
+                prompt,
+                Some(system),
+                None,
+                profile,
+            ),
             AiRouting::Direct => generate_text(&ai_context, prompt, Some(system)),
             AiRouting::Off | AiRouting::Auto => {
                 unreachable!("non-generating routes returned above")
@@ -149,10 +163,11 @@ pub(crate) fn maybe_generate(
     generate: &mut Option<&mut TextGenerator<'_>>,
     prompt: &str,
     system: &str,
+    tier: PromptTier,
 ) -> Generation {
     match generate.as_deref_mut() {
         None => Generation::Skipped,
-        Some(generate) => match generate(prompt, system) {
+        Some(generate) => match generate(prompt, system, tier) {
             Some(text) => Generation::Generated(text),
             None => Generation::Failed,
         },

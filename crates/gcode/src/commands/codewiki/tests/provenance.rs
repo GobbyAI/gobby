@@ -148,7 +148,7 @@ fn citations_validated_against_spans() {
             ),
         ],
     };
-    let mut generator = |prompt: &str, _system: &str| {
+    let mut generator = |prompt: &str, _system: &str, _tier: PromptTier| {
         if prompt.contains("Client") {
             Some("Builds client state [src/lib.rs:999].".to_string())
         } else if prompt.contains("connect") {

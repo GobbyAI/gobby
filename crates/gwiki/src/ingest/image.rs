@@ -353,6 +353,7 @@ mod tests {
             task: None,
             language: None,
             target_lang: None,
+            profile: None,
         };
 
         gobby_core::ai_context::AiContext {

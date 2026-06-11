@@ -64,6 +64,7 @@ impl ResearchModel for GcoreResearchModel {
                 &prompt,
                 Some(model_system_prompt()),
                 Some(max_tokens),
+                None,
             ),
             AiRouting::Off => {
                 return self

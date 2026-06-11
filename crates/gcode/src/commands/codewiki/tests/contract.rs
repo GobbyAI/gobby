@@ -112,7 +112,7 @@ fn repo_structural_fallback_omits_marker_wall_but_generated_text_stays_grounded(
     assert!(fallback_overview.contains("Repository code documentation covers 6 files"));
     assert_eq!(inline_marker_count(fallback_overview), 0);
 
-    let mut generator = |_prompt: &str, system: &str| {
+    let mut generator = |_prompt: &str, system: &str, _tier: PromptTier| {
         if system == prompts::REPO_SYSTEM {
             Some("Generated repository overview.".to_string())
         } else {

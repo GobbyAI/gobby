@@ -67,6 +67,7 @@ pub(crate) fn build_architecture_doc(
                 &prompt_component_ids,
             ),
             prompts::ARCHITECTURE_SYSTEM,
+            PromptTier::Aggregate,
         );
         let responsibility = match generated {
             Generation::Generated(generated) => ground_text(
