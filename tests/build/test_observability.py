@@ -235,6 +235,70 @@ def test_build_stop_target_disables_status_and_dispatch_for_tree(temp_db) -> Non
     assert explanation["reason"] == "automation_disabled"
 
 
+@pytest.mark.parametrize("action", ["stop", "resume", "clean", "restart"])
+def test_build_control_targets_reject_foreign_project_uuid(temp_db, action: str) -> None:
+    from gobby.build.controls import (
+        build_clean_target,
+        build_restart_target,
+        build_resume_target,
+        build_stop_target,
+    )
+    from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager
+
+    local_project_id = _project(temp_db, "observability-stop-local")
+    foreign_project_id = _project(temp_db, "observability-stop-foreign")
+    manager = LocalTaskManager(temp_db)
+    artifact_manager = TaskArtifactManager(temp_db)
+    foreign_task = manager.create_task(project_id=foreign_project_id, title="Foreign")
+    manager.initialize_task_manifest(foreign_task.id, stage_names=["development"])
+    manager.stage_states.start_stage(foreign_task.id, "development", by_session_id="dispatcher")
+    foreign_task = manager.update_task(foreign_task.id, allow_automation=True)
+    artifact_manager.set_artifacts_atomic(
+        foreign_task.id,
+        worktree_path="/tmp/foreign-worktree",
+        worktree_id="wt-foreign",
+        base_commit_sha="abc123",
+        target_branch="foreign-branch",
+    )
+
+    with pytest.raises(ValueError, match="task ref not found"):
+        if action == "stop":
+            asyncio.run(build_stop_target(foreign_task.id, db=temp_db, project_id=local_project_id))
+        elif action == "resume":
+            asyncio.run(
+                build_resume_target(foreign_task.id, db=temp_db, project_id=local_project_id)
+            )
+        elif action == "clean":
+            asyncio.run(
+                build_clean_target(
+                    foreign_task.id,
+                    db=temp_db,
+                    project_id=local_project_id,
+                    yes=True,
+                )
+            )
+        else:
+            asyncio.run(
+                build_restart_target(
+                    foreign_task.id,
+                    db=temp_db,
+                    project_id=local_project_id,
+                    yes=True,
+                )
+            )
+
+    assert manager.get_task(foreign_task.id).allow_automation is True
+    stage = manager.stage_states.current_stage(foreign_task.id)
+    assert stage is not None
+    assert stage.stage_name == "development"
+    assert stage.state == "in_progress"
+    artifacts = artifact_manager.get_artifacts(foreign_task.id)
+    assert artifacts.worktree_path == "/tmp/foreign-worktree"
+    assert artifacts.worktree_id == "wt-foreign"
+    assert artifacts.base_commit_sha == "abc123"
+    assert artifacts.target_branch == "foreign-branch"
+
+
 def test_build_stop_target_preserves_review_approved_stage(temp_db) -> None:
     from gobby.build.controls import build_stop_target
     from gobby.build.observability import explain_dispatch
