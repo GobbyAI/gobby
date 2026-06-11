@@ -25,7 +25,7 @@ from gobby.ai import (
     build_daemon_text_generation_service,
 )
 from gobby.config.app import DaemonConfig
-from gobby.llm.base import LLMTextResult
+from gobby.llm.base import LLMProviderCancellation, LLMTextResult
 
 pytestmark = pytest.mark.unit
 
@@ -333,6 +333,43 @@ async def test_text_generation_service_falls_back_across_profile_candidates() ->
     assert result.model == "haiku"
     assert local.requests[0].model == "qwen-local"
     assert claude.requests[0].model == "haiku"
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_propagates_provider_cancellation() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                available=True,
+                models=("haiku",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.4-mini",),
+            ),
+        ]
+    )
+    claude = ProviderFailureAdapter(LLMProviderCancellation("shutdown"))
+    codex = RecordingAdapter("codex")
+    service = TextGenerationService(registry, {"claude": claude, "codex": codex})
+
+    with pytest.raises(LLMProviderCancellation, match="shutdown"):
+        await service.generate_result(
+            TextGenerationRequest(
+                prompt="summarize",
+                profile="feature_low",
+                candidates=("claude/haiku", "codex/gpt-5.4-mini"),
+            )
+        )
+
+    assert claude.requests[0].model == "haiku"
+    assert codex.requests == []
 
 
 @pytest.mark.asyncio
@@ -809,6 +846,43 @@ async def test_text_generation_service_json_candidates_do_not_fallback_to_profil
                 profile="feature_low",
                 candidates=("claude/haiku",),
                 caller="session_summary",
+            )
+        )
+
+    assert claude.requests[0].model == "haiku"
+    assert codex.requests == []
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_json_propagates_provider_cancellation() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                available=True,
+                models=("haiku",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.4-mini",),
+            ),
+        ]
+    )
+    claude = ProviderFailureAdapter(LLMProviderCancellation("shutdown"))
+    codex = JSONAdapter("codex")
+    service = TextGenerationService(registry, {"claude": claude, "codex": codex})
+
+    with pytest.raises(LLMProviderCancellation, match="shutdown"):
+        await service.generate_json(
+            TextGenerationRequest(
+                prompt="classify",
+                profile="feature_low",
+                candidates=("claude/haiku", "codex/gpt-5.4-mini"),
             )
         )
 

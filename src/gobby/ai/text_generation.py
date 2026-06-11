@@ -26,6 +26,7 @@ from gobby.config.feature_base import (
     normalize_feature_candidate,
     parse_feature_candidate,
 )
+from gobby.llm.base import LLMProviderCancellation
 
 if TYPE_CHECKING:
     from gobby.llm.base import LLMTextResult
@@ -208,6 +209,8 @@ class TextGenerationService:
                     ),
                     None,
                 )
+            except LLMProviderCancellation:
+                raise
             except Exception as exc:
                 last_error = exc
                 candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
@@ -261,6 +264,8 @@ class TextGenerationService:
                     json_parse_outcome=parse_outcome,
                 )
                 return result, None
+            except LLMProviderCancellation:
+                raise
             except Exception as exc:
                 last_error = exc
                 candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
