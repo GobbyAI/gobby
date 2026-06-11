@@ -6,14 +6,16 @@ import json
 import logging
 from typing import Any
 
-from gobby.config.feature_base import FeatureProfile
+from gobby.config.feature_base import FeatureProfile, normalize_feature_candidate
 
 logger = logging.getLogger(__name__)
 
-_OLD_CLAUDE_ONLY_CANDIDATES: dict[FeatureProfile, list[str]] = {
-    FeatureProfile.LOW: ["claude/haiku"],
-    FeatureProfile.MID: ["claude/sonnet"],
-    FeatureProfile.HIGH: ["claude/opus"],
+_STALE_CANDIDATE_ROW_SOURCES = ("defaults", "one-off-0.5.0-migration")
+
+_OLD_CLAUDE_ONLY_CANDIDATES: dict[FeatureProfile, tuple[str, ...]] = {
+    FeatureProfile.LOW: ("claude/haiku",),
+    FeatureProfile.MID: ("claude/sonnet",),
+    FeatureProfile.HIGH: ("claude/opus",),
 }
 
 _FEATURE_CANDIDATE_PROFILES: dict[str, FeatureProfile] = {
@@ -28,14 +30,16 @@ _FEATURE_CANDIDATE_PROFILES: dict[str, FeatureProfile] = {
     "skill_description.candidates": FeatureProfile.LOW,
     "merge_resolution.candidates": FeatureProfile.MID,
     "gobby-tasks.expansion.candidates": FeatureProfile.HIGH,
+    "gobby_tasks.expansion.candidates": FeatureProfile.HIGH,
     "gobby-tasks.validation.candidates": FeatureProfile.MID,
+    "gobby_tasks.validation.candidates": FeatureProfile.MID,
     "chat.candidates": FeatureProfile.HIGH,
     "code_index.summary_candidates": FeatureProfile.LOW,
 }
 
 
 def delete_stale_default_feature_candidate_rows(config_store: Any | None) -> None:
-    """Delete old defaults-seeded Claude-only candidates so profile defaults apply."""
+    """Delete old seeded Claude-only candidates so profile defaults apply."""
     db = getattr(config_store, "db", None)
     if db is None:
         return
@@ -45,14 +49,14 @@ def delete_stale_default_feature_candidate_rows(config_store: Any | None) -> Non
 
     try:
         rows = fetchall(
-            "SELECT key, value FROM config_store WHERE source = %s",
-            ("defaults",),
+            "SELECT key, value FROM config_store WHERE source IN (%s, %s)",
+            _STALE_CANDIDATE_ROW_SOURCES,
         )
     except Exception as exc:
-        logger.debug("Failed to inspect defaults-seeded feature candidate rows: %s", exc)
+        logger.debug("Failed to inspect seeded feature candidate rows: %s", exc)
         return
 
-    stale_keys = sorted(key for row in rows if (key := _get_stale_candidate_key(row)) is not None)
+    stale_keys = sorted({key for row in rows if (key := _get_stale_candidate_key(row)) is not None})
     if not stale_keys:
         return
 
@@ -60,7 +64,7 @@ def delete_stale_default_feature_candidate_rows(config_store: Any | None) -> Non
     if not callable(delete):
         joined = ", ".join(stale_keys)
         raise ValueError(
-            "Stale defaults-seeded Claude-only feature candidate rows found in "
+            "Stale seeded Claude-only feature candidate rows found in "
             f"config_store but cannot be deleted: {joined}."
         )
 
@@ -72,14 +76,13 @@ def delete_stale_default_feature_candidate_rows(config_store: Any | None) -> Non
         logger.debug("Failed to delete stale feature candidate keys %s: %s", stale_keys, exc)
         joined = ", ".join(stale_keys)
         raise ValueError(
-            "Failed to delete stale defaults-seeded Claude-only feature candidate rows "
+            "Failed to delete stale seeded Claude-only feature candidate rows "
             f"from config_store: {joined}."
         ) from exc
 
     joined = ", ".join(stale_keys)
     logger.warning(
-        "Deleted stale defaults-seeded Claude-only feature candidate rows so profile "
-        "defaults apply: %s",
+        "Deleted stale seeded Claude-only feature candidate rows so profile defaults apply: %s",
         joined,
     )
 
@@ -88,9 +91,22 @@ def _get_stale_candidate_key(row: Any) -> str | None:
     key = _row_value(row, "key", 0)
     if not isinstance(key, str) or key not in _FEATURE_CANDIDATE_PROFILES:
         return None
-    value = _decoded_value(_row_value(row, "value", 1))
+    value = _normalized_candidate_list(_decoded_value(_row_value(row, "value", 1)))
+    if value is None:
+        return None
     expected = _OLD_CLAUDE_ONLY_CANDIDATES[_FEATURE_CANDIDATE_PROFILES[key]]
-    return key if value == expected else None
+    return key if tuple(value) == expected else None
+
+
+def _normalized_candidate_list(value: Any) -> list[str] | None:
+    if not isinstance(value, (list, tuple)):
+        return None
+    normalized = []
+    for candidate in value:
+        if not isinstance(candidate, str):
+            return None
+        normalized.append(normalize_feature_candidate(candidate))
+    return normalized
 
 
 def _row_value(row: Any, key: str, index: int) -> Any:

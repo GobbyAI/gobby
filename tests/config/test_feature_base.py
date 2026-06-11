@@ -86,6 +86,7 @@ class TestFeatureDefaultConfig:
             ("claude/claude-haiku-4-5-20251001", "claude/haiku"),
             ("claude/claude-sonnet-4-5", "claude/sonnet"),
             ("claude/claude-opus-4-1", "claude/opus"),
+            ("claude/claude-opus-4-5", "claude/opus"),
             ("claude/fable", "claude/fable"),
             ("claude/claude-fable-5", "claude/fable"),
             ("codex/claude-haiku-4-5", "codex/claude-haiku-4-5"),

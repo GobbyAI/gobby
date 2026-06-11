@@ -703,32 +703,137 @@ class TestLoadConfig:
 
         assert config.session_summary.candidates == ["claude/haiku", "claude/sonnet"]
 
-    def test_load_config_deletes_defaults_seeded_claude_only_feature_candidates(
+    def test_load_config_deletes_seeded_claude_only_feature_candidates(
         self, temp_dir: Path
     ) -> None:
-        """Old defaults-source Claude-only candidate rows fall through to profiles."""
+        """Old seeded Claude-only candidate rows fall through to profiles."""
+
+        values = {
+            "digest.candidates": ["claude/claude-haiku-4-5"],
+            "memory.kg.candidates": ["claude/haiku"],
+            "tool_summarizer.candidates": ["claude/haiku"],
+            "import_mcp_server.candidates": ["claude/haiku"],
+            "skill_description.candidates": ["claude/haiku"],
+            "code_index.summary_candidates": ["claude/haiku"],
+            "recommend_tools.candidates": ["claude/sonnet"],
+            "merge_resolution.candidates": ["claude/claude-sonnet-4-5"],
+            "gobby-tasks.validation.candidates": ["claude/sonnet"],
+            "chat.candidates": ["claude/opus"],
+            "gobby_tasks.expansion.candidates": ["claude/claude-opus-4-5"],
+        }
+        one_off_keys = {
+            "digest.candidates",
+            "merge_resolution.candidates",
+            "gobby_tasks.expansion.candidates",
+        }
+        expected_deleted = sorted(values)
+        deleted: list[str] = []
+        rows = [
+            {
+                "key": key,
+                "value": value if key == "gobby_tasks.expansion.candidates" else json.dumps(value),
+                "source": "one-off-0.5.0-migration" if key in one_off_keys else "defaults",
+            }
+            for key, value in values.items()
+        ]
+
+        class DummyDB:
+            def __init__(self) -> None:
+                self.params: tuple[object, ...] | None = None
+
+            def fetchall(self, _query: str, _params: tuple[object, ...]) -> list[dict[str, object]]:
+                self.params = _params
+                sources = set(_params)
+                return [row for row in rows if row["source"] in sources]
+
+            def transaction(self) -> AbstractContextManager[None]:
+                return nullcontext()
+
+        class DummyConfigStore:
+            def __init__(self) -> None:
+                self.db = DummyDB()
+
+            def get_all(self) -> dict[str, object]:
+                return dict(values)
+
+            def delete(self, key: str) -> bool:
+                deleted.append(key)
+                return values.pop(key, None) is not None
+
+        store = DummyConfigStore()
+
+        config = load_config(
+            config_file=str(temp_dir / "bootstrap.yaml"),
+            config_store=store,
+        )
+
+        low_candidates = ["codex/gpt-5.4-mini", "claude/haiku"]
+        mid_candidates = ["codex/gpt-5.3-codex-spark", "claude/sonnet"]
+        high_candidates = ["codex/gpt-5.5", "claude/opus"]
+
+        assert store.db.params == ("defaults", "one-off-0.5.0-migration")
+        assert deleted == expected_deleted
+        assert config.digest.candidates == low_candidates
+        assert config.memory.kg.candidates == low_candidates
+        assert config.tool_summarizer.candidates == low_candidates
+        assert config.import_mcp_server.candidates == low_candidates
+        assert config.skill_description.candidates == low_candidates
+        assert config.code_index.summary_candidates == low_candidates
+        assert config.recommend_tools.candidates == mid_candidates
+        assert config.merge_resolution.candidates == mid_candidates
+        assert config.gobby_tasks.validation.candidates == mid_candidates
+        assert config.chat.candidates == high_candidates
+        assert config.gobby_tasks.expansion.profile == FeatureProfile.HIGH
+        assert config.gobby_tasks.expansion.candidates == high_candidates
+
+    def test_load_config_preserves_user_and_non_legacy_feature_candidates(
+        self, temp_dir: Path
+    ) -> None:
+        """User-source and non-Claude-only rows remain explicit overrides."""
 
         values = {
             "session_summary.candidates": ["claude/haiku"],
-            "gobby-tasks.validation.candidates": ["claude/sonnet"],
+            "digest.candidates": ["claude/haiku", "codex/gpt-5.4-mini"],
+            "chat.candidates": ["claude/fable"],
+            "tool_summarizer.candidates": [
+                "claude/claude-haiku-4-5",
+                "local:lm-studio/google/gemma-4-26b-a4b-qat",
+            ],
+            "gobby_tasks.expansion.profile": "feature_high",
         }
+        rows = [
+            {
+                "key": "session_summary.candidates",
+                "value": json.dumps(values["session_summary.candidates"]),
+                "source": "user",
+            },
+            {
+                "key": "digest.candidates",
+                "value": json.dumps(values["digest.candidates"]),
+                "source": "defaults",
+            },
+            {
+                "key": "chat.candidates",
+                "value": json.dumps(values["chat.candidates"]),
+                "source": "defaults",
+            },
+            {
+                "key": "tool_summarizer.candidates",
+                "value": json.dumps(values["tool_summarizer.candidates"]),
+                "source": "one-off-0.5.0-migration",
+            },
+            {
+                "key": "gobby_tasks.expansion.profile",
+                "value": json.dumps(values["gobby_tasks.expansion.profile"]),
+                "source": "one-off-0.5.0-migration",
+            },
+        ]
         deleted: list[str] = []
 
         class DummyDB:
             def fetchall(self, _query: str, _params: tuple[object, ...]) -> list[dict[str, object]]:
-                return [
-                    {
-                        "key": "session_summary.candidates",
-                        "value": json.dumps(["claude/haiku"]),
-                    },
-                    {
-                        "key": "gobby-tasks.validation.candidates",
-                        "value": json.dumps(["claude/sonnet"]),
-                    },
-                ]
-
-            def transaction(self) -> AbstractContextManager[None]:
-                return nullcontext()
+                sources = set(_params)
+                return [row for row in rows if row["source"] in sources]
 
         class DummyConfigStore:
             db = DummyDB()
@@ -745,31 +850,15 @@ class TestLoadConfig:
             config_store=DummyConfigStore(),
         )
 
-        assert deleted == ["gobby-tasks.validation.candidates", "session_summary.candidates"]
-        assert config.session_summary.candidates[0] == "codex/gpt-5.4-mini"
-        assert config.gobby_tasks.validation.candidates[0] == "codex/gpt-5.3-codex-spark"
-
-    def test_load_config_preserves_user_claude_only_feature_candidates(
-        self, temp_dir: Path
-    ) -> None:
-        """User-source Claude-only candidate rows remain explicit overrides."""
-
-        class DummyDB:
-            def fetchall(self, _query: str, _params: tuple[object, ...]) -> list[dict[str, object]]:
-                return []
-
-        class DummyConfigStore:
-            db = DummyDB()
-
-            def get_all(self) -> dict[str, object]:
-                return {"session_summary.candidates": ["claude/haiku"]}
-
-        config = load_config(
-            config_file=str(temp_dir / "bootstrap.yaml"),
-            config_store=DummyConfigStore(),
-        )
-
+        assert deleted == []
         assert config.session_summary.candidates == ["claude/haiku"]
+        assert config.digest.candidates == ["claude/haiku", "codex/gpt-5.4-mini"]
+        assert config.chat.candidates == ["claude/fable"]
+        assert config.tool_summarizer.candidates == [
+            "claude/haiku",
+            "local:lm-studio/google/gemma-4-26b-a4b-qat",
+        ]
+        assert config.gobby_tasks.expansion.profile == FeatureProfile.HIGH
 
     def test_ai_embeddings_normalized_at_load(self, temp_dir: Path) -> None:
         """Canonical DB embedding keys populate the runtime embeddings model."""
