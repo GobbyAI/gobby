@@ -116,6 +116,70 @@ async def test_resume_agent_run_persists_only_safe_cache_env(
 
 
 @pytest.mark.asyncio
+async def test_resume_agent_run_skips_started_side_effects_when_start_transition_is_stale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_run = AgentRun(
+        id="run-old",
+        parent_session_id="parent-old",
+        provider="codex",
+        prompt="Original prompt",
+        status="daemon_stopped",
+        created_at="2026-05-30T00:00:00Z",
+        updated_at="2026-05-30T00:00:00Z",
+        continuation_prompt="Continue",
+    )
+    resume_metadata: dict[str, Any] = {
+        "provider": "codex",
+        "provider_native_session_id": "native-123",
+        "cwd": "/repo",
+        "project_id": "proj-1",
+        "parent_session_id": "parent-1",
+    }
+    run_storage = MagicMock()
+    run_storage.start.return_value = None
+    runner = SimpleNamespace(child_session_manager=MagicMock(), run_storage=run_storage)
+    spawner = MagicMock()
+    spawner.spawn.return_value = SimpleNamespace(
+        success=True,
+        pid=123,
+        tmux_session_name="tmux-new",
+        error=None,
+        message=None,
+    )
+    fire_resume_started = MagicMock()
+    claim_task_for_resume = MagicMock()
+
+    monkeypatch.setattr(
+        resume_executor,
+        "prepare_terminal_spawn",
+        lambda **_kwargs: SimpleNamespace(session_id="child-new", env_vars={}),
+    )
+    monkeypatch.setattr(
+        resume_executor,
+        "build_cli_command",
+        lambda **_kwargs: (["codex", "resume"], {}),
+    )
+    monkeypatch.setattr(resume_executor, "_tmux_spawner", lambda *_args: spawner)
+    monkeypatch.setattr(resume_executor, "pre_approve_directory", lambda *_args: None)
+    monkeypatch.setattr(resume_executor, "_fire_resume_started", fire_resume_started)
+    monkeypatch.setattr(resume_executor, "_claim_task_for_resume", claim_task_for_resume)
+
+    result = await resume_executor.resume_agent_run(
+        original_run,
+        resume_metadata=resume_metadata,
+        runner=runner,
+        session_manager=MagicMock(),
+    )
+
+    assert result.success is False
+    assert result.error == "agent_run_start_skipped"
+    run_storage.start.assert_called_once_with(result.run_id)
+    claim_task_for_resume.assert_not_called()
+    fire_resume_started.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_resume_agent_run_rejects_relative_cwd_before_trust(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

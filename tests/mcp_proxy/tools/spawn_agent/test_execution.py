@@ -502,6 +502,58 @@ class TestSpawnAgentPreRegistration:
             assert start_run_id == update_run_id
 
     @pytest.mark.asyncio
+    async def test_skips_started_side_effects_when_start_transition_is_stale(
+        self,
+        mock_runner,
+        agent_body,
+    ) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+        mock_runner.run_storage = MagicMock()
+        mock_runner.run_storage.has_active_run_for_task.return_value = False
+        mock_runner.run_storage.update_child_session = MagicMock()
+        mock_runner.run_storage.update_runtime = MagicMock()
+        mock_runner.run_storage.start = MagicMock(return_value=None)
+        mock_runner.run_storage.fail = MagicMock()
+
+        registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
+                return_value=agent_body,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
+            ) as mock_ctx,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
+            ) as mock_execute,
+            patch("gobby.runner_broadcasting.fire_agent_event") as mock_fire_agent_event,
+        ):
+            mock_ctx.return_value = {"id": "proj-123", "project_path": "/path"}
+            mock_execute.return_value = MagicMock(
+                success=True,
+                child_session_id="child-456",
+                status="pending",
+                pid=12345,
+                terminal_type="ghostty",
+                tmux_session_name="agent-run-canonical",
+                message="Spawned",
+            )
+
+            result = await registry.call(
+                "spawn_agent",
+                {"prompt": "Test", "parent_session_id": "parent-789"},
+            )
+
+            assert result["success"] is False
+            assert result["error"] == "Agent run was no longer pending after spawn"
+            mock_runner.run_storage.start.assert_called_once()
+            mock_runner.run_storage.fail.assert_not_called()
+            mock_fire_agent_event.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_success_result_includes_tmux_socket_metadata(self, mock_runner, agent_body):
         """MCP response exposes the verified tmux session and socket metadata."""
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry

@@ -55,6 +55,35 @@ def sample_session(
     return session.to_dict()
 
 
+@pytest.mark.parametrize(
+    ("transition", "expected_status"),
+    [("cancel", "cancelled"), ("fail", "error")],
+)
+def test_agent_run_start_returns_none_for_terminal_run(
+    agent_run_manager: LocalAgentRunManager,
+    sample_session: dict,
+    transition: str,
+    expected_status: str,
+) -> None:
+    run = agent_run_manager.create(
+        parent_session_id=sample_session["id"],
+        provider="codex",
+        prompt="work",
+        run_id=f"run-start-{expected_status}",
+    )
+
+    if transition == "cancel":
+        terminal_run = agent_run_manager.cancel(run.id)
+    else:
+        terminal_run = agent_run_manager.fail(run.id, error="failed before start")
+
+    assert terminal_run is not None
+    assert agent_run_manager.start(run.id) is None
+    stored_run = agent_run_manager.get(run.id)
+    assert stored_run is not None
+    assert stored_run.status == expected_status
+
+
 @pytest.fixture
 def monitor(
     agent_run_manager: LocalAgentRunManager,

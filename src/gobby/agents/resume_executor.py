@@ -44,7 +44,7 @@ class _RunStorage(Protocol):
         clone_id: str | None,
     ) -> Any: ...
 
-    def start(self, run_id: str) -> Any: ...
+    def start(self, run_id: str) -> AgentRun | None: ...
 
     def fail(self, run_id: str, *, error: str) -> Any: ...
 
@@ -202,7 +202,7 @@ async def resume_agent_run(
         _fail_run(runner, run_id, error)
         return ResumeAgentResult(False, run_id=run_id, error=error)
 
-    _persist_resume_runtime(
+    started_run = _persist_resume_runtime(
         runner,
         run_id,
         child_session_id=spawn_context.session_id,
@@ -211,6 +211,8 @@ async def resume_agent_run(
         worktree_id=_metadata_str(resume_metadata, "worktree_id"),
         clone_id=_metadata_str(resume_metadata, "clone_id"),
     )
+    if started_run is None:
+        return ResumeAgentResult(False, run_id=run_id, error="agent_run_start_skipped")
     _claim_task_for_resume(task_manager, original_run, spawn_context.session_id)
     _fire_resume_started(original_run, run_id, provider, terminal_result, parent_session_id)
     return ResumeAgentResult(True, run_id=run_id, child_session_id=spawn_context.session_id)
@@ -246,7 +248,7 @@ def _provider_native_session_id(
 
 
 def _persist_resume_runtime(
-    runner: Any,
+    runner: _ResumeRunner,
     run_id: str,
     *,
     child_session_id: str,
@@ -254,7 +256,7 @@ def _persist_resume_runtime(
     tmux_session_name: str | None,
     worktree_id: str | None,
     clone_id: str | None,
-) -> None:
+) -> AgentRun | None:
     runner.run_storage.update_child_session(run_id, child_session_id)
     runner.run_storage.update_runtime(
         run_id,
@@ -263,7 +265,7 @@ def _persist_resume_runtime(
         worktree_id=worktree_id,
         clone_id=clone_id,
     )
-    runner.run_storage.start(run_id)
+    return runner.run_storage.start(run_id)
 
 
 def _claim_task_for_resume(task_manager: Any | None, run: AgentRun, child_session_id: str) -> None:

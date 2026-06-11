@@ -762,6 +762,7 @@ async def spawn_agent_impl(
         spawn_result.success and spawn_result.terminal_type == "tmux" and tmux_session_name
     )
     runtime_persisted = False
+    start_skipped = False
     if tmux_spawn and tmux_session_name:
         alive = await _check_tmux_session_alive(
             tmux_session_name,
@@ -786,7 +787,7 @@ async def spawn_agent_impl(
             )
             runtime_persisted = True
             try:
-                runner.run_storage.start(run_id)
+                start_skipped = runner.run_storage.start(run_id) is None
             except Exception as e:
                 logger.warning(f"Failed to mark agent run {run_id} as running: {e}")
 
@@ -804,9 +805,16 @@ async def spawn_agent_impl(
 
         if not tmux_spawn:
             try:
-                runner.run_storage.start(run_id)
+                start_skipped = runner.run_storage.start(run_id) is None
             except Exception as e:
                 logger.warning(f"Failed to mark agent run {run_id} as running: {e}")
+        if start_skipped:
+            return {
+                "success": False,
+                "error": "Agent run was no longer pending after spawn",
+                "run_id": run_id,
+                "child_session_id": spawn_result.child_session_id,
+            }
 
         # Fire agent_started event for WebSocket broadcasting
         try:
