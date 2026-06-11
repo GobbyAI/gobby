@@ -7,6 +7,7 @@ surface; they do not define their own capability names.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -24,6 +25,9 @@ from gobby.search.embeddings import is_embedding_configured
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
+
+
+logger = logging.getLogger(__name__)
 
 
 class AICapability(StrEnum):
@@ -512,8 +516,19 @@ def _audio_bindings(config: DaemonConfig | None) -> tuple[CapabilityBinding, ...
     if config is None:
         return tuple(bindings)
 
+    seen = {(binding.capability, binding.provider) for binding in bindings}
     for binding_config in config.voice.openai_compatible_audio:
-        bindings.extend(_openai_compatible_audio_bindings(binding_config))
+        for binding in _openai_compatible_audio_bindings(binding_config):
+            key = (binding.capability, binding.provider)
+            if key in seen:
+                logger.warning(
+                    "Skipping duplicate OpenAI-compatible audio binding for %s provider %r",
+                    binding.capability.value,
+                    binding.provider,
+                )
+                continue
+            bindings.append(binding)
+            seen.add(key)
     return tuple(bindings)
 
 

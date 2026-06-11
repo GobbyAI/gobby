@@ -356,6 +356,43 @@ def test_daemon_registry_reports_openai_compatible_audio_bindings() -> None:
         assert binding.metadata["url"] == "http://localhost:8080/v1"
 
 
+def test_daemon_registry_skips_colliding_openai_audio_binding(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    bad_audio_binding = OpenAICompatibleAudioBindingConfig.model_construct(
+        provider="WHISPER",
+        url="http://localhost:8080/v1",
+        model="whisper-large-v3",
+        transcription_enabled=True,
+        translation_enabled=True,
+        timeout_seconds=30.0,
+    )
+    voice = VoiceConfig().model_copy(
+        update={
+            "enabled": True,
+            "openai_compatible_audio": [bad_audio_binding],
+        }
+    )
+    config = DaemonConfig().model_copy(update={"voice": voice})
+
+    caplog.set_level("WARNING", logger="gobby.ai.registry")
+    registry = build_daemon_ai_capability_registry(
+        config,
+        provider_installed=lambda _entry: False,
+    )
+
+    bindings = [
+        binding
+        for binding in registry.bindings_for(AICapability.AUDIO_TRANSCRIBE)
+        if binding.provider == "whisper"
+    ]
+    assert len(bindings) == 1
+    assert bindings[0].adapter_style == AIAdapterStyle.LOCAL
+    assert (
+        "Skipping duplicate OpenAI-compatible audio binding for audio_transcribe provider 'whisper'"
+    ) in caplog.text
+
+
 def test_daemon_registry_reports_disabled_openai_audio_capability() -> None:
     registry = build_daemon_ai_capability_registry(
         DaemonConfig(

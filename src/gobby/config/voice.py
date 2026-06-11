@@ -2,7 +2,18 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from typing import Self
+
+from pydantic import BaseModel, Field, model_validator
+
+_RESERVED_AUDIO_PROVIDER_IDS = frozenset({"whisper"})
+
+
+def _normalize_audio_provider_id(provider: str) -> str:
+    normalized = provider.strip().lower()
+    if not normalized:
+        raise ValueError("openai_compatible_audio provider must not be empty")
+    return normalized
 
 
 class OpenAICompatibleAudioBindingConfig(BaseModel):
@@ -173,3 +184,21 @@ class VoiceConfig(BaseModel):
             "OpenAI-compatible audio capability bindings for audio_transcribe and audio_translate."
         ),
     )
+
+    @model_validator(mode="after")
+    def validate_openai_compatible_audio_provider_ids(self) -> Self:
+        seen: set[str] = set()
+        for binding in self.openai_compatible_audio:
+            provider_id = _normalize_audio_provider_id(binding.provider)
+            if provider_id in _RESERVED_AUDIO_PROVIDER_IDS:
+                raise ValueError(
+                    "openai_compatible_audio provider id "
+                    f"{binding.provider!r} is reserved by built-in audio bindings"
+                )
+            if provider_id in seen:
+                raise ValueError(
+                    "openai_compatible_audio provider ids must be unique "
+                    f"case-insensitively: {binding.provider!r}"
+                )
+            seen.add(provider_id)
+        return self

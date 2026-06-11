@@ -93,6 +93,54 @@ class TestVoiceConfig:
         assert binding.translation_enabled is False
         assert binding.timeout_seconds == 30.0
 
+    @pytest.mark.parametrize(
+        "bindings, match",
+        [
+            (
+                [
+                    OpenAICompatibleAudioBindingConfig(
+                        provider="remote-stt",
+                        url="http://localhost:8080/v1",
+                        model="whisper-large-v3",
+                    ),
+                    OpenAICompatibleAudioBindingConfig(
+                        provider="Remote-STT",
+                        url="http://localhost:8081/v1",
+                        model="whisper-large-v3",
+                    ),
+                ],
+                "unique case-insensitively",
+            ),
+            (
+                [
+                    OpenAICompatibleAudioBindingConfig(
+                        provider="Whisper",
+                        url="http://localhost:8080/v1",
+                        model="whisper-large-v3",
+                    )
+                ],
+                "reserved by built-in audio bindings",
+            ),
+            (
+                [
+                    OpenAICompatibleAudioBindingConfig(
+                        provider="   ",
+                        url="http://localhost:8080/v1",
+                        model="whisper-large-v3",
+                    )
+                ],
+                "provider must not be empty",
+            ),
+        ],
+    )
+    def test_openai_compatible_audio_provider_ids_are_validated(
+        self,
+        bindings: list[OpenAICompatibleAudioBindingConfig],
+        match: str,
+    ) -> None:
+        with pytest.raises(ValidationError, match=match):
+            VoiceConfig(openai_compatible_audio=bindings)
+
     @pytest.mark.parametrize("value", [0, 1001])
     def test_generation_token_bounds_validation(self, value: int):
         with pytest.raises(ValidationError):
