@@ -1,5 +1,6 @@
 """Tests for gobby pack and unpack CLI commands."""
 
+import io
 import json
 import tarfile
 from pathlib import Path
@@ -230,6 +231,76 @@ class TestUnpackCommand:
         assert not (fake_home / "hub-postgres.db").exists()
         assert (fake_home / "bootstrap.yaml").read_text() == "hub_backend: postgres\n"
         assert "Skipped legacy PostgreSQL archive member" in result.output
+
+    @patch("gobby.cli.pack.get_gobby_home")
+    @patch("gobby.cli.pack._daemon_is_running", return_value=False)
+    @patch("gobby.cli.pack._stop_docker_services", return_value=False)
+    @pytest.mark.parametrize(
+        ("member_name", "expected"),
+        [
+            ("gobby/../../../evil", "parent-directory traversal is not allowed"),
+            ("gobby//tmp/evil", "absolute paths are not allowed"),
+        ],
+    )
+    def test_unpack_rejects_escaping_member(
+        self,
+        mock_stop_services,
+        mock_daemon,
+        mock_home,
+        member_name,
+        expected,
+        tmp_path,
+        runner: CliRunner,
+    ) -> None:
+        archive = tmp_path / "malicious.tar.gz"
+        payload = b"evil"
+        with tarfile.open(archive, "w:gz") as tar:
+            member = tarfile.TarInfo(member_name)
+            member.size = len(payload)
+            tar.addfile(member, io.BytesIO(payload))
+
+        fake_home = tmp_path / "root" / "nested" / ".gobby"
+        mock_home.return_value = fake_home
+
+        result = runner.invoke(unpack, [str(archive), "--force"])
+
+        assert result.exit_code != 0
+        assert expected in result.output
+        assert not (tmp_path / "evil").exists()
+
+    @pytest.mark.parametrize(
+        ("member_type", "expected"),
+        [
+            (tarfile.SYMTYPE, "only regular files and directories are supported"),
+            (tarfile.CHRTYPE, "only regular files and directories are supported"),
+        ],
+    )
+    @patch("gobby.cli.pack.get_gobby_home")
+    @patch("gobby.cli.pack._daemon_is_running", return_value=False)
+    @patch("gobby.cli.pack._stop_docker_services", return_value=False)
+    def test_unpack_rejects_special_members(
+        self,
+        mock_stop_services,
+        mock_daemon,
+        mock_home,
+        member_type,
+        expected,
+        tmp_path,
+        runner: CliRunner,
+    ) -> None:
+        archive = tmp_path / "malicious.tar.gz"
+        with tarfile.open(archive, "w:gz") as tar:
+            member = tarfile.TarInfo("gobby/unsafe")
+            member.type = member_type
+            member.linkname = "bootstrap.yaml"
+            tar.addfile(member)
+
+        mock_home.return_value = tmp_path / ".gobby"
+
+        result = runner.invoke(unpack, [str(archive), "--force"])
+
+        assert result.exit_code != 0
+        assert expected in result.output
 
     @patch("gobby.cli.pack.get_gobby_home")
     def test_unpack_aborts_if_exists(self, mock_home, tmp_path, runner: CliRunner) -> None:
