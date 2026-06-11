@@ -324,7 +324,7 @@ fn validate_checkpoint_scope_root(
     let expected = comparable_path(expected_root, None);
     let loaded_base = checkpoint_vault_root(checkpoint_path);
     let loaded = comparable_path(loaded_root, loaded_base.as_deref());
-    if expected == loaded || legacy_project_vault_root_matches(&expected, loaded_root) {
+    if expected == loaded {
         return Ok(expected);
     }
     Err(WikiError::InvalidScope {
@@ -335,29 +335,6 @@ fn validate_checkpoint_scope_root(
             expected_root.display()
         ),
     })
-}
-
-fn legacy_project_vault_root_matches(expected_root: &Path, loaded_root: &Path) -> bool {
-    if !is_legacy_project_vault_relative_root(loaded_root) {
-        return false;
-    }
-    let Some(project_root) = project_root_for_vault(expected_root) else {
-        return false;
-    };
-    comparable_path(&project_root.join(".gobby").join("wiki"), None) == expected_root
-}
-
-fn is_legacy_project_vault_relative_root(path: &Path) -> bool {
-    path == Path::new(".gobby").join("wiki")
-}
-
-fn project_root_for_vault(vault_root: &Path) -> Option<&Path> {
-    let wiki_dir = vault_root.file_name()?;
-    let gobby_dir = vault_root.parent()?.file_name()?;
-    if wiki_dir == "wiki" && gobby_dir == ".gobby" {
-        return vault_root.parent()?.parent();
-    }
-    None
 }
 
 fn comparable_path(path: &Path, relative_base: Option<&Path>) -> PathBuf {
@@ -501,7 +478,7 @@ mod tests {
     }
 
     #[test]
-    fn load_checkpoint_migrates_legacy_project_vault_relative_scope_root() {
+    fn load_checkpoint_rejects_legacy_project_vault_relative_scope_root() {
         let temp = tempfile::tempdir().expect("tempdir");
         let project = temp.path().join("repo");
         let expected = project.join(".gobby").join("wiki");
@@ -518,9 +495,14 @@ mod tests {
         let json = serde_json::to_string_pretty(&session).expect("serialize session");
         fs::write(ResearchSession::checkpoint_path(&expected), json).expect("write checkpoint");
 
-        let loaded = ResearchSession::load_checkpoint(&expected).expect("checkpoint loaded");
+        let error = ResearchSession::load_checkpoint(&expected)
+            .expect_err("legacy project-vault-relative scope root is rejected");
 
-        assert_eq!(loaded.scope.root(), expected);
+        let WikiError::InvalidScope { detail } = error else {
+            panic!("expected InvalidScope, got {error:?}");
+        };
+        assert!(detail.contains(".gobby/wiki"));
+        assert!(detail.contains(&expected.display().to_string()));
     }
 
     #[test]
