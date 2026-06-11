@@ -5,11 +5,10 @@ use std::collections::BTreeSet;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
+use crate::index::MAX_FILE_SIZE;
 use crate::index::languages;
 use crate::index::security;
 
-/// Maximum file size to index (10 MB).
-const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 const GENERATED_JS_MARKER_SCAN_BYTES: usize = 64 * 1024;
 const GENERATED_JS_ANALYSIS_READ_BYTES: u64 = 256 * 1024;
 const MINIFIED_JS_MIN_BYTES: usize = 128 * 1024;

@@ -10,6 +10,7 @@ use tree_sitter::{Parser, Query, QueryCursor};
 
 mod calls;
 
+use crate::index::MAX_FILE_SIZE;
 use crate::index::hasher::symbol_content_hash;
 use crate::index::import_resolution::{self, ExtractedImports};
 use crate::index::languages;
@@ -24,9 +25,6 @@ pub use crate::index::import_resolution::{
 
 #[cfg(test)]
 use calls::{call_qualifier_path, line_terminator_len, split_qualified_callee};
-
-/// Maximum file size to index (10 MB).
-const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
 pub(crate) fn parse_file_with_semantic(
     file_path: &Path,

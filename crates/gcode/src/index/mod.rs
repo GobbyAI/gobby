@@ -10,3 +10,6 @@ pub mod parser;
 pub mod security;
 pub mod semantic;
 pub mod walker;
+
+/// Maximum file size to index (10 MB).
+pub(crate) const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;

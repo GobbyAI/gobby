@@ -334,15 +334,16 @@ pub fn upsert_imports(
         "DELETE FROM code_imports WHERE project_id = $1 AND source_file = $2",
         &[&project_id, &file_path],
     )?;
+    let mut rows_affected = 0usize;
     for imp in imports {
-        conn.execute(
+        rows_affected += conn.execute(
             "INSERT INTO code_imports (project_id, source_file, target_module)
              VALUES ($1, $2, $3)
              ON CONFLICT (project_id, source_file, target_module) DO NOTHING",
             &[&project_id, &imp.file_path, &imp.module_name],
-        )?;
+        )? as usize;
     }
-    Ok(imports.len())
+    Ok(rows_affected)
 }
 
 pub fn upsert_calls(
@@ -355,8 +356,9 @@ pub fn upsert_calls(
         "DELETE FROM code_calls WHERE project_id = $1 AND file_path = $2",
         &[&project_id, &file_path],
     )?;
+    let mut rows_affected = 0usize;
     for call in calls {
-        conn.execute(
+        rows_affected += conn.execute(
             "INSERT INTO code_calls
              (project_id, caller_symbol_id, callee_symbol_id, callee_name, \
               callee_target_kind, callee_external_module, file_path, line)
@@ -375,9 +377,9 @@ pub fn upsert_calls(
                 &call.file_path,
                 &to_i32(call.line),
             ],
-        )?;
+        )? as usize;
     }
-    Ok(calls.len())
+    Ok(rows_affected)
 }
 
 fn to_i32(value: usize) -> i32 {

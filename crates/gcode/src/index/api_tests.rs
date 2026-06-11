@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::models::{IndexedFile, IndexedProject, Symbol};
+use crate::models::{CallRelation, ImportRelation, IndexedFile, IndexedProject, Symbol};
 
 use super::api;
 
@@ -125,6 +125,63 @@ fn api_upsert_file_resets_projection_sync_flags_on_conflict() {
         graph_attempt_cleared,
         "reindex must clear the previous graph sync attempt timestamp"
     );
+}
+
+#[test]
+#[serial_test::serial(gcode_postgres_api_sql)]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+)]
+fn api_upsert_imports_and_calls_report_rows_inserted_not_input_len() {
+    let (mut conn, database_url) = connect_test_db();
+    let project_id = unique_test_project_id("gcode-api-relation-upsert");
+    cleanup_project(&mut conn, &project_id).expect("pre-clean test project rows");
+    let _cleanup = ProjectCleanup {
+        database_url,
+        project_id: project_id.clone(),
+    };
+    seed_project(&mut conn, &project_id);
+
+    let rel = "src/lib.rs";
+    let import = ImportRelation {
+        file_path: rel.to_string(),
+        module_name: "std::fs".to_string(),
+    };
+    assert_eq!(
+        api::upsert_imports(&mut conn, &project_id, rel, &[import.clone(), import])
+            .expect("upsert duplicate imports"),
+        1
+    );
+
+    let call = CallRelation::new(
+        "caller-symbol-id".to_string(),
+        "read_to_string".to_string(),
+        rel.to_string(),
+        7,
+    );
+    assert_eq!(
+        api::upsert_calls(&mut conn, &project_id, rel, &[call.clone(), call])
+            .expect("upsert duplicate calls"),
+        1
+    );
+
+    let import_count: i64 = conn
+        .query_one(
+            "SELECT COUNT(*) FROM code_imports WHERE project_id = $1",
+            &[&project_id],
+        )
+        .expect("count imports")
+        .get(0);
+    let call_count: i64 = conn
+        .query_one(
+            "SELECT COUNT(*) FROM code_calls WHERE project_id = $1",
+            &[&project_id],
+        )
+        .expect("count calls")
+        .get(0);
+    assert_eq!(import_count, 1);
+    assert_eq!(call_count, 1);
 }
 
 fn connect_test_db() -> (postgres::Client, String) {
