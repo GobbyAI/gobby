@@ -176,6 +176,86 @@ trusted_hash = "sha256:user-tool"
     assert state[f"{hooks_prefix}:pre_tool_use:9:0"]["trusted_hash"] == "sha256:user-tool"
 
 
+def test_codex_dispatcher_hook_detects_posix_string_command() -> None:
+    from gobby.cli.installers.codex import _is_codex_dispatcher_hook
+
+    assert _is_codex_dispatcher_hook(
+        {
+            "command": (
+                "python3 /tmp/project/.gobby/hooks/hook_dispatcher.py --cli=codex --type=Stop"
+            )
+        }
+    )
+
+
+def test_codex_dispatcher_hook_detects_windows_string_command() -> None:
+    from gobby.cli.installers.codex import _is_codex_dispatcher_hook
+
+    assert _is_codex_dispatcher_hook(
+        {
+            "cmd": (
+                "py C:\\Users\\josh\\repo\\.gobby\\hooks\\hook_dispatcher.py "
+                "--cli=codex --type=Stop"
+            )
+        }
+    )
+
+
+def test_codex_dispatcher_hook_detects_argv_command_list() -> None:
+    from gobby.cli.installers.codex import _is_codex_dispatcher_hook
+
+    assert _is_codex_dispatcher_hook(
+        {
+            "script": [
+                "python3",
+                "/tmp/project/.gobby/hooks/hook_dispatcher.py",
+                "--cli=codex",
+                "--type=Stop",
+            ]
+        }
+    )
+
+
+def test_codex_dispatcher_hook_ignores_non_codex_dispatcher_command() -> None:
+    from gobby.cli.installers.codex import _is_codex_dispatcher_hook
+
+    assert not _is_codex_dispatcher_hook(
+        {
+            "command": [
+                "python3",
+                "/tmp/project/.gobby/hooks/hook_dispatcher.py",
+                "--cli=claude",
+                "--type=Stop",
+            ]
+        }
+    )
+
+
+def test_codex_dispatcher_cleanup_preserves_unrelated_commands() -> None:
+    from gobby.cli.installers.codex import _clean_gobby_handlers_from_groups
+
+    user_hook = {"type": "command", "command": "echo user session hook"}
+    groups = [
+        {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": (
+                        "python3 /tmp/project/.gobby/hooks/hook_dispatcher.py "
+                        "--cli=codex --type=Stop"
+                    ),
+                },
+                user_hook,
+            ]
+        }
+    ]
+
+    cleaned_groups, removed = _clean_gobby_handlers_from_groups(groups)
+
+    assert removed is True
+    assert cleaned_groups == [{"hooks": [user_hook]}]
+
+
 class TestInstallCodex:
     """Tests for install_codex function."""
 

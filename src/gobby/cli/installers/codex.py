@@ -454,16 +454,32 @@ def _is_gobby_hook(hook_entry: Any) -> bool:
     return config_contains_gobby_hook(hook_entry) or _is_codex_dispatcher_hook(hook_entry)
 
 
+def _normalize_hook_command_part(part: Any) -> str:
+    return str(part).replace("\\", "/")
+
+
+def _is_codex_dispatcher_command(command: Any) -> bool:
+    if isinstance(command, str):
+        normalized_command = _normalize_hook_command_part(command)
+        return (
+            ".gobby/hooks/hook_dispatcher.py" in normalized_command
+            and "--cli=codex" in normalized_command
+        )
+
+    if isinstance(command, Sequence):
+        normalized_parts = [_normalize_hook_command_part(part) for part in command]
+        return any("hook_dispatcher.py" in part for part in normalized_parts) and any(
+            part == "--cli=codex" or "--cli=codex" in part for part in normalized_parts
+        )
+
+    return False
+
+
 def _is_codex_dispatcher_hook(hook_entry: Any) -> bool:
     if not isinstance(hook_entry, dict):
         return False
     for field in ("command", "cmd", "script"):
-        command = hook_entry.get(field)
-        if (
-            isinstance(command, str)
-            and ".gobby/hooks/hook_dispatcher.py" in command
-            and "--cli=codex" in command
-        ):
+        if _is_codex_dispatcher_command(hook_entry.get(field)):
             return True
     return False
 
