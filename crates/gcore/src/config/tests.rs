@@ -2,7 +2,57 @@ use super::resolve::{EMBEDDING_DEFAULT_MODEL, EMBEDDING_DEFAULT_TIMEOUT_SECONDS}
 use super::*;
 use crate::provisioning::StandaloneConfig;
 use std::collections::HashMap;
-use std::sync::MutexGuard;
+use std::sync::{Mutex, MutexGuard, Once};
+
+struct TestLogger {
+    records: Mutex<Vec<String>>,
+}
+
+static TEST_LOGGER: TestLogger = TestLogger {
+    records: Mutex::new(Vec::new()),
+};
+static TEST_LOGGER_INIT: Once = Once::new();
+
+impl TestLogger {
+    fn clear(&self) {
+        self.lock_records().clear();
+    }
+
+    fn records(&self) -> Vec<String> {
+        self.lock_records().clone()
+    }
+
+    fn lock_records(&self) -> std::sync::MutexGuard<'_, Vec<String>> {
+        self.records
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+impl log::Log for TestLogger {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        metadata.level() <= log::Level::Warn
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if self.enabled(record.metadata()) {
+            self.lock_records()
+                .push(format!("{}: {}", record.level(), record.args()));
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+fn capture_warn_logs<R>(f: impl FnOnce() -> R) -> (R, Vec<String>) {
+    TEST_LOGGER_INIT.call_once(|| {
+        log::set_logger(&TEST_LOGGER).expect("install test logger");
+        log::set_max_level(log::LevelFilter::Warn);
+    });
+    TEST_LOGGER.clear();
+    let result = f();
+    (result, TEST_LOGGER.records())
+}
 
 // All process-environment mutation in this module must happen through
 // EnvGuard, which holds TEST_ENV_LOCK for the full test scope.
@@ -88,6 +138,40 @@ impl ConfigSource for TestSource {
         self.resolved_values.push(value.to_string());
         if let Some(secret_name) = value.strip_prefix("$secret:") {
             return Ok(format!("resolved-{secret_name}"));
+        }
+        Ok(resolve_env_pattern(value)?.unwrap_or_else(|| value.to_string()))
+    }
+}
+
+#[derive(Default)]
+struct FailingResolveSource {
+    values: HashMap<&'static str, String>,
+    failing_values: Vec<String>,
+}
+
+impl FailingResolveSource {
+    fn with_values_and_failures(
+        values: impl IntoIterator<Item = (&'static str, &'static str)>,
+        failing_values: impl IntoIterator<Item = &'static str>,
+    ) -> Self {
+        Self {
+            values: values
+                .into_iter()
+                .map(|(key, value)| (key, value.to_string()))
+                .collect(),
+            failing_values: failing_values.into_iter().map(str::to_string).collect(),
+        }
+    }
+}
+
+impl ConfigSource for FailingResolveSource {
+    fn config_value(&mut self, key: &str) -> Option<String> {
+        self.values.get(key).cloned()
+    }
+
+    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+        if self.failing_values.iter().any(|failing| failing == value) {
+            return Err(anyhow::anyhow!("resolver failed"));
         }
         Ok(resolve_env_pattern(value)?.unwrap_or_else(|| value.to_string()))
     }
@@ -346,6 +430,53 @@ fn ai_config_resolves_store_then_yaml_no_env() {
     let tuning = resolve_ai_tuning(&mut TestSource::default());
     assert_eq!(tuning.max_concurrency, 1);
     assert!(tuning.keep_alive.is_none());
+}
+
+#[test]
+#[serial_test::serial(config_log_capture)]
+fn ai_binding_resolution_error_logs_config_key() {
+    let raw_value = "$secret:MISSING_AI_KEY";
+    let mut source = FailingResolveSource::with_values_and_failures(
+        [(ai_keys::TEXT_GENERATE_API_BASE, raw_value)],
+        [raw_value],
+    );
+
+    let (binding, warnings) =
+        capture_warn_logs(|| resolve_capability_binding(&mut source, AiCapability::TextGenerate));
+
+    assert!(binding.api_base.is_none());
+    let matching = warnings
+        .iter()
+        .filter(|warning| warning.contains(ai_keys::TEXT_GENERATE_API_BASE))
+        .collect::<Vec<_>>();
+    assert_eq!(matching.len(), 1, "{warnings:?}");
+    assert!(matching[0].contains("resolver failed"));
+    assert!(!matching[0].contains(raw_value));
+}
+
+#[test]
+#[serial_test::serial(config_log_capture)]
+fn env_override_resolution_error_logs_env_key() {
+    let env = EnvGuard::new();
+    let raw_value = "$secret:MISSING_QDRANT_KEY";
+    env.set("GOBBY_QDRANT_API_KEY", raw_value);
+    let mut source = FailingResolveSource::with_values_and_failures(
+        [("databases.qdrant.url", "http://stored-qdrant:6333")],
+        [raw_value],
+    );
+
+    let (qdrant, warnings) =
+        capture_warn_logs(|| resolve_qdrant_config(&mut source).expect("qdrant config"));
+
+    assert_eq!(qdrant.url.as_deref(), Some("http://stored-qdrant:6333"));
+    assert!(qdrant.api_key.is_none());
+    let matching = warnings
+        .iter()
+        .filter(|warning| warning.contains("GOBBY_QDRANT_API_KEY"))
+        .collect::<Vec<_>>();
+    assert_eq!(matching.len(), 1, "{warnings:?}");
+    assert!(matching[0].contains("resolver failed"));
+    assert!(!matching[0].contains(raw_value));
 }
 
 #[test]

@@ -346,7 +346,7 @@ fn resolve_ai_routing_value(source: &mut impl ConfigSource, config_key: &str) ->
 
 fn resolve_ai_config_value(source: &mut impl ConfigSource, config_key: &str) -> Option<String> {
     let value = source.config_value(config_key)?;
-    resolve_ai_non_empty(source, &value)
+    resolve_ai_non_empty(source, config_key, &value)
 }
 
 fn resolve_config_bool(
@@ -373,15 +373,28 @@ fn parse_config_bool(config_key: &'static str, value: &str) -> anyhow::Result<bo
 /// AI config resolves from `config_store`/gcore.yaml, but stored values may
 /// reference secrets or `${VAR}`. Unresolved placeholders must not masquerade as
 /// usable endpoints, models, or keys.
-fn resolve_ai_non_empty(source: &mut impl ConfigSource, value: &str) -> Option<String> {
+fn resolve_ai_non_empty(
+    source: &mut impl ConfigSource,
+    source_key: &str,
+    value: &str,
+) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return None;
     }
-    source.resolve_value(trimmed).ok().filter(|resolved| {
-        let resolved = resolved.trim();
-        !resolved.is_empty() && !contains_unresolved_env_pattern(resolved)
-    })
+    let resolved = match source.resolve_value(trimmed) {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            log::warn!("failed to resolve config key {source_key:?}: {error}");
+            return None;
+        }
+    };
+    let resolved_trimmed = resolved.trim();
+    if resolved_trimmed.is_empty() || contains_unresolved_env_pattern(resolved_trimmed) {
+        None
+    } else {
+        Some(resolved)
+    }
 }
 
 fn contains_unresolved_env_pattern(value: &str) -> bool {
@@ -402,13 +415,13 @@ fn resolve_setting_from_keys(
     config_keys: &[&str],
 ) -> Option<String> {
     if let Some(value) = env_value(env_key) {
-        return resolve_non_empty(source, &value);
+        return resolve_non_empty(source, env_key, &value);
     }
     for config_key in config_keys {
         let Some(value) = source.config_value(config_key) else {
             continue;
         };
-        if let Some(resolved) = resolve_non_empty(source, &value) {
+        if let Some(resolved) = resolve_non_empty(source, config_key, &value) {
             return Some(resolved);
         }
     }
@@ -421,23 +434,40 @@ fn resolve_port(
     config_key: &str,
     default: u16,
 ) -> u16 {
-    let Some(raw_port) = env_value(env_key).or_else(|| source.config_value(config_key)) else {
-        return default;
+    let (source_key, raw_port) = if let Some(raw_port) = env_value(env_key) {
+        (env_key, raw_port)
+    } else {
+        let Some(raw_port) = source.config_value(config_key) else {
+            return default;
+        };
+        (config_key, raw_port)
     };
-    let Some(resolved) = resolve_non_empty(source, &raw_port) else {
+    let Some(resolved) = resolve_non_empty(source, source_key, &raw_port) else {
         return default;
     };
     resolved.parse::<u16>().unwrap_or(default)
 }
 
-fn resolve_non_empty(source: &mut impl ConfigSource, value: &str) -> Option<String> {
+fn resolve_non_empty(
+    source: &mut impl ConfigSource,
+    source_key: &str,
+    value: &str,
+) -> Option<String> {
     if value.trim().is_empty() {
         return None;
     }
-    source
-        .resolve_value(value)
-        .ok()
-        .filter(|resolved| !resolved.trim().is_empty())
+    let resolved = match source.resolve_value(value) {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            log::warn!("failed to resolve config key {source_key:?}: {error}");
+            return None;
+        }
+    };
+    if resolved.trim().is_empty() {
+        None
+    } else {
+        Some(resolved)
+    }
 }
 
 fn env_value(key: &str) -> Option<String> {
