@@ -7,6 +7,7 @@ use gobby_core::config::{
     AiCapability, AiRouting, ConfigSource, resolve_embedding_config, resolve_falkordb_config,
     resolve_qdrant_config,
 };
+use gobby_core::degradation::{DegradationKind, ServiceState};
 use postgres::Client;
 use serde_json::json;
 
@@ -20,6 +21,7 @@ use crate::support::scope::{
     store_scope_for_search,
 };
 use crate::support::search::PostgresConfigSource;
+use crate::support::text::degradation_label;
 use crate::support::time::collect_timestamp;
 use crate::{
     CommandOutcome, IngestFileOptions, ScopeIdentity, ScopeKind, ScopeSelection, WikiError,
@@ -27,18 +29,31 @@ use crate::{
 };
 
 const VIDEO_FRAME_INTERVAL_KEY: &str = "gwiki.ingest.video_frame_interval_seconds";
+const QDRANT_SERVICE: &str = "qdrant";
+const FALKORDB_SERVICE: &str = "falkordb";
+
+struct IndexReport {
+    counts: IndexCounts,
+    degradations: Vec<DegradationKind>,
+}
 
 pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
     let scope = resolve_command_scope(&selection)?;
     ensure_scope_root(&scope)?;
     let output_scope = resolved_scope_identity(&scope);
-    let counts = index_resolved_scope(&scope)?;
-    Ok(render_index(output_scope, scope.root(), counts))
+    let report = index_resolved_scope_report(&scope)?;
+    Ok(render_index(output_scope, scope.root(), report))
 }
 
 pub(crate) fn index_resolved_scope(
     scope: &crate::scope::ResolvedScope,
 ) -> Result<IndexCounts, WikiError> {
+    Ok(index_resolved_scope_report(scope)?.counts)
+}
+
+fn index_resolved_scope_report(
+    scope: &crate::scope::ResolvedScope,
+) -> Result<IndexReport, WikiError> {
     if let Some(database_url) = database_url_for("gwiki index")? {
         let mut conn = connect_postgres_index(&database_url, "gwiki index")?;
         let search_scope = search_scope_for_resolved(scope);
@@ -47,15 +62,27 @@ pub(crate) fn index_resolved_scope(
             let mut store = postgres_store_for_search(&mut conn, &search_scope);
             indexer::index_vault_with_options(scope.root(), &mut store, index_options)?;
         }
-        sync_qdrant_vectors(&mut conn, &search_scope, "gwiki index")?;
-        sync_falkor_graph(&mut conn, &search_scope, "gwiki index")?;
-        return indexed_counts_for_postgres(&mut conn, &search_scope, true);
+        let mut degradations = Vec::new();
+        if let Some(degradation) = sync_qdrant_vectors(&mut conn, &search_scope, "gwiki index")? {
+            degradations.push(degradation);
+        }
+        if let Some(degradation) = sync_falkor_graph(&mut conn, &search_scope, "gwiki index")? {
+            degradations.push(degradation);
+        }
+        let counts = indexed_counts_for_postgres(&mut conn, &search_scope, true)?;
+        return Ok(IndexReport {
+            counts,
+            degradations,
+        });
     }
 
     let index_options = local_index_options()?;
     let mut store = store::MemoryWikiStore::default();
     indexer::index_vault_with_options(scope.root(), &mut store, index_options)?;
-    Ok(index_counts(&store))
+    Ok(IndexReport {
+        counts: index_counts(&store),
+        degradations: Vec::new(),
+    })
 }
 
 pub(crate) fn execute_ingest_file(
@@ -261,7 +288,7 @@ fn sync_falkor_graph(
     conn: &mut Client,
     search_scope: &SearchScope,
     command: &'static str,
-) -> Result<(), WikiError> {
+) -> Result<Option<DegradationKind>, WikiError> {
     let gobby_home = gobby_home()?;
     let primary = PostgresConfigSource { conn };
     let mut source =
@@ -272,21 +299,22 @@ fn sync_falkor_graph(
         })?;
     let Some(falkor) = resolve_falkordb_config(&mut source) else {
         log::warn!("{command}: FalkorDB config not found; skipping gwiki graph sync");
-        return Ok(());
+        return Ok(Some(not_configured_degradation(FALKORDB_SERVICE)));
     };
     if let Err(error) = crate::falkor_graph::sync_scope_from_postgres(conn, search_scope, &falkor) {
         log::warn!(
             "{command}: FalkorDB graph sync failed; continuing with PostgreSQL index: {error}"
         );
+        return Ok(Some(unreachable_degradation(FALKORDB_SERVICE, error)));
     }
-    Ok(())
+    Ok(None)
 }
 
 fn sync_qdrant_vectors(
     conn: &mut Client,
     search_scope: &SearchScope,
     command: &'static str,
-) -> Result<(), WikiError> {
+) -> Result<Option<DegradationKind>, WikiError> {
     let gobby_home = gobby_home()?;
     let (embedding, qdrant) = {
         let primary = PostgresConfigSource { conn };
@@ -302,11 +330,11 @@ fn sync_qdrant_vectors(
 
     let Some(embedding) = embedding else {
         log::warn!("{command}: embedding config not found; skipping gwiki vector sync");
-        return Ok(());
+        return Ok(Some(not_configured_degradation(QDRANT_SERVICE)));
     };
     let Some(qdrant) = qdrant else {
         log::warn!("{command}: Qdrant config not found; skipping gwiki vector sync");
-        return Ok(());
+        return Ok(Some(not_configured_degradation(QDRANT_SERVICE)));
     };
 
     let mut source = vector::PostgresWikiVectorChunkSource::new(conn);
@@ -323,7 +351,7 @@ fn sync_qdrant_vectors(
             log::warn!(
                 "{command}: Qdrant vector sync failed; continuing with PostgreSQL index: {error}"
             );
-            return Ok(());
+            return Ok(Some(qdrant_sync_degradation(error)));
         }
     };
     log::debug!(
@@ -332,7 +360,34 @@ fn sync_qdrant_vectors(
         outcome.upserted,
         outcome.deleted_stale_paths
     );
-    Ok(())
+    Ok(None)
+}
+
+fn qdrant_sync_degradation(error: vector::WikiVectorError) -> DegradationKind {
+    unreachable_degradation(QDRANT_SERVICE, error)
+}
+
+fn not_configured_degradation(service: &'static str) -> DegradationKind {
+    service_unavailable_degradation(service, ServiceState::NotConfigured)
+}
+
+fn unreachable_degradation(
+    service: &'static str,
+    error: impl std::fmt::Display,
+) -> DegradationKind {
+    service_unavailable_degradation(
+        service,
+        ServiceState::Unreachable {
+            message: error.to_string(),
+        },
+    )
+}
+
+fn service_unavailable_degradation(service: &'static str, state: ServiceState) -> DegradationKind {
+    DegradationKind::ServiceUnavailable {
+        service: service.to_string(),
+        state,
+    }
 }
 
 fn resolve_vector_embedding(
@@ -410,7 +465,15 @@ fn indexed_counts_for_postgres(
     }
 }
 
-fn render_index(scope: ScopeIdentity, root: &Path, counts: IndexCounts) -> CommandOutcome {
+fn render_index(scope: ScopeIdentity, root: &Path, report: IndexReport) -> CommandOutcome {
+    let IndexReport {
+        counts,
+        degradations,
+    } = report;
+    let degradation_labels = degradations
+        .iter()
+        .map(degradation_label)
+        .collect::<Vec<_>>();
     let payload = json!({
         "command": "index",
         "scope": scope,
@@ -423,8 +486,14 @@ fn render_index(scope: ScopeIdentity, root: &Path, counts: IndexCounts) -> Comma
             "sources": counts.sources,
             "ingestions": counts.ingestions,
         },
+        "degradations": degradations,
     });
-    let text = format!(
+    let degradations_text = if degradation_labels.is_empty() {
+        "none".to_string()
+    } else {
+        degradation_labels.join(", ")
+    };
+    let mut text = format!(
         "Index complete
 Scope: {scope}
 Documents: {}
@@ -434,6 +503,8 @@ Sources: {}
 Ingestions: {}",
         counts.documents, counts.chunks, counts.links, counts.sources, counts.ingestions
     );
+    text.push_str("\nDegradations: ");
+    text.push_str(&degradations_text);
     super::scoped_outcome("index", &scope, payload, text)
 }
 
@@ -609,11 +680,68 @@ mod tests {
     }
 
     #[test]
+    fn index_render_includes_empty_degradations() {
+        let outcome = render_index(
+            ScopeIdentity::project("project-1"),
+            Path::new("/vault"),
+            IndexReport {
+                counts: sample_counts(),
+                degradations: Vec::new(),
+            },
+        );
+
+        assert!(
+            outcome.result.payload["degradations"]
+                .as_array()
+                .expect("degradations array")
+                .is_empty()
+        );
+        assert!(outcome.result.text.contains("Degradations: none"));
+    }
+
+    #[test]
+    fn index_render_reports_qdrant_sync_failure_degradation() {
+        let outcome = render_index(
+            ScopeIdentity::project("project-1"),
+            Path::new("/vault"),
+            IndexReport {
+                counts: sample_counts(),
+                degradations: vec![qdrant_sync_degradation(vector::WikiVectorError::Qdrant(
+                    "connection refused".to_string(),
+                ))],
+            },
+        );
+
+        let degradation = &outcome.result.payload["degradations"][0]["ServiceUnavailable"];
+        assert_eq!(degradation["service"], "qdrant");
+        assert_eq!(
+            degradation["state"]["Unreachable"]["message"],
+            "wiki vector qdrant error: connection refused"
+        );
+        assert!(
+            outcome
+                .result
+                .text
+                .contains("Degradations: qdrant_unreachable")
+        );
+    }
+
+    #[test]
     #[cfg(not(feature = "ai"))]
     fn auto_embedding_route_falls_back_to_direct_without_ai() {
         let mut source = TestConfigSource { value: None };
         let context = AiContext::resolve(None, &mut source);
 
         assert_eq!(effective_embedding_route(&context), AiRouting::Direct);
+    }
+
+    fn sample_counts() -> IndexCounts {
+        IndexCounts {
+            documents: 3,
+            chunks: 5,
+            links: 7,
+            sources: 11,
+            ingestions: 13,
+        }
     }
 }
