@@ -10,8 +10,8 @@ use crate::commands::search;
 use crate::graph::WikiGraphFacts;
 use crate::graph::context::{GraphContextCodeEdge, GraphContextOptions, build_context_pack};
 use crate::output::{
-    AskAiOutput, AskCodeCitationOutput, AskCodeEdgeOutput, AskOutput, AskRelatedPageOutput,
-    AskSynthesisOutput, SearchOutput, SearchResultOutput,
+    AskAiOutput, AskCitationCheckOutput, AskCodeCitationOutput, AskCodeEdgeOutput, AskOutput,
+    AskRelatedPageOutput, AskSynthesisOutput, SearchOutput, SearchResultOutput,
 };
 use crate::search::SearchScope;
 use crate::support::config::shared_code_graph_limits_from_conn;
@@ -469,7 +469,146 @@ fn record_synthesis(
         model: model.clone(),
         error: None,
     });
-    output.synthesis = Some(AskSynthesisOutput { answer, model });
+    let citation_check = citation_check(&answer, output);
+    let mut dedup = AskOutputDedup::from_output(output);
+    for claim in &citation_check.unsupported_claims {
+        dedup.push_warning(
+            output,
+            format!("synthesis claim lacks citation support in retrieved evidence: {claim}"),
+        );
+    }
+    output.synthesis = Some(AskSynthesisOutput {
+        answer,
+        model,
+        citation_check,
+    });
+}
+
+/// Grounding statuses for [`citation_check`]: every extracted claim overlaps
+/// the retrieved evidence, or at least one claim does not.
+const CITATION_CHECK_SUPPORTED: &str = "supported";
+const CITATION_CHECK_UNSUPPORTED: &str = "unsupported_claims";
+
+/// Minimum fraction of a claim's significant tokens that must appear in the
+/// retrieved evidence for the claim to count as grounded.
+const CLAIM_SUPPORT_THRESHOLD: f64 = 0.5;
+
+/// Claims with fewer significant tokens than this are skipped — short hedges
+/// like "The evidence is insufficient." carry no checkable factual content.
+const MIN_CLAIM_TOKENS: usize = 3;
+
+/// Check the synthesized answer's claims against the retrieved evidence.
+///
+/// The synthesis prompt only *asks* the model to stay grounded; this is the
+/// post-generation verification. Each sentence-level claim is tokenized and
+/// must overlap the evidence corpus (hit titles/snippets/paths, related pages,
+/// code citations) above [`CLAIM_SUPPORT_THRESHOLD`], mirroring the spirit of
+/// `audit`'s provenance check for persisted prose.
+fn citation_check(answer: &str, output: &AskOutput) -> AskCitationCheckOutput {
+    let evidence = evidence_tokens(output);
+    let claims = answer_claims(answer);
+    let checked_claims = claims.len();
+    let unsupported_claims: Vec<String> = claims
+        .into_iter()
+        .filter(|claim| !claim_is_supported(claim, &evidence))
+        .collect();
+    AskCitationCheckOutput {
+        status: if unsupported_claims.is_empty() {
+            CITATION_CHECK_SUPPORTED
+        } else {
+            CITATION_CHECK_UNSUPPORTED
+        },
+        checked_claims,
+        unsupported_claims,
+    }
+}
+
+/// Split the answer into sentence-level claims with enough significant tokens
+/// to be checkable. Markdown headings and list markers are stripped first.
+fn answer_claims(answer: &str) -> Vec<String> {
+    answer
+        .lines()
+        .map(|line| line.trim().trim_start_matches(['#', '-', '*', '>']).trim())
+        .filter(|line| !line.is_empty())
+        .flat_map(|line| line.split_inclusive(['.', '!', '?']))
+        .map(|sentence| {
+            sentence
+                .trim()
+                .trim_end_matches(['.', '!', '?'])
+                .to_string()
+        })
+        .filter(|sentence| significant_tokens(sentence).len() >= MIN_CLAIM_TOKENS)
+        .collect()
+}
+
+fn claim_is_supported(claim: &str, evidence: &HashSet<String>) -> bool {
+    let tokens = significant_tokens(claim);
+    if tokens.is_empty() {
+        return true;
+    }
+    let supported = tokens
+        .iter()
+        .filter(|token| evidence.contains(token.as_str()))
+        .count();
+    (supported as f64 / tokens.len() as f64) >= CLAIM_SUPPORT_THRESHOLD
+}
+
+fn evidence_tokens(output: &AskOutput) -> HashSet<String> {
+    let mut evidence = HashSet::new();
+    for hit in &output.hits {
+        if let Some(title) = &hit.title {
+            collect_tokens(title, &mut evidence);
+        }
+        collect_tokens(&hit.snippet, &mut evidence);
+        collect_tokens(&hit.wiki_page.display().to_string(), &mut evidence);
+        collect_tokens(&hit.source_path.display().to_string(), &mut evidence);
+    }
+    for page in &output.related_pages {
+        if let Some(title) = &page.title {
+            collect_tokens(title, &mut evidence);
+        }
+        collect_tokens(&page.path.display().to_string(), &mut evidence);
+    }
+    for citation in &output.code_citations {
+        collect_tokens(&citation.file, &mut evidence);
+        if let Some(symbol) = &citation.symbol {
+            collect_tokens(symbol, &mut evidence);
+        }
+    }
+    evidence
+}
+
+fn significant_tokens(text: &str) -> Vec<String> {
+    let mut tokens: Vec<String> = Vec::new();
+    collect_tokens_into(text, |token| tokens.push(token));
+    tokens
+}
+
+fn collect_tokens(text: &str, evidence: &mut HashSet<String>) {
+    collect_tokens_into(text, |token| {
+        evidence.insert(token);
+    });
+}
+
+/// Tokenize into lowercase alphanumeric runs, keeping only words long enough
+/// to carry meaning and dropping common function words.
+fn collect_tokens_into(text: &str, mut push: impl FnMut(String)) {
+    const STOPWORDS: &[&str] = &[
+        "about", "after", "also", "based", "because", "been", "before", "being", "between", "both",
+        "does", "each", "either", "from", "have", "into", "its", "more", "most", "only", "other",
+        "over", "same", "should", "since", "some", "such", "than", "that", "their", "them", "then",
+        "there", "these", "they", "this", "through", "under", "uses", "using", "very", "when",
+        "where", "which", "while", "will", "with", "within", "would",
+    ];
+    for token in text
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|token| token.len() >= 4)
+    {
+        let token = token.to_lowercase();
+        if !STOPWORDS.contains(&token.as_str()) {
+            push(token);
+        }
+    }
 }
 
 fn mark_ai_unavailable(
@@ -565,10 +704,17 @@ fn render(output: AskOutput) -> Result<CommandOutcome, WikiError> {
 
 fn render_text(query: &str, scope: &ScopeIdentity, output: &AskOutput) -> String {
     if let Some(synthesis) = &output.synthesis {
-        return format!(
+        let mut text = format!(
             "Answer for \"{query}\"\nScope: {scope}\n\n{}",
             synthesis.answer
         );
+        if synthesis.citation_check.status != CITATION_CHECK_SUPPORTED {
+            text.push_str(&format!(
+                "\n\n[unverified] {} claim(s) lack citation support in the retrieved evidence.",
+                synthesis.citation_check.unsupported_claims.len()
+            ));
+        }
+        return text;
     }
     let mut text = format!("Wiki hits for \"{query}\"\nScope: {scope}\n");
     if output.degraded {
@@ -853,6 +999,125 @@ mod tests {
             vec!["model_provider_unavailable".to_string()]
         );
         assert_eq!(output.warnings, vec!["ai_unavailable".to_string()]);
+    }
+
+    fn output_with_hooks_hit() -> AskOutput {
+        ask_output_from_search(SearchOutput::new(
+            ScopeIdentity::topic("docs"),
+            "How do hooks work?",
+            10,
+            vec![SearchResultOutput {
+                title: Some("Hooks".to_string()),
+                fusion_key: "topic:docs:wiki/hooks.md".to_string(),
+                wiki_page: PathBuf::from("wiki/hooks.md"),
+                source_path: PathBuf::from("raw/hooks.md"),
+                result_type: SearchResultType::Wiki,
+                snippet: "Hooks run at turn boundaries and dispatch envelopes to the daemon."
+                    .to_string(),
+                score: 0.9,
+                sources: vec!["bm25".to_string()],
+                explanations: Vec::new(),
+            }],
+            Vec::new(),
+        ))
+    }
+
+    #[test]
+    fn synthesis_with_ungrounded_claim_is_flagged_in_json() {
+        let mut output = output_with_hooks_hit();
+
+        record_synthesis(
+            &mut output,
+            "direct",
+            "Hooks run at turn boundaries and dispatch envelopes to the daemon. \
+             Kubernetes pods restart the scheduler cluster nightly."
+                .to_string(),
+            Some("test-model".to_string()),
+        );
+
+        let synthesis = output.synthesis.as_ref().expect("synthesis recorded");
+        assert_eq!(synthesis.citation_check.status, "unsupported_claims");
+        assert_eq!(synthesis.citation_check.checked_claims, 2);
+        assert_eq!(
+            synthesis.citation_check.unsupported_claims,
+            vec!["Kubernetes pods restart the scheduler cluster nightly".to_string()]
+        );
+        assert_eq!(
+            output.warnings,
+            vec![
+                "synthesis claim lacks citation support in retrieved evidence: \
+                 Kubernetes pods restart the scheduler cluster nightly"
+                    .to_string()
+            ]
+        );
+
+        let json = serde_json::to_value(&output).expect("serialize ask output");
+        assert_eq!(
+            json["synthesis"]["citation_check"]["status"],
+            "unsupported_claims"
+        );
+        assert_eq!(
+            json["synthesis"]["citation_check"]["unsupported_claims"][0],
+            "Kubernetes pods restart the scheduler cluster nightly"
+        );
+        assert!(
+            json["warnings"][0]
+                .as_str()
+                .expect("warning is a string")
+                .contains("lacks citation support")
+        );
+    }
+
+    #[test]
+    fn synthesis_grounded_in_hits_passes_citation_check() {
+        let mut output = output_with_hooks_hit();
+
+        record_synthesis(
+            &mut output,
+            "daemon",
+            "Hooks dispatch envelopes to the daemon at turn boundaries. \
+             The evidence is thin."
+                .to_string(),
+            None,
+        );
+
+        let synthesis = output.synthesis.as_ref().expect("synthesis recorded");
+        assert_eq!(synthesis.citation_check.status, "supported");
+        assert_eq!(synthesis.citation_check.checked_claims, 1);
+        assert!(synthesis.citation_check.unsupported_claims.is_empty());
+        assert!(output.warnings.is_empty());
+    }
+
+    #[test]
+    fn unverified_synthesis_is_flagged_in_text_render() {
+        let mut output = output_with_hooks_hit();
+        record_synthesis(
+            &mut output,
+            "direct",
+            "Kubernetes pods restart the scheduler cluster nightly.".to_string(),
+            None,
+        );
+
+        let text = render_text(
+            &output.query.clone(),
+            &ScopeIdentity::topic("docs"),
+            &output,
+        );
+        assert!(text.contains("[unverified] 1 claim(s) lack citation support"));
+
+        let mut grounded = output_with_hooks_hit();
+        record_synthesis(
+            &mut grounded,
+            "direct",
+            "Hooks run at turn boundaries.".to_string(),
+            None,
+        );
+        let text = render_text(
+            &grounded.query.clone(),
+            &ScopeIdentity::topic("docs"),
+            &grounded,
+        );
+        assert!(!text.contains("[unverified]"));
     }
 
     #[test]

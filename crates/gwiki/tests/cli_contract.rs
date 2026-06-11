@@ -5,8 +5,9 @@ use std::path::PathBuf;
 use gobby_wiki::{
     ScopeIdentity,
     output::{
-        AskAiOutput, AskCodeCitationOutput, AskCodeEdgeOutput, AskOutput, AskRelatedPageOutput,
-        AskSynthesisOutput, SearchResultOutput, SearchResultType, SearchSourceExplanationOutput,
+        AskAiOutput, AskCitationCheckOutput, AskCodeCitationOutput, AskCodeEdgeOutput, AskOutput,
+        AskRelatedPageOutput, AskSynthesisOutput, SearchResultOutput, SearchResultType,
+        SearchSourceExplanationOutput,
     },
 };
 use serde_json::Value;
@@ -168,6 +169,13 @@ fn representative_ask_output() -> AskOutput {
         synthesis: Some(AskSynthesisOutput {
             answer: "Contract keys must serialize from command output.".to_string(),
             model: Some("test-model".to_string()),
+            citation_check: AskCitationCheckOutput {
+                status: "unsupported_claims",
+                checked_claims: 1,
+                unsupported_claims: vec![
+                    "Contract keys must serialize from command output.".to_string(),
+                ],
+            },
         }),
     }
 }

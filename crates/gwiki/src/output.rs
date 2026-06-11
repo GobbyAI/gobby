@@ -205,6 +205,18 @@ pub struct AskAiOutput {
 pub struct AskSynthesisOutput {
     pub answer: String,
     pub model: Option<String>,
+    pub citation_check: AskCitationCheckOutput,
+}
+
+/// Post-generation grounding verdict for a synthesized answer. Unlike persisted
+/// wiki prose (validated by research-note linting and `audit`), `ask --llm`
+/// output is ephemeral, so the claim check runs inline against the retrieved
+/// evidence and flags any claim it cannot ground.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct AskCitationCheckOutput {
+    pub status: &'static str,
+    pub checked_claims: usize,
+    pub unsupported_claims: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
