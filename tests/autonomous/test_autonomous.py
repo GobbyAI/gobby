@@ -25,9 +25,13 @@ from gobby.autonomous.stuck_detector import (
     StuckDetector,
     TaskSelectionEvent,
 )
+from gobby.hooks.event_handlers import EventHandlers
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
@@ -1362,6 +1366,7 @@ class TestStuckDetectorSelectionHistory:
         history = stuck_detector.get_selection_history(session_id)
         assert history == []
 
+
 class TestStuckDetectorThreadSafety:
     """Tests for StuckDetector thread safety."""
 
@@ -1516,3 +1521,72 @@ class TestAutonomousIntegration:
 
         history = stuck_detector.get_selection_history(session_id)
         assert len(history) == 0
+
+    def test_live_hook_and_task_selection_traffic_persist_and_detect_stuck(
+        self,
+        test_db: HubDatabase,
+        session_id: str,
+        test_project: dict,
+    ) -> None:
+        """Production wiring persists hook/task traffic and detects a wedged session."""
+        progress_tracker = ProgressTracker(test_db)
+        stuck_detector = StuckDetector(test_db, progress_tracker=progress_tracker)
+        handlers = EventHandlers(progress_tracker=progress_tracker)
+
+        for _ in range(stuck_detector.tool_loop_threshold):
+            event = HookEvent(
+                event_type=HookEventType.AFTER_TOOL,
+                session_id="external-session",
+                source=SessionSource.CLAUDE,
+                timestamp=datetime.now(UTC),
+                data={
+                    "tool_name": "Read",
+                    "tool_input": {"file_path": "src/gobby/autonomous/progress_tracker.py"},
+                    "tool_output": "same file contents",
+                },
+                metadata={"_platform_session_id": session_id},
+            )
+            response = handlers.handle_after_tool(event)
+            assert response.decision == "allow"
+
+        progress_rows = test_db.fetchall(
+            """
+            SELECT tool_name
+            FROM loop_progress
+            WHERE session_id = %s
+            ORDER BY recorded_at
+            """,
+            (session_id,),
+        )
+        assert [row["tool_name"] for row in progress_rows] == [
+            "Read"
+        ] * stuck_detector.tool_loop_threshold
+
+        task_manager = LocalTaskManager(test_db)
+        task = task_manager.create_task(
+            project_id=test_project["id"],
+            title="Ready autonomous task",
+            description="Task selected through readiness registry.",
+        )
+        registry = create_readiness_registry(
+            task_manager=task_manager,
+            stuck_detector=stuck_detector,
+        )
+        suggest = registry.get_tool("suggest_next_task")
+
+        suggestion = suggest(session_id=session_id, project=test_project["id"])
+
+        assert suggestion["suggestion"]["id"] == task.id
+        selection_rows = test_db.fetchall(
+            """
+            SELECT task_id
+            FROM task_selection_history
+            WHERE session_id = %s
+            """,
+            (session_id,),
+        )
+        assert [row["task_id"] for row in selection_rows] == [task.id]
+
+        stuck = stuck_detector.is_stuck(session_id)
+        assert stuck.is_stuck is True
+        assert stuck.layer == "tool_loop"

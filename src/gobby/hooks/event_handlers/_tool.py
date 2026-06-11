@@ -155,6 +155,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
         status = "FAIL" if is_failure else "OK"
         if session_id:
             self.logger.debug(f"AFTER_TOOL [{status}]: {tool_name}, session {session_id}")
+            self._record_autonomous_tool_progress(event, session_id, tool_name)
 
             # Track edits for session high-water mark
             # Only if tool succeeded, matches edit tools, and session has claimed a task
@@ -232,6 +233,26 @@ class ToolEventHandlerMixin(EventHandlersBase):
             self.logger.debug(f"AFTER_TOOL [{status}]: {tool_name}")
 
         return HookResponse(decision="allow")
+
+    def _record_autonomous_tool_progress(
+        self, event: HookEvent, session_id: str, tool_name: str
+    ) -> None:
+        """Feed live tool traffic to autonomous progress detection."""
+        if self._progress_tracker is None:
+            return
+        try:
+            self._progress_tracker.record_tool_call(
+                session_id=session_id,
+                tool_name=tool_name,
+                tool_args=event.data.get("tool_input", {}),
+                tool_result=(
+                    event.data.get("tool_output")
+                    or event.data.get("tool_response")
+                    or event.data.get("tool_result")
+                ),
+            )
+        except Exception as e:
+            self.logger.warning(f"Failed to record autonomous tool progress: {e}")
 
     def _resolve_repo_edit_paths(self, file_path: str, cwd: str | None) -> tuple[Path, str] | None:
         """Return ``(repo_root, repo_relative_path)`` for an edited file."""
