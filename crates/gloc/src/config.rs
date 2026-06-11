@@ -65,52 +65,24 @@ pub struct Client {
 }
 
 impl Config {
-    /// Load config: CLI override -> .gobby/gloc.yaml -> ~/.gobby/gloc.yaml -> compiled-in default.
-    /// First found wins entirely (no merging).
+    /// Load config: CLI override -> `.gobby/gloc.yaml` (current directory or
+    /// project root) -> `<gobby_home>/gloc.yaml` -> compiled-in default.
+    /// First found wins entirely (no merging); see
+    /// `gobby_core::layered_config` for the resolution contract.
     pub fn load(config_override: Option<&Path>) -> Self {
-        if let Some(path) = config_override {
-            return Self::load_or_exit(path);
-        }
-
-        let project_config = Path::new(".gobby/gloc.yaml");
-        if let Some(config) = Self::try_load(project_config) {
-            return config;
-        }
-
-        if let Some(home) = dirs::home_dir() {
-            let global_config = home.join(".gobby/gloc.yaml");
-            if let Some(config) = Self::try_load(&global_config) {
-                return config;
+        match gobby_core::layered_config::load_layered_yaml::<Self>("gloc", config_override) {
+            Ok(Some(config)) => config,
+            Ok(None) => {
+                serde_yaml::from_str(DEFAULT_CONFIG).expect("built-in config.yaml is invalid")
             }
-        }
-
-        serde_yaml::from_str(DEFAULT_CONFIG).expect("built-in config.yaml is invalid")
-    }
-
-    fn try_load(path: &Path) -> Option<Self> {
-        let content = std::fs::read_to_string(path).ok()?;
-        match serde_yaml::from_str(&content) {
-            Ok(config) => Some(config),
-            Err(e) => {
-                eprintln!("Error: failed to parse {}: {e}", path.display());
-                eprintln!("Run `gloc --init` to regenerate the default config.");
-                std::process::exit(1);
-            }
-        }
-    }
-
-    fn load_or_exit(path: &Path) -> Self {
-        match std::fs::read_to_string(path) {
-            Ok(content) => match serde_yaml::from_str(&content) {
-                Ok(config) => config,
-                Err(e) => {
-                    eprintln!("Error: failed to parse {}: {e}", path.display());
+            Err(error) => {
+                eprintln!("Error: {error}");
+                if matches!(
+                    error,
+                    gobby_core::layered_config::LayeredConfigError::Parse { .. }
+                ) {
                     eprintln!("Run `gloc --init` to regenerate the default config.");
-                    std::process::exit(1);
                 }
-            },
-            Err(_) => {
-                eprintln!("Error: could not read {}", path.display());
                 std::process::exit(1);
             }
         }

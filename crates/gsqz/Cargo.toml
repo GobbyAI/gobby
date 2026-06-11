@@ -18,17 +18,17 @@ path = "src/main.rs"
 
 [features]
 default = ["gobby"]
-gobby = ["ureq", "serde_json", "dep:gobby-core"]
+gobby = ["ureq", "serde_json"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-dirs = "6"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = { package = "yaml_serde", version = "0.10.4" }
+# Layered config loading and gobby_home() resolution live in gobby-core.
+gobby-core = { path = "../gcore", version = "0.4.0", default-features = false }
 
 # Gobby-specific (daemon HTTP integration)
-gobby-core = { path = "../gcore", version = "0.4.0", default-features = false, optional = true }
 ureq = { version = "2", features = ["json"], optional = true }
 serde_json = { version = "1", optional = true }
 

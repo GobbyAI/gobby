@@ -77,6 +77,7 @@ fn lib_rs_exposes_lightweight_and_feature_gated_modules() {
         "pub mod config;",
         "pub mod context;",
         "pub mod degradation;",
+        "pub mod layered_config;",
         "pub mod local_backend;",
         "pub mod setup;",
         r#"#[cfg(test)]"#,

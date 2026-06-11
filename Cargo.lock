@@ -2196,7 +2196,6 @@ name = "gobby-local"
 version = "0.1.4"
 dependencies = [
  "clap",
- "dirs 6.0.0",
  "gobby-core",
  "serde",
  "serde_json",
@@ -2209,7 +2208,6 @@ name = "gobby-squeeze"
 version = "0.4.6"
 dependencies = [
  "clap",
- "dirs 6.0.0",
  "gobby-core",
  "regex",
  "serde",

@@ -123,8 +123,7 @@ fn main() {
 }
 
 fn auto_export_config() {
-    if let Some(home) = dirs::home_dir() {
-        let global_dir = home.join(".gobby");
+    if let Ok(global_dir) = gobby_core::gobby_home() {
         let global_config = global_dir.join("gloc.yaml");
         if !global_config.exists() {
             let _ = std::fs::create_dir_all(&global_dir);

@@ -70,12 +70,11 @@ fn main() {
     // Load config
     let config = Config::load(cli.config.as_deref());
 
-    // Auto-export default config to ~/.gobby/gsqz.yaml on first run (creates ~/.gobby/ if needed)
+    // Auto-export default config to <gobby_home>/gsqz.yaml on first run (creates the dir if needed)
     if cli.config.is_none()
         && !cli.init
-        && let Some(home) = dirs::home_dir()
+        && let Ok(global_dir) = gobby_core::gobby_home()
     {
-        let global_dir = home.join(".gobby");
         let global_config = global_dir.join("gsqz.yaml");
         if !global_config.exists() {
             let _ = std::fs::create_dir_all(&global_dir);
