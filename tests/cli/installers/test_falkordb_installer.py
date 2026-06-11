@@ -289,7 +289,8 @@ class TestInstallFalkorDB:
 
         assert result["success"] is False
         assert "config_store" in result["error"]
-        assert "gobby uninstall --falkordb" in result["error"]
+        assert "gobby uninstall" in result["error"]
+        assert "--falkordb" not in result["error"]
         assert not (tmp_path / "bootstrap.yaml").exists()
 
     def test_bootstrap_write_failure_reports_running_container_state(
@@ -311,7 +312,8 @@ class TestInstallFalkorDB:
         assert result["success"] is False
         assert result["compose_running"] is True
         assert "bootstrap.yaml write failed" in result["error"]
-        assert "gobby uninstall --falkordb" in result["error"]
+        assert "gobby uninstall" in result["error"]
+        assert "--falkordb" not in result["error"]
 
     def test_config_db_opener_uses_home_bootstrap_path(self, tmp_path: Path) -> None:
         module = _falkor_module()
@@ -369,91 +371,3 @@ class TestInstallFalkorDB:
 
         assert received_homes
         assert all(home == tmp_path for home in received_homes)
-
-
-class TestUninstallFalkorDB:
-    def test_uninstall_stops_profile_and_preserves_behavior_keys(
-        self,
-        tmp_path: Path,
-        hub_db: HubDatabase,
-    ) -> None:
-        module = _falkor_module()
-        services_dir = tmp_path / "services"
-        services_dir.mkdir(parents=True)
-        (services_dir / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
-        (tmp_path / "bootstrap.yaml").write_text(
-            "falkordb_password: stale\ndaemon_port: 60887\n",
-            encoding="utf-8",
-        )
-        (tmp_path / "bootstrap.yaml").chmod(0o600)
-
-        store = ConfigStore(hub_db)
-        secret_store = SecretStore(hub_db)
-        store.set("databases.falkordb.host", "127.0.0.1", source="test")
-        store.set("databases.falkordb.port", 16379, source="test")
-        store.set("databases.falkordb.graph_name", "custom", source="test")
-        store.set_secret("databases.falkordb.password", "secret", secret_store)
-
-        with patch("gobby.cli.installers.falkor.subprocess.run") as mock_run:
-            with _patch_config_db(hub_db):
-                mock_run.return_value = _successful_run()
-                result = module.uninstall_falkordb(gobby_home=tmp_path, purge=True)
-
-        assert result == {"success": True, "data_removed": True}
-        assert mock_run.call_args_list[0].args[0] == [
-            "docker",
-            "compose",
-            "-f",
-            str(services_dir / "docker-compose.yml"),
-            "--profile",
-            "falkordb",
-            "down",
-        ]
-        assert mock_run.call_args_list[0].kwargs["cwd"] == str(services_dir)
-        assert mock_run.call_args_list[1].args[0] == [
-            "docker",
-            "volume",
-            "rm",
-            "gobby_falkordb_data",
-        ]
-
-        assert store.get("databases.falkordb.host") is None
-        assert store.get("databases.falkordb.port") is None
-        assert store.get("databases.falkordb.password") is None
-        assert store.get("databases.falkordb.graph_name") == "custom"
-
-        bootstrap = yaml.safe_load((tmp_path / "bootstrap.yaml").read_text(encoding="utf-8"))
-        assert "falkordb_password" not in bootstrap
-        assert bootstrap["daemon_port"] == 60887
-
-    def test_uninstall_none_home_normalizes_before_cleanup_helpers(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        hub_db: HubDatabase,
-    ) -> None:
-        module = _falkor_module()
-        received_homes: list[Path | None] = []
-        services_dir = tmp_path / "services"
-        services_dir.mkdir(parents=True)
-        (services_dir / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
-
-        monkeypatch.setattr("gobby.cli.utils.get_gobby_home", lambda: tmp_path)
-
-        original_clear_config = module._clear_config
-
-        def track_clear_config(*args: object, gobby_home: Path | None = None) -> None:
-            received_homes.append(gobby_home)
-            original_clear_config(*args, gobby_home=gobby_home)
-
-        monkeypatch.setattr(module, "_clear_config", track_clear_config)
-
-        with (
-            patch("gobby.cli.installers.falkor.subprocess.run") as mock_run,
-            _patch_config_db(hub_db),
-        ):
-            mock_run.return_value = _successful_run()
-            result = module.uninstall_falkordb(gobby_home=None)
-
-        assert result["success"] is True
-        assert received_homes == [tmp_path]

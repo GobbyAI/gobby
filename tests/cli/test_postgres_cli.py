@@ -21,9 +21,8 @@ def test_postgres_group_is_registered_on_root_cli() -> None:
 
     assert "postgres" in cli.commands
     postgres_group = cli.commands["postgres"]
-    assert {"install", "backup", "restore", "uninstall", "status", "activate"} <= set(
-        postgres_group.commands
-    )
+    assert {"install", "backup", "restore", "status", "activate"} <= set(postgres_group.commands)
+    assert "uninstall" not in postgres_group.commands
     assert "migrate-from-postgres" not in postgres_group.commands
     assert "deactivate" not in postgres_group.commands
 
@@ -35,7 +34,6 @@ def test_postgres_group_is_registered_on_root_cli() -> None:
         (["postgres", "status", "--help"], ["--json"]),
         (["postgres", "backup", "--help"], ["--output"]),
         (["postgres", "restore", "--help"], ["--clean", "--yes"]),
-        (["postgres", "uninstall", "--help"], ["--remove-data"]),
         (["postgres", "activate", "--help"], ["--capture-sink", "--accept-no-rollback-risk"]),
     ],
 )
@@ -220,9 +218,8 @@ def test_postgres_restore_command_invokes_restore_helper(
     assert "pg_search: yes" in result.output
 
 
-def test_postgres_uninstall_preserves_required_runtime_bootstrap(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+def test_postgres_uninstall_command_is_not_registered(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from gobby.cli.postgres import postgres_cli
 
@@ -231,33 +228,12 @@ def test_postgres_uninstall_preserves_required_runtime_bootstrap(
 
     result = CliRunner().invoke(postgres_cli, ["uninstall"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 2
+    assert "No such command 'uninstall'" in result.output
     bootstrap = _read_bootstrap(tmp_path)
     assert bootstrap["hub_backend"] == "postgres"
     assert bootstrap["database_url"] == "postgresql://gobby:secret@example.com/gobby"
     assert bootstrap["postgres_install_mode"] == "docker"
-    assert "runtime bootstrap preserved" in result.output
-    assert "hub_backend=postgres" not in result.output
-    assert "PostgreSQL uninstalled" not in result.output
-
-
-def test_postgres_uninstall_preserves_runtime_bootstrap(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    from gobby.cli.postgres import postgres_cli
-
-    _write_postgres_bootstrap(tmp_path, mode="docker", hub_backend="postgres")
-    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
-
-    result = CliRunner().invoke(postgres_cli, ["uninstall"])
-
-    assert result.exit_code == 0
-    bootstrap = _read_bootstrap(tmp_path)
-    assert bootstrap["hub_backend"] == "postgres"
-    assert bootstrap["database_url"] == "postgresql://gobby:secret@example.com/gobby"
-    assert bootstrap["postgres_install_mode"] == "docker"
-    assert "runtime bootstrap preserved" in result.output
 
 
 def test_postgres_activate_refuses_when_daemon_is_running(

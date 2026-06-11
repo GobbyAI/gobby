@@ -46,7 +46,6 @@ from ._install_prompts import (
     _prompt_api_keys,
     _run_embedding_install,
     _run_falkordb_install,
-    _run_falkordb_uninstall,
     _run_git_hooks_install,
     _run_qdrant_install,
     _run_standard_cli_install,
@@ -68,7 +67,6 @@ from .installers import (
     uninstall_claude,
     uninstall_codex,
     uninstall_droid,
-    uninstall_falkordb,
     uninstall_gemini,
     uninstall_grok,
     uninstall_qwen,
@@ -103,7 +101,7 @@ _GRAPH_BACKEND_REMOVED_MESSAGE = """--neo4j / --neo4j-password has been removed 
 
 The knowledge graph backend has been replaced with FalkorDB.
 - Install (auto-runs as part of gobby install; tune with): gobby install [--falkordb-password <pw>] (or service-only: gobby install --falkordb)
-- Uninstall: gobby uninstall --falkordb
+- Uninstall: gobby uninstall
 - Migration notes: see CHANGELOG.md for the full upgrade path."""
 
 
@@ -761,24 +759,12 @@ def install(
     help="Uninstall hooks from all CLIs (default behavior when no flags specified)",
 )
 @click.option(
-    "--falkordb",
-    "falkordb_flag",
-    is_flag=True,
-    help="Uninstall FalkorDB knowledge graph backend",
-)
-@click.option(
     "--neo4j",
     "neo4j_flag",
     is_flag=True,
     hidden=True,
     expose_value=False,
     callback=lambda _ctx, _param, value: _raise_graph_backend_removed() if value else None,
-)
-@click.option(
-    "--volumes",
-    "volumes_flag",
-    is_flag=True,
-    help="Also remove Docker volumes (data loss, use with --falkordb)",
 )
 @click.option(
     "--project",
@@ -803,8 +789,6 @@ def uninstall(
     droid_flag: bool,
     qwen_flag: bool,
     all_flag: bool,
-    falkordb_flag: bool,
-    volumes_flag: bool,
     project_flag: bool,
     working_dir: Path | None,
 ) -> None:
@@ -826,7 +810,6 @@ def uninstall(
         and not codex_flag
         and not droid_flag
         and not all_flag
-        and not falkordb_flag
     ):
         all_flag = True
 
@@ -945,10 +928,6 @@ def uninstall(
                     click.echo(f"  Warning: could not remove {fpath}: {e}", err=True)
         click.echo("Removed global hook dispatchers from ~/.gobby/hooks/")
         click.echo("")
-
-    # FalkorDB
-    if falkordb_flag:
-        _run_falkordb_uninstall(uninstall_falkordb, volumes_flag, results)
 
     # Summary
     all_success = _echo_uninstall_summary(results)

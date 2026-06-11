@@ -217,67 +217,6 @@ class TestInstallQdrant:
 
 
 # ---------------------------------------------------------------------------
-# Uninstaller tests
-# ---------------------------------------------------------------------------
-
-
-class TestUninstallQdrant:
-    """Tests for uninstall_qdrant function."""
-
-    def test_uninstall_without_data(self, tmp_path: Path) -> None:
-        """uninstall_qdrant succeeds without removing data."""
-        from gobby.cli.installers.qdrant import uninstall_qdrant
-
-        # Create compose file
-        services_dir = tmp_path / "services"
-        services_dir.mkdir()
-        compose = services_dir / "docker-compose.yml"
-        compose.write_text("services:\n  qdrant:\n    image: qdrant/qdrant\n")
-
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-
-        with (
-            patch("gobby.cli.installers.qdrant.subprocess.run", return_value=mock_result),
-            patch("gobby.cli.installers.qdrant._update_config"),
-        ):
-            result = uninstall_qdrant(gobby_home=tmp_path)
-
-        assert result["success"] is True
-        assert result["data_removed"] is False
-
-    def test_uninstall_with_data_removal(self, tmp_path: Path) -> None:
-        """uninstall_qdrant removes Docker volume when requested."""
-        from gobby.cli.installers.qdrant import QDRANT_VOLUME_NAME, uninstall_qdrant
-
-        services_dir = tmp_path / "services"
-        services_dir.mkdir(parents=True)
-        compose = services_dir / "docker-compose.yml"
-        compose.write_text("services:\n  qdrant:\n    image: qdrant/qdrant\n")
-
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-
-        with (
-            patch(
-                "gobby.cli.installers.qdrant.subprocess.run", return_value=mock_result
-            ) as mock_run,
-            patch("gobby.cli.installers.qdrant._update_config"),
-        ):
-            result = uninstall_qdrant(gobby_home=tmp_path, remove_data=True)
-
-        assert result["success"] is True
-        assert result["data_removed"] is True
-        # Verify docker volume rm was called
-        volume_rm_calls = [
-            c
-            for c in mock_run.call_args_list
-            if "volume" in str(c) and QDRANT_VOLUME_NAME in str(c)
-        ]
-        assert len(volume_rm_calls) == 1
-
-
-# ---------------------------------------------------------------------------
 # Health check tests
 # ---------------------------------------------------------------------------
 
