@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 VALID_WORKFLOW_TYPES = ("rule", "workflow", "pipeline", "agent", "variable")
+GOBBY_OWNED_WORKFLOW_SOURCES = ("installed", "template")
 
 
 @click.command("reinstall")
@@ -29,27 +30,31 @@ VALID_WORKFLOW_TYPES = ("rule", "workflow", "pipeline", "agent", "variable")
 )
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
 def reinstall_workflows(workflow_type: str | None, force: bool) -> None:
-    """Delete all workflow definitions and reinstall from bundled templates."""
+    """Delete bundled workflow definitions and reinstall from bundled templates."""
     from gobby.storage.hub.runtime import open_runtime_hub_database
 
     type_label = workflow_type or "all"
     if not force:
         click.confirm(
-            f"This will delete and reinstall {type_label} workflow definitions. Continue?",
+            f"This will delete and reinstall only bundled {type_label} workflow definitions. "
+            "User and project definitions will be preserved. Continue?",
             abort=True,
         )
 
     db = open_runtime_hub_database(apply_migrations=False)
 
-    # 1. Hard-delete existing rows
+    # 1. Hard-delete Gobby-owned rows; preserve user/project-authored definitions.
     with db.transaction() as conn:
         if workflow_type:
             cursor = conn.execute(
-                "DELETE FROM workflow_definitions WHERE workflow_type = %s",
-                (workflow_type,),
+                "DELETE FROM workflow_definitions WHERE workflow_type = %s AND source IN (%s, %s)",
+                (workflow_type, *GOBBY_OWNED_WORKFLOW_SOURCES),
             )
         else:
-            cursor = conn.execute("DELETE FROM workflow_definitions")
+            cursor = conn.execute(
+                "DELETE FROM workflow_definitions WHERE source IN (%s, %s)",
+                GOBBY_OWNED_WORKFLOW_SOURCES,
+            )
         deleted = cursor.rowcount
     click.echo(f"Deleted {deleted} existing definitions")
 

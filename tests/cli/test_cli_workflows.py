@@ -5,6 +5,9 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli.workflows import common, workflows
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowDefinition, WorkflowStep
 
 pytestmark = pytest.mark.unit
@@ -301,6 +304,66 @@ def test_import_workflow_file(cli_runner, tmp_path) -> None:
 
         assert result.exit_code == 0
         assert "Imported workflow" in result.output
+
+
+def test_reinstall_prompt_scopes_to_bundled_definitions(cli_runner) -> None:
+    """Reinstall confirmation states only bundled definitions are replaced."""
+    result = cli_runner.invoke(workflows, ["reinstall"], input="n\n")
+
+    assert result.exit_code == 1
+    assert "only bundled all workflow definitions" in result.output
+    assert "User and project definitions will be preserved" in result.output
+
+
+def test_reinstall_preserves_custom_and_project_definitions(
+    cli_runner: CliRunner, temp_db: HubDatabase
+) -> None:
+    """Reinstall deletes only installed/template definitions."""
+    project = LocalProjectManager(temp_db).create("workflow-reinstall-test")
+    manager = LocalWorkflowDefinitionManager(temp_db)
+    manager.create(
+        name="bundled-pipeline",
+        definition_json='{"name": "bundled-pipeline", "type": "pipeline"}',
+        workflow_type="pipeline",
+        source="installed",
+        tags=["gobby"],
+    )
+    manager.create(
+        name="template-rule",
+        definition_json='{"name": "template-rule", "type": "rule"}',
+        workflow_type="rule",
+        source="template",
+        tags=["gobby"],
+    )
+    manager.create(
+        name="custom-pipeline",
+        definition_json='{"name": "custom-pipeline", "type": "pipeline"}',
+        workflow_type="pipeline",
+        source="custom",
+    )
+    manager.create(
+        name="project-pipeline",
+        definition_json='{"name": "project-pipeline", "type": "pipeline"}',
+        workflow_type="pipeline",
+        project_id=project.id,
+        source="project",
+    )
+
+    with (
+        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=temp_db),
+        patch(
+            "gobby.cli.workflows.manage._run_sync",
+            return_value={"pipeline": {"synced": 0, "updated": 0}},
+        ),
+        patch("gobby.cli.workflows.manage._notify_daemon_reload"),
+    ):
+        result = cli_runner.invoke(workflows, ["reinstall", "--force"])
+
+    assert result.exit_code == 0, result.output
+    assert manager.get_by_name("bundled-pipeline") is None
+    assert manager.get_by_name("template-rule") is None
+    assert manager.get_by_name("custom-pipeline") is not None
+    assert manager.get_by_name("project-pipeline", project_id=project.id) is not None
 
 
 def test_import_workflow_not_yaml(cli_runner, tmp_path) -> None:
