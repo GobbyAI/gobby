@@ -211,7 +211,11 @@ fn transcription_result_for_markdown(
     client: &dyn crate::transcribe::TranscriptionClient,
 ) -> TranscriptionMarkdownInput {
     let result = transcribe_available(request, client);
-    transcription_result_to_markdown(result, "transcription_error", "Transcription failed")
+    transcription_result_to_markdown(
+        result,
+        gobby_core::degradation::ModalityDegradationReason::TranscriptionError,
+        "Transcription failed",
+    )
 }
 
 #[cfg(feature = "ai")]
@@ -255,7 +259,11 @@ fn translate_for_markdown(
     } else {
         crate::ai::translate::translate_audio(request, client, target_lang, language_hint)
     };
-    transcription_result_to_markdown(result, "translation_error", "Translation failed")
+    transcription_result_to_markdown(
+        result,
+        gobby_core::degradation::ModalityDegradationReason::TranslationError,
+        "Translation failed",
+    )
 }
 
 #[cfg(not(feature = "ai"))]
@@ -266,20 +274,20 @@ fn translate_for_markdown(
     _language_hint: Option<&str>,
 ) -> TranscriptionMarkdownInput {
     TranscriptionMarkdownInput::Degraded(TranscriptionDegradation {
-        reason: "translation_unavailable".to_string(),
+        reason: gobby_core::degradation::ModalityDegradationReason::TranslationUnavailable,
         fallback: "Translation requires the ai feature.".to_string(),
     })
 }
 
 fn transcription_result_to_markdown(
     result: Result<crate::transcribe::TranscriptionOutput, WikiError>,
-    reason: &str,
+    reason: gobby_core::degradation::ModalityDegradationReason,
     prefix: &str,
 ) -> TranscriptionMarkdownInput {
     match result {
         Ok(output) => TranscriptionMarkdownInput::Transcribed(output),
         Err(error) => TranscriptionMarkdownInput::Degraded(TranscriptionDegradation {
-            reason: reason.to_string(),
+            reason,
             fallback: format!(
                 "{prefix}: {error}; keep raw audio assets and require supplied transcripts."
             ),
@@ -304,11 +312,13 @@ fn transcription_degradation(routing: AiRouting, translate: bool) -> Transcripti
         "transcription"
     };
     let reason = match routing {
-        AiRouting::Off => "disabled",
-        AiRouting::Auto | AiRouting::Daemon | AiRouting::Direct => "missing_endpoint",
+        AiRouting::Off => gobby_core::degradation::ModalityDegradationReason::Disabled,
+        AiRouting::Auto | AiRouting::Daemon | AiRouting::Direct => {
+            gobby_core::degradation::ModalityDegradationReason::MissingEndpoint
+        }
     };
     TranscriptionDegradation {
-        reason: reason.to_string(),
+        reason,
         fallback: format!("Keep raw audio assets and skip daemon {action}."),
     }
 }

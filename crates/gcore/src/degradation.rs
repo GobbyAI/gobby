@@ -178,6 +178,62 @@ fn is_sensitive_keyword_dsn_key(key: &str) -> bool {
     )
 }
 
+/// Why a modality capability (transcription, translation, vision, or a daemon
+/// capability probe) degraded.
+///
+/// The serialized snake_case names double as the marker strings written into
+/// vault frontmatter (`transcription_degradation`, `vision_degradation`,
+/// `media_degradation`) and daemon capability reports, so variants must keep
+/// their names stable; use [`Self::as_str`] when embedding a marker in text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModalityDegradationReason {
+    /// Routing turned the capability off.
+    Disabled,
+    /// No endpoint is configured for the capability.
+    MissingEndpoint,
+    /// The endpoint rejected the configured credentials.
+    Unauthorized,
+    /// The endpoint could not be reached.
+    Unreachable,
+    /// The endpoint answered with an unexpected HTTP status.
+    UnexpectedStatus,
+    /// The capability depends on something that was already degraded upstream.
+    Unavailable,
+    /// Transcription was attempted and failed.
+    TranscriptionError,
+    /// Translation was attempted and failed.
+    TranslationError,
+    /// Translation support is not compiled in or configured.
+    TranslationUnavailable,
+    /// Vision extraction was attempted and failed.
+    VisionError,
+}
+
+impl ModalityDegradationReason {
+    /// The stable marker string for this reason (matches the serde name).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::MissingEndpoint => "missing_endpoint",
+            Self::Unauthorized => "unauthorized",
+            Self::Unreachable => "unreachable",
+            Self::UnexpectedStatus => "unexpected_status",
+            Self::Unavailable => "unavailable",
+            Self::TranscriptionError => "transcription_error",
+            Self::TranslationError => "translation_error",
+            Self::TranslationUnavailable => "translation_unavailable",
+            Self::VisionError => "vision_error",
+        }
+    }
+}
+
+impl std::fmt::Display for ModalityDegradationReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Degradation states for partial results.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DegradationKind {
@@ -219,6 +275,30 @@ pub enum DegradationKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn modality_reason_markers_match_serde_names() {
+        for reason in [
+            ModalityDegradationReason::Disabled,
+            ModalityDegradationReason::MissingEndpoint,
+            ModalityDegradationReason::Unauthorized,
+            ModalityDegradationReason::Unreachable,
+            ModalityDegradationReason::UnexpectedStatus,
+            ModalityDegradationReason::Unavailable,
+            ModalityDegradationReason::TranscriptionError,
+            ModalityDegradationReason::TranslationError,
+            ModalityDegradationReason::TranslationUnavailable,
+            ModalityDegradationReason::VisionError,
+        ] {
+            let serialized = serde_json::to_value(reason).expect("serialize reason");
+            assert_eq!(
+                serialized,
+                serde_json::Value::String(reason.as_str().to_string()),
+                "as_str and serde marker drifted for {reason:?}"
+            );
+            assert_eq!(reason.to_string(), reason.as_str());
+        }
+    }
 
     #[test]
     fn service_unavailable_degradation_is_not_fatal() {

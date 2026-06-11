@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use gobby_core::degradation::ModalityDegradationReason;
 use tempfile::{Builder, NamedTempFile};
 
 use crate::ingest::{markdown_metadata, markdown_title, path_to_string, single_line};
@@ -22,13 +23,13 @@ pub struct VisionExtraction {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VisionDegradation {
-    pub reason: String,
+    pub reason: ModalityDegradationReason,
     pub fallback: String,
 }
 
 pub(crate) fn disabled_degradation() -> VisionDegradation {
     VisionDegradation {
-        reason: "disabled".to_string(),
+        reason: ModalityDegradationReason::Disabled,
         fallback: "Keep PDF text layer only.".to_string(),
     }
 }
@@ -71,7 +72,7 @@ pub fn write_image_derived_markdown(
             Err(error) => (
                 None,
                 Some(VisionDegradation {
-                    reason: "vision_error".to_string(),
+                    reason: ModalityDegradationReason::VisionError,
                     fallback: format!(
                         "Vision extraction failed: {error}; keep raw image assets and surface filename/metadata only."
                     ),
@@ -139,7 +140,10 @@ fn render_image_derived_markdown(
         fields.push(("image_height".to_string(), height.to_string()));
     }
     if let Some(degradation) = degradation {
-        fields.push(("vision_degradation".to_string(), degradation.reason.clone()));
+        fields.push((
+            "vision_degradation".to_string(),
+            degradation.reason.to_string(),
+        ));
     }
     let deduped_metadata = extraction
         .as_ref()
@@ -190,7 +194,7 @@ fn render_image_derived_markdown(
         }
     } else if let Some(degradation) = degradation {
         markdown.push_str("## Vision Unavailable\n\n");
-        markdown.push_str(&single_line(&degradation.reason));
+        markdown.push_str(&single_line(degradation.reason.as_str()));
         markdown.push_str(": ");
         markdown.push_str(&single_line(&degradation.fallback));
         markdown.push_str("\n\n");
@@ -511,14 +515,17 @@ mod tests {
                 height: None,
             },
             VisionEndpoint::Unavailable(VisionDegradation {
-                reason: "missing_endpoint".to_string(),
+                reason: ModalityDegradationReason::MissingEndpoint,
                 fallback: "Keep raw image assets and surface filename/metadata only.".to_string(),
             }),
         )
         .expect("write degraded markdown");
 
         let degradation = result.degradation.expect("degradation");
-        assert_eq!(degradation.reason, "missing_endpoint");
+        assert_eq!(
+            degradation.reason,
+            ModalityDegradationReason::MissingEndpoint
+        );
         assert_eq!(
             std::fs::read(temp.path().join(&asset_path)).expect("asset remains"),
             b"image-bytes"
@@ -555,7 +562,7 @@ mod tests {
         .expect("vision error degrades");
 
         let degradation = result.degradation.expect("degradation");
-        assert_eq!(degradation.reason, "vision_error");
+        assert_eq!(degradation.reason, ModalityDegradationReason::VisionError);
         assert!(degradation.fallback.contains("/api/chat/attachments"));
 
         let markdown =
@@ -585,7 +592,7 @@ mod tests {
                 height: None,
             },
             VisionEndpoint::Unavailable(VisionDegradation {
-                reason: "first".to_string(),
+                reason: ModalityDegradationReason::Disabled,
                 fallback: "first fallback".to_string(),
             }),
         )
@@ -603,14 +610,14 @@ mod tests {
                 height: None,
             },
             VisionEndpoint::Unavailable(VisionDegradation {
-                reason: "second".to_string(),
+                reason: ModalityDegradationReason::MissingEndpoint,
                 fallback: "second fallback".to_string(),
             }),
         )
         .expect("second write");
 
         let markdown = std::fs::read_to_string(temp.path().join(&first.path)).expect("markdown");
-        assert!(markdown.contains("vision_degradation: second"));
+        assert!(markdown.contains("vision_degradation: missing_endpoint"));
         assert!(
             std::fs::read_dir(temp.path().join("knowledge/sources"))
                 .expect("sources dir")

@@ -502,11 +502,13 @@ fn render_file_markdown(
 
 fn vision_degradation(routing: AiRouting) -> VisionDegradation {
     let reason = match routing {
-        AiRouting::Off => "disabled",
-        AiRouting::Auto | AiRouting::Daemon | AiRouting::Direct => "missing_endpoint",
+        AiRouting::Off => gobby_core::degradation::ModalityDegradationReason::Disabled,
+        AiRouting::Auto | AiRouting::Daemon | AiRouting::Direct => {
+            gobby_core::degradation::ModalityDegradationReason::MissingEndpoint
+        }
     };
     VisionDegradation {
-        reason: reason.to_string(),
+        reason,
         fallback: "Keep PDF text layer only; skip page raster vision.".to_string(),
     }
 }

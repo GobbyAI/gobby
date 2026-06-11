@@ -17,14 +17,10 @@ pub enum DaemonCapability {
     SessionEvents,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DegradationReason {
-    MissingEndpoint,
-    Unauthorized,
-    Unreachable,
-    UnexpectedStatus,
-}
+/// Capability-probe degradation reasons share the modality vocabulary from
+/// gobby-core; probes only construct the endpoint-shaped variants
+/// (`MissingEndpoint`, `Unauthorized`, `Unreachable`, `UnexpectedStatus`).
+pub use gobby_core::degradation::ModalityDegradationReason as DegradationReason;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct EndpointShape {

@@ -203,7 +203,7 @@ fn render_raw_image_markdown(
 
 fn default_vision_degradation() -> VisionDegradation {
     VisionDegradation {
-        reason: "missing_endpoint".to_string(),
+        reason: gobby_core::degradation::ModalityDegradationReason::MissingEndpoint,
         fallback:
             "Keep raw image assets and surface filename/metadata only; skip visual extraction."
                 .to_string(),
@@ -212,11 +212,13 @@ fn default_vision_degradation() -> VisionDegradation {
 
 fn vision_degradation(routing: AiRouting) -> VisionDegradation {
     let reason = match routing {
-        AiRouting::Off => "disabled",
-        AiRouting::Auto | AiRouting::Daemon | AiRouting::Direct => "missing_endpoint",
+        AiRouting::Off => gobby_core::degradation::ModalityDegradationReason::Disabled,
+        AiRouting::Auto | AiRouting::Daemon | AiRouting::Direct => {
+            gobby_core::degradation::ModalityDegradationReason::MissingEndpoint
+        }
     };
     VisionDegradation {
-        reason: reason.to_string(),
+        reason,
         fallback: "Keep raw image assets and surface filename/metadata only.".to_string(),
     }
 }

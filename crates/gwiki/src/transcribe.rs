@@ -1,6 +1,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use gobby_core::degradation::ModalityDegradationReason;
 use tempfile::{Builder, NamedTempFile};
 
 use crate::ingest::{markdown_metadata, markdown_title, path_to_string, single_line};
@@ -38,7 +39,7 @@ pub struct TranscriptionOutput {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TranscriptionDegradation {
-    pub reason: String,
+    pub reason: ModalityDegradationReason,
     pub fallback: String,
 }
 
@@ -291,7 +292,7 @@ fn render_audio_transcript_markdown(
     if let Some(degradation) = degradation {
         fields.push((
             "transcription_degradation".to_string(),
-            degradation.reason.clone(),
+            degradation.reason.to_string(),
         ));
     }
 
@@ -324,7 +325,7 @@ fn render_audio_transcript_markdown(
         markdown.push('\n');
     } else if let Some(degradation) = degradation {
         markdown.push_str("## Transcription Unavailable\n\n");
-        markdown.push_str(&single_line(&degradation.reason));
+        markdown.push_str(&single_line(degradation.reason.as_str()));
         markdown.push_str(": ");
         markdown.push_str(&single_line(&degradation.fallback));
         markdown.push_str("\n\n");
@@ -563,14 +564,17 @@ mod tests {
                 bytes: b"audio-bytes",
             },
             TranscriptionMarkdownInput::Degraded(TranscriptionDegradation {
-                reason: "missing_endpoint".to_string(),
+                reason: ModalityDegradationReason::MissingEndpoint,
                 fallback: "Keep raw audio assets and require supplied transcripts.".to_string(),
             }),
         )
         .expect("write degraded transcript markdown");
 
         let degradation = result.degradation.expect("degradation");
-        assert_eq!(degradation.reason, "missing_endpoint");
+        assert_eq!(
+            degradation.reason,
+            ModalityDegradationReason::MissingEndpoint
+        );
         assert_eq!(
             std::fs::read(temp.path().join(&asset_path)).expect("asset remains"),
             b"audio-bytes"

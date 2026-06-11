@@ -418,7 +418,7 @@ fn video_long_english_translation_reuses_chunk_branch() {
             language_hint: Some("es".to_string()),
         },
         VisionEndpoint::Unavailable(crate::vision::VisionDegradation {
-            reason: "disabled".to_string(),
+            reason: gobby_core::degradation::ModalityDegradationReason::Disabled,
             fallback: "skip frames".to_string(),
         }),
         &media,
@@ -514,7 +514,7 @@ fn production_ingest_applies_degradation_matrix() {
         },
         TranscriptionEndpoint::Available(Box::new(FakeTranscriptionClient)),
         VisionEndpoint::Unavailable(crate::vision::VisionDegradation {
-            reason: "disabled".to_string(),
+            reason: gobby_core::degradation::ModalityDegradationReason::Disabled,
             fallback: "skip frames".to_string(),
         }),
         "vision-unavailable.mp4",
@@ -533,7 +533,7 @@ fn production_ingest_applies_degradation_matrix() {
             fail_frames: None,
         },
         TranscriptionEndpoint::Unavailable(crate::transcribe::TranscriptionDegradation {
-            reason: "disabled".to_string(),
+            reason: gobby_core::degradation::ModalityDegradationReason::Disabled,
             fallback: "skip audio".to_string(),
         }),
         VisionEndpoint::Available(&vision),
@@ -603,7 +603,7 @@ fn production_ingest_applies_degradation_matrix() {
                 ]),
             })),
             VisionEndpoint::Unavailable(crate::vision::VisionDegradation {
-                reason: "disabled".to_string(),
+                reason: gobby_core::degradation::ModalityDegradationReason::Disabled,
                 fallback: "skip frames".to_string(),
             }),
             "partial-chunk.mp4",

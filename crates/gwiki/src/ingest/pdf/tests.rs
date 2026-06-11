@@ -406,7 +406,7 @@ fn pdf_degradation_uses_uniform_metadata() {
         text_only_pdf,
         Vec::new(),
         VisionEndpoint::Unavailable(crate::vision::VisionDegradation {
-            reason: "disabled".to_string(),
+            reason: gobby_core::degradation::ModalityDegradationReason::Disabled,
             fallback: "vision disabled".to_string(),
         }),
     )
@@ -429,7 +429,7 @@ fn pdf_degradation_uses_uniform_metadata() {
         empty_pdf,
         Vec::new(),
         VisionEndpoint::Unavailable(crate::vision::VisionDegradation {
-            reason: "disabled".to_string(),
+            reason: gobby_core::degradation::ModalityDegradationReason::Disabled,
             fallback: "vision disabled".to_string(),
         }),
     )

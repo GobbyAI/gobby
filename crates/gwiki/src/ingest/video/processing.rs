@@ -81,7 +81,7 @@ pub(crate) fn ingest_video_file_with_processing_without_index(
     match transcription_endpoint {
         TranscriptionEndpoint::Unavailable(reason) => {
             transcription_degradation = Some(crate::transcribe::TranscriptionDegradation {
-                reason: "unavailable".to_string(),
+                reason: gobby_core::degradation::ModalityDegradationReason::Unavailable,
                 fallback: format!("{}: {}", reason.reason, reason.fallback),
             });
         }
@@ -336,11 +336,13 @@ pub(crate) fn cleanup_kept_temp_frames(paths: &[PathBuf]) {
 
 pub(crate) fn vision_degradation(routing: AiRouting) -> VisionDegradation {
     let reason = match routing {
-        AiRouting::Off => "disabled",
-        AiRouting::Auto | AiRouting::Daemon | AiRouting::Direct => "missing_endpoint",
+        AiRouting::Off => gobby_core::degradation::ModalityDegradationReason::Disabled,
+        AiRouting::Auto | AiRouting::Daemon | AiRouting::Direct => {
+            gobby_core::degradation::ModalityDegradationReason::MissingEndpoint
+        }
     };
     VisionDegradation {
-        reason: reason.to_string(),
+        reason,
         fallback: "Keep raw video assets and skip frame vision.".to_string(),
     }
 }

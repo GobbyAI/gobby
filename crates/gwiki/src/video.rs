@@ -424,7 +424,7 @@ fn render_video_derived_markdown(
     if let Some(degradation) = request.transcription_degradation {
         fields.push((
             "transcription_degradation",
-            MetadataValue::string(degradation.reason.clone()),
+            MetadataValue::string(degradation.reason.to_string()),
         ));
     }
     if let Some(output) = request.transcription {
@@ -500,7 +500,7 @@ fn render_video_derived_markdown(
         }
         if let Some(degradation) = request.transcription_degradation {
             markdown.push_str("- transcription: ");
-            markdown.push_str(&single_line(&degradation.reason));
+            markdown.push_str(&single_line(degradation.reason.as_str()));
             markdown.push_str(" - ");
             markdown.push_str(&single_line(&degradation.fallback));
             markdown.push('\n');
@@ -773,7 +773,7 @@ mod tests {
             message: "ffmpeg frame sampling failed".to_string(),
         }];
         let transcription_degradation = TranscriptionDegradation {
-            reason: "provider_failed".to_string(),
+            reason: gobby_core::degradation::ModalityDegradationReason::TranscriptionError,
             fallback: "STT provider failed after frames were extracted.".to_string(),
         };
 
@@ -842,7 +842,7 @@ mod tests {
 
         let frame_timeline_doc =
             std::fs::read_to_string(temp.path().join(frame_timeline.path)).expect("read doc");
-        assert!(frame_timeline_doc.contains("transcription_degradation: provider_failed"));
+        assert!(frame_timeline_doc.contains("transcription_degradation: transcription_error"));
         assert!(frame_timeline_doc.contains("STT provider failed after frames were extracted."));
         assert!(frame_timeline_doc.contains("Frame survives STT failure."));
     }
