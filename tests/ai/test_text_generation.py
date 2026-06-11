@@ -42,6 +42,16 @@ class RecordingAdapter:
         return f"{self.provider}:{request.prompt}"
 
 
+class StaticTextAdapter:
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.requests: list[TextGenerationRequest] = []
+
+    async def generate(self, request: TextGenerationRequest) -> str:
+        self.requests.append(request)
+        return self.text
+
+
 class UsageAdapter:
     def __init__(self) -> None:
         self.requests: list[TextGenerationRequest] = []
@@ -278,6 +288,118 @@ async def test_text_generation_service_falls_back_across_profile_candidates() ->
     assert result.model == "haiku"
     assert local.requests[0].model == "qwen-local"
     assert claude.requests[0].model == "haiku"
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_falls_back_when_candidate_echoes_prompt() -> None:
+    prompt = "Summarize this module once from lower-level summaries."
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.3-codex-spark",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                available=True,
+                models=("sonnet",),
+            ),
+        ]
+    )
+    codex = StaticTextAdapter(prompt)
+    claude = RecordingAdapter("claude")
+    service = TextGenerationService(registry, {"codex": codex, "claude": claude})
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt=prompt,
+            profile="feature_mid",
+            candidates=("codex/gpt-5.3-codex-spark", "claude/sonnet"),
+        )
+    )
+
+    assert result.text == f"claude:{prompt}"
+    assert result.provider == "claude"
+    assert result.model == "sonnet"
+    assert codex.requests[0].model == "gpt-5.3-codex-spark"
+    assert claude.requests[0].model == "sonnet"
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_falls_back_when_long_output_starts_with_prompt() -> None:
+    prompt = "Summarize this module once. " + ("Keep the API details precise. " * 12)
+    system_prompt = "You write concise module overviews."
+    echoed_prefix = f"{system_prompt}\n\n{prompt}"
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.3-codex-spark",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                available=True,
+                models=("sonnet",),
+            ),
+        ]
+    )
+    codex = StaticTextAdapter(f"{echoed_prefix}\n\nGenerated prose after an echoed prompt.")
+    claude = RecordingAdapter("claude")
+    service = TextGenerationService(registry, {"codex": codex, "claude": claude})
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            profile="feature_mid",
+            candidates=("codex/gpt-5.3-codex-spark", "claude/sonnet"),
+        )
+    )
+
+    assert result.text == f"claude:{prompt}"
+    assert result.provider == "claude"
+    assert result.model == "sonnet"
+    assert codex.requests[0].model == "gpt-5.3-codex-spark"
+    assert claude.requests[0].model == "sonnet"
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_rejects_single_candidate_echo() -> None:
+    prompt = "Summarize this module once from lower-level summaries."
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.3-codex-spark",),
+            )
+        ]
+    )
+    codex = StaticTextAdapter(prompt)
+    service = TextGenerationService(registry, {"codex": codex})
+
+    with pytest.raises(RuntimeError, match="returned the prompt"):
+        await service.generate_result(
+            TextGenerationRequest(
+                prompt=prompt,
+                provider="codex",
+                model="gpt-5.3-codex-spark",
+            )
+        )
+
+    assert codex.requests[0].model == "gpt-5.3-codex-spark"
 
 
 @pytest.mark.asyncio
@@ -957,11 +1079,19 @@ class FakeACPClient:
 
 
 class FakeCodexAppServerClient:
-    def __init__(self) -> None:
+    def __init__(self, events: list[dict[str, Any]] | None = None) -> None:
         self.started = False
         self.stopped = False
         self.thread_kwargs: dict[str, object] | None = None
         self.turn_kwargs: dict[str, object] | None = None
+        self.events = events or [
+            {"type": "item/agentMessage/delta", "delta": "hello "},
+            {
+                "type": "item/completed",
+                "item": {"content": [{"text": "ignored fallback"}]},
+            },
+            {"type": "item/agentMessage/delta", "delta": "world"},
+        ]
 
     async def start(self) -> None:
         self.started = True
@@ -993,12 +1123,8 @@ class FakeCodexAppServerClient:
             "images": images,
             **config_overrides,
         }
-        yield {"type": "item/agentMessage/delta", "delta": "hello "}
-        yield {
-            "type": "item/completed",
-            "item": {"content": [{"text": "ignored fallback"}]},
-        }
-        yield {"type": "item/agentMessage/delta", "delta": "world"}
+        for event in self.events:
+            yield event
 
 
 @pytest.mark.asyncio
@@ -1026,6 +1152,37 @@ async def test_codex_app_server_text_generate_adapter_runs_one_shot_turn() -> No
         "images": None,
         "context_prefix": "system prompt",
     }
+
+
+@pytest.mark.asyncio
+async def test_codex_app_server_text_generate_adapter_ignores_completed_user_messages() -> None:
+    client = FakeCodexAppServerClient(
+        [
+            {
+                "type": "item/completed",
+                "item": {"type": "userMessage", "content": [{"text": "user prompt"}]},
+            },
+            {
+                "type": "item/completed",
+                "item": {"type": "plan", "text": "plan text"},
+            },
+            {
+                "type": "item/completed",
+                "item": {"type": "agentMessage", "text": "final answer"},
+            },
+        ]
+    )
+    adapter = CodexAppServerTextGenerateAdapter(lambda: client)
+
+    response = await adapter.generate(
+        TextGenerationRequest(
+            provider="codex",
+            prompt="user prompt",
+            model="gpt-5.3-codex-spark",
+        )
+    )
+
+    assert response == "final answer"
 
 
 @pytest.mark.asyncio

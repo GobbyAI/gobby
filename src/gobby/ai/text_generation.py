@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_PROMPT_ECHO_PREFIX_MIN_CHARS = 200
+
 
 @dataclass(frozen=True, kw_only=True)
 class TextGenerationRequest:
@@ -103,6 +105,10 @@ class ACPClientLike(Protocol):
 
     async def stop(self) -> None:
         """Stop the ACP client."""
+
+
+class _InvalidTextGenerationOutputError(RuntimeError):
+    """Recoverable invalid output from one text generation candidate."""
 
 
 class TextGenerationService:
@@ -185,6 +191,7 @@ class TextGenerationService:
                 adapter = self._adapter_for_provider(binding.provider)
                 result = await adapter.generate(candidate)
                 text_result = _coerce_text_result(result)
+                _validate_text_generation_output(candidate, text_result.text)
                 self._log_generation_event(
                     request=candidate,
                     binding=binding,
@@ -485,7 +492,10 @@ class CodexAppServerTextGenerateAdapter:
                     continue
                 if event_type in {"agent/messageDelta", "item/agentMessage/delta"}:
                     chunks.append(text)
-                elif event_type == "item/completed":
+                elif (
+                    event_type == "item/completed"
+                    and _codex_completed_item_type(event) == "agentMessage"
+                ):
                     fallback_chunks.append(text)
             return "".join(chunks or fallback_chunks).strip()
         finally:
@@ -635,6 +645,38 @@ def _coerce_text_result(result: str | LLMTextResult) -> LLMTextResult:
     return text_result_type(text=cast(str, result))
 
 
+def _validate_text_generation_output(request: TextGenerationRequest, text: str) -> None:
+    normalized_text = _normalize_generation_text(text)
+    if not normalized_text:
+        raise _InvalidTextGenerationOutputError("text generation returned blank output")
+
+    for prompt in _prompt_echo_targets(request):
+        normalized_prompt = _normalize_generation_text(prompt)
+        if not normalized_prompt:
+            continue
+        if normalized_text == normalized_prompt:
+            raise _InvalidTextGenerationOutputError(
+                "text generation returned the prompt instead of generated text"
+            )
+        if len(normalized_prompt) >= _PROMPT_ECHO_PREFIX_MIN_CHARS and normalized_text.startswith(
+            normalized_prompt
+        ):
+            raise _InvalidTextGenerationOutputError(
+                "text generation output started with the prompt instead of generated text"
+            )
+
+
+def _prompt_echo_targets(request: TextGenerationRequest) -> tuple[str, ...]:
+    composed_prompt = _compose_prompt(request)
+    if composed_prompt == request.prompt:
+        return (request.prompt,)
+    return (request.prompt, composed_prompt)
+
+
+def _normalize_generation_text(text: str) -> str:
+    return " ".join(text.strip().split())
+
+
 def _candidate_debug_label(candidate: TextGenerationRequest) -> str:
     provider = candidate.provider or "<auto>"
     model = candidate.model or "<auto>"
@@ -717,6 +759,10 @@ def _codex_event_text(event: dict[str, Any]) -> str:
     if not isinstance(item, dict):
         return ""
 
+    text = item.get("text")
+    if isinstance(text, str) and text:
+        return text
+
     content = item.get("content")
     if isinstance(content, str) and content:
         return content
@@ -730,6 +776,14 @@ def _codex_event_text(event: dict[str, Any]) -> str:
             if isinstance(text, str) and text:
                 chunks.append(text)
     return "".join(chunks)
+
+
+def _codex_completed_item_type(event: dict[str, Any]) -> str | None:
+    item = event.get("item")
+    if not isinstance(item, dict):
+        return None
+    item_type = item.get("type")
+    return item_type if isinstance(item_type, str) else None
 
 
 def _decode(data: bytes | str) -> str:

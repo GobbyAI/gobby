@@ -46,15 +46,16 @@ class _FakeVisionService:
 
 
 class _FakeTextAdapter:
-    def __init__(self, usage: dict[str, int] | None = None) -> None:
+    def __init__(self, text: str = "Generated text", usage: dict[str, int] | None = None) -> None:
         self.requests: list[TextGenerationRequest] = []
+        self.text = text
         self.usage = usage
 
     async def generate(self, request: TextGenerationRequest) -> str | LLMTextResult:
         self.requests.append(request)
         if self.usage is not None:
-            return LLMTextResult(text="Generated text", usage=self.usage)
-        return "Generated text"
+            return LLMTextResult(text=self.text, usage=self.usage)
+        return self.text
 
 
 @pytest.fixture
@@ -321,6 +322,77 @@ def test_generate_explicit_candidates_bypass_default_profile_and_provider(
             provider="local:lm-studio",
             candidates=("local:lm-studio/Qwen3-Coder-30B-A3B-Instruct",),
             model="Qwen3-Coder-30B-A3B-Instruct",
+            caller="llm-generate-route",
+        )
+    ]
+
+
+def test_generate_falls_back_when_feature_mid_candidate_echoes_prompt(
+    client: TestClient,
+    server_with_llm: MagicMock,
+) -> None:
+    prompt = "Summarize this module once from lower-level summaries."
+    candidates = ("codex/gpt-5.3-codex-spark", "claude/sonnet")
+    codex = _FakeTextAdapter(text=prompt)
+    claude = _FakeTextAdapter(text="Fallback prose")
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.3-codex-spark",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                available=True,
+                models=("sonnet",),
+            ),
+        ]
+    )
+    service = TextGenerationService(registry, {"codex": codex, "claude": claude})
+
+    with patch(
+        "gobby.servers.routes.llm.build_daemon_text_generation_service",
+        return_value=service,
+    ) as build_service:
+        response = client.post(
+            "/api/llm/generate",
+            json={
+                "prompt": prompt,
+                "profile": "feature_mid",
+                "candidates": list(candidates),
+            },
+        )
+
+    assert response.status_code == 200
+    build_service.assert_called_once_with(server_with_llm.config)
+    assert response.json() == {
+        "text": "Fallback prose",
+        "capability": "text_generate",
+        "provider": "claude",
+        "model": "sonnet",
+    }
+    assert codex.requests == [
+        TextGenerationRequest(
+            prompt=prompt,
+            provider="codex",
+            profile="feature_mid",
+            candidates=candidates,
+            model="gpt-5.3-codex-spark",
+            caller="llm-generate-route",
+        )
+    ]
+    assert claude.requests == [
+        TextGenerationRequest(
+            prompt=prompt,
+            provider="claude",
+            profile="feature_mid",
+            candidates=candidates,
+            model="sonnet",
             caller="llm-generate-route",
         )
     ]
