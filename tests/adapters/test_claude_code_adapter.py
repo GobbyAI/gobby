@@ -996,6 +996,32 @@ class TestHandleNative:
             == "Tool not allowed in this workflow step"
         )
 
+    def test_handle_native_pre_tool_rewrite_allows_updated_input(self) -> None:
+        """PreToolUse rewrites must allow updatedInput even without auto_approve."""
+        adapter = ClaudeCodeAdapter()
+        mock_hook_manager = MagicMock()
+        rewritten_input = {"command": "npm run lint"}
+        mock_hook_manager.handle.return_value = HookResponse(
+            decision="allow",
+            modified_input=rewritten_input,
+        )
+
+        native = {
+            "hook_type": "pre-tool-use",
+            "input_data": {
+                "session_id": "ext-457",
+                "tool_name": "Bash",
+                "tool_input": {"command": "npm test"},
+            },
+        }
+        result = adapter.handle_native(native, mock_hook_manager)
+
+        hook_output = result["hookSpecificOutput"]
+        assert result["continue"] is True
+        assert hook_output["hookEventName"] == "PreToolUse"
+        assert hook_output["permissionDecision"] == "allow"
+        assert hook_output["updatedInput"] == rewritten_input
+
     def test_handle_native_preserves_hook_type_in_response(self) -> None:
         """hook_type is used for hookEventName in response."""
         adapter = ClaudeCodeAdapter()
