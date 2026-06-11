@@ -486,39 +486,57 @@ CodexAppServerClientFactory = Callable[[], CodexAppServerClientLike]
 class CodexAppServerTextGenerateAdapter:
     """One-shot text_generate adapter backed by Codex app-server."""
 
-    def __init__(self, client_factory: CodexAppServerClientFactory | None = None) -> None:
+    def __init__(
+        self,
+        client_factory: CodexAppServerClientFactory | None = None,
+        *,
+        timeout_seconds: float = 600.0,
+    ) -> None:
         self._client_factory = client_factory or _codex_app_server_client
+        self._timeout_seconds = timeout_seconds
 
     async def generate(self, request: TextGenerationRequest) -> str:
         client = self._client_factory()
-        await client.start()
         try:
-            thread = await client.start_thread(cwd=request.cwd, model=request.model)
-            chunks: list[str] = []
-            fallback_chunks: list[str] = []
-            async for event in client.run_turn(
-                thread.id,
-                request.prompt,
-                context_prefix=request.system_prompt,
-            ):
-                _raise_for_codex_error_event(event)
-                event_type = event.get("type")
-                text = _codex_event_text(event)
-                if not text:
-                    continue
-                if event_type in {"agent/messageDelta", "item/agentMessage/delta"}:
-                    chunks.append(text)
-                elif (
-                    event_type == "item/completed"
-                    and _codex_completed_item_type(event) == "agentMessage"
-                ):
-                    fallback_chunks.append(text)
-            output = "".join(chunks or fallback_chunks).strip()
-            if not output:
-                raise RuntimeError("Codex text generation returned no output")
-            return output
+            return await asyncio.wait_for(
+                self._generate_with_client(client, request),
+                timeout=self._timeout_seconds,
+            )
+        except TimeoutError as exc:
+            raise RuntimeError(
+                f"Codex app-server text generation timed out after {self._timeout_seconds:g}s"
+            ) from exc
         finally:
             await client.stop()
+
+    async def _generate_with_client(
+        self, client: CodexAppServerClientLike, request: TextGenerationRequest
+    ) -> str:
+        await client.start()
+        thread = await client.start_thread(cwd=request.cwd, model=request.model)
+        chunks: list[str] = []
+        fallback_chunks: list[str] = []
+        async for event in client.run_turn(
+            thread.id,
+            request.prompt,
+            context_prefix=request.system_prompt,
+        ):
+            _raise_for_codex_error_event(event)
+            event_type = event.get("type")
+            text = _codex_event_text(event)
+            if not text:
+                continue
+            if event_type in {"agent/messageDelta", "item/agentMessage/delta"}:
+                chunks.append(text)
+            elif (
+                event_type == "item/completed"
+                and _codex_completed_item_type(event) == "agentMessage"
+            ):
+                fallback_chunks.append(text)
+        output = "".join(chunks or fallback_chunks).strip()
+        if not output:
+            raise RuntimeError("Codex text generation returned no output")
+        return output
 
 
 class DroidCLITextGenerateAdapter:

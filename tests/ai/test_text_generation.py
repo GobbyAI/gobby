@@ -1292,6 +1292,24 @@ class FakeCodexAppServerClient:
             yield event
 
 
+class HangingCodexAppServerClient(FakeCodexAppServerClient):
+    async def run_turn(
+        self,
+        thread_id: str,
+        prompt: str,
+        images: list[str] | None = None,
+        **config_overrides: Any,
+    ) -> AsyncIterator[dict[str, Any]]:
+        self.turn_kwargs = {
+            "thread_id": thread_id,
+            "prompt": prompt,
+            "images": images,
+            **config_overrides,
+        }
+        await asyncio.Event().wait()
+        yield {"type": "item/agentMessage/delta", "delta": "unreachable"}
+
+
 @pytest.mark.asyncio
 async def test_codex_app_server_text_generate_adapter_runs_one_shot_turn() -> None:
     client = FakeCodexAppServerClient()
@@ -1371,6 +1389,24 @@ async def test_codex_app_server_text_generate_adapter_raises_on_completed_error(
         await adapter.generate(TextGenerationRequest(provider="codex", prompt="user prompt"))
 
     assert client.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_codex_app_server_text_generate_adapter_times_out_and_stops_client() -> None:
+    client = HangingCodexAppServerClient()
+    adapter = CodexAppServerTextGenerateAdapter(lambda: client, timeout_seconds=0.01)
+
+    with pytest.raises(RuntimeError, match="timed out after 0.01s"):
+        await adapter.generate(TextGenerationRequest(provider="codex", prompt="user prompt"))
+
+    assert client.started is True
+    assert client.stopped is True
+    assert client.turn_kwargs == {
+        "thread_id": "thread-1",
+        "prompt": "user prompt",
+        "images": None,
+        "context_prefix": None,
+    }
 
 
 @pytest.mark.asyncio
