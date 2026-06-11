@@ -10,12 +10,14 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import gobby.adapters.acp_client as acp_client
 from gobby.adapters.gemini_acp_client import (
     DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS,
     GeminiACPClient,
@@ -23,6 +25,11 @@ from gobby.adapters.gemini_acp_client import (
 from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def _reset_acp_request_ids() -> None:
+    acp_client._next_id = itertools.count(1)
 
 
 # ---------------------------------------------------------------------------
@@ -678,6 +685,49 @@ class TestSend:
                     async for _ in client.send("slow"):
                         pass
 
+    async def test_send_ignores_late_response_after_prompt_timeout(self) -> None:
+        stale_response = (
+            json.dumps({"jsonrpc": "2.0", "id": 3, "result": {"stats": {"source": "stale"}}}) + "\n"
+        )
+        current_response = (
+            json.dumps({"jsonrpc": "2.0", "id": 4, "result": {"stats": {"source": "current"}}})
+            + "\n"
+        )
+        handshake_iter = iter(_handshake_lines())
+        response_iter = iter([stale_response, current_response])
+        timed_out = False
+
+        async def _readline() -> bytes:
+            nonlocal timed_out
+            try:
+                return next(handshake_iter).encode()
+            except StopIteration:
+                pass
+            if not timed_out:
+                timed_out = True
+                await wait_forever()
+            return next(response_iter).encode()
+
+        proc = _mock_process()
+        proc.stdout.readline = AsyncMock(side_effect=_readline)
+
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
+            with patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=proc,
+            ):
+                client = GeminiACPClient(prompt_timeout=0.01)
+                await client.start()
+                with pytest.raises(TimeoutError, match="after 0.0s"):
+                    async for _ in client.send("slow"):
+                        pass
+                events = [event async for event in client.send("next")]
+
+        assert [event.event_type for event in events] == ["result"]
+        assert events[0].data == {"stats": {"source": "current"}}
+        assert proc.stdin.write.call_count == 4
+
     @pytest.mark.asyncio
     async def test_setup_phase_client_request_routes_to_handler(self) -> None:
         client_request = (
@@ -720,7 +770,7 @@ class TestSend:
             side_effect=asyncio.CancelledError,
         ):
             with pytest.raises(asyncio.CancelledError):
-                async for _ in client._read_stream():
+                async for _ in client._read_stream(expected_response_id=1):
                     pass
 
 

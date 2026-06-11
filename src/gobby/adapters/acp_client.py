@@ -411,11 +411,12 @@ class ACPClient:
             if not self._process or not self._process.stdin or not self._process.stdout:
                 raise RuntimeError(f"{type(self).__name__} process not available")
 
+            request_id = _make_id()
             request = {
                 "jsonrpc": "2.0",
                 "method": method,
                 "params": params,
-                "id": _make_id(),
+                "id": request_id,
             }
 
             request_line = json.dumps(request) + "\n"
@@ -460,6 +461,14 @@ class ACPClient:
                     continue
 
                 if "id" in data:
+                    if data.get("id") != request_id:
+                        logger.warning(
+                            "Ignoring stale ACP %s response id=%r while waiting for id=%r",
+                            method,
+                            data.get("id"),
+                            request_id,
+                        )
+                        continue
                     if "error" in data:
                         err = data["error"]
                         raise RuntimeError(f"ACP {method} error: {err.get('message', err)}")
@@ -534,6 +543,7 @@ class ACPClient:
         try:
             await self._io_lock.acquire()
             lock_acquired = True
+            request_id = _make_id()
             request: dict[str, Any] = {
                 "jsonrpc": "2.0",
                 "method": "session/prompt",
@@ -541,7 +551,7 @@ class ACPClient:
                     "sessionId": target_session_id,
                     "prompt": [{"type": "text", "text": message}],
                 },
-                "id": _make_id(),
+                "id": request_id,
             }
             if model:
                 request["params"]["model"] = model
@@ -553,7 +563,10 @@ class ACPClient:
             await self._process.stdin.drain()
             logger.debug("Sent prompt to %s ACP: %r", self.display_name, message[:80])
 
-            async for event in self._read_stream(pre_tool_callback=pre_tool_callback):
+            async for event in self._read_stream(
+                expected_response_id=request_id,
+                pre_tool_callback=pre_tool_callback,
+            ):
                 yield event
         finally:
             if lock_acquired:
@@ -563,6 +576,7 @@ class ACPClient:
     async def _read_stream(
         self,
         *,
+        expected_response_id: int,
         pre_tool_callback: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]]
         | None = None,
     ) -> AsyncIterator[StreamEvent]:
@@ -618,6 +632,13 @@ class ACPClient:
 
             # JSON-RPC response (has "id") = end of turn
             if "id" in data:
+                if data.get("id") != expected_response_id:
+                    logger.warning(
+                        "Ignoring stale ACP session/prompt response id=%r while waiting for id=%r",
+                        data.get("id"),
+                        expected_response_id,
+                    )
+                    continue
                 if "error" in data:
                     err = data["error"]
                     yield StreamEvent(
