@@ -17,7 +17,6 @@ pub mod ai_context;
 pub mod ai_types;
 pub mod codewiki_contract;
 pub mod config;
-pub mod context;
 pub mod degradation;
 pub mod layered_config;
 pub mod local_backend;

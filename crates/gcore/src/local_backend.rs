@@ -19,52 +19,6 @@ pub struct Backend {
     pub auth_token: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BackendDefault {
-    pub name: &'static str,
-    pub url: &'static str,
-    pub probe: &'static str,
-    pub auth_token: &'static str,
-}
-
-impl BackendDefault {
-    pub fn to_backend(self) -> Backend {
-        Backend {
-            name: self.name.to_string(),
-            url: self.url.to_string(),
-            probe: self.probe.to_string(),
-            auth_token: self.auth_token.to_string(),
-        }
-    }
-}
-
-pub const DEFAULT_BACKENDS: &[BackendDefault] = &[
-    BackendDefault {
-        name: "lmstudio",
-        url: "http://localhost:1234",
-        probe: "/v1/models",
-        auth_token: "",
-    },
-    BackendDefault {
-        name: "ollama",
-        url: "http://localhost:11434",
-        probe: "/api/tags",
-        auth_token: "",
-    },
-];
-
-pub fn default_backends() -> Vec<Backend> {
-    DEFAULT_BACKENDS
-        .iter()
-        .copied()
-        .map(BackendDefault::to_backend)
-        .collect()
-}
-
-pub fn backend_api_base(backend: &Backend) -> String {
-    format!("{}/v1", backend.url.trim_end_matches('/'))
-}
-
 /// Probe backends in order, return the first that responds successfully.
 #[cfg(feature = "local-backend")]
 pub fn detect_backend(backends: &[Backend], timeout_ms: u64) -> Option<Backend> {
@@ -260,20 +214,9 @@ fn backend_probe_url(backend: &Backend) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn default_local_backends_do_not_send_auth_tokens() {
-        assert!(
-            default_backends()
-                .iter()
-                .all(|backend| backend.auth_token.is_empty())
-        );
-    }
-
     #[cfg(feature = "local-backend")]
     mod http {
-        use super::*;
+        use super::super::{Backend, backend_probe_url, detect_backend};
         use std::io::{Read, Write};
         use std::net::TcpListener;
         use std::thread;
