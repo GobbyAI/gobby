@@ -900,8 +900,13 @@ class CodexAppServerClient:
                     logger.warning(f"Invalid JSON from app-server: {e}")
                     continue
 
-                # Handle response or incoming request (has "id")
-                if "id" in message:
+                if "method" in message and "id" in message:
+                    # Codex uses an independent id space for inbound requests,
+                    # so these ids can collide with our outgoing request ids.
+                    await self._handle_incoming_request(message)
+
+                # Handle response to our outgoing request (has "id" without "method")
+                elif "id" in message:
                     request_id = message["id"]
                     with self._pending_requests_lock:
                         future = self._pending_requests.get(request_id)
@@ -917,9 +922,6 @@ class CodexAppServerClient:
                             )
                         else:
                             future.set_result(message.get("result", {}))
-                    elif "method" in message:
-                        # Incoming request from Codex (has id + method, not our response)
-                        await self._handle_incoming_request(message)
 
                 # Handle notification (no "id")
                 elif "method" in message:

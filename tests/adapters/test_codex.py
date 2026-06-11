@@ -1888,6 +1888,7 @@ class TestCodexHooksAdapterInit:
 
         assert adapter._hook_manager is mock_hook_manager
 
+
 class TestCodexHooksAdapterTranslateToHookEvent:
     """Tests for translate_to_hook_event method."""
 
@@ -3257,6 +3258,60 @@ class TestCodexClientApprovalResponseRouting:
         assert "error" in response
         assert response["error"]["code"] == -32603  # Internal error
         assert "Hook processing failed" in response["error"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_colliding_request_id_routes_to_approval_handler(self) -> None:
+        """Inbound request id collisions don't resolve outgoing request futures."""
+        client = CodexAppServerClient()
+        written_lines: list[str] = []
+        handler_called = False
+
+        async def handler(method: str, params: dict[str, Any]) -> dict[str, str]:
+            nonlocal handler_called
+            handler_called = True
+            return {"decision": "accept"}
+
+        client.register_approval_handler(handler)
+
+        loop = asyncio.get_running_loop()
+        pending_future = loop.create_future()
+        client._pending_requests[7] = pending_future
+
+        approval_msg = {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "item/commandExecution/requestApproval",
+            "params": {"threadId": "thr-1", "parsedCmd": "echo test"},
+        }
+
+        mock_process = MagicMock()
+        lines = [json.dumps(approval_msg) + "\n"]
+        read_idx = 0
+
+        def mock_readline() -> str:
+            nonlocal read_idx
+            if read_idx < len(lines):
+                line = lines[read_idx]
+                read_idx += 1
+                return line
+            return ""
+
+        mock_process.stdout.readline = mock_readline
+        mock_process.poll.return_value = 0
+        mock_process.stdin.write = lambda x: written_lines.append(x)
+        mock_process.stdin.flush = MagicMock()
+
+        client._process = mock_process
+        client._state = CodexConnectionState.CONNECTED
+
+        reader_task = asyncio.create_task(client._read_loop())
+        await asyncio.wait_for(reader_task, timeout=2.0)
+
+        assert handler_called
+        assert not pending_future.done()
+        response = json.loads(written_lines[0].strip())
+        assert response["id"] == 7
+        assert response["result"]["decision"] == "accept"
 
     @pytest.mark.asyncio
     async def test_response_preserves_request_id(self) -> None:
