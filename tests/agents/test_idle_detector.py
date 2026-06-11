@@ -204,13 +204,15 @@ class TestResetIdle:
         self.detector.reset_idle("run-1")
         assert state.first_idle_at is None
 
-    def test_preserves_reprompt_count(self) -> None:
-        """Reset should not clear reprompt count."""
+    def test_clears_reprompt_budget(self) -> None:
+        """Activity reset should clear the accumulated reprompt budget."""
         state = self.detector.get_state("run-1")
         state.reprompt_count = 2
+        state.last_reprompt_at = time.monotonic()
         state.first_idle_at = time.monotonic()
         self.detector.reset_idle("run-1")
-        assert state.reprompt_count == 2
+        assert state.reprompt_count == 0
+        assert state.last_reprompt_at is None
 
 
 class TestClearState:

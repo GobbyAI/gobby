@@ -14,6 +14,7 @@ import pydantic
 
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.prompt_detector import PromptDetector
+from gobby.servers.routes.sessions.statusline_activity import last_session_activity
 from gobby.utils.datetime import parse_stored_datetime
 from gobby.workflows.step_context import get_active_step_workflow_context
 
@@ -174,8 +175,16 @@ class IdleCheckHandler:
                 except (ValueError, TypeError):
                     pass
 
+        if session_id:
+            activity_at = last_session_activity(session_id)
+            if activity_at is not None:
+                elapsed = (datetime.now(UTC) - activity_at).total_seconds()
+                if elapsed < idle_timeout_seconds:
+                    self._idle_detector.reset_idle(run.id)
+                    return 0
+
         pane_output = await self._tmux.capture_pane(tmux_name, lines=15)
-        if pane_output is None and not session_stale:
+        if pane_output is None:
             return 0
 
         queued_message_prompt_visible = False
@@ -190,7 +199,7 @@ class IdleCheckHandler:
                 await self._fail_idle_agent(run, reason="context window exhausted")
                 return 1
 
-            if not session_stale and status == "active":
+            if status == "active":
                 self._idle_detector.reset_idle(run.id)
                 return 0
 

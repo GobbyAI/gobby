@@ -212,3 +212,5 @@ class IdleDetector:
         """Reset idle tracking when agent becomes active again."""
         state = self.get_state(run_id)
         state.first_idle_at = None
+        state.reprompt_count = 0
+        state.last_reprompt_at = None

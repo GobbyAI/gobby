@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor, _has_dispatch_stage_context
+from gobby.servers.routes.sessions import statusline_activity
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.hub.protocol import HubDatabase
@@ -1104,13 +1105,24 @@ class TestCheckIdleAgents:
             run_id="run-no-capture",
             tmux_session_name="gobby-nocap",
         )
+        state = idle_monitor._idle_detector.get_state("run-no-capture")
+        state.reprompt_count = 2
 
-        with patch.object(
-            idle_monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=None
+        with (
+            patch.object(
+                idle_monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=None
+            ),
+            patch.object(idle_monitor._tmux, "send_keys", new_callable=AsyncMock) as mock_send,
+            patch.object(idle_monitor._tmux, "kill_session", new_callable=AsyncMock) as mock_kill,
         ):
             handled = await idle_monitor.check_idle_agents()
 
         assert handled == 0
+        mock_send.assert_not_called()
+        mock_kill.assert_not_called()
+        updated = agent_run_manager.get("run-no-capture")
+        assert updated is not None
+        assert updated.status == "running"
 
     @pytest.mark.asyncio
     async def test_recent_session_activity_skips_pane_check(
@@ -1159,6 +1171,122 @@ class TestCheckIdleAgents:
         assert handled == 0
         # Pane capture should NOT have been called — session activity was sufficient
         mock_capture.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_recent_hook_activity_skips_stale_session_pane_check(
+        self,
+        agent_run_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+        temp_db: HubDatabase,
+    ) -> None:
+        """Recent hook activity should keep stale session rows from reaching idle handling."""
+        from gobby.config.tmux import TmuxConfig
+
+        statusline_activity.reset_for_tests()
+        config = TmuxConfig(
+            idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
+        )
+        mon = AgentLifecycleMonitor(
+            agent_run_manager=agent_run_manager,
+            db=temp_db,
+            session_manager=session_manager,
+            check_interval_seconds=1.0,
+            tmux_config=config,
+        )
+        child = session_manager.register(
+            external_id="child-hook-active",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_session.get("project_id"),
+        )
+        stale_time = (datetime.now(UTC) - timedelta(seconds=120)).isoformat()
+        temp_db.execute(
+            "UPDATE sessions SET updated_at = %s WHERE id = %s",
+            (stale_time, child.id),
+        )
+        statusline_activity.record_session_activity(child.id)
+
+        _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id="run-hook-active",
+            tmux_session_name="gobby-hook-active",
+            child_session_id=child.id,
+        )
+
+        try:
+            with patch.object(mon._tmux, "capture_pane", new_callable=AsyncMock) as mock_capture:
+                handled = await mon.check_idle_agents()
+        finally:
+            statusline_activity.reset_for_tests()
+
+        assert handled == 0
+        mock_capture.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_active_pane_resets_stale_session_instead_of_failing(
+        self,
+        agent_run_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+        temp_db: HubDatabase,
+    ) -> None:
+        """Active pane output should override a stale session row for destructive decisions."""
+        from gobby.config.tmux import TmuxConfig
+
+        config = TmuxConfig(
+            idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
+        )
+        mon = AgentLifecycleMonitor(
+            agent_run_manager=agent_run_manager,
+            db=temp_db,
+            session_manager=session_manager,
+            check_interval_seconds=1.0,
+            tmux_config=config,
+        )
+        child = session_manager.register(
+            external_id="child-pane-active",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_session.get("project_id"),
+        )
+        stale_time = (datetime.now(UTC) - timedelta(seconds=120)).isoformat()
+        temp_db.execute(
+            "UPDATE sessions SET updated_at = %s WHERE id = %s",
+            (stale_time, child.id),
+        )
+        run = _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id="run-pane-active",
+            tmux_session_name="gobby-pane-active",
+            child_session_id=child.id,
+        )
+        state = mon._idle_detector.get_state(run.id)
+        state.first_idle_at = time.monotonic() - 360
+        state.reprompt_count = 2
+
+        with (
+            patch.object(
+                mon._tmux,
+                "capture_pane",
+                new_callable=AsyncMock,
+                return_value="Running tests...\n",
+            ),
+            patch.object(mon._tmux, "send_keys", new_callable=AsyncMock) as mock_send,
+            patch.object(mon._tmux, "kill_session", new_callable=AsyncMock) as mock_kill,
+        ):
+            handled = await mon.check_idle_agents()
+
+        assert handled == 0
+        mock_send.assert_not_called()
+        mock_kill.assert_not_called()
+        updated = agent_run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "running"
+        assert state.first_idle_at is None
+        assert state.reprompt_count == 0
 
     @pytest.mark.asyncio
     async def test_stale_session_falls_through_to_pane_check(
