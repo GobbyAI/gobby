@@ -298,9 +298,23 @@ async def test_claim_worktree_success(registry, mock_worktree_storage) -> None:
     )
     mock_worktree_storage.get.return_value = wt
     mock_worktree_storage.claim.return_value = True
-    result = await registry.call("claim_worktree", {"worktree_id": "wt-1", "session_id": "sess-1"})
+    with patch(
+        "gobby.mcp_proxy.tools.worktrees._lifecycle.emit_worktree_event",
+        return_value={"event_type": "worktree_claimed", "worktree_id": "wt-1"},
+    ) as emit_event:
+        result = await registry.call(
+            "claim_worktree", {"worktree_id": "wt-1", "session_id": "sess-1"}
+        )
     assert result["success"] is True
+    assert result["event"]["event_type"] == "worktree_claimed"
     mock_worktree_storage.claim.assert_called_with("wt-1", "sess-1")
+    emit_event.assert_called_once_with(
+        "worktree_claimed",
+        worktree_id="wt-1",
+        project_id="p1",
+        branch_name="b1",
+        session_id="sess-1",
+    )
 
 
 @pytest.mark.asyncio
@@ -352,9 +366,21 @@ async def test_release_worktree(registry, mock_worktree_storage) -> None:
     )
     mock_worktree_storage.get.return_value = wt
     mock_worktree_storage.release.return_value = True
-    result = await registry.call("release_worktree", {"worktree_id": "wt-1"})
+    with patch(
+        "gobby.mcp_proxy.tools.worktrees._lifecycle.emit_worktree_event",
+        return_value={"event_type": "worktree_released", "worktree_id": "wt-1"},
+    ) as emit_event:
+        result = await registry.call("release_worktree", {"worktree_id": "wt-1"})
     assert result["success"] is True
     mock_worktree_storage.release.assert_called_with("wt-1")
+    assert result["event"]["event_type"] == "worktree_released"
+    emit_event.assert_called_once_with(
+        "worktree_released",
+        worktree_id="wt-1",
+        project_id="p1",
+        branch_name="b1",
+        session_id="sess-1",
+    )
 
 
 @pytest.mark.asyncio
@@ -511,13 +537,28 @@ async def test_delete_worktree_success(registry, mock_worktree_storage, mock_git
     mock_git_manager.get_worktree_status.return_value.has_uncommitted_changes = False
     mock_git_manager.delete_worktree.return_value.success = True
     mock_worktree_storage.delete.return_value = True
-    with patch("pathlib.Path.exists", return_value=True):
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch(
+            "gobby.mcp_proxy.tools.worktrees._lifecycle.emit_worktree_event",
+            return_value={"event_type": "worktree_deleted", "worktree_id": "wt-1"},
+        ) as emit_event,
+    ):
         result = await registry.call("delete_worktree", {"worktree_id": "wt-1"})
         assert result["success"] is True
+        assert result["event"]["event_type"] == "worktree_deleted"
         mock_git_manager.delete_worktree.assert_called_with(
             "/tmp/p1", force=False, delete_branch=True, branch_name="b1"
         )
         mock_worktree_storage.delete.assert_called_with("wt-1")
+        emit_event.assert_called_once_with(
+            "worktree_deleted",
+            worktree_id="wt-1",
+            project_id="p1",
+            branch_name="b1",
+            worktree_path="/tmp/p1",
+            artifact_refs_cleared=0,
+        )
 
 
 @pytest.mark.asyncio
@@ -689,7 +730,10 @@ async def test_delete_worktree_clears_task_artifact_references(
     with patch("pathlib.Path.exists", return_value=True):
         result = await registry.call("delete_worktree", {"worktree_id": "wt-1", "force": True})
 
-    assert result == {"success": True, "artifact_refs_cleared": 2}
+    assert result["success"] is True
+    assert result["artifact_refs_cleared"] == 2
+    assert result["event"]["event_type"] == "worktree_deleted"
+    assert result["event"]["artifact_refs_cleared"] == 2
     task_manager.artifacts.clear_worktree_references.assert_called_once_with("wt-1")
 
 
@@ -733,7 +777,10 @@ async def test_delete_worktree_artifact_cleanup_failure_is_best_effort(
     ):
         result = await registry.call("delete_worktree", {"worktree_id": "wt-1", "force": True})
 
-    assert result == {"success": True, "artifact_refs_cleared": 0}
+    assert result["success"] is True
+    assert result["artifact_refs_cleared"] == 0
+    assert result["event"]["event_type"] == "worktree_deleted"
+    assert result["event"]["artifact_refs_cleared"] == 0
     mock_worktree_storage.delete.assert_called_once_with("wt-1")
     task_manager.artifacts.clear_worktree_references.assert_called_once_with("wt-1")
     assert any(

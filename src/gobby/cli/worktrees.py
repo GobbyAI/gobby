@@ -255,11 +255,26 @@ def claim_worktree(worktree_ref: str, session_id: str) -> None:
     except click.ClickException as e:
         raise SystemExit(1) from e
 
-    result = manager.claim(worktree_id, session_id)
-    if result:
+    try:
+        result = _call_worktree_tool(
+            "claim_worktree",
+            {"worktree_id": worktree_id, "session_id": session_id},
+            timeout=30.0,
+        )
+    except httpx.ConnectError:
+        click.echo("Error: Cannot connect to Gobby daemon. Is it running?", err=True)
+        return
+    except httpx.HTTPStatusError as e:
+        click.echo(f"HTTP Error {e.response.status_code}: {e.response.text}", err=True)
+        return
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        return
+
+    if result.get("success"):
         click.echo(f"Claimed worktree {worktree_id} for session {session_id}")
     else:
-        click.echo(f"Failed to claim worktree {worktree_id}", err=True)
+        click.echo(f"Failed to claim worktree {worktree_id}: {result.get('error')}", err=True)
 
 
 @worktrees.command("release")
@@ -272,11 +287,26 @@ def release_worktree(worktree_ref: str) -> None:
     except click.ClickException as e:
         raise SystemExit(1) from e
 
-    result = manager.release(worktree_id)
-    if result:
+    try:
+        result = _call_worktree_tool(
+            "release_worktree",
+            {"worktree_id": worktree_id},
+            timeout=30.0,
+        )
+    except httpx.ConnectError:
+        click.echo("Error: Cannot connect to Gobby daemon. Is it running?", err=True)
+        return
+    except httpx.HTTPStatusError as e:
+        click.echo(f"HTTP Error {e.response.status_code}: {e.response.text}", err=True)
+        return
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        return
+
+    if result.get("success"):
         click.echo(f"Released worktree {worktree_id}")
     else:
-        click.echo(f"Failed to release worktree {worktree_id}", err=True)
+        click.echo(f"Failed to release worktree {worktree_id}: {result.get('error')}", err=True)
 
 
 @worktrees.command("sync")

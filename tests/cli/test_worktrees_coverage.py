@@ -320,24 +320,68 @@ class TestDeleteWorktreeErrors:
 
 
 class TestReleaseWorktree:
+    @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
     @patch("gobby.cli.worktrees.resolve_worktree_id", return_value="wt-123")
     @patch("gobby.cli.worktrees.get_worktree_manager")
+    @patch("httpx.post")
     def test_release_success(
-        self, mock_mgr: MagicMock, mock_resolve: MagicMock, runner: CliRunner
+        self,
+        mock_post: MagicMock,
+        mock_mgr: MagicMock,
+        mock_resolve: MagicMock,
+        mock_url: MagicMock,
+        runner: CliRunner,
     ) -> None:
-        mock_mgr.return_value.release.return_value = True
+        resp = MagicMock()
+        resp.json.return_value = {"success": True}
+        resp.raise_for_status.return_value = None
+        mock_post.return_value = resp
         result = runner.invoke(worktrees, ["release", "wt-123"])
         assert result.exit_code == 0
         assert "Released worktree wt-123" in result.output
+        assert mock_post.call_args[0][0] == (
+            "http://localhost:9876/api/mcp/gobby-worktrees/tools/release_worktree"
+        )
+        assert mock_post.call_args[1]["json"] == {"worktree_id": "wt-123"}
+        mock_mgr.return_value.release.assert_not_called()
 
+    @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
     @patch("gobby.cli.worktrees.resolve_worktree_id", return_value="wt-123")
     @patch("gobby.cli.worktrees.get_worktree_manager")
+    @patch("httpx.post")
     def test_release_failure(
-        self, mock_mgr: MagicMock, mock_resolve: MagicMock, runner: CliRunner
+        self,
+        mock_post: MagicMock,
+        mock_mgr: MagicMock,
+        mock_resolve: MagicMock,
+        mock_url: MagicMock,
+        runner: CliRunner,
     ) -> None:
-        mock_mgr.return_value.release.return_value = False
+        resp = MagicMock()
+        resp.json.return_value = {"success": False, "error": "not claimed"}
+        resp.raise_for_status.return_value = None
+        mock_post.return_value = resp
         result = runner.invoke(worktrees, ["release", "wt-123"])
         assert "Failed to release worktree" in result.output
+        assert "not claimed" in result.output
+        mock_mgr.return_value.release.assert_not_called()
+
+    @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
+    @patch("gobby.cli.worktrees.resolve_worktree_id", return_value="wt-123")
+    @patch("gobby.cli.worktrees.get_worktree_manager")
+    @patch("httpx.post", side_effect=httpx.ConnectError("refused"))
+    def test_release_connect_error(
+        self,
+        mock_post: MagicMock,
+        mock_mgr: MagicMock,
+        mock_resolve: MagicMock,
+        mock_url: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        result = runner.invoke(worktrees, ["release", "wt-123"])
+        assert result.exit_code == 0
+        assert "Cannot connect to Gobby daemon" in result.output
+        mock_mgr.return_value.release.assert_not_called()
 
 
 # =============================================================================
@@ -346,26 +390,77 @@ class TestReleaseWorktree:
 
 
 class TestClaimWorktree:
+    @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
     @patch("gobby.cli.worktrees.resolve_worktree_id", return_value="wt-123")
     @patch("gobby.cli.worktrees.resolve_session_id", return_value="sess-1")
     @patch("gobby.cli.worktrees.get_worktree_manager")
+    @patch("httpx.post")
     def test_claim_failure(
-        self, mock_mgr: MagicMock, mock_sess: MagicMock, mock_wt: MagicMock, runner: CliRunner
+        self,
+        mock_post: MagicMock,
+        mock_mgr: MagicMock,
+        mock_sess: MagicMock,
+        mock_wt: MagicMock,
+        mock_url: MagicMock,
+        runner: CliRunner,
     ) -> None:
-        mock_mgr.return_value.claim.return_value = False
+        resp = MagicMock()
+        resp.json.return_value = {"success": False, "error": "already claimed"}
+        resp.raise_for_status.return_value = None
+        mock_post.return_value = resp
         result = runner.invoke(worktrees, ["claim", "wt-123", "sess-1"])
         assert "Failed to claim worktree" in result.output
+        assert "already claimed" in result.output
+        mock_mgr.return_value.claim.assert_not_called()
 
+    @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
     @patch("gobby.cli.worktrees.resolve_worktree_id", return_value="wt-123")
     @patch("gobby.cli.worktrees.resolve_session_id", return_value="sess-1")
     @patch("gobby.cli.worktrees.get_worktree_manager")
+    @patch("httpx.post")
     def test_claim_success(
-        self, mock_mgr: MagicMock, mock_sess: MagicMock, mock_wt: MagicMock, runner: CliRunner
+        self,
+        mock_post: MagicMock,
+        mock_mgr: MagicMock,
+        mock_sess: MagicMock,
+        mock_wt: MagicMock,
+        mock_url: MagicMock,
+        runner: CliRunner,
     ) -> None:
-        mock_mgr.return_value.claim.return_value = True
+        resp = MagicMock()
+        resp.json.return_value = {"success": True}
+        resp.raise_for_status.return_value = None
+        mock_post.return_value = resp
         result = runner.invoke(worktrees, ["claim", "wt-123", "sess-1"])
         assert result.exit_code == 0
         assert "Claimed worktree wt-123" in result.output
+        assert mock_post.call_args[0][0] == (
+            "http://localhost:9876/api/mcp/gobby-worktrees/tools/claim_worktree"
+        )
+        assert mock_post.call_args[1]["json"] == {
+            "worktree_id": "wt-123",
+            "session_id": "sess-1",
+        }
+        mock_mgr.return_value.claim.assert_not_called()
+
+    @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
+    @patch("gobby.cli.worktrees.resolve_worktree_id", return_value="wt-123")
+    @patch("gobby.cli.worktrees.resolve_session_id", return_value="sess-1")
+    @patch("gobby.cli.worktrees.get_worktree_manager")
+    @patch("httpx.post", side_effect=httpx.ConnectError("refused"))
+    def test_claim_connect_error(
+        self,
+        mock_post: MagicMock,
+        mock_mgr: MagicMock,
+        mock_sess: MagicMock,
+        mock_wt: MagicMock,
+        mock_url: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        result = runner.invoke(worktrees, ["claim", "wt-123", "sess-1"])
+        assert result.exit_code == 0
+        assert "Cannot connect to Gobby daemon" in result.output
+        mock_mgr.return_value.claim.assert_not_called()
 
 
 # =============================================================================
