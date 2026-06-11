@@ -289,7 +289,8 @@ fn compile_writes_obsidian_markdown() {
             "source: daemon notes\n",
             "---\n\n",
             "Citation: Example Docs, Compile API\n",
-            "Compile turns accepted notes into source-grounded wiki articles."
+            "Compile turns accepted notes into source-grounded wiki articles.\n",
+            "Evidence sections keep claims traceable to their matching outline entries."
         ),
     )
     .expect("note written");
@@ -324,7 +325,24 @@ fn compile_writes_obsidian_markdown() {
         std::fs::read_to_string(scope.root().join("meta/provenance.json")).expect("provenance");
     assert!(provenance.contains("knowledge/topics/durable-compile.md"));
     assert!(provenance.contains("raw/research/compile.md"));
-    let provenance: ProvenanceGraph = serde_json::from_str(&provenance).expect("parse provenance");
+    let provenance = ProvenanceGraph::load_from_vault(scope.root()).expect("load provenance graph");
+    let links = provenance.links();
+    assert_eq!(links.len(), 2);
+    assert_eq!(links[0].section.section_id, "durable-compile");
+    assert_eq!(links[1].section.section_id, "evidence");
+    let article_page = std::path::Path::new("knowledge/topics/durable-compile.md");
+    assert_eq!(
+        provenance
+            .links_for_page_section(article_page, "durable-compile")
+            .len(),
+        1
+    );
+    assert_eq!(
+        provenance
+            .links_for_page_section(article_page, "evidence")
+            .len(),
+        1
+    );
     let source = &provenance.links()[0].source;
     assert!(source.byte_end > source.byte_start);
 }

@@ -172,7 +172,12 @@ pub fn compile_to_wiki_with_options(
         page_writes.push(write_synthesized_page(vault_root, page, policy)?);
     }
     update_wiki_index(vault_root, &article)?;
-    write_provenance(vault_root, &article, &handoff.bundle.accepted_sources)?;
+    write_provenance(
+        vault_root,
+        &article,
+        &handoff.bundle.accepted_sources,
+        &handoff.bundle.outline,
+    )?;
     mark_sources_compiled(vault_root, &source_paths)?;
 
     Ok(WikiCompileOutcome {

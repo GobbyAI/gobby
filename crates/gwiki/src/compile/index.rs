@@ -135,6 +135,7 @@ pub(crate) fn write_provenance(
     vault_root: &Path,
     article: &SynthesizedPage,
     sources: &[AcceptedCompileSource],
+    outline: &[String],
 ) -> Result<(), WikiError> {
     let _lock = lock_provenance(vault_root)?;
     let provenance_path = vault_root.join("meta").join("provenance.json");
@@ -143,18 +144,11 @@ pub(crate) fn write_provenance(
     } else {
         ProvenanceGraph::default()
     };
-    let heading =
-        first_rendered_article_section(&article.markdown).unwrap_or_else(|| "Overview".to_string());
-    let section_id = if heading == "Overview" {
-        page_slugify(&article.title)
-    } else {
-        page_slugify(&heading)
-    };
-    let section = WikiSectionRef {
-        page_path: PathBuf::from(relative_path(vault_root, &article.path)),
-        heading,
-        section_id,
-    };
+    let sections = provenance_sections(
+        PathBuf::from(relative_path(vault_root, &article.path)),
+        article,
+        outline,
+    );
     let manifest_records = source_records_for_paths(
         vault_root,
         &sources
@@ -163,6 +157,7 @@ pub(crate) fn write_provenance(
             .collect::<Vec<_>>(),
     )?;
 
+    let mut chunk_ordinal = 0;
     for source in sources {
         let source_id = manifest_records
             .iter()
@@ -187,9 +182,10 @@ pub(crate) fn write_provenance(
                     byte_start: offset.byte_start,
                     byte_end: offset.byte_end,
                 },
-                section: section.clone(),
+                section: section_for_chunk(&sections, chunk_ordinal).clone(),
                 claim: Some(chunk.clone()),
             });
+            chunk_ordinal += 1;
         }
     }
 
@@ -220,13 +216,57 @@ fn lock_provenance(vault_root: &Path) -> Result<fs::File, WikiError> {
     Ok(lock)
 }
 
-fn first_rendered_article_section(markdown: &str) -> Option<String> {
-    markdown.lines().find_map(|line| {
-        line.strip_prefix("## ")
-            .map(str::trim)
-            .filter(|heading| !heading.is_empty())
-            .map(ToString::to_string)
-    })
+fn provenance_sections(
+    page_path: PathBuf,
+    article: &SynthesizedPage,
+    outline: &[String],
+) -> Vec<WikiSectionRef> {
+    let mut headings: Vec<String> = outline
+        .iter()
+        .map(|heading| heading.trim())
+        .filter(|heading| !heading.is_empty())
+        .map(ToString::to_string)
+        .collect();
+    if headings.is_empty() {
+        headings = rendered_article_sections(&article.markdown);
+    }
+    if headings.is_empty() {
+        headings.push("Overview".to_string());
+    }
+
+    headings
+        .into_iter()
+        .map(|heading| WikiSectionRef {
+            section_id: section_id_for_article(article, &heading),
+            heading,
+            page_path: page_path.clone(),
+        })
+        .collect()
+}
+
+fn section_for_chunk(sections: &[WikiSectionRef], chunk_ordinal: usize) -> &WikiSectionRef {
+    let index = chunk_ordinal.min(sections.len().saturating_sub(1));
+    &sections[index]
+}
+
+fn rendered_article_sections(markdown: &str) -> Vec<String> {
+    markdown
+        .lines()
+        .filter_map(|line| {
+            line.strip_prefix("## ")
+                .map(str::trim)
+                .filter(|heading| !heading.is_empty())
+                .map(ToString::to_string)
+        })
+        .collect()
+}
+
+fn section_id_for_article(article: &SynthesizedPage, heading: &str) -> String {
+    if heading == "Overview" {
+        page_slugify(&article.title)
+    } else {
+        page_slugify(heading)
+    }
 }
 
 pub(crate) fn mark_sources_compiled(
