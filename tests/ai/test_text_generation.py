@@ -336,6 +336,48 @@ async def test_text_generation_service_falls_back_across_profile_candidates() ->
 
 
 @pytest.mark.asyncio
+async def test_text_generation_service_falls_back_when_candidate_returns_blank_output(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local:lm-studio",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("qwen-local",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                available=True,
+                models=("haiku",),
+            ),
+        ]
+    )
+    claude = RecordingAdapter("claude")
+    service = TextGenerationService(
+        registry,
+        {"local:lm-studio": StaticTextAdapter("   "), "claude": claude},
+    )
+    caplog.set_level(logging.DEBUG, logger=TEXT_GENERATION_LOGGER)
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="summarize",
+            profile="feature_low",
+            candidates=("local:lm-studio/qwen-local", "claude/haiku"),
+        )
+    )
+
+    assert result.text == "claude:summarize"
+    records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
+    assert [record.success for record in records] == [False, True]
+
+
+@pytest.mark.asyncio
 async def test_text_generation_service_falls_back_when_candidate_echoes_prompt() -> None:
     prompt = "Summarize this module once from lower-level summaries."
     registry = AICapabilityRegistry(
@@ -1105,10 +1147,15 @@ async def test_local_text_generate_adapter_forwards_json_request(
 
 
 class FakeACPClient:
-    def __init__(self) -> None:
+    def __init__(self, events: list[StreamEvent] | None = None) -> None:
         self.started: dict[str, object] | None = None
         self.sent: list[dict[str, object]] = []
         self.stopped = False
+        self.events = events or [
+            StreamEvent(event_type="content_delta", data={"content": "hello "}),
+            StreamEvent(event_type="content_delta", data={"content": "world"}),
+            StreamEvent(event_type="result", data={"content": "ignored fallback"}),
+        ]
 
     async def start(self, **kwargs: object) -> None:
         self.started = kwargs
@@ -1118,9 +1165,8 @@ class FakeACPClient:
 
     async def send(self, message: str, **kwargs: object) -> AsyncIterator[StreamEvent]:
         self.sent.append({"message": message, **kwargs})
-        yield StreamEvent(event_type="content_delta", data={"content": "hello "})
-        yield StreamEvent(event_type="content_delta", data={"content": "world"})
-        yield StreamEvent(event_type="result", data={"content": "ignored fallback"})
+        for event in self.events:
+            yield event
 
 
 class FakeCodexAppServerClient:
@@ -1231,6 +1277,42 @@ async def test_codex_app_server_text_generate_adapter_ignores_completed_user_mes
 
 
 @pytest.mark.asyncio
+async def test_codex_app_server_text_generate_adapter_raises_on_completed_error() -> None:
+    client = FakeCodexAppServerClient(
+        [
+            {
+                "type": "turn/completed",
+                "turn": {
+                    "id": "turn-1",
+                    "status": "error",
+                    "error": "quota exceeded",
+                    "items": [],
+                },
+            }
+        ]
+    )
+    adapter = CodexAppServerTextGenerateAdapter(lambda: client)
+
+    with pytest.raises(RuntimeError, match="quota exceeded"):
+        await adapter.generate(TextGenerationRequest(provider="codex", prompt="user prompt"))
+
+    assert client.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_codex_app_server_text_generate_adapter_raises_when_turn_has_no_output() -> None:
+    client = FakeCodexAppServerClient(
+        [{"type": "turn/completed", "turn": {"id": "turn-1", "status": "completed", "items": []}}]
+    )
+    adapter = CodexAppServerTextGenerateAdapter(lambda: client)
+
+    with pytest.raises(RuntimeError, match="returned no output"):
+        await adapter.generate(TextGenerationRequest(provider="codex", prompt="user prompt"))
+
+    assert client.stopped is True
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["gemini", "grok", "qwen"])
 async def test_acp_text_generate_adapter_runs_one_shot_prompt_turn(provider: str) -> None:
     client = FakeACPClient()
@@ -1259,6 +1341,50 @@ async def test_acp_text_generate_adapter_runs_one_shot_prompt_turn(provider: str
         }
     ]
     assert client.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_falls_back_when_acp_candidate_errors() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="gemini",
+                adapter_style=AIAdapterStyle.ACP,
+                available=True,
+                models=("gemini-pro",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                available=True,
+                models=("haiku",),
+            ),
+        ]
+    )
+    acp_client = FakeACPClient(
+        [StreamEvent(event_type="error", data={"message": "provider unavailable"})]
+    )
+    claude = RecordingAdapter("claude")
+    service = TextGenerationService(
+        registry,
+        {
+            "gemini": ACPTextGenerateAdapter(lambda: acp_client),  # type: ignore[arg-type]
+            "claude": claude,
+        },
+    )
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="summarize",
+            profile="feature_low",
+            candidates=("gemini/gemini-pro", "claude/haiku"),
+        )
+    )
+
+    assert result.text == "claude:summarize"
+    assert acp_client.stopped is True
 
 
 class FakeProcess:

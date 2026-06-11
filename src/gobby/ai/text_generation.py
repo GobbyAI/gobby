@@ -496,6 +496,7 @@ class CodexAppServerTextGenerateAdapter:
                 request.prompt,
                 context_prefix=request.system_prompt,
             ):
+                _raise_for_codex_error_event(event)
                 event_type = event.get("type")
                 text = _codex_event_text(event)
                 if not text:
@@ -507,7 +508,10 @@ class CodexAppServerTextGenerateAdapter:
                     and _codex_completed_item_type(event) == "agentMessage"
                 ):
                     fallback_chunks.append(text)
-            return "".join(chunks or fallback_chunks).strip()
+            output = "".join(chunks or fallback_chunks).strip()
+            if not output:
+                raise RuntimeError("Codex text generation returned no output")
+            return output
         finally:
             await client.stop()
 
@@ -741,6 +745,8 @@ async def _collect_acp_text(events: AsyncIterator[ACPStreamEventLike]) -> str:
     chunks: list[str] = []
     result_chunks: list[str] = []
     async for event in events:
+        if event.event_type == "error":
+            raise RuntimeError(f"ACP text generation failed: {_event_error_message(event.data)}")
         text = _stream_event_text(event)
         if not text:
             continue
@@ -750,6 +756,16 @@ async def _collect_acp_text(events: AsyncIterator[ACPStreamEventLike]) -> str:
             result_chunks.append(text)
 
     return "".join(chunks or result_chunks).strip()
+
+
+def _event_error_message(data: Mapping[str, Any]) -> str:
+    for key in ("message", "error", "details", "code"):
+        value = data.get(key)
+        if value:
+            if isinstance(value, str):
+                return value
+            return json.dumps(value, sort_keys=True, default=str)
+    return "unknown error"
 
 
 def _stream_event_text(event: ACPStreamEventLike) -> str:
@@ -786,6 +802,38 @@ def _codex_event_text(event: dict[str, Any]) -> str:
             if isinstance(text, str) and text:
                 chunks.append(text)
     return "".join(chunks)
+
+
+def _raise_for_codex_error_event(event: dict[str, Any]) -> None:
+    event_type = event.get("type")
+    if event_type not in {"turn/created", "turn/completed"}:
+        return
+
+    for payload in _codex_turn_payloads(event):
+        error = payload.get("error")
+        if error:
+            raise RuntimeError(f"Codex text generation failed: {_codex_error_message(error)}")
+        status = payload.get("status")
+        if isinstance(status, str) and status.lower() in {"error", "failed"}:
+            raise RuntimeError(
+                f"Codex text generation failed with status {status}: "
+                f"{_codex_error_message(payload)}"
+            )
+
+
+def _codex_turn_payloads(event: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    turn = event.get("turn")
+    if isinstance(turn, dict):
+        return event, turn
+    return (event,)
+
+
+def _codex_error_message(error: object) -> str:
+    if isinstance(error, str):
+        return error
+    if isinstance(error, Mapping):
+        return _event_error_message(error)
+    return json.dumps(error, sort_keys=True, default=str)
 
 
 def _codex_completed_item_type(event: dict[str, Any]) -> str | None:
