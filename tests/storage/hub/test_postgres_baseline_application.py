@@ -217,6 +217,59 @@ def test_postgres_pool_opens_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
     assert calls["opened"] == (True, 1.5)
 
 
+def test_postgres_close_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _postgres_module()
+    calls: dict[str, int] = {"close": 0}
+
+    class FakePool:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def open(self, *, wait: bool, timeout: float) -> None:
+            raise AssertionError("open should not be called by close")
+
+        def close(self) -> None:
+            calls["close"] += 1
+
+    monkeypatch.setattr(module, "ConnectionPool", FakePool)
+
+    db = module.PostgresHubDatabase("postgresql://gobby:secret@localhost/gobby")
+    db.close()
+    db.close()
+
+    assert calls["close"] == 1
+
+
+def test_postgres_open_after_close_raises_without_reopening(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _postgres_module()
+    calls: dict[str, int] = {"open": 0, "close": 0}
+
+    class FakePool:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def open(self, *, wait: bool, timeout: float) -> None:
+            calls["open"] += 1
+
+        def close(self) -> None:
+            calls["close"] += 1
+
+    monkeypatch.setattr(module, "ConnectionPool", FakePool)
+
+    db = module.PostgresHubDatabase("postgresql://gobby:secret@localhost/gobby")
+    db.close()
+
+    with pytest.raises(RuntimeError, match="connection pool is closed"):
+        db.open()
+    with pytest.raises(RuntimeError, match="connection pool is closed"):
+        with db.transaction():
+            pass
+
+    assert calls == {"open": 0, "close": 1}
+
+
 def test_apply_postgres_baseline_uses_transaction_scoped_advisory_lock(monkeypatch) -> None:
     module = _postgres_module()
     fast = _ApplyConnection("fresh")

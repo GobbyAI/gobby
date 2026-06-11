@@ -7,7 +7,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby import app_context, runner_lifecycle_shutdown
+from gobby.hooks.event_handlers import EventHandlers
+from gobby.hooks.events import HookEventType
 from gobby.runner import GobbyRunner
+from gobby.shutdown_intent import ShutdownIntent
+from tests.hooks._event_handler_helpers import make_event
 from tests.runner_helpers import create_base_patches
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
@@ -802,3 +807,160 @@ class TestGobbyRunnerShutdownExtended:
             assert events == ["database"]
             runner.code_indexer.close_graph_client.assert_not_called()
             assert runner.database.close.call_count == 1
+
+
+class TestShutdownSessionStatusLifecycle:
+    def test_late_session_status_event_skips_storage_during_shutdown(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            app_context,
+            "_current_container",
+            SimpleNamespace(shutdown_in_progress=True),
+        )
+        session_manager = MagicMock()
+        handlers = EventHandlers(session_manager=session_manager)
+        event = make_event(
+            HookEventType.AFTER_AGENT,
+            metadata={"_platform_session_id": "sess-1"},
+        )
+
+        response = handlers.handle_after_agent(event)
+
+        assert response.decision == "allow"
+        session_manager.update_session_status.assert_not_called()
+
+    async def test_shutdown_skips_hook_manager_fallback_after_lifespan_shutdown(self) -> None:
+        events: list[str] = []
+        hook_manager = SimpleNamespace(
+            _shutdown_complete=True,
+            shutdown_async=AsyncMock(),
+        )
+        runner = SimpleNamespace(
+            _shutdown_intent=ShutdownIntent.STOP,
+            http_server=SimpleNamespace(
+                services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
+                _hook_manager=hook_manager,
+                _terminate_streamable_http_sessions=AsyncMock(),
+            ),
+            lifecycle_manager=SimpleNamespace(stop=AsyncMock()),
+            agent_lifecycle_monitor=None,
+            cron_scheduler=None,
+            message_processor=None,
+            communications_manager=None,
+            config=SimpleNamespace(ui=SimpleNamespace(enabled=False, mode="production")),
+            memory_manager=None,
+            vector_store=None,
+            mcp_proxy=SimpleNamespace(disconnect_all=AsyncMock()),
+            database=SimpleNamespace(
+                close=MagicMock(side_effect=lambda: events.append("database"))
+            ),
+        )
+        server = SimpleNamespace(should_exit=False)
+
+        async def server_done() -> None:
+            return None
+
+        await runner_lifecycle_shutdown.shutdown_daemon_services(
+            runner,
+            server,
+            asyncio.create_task(server_done()),
+            1,
+            await_critical_stop_hook_grace_window=AsyncMock(),
+            shutdown_websocket_server=AsyncMock(),
+            cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
+            reap_remaining_child_processes=AsyncMock(),
+            shutdown_telemetry=lambda: events.append("telemetry"),
+            cleanup_pid_file=lambda: events.append("cleanup"),
+        )
+
+        assert events == ["telemetry", "database", "cleanup"]
+        assert runner.http_server._hook_manager is hook_manager
+        hook_manager.shutdown_async.assert_not_awaited()
+        runner.database.close.assert_called_once()
+
+    async def test_database_closes_after_session_writing_services_stop(self) -> None:
+        events: list[str] = []
+
+        async def lifecycle_stop() -> None:
+            events.append("lifecycle")
+
+        async def hook_shutdown() -> None:
+            events.append("hook")
+
+        async def cancel_agents(_runner: object) -> int:
+            events.append("agent-cancel")
+            return 0
+
+        async def agent_monitor_stop() -> None:
+            events.append("agent-monitor")
+
+        async def message_processor_stop() -> None:
+            events.append("message-processor")
+
+        async def terminate_sessions() -> None:
+            events.append("sessions")
+
+        async def disconnect_mcp() -> None:
+            events.append("mcp")
+
+        runner = SimpleNamespace(
+            _shutdown_intent=ShutdownIntent.STOP,
+            http_server=SimpleNamespace(
+                services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
+                _hook_manager=SimpleNamespace(shutdown_async=AsyncMock(side_effect=hook_shutdown)),
+                _terminate_streamable_http_sessions=AsyncMock(side_effect=terminate_sessions),
+            ),
+            lifecycle_manager=SimpleNamespace(stop=AsyncMock(side_effect=lifecycle_stop)),
+            agent_lifecycle_monitor=SimpleNamespace(stop=AsyncMock(side_effect=agent_monitor_stop)),
+            cron_scheduler=None,
+            message_processor=SimpleNamespace(stop=AsyncMock(side_effect=message_processor_stop)),
+            communications_manager=None,
+            config=SimpleNamespace(ui=SimpleNamespace(enabled=False, mode="production")),
+            memory_manager=None,
+            vector_store=None,
+            mcp_proxy=SimpleNamespace(disconnect_all=AsyncMock(side_effect=disconnect_mcp)),
+            database=SimpleNamespace(
+                close=MagicMock(side_effect=lambda: events.append("database"))
+            ),
+        )
+        server = SimpleNamespace(should_exit=False)
+
+        async def server_done() -> None:
+            return None
+
+        await runner_lifecycle_shutdown.shutdown_daemon_services(
+            runner,
+            server,
+            asyncio.create_task(server_done()),
+            1,
+            await_critical_stop_hook_grace_window=AsyncMock(),
+            shutdown_websocket_server=AsyncMock(),
+            cancel_active_agent_runs_for_shutdown=cancel_agents,
+            reap_remaining_child_processes=AsyncMock(),
+            shutdown_telemetry=MagicMock(),
+            cleanup_pid_file=MagicMock(),
+        )
+
+        assert events == [
+            "sessions",
+            "lifecycle",
+            "agent-cancel",
+            "agent-monitor",
+            "message-processor",
+            "hook",
+            "mcp",
+            "database",
+        ]
+        database_index = events.index("database")
+        for event in (
+            "sessions",
+            "lifecycle",
+            "agent-cancel",
+            "agent-monitor",
+            "message-processor",
+            "hook",
+            "mcp",
+        ):
+            assert events.index(event) < database_index

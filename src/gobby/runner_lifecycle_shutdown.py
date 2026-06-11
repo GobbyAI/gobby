@@ -425,10 +425,16 @@ def _stop_ui_dev_server_if_needed(runner: GobbyRunner) -> None:
 async def _close_managers_and_storage(runner: GobbyRunner) -> None:
     hook_manager = getattr(runner.http_server, "_hook_manager", None)
     if hook_manager:
-        try:
-            await hook_manager.shutdown_async()
-        except Exception as e:
-            logger.warning(f"HookManager shutdown failed: {e}")
+        if getattr(hook_manager, "_shutdown_complete", False):
+            logger.debug("HookManager shutdown already handled by HTTP lifespan")
+        else:
+            try:
+                await hook_manager.shutdown_async()
+            except Exception as e:
+                logger.warning(f"HookManager shutdown failed: {e}")
+            else:
+                if getattr(runner.http_server, "_hook_manager", None) is hook_manager:
+                    runner.http_server._hook_manager = None
 
     memory_manager = getattr(runner, "memory_manager", None)
     if memory_manager:

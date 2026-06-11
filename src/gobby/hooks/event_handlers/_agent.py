@@ -77,11 +77,14 @@ class AgentEventHandlerMixin(EventHandlersBase):
             # Update status to active (unless /clear or /exit)
             prompt_lower = stripped_prompt.lower()
             if prompt_lower not in ("/clear", "/exit") and self._session_manager:
-                try:
-                    self._session_manager.update_session_status(session_id, "active")
-                    self._session_manager.reset_transcript_processed(session_id)
-                except Exception as e:
-                    self.logger.warning(f"Failed to update session status: {e}")
+                if not self._skip_session_status_update_during_shutdown(
+                    "BEFORE_AGENT", session_id, "active"
+                ):
+                    try:
+                        self._session_manager.update_session_status(session_id, "active")
+                        self._session_manager.reset_transcript_processed(session_id)
+                    except Exception as e:
+                        self.logger.warning(f"Failed to update session status: {e}")
 
             # Handle /clear command - generate boundary summaries before clear/exit
             # and set handoff_source so session-end marks the session handoff_ready.
@@ -382,10 +385,13 @@ class AgentEventHandlerMixin(EventHandlersBase):
         if session_id:
             self.logger.debug(f"AFTER_AGENT: session {session_id}, cli={cli_source}")
             if self._session_manager:
-                try:
-                    self._session_manager.update_session_status(session_id, "paused")
-                except Exception as e:
-                    self.logger.warning(f"Failed to update session status: {e}")
+                if not self._skip_session_status_update_during_shutdown(
+                    "AFTER_AGENT", session_id, "paused"
+                ):
+                    try:
+                        self._session_manager.update_session_status(session_id, "paused")
+                    except Exception as e:
+                        self.logger.warning(f"Failed to update session status: {e}")
         else:
             self.logger.debug(f"AFTER_AGENT: cli={cli_source}")
 
@@ -403,10 +409,13 @@ class AgentEventHandlerMixin(EventHandlersBase):
         if session_id:
             self.logger.debug(f"STOP: session {session_id}")
             if self._session_manager:
-                try:
-                    self._session_manager.update_session_status(session_id, "paused")
-                except Exception as e:
-                    self.logger.warning(f"Failed to update session status: {e}")
+                if not self._skip_session_status_update_during_shutdown(
+                    "STOP", session_id, "paused"
+                ):
+                    try:
+                        self._session_manager.update_session_status(session_id, "paused")
+                    except Exception as e:
+                        self.logger.warning(f"Failed to update session status: {e}")
         else:
             self.logger.debug("STOP")
 
@@ -443,7 +452,10 @@ class AgentEventHandlerMixin(EventHandlersBase):
             self.logger.debug(f"PRE_COMPACT ({trigger}): session {session_id}")
             # Auto compaction in Codex is an in-session event, not a handoff.
             if is_handoff_trigger and self._session_manager:
-                self._session_manager.update_session_status(session_id, "handoff_ready")
+                if not self._skip_session_status_update_during_shutdown(
+                    "PRE_COMPACT", session_id, "handoff_ready"
+                ):
+                    self._session_manager.update_session_status(session_id, "handoff_ready")
             # Generate session summaries from digest before compaction
             try:
                 if self._dispatch_session_summaries_fn:

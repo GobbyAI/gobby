@@ -76,6 +76,7 @@ class HookManager:
         self.memory_sync_manager = memory_sync_manager
         self.task_sync_manager = task_sync_manager
         self._owns_database = database is None and session_manager is None
+        self._shutdown_complete = False
 
         # Capture event loop for thread-safe broadcasting (if running in async context)
         self._loop: asyncio.AbstractEventLoop | None
@@ -597,6 +598,10 @@ class HookManager:
 
     async def shutdown_async(self) -> None:
         """Clean up HookManager resources from an async shutdown context."""
+        if self._shutdown_complete:
+            self.logger.debug("HookManager shutdown already complete")
+            return
+
         self.logger.debug("HookManager shutting down")
 
         # Stop health check monitoring (delegated to HealthMonitor)
@@ -607,6 +612,7 @@ class HookManager:
         if self._owns_database and hasattr(self, "_database"):
             self._database.close()
 
+        self._shutdown_complete = True
         self.logger.debug("HookManager shutdown complete")
 
     async def _close_webhook_dispatcher_async(self) -> None:
