@@ -14,6 +14,8 @@ from gobby.config.sessions import SessionSummaryConfig
 from gobby.sessions.summarize import (
     TRANSCRIPT_FALLBACK_MAX_CHARS,
     TRANSCRIPT_FALLBACK_MAX_TURNS,
+    _build_summary_prompt_context,
+    _digest_markdown_for_summary,
     _generate_full_summary,
     generate_session_summaries,
 )
@@ -133,6 +135,66 @@ class _RevisionAwareSummaryManager:
 
 def _digest_turns(count: int) -> str:
     return "\n\n".join(f"### Turn {index}\nDigest turn {index}." for index in range(1, count + 1))
+
+
+def test_digest_markdown_for_summary_strips_injected_context() -> None:
+    session = _make_session(
+        digest_markdown=(
+            "### Turn 1\nUser: keep\nAssistant: keep\n\n"
+            "<!-- gobby:injected-context:begin -->\n"
+            "Injected by Gobby session handoff\n"
+            "<!-- gobby:injected-context:end -->"
+        ),
+        last_turn_markdown=(
+            "User: latest\n"
+            "## Previous Session Context\n"
+            "*Injected by Gobby session handoff*\n\n"
+            "/Users/josh/Projects/gobby/src/gobby/memory/recall.py\n\n"
+            "# Next\nAssistant: latest"
+        ),
+    )
+
+    result = _digest_markdown_for_summary(session)
+
+    assert "Injected by Gobby" not in result
+    assert "/Users/josh/Projects/gobby" not in result
+    assert "User: keep" in result
+    assert "Assistant: latest" in result
+
+
+@pytest.mark.asyncio
+async def test_build_summary_prompt_context_strips_no_digest_fallback_inputs() -> None:
+    injected = (
+        "## Previous Session Context\n"
+        "*Injected by Gobby session handoff*\n\n"
+        "/Users/josh/Projects/gobby/src/gobby/memory/recall.py"
+    )
+    turns = [
+        {"type": "user", "message": {"role": "user", "content": "Real prompt\n" + injected}},
+        {
+            "type": "assistant",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "Real answer"}]},
+        },
+    ]
+    session = _make_session(digest_markdown=None)
+    handoff_ctx = MagicMock()
+    handoff_ctx.git_status = ""
+    manager = MagicMock()
+    manager.db = None
+
+    result = await _build_summary_prompt_context(
+        session=session,
+        turns=turns,
+        handoff_ctx=handoff_ctx,
+        db=None,
+        session_manager=manager,
+        project_path="/tmp",
+    )
+
+    assert "Injected by Gobby" not in result["transcript_summary"]
+    assert "Injected by Gobby" not in result["last_messages"]
+    assert "/Users/josh/Projects/gobby" not in result["transcript_summary"]
+    assert "Real prompt" in result["transcript_summary"]
 
 
 class TestGenerateSessionSummaries:

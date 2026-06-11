@@ -32,6 +32,7 @@ from gobby.sessions.workspace_context import (
     resolve_session_workspace,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.injected_context import strip_injected_context
 
 logger = logging.getLogger(__name__)
 
@@ -405,10 +406,14 @@ def _summary_source_text(value: str | None) -> str:
 
 def _digest_markdown_for_summary(session: Any) -> str:
     """Return digest context with the latest completed turn when digest lags."""
-    digest_markdown = _summary_source_text(getattr(session, "digest_markdown", None))
+    digest_markdown = strip_injected_context(
+        _summary_source_text(getattr(session, "digest_markdown", None))
+    )
     pending_turns = [
-        _summary_source_text(getattr(session, "last_turn_markdown", None)),
-        _summary_source_text(getattr(session, "last_assistant_content", None)),
+        strip_injected_context(_summary_source_text(getattr(session, "last_turn_markdown", None))),
+        strip_injected_context(
+            _summary_source_text(getattr(session, "last_assistant_content", None))
+        ),
     ]
 
     summary_parts = [digest_markdown] if digest_markdown else []
@@ -423,6 +428,16 @@ def _digest_markdown_for_summary(session: Any) -> str:
         next_turn += 1
 
     return "\n\n".join(summary_parts)
+
+
+def _strip_injected_context_from_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return strip_injected_context(value)
+    if isinstance(value, list):
+        return [_strip_injected_context_from_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _strip_injected_context_from_value(item) for key, item in value.items()}
+    return value
 
 
 def _truncate_markdown(value: str, max_chars: int) -> str:
@@ -584,13 +599,17 @@ async def _build_summary_prompt_context(
 
             parser = ClaudeTranscriptParser()
 
-        last_turns = parser.extract_turns_since_clear(turns)
+        last_turns = _strip_injected_context_from_value(parser.extract_turns_since_clear(turns))
         transcript_summary = _format_transcript_fallback_summary(
             last_turns,
             format_turns_for_llm,
         )
-        last_messages = parser.extract_last_messages(turns, num_pairs=2)
+        transcript_summary = strip_injected_context(transcript_summary)
+        last_messages = _strip_injected_context_from_value(
+            parser.extract_last_messages(turns, num_pairs=2)
+        )
         last_messages_str = format_turns_for_llm(last_messages) if last_messages else ""
+        last_messages_str = strip_injected_context(last_messages_str)
 
     resolved_db = _summary_context_db(db, session_manager)
     claimed_tasks = (

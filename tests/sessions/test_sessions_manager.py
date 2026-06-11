@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
@@ -287,6 +287,60 @@ class TestSessionManagerLookup:
         assert recovered is not None
         assert recovered.id == older.id
         assert session_mgr.get_session_id("ranked-external-id", "gemini") == older.id
+
+    def test_recover_session_none_project_searches_real_project(
+        self,
+        session_mgr: SessionManager,
+        session_storage: SessionManager,
+        test_project: dict,
+    ) -> None:
+        real_project = session_storage.register(
+            external_id="real-project-external-id",
+            machine_id="machine-1",
+            source="codex",
+            project_id=test_project["id"],
+        )
+
+        recovered = session_mgr.recover_session(
+            external_id="real-project-external-id",
+            source="gemini",
+            machine_id="machine-1",
+            project_id=None,
+        )
+
+        assert recovered is not None
+        assert recovered.id == real_project.id
+        assert recovered.project_id != PERSONAL_PROJECT_ID
+
+    def test_recover_session_none_project_cross_project_collision_returns_none(
+        self,
+        session_mgr: SessionManager,
+        session_storage: SessionManager,
+        project_storage: LocalProjectManager,
+        test_project: dict,
+    ) -> None:
+        other_project = project_storage.create(name="other-project", repo_path="/tmp/other")
+        session_storage.register(
+            external_id="colliding-external-id",
+            machine_id="machine-1",
+            source="codex",
+            project_id=test_project["id"],
+        )
+        session_storage.register(
+            external_id="colliding-external-id",
+            machine_id="machine-1",
+            source="claude",
+            project_id=other_project.id,
+        )
+
+        recovered = session_mgr.recover_session(
+            external_id="colliding-external-id",
+            source="gemini",
+            machine_id="machine-1",
+            project_id=None,
+        )
+
+        assert recovered is None
 
 
 class TestSessionManagerStatus:
