@@ -24,6 +24,7 @@ must still finish by calling `gobby-agents:end_agent_run`.
 | Qwen CLI | Gemini-compatible PascalCase | `session_id` | HTTP hook command |
 | Codex CLI | hooks.json PascalCase (`SessionStart`, `PreToolUse`) | `session_id` | HTTP hook command |
 | Droid CLI | PascalCase (`PreToolUse`) | `session_id` | HTTP hook command |
+| Grok CLI | snake_case (`session_start`, `pre_tool_use`) | `session_id` | HTTP hook command |
 
 ## HTTP Request Envelope
 
@@ -33,25 +34,9 @@ All Gobby-managed hook commands post to:
 POST /api/hooks/execute
 ```
 
-The legacy flat request shape is:
-
-```json
-{
-  "source": "claude",
-  "hook_type": "pre-tool-use",
-  "input_data": {
-    "session_id": "provider-session-id",
-    "machine_id": "machine-uuid",
-    "cwd": "/path/to/project"
-  }
-}
-```
-
-`source` is required and must be one of `claude`, `gemini`, `qwen`, `codex`, or
-`droid`. `hook_type` is the provider hook name that the selected adapter
-understands.
-
-The endpoint also accepts an explicit schema-versioned envelope:
+The endpoint accepts ONLY the schema-versioned envelope. Requests without
+`schema_version: 1` are rejected with HTTP 400 (`Unsupported schema_version`);
+the older flat shape without `schema_version` is no longer accepted.
 
 ```json
 {
@@ -70,8 +55,9 @@ The endpoint also accepts an explicit schema-versioned envelope:
 }
 ```
 
-`schema_version` is the discriminator. If it is present, it must be `1`;
-otherwise the request is treated as the legacy flat shape.
+`source` is required and must be one of `claude`, `gemini`, `grok`, `qwen`,
+`codex`, or `droid`. `hook_type` is the provider hook name that the selected
+adapter understands.
 
 ## Native To Workflow Mapping
 
@@ -150,7 +136,10 @@ integration, but they are not the installed terminal hook contract.
 | `SessionStart` | `session_start` | `session_start` |
 | `UserPromptSubmit` | `before_agent` | `turn_start` |
 | `PreToolUse` | `before_tool` | `before_tool` |
+| `PermissionRequest` | `permission_request` | `permission_request` |
 | `PostToolUse` | `after_tool` | `after_tool` |
+| `PreCompact` | `pre_compact` | `pre_compact` |
+| `PostCompact` | `post_compact` | `post_compact` |
 | `Stop` | `stop` | `turn_end` |
 
 Codex `PreToolUse` and `Stop` responses use `systemMessage` for context; Codex
@@ -415,6 +404,7 @@ def main() -> None:
     response = requests.post(
         GOBBY_URL,
         json={
+            "schema_version": 1,
             "source": source,
             "hook_type": hook_type,
             "input_data": input_data,
@@ -437,4 +427,4 @@ Gemini and Qwen communicate block decisions in JSON; their hook commands should
 exit `0` so the CLI treats the hook response as successful rather than a hook
 process failure.
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-06-10_

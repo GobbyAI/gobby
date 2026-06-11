@@ -104,7 +104,7 @@ call_tool("gobby-config", "get_config_section", {"prefix": "gobby-tasks.validati
 call_tool(
     "gobby-config",
     "set_config",
-    {"key": "gobby-tasks.validation.profile", "value": "mid"},
+    {"key": "gobby-tasks.validation.profile", "value": "feature_mid"},
 )
 call_tool(
     "gobby-config",
@@ -186,7 +186,7 @@ websocket:
 
 ui:
   enabled: false
-  mode: production
+  mode: auto
   port: 60889
   host: localhost
 ```
@@ -218,15 +218,16 @@ search.
 
 ```yaml
 chat:
-  profile: high
+  profile: feature_high
   candidates:
     - codex/gpt-5.5
     - claude/opus
 gobby-tasks:
   validation:
-    profile: mid
+    profile: feature_mid
 ```
 
+Profiles take the enum values `feature_low`, `feature_mid`, and `feature_high`.
 Feature configs select ordered `provider/model` candidates. Provider auth and
 model discovery come from the provider CLIs, local compatible backends, shipped
 catalog metadata, and secrets managed by the relevant provider integration.
@@ -307,13 +308,11 @@ context_injection:
 
 session_summary:
   enabled: true
-  provider: claude
-  model: sonnet
+  profile: feature_low
 
 digest:
   enabled: true
-  provider: claude
-  model: haiku
+  profile: feature_low
   timeout: 30
 
 message_tracking:
@@ -340,15 +339,13 @@ gobby-tasks:
   show_result_on_create: false
   expansion:
     enabled: true
-    provider: claude
-    model: opus
+    profile: feature_high
     default_strategy: auto
     timeout: 300.0
     research_timeout: 60.0
   validation:
     enabled: true
-    provider: claude
-    model: sonnet
+    profile: feature_mid
     max_retries: 3
     max_iterations: 10
     run_build_first: true
@@ -382,8 +379,8 @@ code_index:
   graph_enabled: true
   qdrant_collection_prefix: code_symbols_
   summary_enabled: true
-  summary_provider: claude
-  summary_model: haiku
+  summary_profile: feature_low
+  summary_candidates: []
 ```
 
 `databases.qdrant.collection_prefix` must match
@@ -420,8 +417,7 @@ tool_approval:
   policies: []
 
 chat:
-  provider: claude
-  model: opus
+  profile: feature_high
   default_mode: plan
 ```
 
@@ -442,8 +438,7 @@ daemon state by the MCP manager. The file has a top-level `servers` array:
       "transport": "stdio",
       "command": "npx",
       "args": ["@anthropic-ai/filesystem-mcp"],
-      "env": null,
-      "project_id": "global"
+      "env": null
     },
     {
       "name": "api-server",
@@ -453,16 +448,17 @@ daemon state by the MCP manager. The file has a top-level `servers` array:
       "headers": {
         "Authorization": "Bearer ${API_TOKEN}"
       },
-      "requires_oauth": false,
-      "project_id": "global"
+      "requires_oauth": false
     }
   ]
 }
 ```
 
-Supported transports are `stdio`, `http`, `websocket`, and `sse`. `stdio`
-servers use `command`, `args`, and `env`. Network transports use `url` and
-optional `headers`.
+Supported transports are `stdio`, `http`, and `websocket` (`sse` entries are
+accepted by registry validation but have no transport implementation and cannot
+connect). `stdio` servers use `command`, `args`, and `env`. Network transports
+use `url` and optional `headers`. `project_id` may be omitted; it defaults to
+the global project UUID.
 
 ## Project Configuration
 

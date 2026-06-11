@@ -67,7 +67,7 @@ links to the guide that owns that topic.
 | [comm-integrations.md](comm-integrations.md) | Slack, Telegram, Discord, Teams, email, SMS, and Gobby chat adapters |
 | [webhooks-and-plugins.md](webhooks-and-plugins.md) | Webhook and plugin development |
 | [webhook-action-schema.md](webhook-action-schema.md) | Webhook action schema reference |
-| [../cli-integrations/droid.md](../cli-integrations/droid.md) | Factory Droid CLI hooks, MCP, and agent spawning |
+| [../archive/droid.md](../archive/droid.md) | Factory Droid CLI hooks, MCP, and agent spawning |
 
 ## Runtime & Safety
 
@@ -130,7 +130,7 @@ links to the guide that owns that topic.
 
 - **Create a task**: `gobby tasks create "Title"` or `create_task` MCP tool
 - **List ready work**: `gobby tasks ready` or `list_ready_tasks` MCP tool
-- **Spawn an agent**: `gobby agents spawn "Prompt"` or `spawn_agent` MCP tool
+- **Spawn an agent**: `gobby agents spawn "Prompt" --session <session-id>` or `spawn_agent` MCP tool
 - **Create memory**: `gobby memory create "Content"` or `create_memory` MCP tool
 - **Session handoff**: `gobby sessions create-handoff` or `set_handoff_context` MCP tool
 - **Check daemon health**: `gobby status` or `/api/admin/status`

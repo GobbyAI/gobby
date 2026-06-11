@@ -26,19 +26,19 @@ uv run gobby cron list
 Create an interval job:
 
 ```bash
-uv run gobby cron add "nightly-health" 24h shell --command "uv run gobby status"
+uv run gobby cron add -n nightly-health -s 24h -t shell -c '{"command": "uv run gobby status"}'
 ```
 
-Run a job immediately:
+Run a job immediately (jobs are addressed by UUID; get it from `cron list`):
 
 ```bash
-uv run gobby cron run nightly-health
+uv run gobby cron run <job-id>
 ```
 
 Inspect run history:
 
 ```bash
-uv run gobby cron runs nightly-health
+uv run gobby cron runs <job-id>
 ```
 
 Use MCP when an agent creates or manages jobs:
@@ -59,9 +59,9 @@ The storage model supports these schedule types:
 | `cron` | Run from a cron expression |
 | `once` | Run one time at a scheduled timestamp |
 
-The CLI accepts interval strings such as `300s`, `15m`, `6h`, or `1d`, and cron
-expressions for calendar schedules. The storage layer enforces a minimum interval
-of 60 seconds.
+The CLI accepts interval strings such as `300s`, `15m`, or `6h` (there is no
+day suffix; use `24h`), and cron expressions for calendar schedules. The storage
+layer enforces a minimum interval of 60 seconds.
 
 ## Actions
 
@@ -127,13 +127,16 @@ The cron CLI lives under `gobby cron`:
 
 ```bash
 uv run gobby cron list
-uv run gobby cron add NAME SCHEDULE ACTION_TYPE [options]
-uv run gobby cron run NAME_OR_ID
-uv run gobby cron toggle NAME_OR_ID --enable
-uv run gobby cron runs NAME_OR_ID
-uv run gobby cron edit NAME_OR_ID
-uv run gobby cron remove NAME_OR_ID
+uv run gobby cron add -n NAME -s SCHEDULE -t ACTION_TYPE -c ACTION_CONFIG_JSON [options]
+uv run gobby cron run JOB_ID
+uv run gobby cron toggle JOB_ID
+uv run gobby cron runs JOB_ID
+uv run gobby cron edit JOB_ID [--enabled | --disabled] [options]
+uv run gobby cron remove JOB_ID
 ```
+
+`toggle` flips the enabled state; use `cron edit --enabled/--disabled` to set
+it explicitly. Jobs are addressed by UUID, not name.
 
 Use the CLI for operator inspection and manual maintenance. Agents should use the
 `gobby-cron` MCP server when mutating cron state.

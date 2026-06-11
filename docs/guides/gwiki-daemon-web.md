@@ -44,6 +44,8 @@ Every gateway call carries explicit scope:
 | `gwiki collect --format json` | Scope flags | Explicit write | Processes inbox items into raw sources. |
 | `gwiki research --format json` | Research prompt/options and scope flags | Explicit or scheduled write | Scheduled research may run from cron; accepted output remains CLI-owned. |
 | `gwiki compile --format json` | Compile target/options and scope flags | Explicit write | Writes compiled wiki material only under CLI rules. |
+| `gwiki ask --format json` | Question text and scope flags; optional `--llm`, `--ai`, `--require-ai` | Read-only | Question answering over scoped wiki content; consumed by `GET /api/wiki/ask` and the `wiki_ask` MCP tool. |
+| `gwiki trust --format json` | Scope flags | Read-only | Reports source trust state; consumed by the `wiki_trust` MCP tool. |
 | `gwiki audit --format json` | Scope flags and audit options | Read-only | Scheduled audits are allowed, but audit remains read-only unless a future fix command says otherwise. |
 | `gwiki health --format json` | Scope flags | Read-only | Scheduled health checks are read-only status/report jobs. |
 | `gwiki sources --format json` | Scope flags | Read-only | CLI owns source record schema and missing-raw degradations. |
@@ -357,20 +359,25 @@ command-level statuses that represent user-visible failures. It raises typed
 gateway errors for subprocess failures, malformed JSON, missing required fields,
 and timeouts.
 
-Gateway errors must preserve:
+The typed gateway errors are `GwikiUnavailableError`, `GwikiJsonError`,
+`GwikiReadSelectorError`, and `GwikiCommandError`. A command-error envelope
+preserves:
 
 | Field | Requirement |
 | :--- | :--- |
+| `ok` | Always `false` for error envelopes. |
 | `command` | The attempted command. |
-| `scope` | Scope identity when available. |
-| `exit_code` | Nonzero exit code when the process exited. |
+| `status` | Degradation status for the failure. |
+| `payload` | Parsed structured JSON from stdout (or stderr) when available. |
 | `stderr` | Captured stderr. |
-| `stdout_json` | Parsed structured stdout when available. |
-| `raw_stdout` | Raw stdout when JSON parsing failed or partial data matters. |
-| `degradations` | Parsed structured guidance from stdout or stderr when available. |
-| `timeout` | Timeout metadata for killed commands. |
+| `error.type` | Error classification (e.g. `command_failed`, `timeout`). |
+| `error.returncode` | Nonzero exit code when the process exited. |
+| `error.message` | Human-readable failure description. |
+
+Timeouts use a separate envelope with `error.type: timeout`; see the timeout
+contract above for the fields it is expected to carry.
 
 Malformed or incomplete CLI JSON is a gateway contract failure. Daemon/web
 layers should surface that failure rather than fabricating wiki domain data.
 
-_Last verified: 2026-06-02_
+_Last verified: 2026-06-10_

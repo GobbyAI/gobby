@@ -37,7 +37,7 @@ Each hook capability declares:
 | Qwen CLI | Gemini-compatible PascalCase hook names | `hookSpecificOutput.additionalContext` | Same current behavior as Gemini | Not supported | Distinct source for sessions, storage, and telemetry |
 | Factory Droid | PascalCase Droid hook names | `additionalContext` on Droid-supported context hooks; no context channel on `PreToolUse` | `PreToolUse.permissionDecision` | Not supported | Current behavior is intentionally standalone, not inherited from Claude |
 | AGY | TBD | TBD | TBD | TBD | Fill only after real hook behavior is observed and tested |
-| Grok | TBD | TBD | TBD | TBD | Fill only after real hook behavior is observed and tested |
+| Grok | snake_case hooks in `GROK_EVENT_MAP` | `additionalContext` for `session_start`, `user_prompt_submit`, `post_tool_use`; `systemMessage` for `pre_tool_use`, `pre_compact`, `stop` | `pre_tool_use` permission control (`permission_decision`, `auto_approve`, modified input) | Not supported | Capabilities in `_grok_capabilities` with drift tests in `tests/adapters/test_capabilities.py` |
 
 ## Degradation Telemetry
 
@@ -60,7 +60,7 @@ When adding or changing a provider adapter:
 1. Add or update capability declarations first.
 2. Add drift tests proving adapter behavior matches those declarations.
 3. Route unsupported `HookResponse` fields through degradation telemetry.
-4. Keep AGY and Grok documentation as `TBD` until backed by code and tests.
+4. Keep AGY documentation as `TBD` until backed by code and tests.
 
 A broader universal response-translation layer is future work. The current
 slice records today's provider facts so that future extraction has a stable

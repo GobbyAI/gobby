@@ -316,8 +316,8 @@ memory:
   min_recall_score: 0.6
   code_link_min_score: 0.82
   kg:
-    enabled: true
-    model: haiku
+    profile: feature_low
+    candidates: []
   dream:
     enabled: true
     schedule_cron: "0 3 * * *"
@@ -357,6 +357,10 @@ memory_sync:
   export_path: .gobby/memories.jsonl
 ```
 
+Knowledge-graph extraction is enabled by FalkorDB being configured
+(`databases.falkordb.password`); `memory.kg` only selects the LLM profile and
+candidates for extraction — there is no `kg.enabled` flag.
+
 `memory_sync` is retained as the configuration key, but the implementation is a
 backup/export manager. Treat `.gobby/memories.jsonl` as a backup and migration
 artifact, not a live bidirectional source of truth.
@@ -394,6 +398,7 @@ Current bundled memory rules:
 | `require-memory-review-before-status` | `before_tool` | Blocks close/review transitions after edits until memory review is complete. |
 | `clear-memory-review-on-create` | `before_tool` | Marks memory review complete when `create_memory` is called. |
 | `reset-memory-tracking-on-start` | `session_start` | Clears injected-memory tracking after clear, compact, or selected resume events. |
+| `increment-parent-turn-seq` | `turn_start` | Increments the parent session turn sequence counter. |
 
 Author new lifecycle rules against semantic events such as `turn_start` and
 `turn_end`. Raw provider/runtime hook names are transport details.
@@ -493,7 +498,7 @@ gobby memory rebuild-graph --wait
 | `.gobby/memories.jsonl` | JSONL memory backup/export file. |
 | `src/gobby/memory/` | Memory manager, search, graph, indexing, and maintenance code. |
 | `src/gobby/mcp_proxy/tools/memory.py` | `gobby-memory` MCP tool definitions. |
-| `src/gobby/cli/memory.py` | CLI command implementation. |
+| `src/gobby/cli/memory/` | CLI command package (crud, dream, export, graph, indices, maintenance). |
 | `src/gobby/servers/routes/memory.py` | HTTP memory routes. |
 | `src/gobby/install/shared/workflows/rules/memory-lifecycle/` | Bundled memory lifecycle rules. |
 

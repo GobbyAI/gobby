@@ -1,7 +1,7 @@
 # Gobby MCP Tools
 
 Reference for the MCP surface exposed by the Gobby daemon: the native proxy
-tools exposed at the top level, plus the 17 internal `gobby-*` registries
+tools exposed at the top level, plus the 21 internal `gobby-*` registries
 reached through `call_tool`.
 
 The exact live surface drifts as the daemon evolves. Treat
@@ -107,7 +107,7 @@ Add a new MCP server to the current project.
 | Parameter | Type | Required | Description |
 | :--- | :--- | :--- | :--- |
 | `name` | string | Yes | Unique server name |
-| `transport` | string | Yes | `http`, `stdio`, or `websocket` |
+| `transport` | string | Yes | `http`, `stdio`, `websocket`, or `sse` (accepted by validation; no transport implementation yet) |
 | `url` | string | For http/ws | Server URL |
 | `headers` | object | No | Custom HTTP headers |
 | `command` | string | For stdio | Command to run |
@@ -163,13 +163,15 @@ registries (`gobby-tasks`, `gobby-tasks-ops`, `gobby-workflows`,
 
 | Registry | Purpose | Tools |
 | :--- | :--- | :--- |
-| `gobby-tasks` | Task lifecycle, dependencies, claim/close, search | 31 |
-| `gobby-tasks-ops` | Expansion runs, artifacts, stage transitions, PR/merge state, build, GitHub | 39 |
+| `gobby-tasks` | Task lifecycle, dependencies, claim/close, search, build observability | 38 |
+| `gobby-tasks-ops` | Expansion runs, artifacts, stage transitions, PR/merge state, build, GitHub | 40 |
 | `gobby-plans` | Plan-Coverage Contract registry | 8 |
-| `gobby-sessions` | Session lifecycle, handoffs, transcripts, tmux integration | 18 |
-| `gobby-memory` | Persistent memory, embeddings, knowledge graph | 20 |
+| `gobby-profiles` | Build profile registry | 8 |
+| `gobby-sessions` | Session lifecycle, handoffs, transcripts, tmux integration | 20 |
+| `gobby-memory` | Persistent memory, embeddings, knowledge graph | 19 |
+| `gobby-review-learning` | Review lesson recall/record | 3 |
 | `gobby-workflows` | Workflows, rules, variables, agent definitions, pipelines | 47 |
-| `gobby-agents` | Agent runtime, persona, P2P messaging, commands | 21 |
+| `gobby-agents` | Agent runtime, persona, P2P messaging, commands | 19 |
 | `gobby-worktrees` | Git worktree isolation lifecycle | 17 |
 | `gobby-clones` | Git clone isolation lifecycle | 13 |
 | `gobby-merge` | Merge resolution, conflict prediction, branch protection | 12 |
@@ -180,12 +182,14 @@ registries (`gobby-tasks`, `gobby-tasks-ops`, `gobby-workflows`,
 | `gobby-cron` | Scheduled triggers | 8 |
 | `gobby-hub` | Cross-project queries | 5 |
 | `gobby-voice` | Whisper STT vocabulary | 4 |
+| `gobby-wiki` | Wiki search, ingest, research | 12 |
+| `gobby-communications` | Channels, identities, messaging | 9 |
 
 ---
 
 ## Task Management (`gobby-tasks`)
 
-31 tools for the task lifecycle.
+38 tools for the task lifecycle.
 
 ### CRUD and Claim
 
@@ -238,6 +242,18 @@ artifacts. Use `clear_isolation_pair` when artifact cleanup is intended.
 | `get_task_stages` | Return a task's stage manifest in position order. |
 | `list_stages_registry` | Return all registered stage definitions. |
 | `get_task_type_defaults` | Return the default manifest for a task type. |
+| `set_task_type_defaults` | Replace a task type's default stage manifest. |
+| `update_stage` | Update editable stage registry metadata. |
+| `restore_stage` | Restore a bundled stage registry row. |
+| `delete_stage` | Soft-delete an unused stage registry row. |
+
+### Build Observability
+
+| Tool | Description |
+| :--- | :--- |
+| `get_build_status` | Read compact task-tree build state, agents, mutexes, artifact health, events, and recent history. |
+| `explain_dispatch` | Explain dispatcher eligibility and the action that would be chosen without mutating state. |
+| `list_build_history` | Read recent `build_runs` and `build_history_events` rows for a task tree or build input. |
 
 ### Session Integration
 
@@ -294,7 +310,7 @@ call_tool("gobby-tasks", "close_task", {
 
 ## Task Operations (`gobby-tasks-ops`)
 
-39 tools for expansion runs, sparse dispatch artifacts, stage transitions,
+40 tools for expansion runs, sparse dispatch artifacts, stage transitions,
 PR/merge delivery state, GitHub issues, and the shared `build_task` entry
 point.
 
@@ -377,9 +393,9 @@ point.
 | Tool | Description |
 | :--- | :--- |
 | `build_task` | Start lifecycle automation for a plan, epic, or leaf. The MCP entry to the same shared service used by CLI `gobby build` and HTTP `POST /api/build`. |
-| `get_build_status` | Read compact task-tree build state, agents, mutexes, artifact health, events, and recent history. |
-| `explain_dispatch` | Explain dispatcher eligibility and the action that would be chosen without mutating state. |
-| `list_build_history` | Read recent `build_runs` and `build_history_events` rows for a task tree or build input. |
+
+The read-only build observability tools (`get_build_status`,
+`explain_dispatch`, `list_build_history`) live on `gobby-tasks`, not here.
 
 `build_task` requires `input_ref` and accepts the MCP-native automation options
 exposed by its schema: `quick`, `skip_stages`, `isolation` (`none`, `worktree`,
@@ -434,7 +450,7 @@ contract and [spec-writing.md](./spec-writing.md) for the authoring flow.
 
 ## Session Management (`gobby-sessions`)
 
-18 tools for session lifecycle and context management.
+20 tools for session lifecycle and context management.
 
 | Tool | Description |
 | :--- | :--- |
@@ -449,6 +465,8 @@ contract and [spec-writing.md](./spec-writing.md) for the authoring flow.
 | `get_usage_breakdown` | Token usage broken down by source and model over a period. |
 | `set_handoff_context` | Set handoff context (agent-authored or auto-fallback). Optional `to_session` peer delivery. |
 | `get_handoff_context` | Read handoff context from a session. |
+| `wait_for_summary` | Wait for a session's `summary_markdown` to become available. |
+| `record_verification_evidence` | Record non-command verification evidence for completion readiness. |
 | `mark_loop_complete` | Mark the autonomous loop as complete to prevent session chaining. |
 | `capture_baseline_dirty_files` | Capture current dirty files as the session-aware commit-detection baseline. |
 | `restore_session_transcript` | Restore a transcript from the gzip archive for CLI resume. |
@@ -477,7 +495,7 @@ call_tool("gobby-sessions", "get_handoff_context", {})
 
 ## Memory (`gobby-memory`)
 
-20 tools for persistent knowledge across sessions, including embeddings
+19 tools for persistent knowledge across sessions, including embeddings
 and the optional FalkorDB knowledge graph.
 
 ### Core
@@ -645,7 +663,7 @@ call_tool("gobby-workflows", "get_pipeline_status", {
 
 ## Agent Runtime (`gobby-agents`)
 
-21 tools for spawning agents, applying personas, and inter-agent
+19 tools for spawning agents, applying personas, and inter-agent
 coordination. Agent **definitions** live in `gobby-workflows`; this
 registry is the runtime side.
 
@@ -665,9 +683,11 @@ registry is the runtime side.
 | Tool | Description |
 | :--- | :--- |
 | `get_agent_result` | Final result of a completed run. |
+| `wait_for_agent` | Wait for a running agent to complete (wrapper-capped timeout). |
 | `list_agent_runs` | Runs for a parent session. |
 | `list_running_agents` | All currently running agents. |
 | `get_running_agent` | Process state for a running agent. |
+| `cancel_stale_helpers` | Cancel stale helper agent runs. |
 
 ### Termination
 
@@ -986,26 +1006,22 @@ reports.
 
 ## Error Handling
 
-All tools return a consistent envelope.
-
-**Success:**
-
-```json
-{
-  "success": true,
-  "result": { ... }
-}
-```
+Successful internal-tool calls return the tool's raw payload — the proxy
+strips any top-level `"success": true` marker, and there is no `result`
+wrapper key. Payload shapes vary per tool (for example, `create_task` returns
+`{"id", "seq_num", "ref"}`).
 
 **Failure:**
 
 ```json
 {
   "success": false,
-  "error": "Error message",
-  "error_type": "ValueError"
+  "error": "Error message"
 }
 ```
+
+Some failure paths add an `error_code` field (proxy blocked/error responses)
+or, for import/config tools, an `error_type` field.
 
 When a `call_tool` invocation fails parameter validation, the error
 includes the full schema for the target tool so callers can correct and

@@ -18,12 +18,14 @@ industrial, efficient, and calm: solid colors, sharp type hierarchy, subtle
 motion, and no decorative gradients.
 
 The authoritative design contract is `.impeccable.md`. The deployed product UI
-tokens live in `web/src/styles/index.css`; Tailwind exposes the common tokens in
-`web/tailwind.config.ts`.
+tokens live in `web/src/styles/tokens.css` (`web/src/styles/index.css` only
+aggregates imports); Tailwind exposes the common tokens through the `@theme`
+blocks in `web/src/styles/tailwind-theme.css`, while `web/tailwind.config.ts`
+only sets content scanning and `important: true`.
 
 ## Design Tokens
 
-Theme values live as CSS custom properties in `web/src/styles/index.css`.
+Theme values live as CSS custom properties in `web/src/styles/tokens.css`.
 `:root` is the dark theme. `[data-theme="light"]` overrides values for light
 theme. `useSettings.ts` writes the selected or system-resolved theme to
 `<html data-theme="...">`.
@@ -35,13 +37,13 @@ brand-tinted neutral ramp.
 
 | Token | Dark | Light | Usage |
 |-------|------|-------|-------|
-| `--bg-primary` | `oklch(15% 0.005 125)` | `oklch(99% 0.002 125)` | Page background |
-| `--bg-secondary` | `oklch(19% 0.006 125)` | `oklch(96% 0.004 125)` | Cards, sidebars, panels |
-| `--bg-tertiary` | `oklch(23% 0.007 125)` | `oklch(92% 0.006 125)` | Hover states, muted areas |
+| `--bg-primary` | `oklch(15% 0.005 125)` | `oklch(96.5% 0.006 125)` | Page background |
+| `--bg-secondary` | `oklch(19% 0.006 125)` | `oklch(94% 0.008 125)` | Cards, sidebars, panels |
+| `--bg-tertiary` | `oklch(23% 0.007 125)` | `oklch(90% 0.008 125)` | Hover states, muted areas |
 | `--text-primary` | `oklch(92% 0.004 125)` | `oklch(20% 0.005 125)` | Body text, headings |
 | `--text-secondary` | `oklch(68% 0.005 125)` | `oklch(40% 0.005 125)` | Secondary labels |
-| `--text-muted` | `oklch(62% 0.005 125)` | `oklch(51% 0.005 125)` | Timestamps, placeholders, hints |
-| `--border` | `oklch(28% 0.008 125)` | `oklch(86% 0.008 125)` | Borders and dividers |
+| `--text-muted` | `oklch(62% 0.005 125)` | `oklch(48% 0.005 125)` | Timestamps, placeholders, hints |
+| `--border` | `oklch(28% 0.008 125)` | `oklch(80% 0.008 125)` | Borders and dividers |
 
 ### Accent Tokens
 
@@ -63,27 +65,27 @@ or shape.
 
 | Token | Dark | Light | Usage |
 |-------|------|-------|-------|
-| `--color-info` | `oklch(72% 0.16 250)` | `oklch(48% 0.18 250)` | Informational text, dots, badges |
+| `--color-info` | `oklch(70% 0.16 250)` | `oklch(48% 0.18 250)` | Informational text, dots, badges |
 | `--color-info-bg` | `oklch(28% 0.08 250)` | `oklch(94% 0.05 250)` | Info backgrounds |
-| `--color-info-soft` | `oklch(72% 0.16 250 / 0.12)` | `oklch(48% 0.18 250 / 0.10)` | Soft info backgrounds |
+| `--color-info-soft` | `oklch(70% 0.16 250 / 0.12)` | `oklch(48% 0.18 250 / 0.10)` | Soft info backgrounds |
 | `--color-warning` | `oklch(30% 0.08 75)` | `oklch(95% 0.06 75)` | Warning backgrounds |
 | `--color-warning-foreground` | `oklch(78% 0.16 75)` | `oklch(58% 0.16 75)` | Warning text/icons |
 | `--color-warning-soft` | `oklch(78% 0.16 75 / 0.12)` | `oklch(58% 0.16 75 / 0.10)` | Soft warning backgrounds |
 | `--color-destructive` | `oklch(28% 0.10 350)` | `oklch(95% 0.05 350)` | Destructive button backgrounds |
 | `--color-destructive-foreground` | `oklch(72% 0.20 350)` | `oklch(52% 0.22 350)` | Destructive text/icons |
-| `--color-error` | `oklch(72% 0.20 350)` | `oklch(52% 0.22 350)` | Error text |
-| `--color-error-soft` | `oklch(72% 0.20 350 / 0.12)` | `oklch(52% 0.22 350 / 0.10)` | Soft error backgrounds |
+| `--color-error` | `oklch(65% 0.20 350)` | `oklch(52% 0.22 350)` | Error text |
+| `--color-error-soft` | `oklch(65% 0.20 350 / 0.12)` | `oklch(52% 0.22 350 / 0.10)` | Soft error backgrounds |
 | `--color-inactive` | `oklch(60% 0.04 30)` | `oklch(45% 0.06 30)` | Stopped, closed, dormant states |
 | `--color-success` | `oklch(25% 0.05 125)` | `oklch(95% 0.04 125)` | Success backgrounds |
-| `--color-success-foreground` | `oklch(82% 0.10 125)` | `oklch(48% 0.10 125)` | Success text/icons |
-| `--color-success-soft` | `oklch(82% 0.10 125 / 0.12)` | `oklch(48% 0.10 125 / 0.10)` | Soft success backgrounds |
+| `--color-success-foreground` | `oklch(72% 0.10 125)` | `oklch(48% 0.10 125)` | Success text/icons |
+| `--color-success-soft` | `oklch(72% 0.10 125 / 0.12)` | `oklch(48% 0.10 125 / 0.10)` | Soft success backgrounds |
 | `--color-review` | `oklch(72% 0.14 200)` | `oklch(48% 0.16 200)` | Review state accents |
 | `--color-review-bg` | `oklch(28% 0.08 200)` | `oklch(94% 0.05 200)` | Review backgrounds |
 | `--color-review-soft` | `oklch(72% 0.14 200 / 0.12)` | `oklch(48% 0.16 200 / 0.10)` | Soft review backgrounds |
 
 Specialized palettes for language icons, git status, pipeline steps, execution
 status, session sources, providers, integration channels, task categories, and
-agent isolation live in `web/src/styles/index.css`. The TypeScript source of
+agent isolation live in `web/src/styles/tokens.css`. The TypeScript source of
 truth for the mirrored color pairs is in:
 
 - `web/src/lib/languageColors.ts`
@@ -132,8 +134,8 @@ Do not introduce a dedicated agent hue. Agents use existing state/source tokens.
 
 | Purpose | Variable | Stack |
 |---------|----------|-------|
-| UI text | `--font-sans` | `"Geist Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif` |
-| Code | `--font-mono` | `"SF Mono", "Fira Code", "JetBrains Mono", monospace` |
+| UI text | `--font-sans` | `"Geist Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif` |
+| Code | `--font-mono` | `"JetBrains Mono Variable", "SF Mono", "Fira Code", monospace` |
 
 The app imports Geist through `@fontsource-variable/geist`. Do not add a display
 font to the product UI.
@@ -240,12 +242,13 @@ and `pointer-coarse:min-w-11`.
 
 ### Shared UI Primitives
 
-Shared primitives live in `web/src/components/chat/ui/`.
+Shared primitives live in `web/src/components/chat/ui/`, except `Button.tsx`
+and `buttonVariants.ts`, which live in `web/src/components/shared/`.
 
 | Component | Purpose |
 |-----------|---------|
-| `Button.tsx` | CVA button wrapper with Radix `Slot` support through `asChild` |
-| `buttonVariants.ts` | Shared `buttonVariants` CVA definition |
+| `shared/Button.tsx` | CVA button wrapper with Radix `Slot` support through `asChild` |
+| `shared/buttonVariants.ts` | Shared `buttonVariants` CVA definition |
 | `Badge.tsx` | Status badge variants |
 | `Dialog.tsx` | Radix dialog overlay, content, title, and description wrappers |
 | `dialogPrimitives.ts` | Re-exported Radix dialog root/trigger/close primitives |
@@ -261,7 +264,7 @@ Shared primitives live in `web/src/components/chat/ui/`.
 #### Button
 
 ```tsx
-import { Button } from './chat/ui/Button'
+import { Button } from '../shared/Button' // path relative to the caller
 
 <Button variant="primary">Save</Button>
 <Button variant="destructive" size="sm">Delete</Button>
@@ -273,7 +276,8 @@ import { Button } from './chat/ui/Button'
 |---------|------------|
 | `default` | Foreground background with background text |
 | `primary` | Accent background with accent foreground |
-| `destructive` | Destructive background and foreground |
+| `accent` | Tinted accent border/background; the canonical non-CTA action style |
+| `destructive` | Transparent with error text; error-soft surface on hover |
 | `outline` | Transparent background with border |
 | `ghost` | Transparent, muted hover background |
 
@@ -402,8 +406,9 @@ Import CSS at the component boundary:
 import './MyFeature.css'
 ```
 
-Feature-scoped style modules already exist for sessions, integrations, agents,
-workflows, source control, chat tabs, lifecycle boards, and settings.
+Feature-scoped style modules already exist for integrations, agents,
+workflows, and chat tabs; session, source-control, and settings styles
+currently live as global sheets under `web/src/styles/`.
 
 ### Light Mode
 
@@ -484,8 +489,8 @@ Prefer property-specific transitions.
 }
 ```
 
-Current shared keyframes include `fadeIn`, `pulse-glow`, and
-`reasoning-pulse` in `web/src/styles/index.css`; chat and reporting CSS define
+Current shared keyframes include `fade-in`, `pulse-glow`, and
+`reasoning-pulse` in `web/src/styles/base.css`; chat and reporting CSS define
 additional feature-local keyframes.
 
 ## Dark And Light Mode
@@ -540,24 +545,29 @@ Pages are lazy-loaded through `web/src/components/app/AppPages.tsx`.
 ```
 web/src/
 ├── components/
-│   ├── activity/           # Activity panel tabs and models
+│   ├── activity/           # Activity panel tabs (sessions, filters, modals)
+│   ├── agents/             # Agent portfolio and agent run UI
 │   ├── app/                # App shell helpers, navigation, lazy pages
+│   ├── auth/               # Login and auth surfaces
 │   ├── chat/               # Chat page, input, messages, chat-specific styles
 │   │   └── ui/             # Shared UI primitives
 │   ├── code/               # Code graph/code page surfaces
+│   ├── code-graph/         # Code knowledge-graph visualization
 │   ├── command-browser/    # Slash command and tool/skill browser modals
 │   ├── cron/               # Cron run components
 │   ├── dashboard/          # Dashboard cards and charts
 │   ├── icons/              # App navigation icons
 │   ├── integrations/       # Integration channel UI
 │   ├── mcp/                # MCP server/tool UI
+│   ├── memory/             # Memory browser UI
 │   ├── projects/           # Project list/detail/settings UI
-│   ├── sessions/           # Session detail/sidebar/transcript UI
+│   ├── rules/              # Rule management UI
 │   ├── shared/             # Shared components and shared icons
 │   ├── skills/             # Skill browser/editor UI
 │   ├── source-control/     # GitHub/source-control UI
 │   ├── tasks/              # Task management UI
 │   ├── traces/             # Trace UI
+│   ├── ui/                 # Standalone primitives (SegmentedControl, Switch)
 │   └── workflows/          # Workflow, agent, pipeline, and reports UI
 ├── contexts/               # React contexts used by cross-page surfaces
 ├── hooks/                  # Custom React hooks
@@ -572,9 +582,9 @@ web/src/
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Component files | PascalCase | `TasksPage.tsx`, `SessionDetail.tsx` |
+| Component files | PascalCase | `AgentPortfolioPage.tsx`, `SessionsTab.tsx` |
 | Hook files | camelCase with `use` prefix | `useSettings.ts`, `useTasks.ts` |
-| CSS classes | kebab-case or BEM | `.code-block-header`, `.sc-badge--green` |
+| CSS classes | kebab-case or BEM | `.sidebar-overlay`, `.sc-badge--green` |
 | TypeScript types | PascalCase | `ChatMessage`, `TaskCreateDefaults` |
 | Functions | camelCase | `handleSubmit`, `fetchDetail` |
 

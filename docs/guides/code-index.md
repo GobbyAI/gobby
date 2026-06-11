@@ -146,7 +146,7 @@ These commands require the Gobby daemon and graph support:
 | `gcode graph rebuild` | Rebuild the graph projection from indexed hub rows |
 
 `gcode callers` and `gcode usages` support `--limit` and `--offset`. `gcode
-blast-radius` supports `--depth` and `--limit`.
+blast-radius` supports `--depth`.
 
 ## Indexed Data
 
@@ -209,8 +209,9 @@ code_index:
   graph_enabled: true
   qdrant_collection_prefix: code_symbols_
   summary_enabled: true
-  summary_provider: claude
-  summary_model: haiku
+  summary_profile: feature_low
+  summary_candidates: []
+  summary_max_concurrency: 2
   summary_batch_size: 20
   sync_worker_interval_seconds: 5.0
   sync_worker_batch_size: 50

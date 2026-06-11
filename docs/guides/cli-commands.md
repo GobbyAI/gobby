@@ -2,7 +2,9 @@
 
 Source-backed reference for the current Gobby CLI surface. Command names are
 registered in `src/gobby/cli/__init__.py`; command-specific flags are defined in
-the corresponding module under `src/gobby/cli/`.
+the corresponding module under `src/gobby/cli/`. This reference is not
+exhaustive — some groups carry additional maintenance subcommands and flags;
+run `gobby <group> --help` for the complete surface of any group.
 
 ## Global Form
 
@@ -13,6 +15,7 @@ gobby [--config PATH] COMMAND [ARGS]...
 | Option | Purpose |
 | --- | --- |
 | `--config PATH` | Load a custom configuration file before dispatching the command. |
+| `--version` | Print the Gobby version and exit. |
 
 Most commands that inspect daemon-backed state expect the daemon to be running.
 Start it with `gobby start` and check it with `gobby status` or `gobby health`.
@@ -27,6 +30,7 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | `clones` | Manage isolated clone workspaces. | `src/gobby/cli/clones.py` |
 | `comms` | Manage inter-session communication channels. | `src/gobby/cli/communications.py` |
 | `cron` | Manage scheduled jobs and dispatcher ticks. | `src/gobby/cli/cron.py` |
+| `embeddings` | Manage the embedding service and indices. | `src/gobby/cli/embeddings.py` |
 | `export` | Export project resources. | `src/gobby/cli/export_import.py` |
 | `github` | Manage GitHub integration. | `src/gobby/cli/github.py` |
 | `health` | Check daemon health. | `src/gobby/cli/daemon.py` |
@@ -37,12 +41,14 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | `linear` | Manage Linear integration. | `src/gobby/cli/linear.py` |
 | `mcp-proxy` | Inspect and call tools through the MCP proxy. | `src/gobby/cli/mcp_proxy.py` |
 | `mcp-server` | Run the stdio MCP server. | `src/gobby/cli/mcp.py` |
-| `memory` | Manage persistent memories. | `src/gobby/cli/memory.py` |
+| `memory` | Manage persistent memories. | `src/gobby/cli/memory/` |
 | `merge` | Manage merge assistance. | `src/gobby/cli/merge.py` |
 | `pack` | Pack project context. | `src/gobby/cli/pack.py` |
 | `pipelines` | Manage pipeline definitions and runs. | `src/gobby/cli/pipelines.py` |
 | `plan` | Run plan utility commands. | `src/gobby/cli/plan.py` |
 | `plans` | Manage DB-backed plan records. | `src/gobby/cli/plans.py` |
+| `postgres` | Manage the PostgreSQL hub (status, migrate-from-sqlite). | `src/gobby/cli/postgres.py` |
+| `profiles` | Manage build profile registry rows. | `src/gobby/cli/profiles.py` |
 | `projects` | Inspect known Gobby projects. | `src/gobby/cli/projects.py` |
 | `qdrant` | Manage Qdrant helper commands. | `src/gobby/cli/qdrant.py` |
 | `restart` | Restart the daemon. | `src/gobby/cli/daemon.py` |
@@ -52,6 +58,7 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | `sessions` | Inspect stored sessions and transcripts. | `src/gobby/cli/sessions.py` |
 | `setup` | Run the first-run setup wizard. | `src/gobby/cli/setup.py` |
 | `skills` | Manage installed skills. | `src/gobby/cli/skills.py` |
+| `stages` | Manage the task stage registry. | `src/gobby/cli/stages.py` |
 | `start` | Start the daemon. | `src/gobby/cli/daemon.py` |
 | `status` | Show daemon status. | `src/gobby/cli/daemon.py` |
 | `stop` | Stop the daemon. | `src/gobby/cli/daemon.py` |
@@ -73,12 +80,14 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 Start the daemon.
 
 ```bash
-gobby start [--verbose]
+gobby start [--verbose] [--no-ui] [--docker]
 ```
 
 | Option | Purpose |
 | --- | --- |
 | `--verbose` | Enable verbose startup output. |
+| `--no-ui` | Do not auto-start the web UI. |
+| `--docker` | Also start Docker service containers. |
 
 ### `gobby stop`
 
@@ -93,7 +102,7 @@ gobby stop
 Stop and start the daemon.
 
 ```bash
-gobby restart [--verbose]
+gobby restart [--verbose] [--no-ui] [--docker]
 ```
 
 ### `gobby status`
@@ -147,8 +156,7 @@ gobby uninstall [OPTIONS]
 | `--codex` | Install Codex integration assets. |
 | `--droid` | Install Droid integration assets. |
 | `--qwen` | Install QwenCode integration assets. |
-| `--hooks` | Install CLI hook configuration. |
-| `--git-hooks` | Install repository git hooks. |
+| `--hooks`, `--git-hooks` | Aliases for one flag: install repository git hooks (verification, JSONL export, code indexing). |
 | `--all` | Install all supported integrations. |
 | `--no-ext-services` | Skip external service setup. |
 | `--falkordb` | Install only the FalkorDB graph backend service. |
@@ -260,7 +268,7 @@ gobby tasks stages TASK
 
 | Command | Key options |
 | --- | --- |
-| `tasks list` | `--active`, `--project`, `--stage`, `--state`, `--assignee`, `--claimed`, `--unclaimed`, `--ready`, `--blocked`, `--closed`, `--escalated`, `--limit`, `--group`, `--json` |
+| `tasks list` | `--active`, `--project`, `--stage`, `--state`, `--claimed`, `--unclaimed`, `--ready`, `--blocked`, `--closed`, `--escalated`, `--limit`, `--group`, `--json` |
 | `tasks ready` | `--limit`, `--project`, `--priority`, `--type`, `--json`, `--flat` |
 | `tasks blocked` | `--limit`, `--project`, `--json` |
 | `tasks stats` | `--project`, `--json` |
@@ -417,7 +425,7 @@ gobby mcp-proxy refresh [OPTIONS]
 | --- | --- |
 | `add-server` | `--transport`, `--url`, `--command`, `--args`, `--env`, `--headers`, `--disabled` |
 | `import-server` | `--from-project`, `--github`, `--query`, `--server`, `--json` |
-| `recommend-tools` | `--agent`, `--search-mode`, `--top-k`, `--json` |
+| `recommend-tools` | `--agent`, `--mode`, `--top-k`, `--json` |
 | `search-tools` | `--top-k`, `--min-similarity`, `--server`, `--json` |
 | `refresh` | `--force`, `--server`, `--json` |
 
@@ -429,9 +437,8 @@ gobby mcp-proxy refresh [OPTIONS]
 gobby sessions list [--project PROJECT] [--status STATUS] [--source SOURCE] [--limit N] [--json]
 gobby sessions show SESSION [--json]
 gobby sessions messages SESSION [--limit N] [--role ROLE] [--offset N] [--json]
-gobby sessions search QUERY [OPTIONS]
 gobby sessions stats
-gobby sessions create-handoff SESSION
+gobby sessions create-handoff [NOTES] [--session-id SESSION] [--output db|file|all] [--path DIR]
 gobby sessions delete SESSION
 ```
 
@@ -463,7 +470,7 @@ gobby worktrees create BRANCH_NAME [--base BRANCH] [--task TASK] [--json]
 gobby worktrees list [--status STATUS] [--project PROJECT] [--json]
 gobby worktrees show WORKTREE [--json]
 gobby worktrees delete WORKTREE [--force] [--yes]
-gobby worktrees claim WORKTREE --session SESSION
+gobby worktrees claim WORKTREE SESSION_ID
 gobby worktrees release WORKTREE
 gobby worktrees sync WORKTREE
 gobby worktrees stale [--days N]
@@ -511,11 +518,12 @@ gobby skills update NAME
 gobby skills enable NAME
 gobby skills disable NAME
 gobby skills init
-gobby skills new NAME [--category CATEGORY]
+gobby skills new NAME [--description DESC]
 gobby skills validate PATH
 gobby skills doc [--output PATH]
-gobby skills meta NAME --set KEY=VALUE
-gobby skills meta NAME --get KEY
+gobby skills meta get NAME KEY
+gobby skills meta set NAME KEY VALUE
+gobby skills meta unset NAME KEY
 ```
 
 ### Workflows
@@ -547,7 +555,6 @@ gobby rules audit [--session SESSION] [--limit N] [--json]
 gobby pipelines list [--json]
 gobby pipelines show NAME [--json]
 gobby pipelines run NAME [-i KEY=VALUE ...] [--json]
-gobby pipelines status RUN [--json]
 gobby pipelines runs list [--status STATUS] [--name NAME] [--limit N] [--offset N] [--json]
 gobby pipelines runs show RUN [--json]
 gobby pipelines approve TOKEN [--json]

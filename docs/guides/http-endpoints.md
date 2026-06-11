@@ -1,6 +1,6 @@
 # Gobby HTTP Endpoints
 
-This guide is the HTTP reference for the Gobby 0.4.0 daemon. The daemon exposes
+This guide is the HTTP reference for the Gobby 0.5.0 daemon. The daemon exposes
 three HTTP-facing surfaces:
 
 - JSON REST endpoints under `/api/*`
@@ -8,7 +8,10 @@ three HTTP-facing surfaces:
 - WebSocket proxy routes mounted at `/ws`
 
 The route source of truth is `src/gobby/servers/app_factory.py` plus the router
-modules under `src/gobby/servers/routes/`.
+modules under `src/gobby/servers/routes/`. This reference is not exhaustive:
+some surfaces (for example `/api/wiki/*`, `/api/profiles`, `/api/llm`,
+`/api/embeddings`, chat attachments, and stage-registry mutation routes) are
+documented in their feature guides rather than here.
 
 Admin route helpers define paths relative to `/api/admin`; session and task
 helper modules attach their routes to the parent `/api/sessions` and
@@ -22,7 +25,7 @@ http://localhost:60887
 ```
 
 The default daemon port is `60887`. Bootstrap config can override it with
-`daemon_port`; runtime config exposes it as `daemon.daemon_port`.
+`daemon_port`; runtime config exposes it as the top-level `daemon_port` field.
 
 ## Request Context
 
@@ -46,6 +49,7 @@ require a valid UI session cookie except the public surfaces below:
 
 - `/api/auth/*`
 - `/api/hooks/*`
+- `/api/local/*`
 - `/api/github/webhooks/*`
 - `/api/sessions/*`
 - `/api/mcp/*`
@@ -92,8 +96,6 @@ register a top-level `/health` REST route.
 | `POST` | `/api/admin/shutdown` | Graceful daemon shutdown. |
 | `POST` | `/api/admin/restart` | Restart the daemon through service-managed or direct restart helpers. |
 | `POST` | `/api/admin/workflows/reload` | Reload installed workflow definitions. |
-| `GET` | `/api/admin/setup-state` | Read web onboarding setup state. |
-| `POST` | `/api/admin/setup-state` | Update web onboarding setup state. |
 | `GET` | `/api/admin/savings` | Current token/cost savings tracker data. |
 | `GET` | `/api/admin/savings/cumulative` | Cumulative savings totals. |
 | `POST` | `/api/admin/savings/record` | Record a savings event. |
@@ -307,11 +309,15 @@ context tracking are consistent.
 
 ### `POST /api/hooks/execute`
 
-Required body fields after envelope normalization: `hook_type` and `source`.
+Required body fields: `schema_version` (must be `1`), `hook_type`, and
+`source`. Requests without `schema_version: 1` are rejected with HTTP 400.
+`hook_type` is the provider's native hook name (e.g. `UserPromptSubmit` for
+Codex), not a semantic rule event.
 
 ```json
 {
-  "hook_type": "turn_start",
+  "schema_version": 1,
+  "hook_type": "UserPromptSubmit",
   "source": "codex",
   "input_data": {
     "prompt": "Implement the task"
@@ -365,7 +371,6 @@ exist.
 | `POST` | `/api/agents/definitions` | Create an agent definition. |
 | `GET` | `/api/agents/definitions/{name}` | Get an agent definition. |
 | `GET` | `/api/agents/definitions/{name}/export` | Export an agent definition. |
-| `POST` | `/api/agents/definitions/{name}/install` | Install a bundled agent template. |
 | `POST` | `/api/agents/definitions/import/{name}` | Import an agent definition. |
 | `PUT` | `/api/agents/definitions/{definition_id}` | Update an agent definition. |
 | `DELETE` | `/api/agents/definitions/{definition_id}` | Delete an agent definition. |
@@ -429,12 +434,10 @@ instead of silently choosing one value.
 | `POST` | `/api/skills/import` | Import a skill. |
 | `POST` | `/api/skills/scan` | Scan a skill. |
 | `POST` | `/api/skills/restore-defaults` | Restore default skills. |
-| `POST` | `/api/skills/install-all-templates` | Legacy template install endpoint. |
 | `GET` | `/api/skills/{skill_id}` | Get a skill. |
 | `PUT` | `/api/skills/{skill_id}` | Update a skill. |
 | `DELETE` | `/api/skills/{skill_id}` | Delete a skill. |
 | `GET` | `/api/skills/{skill_id}/export` | Export a skill. |
-| `POST` | `/api/skills/{skill_id}/install` | Install a bundled skill template. |
 | `POST` | `/api/skills/{skill_id}/move-to-project` | Move a skill to project scope. |
 | `POST` | `/api/skills/{skill_id}/move-to-installed` | Move a project skill to installed scope. |
 | `POST` | `/api/skills/{skill_id}/restore` | Restore a deleted skill. |

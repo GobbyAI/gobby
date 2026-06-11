@@ -31,7 +31,7 @@ uv run gobby auth
 Store a secret:
 
 ```bash
-uv run gobby secrets set LINEAR_API_KEY --category integrations --stdin
+uv run gobby secrets set LINEAR_API_KEY --category integration --stdin
 ```
 
 Check service state:
@@ -117,7 +117,7 @@ uv run gobby import all --from-project /path/to/other/project
 The Configuration API can also export and import UI-managed configuration:
 
 ```text
-GET  /api/config/export
+POST /api/config/export
 POST /api/config/import
 ```
 
@@ -132,7 +132,7 @@ Common commands:
 
 ```bash
 uv run gobby pack --dry-run
-uv run gobby pack --output gobby-pack.tar.gz
+uv run gobby pack gobby-pack.tar.gz
 uv run gobby pack --no-docker
 uv run gobby pack --no-transcripts
 uv run gobby unpack gobby-pack.tar.gz
@@ -147,8 +147,6 @@ Use `--dry-run` before a real pack on active machines.
 Useful admin routes:
 
 ```text
-GET  /api/admin/setup-state
-POST /api/admin/setup-state
 GET  /api/admin/health
 GET  /api/admin/startup-progress
 GET  /api/admin/status

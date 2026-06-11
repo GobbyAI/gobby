@@ -128,8 +128,9 @@ call_tool(
 )
 ```
 
-Sync, PR creation, and project GitHub status are CLI workflows in the current
-Gobby surface.
+Sync and project GitHub status are CLI workflows in the current Gobby surface;
+PR creation is available via the `gobby github pr` CLI or the
+`gobby-tasks-ops:open_delivery_pr` MCP tool.
 
 ## Linear
 
