@@ -270,14 +270,16 @@ class TestImportRules:
             "group: test\nrules:\n  my-rule:\n    event: before_tool\n    effect:\n      type: block\n      reason: test\n"
         )
 
+        mock_db = MagicMock()
         with (
-            patch("gobby.cli.rules.open_runtime_hub_database", return_value=MagicMock()),
-            patch("gobby.workflows.sync_rules.sync_bundled_rules") as mock_sync,
+            patch("gobby.cli.rules.open_runtime_hub_database", return_value=mock_db),
+            patch("gobby.workflows.sync_rules.sync_rule_file") as mock_sync,
         ):
             mock_sync.return_value = {"success": True, "synced": 1, "updated": 0, "errors": []}
             result = cli_runner.invoke(rules, ["import", str(rule_file)])
             assert result.exit_code == 0
             assert "Imported" in result.output
+            mock_sync.assert_called_once_with(mock_db, rule_file=rule_file)
 
     def test_import_file_not_found(self, cli_runner) -> None:
         from gobby.cli.rules import rules

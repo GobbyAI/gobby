@@ -58,6 +58,28 @@ def _iter_active_rule_files(rules_paths: list[Path]) -> list[tuple[Path, Path]]:
     return files
 
 
+def sync_rule_file(
+    db: HubDatabase,
+    rule_file: Path,
+    tag: str = "gobby",
+) -> dict[str, Any]:
+    """Sync one rule YAML file without scanning siblings or pruning orphans."""
+    result = _new_rules_sync_result()
+    if not rule_file.exists():
+        logger.debug("Rule file not found", extra={"file": str(rule_file)})
+        return result
+
+    manager = LocalWorkflowDefinitionManager(db)
+    _sync_rule_file(
+        manager=manager,
+        current_rules_path=rule_file.parent,
+        yaml_file=rule_file,
+        tag=tag,
+        result=result,
+    )
+    return result
+
+
 def sync_bundled_rules(
     db: HubDatabase,
     rules_path: Path | None = None,
@@ -94,13 +116,7 @@ def sync_bundled_rules(
     if repaired:
         logger.info(f"Repaired {repaired} rows with incorrect workflow_type (should be 'rule')")
 
-    result: dict[str, Any] = {
-        "success": True,
-        "synced": 0,
-        "updated": 0,
-        "skipped": 0,
-        "errors": [],
-    }
+    result = _new_rules_sync_result()
 
     existing_paths = [path for path in rules_paths if path.exists()]
     if not existing_paths:
@@ -111,79 +127,14 @@ def sync_bundled_rules(
     on_disk: set[str] = set()
 
     for current_rules_path, yaml_file in _iter_active_rule_files(existing_paths):
-        if "deprecated" in yaml_file.relative_to(current_rules_path).parts:
-            continue
-        try:
-            raw_content = yaml_file.read_text(encoding="utf-8")
-            data = yaml.safe_load(raw_content)
-
-            if not isinstance(data, dict):
-                logger.warning("Skipping non-dict YAML", extra={"file": str(yaml_file)})
-                continue
-
-            rules_dict = data.get("rules")
-            if not isinstance(rules_dict, dict):
-                logger.debug("No 'rules' key in YAML, skipping", extra={"file": str(yaml_file)})
-                result["skipped"] += 1
-                continue
-
-            # File-level defaults
-            rel_parts = yaml_file.relative_to(current_rules_path).parts
-            dir_group = rel_parts[0] if len(rel_parts) > 1 else None
-            file_group = data.get("group") or dir_group
-            file_tags = data.get("tags") or []
-            if tag not in file_tags:
-                file_tags = [*file_tags, tag]
-            file_sources = data.get("sources")
-            file_audience = data.get("audience")
-
-            for rule_name, rule_data in rules_dict.items():
-                if not isinstance(rule_data, dict):
-                    result["errors"].append(f"Rule '{rule_name}' in {yaml_file.name} is not a dict")
-                    continue
-
-                on_disk.add(rule_name)
-
-                # Name collision prevention: user templates can't shadow gobby rules
-                if tag != "gobby":
-                    gobby_tag_condition, gobby_tag_params = json_array_contains_condition(
-                        db, "tags", "gobby"
-                    )
-                    gobby_row = db.fetchone(
-                        "SELECT id FROM workflow_definitions "
-                        f"WHERE name = %s AND {gobby_tag_condition} "
-                        "AND deleted_at IS NULL",
-                        (rule_name, *gobby_tag_params),
-                    )
-                    if gobby_row:
-                        logger.debug(
-                            "Skipping user rule that collides with gobby rule",
-                            extra={"rule": rule_name},
-                        )
-                        result["skipped"] += 1
-                        continue
-
-                try:
-                    _sync_single_rule(
-                        manager=manager,
-                        rule_name=rule_name,
-                        rule_data=rule_data,
-                        file_group=file_group,
-                        file_tags=file_tags,
-                        file_sources=file_sources,
-                        file_audience=file_audience,
-                        sync_tag=tag,
-                        result=result,
-                    )
-                except Exception as e:
-                    error_msg = f"Failed to sync rule '{rule_name}' from {yaml_file.name}: {e}"
-                    logger.warning(error_msg)
-                    result["errors"].append(error_msg)
-
-        except Exception as e:
-            error_msg = f"Failed to parse rule file '{yaml_file}': {e}"
-            logger.error(error_msg)
-            result["errors"].append(error_msg)
+        _sync_rule_file(
+            manager=manager,
+            current_rules_path=current_rules_path,
+            yaml_file=yaml_file,
+            tag=tag,
+            result=result,
+            on_disk=on_disk,
+        )
 
     # Orphan cleanup: soft-delete rules whose YAML was removed.
     # Only touch rows with matching tag to avoid cross-tag damage.
@@ -214,6 +165,110 @@ def sync_bundled_rules(
     )
 
     return result
+
+
+def _new_rules_sync_result() -> dict[str, Any]:
+    return {
+        "success": True,
+        "synced": 0,
+        "updated": 0,
+        "skipped": 0,
+        "errors": [],
+    }
+
+
+def _sync_rule_file(
+    *,
+    manager: LocalWorkflowDefinitionManager,
+    current_rules_path: Path,
+    yaml_file: Path,
+    tag: str,
+    result: dict[str, Any],
+    on_disk: set[str] | None = None,
+) -> None:
+    try:
+        raw_content = yaml_file.read_text(encoding="utf-8")
+        data = yaml.safe_load(raw_content)
+
+        if not isinstance(data, dict):
+            logger.warning("Skipping non-dict YAML", extra={"file": str(yaml_file)})
+            return
+
+        rules_dict = data.get("rules")
+        if not isinstance(rules_dict, dict):
+            logger.debug("No 'rules' key in YAML, skipping", extra={"file": str(yaml_file)})
+            result["skipped"] += 1
+            return
+
+        # File-level defaults
+        rel_parts = yaml_file.relative_to(current_rules_path).parts
+        dir_group = rel_parts[0] if len(rel_parts) > 1 else None
+        file_group = data.get("group") or dir_group
+        file_tags = data.get("tags") or []
+        if tag not in file_tags:
+            file_tags = [*file_tags, tag]
+        file_sources = data.get("sources")
+        file_audience = data.get("audience")
+
+        for rule_name, rule_data in rules_dict.items():
+            if not isinstance(rule_data, dict):
+                result["errors"].append(f"Rule '{rule_name}' in {yaml_file.name} is not a dict")
+                continue
+
+            if on_disk is not None:
+                on_disk.add(rule_name)
+
+            if _has_gobby_rule_name_collision(manager, rule_name, tag):
+                logger.debug(
+                    "Skipping user rule that collides with gobby rule",
+                    extra={"rule": rule_name},
+                )
+                result["skipped"] += 1
+                continue
+
+            try:
+                _sync_single_rule(
+                    manager=manager,
+                    rule_name=rule_name,
+                    rule_data=rule_data,
+                    file_group=file_group,
+                    file_tags=file_tags,
+                    file_sources=file_sources,
+                    file_audience=file_audience,
+                    sync_tag=tag,
+                    result=result,
+                )
+            except Exception as e:
+                error_msg = f"Failed to sync rule '{rule_name}' from {yaml_file.name}: {e}"
+                logger.warning(error_msg)
+                result["errors"].append(error_msg)
+
+    except Exception as e:
+        error_msg = f"Failed to parse rule file '{yaml_file}': {e}"
+        logger.error(error_msg)
+        result["errors"].append(error_msg)
+
+
+def _has_gobby_rule_name_collision(
+    manager: LocalWorkflowDefinitionManager,
+    rule_name: str,
+    tag: str,
+) -> bool:
+    if tag == "gobby":
+        return False
+
+    gobby_tag_condition, gobby_tag_params = json_array_contains_condition(
+        manager.db, "tags", "gobby"
+    )
+    return (
+        manager.db.fetchone(
+            "SELECT id FROM workflow_definitions "
+            f"WHERE name = %s AND {gobby_tag_condition} "
+            "AND deleted_at IS NULL",
+            (rule_name, *gobby_tag_params),
+        )
+        is not None
+    )
 
 
 def resolve_sync_placeholders(definition_json: str) -> str:
