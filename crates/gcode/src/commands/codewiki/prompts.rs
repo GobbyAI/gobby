@@ -79,7 +79,12 @@ pub fn repo_prompt(modules: &[ChildSummary], files: &[ChildSummary]) -> String {
         prompt.push_str("- No modules.\n");
     } else {
         for module in modules {
-            let _ = writeln!(prompt, "- {}: {}", module.name, module.summary);
+            let _ = writeln!(
+                prompt,
+                "- {}: {}",
+                module.name,
+                summary_excerpt(&module.summary)
+            );
         }
     }
     prompt.push_str("\nRoot files:\n");
@@ -87,7 +92,12 @@ pub fn repo_prompt(modules: &[ChildSummary], files: &[ChildSummary]) -> String {
         prompt.push_str("- No root files.\n");
     } else {
         for file in files {
-            let _ = writeln!(prompt, "- {}: {}", file.name, file.summary);
+            let _ = writeln!(
+                prompt,
+                "- {}: {}",
+                file.name,
+                summary_excerpt(&file.summary)
+            );
         }
     }
     prompt
@@ -132,7 +142,12 @@ fn append_child_summary_sections(
         prompt.push_str("- No direct files.\n");
     } else {
         for file in files {
-            let _ = writeln!(prompt, "- {}: {}", file.name, file.summary);
+            let _ = writeln!(
+                prompt,
+                "- {}: {}",
+                file.name,
+                summary_excerpt(&file.summary)
+            );
         }
     }
     prompt.push_str("\nChild modules:\n");
@@ -140,7 +155,12 @@ fn append_child_summary_sections(
         prompt.push_str("- No child modules.\n");
     } else {
         for module in modules {
-            let _ = writeln!(prompt, "- {}: {}", module.name, module.summary);
+            let _ = writeln!(
+                prompt,
+                "- {}: {}",
+                module.name,
+                summary_excerpt(&module.summary)
+            );
         }
     }
     prompt.push_str("\nStable component IDs:\n");
@@ -151,6 +171,35 @@ fn append_child_summary_sections(
             let _ = writeln!(prompt, "- {component}");
         }
     }
+}
+
+/// Hard cap on one child summary embedded in an aggregate prompt. Aggregate
+/// prompts roll up every child; unbounded summaries (citation walls, echoed
+/// prompts recorded as summaries) once compounded up the module tree past
+/// provider input limits (#698).
+const CHILD_SUMMARY_EXCERPT_MAX_CHARS: usize = 600;
+
+/// First paragraph of a child summary, flattened to one line and hard-capped
+/// at [`CHILD_SUMMARY_EXCERPT_MAX_CHARS`], so each prompt list entry stays one
+/// bounded line regardless of what an earlier run recorded as the summary.
+fn summary_excerpt(summary: &str) -> String {
+    let paragraph = summary
+        .trim()
+        .split("\n\n")
+        .next()
+        .unwrap_or_default()
+        .trim();
+    let flattened = paragraph.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut excerpt = flattened;
+    let cap = excerpt
+        .char_indices()
+        .nth(CHILD_SUMMARY_EXCERPT_MAX_CHARS)
+        .map(|(index, _)| index);
+    if let Some(cap) = cap {
+        excerpt.truncate(cap);
+        excerpt.push('…');
+    }
+    excerpt
 }
 
 #[derive(Debug, Clone)]
@@ -168,4 +217,63 @@ pub struct SymbolSummary {
 pub struct ChildSummary {
     pub name: String,
     pub summary: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn oversized_child(name: &str) -> ChildSummary {
+        let citation_wall = (0..2_000)
+            .map(|line| format!("[src/lib.rs:{line}]"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        ChildSummary {
+            name: name.to_string(),
+            summary: format!("One real sentence.\n{citation_wall}"),
+        }
+    }
+
+    #[test]
+    fn aggregate_prompts_bound_each_child_summary() {
+        let children = (0..3)
+            .map(|index| oversized_child(&format!("src/module_{index}")))
+            .collect::<Vec<_>>();
+
+        for prompt in [
+            module_prompt("src", &children, &children, &[]),
+            architecture_prompt("src", &children, &children, &[]),
+            repo_prompt(&children, &children),
+        ] {
+            for line in prompt.lines().filter(|line| line.starts_with("- src/")) {
+                assert!(
+                    line.chars().count()
+                        <= CHILD_SUMMARY_EXCERPT_MAX_CHARS + "- src/module_0: …".chars().count(),
+                    "child summary line stays bounded: {} chars",
+                    line.chars().count()
+                );
+                assert!(line.ends_with('…'), "oversized excerpt is marked truncated");
+            }
+        }
+    }
+
+    #[test]
+    fn short_summaries_pass_through_untruncated() {
+        let child = ChildSummary {
+            name: "src/lib.rs".to_string(),
+            summary: "Concise healthy summary.".to_string(),
+        };
+        let prompt = module_prompt("src", &[child], &[], &[]);
+        assert!(prompt.contains("- src/lib.rs: Concise healthy summary.\n"));
+    }
+
+    #[test]
+    fn excerpt_flattens_multiline_summaries_to_one_line() {
+        let child = ChildSummary {
+            name: "src/lib.rs".to_string(),
+            summary: "First line.\nSecond line of the same paragraph.".to_string(),
+        };
+        let prompt = module_prompt("src", &[child], &[], &[]);
+        assert!(prompt.contains("- src/lib.rs: First line. Second line of the same paragraph.\n"));
+    }
 }

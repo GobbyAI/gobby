@@ -168,10 +168,30 @@ pub(crate) fn maybe_generate(
     match generate.as_deref_mut() {
         None => Generation::Skipped,
         Some(generate) => match generate(prompt, system, tier) {
+            Some(text) if is_prompt_echo(&text, prompt) => Generation::Failed,
             Some(text) => Generation::Generated(text),
             None => Generation::Failed,
         },
     }
+}
+
+/// Echo detection floor: prompts shorter than this never trigger rejection,
+/// and only this much of the prompt head has to reappear to count as an echo.
+const PROMPT_ECHO_PREFIX_CHARS: usize = 80;
+
+/// True when the generated text starts by repeating the prompt itself — a
+/// failure mode of overloaded models on huge prompts that previously poisoned
+/// pages and recorded summaries as healthy output (#698).
+pub(crate) fn is_prompt_echo(text: &str, prompt: &str) -> bool {
+    let prefix = prompt
+        .trim_start()
+        .chars()
+        .take(PROMPT_ECHO_PREFIX_CHARS)
+        .collect::<String>();
+    if prefix.chars().count() < PROMPT_ECHO_PREFIX_CHARS {
+        return false;
+    }
+    text.trim_start().starts_with(&prefix)
 }
 
 pub(crate) fn clean_generated(text: String) -> Option<String> {
@@ -507,6 +527,47 @@ mod tests {
                 .all(|line| line.len() <= FALLBACK_CITATION_LINE_WIDTH),
             "{markers}"
         );
+    }
+
+    #[test]
+    fn prompt_echo_is_rejected_as_failed_generation() {
+        let prompt = prompts::module_prompt(
+            "crates/gcode",
+            &[prompts::ChildSummary {
+                name: "crates/gcode/Cargo.toml".to_string(),
+                summary: "Manifest for the gcode binary.".to_string(),
+            }],
+            &[],
+            &[],
+        );
+
+        let mut echoing = |prompt: &str, _system: &str, _tier: PromptTier| Some(prompt.to_string());
+        let mut generate = Some::<&mut TextGenerator<'_>>(&mut echoing);
+        let generation = maybe_generate(
+            &mut generate,
+            &prompt,
+            prompts::MODULE_SYSTEM,
+            PromptTier::Aggregate,
+        );
+        assert!(generation.failed(), "prompt echo must record degradation");
+
+        let mut healthy = |_prompt: &str, _system: &str, _tier: PromptTier| {
+            Some("`crates/gcode` indexes source and serves search.".to_string())
+        };
+        let mut generate = Some::<&mut TextGenerator<'_>>(&mut healthy);
+        let generation = maybe_generate(
+            &mut generate,
+            &prompt,
+            prompts::MODULE_SYSTEM,
+            PromptTier::Aggregate,
+        );
+        assert!(matches!(generation, Generation::Generated(_)));
+    }
+
+    #[test]
+    fn short_prompts_never_trigger_echo_rejection() {
+        let prompt = "Short prompt.";
+        assert!(!is_prompt_echo("Short prompt.", prompt));
     }
 
     fn transport_failure() -> AiError {
