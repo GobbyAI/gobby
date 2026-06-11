@@ -13,11 +13,7 @@ from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.utils.injected_context import (
-    INJECTED_CONTEXT_BEGIN,
-    INJECTED_CONTEXT_END,
-    strip_injected_context,
-)
+from gobby.utils.injected_context import INJECTED_CONTEXT_BEGIN
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
     AgentSelector,
@@ -341,10 +337,10 @@ class TestInjectContextEffect:
         response = await _assert_evaluation(db, event, "allow")
 
         context = response.context or ""
-        assert context.startswith(INJECTED_CONTEXT_BEGIN)
-        assert context.endswith(INJECTED_CONTEXT_END)
         assert "important task" in context
-        assert strip_injected_context(context) == ""
+        # Generic (non-handoff) inject_context must NOT be sentinel-fenced —
+        # fencing lives only in the session_start handoff/compact templates.
+        assert INJECTED_CONTEXT_BEGIN not in context
 
     @pytest.mark.asyncio
     async def test_multiple_inject_context_accumulate(
@@ -375,11 +371,9 @@ class TestInjectContextEffect:
         response = await _assert_evaluation(db, event, "allow")
 
         context = response.context or ""
-        assert context.count(INJECTED_CONTEXT_BEGIN) == 2
-        assert context.count(INJECTED_CONTEXT_END) == 2
         assert "Context A" in context
         assert "Context B" in context
-        assert strip_injected_context(context) == ""
+        assert INJECTED_CONTEXT_BEGIN not in context
 
 
 class TestWhenConditions:
