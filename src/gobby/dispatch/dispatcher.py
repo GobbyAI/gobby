@@ -59,7 +59,7 @@ from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     _register_background_task,
 )
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import AgentCapAdmission, HubDatabase
 from gobby.storage.tasks._ancestor_gate import find_child_development_ancestor_gate
 from gobby.storage.tasks._artifacts import TaskArtifacts
 from gobby.storage.tasks._artifacts import (
@@ -125,6 +125,9 @@ def _action_cap_reached(result: HeartbeatResult, max_actions: int | None) -> boo
 
 def _unavailable(result: HeartbeatResult, reason: str) -> HeartbeatResult:
     return HeartbeatResult(result.scanned, result.executed, result.skipped + 1, False, reason)
+
+
+_AGENT_CAP_REACHED = object()
 
 
 async def run_heartbeat(
@@ -233,13 +236,17 @@ async def run_heartbeat(
                     result = _release_and_skip(mutex, result)
                     continue
 
-            action_result = await _execute_action(
+            action_result = await _execute_action_with_agent_cap(
                 action,
                 mutex=mutex,
                 db=resolved_db,
                 context=context,
                 services=services,
+                project_id=project_id,
+                cap=cap,
             )
+            if action_result is _AGENT_CAP_REACHED:
+                return _cap_reached(result)
             if action_result is not None and write_set_guard.action_reserves_write_set(
                 action, current
             ):
@@ -327,6 +334,38 @@ async def _execute_action(
     if inspect.isawaitable(result):
         return await cast(Awaitable[object | None], result)
     return result
+
+
+async def _execute_action_with_agent_cap(
+    action: Action,
+    *,
+    mutex: RuntimeDispatchMutex,
+    db: HubDatabase,
+    context: object,
+    services: object | None,
+    project_id: str | None,
+    cap: int,
+) -> object | None:
+    if not isinstance(action, SpawnAgentAction):
+        return await _execute_action(
+            action,
+            mutex=mutex,
+            db=db,
+            context=context,
+            services=services,
+        )
+
+    with db.transaction_immediate(AgentCapAdmission(project_id=project_id)):
+        if count_active_agents(db, project_id=project_id) >= cap:
+            mutex.release()
+            return _AGENT_CAP_REACHED
+        return await _execute_action(
+            action,
+            mutex=mutex,
+            db=db,
+            context=context,
+            services=services,
+        )
 
 
 async def _execute_spawn_action(
