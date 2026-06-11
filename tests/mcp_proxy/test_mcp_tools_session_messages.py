@@ -487,6 +487,27 @@ async def test_get_handoff_context_by_session_id(mock_session_manager, full_sess
 
 
 @pytest.mark.asyncio
+async def test_get_handoff_context_expired_session_id_fails_closed(
+    mock_session_manager, full_sessions_registry
+):
+    """Explicit session lookup must not serve stale non-handoff summaries."""
+    mock_session = _make_mock_session("sess-expired", status="expired")
+    mock_session.summary_markdown = "## Stale Context"
+    mock_session.status = "expired"
+    mock_session_manager.resolve_session_reference.return_value = "sess-expired"
+    mock_session_manager.get.return_value = mock_session
+
+    result = await full_sessions_registry.call(
+        "get_handoff_context", {"session_id": "sess-expired"}
+    )
+
+    assert result["success"] is False
+    assert result["found"] is False
+    mock_session_manager.find_parent.assert_not_called()
+    mock_session_manager.list.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_get_handoff_context_no_summary_returns_no_context(
     mock_session_manager, full_sessions_registry
 ):
@@ -521,8 +542,9 @@ async def test_get_handoff_context_not_found(mock_session_manager, full_sessions
 @pytest.mark.asyncio
 async def test_get_handoff_context_no_context(mock_session_manager, full_sessions_registry):
     """Test get_handoff_context when session has no handoff context."""
-    mock_session = _make_mock_session("sess-abc")
+    mock_session = _make_mock_session("sess-abc", status="handoff_ready")
     mock_session.summary_markdown = None
+    mock_session.status = "handoff_ready"
     mock_session_manager.resolve_session_reference.return_value = "sess-abc"
     mock_session_manager.get.return_value = mock_session
 
@@ -539,11 +561,12 @@ async def test_get_handoff_context_most_recent(mock_session_manager, full_sessio
     mock_session.summary_markdown = "## Recent Context"
     mock_session.title = "Recent Session"
     mock_session.status = "handoff_ready"
-    mock_session_manager.list.return_value = [mock_session]
+    mock_session_manager.find_parent.return_value = mock_session
 
-    result = await full_sessions_registry.call("get_handoff_context", {})
+    result = await full_sessions_registry.call("get_handoff_context", {"project_id": "proj-123"})
 
-    mock_session_manager.list.assert_called_with(status="handoff_ready", limit=1)
+    mock_session_manager.find_parent.assert_called_once()
+    mock_session_manager.list.assert_not_called()
     assert result["found"] is True
     assert result["session_id"] == "sess-recent"
 
@@ -555,7 +578,10 @@ async def test_get_handoff_context_links_child(mock_session_manager, full_sessio
     mock_session.summary_markdown = "## Context"
     mock_session.title = "Parent"
     mock_session.status = "handoff_ready"
-    mock_session_manager.get.return_value = mock_session
+    mock_session.project_id = "proj-123"
+    child_session = _make_mock_session("sess-child", project_id="proj-123")
+    child_session.project_id = "proj-123"
+    mock_session_manager.get.side_effect = [mock_session, child_session]
 
     result = await full_sessions_registry.call(
         "get_handoff_context",
@@ -569,12 +595,14 @@ async def test_get_handoff_context_links_child(mock_session_manager, full_sessio
 @pytest.mark.asyncio
 async def test_get_handoff_context_no_session_found(mock_session_manager, full_sessions_registry):
     """Test get_handoff_context when no handoff_ready session exists."""
+    mock_session_manager.resolve_session_reference.return_value = "nonexistent"
     mock_session_manager.get.return_value = None
-    mock_session_manager.list.return_value = []
 
     result = await full_sessions_registry.call("get_handoff_context", {"session_id": "nonexistent"})
 
     assert result["success"] is False
+    mock_session_manager.find_parent.assert_not_called()
+    mock_session_manager.list.assert_not_called()
 
 
 @pytest.mark.asyncio

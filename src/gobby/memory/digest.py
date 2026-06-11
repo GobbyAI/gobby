@@ -25,6 +25,7 @@ from gobby.memory.title_heuristics import (
     normalize_title_candidate,
 )
 from gobby.sync.export_context import in_jsonl_export_context
+from gobby.utils.injected_context import strip_injected_context
 from gobby.utils.json_helpers import extract_json_object
 
 logger = logging.getLogger(__name__)
@@ -171,10 +172,11 @@ async def _read_last_turn_from_transcript(transcript_path: str, source: str) -> 
         prompt_text = ""
         response_text = ""
         for msg in messages:
+            content = strip_injected_context(str(msg["content"]))
             if msg["role"] == "user":
-                prompt_text = msg["content"]
+                prompt_text = content
             elif msg["role"] == "assistant":
-                response_text = msg["content"]
+                response_text = content
 
         return prompt_text, response_text
     except Exception as e:
@@ -230,6 +232,13 @@ async def _read_undigested_turns(
 
         # Extract all user/assistant messages from the segment
         messages = parser.extract_last_messages(segment, num_pairs=num_pairs)
+        if not messages:
+            return []
+        messages = [
+            {**msg, "content": stripped}
+            for msg in messages
+            if (stripped := strip_injected_context(str(msg["content"]))).strip()
+        ]
         if not messages:
             return []
 

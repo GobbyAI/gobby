@@ -12,6 +12,7 @@ from gobby.tasks.state_semantics import (
     get_claimed_session_id,
     is_task_actionable,
 )
+from gobby.utils.injected_context import strip_injected_context
 
 
 def find_parent_session(
@@ -108,11 +109,30 @@ def populate_handoff_session_variables(
 
     handoff_vars: dict[str, Any] = {}
     if parent and parent.summary_markdown:
-        handoff_vars["session_summary"] = parent.summary_markdown
-        handoff_vars["full_session_summary"] = parent.summary_markdown
-        handoff_vars["handoff_summary_injectable"] = _bound_handoff_summary(
-            parent.summary_markdown, parent
-        )
+        child = handler._session_manager.get(session_id)
+        child_project_id = getattr(child, "project_id", None)
+        parent_project_id = getattr(parent, "project_id", None)
+        if (
+            child_project_id is None
+            or parent_project_id is None
+            or (
+                isinstance(child_project_id, str)
+                and isinstance(parent_project_id, str)
+                and child_project_id != parent_project_id
+            )
+        ):
+            handler.logger.warning(
+                "Skipping handoff summary injection from parent %s to child %s; projects differ",
+                parent_session_id,
+                session_id,
+            )
+        else:
+            summary_markdown = strip_injected_context(parent.summary_markdown)
+            handoff_vars["session_summary"] = summary_markdown
+            handoff_vars["full_session_summary"] = summary_markdown
+            handoff_vars["handoff_summary_injectable"] = _bound_handoff_summary(
+                summary_markdown, parent
+            )
     if handoff_vars:
         sv_mgr.merge_variables(session_id, handoff_vars)
 

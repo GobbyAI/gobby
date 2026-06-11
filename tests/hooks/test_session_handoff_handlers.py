@@ -13,6 +13,7 @@ from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.event_handlers._session_start.handoff import (
     _preserve_compact_resume_required_skills,
     find_parent_session,
+    populate_handoff_session_variables,
 )
 from gobby.hooks.events import HookEventType
 from gobby.sessions.compact_continuation import (
@@ -489,15 +490,18 @@ class TestSessionStartHandoff:
         mock_parent_obj = MagicMock()
         mock_parent_obj.id = "parent-sess-123"
         mock_parent_obj.seq_num = 42
+        mock_parent_obj.project_id = "proj-1"
         mock_parent_obj.summary_markdown = "# Compact\nContinuation"
         mock_parent_obj.terminal_context = mock_parent_for_find.terminal_context
 
         mock_new_session = MagicMock()
         mock_new_session.seq_num = 43
+        mock_new_session.project_id = "proj-1"
 
         mock_dependencies["session_storage"].get.side_effect = [
             None,  # pre-created session check
             mock_parent_obj,  # handoff variable population
+            mock_new_session,  # child project guard
             mock_new_session,  # fetch session for seq_num
         ]
         mock_dependencies["session_storage"].find_parent.return_value = mock_parent_for_find
@@ -567,6 +571,68 @@ class TestSessionStartHandoff:
         )
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_populate_handoff_session_variables_skips_cross_project_parent(
+        self, mock_sv_mgr_cls: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_sv_mgr = MagicMock()
+        mock_sv_mgr.get_variables.return_value = {"auto_inject_handoff": True}
+        mock_sv_mgr_cls.return_value = mock_sv_mgr
+        parent = MagicMock(
+            id="parent-session",
+            project_id="project-a",
+            summary_markdown="# Parent\nWrong project",
+        )
+        child = MagicMock(id="child-session", project_id="project-b")
+        handler = MagicMock()
+        handler.logger = logging.getLogger("test.cross_project_handoff")
+        handler._session_manager.db = MagicMock()
+        handler._session_manager.get.side_effect = lambda session_id: (
+            parent if session_id == "parent-session" else child
+        )
+        caplog.set_level(logging.WARNING, logger=handler.logger.name)
+
+        populate_handoff_session_variables(handler, "child-session", "parent-session", "clear")
+
+        mock_sv_mgr.merge_variables.assert_not_called()
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelno == logging.WARNING
+        assert "projects differ" in caplog.text
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_populate_handoff_session_variables_strips_same_project_parent(
+        self, mock_sv_mgr_cls: MagicMock
+    ) -> None:
+        mock_sv_mgr = MagicMock()
+        mock_sv_mgr.get_variables.return_value = {"auto_inject_handoff": True}
+        mock_sv_mgr_cls.return_value = mock_sv_mgr
+        parent = MagicMock(
+            id="parent-session",
+            project_id="project-a",
+            seq_num=12,
+            summary_markdown=(
+                "# Parent\nKeep this\n\n"
+                "## Previous Session Context\n"
+                "*Injected by Gobby session handoff*\n\n"
+                "/Users/josh/Projects/gobby/src/gobby/memory/recall.py"
+            ),
+        )
+        child = MagicMock(id="child-session", project_id="project-a")
+        handler = MagicMock()
+        handler._session_manager.db = MagicMock()
+        handler._session_manager.get.side_effect = lambda session_id: (
+            parent if session_id == "parent-session" else child
+        )
+
+        populate_handoff_session_variables(handler, "child-session", "parent-session", "clear")
+
+        assert mock_sv_mgr.merge_variables.call_args.args[0] == "child-session"
+        assert mock_sv_mgr.merge_variables.call_args.args[1] == {
+            "session_summary": "# Parent\nKeep this",
+            "full_session_summary": "# Parent\nKeep this",
+            "handoff_summary_injectable": "# Parent\nKeep this",
+        }
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_closed_task_not_carried_over(
         self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
     ) -> None:
@@ -589,15 +655,18 @@ class TestSessionStartHandoff:
         mock_parent_obj = MagicMock()
         mock_parent_obj.id = "parent-sess-123"
         mock_parent_obj.seq_num = 42
+        mock_parent_obj.project_id = "proj-1"
         mock_parent_obj.summary_markdown = "# Compact\nDone"
         mock_parent_obj.terminal_context = mock_parent_for_find.terminal_context
 
         mock_new_session = MagicMock()
         mock_new_session.seq_num = 43
+        mock_new_session.project_id = "proj-1"
 
         mock_dependencies["session_storage"].get.side_effect = [
             None,
             mock_parent_obj,
+            mock_new_session,
             mock_new_session,
         ]
         mock_dependencies["session_storage"].find_parent.return_value = mock_parent_for_find
@@ -653,15 +722,18 @@ class TestSessionStartHandoff:
         mock_parent_obj = MagicMock()
         mock_parent_obj.id = "parent-sess-500"
         mock_parent_obj.seq_num = 50
+        mock_parent_obj.project_id = "proj-1"
         mock_parent_obj.summary_markdown = "# Summary\nCleared session"
         mock_parent_obj.terminal_context = mock_parent_for_find.terminal_context
 
         mock_new_session = MagicMock()
         mock_new_session.seq_num = 51
+        mock_new_session.project_id = "proj-1"
 
         mock_dependencies["session_storage"].get.side_effect = [
             None,  # pre-created session check
             mock_parent_obj,  # handoff variable population
+            mock_new_session,  # child project guard
             mock_new_session,  # fetch session for seq_num
         ]
         mock_dependencies["session_storage"].find_parent.return_value = mock_parent_for_find
@@ -736,15 +808,18 @@ class TestSessionStartHandoff:
         mock_parent_obj = MagicMock()
         mock_parent_obj.id = "parent-sess-123"
         mock_parent_obj.seq_num = 42
+        mock_parent_obj.project_id = "proj-1"
         mock_parent_obj.summary_markdown = "# Compact\nContinuation"
         mock_parent_obj.terminal_context = mock_parent_for_find.terminal_context
 
         mock_new_session = MagicMock()
         mock_new_session.seq_num = 43
+        mock_new_session.project_id = "proj-1"
 
         mock_dependencies["session_storage"].get.side_effect = [
             None,
             mock_parent_obj,
+            mock_new_session,
             mock_new_session,
         ]
         mock_dependencies["session_storage"].find_parent.return_value = mock_parent_for_find

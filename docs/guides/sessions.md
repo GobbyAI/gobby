@@ -203,7 +203,7 @@ with `get_tool_schema` before writing examples or automating calls.
 | `get_session_messages` | Read rendered transcript messages. |
 | `search_session_messages` | Search rendered transcript messages by substring. |
 | `set_handoff_context` | Set or generate handoff context for the current session. |
-| `get_handoff_context` | Retrieve handoff context directly or from the latest `handoff_ready` session. |
+| `get_handoff_context` | Retrieve handoff context directly or from the latest same-project `handoff_ready` session. |
 | `wait_for_summary` | Wait for a session's `summary_markdown` to become available. |
 | `record_verification_evidence` | Record non-command verification evidence for completion readiness. |
 | `register_session` | Register hookless clients such as SDK-driven agents. |
@@ -271,8 +271,10 @@ call_tool("gobby-sessions", "get_handoff_context", {
 })
 ```
 
-When no `session_id` is provided, `get_handoff_context` falls back to the most
-recent `handoff_ready` session. It can also search by `project_id` and `source`.
+When no `session_id` is provided, `get_handoff_context` falls back to the latest
+`handoff_ready` session in the caller's current project. It can also search by
+explicit `project_id` and `source`. If no project can be resolved, the lookup
+fails closed instead of returning a session from another project.
 
 ### Hookless Registration
 

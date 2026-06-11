@@ -1709,6 +1709,50 @@ class TestReadUndigestedTurns:
         assert len(result) == 1
         assert result[0] == ("Q2", "A2")
 
+    @pytest.mark.asyncio
+    async def test_injected_handoff_block_is_stripped_and_empty_pair_dropped(
+        self, tmp_path
+    ) -> None:
+        """Injected handoff-only transcript content is not emitted for digesting."""
+        transcript = tmp_path / "transcript.jsonl"
+        injected = (
+            "## Previous Session Context\n"
+            "*Injected by Gobby session handoff*\n\n"
+            "/Users/josh/Projects/gobby/src/gobby/memory/recall.py"
+        )
+        self._write_claude_transcript(
+            transcript,
+            [
+                (injected, ""),
+                ("Real follow-up", "Real response"),
+            ],
+        )
+
+        result = await _read_undigested_turns(str(transcript), "claude", 0)
+
+        assert result == [("Real follow-up", "Real response")]
+
+    @pytest.mark.asyncio
+    async def test_last_turn_strips_injected_context(self, tmp_path) -> None:
+        """The single-turn reader strips injected context before summary input."""
+        transcript = tmp_path / "transcript.jsonl"
+        self._write_claude_transcript(
+            transcript,
+            [
+                (
+                    "Question\n"
+                    "<!-- gobby:injected-context:begin -->\n"
+                    "injected\n"
+                    "<!-- gobby:injected-context:end -->",
+                    "Answer",
+                )
+            ],
+        )
+
+        result = await _read_last_turn_from_transcript(str(transcript), "claude")
+
+        assert result == ("Question", "Answer")
+
 
 class TestBuildTurnAndDigestCatchUp:
     """Tests for build_turn_and_digest catching up on missed turns."""

@@ -8,6 +8,9 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
+from gobby.utils.injected_context import strip_injected_context
+from gobby.utils.project_context import get_project_context
+
 if TYPE_CHECKING:
     from gobby.config.sessions import SessionSummaryConfig
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -218,6 +221,8 @@ def register_handoff_tools(
             return {"success": False, "error": "Session manager not available"}
 
         parent_session = None
+        project_ctx = get_project_context()
+        caller_project_id = project_id or (project_ctx.get("id") if project_ctx else None)
 
         # Option 1: Direct session_id lookup with resolution
         if session_id:
@@ -226,22 +231,50 @@ def register_handoff_tools(
                 parent_session = session_manager.get(resolved_id)
             except ValueError as e:
                 return {"success": False, "error": str(e)}
+            if not parent_session:
+                return {
+                    "success": False,
+                    "found": False,
+                    "message": "No handoff-ready session found",
+                    "filters": {
+                        "session_id": session_id,
+                        "project_id": caller_project_id,
+                        "source": source,
+                    },
+                }
+            if getattr(parent_session, "status", None) != "handoff_ready":
+                return {
+                    "success": False,
+                    "found": False,
+                    "message": "No handoff-ready session found",
+                    "filters": {
+                        "session_id": session_id,
+                        "project_id": caller_project_id,
+                        "source": source,
+                    },
+                }
 
         # Option 2: Find parent by project_id and source
-        if not parent_session and project_id:
+        if not parent_session and (project_id or source) and caller_project_id:
             machine_id = get_machine_id()
             if machine_id:
                 parent_session = session_manager.find_parent(
                     machine_id=machine_id,
-                    project_id=project_id,
+                    project_id=caller_project_id,
                     source=source,
                     status="handoff_ready",
                 )
 
-        # Option 3: Find most recent handoff_ready session
-        if not parent_session:
-            sessions = session_manager.list(status="handoff_ready", limit=1)
-            parent_session = sessions[0] if sessions else None
+        # Option 3: Find most recent handoff_ready session scoped to caller project.
+        if not parent_session and not session_id and caller_project_id:
+            machine_id = get_machine_id()
+            if machine_id:
+                parent_session = session_manager.find_parent(
+                    machine_id=machine_id,
+                    project_id=caller_project_id,
+                    source=source,
+                    status="handoff_ready",
+                )
 
         if not parent_session:
             return {
@@ -250,13 +283,30 @@ def register_handoff_tools(
                 "message": "No handoff-ready session found",
                 "filters": {
                     "session_id": session_id,
-                    "project_id": project_id,
+                    "project_id": caller_project_id,
+                    "source": source,
+                },
+            }
+
+        parent_project_id = getattr(parent_session, "project_id", None)
+        if (
+            isinstance(parent_project_id, str)
+            and isinstance(caller_project_id, str)
+            and parent_project_id != caller_project_id
+        ):
+            return {
+                "success": False,
+                "found": False,
+                "message": "No handoff-ready session found",
+                "filters": {
+                    "session_id": session_id,
+                    "project_id": caller_project_id,
                     "source": source,
                 },
             }
 
         # Get handoff context
-        context = parent_session.summary_markdown
+        context = strip_injected_context(parent_session.summary_markdown or "")
 
         if not context:
             return {
@@ -272,6 +322,26 @@ def register_handoff_tools(
         if link_child_session_id:
             try:
                 resolved_child_id = _resolve_session_id(link_child_session_id)
+                child_session = session_manager.get(resolved_child_id)
+                child_project_id = getattr(child_session, "project_id", None)
+                if (
+                    not child_session
+                    or child_project_id is None
+                    or parent_project_id is None
+                    or (
+                        isinstance(child_project_id, str)
+                        and isinstance(parent_project_id, str)
+                        and child_project_id != parent_project_id
+                    )
+                ):
+                    return {
+                        "success": False,
+                        "found": True,
+                        "session_id": parent_session.id,
+                        "has_context": True,
+                        "error": "Child session belongs to a different project",
+                        "context": context,
+                    }
                 session_manager.update_parent_session_id(resolved_child_id, parent_session.id)
             except ValueError as e:
                 return {

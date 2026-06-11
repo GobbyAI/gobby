@@ -183,15 +183,16 @@ class _DiscoveryMixin:
         project_id: str | None,
         session_type: str | None = None,
     ) -> list[Session]:
-        """Find all sessions sharing an external_id across sources within one project."""
-        storage_project_id = project_id or PERSONAL_PROJECT_ID
+        """Find all sessions sharing an external_id across sources."""
         query = """
             SELECT * FROM sessions
             WHERE external_id = %s
               AND machine_id = %s
-              AND project_id = %s
         """
-        params: list[str | None] = [external_id, machine_id, storage_project_id]
+        params: list[str | None] = [external_id, machine_id]
+        if project_id is not None:
+            query += " AND project_id = %s"
+            params.append(project_id)
         if session_type is not None:
             query += " AND session_type = %s"
             params.append(session_type)

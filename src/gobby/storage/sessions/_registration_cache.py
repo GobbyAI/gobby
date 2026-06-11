@@ -237,6 +237,16 @@ class _RegistrationCacheMixin:
             )
             if not candidates:
                 return None
+            if project_id is None and len({candidate.project_id for candidate in candidates}) > 1:
+                self.logger.warning(
+                    "Ambiguous cross-project session recovery for external_id=%s source=%s "
+                    "machine_id=%s candidates=%s",
+                    external_id,
+                    source,
+                    machine_id,
+                    [candidate.id for candidate in candidates],
+                )
+                return None
 
             ranked = sorted(candidates, key=_recovery_rank)
             if len(ranked) > 1 and _recovery_rank(ranked[0]) == _recovery_rank(ranked[1]):

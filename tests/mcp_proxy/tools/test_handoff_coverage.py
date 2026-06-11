@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -100,3 +100,97 @@ class TestSetHandoffContext:
 # ---------------------------------------------------------------------------
 # get_handoff_context tests
 # ---------------------------------------------------------------------------
+
+
+class TestGetHandoffContextProjectScope:
+    """Project scoping tests for get_handoff_context."""
+
+    @patch(
+        "gobby.mcp_proxy.tools.sessions._handoff.get_project_context",
+        return_value={"id": "proj-1"},
+    )
+    def test_fallback_uses_caller_project_context(
+        self, _mock_project_context: MagicMock, mock_session_manager: MagicMock
+    ) -> None:
+        parent = _make_session(
+            id="parent-session",
+            summary_markdown="# Same project\nReady",
+            status="handoff_ready",
+            project_id="proj-1",
+        )
+        mock_session_manager.find_parent.return_value = parent
+        registry = _register_tools(mock_session_manager)
+
+        result = registry.get_tool("get_handoff_context")()
+
+        assert result["success"] is True
+        assert result["session_id"] == "parent-session"
+        mock_session_manager.find_parent.assert_called_once()
+        assert mock_session_manager.find_parent.call_args.kwargs["project_id"] == "proj-1"
+        mock_session_manager.list.assert_not_called()
+
+    @patch("gobby.mcp_proxy.tools.sessions._handoff.get_project_context", return_value=None)
+    def test_fallback_without_project_context_fails_closed(
+        self, _mock_project_context: MagicMock, mock_session_manager: MagicMock
+    ) -> None:
+        registry = _register_tools(mock_session_manager)
+
+        result = registry.get_tool("get_handoff_context")()
+
+        assert result["success"] is False
+        assert result["found"] is False
+        mock_session_manager.find_parent.assert_not_called()
+        mock_session_manager.list.assert_not_called()
+
+    @patch(
+        "gobby.mcp_proxy.tools.sessions._handoff.get_project_context",
+        return_value={"id": "proj-1"},
+    )
+    def test_explicit_cross_project_session_fails_closed(
+        self, _mock_project_context: MagicMock, mock_session_manager: MagicMock
+    ) -> None:
+        parent = _make_session(
+            id="parent-session",
+            summary_markdown="# Other project\nWrong",
+            status="handoff_ready",
+            project_id="other-project",
+        )
+        mock_session_manager.resolve_session_reference.return_value = "parent-session"
+        mock_session_manager.get.return_value = parent
+        registry = _register_tools(mock_session_manager)
+
+        result = registry.get_tool("get_handoff_context")(session_id="parent-session")
+
+        assert result["success"] is False
+        assert result["found"] is False
+        assert "context" not in result
+
+    @patch(
+        "gobby.mcp_proxy.tools.sessions._handoff.get_project_context",
+        return_value={"id": "proj-1"},
+    )
+    def test_link_child_session_rejects_cross_project_child(
+        self, _mock_project_context: MagicMock, mock_session_manager: MagicMock
+    ) -> None:
+        parent = _make_session(
+            id="parent-session",
+            summary_markdown="# Parent\nReady",
+            status="handoff_ready",
+            project_id="proj-1",
+        )
+        child = _make_session(id="child-session", project_id="proj-2")
+        mock_session_manager.resolve_session_reference.side_effect = [
+            "parent-session",
+            "child-session",
+        ]
+        mock_session_manager.get.side_effect = [parent, child]
+        registry = _register_tools(mock_session_manager)
+
+        result = registry.get_tool("get_handoff_context")(
+            session_id="parent-session",
+            link_child_session_id="child-session",
+        )
+
+        assert result["success"] is False
+        assert "different project" in result["error"]
+        mock_session_manager.update_parent_session_id.assert_not_called()
