@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from gobby.agents.kill import pid_matches_agent_identity
+
 logger = logging.getLogger(__name__)
 
 # Event callback type - (event_type, run_id, data)
@@ -412,6 +414,18 @@ class RunningAgentRegistry:
             parent_pid = ctx.get("parent_pid")
             if parent_pid:
                 try:
+                    if not await pid_matches_agent_identity(
+                        int(parent_pid),
+                        provider=agent.provider,
+                        session_id=agent.session_id,
+                        run_subprocess=self._run_subprocess,
+                    ):
+                        return {
+                            "success": False,
+                            "error": f"PID {parent_pid} does not match agent identity",
+                            "pid": parent_pid,
+                            "method": "taskkill_tree",
+                        }
                     await self._run_subprocess(
                         "taskkill",
                         "/F",
@@ -429,6 +443,18 @@ class RunningAgentRegistry:
         if parent_pid:
             try:
                 pid = int(parent_pid)
+                if not await pid_matches_agent_identity(
+                    pid,
+                    provider=agent.provider,
+                    session_id=agent.session_id,
+                    run_subprocess=self._run_subprocess,
+                ):
+                    return {
+                        "success": False,
+                        "error": f"PID {pid} does not match agent identity",
+                        "pid": pid,
+                        "method": "parent_pid",
+                    }
                 if is_windows:
                     await self._run_subprocess(
                         "taskkill",
@@ -546,37 +572,25 @@ class RunningAgentRegistry:
                                 for pid_str in pids:
                                     try:
                                         candidate_pid = int(pid_str)
-                                        # Query the process command line to verify
-                                        ps_rc, ps_stdout, _ = await self._run_subprocess(
-                                            "ps",
-                                            "-p",
-                                            str(candidate_pid),
-                                            "-o",
-                                            "args=",
-                                            timeout=2.0,
+                                        is_matched = await pid_matches_agent_identity(
+                                            candidate_pid,
+                                            provider=agent.provider,
+                                            session_id=agent.session_id,
+                                            run_subprocess=self._run_subprocess,
                                         )
-                                        if ps_rc == 0:
-                                            cmdline = ps_stdout.strip()
-                                            # Verify it's actually the agent process
-                                            # (contains session-id and matches expected CLI)
-                                            is_matched = agent.provider in cmdline.lower()
-
-                                            if (
-                                                f"session-id {agent.session_id}" in cmdline
-                                                and is_matched
-                                            ):
-                                                if matched_pid is not None:
-                                                    # Multiple matches — pick highest PID.
-                                                    # Child process is spawned after parent shell,
-                                                    # so it gets a higher PID on Linux/macOS.
-                                                    self._logger.info(
-                                                        f"Multiple PID matches ({matched_pid}, "
-                                                        f"{candidate_pid}) for session "
-                                                        f"{agent.session_id} — picking highest"
-                                                    )
-                                                    matched_pid = max(matched_pid, candidate_pid)
-                                                else:
-                                                    matched_pid = candidate_pid
+                                        if is_matched:
+                                            if matched_pid is not None:
+                                                # Multiple matches: pick highest PID.
+                                                # Child process is spawned after parent shell,
+                                                # so it gets a higher PID on Linux/macOS.
+                                                self._logger.info(
+                                                    f"Multiple PID matches ({matched_pid}, "
+                                                    f"{candidate_pid}) for session "
+                                                    f"{agent.session_id} - picking highest"
+                                                )
+                                                matched_pid = max(matched_pid, candidate_pid)
+                                            else:
+                                                matched_pid = candidate_pid
                                     except (ValueError, TimeoutError):
                                         continue
                                 if matched_pid is not None:
@@ -608,6 +622,19 @@ class RunningAgentRegistry:
             }
         except PermissionError:
             return {"success": False, "error": f"No permission to signal PID {target_pid}"}
+
+        if not await pid_matches_agent_identity(
+            target_pid,
+            provider=agent.provider,
+            session_id=agent.session_id,
+            run_subprocess=self._run_subprocess,
+        ):
+            return {
+                "success": False,
+                "error": f"PID {target_pid} does not match agent identity",
+                "pid": target_pid,
+                "found_via": found_via,
+            }
 
         # Close PTY if embedded mode
         if agent.master_fd is not None:
@@ -641,6 +668,18 @@ class RunningAgentRegistry:
             else:
                 # Still alive - escalate to SIGKILL
                 try:
+                    if not await pid_matches_agent_identity(
+                        target_pid,
+                        provider=agent.provider,
+                        session_id=agent.session_id,
+                        run_subprocess=self._run_subprocess,
+                    ):
+                        return {
+                            "success": False,
+                            "error": f"PID {target_pid} no longer matches agent identity",
+                            "pid": target_pid,
+                            "found_via": found_via,
+                        }
                     os.kill(target_pid, signal.SIGKILL)
                     self._logger.info(f"Escalated to SIGKILL for PID {target_pid}")
                 except ProcessLookupError:

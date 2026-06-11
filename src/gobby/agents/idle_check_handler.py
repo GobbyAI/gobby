@@ -200,8 +200,11 @@ class IdleCheckHandler:
                 return 1
 
             if status == "active":
-                self._idle_detector.reset_idle(run.id)
-                return 0
+                if not session_stale or self._idle_detector.should_fail(
+                    run.id, self._tmux_config.max_reprompt_attempts
+                ):
+                    self._idle_detector.reset_idle(run.id)
+                    return 0
 
             if self._idle_detector.has_unsubmitted_input(pane_output):
                 logger.info(

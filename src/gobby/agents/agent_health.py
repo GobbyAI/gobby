@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from gobby.agents.kill import kill_agent
+from gobby.agents.kill import kill_agent, pid_matches_agent_identity
 from gobby.agents.stall_classifier import StallStatus
 from gobby.utils.datetime import parse_stored_datetime
 
@@ -212,6 +212,18 @@ class AgentHealthMonitor:
                         continue
                     await self._clear_tmux_session_name(run)
                 elif run.pid:
+                    session_id = run.child_session_id or run.parent_session_id
+                    if not await pid_matches_agent_identity(
+                        run.pid,
+                        provider=run.provider,
+                        session_id=session_id,
+                    ):
+                        logger.warning(
+                            "Skipping cleanup for run %s: PID %s does not match identity",
+                            run.id,
+                            run.pid,
+                        )
+                        continue
                     try:
                         os.kill(run.pid, signal.SIGTERM)
                     except ProcessLookupError:
@@ -281,6 +293,17 @@ class AgentHealthMonitor:
                     await self._tmux.kill_session(run.tmux_session_name)
                     await self._clear_tmux_session_name(run)
                 elif run.pid:
+                    if not await pid_matches_agent_identity(
+                        run.pid,
+                        provider=run.provider,
+                        session_id=session_id,
+                    ):
+                        logger.warning(
+                            "Skipping init-timeout cleanup for run %s: PID %s does not match identity",
+                            run.id,
+                            run.pid,
+                        )
+                        continue
                     try:
                         os.kill(run.pid, signal.SIGTERM)
                     except ProcessLookupError:

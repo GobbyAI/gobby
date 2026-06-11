@@ -12,6 +12,7 @@ import os
 import re
 import signal
 import sys
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from gobby.storage.agents import AgentRun
@@ -60,12 +61,48 @@ async def _run_subprocess(*args: str, timeout: float = 5.0) -> tuple[int, str, s
     )
 
 
+async def pid_matches_agent_identity(
+    pid: int,
+    *,
+    provider: str,
+    session_id: str | None,
+    run_subprocess: Callable[..., Awaitable[tuple[int, str, str]]] | None = None,
+) -> bool:
+    """Verify a recorded PID still belongs to the expected provider/session."""
+    if not session_id or not _validate_terminal_value("session_id", session_id):
+        logger.warning("Refusing to signal PID %s: missing or invalid session id", pid)
+        return False
+
+    provider_marker = provider.strip().lower()
+    if not provider_marker:
+        logger.warning("Refusing to signal PID %s: missing provider", pid)
+        return False
+
+    runner = run_subprocess or _run_subprocess
+    try:
+        rc, stdout, _ = await runner("ps", "-p", str(pid), "-o", "args=", timeout=2.0)
+    except Exception as e:
+        logger.warning("Refusing to signal PID %s: cmdline lookup failed: %s", pid, e)
+        return False
+
+    cmdline = stdout.strip()
+    matches = rc == 0 and f"session-id {session_id}" in cmdline
+    matches = matches and provider_marker in cmdline.lower()
+    if not matches:
+        logger.warning(
+            "Refusing to signal PID %s: cmdline does not match provider/session identity",
+            pid,
+        )
+    return matches
+
+
 async def _close_terminal_window(
     session_id: str,
     db: HubDatabase,
     session_manager: SessionManager | None = None,
     signal_name: str = "TERM",
     timeout: float = 5.0,
+    provider: str | None = None,
 ) -> dict[str, Any]:
     """Close the terminal window/pane for an agent session.
 
@@ -128,6 +165,17 @@ async def _close_terminal_window(
         parent_pid = ctx.get("parent_pid")
         if parent_pid:
             try:
+                if provider and not await pid_matches_agent_identity(
+                    int(parent_pid),
+                    provider=provider,
+                    session_id=session_id,
+                ):
+                    return {
+                        "success": False,
+                        "error": f"PID {parent_pid} does not match agent identity",
+                        "pid": parent_pid,
+                        "method": "taskkill_tree",
+                    }
                 await _run_subprocess(
                     "taskkill",
                     "/F",
@@ -145,6 +193,17 @@ async def _close_terminal_window(
     if parent_pid:
         try:
             pid = int(parent_pid)
+            if provider and not await pid_matches_agent_identity(
+                pid,
+                provider=provider,
+                session_id=session_id,
+            ):
+                return {
+                    "success": False,
+                    "error": f"PID {pid} does not match agent identity",
+                    "pid": pid,
+                    "method": "parent_pid",
+                }
             if is_windows:
                 await _run_subprocess(
                     "taskkill",
@@ -217,6 +276,7 @@ async def kill_agent(
             session_manager=session_manager,
             signal_name=signal_name,
             timeout=timeout,
+            provider=run.provider,
         )
         if result.get("success"):
             return result
@@ -266,27 +326,20 @@ async def kill_agent(
                             for pid_str in pids:
                                 try:
                                     candidate_pid = int(pid_str)
-                                    ps_rc, ps_stdout, _ = await _run_subprocess(
-                                        "ps",
-                                        "-p",
-                                        str(candidate_pid),
-                                        "-o",
-                                        "args=",
-                                        timeout=2.0,
+                                    is_matched = await pid_matches_agent_identity(
+                                        candidate_pid,
+                                        provider=run.provider,
+                                        session_id=session_id,
                                     )
-                                    if ps_rc == 0:
-                                        cmdline = ps_stdout.strip()
-                                        is_matched = run.provider in cmdline.lower()
-
-                                        if f"session-id {session_id}" in cmdline and is_matched:
-                                            if matched_pid is not None:
-                                                logger.info(
-                                                    f"Multiple PID matches ({matched_pid}, "
-                                                    f"{candidate_pid}) — picking highest"
-                                                )
-                                                matched_pid = max(matched_pid, candidate_pid)
-                                            else:
-                                                matched_pid = candidate_pid
+                                    if is_matched:
+                                        if matched_pid is not None:
+                                            logger.info(
+                                                f"Multiple PID matches ({matched_pid}, "
+                                                f"{candidate_pid}) - picking highest"
+                                            )
+                                            matched_pid = max(matched_pid, candidate_pid)
+                                        else:
+                                            matched_pid = candidate_pid
                                 except (ValueError, TimeoutError):
                                     continue
                             if matched_pid is not None:
@@ -314,6 +367,18 @@ async def kill_agent(
         }
     except PermissionError:
         return {"success": False, "error": f"No permission to signal PID {target_pid}"}
+
+    if not await pid_matches_agent_identity(
+        target_pid,
+        provider=run.provider,
+        session_id=session_id,
+    ):
+        return {
+            "success": False,
+            "error": f"PID {target_pid} does not match agent identity",
+            "pid": target_pid,
+            "found_via": found_via,
+        }
 
     # Close PTY if embedded mode
     if master_fd is not None:
@@ -345,6 +410,17 @@ async def kill_agent(
                 break
         else:
             try:
+                if not await pid_matches_agent_identity(
+                    target_pid,
+                    provider=run.provider,
+                    session_id=session_id,
+                ):
+                    return {
+                        "success": False,
+                        "error": f"PID {target_pid} no longer matches agent identity",
+                        "pid": target_pid,
+                        "found_via": found_via,
+                    }
                 os.kill(target_pid, signal.SIGKILL)
                 logger.info(f"Escalated to SIGKILL for PID {target_pid}")
             except ProcessLookupError:

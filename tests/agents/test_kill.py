@@ -113,6 +113,25 @@ class TestCloseTerminalWindow:
         assert res["pid"] == 456
         mock_kill.assert_called_with(456, signal.SIGTERM)
 
+    @pytest.mark.asyncio
+    @patch("gobby.agents.kill._run_subprocess")
+    @patch("gobby.agents.kill.os.kill")
+    @patch("gobby.agents.kill.SessionManager")
+    async def test_close_parent_pid_refuses_recycled_pid(self, mock_sm_cls, mock_kill, mock_run):
+        mock_session = MagicMock()
+        mock_session.terminal_context = {"parent_pid": "456"}
+        mock_sm = MagicMock()
+        mock_sm.get.return_value = mock_session
+        mock_sm_cls.return_value = mock_sm
+        mock_run.return_value = (0, "python qwen session-id other", "")
+
+        res = await _close_terminal_window("sess1", MagicMock(), provider="claude")
+
+        assert res["success"] is False
+        assert res["method"] == "parent_pid"
+        assert "does not match agent identity" in res["error"]
+        mock_kill.assert_not_called()
+
 
 class TestKillAgent:
     @pytest.fixture
@@ -187,9 +206,11 @@ class TestKillAgent:
         mock_close.assert_called_once()
 
     @pytest.mark.asyncio
+    @patch("gobby.agents.kill._run_subprocess")
     @patch("gobby.agents.kill.os.kill")
-    async def test_kill_by_explicit_pid(self, mock_kill, agent_run, mock_db):
+    async def test_kill_by_explicit_pid(self, mock_kill, mock_run, agent_run, mock_db):
         agent_run.pid = 999
+        mock_run.return_value = (0, "python claude session-id sess1", "")
         res = await kill_agent(agent_run, mock_db, timeout=0)
         assert res["success"] is True
         assert res["pid"] == 999
@@ -197,15 +218,35 @@ class TestKillAgent:
         mock_kill.assert_called_with(999, signal.SIGTERM)
 
     @pytest.mark.asyncio
+    @patch("gobby.agents.kill._run_subprocess")
+    @patch("gobby.agents.kill.os.kill")
+    async def test_kill_by_explicit_pid_refuses_recycled_pid(
+        self, mock_kill, mock_run, agent_run, mock_db
+    ):
+        agent_run.pid = 999
+        mock_run.return_value = (0, "python other-provider session-id other-session", "")
+
+        res = await kill_agent(agent_run, mock_db, timeout=0)
+
+        assert res["success"] is False
+        assert res["pid"] == 999
+        assert "does not match agent identity" in res["error"]
+        mock_kill.assert_called_once_with(999, 0)
+
+    @pytest.mark.asyncio
+    @patch("gobby.agents.kill._run_subprocess")
     @patch("gobby.agents.kill.SessionManager")
     @patch("gobby.agents.kill.os.kill")
-    async def test_kill_pid_from_terminal_context(self, mock_kill, mock_sm_cls, agent_run, mock_db):
+    async def test_kill_pid_from_terminal_context(
+        self, mock_kill, mock_sm_cls, mock_run, agent_run, mock_db
+    ):
         agent_run.pid = None
         mock_session = MagicMock()
         mock_session.terminal_context = {"parent_pid": "888"}
         mock_sm = MagicMock()
         mock_sm.get.return_value = mock_session
         mock_sm_cls.return_value = mock_sm
+        mock_run.return_value = (0, "python claude session-id sess1", "")
 
         res = await kill_agent(agent_run, mock_db, timeout=0)
         assert res["success"] is True
@@ -218,8 +259,16 @@ class TestKillAgent:
     @patch("gobby.agents.kill.os.kill")
     async def test_kill_pid_from_pgrep(self, mock_kill, mock_run, agent_run, mock_db):
         agent_run.pid = None
-        # pgrep returns pid 777
-        mock_run.return_value = (0, "777\n", "")
+
+        def _run_side_effect(*args, **kwargs):
+            cmd = args[0] if args else ""
+            if cmd == "pgrep":
+                return (0, "777\n", "")
+            if cmd == "ps":
+                return (0, "python claude session-id sess1", "")
+            return (1, "", "")
+
+        mock_run.side_effect = _run_side_effect
 
         res = await kill_agent(agent_run, mock_db, timeout=0)
         assert res["success"] is True
@@ -270,8 +319,12 @@ class TestKillAgent:
     @pytest.mark.asyncio
     @patch("gobby.agents.kill.os.kill")
     @patch("gobby.agents.kill.asyncio.sleep")
-    async def test_kill_escalates_to_kill(self, mock_sleep, mock_kill, agent_run, mock_db):
+    @patch("gobby.agents.kill._run_subprocess")
+    async def test_kill_escalates_to_kill(
+        self, mock_run, mock_sleep, mock_kill, agent_run, mock_db
+    ):
         agent_run.pid = 999
+        mock_run.return_value = (0, "python claude session-id sess1", "")
 
         # Custom side effect for os.kill
         # call 1: os.kill(999, 0) -> pass

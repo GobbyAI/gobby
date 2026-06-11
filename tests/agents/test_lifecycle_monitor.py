@@ -13,6 +13,7 @@ import json
 import os
 import threading
 import time
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -621,6 +622,12 @@ class TestStartStop:
 
 class TestCheckIdleAgents:
     """Tests for idle agent detection and reprompting."""
+
+    @pytest.fixture(autouse=True)
+    def reset_statusline_activity(self) -> Iterator[None]:
+        statusline_activity.reset_for_tests()
+        yield
+        statusline_activity.reset_for_tests()
 
     @pytest.fixture
     def idle_monitor(
@@ -2045,6 +2052,51 @@ class TestCheckExpiredAgents:
         assert "timeout" in (updated.error or "").lower()
 
     @pytest.mark.asyncio
+    async def test_expired_pid_agent_refuses_recycled_pid(
+        self,
+        monitor: AgentLifecycleMonitor,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict,
+        temp_db: HubDatabase,
+    ) -> None:
+        """A no-tmux timeout must not signal a PID that fails identity verification."""
+        run = agent_run_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="test",
+            run_id="run-expired-recycled-pid",
+            timeout_seconds=300,
+        )
+        agent_run_manager.start(run.id)
+        agent_run_manager.update_runtime(run.id, pid=999)
+        past = (datetime.now(UTC) - timedelta(seconds=600)).isoformat()
+        temp_db.execute(
+            "UPDATE agent_runs SET started_at = %s WHERE id = %s",
+            (past, run.id),
+        )
+
+        with (
+            patch(
+                "gobby.agents.agent_health.pid_matches_agent_identity",
+                new_callable=AsyncMock,
+                return_value=False,
+            ) as mock_identity,
+            patch("gobby.agents.agent_health.os.kill") as mock_kill,
+        ):
+            cleaned = await monitor.check_unhealthy_agents()
+
+        assert cleaned == 0
+        mock_identity.assert_awaited_once_with(
+            999,
+            provider="claude",
+            session_id=sample_session["id"],
+        )
+        mock_kill.assert_not_called()
+        updated = agent_run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "running"
+
+    @pytest.mark.asyncio
     async def test_zero_accounting_timeout_with_terminal_output_is_bootstrap_stall(
         self,
         agent_run_manager: LocalAgentRunManager,
@@ -2849,6 +2901,59 @@ class TestCheckInitializationTimeout:
         assert updated.status == "error"
         assert "connection timed out" in (updated.error or "").lower()
         assert "never initialized" in (updated.error or "").lower()
+
+    @pytest.mark.asyncio
+    async def test_initialization_timeout_refuses_recycled_pid(
+        self,
+        monitor: AgentLifecycleMonitor,
+        agent_run_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+        sample_project: dict,
+    ) -> None:
+        """Initialization timeout must not signal a PID that fails identity verification."""
+        child = session_manager.register(
+            external_id="child-uninit-recycled-pid",
+            machine_id="machine-1",
+            source="gemini",
+            project_id=sample_project["id"],
+        )
+        run = agent_run_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="test",
+            run_id="run-uninit-recycled-pid",
+            child_session_id=child.id,
+        )
+        agent_run_manager.start(run.id)
+        agent_run_manager.update_runtime(run.id, pid=999)
+        backdated = (datetime.now(UTC) - timedelta(seconds=200)).isoformat()
+        agent_run_manager.db.execute(
+            "UPDATE agent_runs SET started_at = %s WHERE id = %s",
+            (backdated, run.id),
+        )
+        monitor._session_manager = session_manager
+
+        with (
+            patch(
+                "gobby.agents.agent_health.pid_matches_agent_identity",
+                new_callable=AsyncMock,
+                return_value=False,
+            ) as mock_identity,
+            patch("gobby.agents.agent_health.os.kill") as mock_kill,
+        ):
+            killed = await monitor.check_initialization_timeout()
+
+        assert killed == 0
+        mock_identity.assert_awaited_once_with(
+            999,
+            provider="claude",
+            session_id=child.id,
+        )
+        mock_kill.assert_not_called()
+        updated = agent_run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "running"
 
     @pytest.mark.asyncio
     async def test_initialization_timeout_resets_stage_and_releases_dispatch_mutex(

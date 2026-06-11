@@ -29,7 +29,7 @@ class TestRunningAgentRegistryKill:
             yield mock
 
     @pytest.mark.asyncio
-    async def test_kill_headless_success(self, registry, mock_os_kill):
+    async def test_kill_headless_success(self, registry, mock_os_kill, mock_subprocess):
         """Kill autonomous agent sends signal to PID."""
         agent = RunningAgent(
             run_id="ar-autonomous",
@@ -38,6 +38,7 @@ class TestRunningAgentRegistryKill:
             pid=12345,
         )
         registry.add(agent)
+        mock_subprocess.return_value = (0, "claude session-id sess", "")
 
         # Sequence of calls:
         # 1. check alive (pid, 0) -> success (None)
@@ -102,8 +103,15 @@ class TestRunningAgentRegistryKill:
         )
         registry.add(agent)
 
-        # Mock pgrep finding a PID
-        mock_subprocess.return_value = (0, "99999\n", "")
+        def _run_side_effect(*args, **kwargs):
+            cmd = args[0] if args else ""
+            if cmd == "pgrep":
+                return (0, "99999\n", "")
+            if cmd == "ps":
+                return (0, "claude session-id sess-term", "")
+            return (1, "", "")
+
+        mock_subprocess.side_effect = _run_side_effect
 
         # Simulate process death loop: alive -> signal -> dead
         mock_os_kill.side_effect = [None, None, ProcessLookupError()]
@@ -126,6 +134,7 @@ class TestRunningAgentRegistryKill:
             pid=54321,
         )
         registry.add(agent)
+        mock_subprocess.return_value = (0, "claude session-id sess-has-pid", "")
 
         # Simulate: alive -> signal -> dead
         mock_os_kill.side_effect = [None, None, ProcessLookupError()]
@@ -135,8 +144,28 @@ class TestRunningAgentRegistryKill:
         assert result["success"] is True
         # Should use the registered PID directly
         mock_os_kill.assert_any_call(54321, signal.SIGTERM)
-        # pgrep should NOT have been called
-        mock_subprocess.assert_not_called()
+        mock_subprocess.assert_called_once_with("ps", "-p", "54321", "-o", "args=", timeout=2.0)
+
+    @pytest.mark.asyncio
+    async def test_kill_registered_pid_refuses_recycled_pid(
+        self, registry, mock_os_kill, mock_subprocess
+    ):
+        """When agent.pid was reused, kill refuses before sending TERM."""
+        agent = RunningAgent(
+            run_id="ar-recycled-pid",
+            session_id="sess-recycled",
+            parent_session_id="parent",
+            pid=54321,
+        )
+        registry.add(agent)
+        mock_subprocess.return_value = (0, "claude session-id other-session", "")
+
+        result = await registry.kill("ar-recycled-pid", timeout=0)
+
+        assert result["success"] is False
+        assert "does not match agent identity" in result["error"]
+        mock_os_kill.assert_called_once_with(54321, 0)
+        assert registry.get("ar-recycled-pid") is agent
 
     @pytest.mark.asyncio
     async def test_kill_pgrep_disambiguates_highest_pid(
@@ -153,11 +182,15 @@ class TestRunningAgentRegistryKill:
         registry.add(agent)
 
         # pgrep returns two PIDs (parent shell + child CLI)
-        mock_subprocess.side_effect = [
-            (0, "10000\n10050\n", ""),  # pgrep returns two PIDs
-            (0, "claude --session-id sess-multi", ""),  # ps for PID 10000
-            (0, "claude --session-id sess-multi", ""),  # ps for PID 10050
-        ]
+        def _run_side_effect(*args, **kwargs):
+            cmd = args[0] if args else ""
+            if cmd == "pgrep":
+                return (0, "10000\n10050\n", "")
+            if cmd == "ps":
+                return (0, "claude --session-id sess-multi", "")
+            return (1, "", "")
+
+        mock_subprocess.side_effect = _run_side_effect
 
         # Simulate: alive -> signal -> dead
         mock_os_kill.side_effect = [None, None, ProcessLookupError()]

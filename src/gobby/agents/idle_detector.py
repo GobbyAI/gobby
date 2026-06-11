@@ -68,6 +68,7 @@ class IdleDetector:
             r"The context window is full\. Would you like to start a new conversation\?",
             re.IGNORECASE,
         ),
+        re.compile(r"The context window is full\.", re.IGNORECASE),
         re.compile(r"I've run out of context space\.", re.IGNORECASE),
         re.compile(r"This conversation is too long to continue\.", re.IGNORECASE),
     )
