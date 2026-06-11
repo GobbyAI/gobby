@@ -1723,6 +1723,39 @@ class TestCodexAdapterHandleNotification:
         call_args = mock_hook_manager.handle.call_args[0]
         assert call_args[0].event_type == HookEventType.BEFORE_AGENT
 
+    def test_handle_notification_interrupts_turn_when_before_agent_blocks(self) -> None:
+        """Blocking BEFORE_AGENT notification decisions interrupt the active Codex turn."""
+
+        class BlockingHookManager:
+            def __init__(self) -> None:
+                self.events: list[HookEvent] = []
+
+            def handle(self, event: HookEvent) -> HookResponse:
+                self.events.append(event)
+                return HookResponse(decision="block", reason="Blocked by rule")
+
+        class RecordingClient:
+            def __init__(self) -> None:
+                self.interrupts: list[tuple[str, str]] = []
+
+            async def interrupt_turn(self, thread_id: str, turn_id: str) -> None:
+                self.interrupts.append((thread_id, turn_id))
+
+        hook_manager = BlockingHookManager()
+        client = RecordingClient()
+        adapter = CodexAdapter(hook_manager=hook_manager)
+        adapter._codex_client = client
+
+        adapter._handle_notification(
+            "turn/started",
+            {"threadId": "thr-1", "turn": {"id": "turn-1", "status": "inProgress"}},
+        )
+
+        assert len(hook_manager.events) == 1
+        assert hook_manager.events[0].event_type == HookEventType.BEFORE_AGENT
+        assert hook_manager.events[0].data["turn_id"] == "turn-1"
+        assert client.interrupts == [("thr-1", "turn-1")]
+
     def test_handle_notification_without_hook_manager(self) -> None:
         """Notification without hook manager is silently ignored."""
         adapter = CodexAdapter()
