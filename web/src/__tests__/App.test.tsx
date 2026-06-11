@@ -646,6 +646,22 @@ describe("App wiring", () => {
     });
   });
 
+  it.each(["projects", "cron", "reports", "traces"])(
+    "lands on chat for retired #%s hash",
+    async (hash) => {
+      window.location.hash = `#${hash}`;
+
+      await act(async () => {
+        render(<App />);
+      });
+
+      expect(await screen.findByText("Chat")).toBeInTheDocument();
+      await waitFor(() => {
+        expect(window.location.hash).toBe("#chat");
+      });
+    },
+  );
+
   it("resets the backend-facing chat mode on New Chat so a fresh session does not inherit the prior mode (#15703)", async () => {
     const sendMode = vi.fn();
     const startNewChat = vi.fn();
@@ -681,7 +697,7 @@ describe("App wiring", () => {
     expect(sendMode).toHaveBeenCalledWith("plan");
   });
 
-  it("omits MCP from sidebar navigation", async () => {
+  it("omits retired and activity-only entries from sidebar navigation", async () => {
     await act(async () => {
       render(<App />);
     });
@@ -695,8 +711,16 @@ describe("App wiring", () => {
       items: Array<{ id: string; label: string }>;
     };
 
-    expect(props.items.map((item) => item.id)).not.toContain("mcp");
-    expect(props.items.map((item) => item.label)).not.toContain("MCP");
+    const itemIds = props.items.map((item) => item.id);
+    const itemLabels = props.items.map((item) => item.label);
+    expect(itemIds).not.toContain("mcp");
+    expect(itemLabels).not.toContain("MCP");
+    for (const id of ["projects", "cron", "reports", "traces"]) {
+      expect(itemIds).not.toContain(id);
+    }
+    for (const label of ["Project", "Cron Jobs", "Reports", "Traces"]) {
+      expect(itemLabels).not.toContain(label);
+    }
   });
 
   it("keeps parked web chat session catalog entries wired while viewing a terminal", async () => {

@@ -44,14 +44,10 @@ import { GobbyLogo } from "./components/shared/GobbyLogo";
 import {
   ComingSoonPage,
   ConfigurationPage,
-  CronJobsPage,
   DashboardPage,
   IntegrationsPage,
   MemoryPage,
-  ProjectsPage,
-  ReportsPage,
   SkillsPage,
-  TracesPage,
   WorkflowsPage,
 } from "./components/app/AppPages";
 import { APP_VALID_TABS, createAppNavItems } from "./components/app/appNavigation";
@@ -215,29 +211,12 @@ export default function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
     null,
   );
-  const [initialTraceId, setInitialTraceId] = useState<string | null>(null);
-  const [initialPipelineExecutionId, setInitialPipelineExecutionId] = useState<
-    string | null
-  >(null);
   const [uiSettingsLoaded, setUiSettingsLoaded] = useState(false);
   const showPlanRef = useRef<(() => void) | null>(null);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   const [resumeModalOpen, setResumeModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
-
-  const handleNavigateToTrace = useCallback((traceId: string) => {
-    setInitialTraceId(traceId);
-    setActiveTab("traces");
-  }, []);
-
-  const handleNavigateToPipelineExecution = useCallback(
-    (executionId: string) => {
-      setInitialPipelineExecutionId(executionId);
-      setActiveTab("reports");
-    },
-    [],
-  );
 
   const handleOpenActivityTab = useCallback((tab: ActivityTab) => {
     setActivityTabRequest(tab);
@@ -895,35 +874,14 @@ export default function App() {
                   stopTTS: voice.stopTTS,
                 }}
               />
-            ) : activeTab === "projects" ? (
-              <ProjectsPage projectId={effectiveProjectId} />
             ) : activeTab === "memory" ? (
               <MemoryPage projectId={effectiveProjectId} />
-            ) : activeTab === "cron" ? (
-              <CronJobsPage
-                projectId={effectiveProjectId}
-                onNavigateToPipelineExecution={handleNavigateToPipelineExecution}
-              />
-            ) : activeTab === "traces" ? (
-              <TracesPage
-                projectId={effectiveProjectId || undefined}
-                initialTraceId={initialTraceId}
-              />
             ) : activeTab === "skills" ? (
               <SkillsPage />
             ) : activeTab === "workflows" ? (
               <WorkflowsPage projectId={effectiveProjectId} />
             ) : activeTab === "integrations" ? (
               <IntegrationsPage />
-            ) : activeTab === "reports" ? (
-              <ReportsPage
-                projectId={effectiveProjectId}
-                onNavigateToTrace={handleNavigateToTrace}
-                initialPipelineExecutionId={initialPipelineExecutionId}
-                onInitialPipelineExecutionConsumed={() =>
-                  setInitialPipelineExecutionId(null)
-                }
-              />
             ) : activeTab === "configuration" ? (
               <ConfigurationPage />
             ) : activeTab === "dashboard" ? (

@@ -101,4 +101,13 @@ describe('useAppCommandPalette', () => {
     expect(result.current.commandPaletteActions.map((action) => action.id))
       .not.toContain('nav-mcp')
   })
+
+  it('does not include retired pages as app navigation actions', () => {
+    const { result } = renderHook(() => useAppCommandPalette(makeHookArgs()))
+    const actionIds = result.current.commandPaletteActions.map((action) => action.id)
+
+    for (const actionId of ['nav-projects', 'nav-cron', 'nav-reports', 'nav-traces']) {
+      expect(actionIds).not.toContain(actionId)
+    }
+  })
 })

@@ -6,11 +6,6 @@ export const MemoryPage = lazy(() =>
     default: m.MemoryPage,
   })),
 );
-export const ProjectsPage = lazy(() =>
-  import("../projects/ProjectsPage").then((m) => ({
-    default: m.ProjectsPage,
-  })),
-);
 export const SkillsPage = lazy(() =>
   import("../skills/SkillsPage").then((m) => ({
     default: m.SkillsPage,
@@ -24,11 +19,6 @@ export const IntegrationsPage = lazy(() =>
     default: m.IntegrationsPage,
   })),
 );
-export const CronJobsPage = lazy(() =>
-  import("../CronJobsPage").then((m) => ({
-    default: m.CronJobsPage,
-  })),
-);
 export const ConfigurationPage = lazy(() =>
   import("../ConfigurationPage").then((m) => ({
     default: m.ConfigurationPage,
@@ -39,19 +29,9 @@ export const WorkflowsPage = lazy(() =>
     default: m.WorkflowsPage,
   })),
 );
-export const ReportsPage = lazy(() =>
-  import("../workflows/ReportsPage").then((m) => ({
-    default: m.ReportsPage,
-  })),
-);
 export const DashboardPage = lazy(() =>
   import("../dashboard/DashboardPage").then((m) => ({
     default: m.DashboardPage,
-  })),
-);
-export const TracesPage = lazy(() =>
-  import("../traces/TracesPage").then((m) => ({
-    default: m.TracesPage,
   })),
 );
 
