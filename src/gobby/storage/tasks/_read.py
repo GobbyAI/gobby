@@ -7,6 +7,11 @@ from gobby.storage.tasks._models import Task, TaskNotFoundError
 from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 
 
+def _escape_like_prefix(prefix: str) -> str:
+    """Escape SQL LIKE wildcard characters in an ID prefix."""
+    return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def get_task(db: HubDatabase, task_id: str, project_id: str | None = None) -> Task:
     """Get a task by ID or reference.
 
@@ -35,6 +40,10 @@ def get_task(db: HubDatabase, task_id: str, project_id: str | None = None) -> Ta
 
 def find_task_by_prefix(db: HubDatabase, prefix: str) -> Task | None:
     """Find a task by ID prefix. Returns None if no match or multiple matches."""
+    prefix = prefix.strip()
+    if not prefix:
+        return None
+
     row = db.fetchone("SELECT * FROM tasks WHERE id = %s", (prefix,))
     if row:
         task = Task.from_row(row)
@@ -42,7 +51,10 @@ def find_task_by_prefix(db: HubDatabase, prefix: str) -> Task | None:
         hydrate_task_blocking_state(db, [task])
         return task
 
-    rows = db.fetchall("SELECT * FROM tasks WHERE id LIKE %s", (f"{prefix}%",))
+    rows = db.fetchall(
+        "SELECT * FROM tasks WHERE id LIKE %s ESCAPE '\\'",
+        (f"{_escape_like_prefix(prefix)}%",),
+    )
     if len(rows) == 1:
         task = Task.from_row(rows[0])
         hydrate_task_stage_state(db, [task])
@@ -53,7 +65,14 @@ def find_task_by_prefix(db: HubDatabase, prefix: str) -> Task | None:
 
 def find_tasks_by_prefix(db: HubDatabase, prefix: str) -> list[Task]:
     """Find all tasks matching an ID prefix."""
-    rows = db.fetchall("SELECT * FROM tasks WHERE id LIKE %s", (f"{prefix}%",))
+    prefix = prefix.strip()
+    if not prefix:
+        return []
+
+    rows = db.fetchall(
+        "SELECT * FROM tasks WHERE id LIKE %s ESCAPE '\\'",
+        (f"{_escape_like_prefix(prefix)}%",),
+    )
     tasks = [Task.from_row(row) for row in rows]
     hydrate_task_stage_state(db, tasks)
     hydrate_task_blocking_state(db, tasks)

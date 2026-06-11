@@ -38,6 +38,11 @@ def get_agent_definition_manager() -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
+def _escape_like_prefix(prefix: str) -> str:
+    """Escape SQL LIKE wildcard characters in an ID prefix."""
+    return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _agent_body(row: WorkflowDefinitionRow) -> tuple[AgentDefinitionBody, dict[str, Any]]:
     """Parse and validate an agent definition row."""
     data = json.loads(row.definition_json)
@@ -107,6 +112,10 @@ def resolve_agent_run_id(run_ref: str) -> str:
     Raises:
         click.ClickException: If run not found or ambiguous
     """
+    run_ref = run_ref.strip()
+    if not run_ref:
+        raise click.ClickException("Agent run reference cannot be empty")
+
     manager = get_agent_run_manager()
 
     # Try exact match first
@@ -117,8 +126,8 @@ def resolve_agent_run_id(run_ref: str) -> str:
     # Try prefix match
     db = open_runtime_hub_database(apply_migrations=False)
     rows = db.fetchall(
-        "SELECT id FROM agent_runs WHERE id LIKE %s LIMIT 5",
-        (f"{run_ref}%",),
+        "SELECT id FROM agent_runs WHERE id LIKE %s ESCAPE '\\' LIMIT 5",
+        (f"{_escape_like_prefix(run_ref)}%",),
     )
 
     if not rows:

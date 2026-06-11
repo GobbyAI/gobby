@@ -614,6 +614,44 @@ class TestLocalTaskManager:
         assert len(tasks) >= 1
         assert t1.id in [t.id for t in tasks]
 
+    @pytest.mark.parametrize(
+        ("prefix", "literal_id", "unintended_id"),
+        [
+            ("abc_", "abc_def", "abcXdef"),
+            ("abc%", "abc%def", "abcXYZdef"),
+        ],
+    )
+    def test_find_tasks_by_prefix_escapes_like_wildcards(
+        self,
+        task_manager: LocalTaskManager,
+        project_id: str,
+        prefix: str,
+        literal_id: str,
+        unintended_id: str,
+    ) -> None:
+        first = task_manager.create_task(project_id, "Literal Wildcard Task")
+        second = task_manager.create_task(project_id, "Potential Wildcard Match")
+        task_manager.db.execute(
+            "UPDATE tasks SET id = %s WHERE id = %s",
+            (literal_id, first.id),
+        )
+        task_manager.db.execute(
+            "UPDATE tasks SET id = %s WHERE id = %s",
+            (unintended_id, second.id),
+        )
+
+        results = task_manager.find_tasks_by_prefix(prefix)
+
+        assert [task.id for task in results] == [literal_id]
+
+    def test_find_task_by_prefix_rejects_empty_before_like_lookup(
+        self, task_manager: LocalTaskManager, project_id: str
+    ) -> None:
+        task_manager.create_task(project_id, "Existing Task")
+
+        assert task_manager.find_task_by_prefix("  ") is None
+        assert task_manager.find_tasks_by_prefix("  ") == []
+
     def test_hierarchical_ordering(self, task_manager, project_id) -> None:
         # Root 1
         r1 = task_manager.create_task(project_id, "R1", priority=1)
