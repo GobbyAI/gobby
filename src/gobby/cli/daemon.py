@@ -412,6 +412,35 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
     click.echo("Starting Gobby daemon...")
     click.echo("")
 
+    should_kill_existing_daemons = False
+
+    # Check for a live daemon before any global cleanup. A valid gobby.runner PID
+    # means start should fail without tearing down active work.
+    if pid_file.exists():
+        try:
+            with open(pid_file) as f:
+                pid = int(f.read().strip())
+            if _is_process_alive(pid):
+                try:
+                    proc = psutil.Process(pid)
+                    cmdline_lower = " ".join(proc.cmdline()).lower()
+                    if "gobby.runner" in cmdline_lower or "gobby_client.runner" in cmdline_lower:
+                        _step(f"Daemon already running (PID: {pid})", error=True)
+                        sys.exit(1)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            pid_file.unlink(missing_ok=True)
+            should_kill_existing_daemons = True
+        except Exception:
+            pid_file.unlink(missing_ok=True)
+            should_kill_existing_daemons = True
+
+    if should_kill_existing_daemons:
+        killed_count = kill_all_gobby_daemons()
+        if killed_count > 0:
+            _step(f"Stopped {killed_count} existing process(es)")
+            time.sleep(2.0)
+
     # Start Docker services if compose file exists or --docker flag
     services_compose = gobby_dir / "services" / "docker-compose.yml"
     if services_compose.exists() or docker_flag:
@@ -422,31 +451,6 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
     hub_db = init_local_storage()
     hub_db.close()
     _step("PostgreSQL hub initialized")
-
-    # Kill existing gobby daemon processes
-    killed_count = kill_all_gobby_daemons()
-    if killed_count > 0:
-        _step(f"Stopped {killed_count} existing process(es)")
-        pid_file.unlink(missing_ok=True)
-        time.sleep(2.0)
-
-    # Check for stale PID file
-    if pid_file.exists():
-        try:
-            with open(pid_file) as f:
-                pid = int(f.read().strip())
-            if _is_process_alive(pid):
-                try:
-                    proc = psutil.Process(pid)
-                    cmdline_str = " ".join(proc.cmdline())
-                    if "gobby" in cmdline_str.lower():
-                        _step(f"Daemon already running (PID: {pid})", error=True)
-                        sys.exit(1)
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
-            pid_file.unlink(missing_ok=True)
-        except Exception:
-            pid_file.unlink(missing_ok=True)
 
     # Check port availability
     http_port = config.daemon_port
