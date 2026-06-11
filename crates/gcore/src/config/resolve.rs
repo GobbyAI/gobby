@@ -1,6 +1,6 @@
 use super::*;
 
-const FALKORDB_DEFAULT_PORT: u16 = 16379;
+pub(crate) const FALKORDB_DEFAULT_PORT: u16 = 16379;
 pub(crate) const EMBEDDING_DEFAULT_MODEL: &str = "nomic-embed-text";
 pub(crate) const EMBEDDING_DEFAULT_TIMEOUT_SECONDS: u64 = 10;
 const AI_DEFAULT_MAX_CONCURRENCY: u8 = 1;
@@ -181,8 +181,8 @@ pub fn resolve_embedding_config(source: &mut impl ConfigSource) -> Option<Embedd
 /// Resolve indexing config from env/config_store/gcore.yaml/defaults.
 pub fn resolve_indexing_config(source: &mut impl ConfigSource) -> anyhow::Result<IndexingConfig> {
     let respect_gitignore = match env_value(INDEXING_RESPECT_GITIGNORE_ENV) {
-        Some(value) => parse_config_bool(INDEXING_RESPECT_GITIGNORE_KEY, &value)?,
-        None => resolve_config_bool(source, INDEXING_RESPECT_GITIGNORE_KEY)?.unwrap_or(true),
+        Some(value) => parse_config_bool_or_default(INDEXING_RESPECT_GITIGNORE_ENV, &value, true),
+        None => resolve_config_bool(source, INDEXING_RESPECT_GITIGNORE_KEY, true),
     };
 
     Ok(IndexingConfig { respect_gitignore })
@@ -352,19 +352,25 @@ fn resolve_ai_config_value(source: &mut impl ConfigSource, config_key: &str) -> 
 fn resolve_config_bool(
     source: &mut impl ConfigSource,
     config_key: &'static str,
-) -> anyhow::Result<Option<bool>> {
+    default: bool,
+) -> bool {
     let Some(value) = source.config_value(config_key) else {
-        return Ok(None);
+        return default;
     };
-    let resolved = source.resolve_value(&value)?;
-    parse_config_bool(config_key, &resolved).map(Some)
+    let Some(resolved) = resolve_non_empty(source, config_key, &value) else {
+        return default;
+    };
+    parse_config_bool_or_default(config_key, &resolved, default)
 }
 
-fn parse_config_bool(config_key: &'static str, value: &str) -> anyhow::Result<bool> {
+fn parse_config_bool_or_default(source_key: &str, value: &str, default: bool) -> bool {
     match value.trim().to_ascii_lowercase().as_str() {
-        "true" | "1" | "yes" | "on" => Ok(true),
-        "false" | "0" | "no" | "off" => Ok(false),
-        _ => anyhow::bail!("invalid boolean for {config_key}: `{value}`"),
+        "true" | "1" | "yes" | "on" => true,
+        "false" | "0" | "no" | "off" => false,
+        _ => {
+            log::warn!("invalid boolean for config key {source_key:?}; using default {default}");
+            default
+        }
     }
 }
 
@@ -445,7 +451,15 @@ fn resolve_port(
     let Some(resolved) = resolve_non_empty(source, source_key, &raw_port) else {
         return default;
     };
-    resolved.parse::<u16>().unwrap_or(default)
+    match resolved.parse::<u16>() {
+        Ok(port) => port,
+        Err(error) => {
+            log::warn!(
+                "invalid port for config key {source_key:?}: {error}; using default {default}"
+            );
+            default
+        }
+    }
 }
 
 fn resolve_non_empty(

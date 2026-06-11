@@ -1,4 +1,6 @@
-use super::resolve::{EMBEDDING_DEFAULT_MODEL, EMBEDDING_DEFAULT_TIMEOUT_SECONDS};
+use super::resolve::{
+    EMBEDDING_DEFAULT_MODEL, EMBEDDING_DEFAULT_TIMEOUT_SECONDS, FALKORDB_DEFAULT_PORT,
+};
 use super::*;
 use crate::provisioning::StandaloneConfig;
 use std::collections::HashMap;
@@ -279,6 +281,28 @@ fn env_overrides_config_store() {
     assert_eq!(falkordb.password.as_deref(), Some("env-pass"));
     assert_eq!(qdrant.url.as_deref(), Some("http://env-qdrant:6333"));
     assert_eq!(qdrant.api_key.as_deref(), Some("env-qdrant-key"));
+}
+
+#[test]
+fn invalid_falkordb_env_port_warns_and_uses_default() {
+    let env = EnvGuard::new();
+    env.set("GOBBY_FALKORDB_HOST", "env-falkor.local");
+    env.set("GOBBY_FALKORDB_PORT", "notaport");
+    let mut source = TestSource::with_values([("databases.falkordb.port", "17000")]);
+
+    let (falkordb, warnings) =
+        capture_warn_logs(|| resolve_falkordb_config(&mut source).expect("falkordb config"));
+
+    assert_eq!(falkordb.host, "env-falkor.local");
+    assert_eq!(falkordb.port, FALKORDB_DEFAULT_PORT);
+    let matching = warnings
+        .iter()
+        .filter(|warning| warning.contains("GOBBY_FALKORDB_PORT"))
+        .collect::<Vec<_>>();
+    assert_eq!(matching.len(), 1, "{warnings:?}");
+    assert!(matching[0].contains("invalid port"));
+    assert!(matching[0].contains(&format!("using default {FALKORDB_DEFAULT_PORT}")));
+    assert!(!matching[0].contains("notaport"));
 }
 
 #[test]
@@ -754,17 +778,22 @@ fn indexing_config_resolves_config_store_values_before_yaml() {
 }
 
 #[test]
-fn indexing_config_rejects_invalid_boolean() {
+fn indexing_config_invalid_boolean_warns_and_uses_default() {
     let _env = EnvGuard::new();
     let mut source = TestSource::with_values([(INDEXING_RESPECT_GITIGNORE_KEY, "sometimes")]);
 
-    let error = resolve_indexing_config(&mut source).expect_err("invalid boolean");
+    let (indexing, warnings) =
+        capture_warn_logs(|| resolve_indexing_config(&mut source).expect("indexing config"));
 
-    assert!(
-        error
-            .to_string()
-            .contains("invalid boolean for indexing.respect_gitignore")
-    );
+    assert!(indexing.respect_gitignore);
+    let matching = warnings
+        .iter()
+        .filter(|warning| warning.contains(INDEXING_RESPECT_GITIGNORE_KEY))
+        .collect::<Vec<_>>();
+    assert_eq!(matching.len(), 1, "{warnings:?}");
+    assert!(matching[0].contains("invalid boolean"));
+    assert!(matching[0].contains("using default true"));
+    assert!(!matching[0].contains("sometimes"));
 }
 
 #[test]
@@ -782,18 +811,23 @@ fn indexing_config_env_overrides_config_sources() {
 }
 
 #[test]
-fn indexing_config_rejects_invalid_environment_boolean() {
+fn indexing_config_invalid_environment_boolean_warns_and_uses_default() {
     let env = EnvGuard::new();
     env.set("GOBBY_INDEXING_RESPECT_GITIGNORE", "sometimes");
-    let mut source = TestSource::with_values([(INDEXING_RESPECT_GITIGNORE_KEY, "true")]);
+    let mut source = TestSource::with_values([(INDEXING_RESPECT_GITIGNORE_KEY, "false")]);
 
-    let error = resolve_indexing_config(&mut source).expect_err("invalid boolean");
+    let (indexing, warnings) =
+        capture_warn_logs(|| resolve_indexing_config(&mut source).expect("indexing config"));
 
-    assert!(
-        error
-            .to_string()
-            .contains("invalid boolean for indexing.respect_gitignore")
-    );
+    assert!(indexing.respect_gitignore);
+    let matching = warnings
+        .iter()
+        .filter(|warning| warning.contains("GOBBY_INDEXING_RESPECT_GITIGNORE"))
+        .collect::<Vec<_>>();
+    assert_eq!(matching.len(), 1, "{warnings:?}");
+    assert!(matching[0].contains("invalid boolean"));
+    assert!(matching[0].contains("using default true"));
+    assert!(!matching[0].contains("sometimes"));
 }
 
 #[test]
