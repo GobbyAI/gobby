@@ -34,7 +34,7 @@ runs:
       - action: add_pytest_cases
         path: tests/test_config.py
       - action: run_validation
-        command: uv run ruff check src/example/config.py tests/test_config.py && uv run mypy src/example && uv run pytest tests/test_config.py -q
+        command: uv run ruff check src/example/config.py tests/test_config.py && uv run mypy src/example && GOBBY_TEST_PROTECT=1 uv run pytest tests/test_config.py -q
       - action: respond
         text: "Verified pyproject tooling stayed strict, config values are typed and validated at the environment boundary, and focused Ruff, mypy, and pytest checks pass."
 assertions:

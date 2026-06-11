@@ -26,6 +26,7 @@ from gobby.prompts.models import parse_frontmatter
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import ImportConfigRequest
 from gobby.servers.routes.configuration_secrets import (
+    FALKOR_PASSWORD_KEY,
     add_restart_hint,
     mark_secret_keys,
     partition_config_entries,
@@ -252,8 +253,8 @@ def persist_imported_config(
         runtime_config_secret_keys,
     )
 
-    validated_secret_values = _validate_imported_secret_values(secret_values)
     try:
+        validated_secret_values = _validate_imported_secret_values(secret_values)
         for key, value in validated_secret_values.items():
             if value is not None and value != "":
                 validate_falkordb_secret(key, value)
@@ -368,8 +369,15 @@ def register_import_export_routes(
             elif request.config:
                 flat = flatten_config(request.config)
                 try:
+                    falkordb_config = request.config.get("databases", {}).get("falkordb", {})
+                    if isinstance(falkordb_config, dict):
+                        falkordb_password = falkordb_config.get("password")
+                        if falkordb_password not in (None, ""):
+                            validate_falkordb_secret(FALKOR_PASSWORD_KEY, falkordb_password)
                     for key, value in flat.items():
-                        if is_secret_key_name(key) and value not in (None, ""):
+                        if (
+                            key == FALKOR_PASSWORD_KEY or is_secret_key_name(key)
+                        ) and value not in (None, ""):
                             validate_falkordb_secret(key, value)
                 except ValueError as e:
                     raise HTTPException(status_code=422, detail=str(e)) from e

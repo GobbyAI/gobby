@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -209,14 +209,33 @@ def _codex_hook_state_key(
     return f"{hooks_file.resolve()}:{event_label}:{group_index}:{handler_index}"
 
 
+def _normalize_codex_command(command: Any) -> str | None:
+    """Normalize Codex command strings and argv-style command sequences."""
+    if isinstance(command, str):
+        normalized = " ".join(command.split())
+        return normalized or None
+
+    if isinstance(command, Sequence) and not isinstance(command, (str, bytes, bytearray)):
+        parts: list[str] = []
+        for part in command:
+            if not isinstance(part, str):
+                return None
+            normalized_part = " ".join(part.split())
+            if normalized_part:
+                parts.append(normalized_part)
+        return " ".join(parts) or None
+
+    return None
+
+
 def _normalized_codex_command_hook_hash(
     event_name: str,
     group: dict[str, Any],
     hook: dict[str, Any],
 ) -> str | None:
     """Return Codex's normalized trust hash for one command hook."""
-    command = hook.get("command")
-    if not isinstance(command, str) or not command.strip():
+    command = _normalize_codex_command(hook.get("command"))
+    if command is None:
         return None
 
     try:

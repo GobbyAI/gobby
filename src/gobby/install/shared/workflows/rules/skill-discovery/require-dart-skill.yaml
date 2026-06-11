@@ -11,8 +11,18 @@ rules:
       and event.data.get('canonical_tool_kind') == 'write'
       and (
         event.data.get('canonical_file_path', '').endswith('.dart')
-        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('pubspec.yaml', 'pubspec.lock', 'pubspec_overrides.yaml', 'analysis_options.yaml', 'dart_test.yaml', 'build.yaml', 'melos.yaml', 'l10n.yaml')
-        or event.data.get('canonical_file_path', '').rpartition('/')[2] in ('flutter_launcher_icons.yaml', 'flutter_native_splash.yaml')
+        or event.data.get('canonical_file_path', '').rpartition('/')[2] in (
+          'pubspec.yaml',
+          'pubspec.lock',
+          'pubspec_overrides.yaml',
+          'analysis_options.yaml',
+          'dart_test.yaml',
+          'build.yaml',
+          'melos.yaml',
+          'l10n.yaml',
+          'flutter_launcher_icons.yaml',
+          'flutter_native_splash.yaml'
+        )
       )
     effects:
       - type: block

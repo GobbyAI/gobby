@@ -136,7 +136,7 @@ class TextGenerationService:
         if text_result is not None:
             return text_result
 
-        if len(candidates) == 1 and last_error is not None:
+        if len(attempted_candidates) == 1 and last_error is not None:
             raise last_error
         raise RuntimeError(
             "No text generation candidate succeeded "
@@ -156,7 +156,7 @@ class TextGenerationService:
         if result is not None:
             return result
 
-        if len(candidates) == 1 and last_error is not None:
+        if len(attempted_candidates) == 1 and last_error is not None:
             raise last_error
         raise RuntimeError(
             "No JSON generation candidate succeeded; "

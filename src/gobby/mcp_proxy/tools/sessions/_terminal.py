@@ -323,10 +323,7 @@ async def _persist_compact_handoff_fallback(
 
     try:
         persist_summary_state = getattr(session_manager, "persist_summary_state", None)
-        has_concrete_persist = callable(
-            getattr(type(session_manager), "persist_summary_state", None)
-        )
-        if callable(persist_summary_state) and has_concrete_persist:
+        if callable(persist_summary_state):
             from gobby.sessions.summary_refresh import digest_turn_count
 
             persist_summary_state(

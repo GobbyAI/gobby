@@ -17,6 +17,7 @@
 ## Findings
 
 ### [BLOCKER] <short title>
+
 - **Where:** `path/to/file.py:123`
 - **Failure mode:** <what actually goes wrong, and under what conditions>
 - **Why it matters:** <impact — data loss, crash, contract violated, etc.>
@@ -24,12 +25,14 @@
 - **Confidence:** high | med | low — <what would confirm it, if low>
 
 ### [IMPORTANT] <short title>
+
 - **Where:** `path/to/file.py:45-60`
 - **Failure mode:** ...
 - **Minimal fix:** ...
 - **Confidence:** ...
 
 ### [NIT] <short title>
+
 - **Where:** `path/to/file.py:88`
 - **Note:** ...
 

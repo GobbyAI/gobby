@@ -6,7 +6,7 @@ import X``) while splitting implementation across cohesive submodules.
 """
 
 from .cascade import cascade_progress
-from .claims import get_claimed_task_ids
+from .claims import get_claimed_task_ids, get_claimed_task_owners
 from .config import check_tasks_enabled, get_sync_manager, get_task_manager
 from .listing import format_task_list
 from .rendering import format_task_header, format_task_row, pad_to_width
@@ -28,6 +28,7 @@ __all__ = [
     "format_task_row",
     "get_all_descendants",
     "get_claimed_task_ids",
+    "get_claimed_task_owners",
     "get_sync_manager",
     "get_task_manager",
     "pad_to_width",

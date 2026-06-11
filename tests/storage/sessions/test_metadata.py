@@ -265,23 +265,29 @@ class TestSessionManagerMetadata:
             """
         )
 
-        with pytest.raises(RaiseException, match="digest boom"):
-            session_manager.persist_digest_state(
-                session.id,
-                last_turn_markdown="new turn",
-                digest_markdown="boom",
-                last_digest_input_hash="new-hash",
-                title="New Title",
-                title_source="llm",
-            )
+        try:
+            with pytest.raises(RaiseException, match="digest boom"):
+                session_manager.persist_digest_state(
+                    session.id,
+                    last_turn_markdown="new turn",
+                    digest_markdown="boom",
+                    last_digest_input_hash="new-hash",
+                    title="New Title",
+                    title_source="llm",
+                )
 
-        reloaded = session_manager.get(session.id)
-        assert reloaded is not None
-        assert reloaded.title == "Old Title"
-        assert reloaded.title_source is None
-        assert reloaded.last_turn_markdown is None
-        assert reloaded.digest_markdown is None
-        assert reloaded.last_digest_input_hash is None
+            reloaded = session_manager.get(session.id)
+            assert reloaded is not None
+            assert reloaded.title == "Old Title"
+            assert reloaded.title_source is None
+            assert reloaded.last_turn_markdown is None
+            assert reloaded.digest_markdown is None
+            assert reloaded.last_digest_input_hash is None
+        finally:
+            session_manager.db.execute(
+                "DROP TRIGGER IF EXISTS fail_digest_state_update ON sessions"
+            )
+            session_manager.db.execute("DROP FUNCTION IF EXISTS fail_digest_state_update_fn()")
 
     def test_update_title_listener_failure_does_not_break_update(
         self,
@@ -691,20 +697,26 @@ class TestSessionManagerMetadata:
             """
         )
 
-        with pytest.raises(RaiseException, match="summary boom"):
-            session_manager.persist_summary_state(
-                session.id,
-                summary_markdown="boom",
-                generation_mode="full",
-                source_context_hash="hash-1",
-                source_digest_turn_count=1,
-            )
+        try:
+            with pytest.raises(RaiseException, match="summary boom"):
+                session_manager.persist_summary_state(
+                    session.id,
+                    summary_markdown="boom",
+                    generation_mode="full",
+                    source_context_hash="hash-1",
+                    source_digest_turn_count=1,
+                )
 
-        reloaded = session_manager.get(session.id)
-        assert reloaded is not None
-        assert reloaded.summary_markdown is None
-        assert reloaded.summary_revision_id is None
-        assert session_manager.list_summary_revisions(session.id) == []
+            reloaded = session_manager.get(session.id)
+            assert reloaded is not None
+            assert reloaded.summary_markdown is None
+            assert reloaded.summary_revision_id is None
+            assert session_manager.list_summary_revisions(session.id) == []
+        finally:
+            session_manager.db.execute(
+                "DROP TRIGGER IF EXISTS fail_summary_state_update ON sessions"
+            )
+            session_manager.db.execute("DROP FUNCTION IF EXISTS fail_summary_state_update_fn()")
 
     def test_update_resume_metadata_fields(
         self,

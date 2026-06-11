@@ -85,7 +85,6 @@ def test_fail_stage_releases_failed_agent_task_claim(temp_db, sample_project) ->
     assert stage_row(temp_db, task.id, "development")["state"] == "ready"
     assert refreshed is not None
     assert refreshed.claimed_by_session_id is None
-    assert refreshed.claimed_by_session_id is None
     assert child_vars["task_claimed"] is False
     assert child_vars["claimed_tasks"] == {}
 

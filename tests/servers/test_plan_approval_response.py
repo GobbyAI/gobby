@@ -14,6 +14,8 @@ import pytest
 
 from gobby.servers.websocket.session_control import SessionControlMixin
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.mark.asyncio
 async def test_handle_plan_approval_request_changes_legacy_sends_mode_changed():

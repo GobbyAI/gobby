@@ -21,7 +21,7 @@ SKILL_DIR = REPO_ROOT / "src/gobby/install/shared/skills/javascript"
 
 def test_javascript_skill_parses_with_references() -> None:
     """Verify the bundled JavaScript skill has expected metadata and reference files."""
-    parsed = SkillLoader().load_skill(SKILL_DIR, validate=False)
+    parsed = SkillLoader().load_skill(SKILL_DIR, validate=True)
 
     assert parsed.name == "javascript"
     assert parsed.version == "1.0.0"

@@ -29,7 +29,7 @@ def test_c_skill_parses_with_references() -> None:
     assert parsed.triggers is not None
     assert {"c", "cmake", "make", "autotools", "pkg-config", "sanitizer"}.issubset(parsed.triggers)
     assert 'get_skill_file(name="c", path="references/configuration.md")' in parsed.content
-    assert 'get_skill_file(name="c", path="references/memory-and-lifetime.md")' in (parsed.content)
+    assert 'get_skill_file(name="c", path="references/memory-and-lifetime.md")' in parsed.content
 
     assert parsed.loaded_files is not None
     reference_paths = {file.path for file in parsed.loaded_files if file.file_type == "reference"}

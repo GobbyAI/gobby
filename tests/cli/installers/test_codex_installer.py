@@ -102,10 +102,18 @@ def test_codex_hook_trust_hash_matches_codex_discovery() -> None:
 
     # Codex canonicalizes the event name plus command-hook payload before SHA-256 hashing.
     hook = {"type": "command", "command": "python3 /tmp/user.py"}
+    spaced_hook = {"type": "command", "command": "  python3   /tmp/user.py\n"}
+    argv_hook = {"type": "command", "command": ["python3", "/tmp/user.py"]}
+    expected = "sha256:775a1a39423c99333a34296e0b7c23c35bd26a3f709d4df4fbb3d15304ae8adc"
 
+    assert _normalized_codex_command_hook_hash("SessionStart", {"hooks": [hook]}, hook) == expected
     assert (
-        _normalized_codex_command_hook_hash("SessionStart", {"hooks": [hook]}, hook)
-        == "sha256:775a1a39423c99333a34296e0b7c23c35bd26a3f709d4df4fbb3d15304ae8adc"
+        _normalized_codex_command_hook_hash("SessionStart", {"hooks": [spaced_hook]}, spaced_hook)
+        == expected
+    )
+    assert (
+        _normalized_codex_command_hook_hash("SessionStart", {"hooks": [argv_hook]}, argv_hook)
+        == expected
     )
 
 
@@ -625,6 +633,7 @@ class TestInstallCodex:
         assert config["mcp_servers"]["gobby"]["command"] == "gobby"
         assert list(config["mcp_servers"]["gobby"]["args"]) == ["mcp-server"]
 
+
 class TestUninstallCodex:
     """Tests for uninstall_codex function."""
 
@@ -818,6 +827,7 @@ trusted_hash = "sha256:user-tool"
 
         assert result["success"] is True
         assert result["mcp_removed"] is False
+
 
 class TestHooksTemplateFormat:
     """Tests for hooks.json format and content."""

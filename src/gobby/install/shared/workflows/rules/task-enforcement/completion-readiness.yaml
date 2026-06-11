@@ -34,7 +34,7 @@ rules:
 
           For non-command evidence, call:
           record_verification_evidence(summary="...", evidence_type="...",
-          supports="...", command="...", scope="...")
+          supports="task_id:#123", command="...", scope="...", task_id="#123")
 
   block-direct-verification-evidence-variable-set:
     description: "Protect verification evidence variables from direct set_variable writes"

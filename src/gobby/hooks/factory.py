@@ -30,6 +30,7 @@ from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.sync.memories import MemoryBackupManager
 from gobby.utils.daemon_client import DaemonClient
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.loader import WorkflowLoader
@@ -123,7 +124,7 @@ class HookManagerFactory:
         broadcaster: Any | None,
         tool_proxy_getter: Any | None,
         message_processor: Any | None,
-        memory_sync_manager: Any | None,
+        memory_sync_manager: MemoryBackupManager | None,
         task_sync_manager: Any | None,
         agent_runner: Any | None,
         completion_registry: Any | None,
@@ -463,7 +464,7 @@ class HookManagerFactory:
         memory_manager: MemoryManager,
         storage: _Storage,
         autonomous: _Autonomous,
-        memory_sync_manager: Any | None,
+        memory_sync_manager: MemoryBackupManager | None,
         task_sync_manager: Any | None,
         agent_runner: Any | None,
         completion_registry: Any | None,

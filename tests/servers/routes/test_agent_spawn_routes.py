@@ -158,7 +158,6 @@ class TestSpawnAgent:
         data = response.json()
         updated = task_manager.get_task(task.id)
         assert updated.claimed_by_session_id == data["conversation_id"]
-        assert updated.claimed_by_session_id == data["conversation_id"]
 
     def test_spawn_web_chat_preserves_review_status(
         self, client: TestClient, task_manager: LocalTaskManager, test_project

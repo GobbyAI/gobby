@@ -29,6 +29,7 @@ def format_task_list(
     tasks: list[Task],
     *,
     claimed_task_ids: set[str] | None = None,
+    claimed_task_owner_map: dict[str, str] | None = None,
     primary_ids: set[str] | None = None,
     tree_prefixes: dict[str, tuple[str, bool]] | None = None,
     group_by: str | None = None,
@@ -75,6 +76,8 @@ def format_task_list(
             claimed_task_ids is not None and task.id in claimed_task_ids
         )
         owner = state["owner_session_id"] if is_claimed else None
+        if owner is None and claimed_task_owner_map is not None:
+            owner = claimed_task_owner_map.get(task.id)
         if owner:
             session_ids.add(owner)
         if group_by == "project":
@@ -103,6 +106,7 @@ def format_task_list(
             tree_prefix=tree_prefix,
             is_primary=is_primary,
             claimed_task_ids=claimed_task_ids,
+            claimed_task_owner_map=claimed_task_owner_map,
             session_ref_map=session_ref_map,
         )
         rendered.append(row)

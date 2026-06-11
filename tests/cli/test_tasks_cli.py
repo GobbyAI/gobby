@@ -178,7 +178,7 @@ class TestListTasksCommand:
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.get_project_context")
-    @patch("gobby.cli.tasks.crud.get_claimed_task_ids")
+    @patch("gobby.cli.tasks.crud.get_claimed_task_owners")
     def test_list_with_tasks(
         self,
         mock_claimed: MagicMock,
@@ -189,7 +189,7 @@ class TestListTasksCommand:
     ) -> None:
         """Test list with tasks."""
         mock_project_ctx.return_value = {"id": "proj-123"}
-        mock_claimed.return_value = set()
+        mock_claimed.return_value = {}
         mock_manager = MagicMock()
         mock_manager.list_tasks.return_value = [mock_task]
         mock_manager.db.fetchall.return_value = []
@@ -394,7 +394,7 @@ class TestListTasksCommand:
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.get_project_context")
-    @patch("gobby.cli.tasks.crud.get_claimed_task_ids")
+    @patch("gobby.cli.tasks.crud.get_claimed_task_owners")
     @patch("gobby.cli.tasks.crud.collect_ancestors")
     def test_list_with_ready_flag(
         self,
@@ -407,7 +407,7 @@ class TestListTasksCommand:
     ) -> None:
         """Test list with --ready flag."""
         mock_project_ctx.return_value = {"id": "proj-123"}
-        mock_claimed.return_value = set()
+        mock_claimed.return_value = {}
         mock_manager = MagicMock()
         mock_manager.list_ready_tasks.return_value = [mock_task]
         mock_get_manager.return_value = mock_manager
@@ -421,7 +421,7 @@ class TestListTasksCommand:
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.get_project_context")
-    @patch("gobby.cli.tasks.crud.get_claimed_task_ids")
+    @patch("gobby.cli.tasks.crud.get_claimed_task_owners")
     @patch("gobby.cli.tasks.crud.collect_ancestors")
     def test_list_with_blocked_flag(
         self,
@@ -434,7 +434,7 @@ class TestListTasksCommand:
     ) -> None:
         """Test list with --blocked flag."""
         mock_project_ctx.return_value = {"id": "proj-123"}
-        mock_claimed.return_value = set()
+        mock_claimed.return_value = {}
         mock_manager = MagicMock()
         mock_manager.list_blocked_tasks.return_value = [mock_task]
         mock_get_manager.return_value = mock_manager
@@ -467,7 +467,7 @@ class TestReadyTasksCommand:
         assert "No ready tasks found" in result.output
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
-    @patch("gobby.cli.tasks.crud.get_claimed_task_ids")
+    @patch("gobby.cli.tasks.crud.get_claimed_task_owners")
     @patch("gobby.cli.tasks.crud.collect_ancestors")
     def test_ready_with_tasks(
         self,
@@ -478,7 +478,7 @@ class TestReadyTasksCommand:
         mock_task: MagicMock,
     ) -> None:
         """Test ready with tasks."""
-        mock_claimed.return_value = set()
+        mock_claimed.return_value = {}
         mock_manager = MagicMock()
         mock_manager.list_ready_tasks.return_value = [mock_task]
         mock_get_manager.return_value = mock_manager
@@ -509,7 +509,7 @@ class TestReadyTasksCommand:
         assert len(data) == 1
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
-    @patch("gobby.cli.tasks.crud.get_claimed_task_ids")
+    @patch("gobby.cli.tasks.crud.get_claimed_task_owners")
     def test_ready_flat_output(
         self,
         mock_claimed: MagicMock,
@@ -518,7 +518,7 @@ class TestReadyTasksCommand:
         mock_task: MagicMock,
     ) -> None:
         """Test ready with --flat flag."""
-        mock_claimed.return_value = set()
+        mock_claimed.return_value = {}
         mock_manager = MagicMock()
         mock_manager.list_ready_tasks.return_value = [mock_task]
         mock_get_manager.return_value = mock_manager
@@ -822,7 +822,7 @@ class TestShowTaskCommand:
 
         assert result.exit_code == 0
         assert "bug, priority" in result.output
-        assert "Compatibility Assignee: john" in result.output
+        assert "Owner Session: john" in result.output
         assert "john" in result.output
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
@@ -1967,7 +1967,6 @@ class TestFormatTaskList:
         task.project_id = project_id
         task.parent_task_id = None
         task.claimed_by_session_id = owner
-        task.claimed_by_session_id = owner
         task.current_stage = None
         task.stages = (
             SimpleNamespace(
@@ -2081,6 +2080,27 @@ class TestFormatTaskList:
 
         # Fallback is the first 8 chars of the owner UUID
         assert "orphaned" in plain
+
+    def test_active_session_claim_owner_map_resolves_session_ref(self) -> None:
+        """Active workflow-state claims populate the session column."""
+        from gobby.cli.tasks._utils import format_task_list
+
+        task = self._make_task(seq_num=8, title="active claim")
+        mock_db = MagicMock()
+        mock_db.fetchall.return_value = [
+            {"id": "active-session-uuid", "seq_num": 7061},
+        ]
+
+        rendered = format_task_list(
+            [task],
+            claimed_task_ids={task.id},
+            claimed_task_owner_map={task.id: "active-session-uuid"},
+            db=mock_db,
+            term_width=120,
+        )
+        plain = self._strip_ansi(rendered)
+
+        assert "#7061" in plain
 
     def test_title_truncates_to_terminal_width(self) -> None:
         from gobby.cli.tasks._utils import format_task_list

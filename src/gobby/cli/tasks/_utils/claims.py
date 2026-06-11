@@ -8,8 +8,8 @@ from gobby.storage.hub.runtime import open_runtime_hub_database
 logger = logging.getLogger(__name__)
 
 
-def get_claimed_task_ids() -> set[str]:
-    """Get task IDs that are claimed by active sessions via session_task variable.
+def get_claimed_task_owners() -> dict[str, str]:
+    """Map active-session claimed task IDs to their owner session IDs.
 
     Queries workflow_states for active sessions that have a session_task variable set,
     indicating the task is being actively worked on by that session.
@@ -20,7 +20,7 @@ def get_claimed_task_ids() -> set[str]:
       - Partial UUID prefix: Used for prefix matching
 
     Returns:
-        Set of task UUIDs claimed by active sessions
+        Mapping of task UUID to active owner session UUID.
     """
     try:
         db = open_runtime_hub_database(apply_migrations=False)
@@ -28,7 +28,7 @@ def get_claimed_task_ids() -> set[str]:
             # Join workflow_states with sessions to find active sessions with session_task
             rows = db.fetchall(
                 """
-                SELECT ws.variables, s.project_id
+                SELECT ws.variables, ws.session_id, s.project_id
                 FROM workflow_states ws
                 JOIN sessions s ON ws.session_id = s.id
                 WHERE s.status = 'active'
@@ -37,7 +37,7 @@ def get_claimed_task_ids() -> set[str]:
                 """
             )
 
-            claimed_ids: set[str] = set()
+            claimed_owners: dict[str, str] = {}
 
             def resolve_task_ref(ref: str, project_id: str | None) -> str | None:
                 """Resolve a task reference to UUID."""
@@ -70,22 +70,28 @@ def get_claimed_task_ids() -> set[str]:
             for row in rows:
                 try:
                     variables = json.loads(row["variables"]) if row["variables"] else {}
+                    session_id = row["session_id"]
                     project_id = row["project_id"]
                     if session_task := variables.get("session_task"):
                         # session_task can be: string, list of strings, or "*" (wildcard)
                         if isinstance(session_task, list):
                             for task_ref in session_task:
                                 if resolved := resolve_task_ref(task_ref, project_id):
-                                    claimed_ids.add(resolved)
+                                    claimed_owners[resolved] = session_id
                         elif session_task != "*":
                             if resolved := resolve_task_ref(session_task, project_id):
-                                claimed_ids.add(resolved)
+                                claimed_owners[resolved] = session_id
                 except (json.JSONDecodeError, TypeError):
                     continue
 
-            return claimed_ids
+            return claimed_owners
         finally:
             db.close()
     except (RuntimeError, json.JSONDecodeError, KeyError) as e:
-        logger.debug(f"Failed to get claimed task IDs: {e}")
-        return set()
+        logger.debug(f"Failed to get claimed task owners: {e}")
+        return {}
+
+
+def get_claimed_task_ids() -> set[str]:
+    """Get task IDs that are claimed by active sessions via session_task variable."""
+    return set(get_claimed_task_owners())

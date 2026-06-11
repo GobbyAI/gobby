@@ -103,6 +103,7 @@ def _build_rendered_row(
     is_primary: bool = True,
     muted: bool = False,
     claimed_task_ids: set[str] | None = None,
+    claimed_task_owner_map: dict[str, str] | None = None,
     session_ref_map: dict[str, str] | None = None,
 ) -> _RenderedRow:
     """Resolve the display fields for a single task row.
@@ -117,6 +118,8 @@ def _build_rendered_row(
         claimed_task_ids is not None and task.id in claimed_task_ids
     )
     owner_session_id = state["owner_session_id"] if is_claimed else None
+    if owner_session_id is None and claimed_task_owner_map is not None:
+        owner_session_id = claimed_task_owner_map.get(task.id)
     current_stage = state["current_stage"]
     stage_state = current_stage["state"] if current_stage else "ready"
     blocked = state["is_blocked"]

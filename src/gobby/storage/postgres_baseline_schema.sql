@@ -234,6 +234,11 @@ CONSTRAINT sessions_context_usage_confidence_valid
 CHECK (
     context_usage_confidence IS NULL
     OR context_usage_confidence IN ('reported', 'estimated', 'unknown')
+),
+CONSTRAINT sessions_summary_digest_turn_count_nonnegative
+CHECK (
+    summary_digest_turn_count IS NULL
+    OR summary_digest_turn_count >= 0
 )
 );
 
@@ -261,18 +266,25 @@ CREATE TABLE session_summary_revisions (
     generation_mode TEXT NOT NULL,
     source_context_hash TEXT,
     source_digest_turn_count INTEGER,
-    previous_revision_id TEXT REFERENCES session_summary_revisions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    previous_revision_id TEXT,
     metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 CONSTRAINT session_summary_revisions_digest_turn_count_nonnegative
-CHECK (source_digest_turn_count IS NULL OR source_digest_turn_count >= 0)
+CHECK (source_digest_turn_count IS NULL OR source_digest_turn_count >= 0),
+CONSTRAINT session_summary_revisions_id_session_id_unique
+UNIQUE (id, session_id),
+CONSTRAINT session_summary_revisions_previous_same_session_fk
+FOREIGN KEY (previous_revision_id, session_id)
+REFERENCES session_summary_revisions(id, session_id)
+ON DELETE SET NULL (previous_revision_id)
+DEFERRABLE INITIALLY IMMEDIATE
 );
 
 ALTER TABLE sessions
     ADD CONSTRAINT sessions_summary_revision_fk
-    FOREIGN KEY (summary_revision_id)
-    REFERENCES session_summary_revisions(id)
-    ON DELETE SET NULL
+    FOREIGN KEY (summary_revision_id, id)
+    REFERENCES session_summary_revisions(id, session_id)
+    ON DELETE SET NULL (summary_revision_id)
     DEFERRABLE INITIALLY IMMEDIATE;
 
 CREATE INDEX idx_session_summary_revisions_session_created

@@ -73,7 +73,7 @@ def _mock_llm(summary: str) -> MagicMock:
 
 
 class _RevisionAwareSummaryManager:
-    def __init__(self, session: MagicMock):
+    def __init__(self, session: MagicMock) -> None:
         self.session = session
         self.persist_calls: list[dict[str, object]] = []
         self.status_updates: list[tuple[str, str]] = []
@@ -600,6 +600,54 @@ class TestGenerateSessionSummaries:
             session_id="sess-droid",
             transcript_path="/tmp/droid-session.jsonl",
         )
+
+    @pytest.mark.asyncio
+    async def test_full_summary_uses_qwen_parser_for_qwen_source(self) -> None:
+        session = _make_session(
+            session_id="sess-qwen",
+            transcript_path="/tmp/qwen-session.json",
+            source="qwen",
+        )
+        handoff_ctx = MagicMock()
+        handoff_ctx.git_status = ""
+        session_manager = MagicMock()
+        session_manager.db = None
+        llm_service = _mock_llm("# Qwen Summary")
+
+        with (
+            patch("gobby.prompts.loader.PromptLoader") as MockPromptLoader,
+            patch("gobby.sessions.transcripts.gemini.GeminiTranscriptParser") as MockGeminiParser,
+            patch("gobby.sessions.transcripts.qwen.QwenTranscriptParser") as MockQwenParser,
+            patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
+            patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
+            patch(
+                "gobby.workflows.summary_actions._format_structured_context",
+                return_value="structured",
+            ),
+            patch("gobby.workflows.summary_actions.format_turns_for_llm", return_value="turns"),
+        ):
+            MockPromptLoader.return_value.load.return_value.content = "Qwen:\n{transcript_summary}"
+            MockQwenParser.return_value.extract_turns_since_clear.return_value = [
+                {"type": "message"}
+            ]
+            MockQwenParser.return_value.extract_last_messages.return_value = [
+                {"role": "user", "content": "hi"}
+            ]
+
+            full_markdown, full_error = await _generate_full_summary(
+                session=session,
+                turns=[{"type": "message"}],
+                handoff_ctx=handoff_ctx,
+                llm_service=llm_service,
+                session_summary_config=_summary_config("Qwen:\n{transcript_summary}"),
+                db=None,
+                session_manager=session_manager,
+            )
+
+        assert full_markdown == "# Qwen Summary"
+        assert full_error is None
+        MockQwenParser.assert_called_once_with(session_id="sess-qwen")
+        MockGeminiParser.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_digest_primary_context_does_not_format_full_transcript(self) -> None:

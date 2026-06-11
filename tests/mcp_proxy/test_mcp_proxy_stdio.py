@@ -926,6 +926,7 @@ class TestDaemonProxy:
                     preflight=True,
                 )
 
+    @pytest.mark.asyncio
     async def test_call_tool_treats_wait_for_summary_as_wait_tool(self) -> None:
         """wait_for_summary uses generic wait-tool proxying and timeout buffering."""
         from gobby.mcp_proxy.stdio import DaemonProxy

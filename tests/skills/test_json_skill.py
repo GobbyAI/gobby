@@ -1,8 +1,14 @@
 """Tests for the bundled JSON language skill."""
 
+from __future__ import annotations
+
 from pathlib import Path
 
+import pytest
+
 from gobby.skills.loader import SkillLoader
+
+pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SKILL_DIR = REPO_ROOT / "src/gobby/install/shared/skills/json"

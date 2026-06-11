@@ -172,7 +172,6 @@ async def test_stop_clears_runtime_claim_and_resets_current_stage(
 
     updated = task_manager.get_task(task.id)
     assert updated.claimed_by_session_id is None
-    assert updated.claimed_by_session_id is None
     assert TaskDispatchMutexManager(temp_db).get_mutex(task.id) is None
     assert stage_row(temp_db, task.id, "development")["state"] == "ready"
     assert result.claims_released == 1

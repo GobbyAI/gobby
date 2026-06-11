@@ -17,7 +17,11 @@ Use `AbortController` for fetch, long-running I/O, and operations tied to reques
 export async function fetchJson(url, { signal, timeoutMs = 10000 } = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  signal?.addEventListener("abort", () => controller.abort(), { once: true });
+  if (signal?.aborted) {
+    controller.abort();
+  } else {
+    signal?.addEventListener("abort", () => controller.abort(), { once: true });
+  }
 
   try {
     const response = await fetch(url, { signal: controller.signal });

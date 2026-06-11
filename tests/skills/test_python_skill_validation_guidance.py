@@ -6,7 +6,9 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
-PYTHON_SKILL = Path("src/gobby/install/shared/skills/python/SKILL.md")
+PYTHON_SKILL = (
+    Path(__file__).resolve().parents[2] / "src/gobby/install/shared/skills/python/SKILL.md"
+)
 
 
 def test_python_skill_separates_format_fix_from_verification_evidence() -> None:
@@ -15,4 +17,5 @@ def test_python_skill_separates_format_fix_from_verification_evidence() -> None:
     assert "`uv run ruff format <files>`" in body
     assert "`uv run ruff format --check <files>`" in body
     assert "`uv run ruff check <files>`" in body
+    assert "`GOBBY_TEST_PROTECT=1 uv run pytest <tests>`" in body
     assert "ruff format . && ruff check . --fix" not in body

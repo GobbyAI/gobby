@@ -334,7 +334,7 @@ def register_handoff_tools(
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
         while True:
-            session = session_manager.get(resolved_id)
+            session = await asyncio.to_thread(session_manager.get, resolved_id)
             if session is None:
                 return {
                     "success": False,

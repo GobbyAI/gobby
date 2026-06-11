@@ -179,6 +179,7 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
         "276_memory_dream_constraints.sql",
         "277_drop_llm_providers_config.sql",
         "278_session_summary_revisions.sql",
+        "279_session_summary_revision_integrity.sql",
     ]
 
 
@@ -263,7 +264,7 @@ def test_session_summary_revisions_migration_and_baseline_define_schema() -> Non
         "generation_mode TEXT NOT NULL",
         "source_context_hash TEXT",
         "source_digest_turn_count INTEGER",
-        "previous_revision_id TEXT REFERENCES session_summary_revisions(id)",
+        "previous_revision_id TEXT",
         "metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb",
         "session_summary_revisions_digest_turn_count_nonnegative",
         "sessions_summary_revision_fk",
@@ -283,6 +284,22 @@ def test_session_summary_revisions_migration_and_baseline_define_schema() -> Non
         baseline,
         tuple(snippet.replace("IF NOT EXISTS ", "") for snippet in revision_snippets),
     )
+
+    integrity_migration = (
+        SRC_ROOT / "storage" / "migrations" / "279_session_summary_revision_integrity.sql"
+    ).read_text(encoding="utf-8")
+    integrity_snippets = (
+        "sessions_summary_digest_turn_count_nonnegative",
+        "session_summary_revisions_id_session_id_unique",
+        "session_summary_revisions_previous_same_session_fk",
+        "FOREIGN KEY (previous_revision_id, session_id)",
+        "FOREIGN KEY (summary_revision_id, id)",
+        "ON DELETE SET NULL (summary_revision_id)",
+    )
+    _assert_contains_all(
+        "summary revision integrity migration", integrity_migration, integrity_snippets
+    )
+    _assert_contains_all("summary revision integrity baseline", baseline, integrity_snippets)
 
 
 def test_removed_migration_baseline_and_import_files_are_absent() -> None:

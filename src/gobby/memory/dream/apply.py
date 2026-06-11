@@ -170,10 +170,9 @@ async def _apply_action(
     if action.action == "delete":
         memory_id = _required_memory_id(action)
         return await _delete(memory_manager, store, run_id, memory_id, "delete")
-    if action.action == "refresh":
-        _required_memory_id(action)
     if action.action == "refresh" and action.content:
-        return await _refresh(memory_manager, store, run_id, action)
+        memory_id = _required_memory_id(action)
+        return await _refresh(memory_manager, store, run_id, memory_id, action)
     if action.action == "merge":
         return await _merge(memory_manager, store, run_id, action)
     if action.action == "supersede":
@@ -220,26 +219,25 @@ async def _refresh(
     memory_manager: MemoryDreamManagerProtocol,
     store: MemoryDreamStore,
     run_id: str,
+    memory_id: str,
     action: DreamAction,
 ) -> int:
-    if action.memory_id is None:
-        raise ValueError("refresh action requires memory_id")
-    before = await asyncio.to_thread(store.get_memory_row, action.memory_id)
+    before = await asyncio.to_thread(store.get_memory_row, memory_id)
     if before is None:
         return 0
     snapshot_id = await asyncio.to_thread(
         store.insert_snapshot,
         run_id=run_id,
-        memory_id=action.memory_id,
+        memory_id=memory_id,
         action="refresh",
         before_data=before,
     )
     await memory_manager.update_memory(
-        memory_id=action.memory_id,
+        memory_id=memory_id,
         content=action.content,
         tags=action.tags,
     )
-    after = await asyncio.to_thread(store.get_memory_row, action.memory_id)
+    after = await asyncio.to_thread(store.get_memory_row, memory_id)
     await asyncio.to_thread(store.complete_snapshot, snapshot_id, after_data=after)
     return 1
 

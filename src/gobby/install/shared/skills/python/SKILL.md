@@ -21,7 +21,7 @@ Run the repo's configured lint, type-check, and test commands before finishing. 
 - Format verification: `uv run ruff format --check <files>`
 - Lint verification: `uv run ruff check <files>`
 - Type check: `uv run mypy <files-or-package>` or the repo's configured strict target
-- Tests: targeted `uv run pytest <tests>` for changed behavior
+- Tests: targeted `GOBBY_TEST_PROTECT=1 uv run pytest <tests>` for changed behavior
 - Packages: use the repo's Python package manager and lockfile, commonly `uv`
 
 Do not suppress lint warnings with `# noqa`, mypy errors, broad ignores, or looser tool settings without a written reason tied to an external boundary or migration step.

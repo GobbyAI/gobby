@@ -21,6 +21,8 @@ from gobby.review_learning.guidance import format_review_lesson_guidance
 from gobby.skills.formatting import skill_fetch_directive
 
 REVIEW_LESSON_TAG = "review-lesson"
+# Project memories share the SDK additional-context budget; cap them at 4k chars
+# and never allow them to consume more than half of the total context.
 PROJECT_MEMORY_CONTEXT_BUDGET = min(4_000, ADDITIONAL_CONTEXT_LIMIT // 2)
 PROJECT_MEMORY_OPEN_TAG = "<project-memory>"
 PROJECT_MEMORY_CLOSE_TAG = "</project-memory>"

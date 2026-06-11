@@ -537,7 +537,6 @@ class TestListTasksEscalatedFilter:
         mock_task.escalation_reason = "recurring_issues"
         mock_task.is_escalated = True
         mock_task.claimed_by_session_id = None
-        mock_task.claimed_by_session_id = None
         mock_task.stages = ({"stage_name": "development", "position": 0, "state": "ready"},)
         mock_task.active_blocked_by = set()
         mock_task.to_dict.return_value = {
@@ -582,7 +581,6 @@ class TestListTasksEscalatedFilter:
         mock_task.closed_reason = None
         mock_task.closed_in_session_id = None
         mock_task.closed_commit_sha = None
-        mock_task.claimed_by_session_id = None
         mock_task.claimed_by_session_id = None
         mock_task.stages = ({"stage_name": "development", "position": 0, "state": "ready"},)
         mock_task.active_blocked_by = set()

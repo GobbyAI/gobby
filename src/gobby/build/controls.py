@@ -362,6 +362,7 @@ async def build_restart_target(
     restart_opts = _effective_restart_options(root, opts)
     if restart_opts is not None:
         _validate_restart_options(restart_opts)
+    if opts is not None and restart_opts is not None:
         _persist_restart_artifacts(task_manager, root, restart_opts)
         _apply_restart_task_controls(
             task_manager,
@@ -677,7 +678,12 @@ def _is_build_owned_escalation(reason: str | None) -> bool:
 
 def _effective_restart_options(root: Task, opts: BuildOptions | None) -> BuildOptions | None:
     if opts is None:
-        return None
+        return BuildOptions(
+            isolation=_task_isolation(root),
+            isolation_explicit=False,
+            skip_stages=["pr"],
+            skip_stages_explicit=False,
+        )
     if opts.isolation_explicit:
         return opts
     return replace(opts, isolation=_task_isolation(root))

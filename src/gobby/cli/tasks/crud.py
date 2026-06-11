@@ -11,7 +11,7 @@ from gobby.cli.tasks._utils import (
     collect_ancestors,
     compute_tree_prefixes,
     format_task_list,
-    get_claimed_task_ids,
+    get_claimed_task_owners,
     get_task_manager,
     resolve_task_id,
     sort_tasks_for_tree,
@@ -200,7 +200,8 @@ def list_tasks(
     display_tasks = sort_tasks_for_tree(display_tasks)
 
     # Get tasks claimed by active sessions for indicator display
-    claimed_ids = get_claimed_task_ids()
+    claimed_owner_map = get_claimed_task_owners()
+    claimed_ids = set(claimed_owner_map)
 
     # Auto-group by project when running outside a project context unless the
     # user already asked for a specific grouping.
@@ -218,6 +219,7 @@ def list_tasks(
     rendered = format_task_list(
         display_tasks,
         claimed_task_ids=claimed_ids,
+        claimed_task_owner_map=claimed_owner_map,
         primary_ids=primary_ids,
         tree_prefixes=prefixes,
         group_by=effective_group_by,
@@ -261,7 +263,8 @@ def ready_tasks(
         return
 
     # Get tasks claimed by active sessions for indicator display
-    claimed_ids = get_claimed_task_ids()
+    claimed_owner_map = get_claimed_task_owners()
+    claimed_ids = set(claimed_owner_map)
 
     click.echo(f"Found {len(tasks_list)} ready tasks:")
 
@@ -269,6 +272,7 @@ def ready_tasks(
         rendered = format_task_list(
             list(tasks_list),
             claimed_task_ids=claimed_ids,
+            claimed_task_owner_map=claimed_owner_map,
             db=manager.db,
         )
     else:
@@ -278,6 +282,7 @@ def ready_tasks(
         rendered = format_task_list(
             display_tasks,
             claimed_task_ids=claimed_ids,
+            claimed_task_owner_map=claimed_owner_map,
             primary_ids=primary_ids,
             tree_prefixes=prefixes,
             db=manager.db,

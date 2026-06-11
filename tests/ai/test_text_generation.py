@@ -280,6 +280,7 @@ async def test_text_generation_service_falls_back_across_profile_candidates() ->
     assert claude.requests[0].model == "haiku"
 
 
+@pytest.mark.asyncio
 async def test_text_generation_service_falls_back_between_named_local_endpoints() -> None:
     registry = AICapabilityRegistry(
         [
@@ -323,6 +324,7 @@ async def test_text_generation_service_falls_back_between_named_local_endpoints(
     assert ollama.requests[0].model == "qwen-ollama"
 
 
+@pytest.mark.asyncio
 async def test_text_generation_service_resolves_bare_local_candidate_to_named_endpoint() -> None:
     registry = AICapabilityRegistry(
         [

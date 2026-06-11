@@ -19,6 +19,7 @@ classifiers = [
 requires-python = ">=3.13"
 dependencies = [
     "aiofiles>=24.1.0",
+    # aiohttp >=3.14.0 keeps the dependency beyond current aiohttp CVE advisories.
     "aiohttp>=3.14.0",
     "anthropic>=0.75.0",
     "click>=8.1.0",
@@ -50,8 +51,8 @@ dependencies = [
     # cryptography <46.0.7 has CVE-2026-26007, CVE-2026-34073, CVE-2026-39892
     "cryptography>=46.0.7",
     "clawcare>=0.9.0",
-    # pyjwt <2.12.0 has CVE-2026-32597 (transitive via mcp)
-    "pyjwt>=2.12.0",
+# pyjwt <2.13.0 has 2026 advisories (transitive via mcp)
+"pyjwt>=2.13.0",
     # Native SDK executors for autonomous mode
     "openai>=1.0.0",
     "opentelemetry-api>=1.28.0",
@@ -270,7 +271,7 @@ dev = [
     "black>=26.3.1",  # CVE-2026-32274
     "mypy>=1.8.0",
     "mutmut>=3.0.0",
-    "pip>=26.1",  # CVE-2026-1703, CVE-2026-3219, CVE-2026-6357
+"pip>=26.1.2",  # CVE-2026-1703, CVE-2026-3219, CVE-2026-6357, PYSEC-2026-196
     "pip-audit>=2.7.0",
     "pre-commit>=4.0.0",
     "pytest>=9.0.3",

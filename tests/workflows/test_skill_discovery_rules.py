@@ -65,6 +65,7 @@ SKILL_DISCOVERY_RULES = {
     "require-go-skill",
     "require-java-skill",
     "require-javascript-skill",
+    "require-json-skill",
     "require-kotlin-skill",
     "require-php-skill",
     "require-python-skill",
@@ -72,6 +73,7 @@ SKILL_DISCOVERY_RULES = {
     "require-rust-skill",
     "require-swift-skill",
     "require-typescript-skill",
+    "require-yaml-skill",
     "reset-skill-injection",
 }
 
@@ -396,7 +398,7 @@ class TestRequirePythonSkillStructure:
         assert ".pyi" in body.when
         assert "pyproject.toml" in body.when
 
-    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+    def test_has_block_effect_with_short_reason(self, db, manager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("require-python-skill")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
@@ -571,8 +573,9 @@ class TestRequireRustSkillCondition:
         "'clippy.toml', "
         "'.clippy.toml'"
         ") "
-        "or event.data.get('canonical_file_path', '').endswith('/.cargo/config') "
-        "or event.data.get('canonical_file_path', '').endswith('/.cargo/config.toml')"
+        "or event.data.get('canonical_file_path', '').endswith(("
+        "'.cargo/config', '.cargo/config.toml'"
+        "))"
         ")"
     )
 
@@ -623,6 +626,8 @@ class TestRequireRustSkillCondition:
     def test_matches_cargo_config(self) -> None:
         assert self._eval("/project/.cargo/config.toml") is True
         assert self._eval("/project/.cargo/config") is True
+        assert self._eval(".cargo/config.toml") is True
+        assert self._eval(".cargo/config") is True
 
     def test_skips_non_rust_file(self) -> None:
         assert self._eval("/project/config.yaml") is False
@@ -1388,7 +1393,7 @@ class TestRequireRubySkillCondition:
         "'Scanfile', 'Gymfile', 'config.ru', '.ruby-version', '.ruby-gemset', "
         "'.rspec', '.rubocop.yml', '.rubocop_todo.yml', '.standard.yml', "
         "'Steepfile') "
-        "or event.data.get('canonical_file_path', '').endswith('/sorbet/config')"
+        "or event.data.get('canonical_file_path', '').endswith('sorbet/config')"
         ")"
     )
 
@@ -1464,6 +1469,7 @@ class TestRequireRubySkillCondition:
             "/project/.standard.yml",
             "/project/Steepfile",
             "/project/sorbet/config",
+            "sorbet/config",
         ],
     )
     def test_matches_ruby_tooling_and_dsl_writes(self, file_path: str) -> None:
@@ -1780,7 +1786,10 @@ class TestRequireJavaSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("java")
+        assert body.effects[0].reason == (
+            'Load the java skill before editing Java files: call get_skill(name="java") '
+            "on gobby-skills, then continue."
+        )
 
 
 # --- require-java-skill condition evaluation ---
@@ -2203,8 +2212,7 @@ class TestRequireYamlSkillCondition:
         "or event.data.get('canonical_file_path', '').endswith('.yml.tmpl') "
         "or event.data.get('canonical_file_path', '').endswith('.yaml.template') "
         "or event.data.get('canonical_file_path', '').endswith('.yml.template') "
-        "or event.data.get('canonical_file_path', '').rpartition('/')[2] "
-        "in ('.yamllint', '.clang-format', '.clang-tidy')"
+        "or event.data.get('canonical_file_path', '').rpartition('/')[2] == '.yamllint'"
         ")"
     )
 
@@ -2268,8 +2276,6 @@ class TestRequireYamlSkillCondition:
         [
             "/project/.yamllint",
             "/project/config/.yamllint",
-            "/project/.clang-format",
-            "/project/src/.clang-tidy",
         ],
     )
     def test_matches_yaml_tool_config_writes(self, file_path: str) -> None:

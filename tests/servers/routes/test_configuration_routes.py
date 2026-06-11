@@ -1291,8 +1291,10 @@ class TestExportImport:
             },
         )
 
-        assert response.status_code == 400
-        assert "Secret 'service.provider_api_key' must be a string" in response.json()["detail"]
+        assert response.status_code == 422
+        assert response.json()["detail"] == (
+            "Secret 'service.provider_api_key' must be a string, got dict"
+        )
         assert store.get("daemon_port") == 5555
         assert store.get("service.provider_api_key") is None
 
@@ -1352,6 +1354,24 @@ class TestExportImport:
         store = ConfigStore(postgres_db)
         assert store.get("daemon_port") is None
         assert store.get(FALKOR_PASSWORD_KEY) is None
+
+    def test_import_config_store_non_string_falkordb_password_rejected(
+        self, postgres_client: TestClient, postgres_db: Any
+    ) -> None:
+        response = postgres_client.post(
+            "/api/config/import",
+            json={
+                "config_store": {
+                    FALKOR_PASSWORD_KEY: {"nested": "bad"},
+                }
+            },
+        )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == (
+            "Secret 'databases.falkordb.password' must be a string, got dict"
+        )
+        assert ConfigStore(postgres_db).get(FALKOR_PASSWORD_KEY) is None
 
     def test_import_config_falkordb_password_encrypts(
         self, postgres_client: TestClient, postgres_db: Any, mock_machine_id: Any
@@ -1420,8 +1440,8 @@ class TestExportImport:
             },
         )
 
-        assert response.status_code == 400
-        assert response.json()["detail"] == "Invalid imported configuration"
+        assert response.status_code == 422
+        assert response.json()["detail"] == "FalkorDB password must be a string"
         assert ConfigStore(postgres_db).get(FALKOR_PASSWORD_KEY) is None
 
     def test_import_falkordb_secret_reference_preserves_secret_row(

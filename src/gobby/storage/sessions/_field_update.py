@@ -311,19 +311,23 @@ class _FieldUpdateMixin:
         summary_path: str | None = None,
     ) -> Session | None:
         """Persist summary markdown, source metadata, and a revision row atomically."""
-        current = self.get(session_id)
-        if current is None:
-            return None
         if source_digest_turn_count is not None and source_digest_turn_count < 0:
             raise ValueError("source_digest_turn_count must be non-negative")
 
         now = datetime.now(UTC).isoformat()
         revision_id = str(uuid.uuid4())
-        previous_id = previous_revision_id
-        if previous_id is None:
-            previous_id = current.summary_revision_id
 
         with self.db.transaction() as conn:
+            current_row = conn.execute(
+                "SELECT summary_revision_id FROM sessions WHERE id = %s FOR UPDATE",
+                (session_id,),
+            ).fetchone()
+            if current_row is None:
+                return None
+            previous_id = previous_revision_id
+            if previous_id is None:
+                previous_id = current_row["summary_revision_id"]
+
             conn.execute(
                 """
                 INSERT INTO session_summary_revisions (

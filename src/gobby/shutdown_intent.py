@@ -106,7 +106,7 @@ def write_shutdown_intent(
             for target in cleanup_targets:
                 try:
                     target.unlink(missing_ok=True)
-                except OSError:
+                except Exception:
                     logger.exception("Failed to clean up partial shutdown marker: %s", target)
             logger.exception("Failed to write shutdown intent markers")
             raise

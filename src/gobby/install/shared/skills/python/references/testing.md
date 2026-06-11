@@ -93,8 +93,8 @@ Assert the error type and the important message or machine-readable fields. Test
 @pytest.mark.asyncio
 async def test_async_fetch() -> None:
     async with AsyncClient(app=app) as client:
-    response = await client.get("/users/1")
-    assert response.status_code == 200
+        response = await client.get("/users/1")
+        assert response.status_code == 200
 ```
 
 Await every async operation under test. Use fake clocks, controlled events, or short explicit timeouts instead of real sleeps.

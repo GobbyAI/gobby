@@ -1,5 +1,7 @@
 """Tests for the bundled Elixir language skill."""
 
+from __future__ import annotations
+
 from pathlib import Path
 
 import pytest
@@ -19,7 +21,7 @@ SKILL_DIR = REPO_ROOT / "src/gobby/install/shared/skills/elixir"
 
 def test_elixir_skill_parses_with_references() -> None:
     """Verify the bundled Elixir skill has expected metadata and reference files."""
-    parsed = SkillLoader().load_skill(SKILL_DIR, validate=False)
+    parsed = SkillLoader().load_skill(SKILL_DIR, validate=True)
 
     assert parsed.name == "elixir"
     assert parsed.version == "1.0.0"

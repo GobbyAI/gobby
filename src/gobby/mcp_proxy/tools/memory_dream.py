@@ -76,9 +76,10 @@ def _background_dream_semaphore() -> asyncio.BoundedSemaphore:
 
 async def _try_acquire_background_slot() -> bool:
     semaphore = _background_dream_semaphore()
-    if semaphore.locked():
+    try:
+        await asyncio.wait_for(semaphore.acquire(), timeout=0.001)
+    except TimeoutError:
         return False
-    await semaphore.acquire()
     return True
 
 

@@ -21,8 +21,7 @@ rules:
           'clippy.toml',
           '.clippy.toml'
         )
-        or event.data.get('canonical_file_path', '').endswith('/.cargo/config')
-        or event.data.get('canonical_file_path', '').endswith('/.cargo/config.toml')
+        or event.data.get('canonical_file_path', '').endswith(('.cargo/config', '.cargo/config.toml'))
       )
     effects:
       - type: block

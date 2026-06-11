@@ -58,11 +58,11 @@ def init(
         click.echo(f"Project already initialized: {result.project_name}")
         click.echo(f"  Project ID: {result.project_id}")
     else:
-        click.echo("Tip: For first-time setup, try `gobby setup` for a guided experience.")
-        click.echo()
         click.echo(f"Initialized project '{result.project_name}' in {cwd}")
         click.echo(f"  Project ID: {result.project_id}")
         click.echo(f"  Config: {cwd / '.gobby' / 'project.json'}")
+        click.echo()
+        click.echo("Tip: For first-time setup, try `gobby setup` for a guided experience.")
 
         # Trigger initial code indexing via gcode
         try:

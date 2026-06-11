@@ -592,6 +592,10 @@ async def _build_summary_prompt_context(
             from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 
             parser = GeminiTranscriptParser()
+        elif source == "qwen":
+            from gobby.sessions.transcripts.qwen import QwenTranscriptParser
+
+            parser = QwenTranscriptParser(session_id=getattr(session, "id", None))
         elif source == "grok":
             from gobby.sessions.transcripts.grok import GrokTranscriptParser
 
