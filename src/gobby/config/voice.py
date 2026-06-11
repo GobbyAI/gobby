@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Self
-
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 _RESERVED_AUDIO_PROVIDER_IDS = frozenset({"whisper"})
 
@@ -185,10 +183,13 @@ class VoiceConfig(BaseModel):
         ),
     )
 
-    @model_validator(mode="after")
-    def validate_openai_compatible_audio_provider_ids(self) -> Self:
+    @field_validator("openai_compatible_audio")
+    @classmethod
+    def validate_openai_compatible_audio_provider_ids(
+        cls, bindings: list[OpenAICompatibleAudioBindingConfig]
+    ) -> list[OpenAICompatibleAudioBindingConfig]:
         seen: set[str] = set()
-        for binding in self.openai_compatible_audio:
+        for binding in bindings:
             provider_id = _normalize_audio_provider_id(binding.provider)
             if provider_id in _RESERVED_AUDIO_PROVIDER_IDS:
                 raise ValueError(
@@ -201,4 +202,4 @@ class VoiceConfig(BaseModel):
                     f"case-insensitively: {binding.provider!r}"
                 )
             seen.add(provider_id)
-        return self
+        return bindings
