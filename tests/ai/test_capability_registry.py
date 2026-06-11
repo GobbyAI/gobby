@@ -489,10 +489,20 @@ def test_daemon_registry_reprobes_provider_installation_after_startup(
 
     registry = build_daemon_ai_capability_registry(DaemonConfig(), provider_installed=installed)
     service = LLMService(DaemonConfig(), text_generation=TextGenerationStub(registry))
+    initial_route_status = build_daemon_ai_capability_registry(
+        DaemonConfig(),
+        provider_installed=installed,
+    ).status_snapshot()
+    initial_route_binding = next(
+        binding
+        for binding in initial_route_status["capabilities"]["text_generate"]["bindings"]
+        if binding["provider"] == "codex"
+    )
 
     with pytest.raises(CapabilityUnavailableError):
         registry.select(AICapability.TEXT_GENERATE, provider="codex")
     assert "codex" not in service.enabled_providers
+    assert initial_route_binding["available"] is False
 
     installed_state["codex"] = True
 
@@ -502,4 +512,11 @@ def test_daemon_registry_reprobes_provider_installation_after_startup(
         provider_installed=installed,
     )
     assert fresh_registry.select(AICapability.TEXT_GENERATE, provider="codex").provider == "codex"
+    route_status = fresh_registry.status_snapshot()
+    route_binding = next(
+        binding
+        for binding in route_status["capabilities"]["text_generate"]["bindings"]
+        if binding["provider"] == "codex"
+    )
+    assert route_binding["available"] is True
     assert "codex" in service.enabled_providers
