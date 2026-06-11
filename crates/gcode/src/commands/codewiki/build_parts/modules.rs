@@ -32,7 +32,7 @@ pub(crate) fn build_module_docs(
         let direct_files = files
             .iter()
             .filter(|file| {
-                (file.module == module || module_for_file(&file.path) == module)
+                file_is_direct_module_member(file, &module)
                     && seen_direct_files.insert(file.path.clone())
             })
             .map(|file| FileLink {
@@ -63,15 +63,7 @@ pub(crate) fn build_module_docs(
                 summary: module.summary.clone(),
             })
             .collect::<Vec<_>>();
-        let component_ids = files
-            .iter()
-            .filter(|file| file.module == module || module_is_ancestor(&module, &file.module))
-            .flat_map(|file| {
-                file.symbols
-                    .iter()
-                    .map(|symbol| symbol.component_id.clone())
-            })
-            .collect::<Vec<_>>();
+        let component_ids = direct_component_ids_for_module(files, &module);
         let prompt_component_ids = prompt_component_ids_for_module(files, &module);
         let dependency_diagram = render_module_dependency_mermaid(&module, files, graph_edges);
         let call_diagram = render_module_call_mermaid(&module, files, graph_edges);
@@ -141,6 +133,23 @@ pub(crate) fn build_module_docs(
 
     docs.sort_by(|a, b| a.module.cmp(&b.module));
     Ok(docs)
+}
+
+fn direct_component_ids_for_module(files: &[FileDoc], module: &str) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    files
+        .iter()
+        .filter(|file| file_is_direct_module_member(file, module))
+        .flat_map(|file| &file.symbols)
+        .filter_map(|symbol| {
+            let component_id = symbol.component_id.clone();
+            seen.insert(component_id.clone()).then_some(component_id)
+        })
+        .collect()
+}
+
+fn file_is_direct_module_member(file: &FileDoc, module: &str) -> bool {
+    file.module == module || module_for_file(&file.path) == module
 }
 
 pub(super) fn prompt_component_ids_for_module(files: &[FileDoc], module: &str) -> Vec<String> {
