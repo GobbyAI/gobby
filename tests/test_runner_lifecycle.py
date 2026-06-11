@@ -1897,6 +1897,21 @@ class TestAgentRestartRecoveryHelpers:
         )
 
     @pytest.mark.asyncio
+    async def test_recover_agent_runs_after_restart_sweeps_terminal_subscribers(self) -> None:
+        runner = SimpleNamespace(
+            agent_runner=None,
+            pipeline_execution_manager=SimpleNamespace(
+                remove_completion_subscribers_for_terminal_agent_runs=MagicMock(return_value=2),
+            ),
+            completion_registry=None,
+        )
+
+        recovered = await runner_lifecycle._recover_agent_runs_after_restart(runner)
+
+        assert recovered == 0
+        runner.pipeline_execution_manager.remove_completion_subscribers_for_terminal_agent_runs.assert_called_once_with()
+
+    @pytest.mark.asyncio
     async def test_rehydrated_agent_completion_event_fires_on_later_notify(self) -> None:
         from gobby.events.completion_registry import CompletionEventRegistry
 

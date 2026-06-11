@@ -51,11 +51,30 @@ def _cleanup_persisted_completion_subscribers(
         runner.completion_registry.cleanup(completion_id)
 
 
+def _cleanup_terminal_agent_completion_subscribers(runner: GobbyRunner) -> int:
+    """Remove stale subscriber rows for agent runs already in a terminal state."""
+    manager = runner.pipeline_execution_manager
+    if manager is None:
+        return 0
+    cleanup = getattr(manager, "remove_completion_subscribers_for_terminal_agent_runs", None)
+    if cleanup is None:
+        return 0
+    try:
+        cleaned = cleanup()
+    except Exception:
+        logger.warning("Failed to clean terminal agent completion subscribers", exc_info=True)
+        return 0
+    if cleaned:
+        logger.info("Cleaned %s terminal agent completion subscriber row(s)", cleaned)
+    return int(cleaned)
+
+
 _RUN_REPLAY_PAGE_SIZE = 500
 
 
 async def _recover_agent_runs_after_restart(runner: GobbyRunner) -> int:
     """Rehydrate completion events for active agent rows after daemon restart."""
+    _cleanup_terminal_agent_completion_subscribers(runner)
     if runner.agent_runner is None or runner.completion_registry is None:
         return 0
 

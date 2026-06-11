@@ -89,6 +89,25 @@ def subscribe_agent_completion(
     return subscribers
 
 
+def remove_agent_completion_subscribers(*, db: HubDatabase, run_id: str) -> None:
+    """Remove durable completion subscribers for an agent run."""
+    try:
+        from gobby.storage.pipelines import LocalPipelineExecutionManager
+    except ImportError:
+        logger.debug("Could not load pipeline execution manager", exc_info=True)
+        return
+
+    manager = LocalPipelineExecutionManager(db=db, project_id="")
+    try:
+        manager.remove_completion_subscribers(run_id)
+    except (sqlite3.DatabaseError, psycopg.Error):
+        logger.debug(
+            "Failed to remove completion subscribers for run %s",
+            run_id,
+            exc_info=True,
+        )
+
+
 def _dedupe(values: list[str]) -> list[str]:
     """Return values with duplicates removed while preserving order."""
     seen: set[str] = set()
@@ -101,4 +120,8 @@ def _dedupe(values: list[str]) -> list[str]:
     return deduped
 
 
-__all__ = ["completion_subscriber_lineage", "subscribe_agent_completion"]
+__all__ = [
+    "completion_subscriber_lineage",
+    "remove_agent_completion_subscribers",
+    "subscribe_agent_completion",
+]

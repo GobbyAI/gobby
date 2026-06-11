@@ -109,6 +109,7 @@ class AgentCleanupHandler:
         allow_parent_session_fallback: bool = True,
     ) -> None:
         """Release in-memory and isolation state for a terminal agent run."""
+        from gobby.agents.completion_subscribers import remove_agent_completion_subscribers
         from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 
         session_id = cleanup_session_id
@@ -131,6 +132,9 @@ class AgentCleanupHandler:
         self._terminal_prompt_monitor.clear(run.id)
         self._stall_classifier.clear(run.id)
         self._loop_tracker.clear(run.id)
+        if self._completion_registry:
+            self._completion_registry.cleanup(run.id)
+        await self._run_db(remove_agent_completion_subscribers, db=self._db, run_id=run.id)
 
         if session_coordinator and session_id:
             try:
