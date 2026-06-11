@@ -49,10 +49,27 @@ class TestDetect:
         output = "This conversation is too long to continue.\n"
         assert self.detector.detect(output) == "context_full"
 
-    def test_context_full_takes_priority_over_idle(self) -> None:
-        """Context full should be detected even if last line is idle prompt."""
-        output = "Would you like to continue?\n❯\n"
+    def test_context_full_exact_message_takes_priority_over_idle(self) -> None:
+        output = "The context window is full. Would you like to start a new conversation?\n❯\n"
         assert self.detector.detect(output) == "context_full"
+
+    def test_quoted_continue_prompt_is_not_context_full(self) -> None:
+        output = 'Review says: "Would you like to continue?"\nStill analyzing the transcript.\n'
+        assert self.detector.detect(output) == "active"
+
+    def test_generic_conversation_too_long_quote_is_not_context_full(self) -> None:
+        output = 'Log excerpt: "conversation is too long"\nStill analyzing the transcript.\n'
+        assert self.detector.detect(output) == "active"
+
+    def test_context_full_message_above_bottom_lines_is_not_context_full(self) -> None:
+        output = (
+            "The context window is full. Would you like to start a new conversation?\n"
+            "line 1\n"
+            "line 2\n"
+            "line 3\n"
+            "line 4\n"
+        )
+        assert self.detector.detect(output) == "active"
 
     def test_idle_prompt_with_whitespace(self) -> None:
         output = "done\n  ❯  \n"
