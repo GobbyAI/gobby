@@ -139,3 +139,41 @@ impl PositionalContract {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::*;
+
+    #[test]
+    fn command_contract_serializes_builder_shape_and_skips_empty_optional_fields() {
+        let mut contract = CommandContract::new("index", "Index source files");
+        contract.daemon_consumed = true;
+        contract.positionals = vec![PositionalContract::repeatable("path")];
+        contract.flags = vec![
+            FlagContract::repeatable_value("glob", "GLOB")
+                .required()
+                .allowed(vec!["*.rs", "*.md"]),
+            FlagContract::switch("dry-run"),
+        ];
+        contract.json_output_keys = vec!["indexed_files", "skipped_files"];
+
+        let serialized = serde_json::to_string(&contract).expect("serialize command contract");
+
+        assert_eq!(
+            serialized,
+            r#"{"name":"index","summary":"Index source files","daemon_consumed":true,"positionals":[{"name":"path","required":true,"repeatable":true}],"flags":[{"name":"glob","takes_value":true,"value_name":"GLOB","allowed_values":["*.rs","*.md"],"required":true,"repeatable":true},{"name":"dry-run","takes_value":false,"value_name":null,"allowed_values":[],"required":false,"repeatable":false}],"json_output_keys":["indexed_files","skipped_files"]}"#
+        );
+
+        let round_trip: Value =
+            serde_json::from_str(&serialized).expect("golden command contract is valid JSON");
+        assert!(round_trip.get("hard_dependencies").is_none());
+        assert!(round_trip.get("optional_dependencies").is_none());
+        assert!(round_trip.get("multimodal").is_none());
+        assert!(round_trip.get("degradation").is_none());
+        assert_eq!(round_trip["flags"][0]["value_name"].as_str(), Some("GLOB"));
+        assert_eq!(round_trip["flags"][0]["required"].as_bool(), Some(true));
+        assert_eq!(round_trip["flags"][0]["repeatable"].as_bool(), Some(true));
+    }
+}
