@@ -399,6 +399,20 @@ class TestRecoverTaskFromFailedAgent:
 class TestLoopPromptEscalation:
     """Tests for loop prompt counting and escalation in check_loop_prompts."""
 
+    @staticmethod
+    def _run(run_id: str = "run-1") -> AgentRun:
+        return AgentRun(
+            id=run_id,
+            parent_session_id="p",
+            provider="claude",
+            prompt="p",
+            status="running",
+            created_at="2024-01-01",
+            updated_at="2024-01-01",
+            tmux_session_name="gobby-test",
+            pid=12345,
+        )
+
     @pytest.mark.asyncio
     async def test_dismisses_below_threshold(self) -> None:
         """Loop prompts are dismissed normally when count < threshold."""
@@ -410,17 +424,7 @@ class TestLoopPromptEscalation:
         )
         monitor._tmux = mock_tmux
 
-        run = AgentRun(
-            id="run-1",
-            parent_session_id="p",
-            provider="claude",
-            prompt="p",
-            status="running",
-            created_at="2024-01-01",
-            updated_at="2024-01-01",
-            tmux_session_name="gobby-test",
-            pid=12345,
-        )
+        run = self._run()
         mock_run_mgr.list_active.return_value = [run]
         mock_tmux.capture_pane.return_value = "stuck in a loop\nContinue? (y/n)"
         mock_tmux.send_keys.return_value = True
@@ -432,7 +436,7 @@ class TestLoopPromptEscalation:
 
     @pytest.mark.asyncio
     async def test_escalates_at_threshold(self) -> None:
-        """After 3 dismissals, agent is killed instead of dismissed."""
+        """After 3 successful dismissals, agent is killed."""
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = AgentLifecycleMonitor(
@@ -441,19 +445,10 @@ class TestLoopPromptEscalation:
         )
         monitor._tmux = mock_tmux
 
-        run = AgentRun(
-            id="run-1",
-            parent_session_id="p",
-            provider="claude",
-            prompt="p",
-            status="running",
-            created_at="2024-01-01",
-            updated_at="2024-01-01",
-            tmux_session_name="gobby-test",
-            pid=12345,
-        )
+        run = self._run()
         mock_run_mgr.list_active.return_value = [run]
-        mock_tmux.capture_pane.return_value = "stuck in a loop"
+        mock_tmux.capture_pane.return_value = "stuck in a loop\nContinue? (y/n)"
+        mock_tmux.send_keys.return_value = True
 
         # Pre-load 2 dismissals
         monitor._loop_tracker.record_dismissal("run-1")
@@ -467,10 +462,110 @@ class TestLoopPromptEscalation:
             assert mock_kill.call_count == 1
             assert mock_kill.call_args is not None
 
-        # send_keys should NOT have been called (escalated instead)
+        mock_tmux.send_keys.assert_called_once_with("gobby-test", PromptDetector.LOOP_DISMISS_KEYS)
+        assert monitor._loop_tracker.get_count("run-1") == 3
+
+    @pytest.mark.asyncio
+    async def test_static_loop_prose_without_dialog_chrome_is_ignored(self) -> None:
+        """Static prose matching loop terms never sends keys or escalates."""
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=mock_run_mgr,
+            db=MagicMock(),
+        )
+        monitor._tmux = mock_tmux
+
+        run = self._run()
+        mock_run_mgr.list_active.return_value = [run]
+        mock_tmux.capture_pane.return_value = "It seems like I'm stuck in a loop.\n"
+
+        with patch.object(
+            monitor, "_checkpoint_and_kill_looping_agent", new_callable=AsyncMock
+        ) as mock_kill:
+            for _ in range(3):
+                handled = await monitor.check_loop_prompts()
+                assert handled == 0
+
         mock_tmux.send_keys.assert_not_called()
-        assert mock_tmux.send_keys.call_count == 0
-        assert not mock_tmux.send_keys.called
+        mock_kill.assert_not_called()
+        assert monitor._loop_tracker.get_count("run-1") == 0
+
+    @pytest.mark.asyncio
+    async def test_deduplicates_same_loop_prompt_fingerprint(self) -> None:
+        """A repeated visible loop prompt is dismissed once per run."""
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=mock_run_mgr,
+            db=MagicMock(),
+        )
+        monitor._tmux = mock_tmux
+        now = 0.0
+        monitor._terminal_prompt_monitor._monotonic = lambda: now
+
+        run = self._run()
+        mock_run_mgr.list_active.return_value = [run]
+        mock_tmux.capture_pane.return_value = "Potential loop detected\nContinue? (y/n)"
+        mock_tmux.send_keys.return_value = True
+
+        assert await monitor.check_loop_prompts() == 1
+        now = 120.0
+        assert await monitor.check_loop_prompts() == 0
+
+        mock_tmux.send_keys.assert_called_once_with("gobby-test", PromptDetector.LOOP_DISMISS_KEYS)
+        assert monitor._loop_tracker.get_count("run-1") == 1
+
+    @pytest.mark.asyncio
+    async def test_throttles_distinct_loop_prompts_by_minimum_interval(self) -> None:
+        """Distinct loop prompts still cannot increment the count too quickly."""
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=mock_run_mgr,
+            db=MagicMock(),
+        )
+        monitor._tmux = mock_tmux
+        now = 0.0
+        monitor._terminal_prompt_monitor._monotonic = lambda: now
+
+        run = self._run()
+        mock_run_mgr.list_active.return_value = [run]
+        mock_tmux.capture_pane.side_effect = [
+            "Potential loop detected\nContinue? (y/n)",
+            "It seems to be stuck\nContinue? (y/n)",
+        ]
+        mock_tmux.send_keys.return_value = True
+
+        assert await monitor.check_loop_prompts() == 1
+        now = 30.0
+        assert await monitor.check_loop_prompts() == 0
+
+        mock_tmux.send_keys.assert_called_once_with("gobby-test", PromptDetector.LOOP_DISMISS_KEYS)
+        assert monitor._loop_tracker.get_count("run-1") == 1
+
+    @pytest.mark.asyncio
+    async def test_send_failure_does_not_count_or_fingerprint_loop_prompt(self) -> None:
+        """Loop dismissals are counted only after keys are actually sent."""
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=mock_run_mgr,
+            db=MagicMock(),
+        )
+        monitor._tmux = mock_tmux
+
+        run = self._run()
+        mock_run_mgr.list_active.return_value = [run]
+        pane_output = "Potential loop detected\nContinue? (y/n)"
+        mock_tmux.capture_pane.return_value = pane_output
+        mock_tmux.send_keys.return_value = False
+
+        handled = await monitor.check_loop_prompts()
+
+        assert handled == 0
+        assert monitor._loop_tracker.get_count("run-1") == 0
+        assert monitor._prompt_detector.was_loop_prompt_dismissed("run-1", pane_output) is False
 
 
 class TestApprovalPromptAutoEnter:

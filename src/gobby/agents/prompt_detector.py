@@ -37,6 +37,17 @@ class PromptDetector:
         re.compile(r"potential loop detected", re.IGNORECASE),
         re.compile(r"seems? to be (?:stuck|looping|repeating)", re.IGNORECASE),
     )
+    LOOP_DIALOG_CHROME_PATTERNS: tuple[re.Pattern[str], ...] = (
+        re.compile(
+            r"\b(?:continue|proceed)(?:\s+anyway)?\?\s*"
+            r"(?:\((?:y|yes)/(?:n|no)\)|\[(?:y|yes)/(?:n|no)\])",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?:press|type)\s+(?:y|yes)\s+(?:to\s+)?(?:continue|proceed)\b",
+            re.IGNORECASE,
+        ),
+    )
 
     # Key sequence to dismiss loop detection: "yes, continue"
     LOOP_DISMISS_KEYS = "y\n"
@@ -85,6 +96,7 @@ class PromptDetector:
     def __init__(self) -> None:
         self._dismissed: set[str] = set()
         self._loop_counts: dict[str, int] = {}
+        self._loop_prompt_fingerprints: dict[str, set[str]] = {}
         self._approval_fingerprints: dict[str, str] = {}
 
     def detect_trust_prompt(self, pane_output: str) -> bool:
@@ -96,10 +108,14 @@ class PromptDetector:
 
     def detect_loop_prompt(self, pane_output: str) -> bool:
         """Return True if pane output contains a loop detection prompt."""
-        for pattern in self.LOOP_DETECTION_PATTERNS:
-            if pattern.search(pane_output):
-                return True
-        return False
+        if not pane_output:
+            return False
+
+        has_loop_text = any(pattern.search(pane_output) for pattern in self.LOOP_DETECTION_PATTERNS)
+        if not has_loop_text:
+            return False
+
+        return any(pattern.search(pane_output) for pattern in self.LOOP_DIALOG_CHROME_PATTERNS)
 
     def detect_approval_prompt(self, pane_output: str) -> bool:
         """Return True when Enter is explicitly shown as an approval action."""
@@ -153,13 +169,31 @@ class PromptDetector:
         """Return True if this run already handled the same approval prompt."""
         return self._approval_fingerprints.get(run_id) == self._approval_fingerprint(pane_output)
 
+    def mark_loop_prompt_dismissed(self, run_id: str, pane_output: str) -> None:
+        """Record a loop prompt fingerprint handled for this run."""
+        fingerprints = self._loop_prompt_fingerprints.setdefault(run_id, set())
+        fingerprints.add(self._loop_fingerprint(pane_output))
+
+    def was_loop_prompt_dismissed(self, run_id: str, pane_output: str) -> bool:
+        """Return True if this run already handled the same loop prompt."""
+        return self._loop_fingerprint(pane_output) in self._loop_prompt_fingerprints.get(
+            run_id, set()
+        )
+
     def clear(self, run_id: str) -> None:
         """Remove tracking state for an agent (on cleanup)."""
         self._dismissed.discard(run_id)
         self._loop_counts.pop(run_id, None)
+        self._loop_prompt_fingerprints.pop(run_id, None)
         self._approval_fingerprints.pop(run_id, None)
 
     def _approval_fingerprint(self, pane_output: str) -> str:
+        return self._pane_fingerprint(pane_output)
+
+    def _loop_fingerprint(self, pane_output: str) -> str:
+        return self._pane_fingerprint(pane_output)
+
+    def _pane_fingerprint(self, pane_output: str) -> str:
         lines = [line.strip() for line in pane_output.splitlines() if line.strip()]
         normalized = " ".join(lines[-12:]).lower()
         normalized = re.sub(r"\s+", " ", normalized)

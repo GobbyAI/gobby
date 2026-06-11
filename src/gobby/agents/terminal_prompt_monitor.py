@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 class TerminalPromptMonitor:
     """Detect and dismiss blocking prompts in spawned agent tmux panes."""
 
+    LOOP_PROMPT_DISMISS_MIN_INTERVAL_SECONDS = 60.0
+
     def __init__(
         self,
         *,
@@ -42,6 +44,7 @@ class TerminalPromptMonitor:
         self._handle_looping_agent = handle_looping_agent
         self._monotonic = monotonic
         self._last_enter_sent_at: dict[str, float] = {}
+        self._last_loop_dismissed_at: dict[str, float] = {}
         self._run_db_callback = run_db
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -56,6 +59,7 @@ class TerminalPromptMonitor:
     def clear(self, run_id: str) -> None:
         """Remove prompt-monitor state for a completed or cleaned-up run."""
         self._last_enter_sent_at.pop(run_id, None)
+        self._last_loop_dismissed_at.pop(run_id, None)
 
     async def check_trust_prompts(self) -> int:
         """Check for folder trust prompts and auto-dismiss them."""
@@ -100,31 +104,46 @@ class TerminalPromptMonitor:
 
             try:
                 pane_output = await self._get_tmux().capture_pane(tmux_name, lines=15)
-                if pane_output and self._prompt_detector.detect_loop_prompt(pane_output):
-                    count = self._loop_tracker.record_dismissal(run.id)
+                if not pane_output or not self._prompt_detector.detect_loop_prompt(pane_output):
+                    continue
+                if self._prompt_detector.was_loop_prompt_dismissed(run.id, pane_output):
+                    continue
 
-                    if self._loop_tracker.should_escalate(run.id):
-                        logger.warning(
-                            "Doom loop detected for agent %s: %s loop prompts dismissed, "
-                            "escalating to kill",
-                            run.id,
-                            count,
-                        )
-                        await self._handle_looping_agent(run)
-                    else:
-                        sent = await self._get_tmux().send_keys(
-                            tmux_name,
-                            PromptDetector.LOOP_DISMISS_KEYS,
-                        )
-                        if sent:
-                            self.mark_enter_sent(run.id)
-                            logger.info(
-                                "Auto-dismissed loop prompt for agent %s (%s/%s)",
-                                run.id,
-                                count,
-                                self._loop_tracker.threshold,
-                            )
-                            handled += 1
+                now = self._monotonic()
+                last_dismissed = self._last_loop_dismissed_at.get(run.id)
+                if (
+                    last_dismissed is not None
+                    and now - last_dismissed < self.LOOP_PROMPT_DISMISS_MIN_INTERVAL_SECONDS
+                ):
+                    continue
+
+                sent = await self._get_tmux().send_keys(
+                    tmux_name,
+                    PromptDetector.LOOP_DISMISS_KEYS,
+                )
+                if not sent:
+                    continue
+
+                self.mark_enter_sent(run.id)
+                self._last_loop_dismissed_at[run.id] = now
+                self._prompt_detector.mark_loop_prompt_dismissed(run.id, pane_output)
+                count = self._loop_tracker.record_dismissal(run.id)
+                logger.info(
+                    "Auto-dismissed loop prompt for agent %s (%s/%s)",
+                    run.id,
+                    count,
+                    self._loop_tracker.threshold,
+                )
+                handled += 1
+
+                if self._loop_tracker.should_escalate(run.id):
+                    logger.warning(
+                        "Doom loop detected for agent %s: %s loop prompts dismissed, "
+                        "escalating to kill",
+                        run.id,
+                        count,
+                    )
+                    await self._handle_looping_agent(run)
             except Exception as e:
                 logger.warning("Error checking loop prompt for agent %s: %s", run.id, e)
 

@@ -80,11 +80,13 @@ class TestDetectLoopPrompt:
 
     def test_detects_stuck_in_loop(self) -> None:
         detector = PromptDetector()
-        assert detector.detect_loop_prompt("It seems like I'm stuck in a loop.") is True
+        prompt = "It seems like I'm stuck in a loop.\nContinue? (y/n)\n"
+        assert detector.detect_loop_prompt(prompt) is True
 
     def test_detects_repeating_myself(self) -> None:
         detector = PromptDetector()
-        assert detector.detect_loop_prompt("I think I'm repeating myself.") is True
+        prompt = "I think I'm repeating myself.\nPress y to continue\n"
+        assert detector.detect_loop_prompt(prompt) is True
 
     def test_detects_potential_loop(self) -> None:
         detector = PromptDetector()
@@ -92,19 +94,23 @@ class TestDetectLoopPrompt:
 
     def test_detects_seems_stuck(self) -> None:
         detector = PromptDetector()
-        assert detector.detect_loop_prompt("It seems to be stuck.") is True
-        assert detector.detect_loop_prompt("The agent seem to be looping.") is True
-        assert detector.detect_loop_prompt("This seems to be repeating.") is True
+        assert detector.detect_loop_prompt("It seems to be stuck.\nContinue? (y/n)") is True
+        assert detector.detect_loop_prompt("The agent seem to be looping.\nContinue? [y/n]") is True
+        assert (
+            detector.detect_loop_prompt("This seems to be repeating.\nType yes to proceed") is True
+        )
 
     def test_case_insensitive(self) -> None:
         detector = PromptDetector()
-        assert detector.detect_loop_prompt("STUCK IN A LOOP") is True
-        assert detector.detect_loop_prompt("Potential Loop Detected") is True
+        assert detector.detect_loop_prompt("STUCK IN A LOOP\nCONTINUE? (Y/N)") is True
+        assert detector.detect_loop_prompt("Potential Loop Detected\ncontinue? [Y/N]") is True
 
     def test_no_match_on_normal_output(self) -> None:
         detector = PromptDetector()
         assert detector.detect_loop_prompt("Running tests...\n$ pytest -v\n") is False
         assert detector.detect_loop_prompt("Loop iteration 5 complete\n") is False
+        assert detector.detect_loop_prompt("It seems like I'm stuck in a loop.") is False
+        assert detector.detect_loop_prompt("Potential loop detected.") is False
         assert detector.detect_loop_prompt("") is False
 
     def test_embedded_in_output(self) -> None:
@@ -245,3 +251,28 @@ class TestDismissedTracking:
         detector.clear("run-1")
 
         assert detector.was_approval_prompt_dismissed("run-1", prompt) is False
+
+    def test_loop_prompt_fingerprint_tracking(self) -> None:
+        detector = PromptDetector()
+        prompt = "Potential loop detected\nContinue? (y/n)\n"
+
+        assert detector.was_loop_prompt_dismissed("run-1", prompt) is False
+        detector.mark_loop_prompt_dismissed("run-1", prompt)
+        assert detector.was_loop_prompt_dismissed("run-1", prompt) is True
+        assert (
+            detector.was_loop_prompt_dismissed(
+                "run-1",
+                "Potential loop detected\nType y to continue\n",
+            )
+            is False
+        )
+        assert detector.was_loop_prompt_dismissed("run-2", prompt) is False
+
+    def test_clear_removes_loop_prompt_fingerprints(self) -> None:
+        detector = PromptDetector()
+        prompt = "Potential loop detected\nContinue? (y/n)\n"
+        detector.mark_loop_prompt_dismissed("run-1", prompt)
+
+        detector.clear("run-1")
+
+        assert detector.was_loop_prompt_dismissed("run-1", prompt) is False
