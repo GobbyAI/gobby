@@ -93,7 +93,10 @@ mod tests {
         assert!(config_services.contains("gobby_core::config::{"));
         assert!(config_services.contains("ConfigSource"));
         assert!(config_services.contains("StandaloneConfig"));
-        assert!(config_services.contains("impl ConfigSource for PostgresConfigSource"));
+        assert!(config_services.contains("impl ServiceConfigSource for PostgresConfigSource"));
+        assert!(config_services.contains("struct ErrorCapturingConfigSource"));
+        assert!(config_services.contains("impl<S> ConfigSource for ErrorCapturingConfigSource"));
+        assert!(!config_services.contains("impl ConfigSource for PostgresConfigSource"));
         assert!(config_services.contains("gobby_core::postgres::read_config_value"));
         assert!(config_services.contains("gobby_core::config::decode_config_value"));
         assert!(!config_root.contains("fn decode_config_value("));

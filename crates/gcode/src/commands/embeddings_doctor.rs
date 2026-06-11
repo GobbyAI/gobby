@@ -81,7 +81,7 @@ pub fn run(ctx: &Context) -> anyhow::Result<()> {
     let resolution = config::resolve_embedding_config_details(
         &mut conn,
         config::read_standalone_config_optional(),
-    );
+    )?;
     let peer = fetch_daemon_peer(ctx.daemon_url.as_deref());
     let (payload, exit_code) =
         build_doctor_report(resolution, ctx.code_vectors.vector_dim, probe_dim, peer);

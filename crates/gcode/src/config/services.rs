@@ -1,8 +1,6 @@
 use gobby_core::ai_context::AiContext;
 use gobby_core::config::embedding_keys;
-use gobby_core::config::{
-    AiCapability, AiRouting, CapabilityBinding, ConfigSource, LayeredConfigSource,
-};
+use gobby_core::config::{AiCapability, AiRouting, CapabilityBinding, ConfigSource};
 use gobby_core::provisioning::{GCORE_CONFIG_FILENAME, StandaloneConfig};
 use postgres::Client;
 use std::collections::HashMap;
@@ -63,38 +61,9 @@ impl ServiceConfigSource for PostgresConfigSource<'_> {
     }
 }
 
-impl ConfigSource for PostgresConfigSource<'_> {
-    fn config_value(&mut self, key: &str) -> Option<String> {
-        <Self as ServiceConfigSource>::config_value(self, key)
-            .inspect_err(|error| log::warn!("failed to read config key {key:?}: {error}"))
-            .ok()
-            .flatten()
-    }
-
-    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
-        <Self as ServiceConfigSource>::resolve_value(self, value)
-    }
-}
-
 struct FallbackConfigSource<'a> {
     postgres: PostgresConfigSource<'a>,
     standalone: Option<StandaloneConfig>,
-}
-
-impl ConfigSource for FallbackConfigSource<'_> {
-    fn config_value(&mut self, key: &str) -> Option<String> {
-        service_env_value(key)
-            .or_else(|| ConfigSource::config_value(&mut self.postgres, key))
-            .or_else(|| {
-                self.standalone
-                    .as_mut()
-                    .and_then(|standalone| standalone.config_value(key))
-            })
-    }
-
-    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
-        ConfigSource::resolve_value(&mut self.postgres, value)
-    }
 }
 
 impl ServiceConfigSource for FallbackConfigSource<'_> {
@@ -135,15 +104,15 @@ impl TracingFallbackConfigSource<'_> {
     }
 }
 
-impl ConfigSource for TracingFallbackConfigSource<'_> {
-    fn config_value(&mut self, key: &str) -> Option<String> {
+impl ServiceConfigSource for TracingFallbackConfigSource<'_> {
+    fn config_value(&mut self, key: &str) -> anyhow::Result<Option<String>> {
         if let Some(value) = service_env_value(key) {
             self.hits.insert(key.to_string(), "env");
-            return Some(value);
+            return Ok(Some(value));
         }
-        if let Some(value) = ConfigSource::config_value(&mut self.postgres, key) {
+        if let Some(value) = ServiceConfigSource::config_value(&mut self.postgres, key)? {
             self.hits.insert(key.to_string(), "config_store");
-            return Some(value);
+            return Ok(Some(value));
         }
         let value = self
             .standalone
@@ -152,11 +121,48 @@ impl ConfigSource for TracingFallbackConfigSource<'_> {
         if value.is_some() {
             self.hits.insert(key.to_string(), "gcore.yaml");
         }
-        value
+        Ok(value)
     }
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
-        ConfigSource::resolve_value(&mut self.postgres, value)
+        ServiceConfigSource::resolve_value(&mut self.postgres, value)
+    }
+}
+
+struct ErrorCapturingConfigSource<'a, S> {
+    source: &'a mut S,
+    first_error: Option<anyhow::Error>,
+}
+
+impl<S> ErrorCapturingConfigSource<'_, S> {
+    fn finish<T>(self, value: T) -> anyhow::Result<T> {
+        match self.first_error {
+            Some(error) => Err(error),
+            None => Ok(value),
+        }
+    }
+}
+
+impl<S> ConfigSource for ErrorCapturingConfigSource<'_, S>
+where
+    S: ServiceConfigSource,
+{
+    fn config_value(&mut self, key: &str) -> Option<String> {
+        if self.first_error.is_some() {
+            return None;
+        }
+        match self.source.config_value(key) {
+            Ok(value) => value,
+            Err(error) => {
+                self.first_error =
+                    Some(error.context(format!("failed to read config key {key:?}")));
+                None
+            }
+        }
+    }
+
+    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+        self.source.resolve_value(value)
     }
 }
 
@@ -275,6 +281,31 @@ where
 }
 
 #[cfg(test)]
+struct FallibleClosureConfigSource<R, S> {
+    read_config_value: R,
+    resolve_value: S,
+}
+
+#[cfg(test)]
+impl<R, S> ServiceConfigSource for FallibleClosureConfigSource<R, S>
+where
+    R: FnMut(&str) -> anyhow::Result<Option<String>>,
+    S: FnMut(&str) -> anyhow::Result<String>,
+{
+    fn config_value(&mut self, key: &str) -> anyhow::Result<Option<String>> {
+        if let Some(value) = service_env_value(key) {
+            return Ok(Some(value));
+        }
+        Ok((self.read_config_value)(key)?
+            .and_then(|raw| gobby_core::config::decode_config_value(&raw)))
+    }
+
+    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+        (self.resolve_value)(value)
+    }
+}
+
+#[cfg(test)]
 pub(super) fn resolve_falkordb_config_from_values<R, S>(
     read_config_value: R,
     resolve_value: S,
@@ -320,6 +351,22 @@ where
         resolve_value,
     };
     resolve_embedding_config_from_source(None, &mut source)
+}
+
+#[cfg(test)]
+pub(super) fn resolve_embedding_config_from_fallible_values<R, S>(
+    read_config_value: R,
+    resolve_value: S,
+) -> anyhow::Result<Option<super::EmbeddingConfig>>
+where
+    R: FnMut(&str) -> anyhow::Result<Option<String>>,
+    S: FnMut(&str) -> anyhow::Result<String>,
+{
+    let mut source = FallibleClosureConfigSource {
+        read_config_value,
+        resolve_value,
+    };
+    resolve_embedding_config_from_service_source(None, &mut source)
 }
 
 #[cfg(test)]
@@ -455,32 +502,46 @@ pub(super) fn resolve_embedding_config(
     conn: &mut Client,
     standalone: Option<StandaloneConfig>,
     _quiet: bool,
-) -> Option<super::EmbeddingConfig> {
+) -> anyhow::Result<Option<super::EmbeddingConfig>> {
     let mut source = FallbackConfigSource {
         postgres: PostgresConfigSource { conn },
         standalone,
     };
-    resolve_embedding_config_from_source(None, &mut source)
+    resolve_embedding_config_from_service_source(None, &mut source)
 }
 
 pub(crate) fn resolve_embedding_config_details(
     conn: &mut Client,
     standalone: Option<StandaloneConfig>,
-) -> Option<EmbeddingConfigDetails> {
+) -> anyhow::Result<Option<EmbeddingConfigDetails>> {
     let mut source = TracingFallbackConfigSource {
         postgres: PostgresConfigSource { conn },
         standalone,
         hits: HashMap::new(),
     };
-    let config = resolve_embedding_config_from_source(None, &mut source)?;
+    let Some(config) = resolve_embedding_config_from_service_source(None, &mut source)? else {
+        return Ok(None);
+    };
     let source_name = source
         .hit_source(embedding_keys::AI_API_BASE)
         .unwrap_or("unknown");
-    Some(EmbeddingConfigDetails {
+    Ok(Some(EmbeddingConfigDetails {
         config,
         namespace: embedding_keys::AI_NAMESPACE,
         source: source_name,
-    })
+    }))
+}
+
+fn resolve_embedding_config_from_service_source(
+    project_id: Option<String>,
+    source: &mut impl ServiceConfigSource,
+) -> anyhow::Result<Option<super::EmbeddingConfig>> {
+    let mut source = ErrorCapturingConfigSource {
+        source,
+        first_error: None,
+    };
+    let config = resolve_embedding_config_from_source(project_id, &mut source);
+    source.finish(config)
 }
 
 pub(crate) fn resolve_embedding_config_from_source(
@@ -529,9 +590,16 @@ pub(super) fn resolve_indexing_settings(
     conn: &mut Client,
     standalone: Option<StandaloneConfig>,
 ) -> anyhow::Result<IndexingSettings> {
-    let primary = PostgresConfigSource { conn };
-    let mut source = LayeredConfigSource::new(Some(primary), standalone);
-    gobby_core::config::resolve_indexing_config(&mut source)
+    let mut source = FallbackConfigSource {
+        postgres: PostgresConfigSource { conn },
+        standalone,
+    };
+    let mut source = ErrorCapturingConfigSource {
+        source: &mut source,
+        first_error: None,
+    };
+    let settings = gobby_core::config::resolve_indexing_config(&mut source)?;
+    source.finish(settings)
 }
 
 fn resolve_code_vector_settings_from_source(

@@ -255,7 +255,7 @@ impl Context {
             None
         };
         let embedding = if services.embedding {
-            resolve_embedding_config(&mut conn, standalone_config.clone(), quiet)
+            resolve_embedding_config(&mut conn, standalone_config.clone(), quiet)?
         } else {
             None
         };

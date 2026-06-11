@@ -4,8 +4,9 @@ use std::process::Command;
 use super::context::project_name_suffixes;
 use super::context::resolve_project_id;
 use super::services::{
-    resolve_code_vector_settings_from_values, resolve_embedding_config_from_values,
-    resolve_falkordb_config_from_values, resolve_qdrant_config_from_values,
+    resolve_code_vector_settings_from_values, resolve_embedding_config_from_fallible_values,
+    resolve_embedding_config_from_values, resolve_falkordb_config_from_values,
+    resolve_qdrant_config_from_values,
 };
 use super::*;
 use gobby_core::config::embedding_keys;
@@ -225,6 +226,19 @@ fn adapter_resolves_config_store_secrets() {
         assert_eq!(qdrant.api_key.as_deref(), Some("resolved-qdrant"));
         assert_eq!(embedding.api_key.as_deref(), Some("resolved-embedding"));
     });
+}
+
+#[test]
+fn embedding_config_source_errors_are_propagated() {
+    let error = resolve_embedding_config_from_fallible_values(
+        |_key| Err(anyhow::anyhow!("database read failed")),
+        |value| Ok(value.to_string()),
+    )
+    .expect_err("config read failure must not resolve as missing embeddings");
+
+    let message = format!("{error:#}");
+    assert!(message.contains("failed to read config key"));
+    assert!(message.contains("database read failed"));
 }
 
 #[test]
