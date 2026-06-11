@@ -383,6 +383,7 @@
     "workflows/rules/task-enforcement/require-task-transitions-skill-on-lifecycle.yaml": "edac0266f39dd0cfbe2b6e4a432d28ba7b48eae789003677fdd0a039b38635e2",
     "workflows/rules/task-enforcement/reset-subagent-flag.yaml": "2c7613b0aade91b9af6a0475de77b580e50ecc6dbadb88ee882d5ef850a8b5e6",
     "workflows/rules/task-enforcement/strip-skip-validation-with-commit.yaml": "9fc115722edcefa0c88ad6052d3dc67aeb8778618b124f71bfd9972888e402e8",
+    "workflows/rules/task-enforcement/task-commit-project-path-allowlist-before-git.yaml": "db678cc76b7abd6020edd221d340e48aae133541802ac809f33188500d9e2dc6",
     "workflows/rules/task-enforcement/track-task-claim.yaml": "bc418a639d46f48f91eb7a1579c1173732250bc03c89217b0886f69f5c2cc9bb",
     "workflows/rules/tdd-enforcement/enforce-tdd-block.yaml": "5eadb58a748a36f95e22fe2a29371dee1f3d0a91f1b5b3693f8907818c998742",
     "workflows/rules/tdd-enforcement/enforce-tdd-track-tests.yaml": "27d717a5113b4ecd945b6d4f3576f5756cdd79ae668fef220480d3c54dd5f0cb",

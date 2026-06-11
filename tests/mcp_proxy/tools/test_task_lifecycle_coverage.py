@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import inspect
 from collections.abc import Iterator
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
@@ -1284,3 +1286,48 @@ class TestEscalateTaskSessionContextGuard:
 
         assert "No session context available" in result.get("error", "")
         mock_task_manager.de_escalate_task.assert_not_called()
+
+
+def test_close_task_git_helper_calls_follow_repo_path_resolution() -> None:
+    """close_task must resolve project_path before commit/Git helper cwd use."""
+    import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle_close
+
+    source = inspect.getsource(lifecycle_close.register_close_task)
+    tree = ast.parse(source)
+    close_task = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "close_task"
+    )
+    lines = _call_line_numbers(close_task)
+
+    resolver_line = lines["resolve_task_repo_path"]
+    assert resolver_line < lines["ctx.task_manager.link_commit"]
+    assert resolver_line < lines["validate_commit_requirements"]
+    assert resolver_line < lines["gather_validation_context"]
+    assert resolver_line < lines["normalize_commit_sha"]
+    assert resolver_line < lines["run_git_command"]
+
+
+def _call_line_numbers(function: ast.AST) -> dict[str, int]:
+    lines: dict[str, int] = {}
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Call):
+            continue
+        call_name = _call_name(node)
+        if call_name and call_name not in lines:
+            lines[call_name] = node.lineno
+    return lines
+
+
+def _call_name(call: ast.Call) -> str | None:
+    if isinstance(call.func, ast.Name):
+        return call.func.id
+    if isinstance(call.func, ast.Attribute):
+        value = call.func.value
+        if isinstance(value, ast.Name):
+            return f"{value.id}.{call.func.attr}"
+        if isinstance(value, ast.Attribute) and isinstance(value.value, ast.Name):
+            return f"{value.value.id}.{value.attr}.{call.func.attr}"
+        return call.func.attr
+    return None

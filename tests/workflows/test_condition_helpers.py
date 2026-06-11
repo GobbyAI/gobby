@@ -13,6 +13,7 @@ from gobby.workflows.condition_helpers import (
     completion_evidence_ready,
     is_gobby_build_command,
     is_task_complete,
+    task_commit_project_path_allowlist_violation,
     task_needs_human_review,
     task_tree_complete,
     task_type_in,
@@ -493,3 +494,83 @@ class TestTaskTypeIn:
         )
 
         assert task_type_in(manager, "task-id", "epic") is True
+
+
+class TestTaskCommitProjectPathAllowlistViolation:
+    def test_blocks_raw_project_path_cwd_in_task_sync(self) -> None:
+        event_data = {
+            "canonical_file_path": "/repo/src/gobby/mcp_proxy/tools/task_sync.py",
+        }
+        tool_input = {
+            "file_path": "src/gobby/mcp_proxy/tools/task_sync.py",
+            "new_string": (
+                "task = task_manager.unlink_commit(resolved_task_id, commit_sha, cwd=project_path)"
+            ),
+        }
+
+        assert task_commit_project_path_allowlist_violation(event_data, tool_input) is True
+
+    def test_blocks_raw_project_path_cwd_in_lifecycle_close(self) -> None:
+        event_data = {
+            "canonical_file_path": "/repo/src/gobby/mcp_proxy/tools/tasks/_lifecycle_close.py",
+        }
+        tool_input = {
+            "file_path": "src/gobby/mcp_proxy/tools/tasks/_lifecycle_close.py",
+            "edits": [
+                {
+                    "old_string": "safe",
+                    "new_string": (
+                        "current_commit_sha = normalize_commit_sha(commit_sha, cwd=project_path)"
+                    ),
+                }
+            ],
+        }
+
+        assert task_commit_project_path_allowlist_violation(event_data, tool_input) is True
+
+    def test_allows_resolver_first_cwd(self) -> None:
+        event_data = {
+            "canonical_file_path": "/repo/src/gobby/mcp_proxy/tools/task_sync.py",
+        }
+        tool_input = {
+            "file_path": "src/gobby/mcp_proxy/tools/task_sync.py",
+            "content": """
+                repo_path = resolve_task_repo_path(
+                    task_manager=task_manager,
+                    project_manager=project_manager,
+                    task=task,
+                    project_path=project_path,
+                )
+                task = task_manager.link_commit(resolved_task_id, commit_sha, cwd=repo_path)
+            """,
+        }
+
+        assert task_commit_project_path_allowlist_violation(event_data, tool_input) is False
+
+    def test_allows_existing_get_task_and_repo_path_pattern(self) -> None:
+        event_data = {
+            "canonical_file_path": "/repo/src/gobby/mcp_proxy/tools/task_sync.py",
+        }
+        tool_input = {
+            "file_path": "src/gobby/mcp_proxy/tools/task_sync.py",
+            "content": """
+                task_and_repo_path = _get_task_and_repo_path(
+                    resolved_task_id, task_id, project_path
+                )
+                if isinstance(task_and_repo_path, dict):
+                    return task_and_repo_path
+                _, repo_path = task_and_repo_path
+                result = get_task_diff_fn(task_id=resolved_task_id, cwd=repo_path)
+            """,
+        }
+
+        assert task_commit_project_path_allowlist_violation(event_data, tool_input) is False
+
+    def test_allows_unrelated_files(self) -> None:
+        event_data = {"canonical_file_path": "/repo/src/gobby/other.py"}
+        tool_input = {
+            "file_path": "src/gobby/other.py",
+            "new_string": "run_git_command(['git', 'status'], cwd=project_path)",
+        }
+
+        assert task_commit_project_path_allowlist_violation(event_data, tool_input) is False

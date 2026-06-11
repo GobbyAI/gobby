@@ -6,8 +6,10 @@ so they can be called from rule ``when`` conditions, e.g.:
     when: "task_tree_complete(variables.session_task)"
 """
 
+import ast
 import logging
 import re
+import textwrap
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Protocol
 from uuid import UUID
@@ -29,6 +31,27 @@ logger = logging.getLogger(__name__)
 TaskIdRef = str | int | UUID | bytes | bytearray | memoryview
 TaskIdInput = TaskIdRef | Iterable[TaskIdRef | None] | None
 _ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")
+_TASK_COMMIT_PROJECT_PATH_GUARD_FILE_SUFFIXES = frozenset(
+    {
+        "src/gobby/mcp_proxy/tools/task_sync.py",
+        "src/gobby/mcp_proxy/tools/tasks/_lifecycle_close.py",
+        "src/gobby/mcp_proxy/tools/_lifecycle_close.py",
+    }
+)
+_PROJECT_PATH_RESOLVER_CALLS = frozenset({"resolve_task_repo_path", "_get_task_and_repo_path"})
+_DIRECT_PROJECT_PATH_CWD_RE = re.compile(r"\bcwd\s*=\s*(?:(?:str|Path)\(\s*)?project_path\b")
+_SOURCE_FRAGMENT_KEYS = frozenset(
+    {
+        "content",
+        "new_string",
+        "newStr",
+        "new_text",
+        "newText",
+        "replacement",
+        "text",
+    }
+)
+_NESTED_EDIT_KEYS = frozenset({"changes", "edits"})
 _UV_RUN_OPTIONS_WITH_VALUE = frozenset(
     {
         "--allow-insecure-host",
@@ -75,6 +98,218 @@ _UV_RUN_OPTIONS_WITH_VALUE = frozenset(
         "-w",
     }
 )
+
+
+def task_commit_project_path_allowlist_violation(
+    event_data: Mapping[str, Any] | None,
+    tool_input: Any,
+) -> bool:
+    """Detect edits that route raw ``project_path`` into task Git helper cwd."""
+    if not _touches_task_commit_guard_file(event_data, tool_input):
+        return False
+
+    return any(
+        _source_fragment_uses_direct_project_path_cwd(fragment)
+        for fragment in _iter_source_fragments(tool_input)
+    )
+
+
+def _touches_task_commit_guard_file(
+    event_data: Mapping[str, Any] | None,
+    tool_input: Any,
+) -> bool:
+    touched_paths: list[str] = []
+    if event_data:
+        canonical_paths = event_data.get("canonical_file_paths")
+        if isinstance(canonical_paths, list | tuple):
+            touched_paths.extend(path for path in canonical_paths if isinstance(path, str))
+        canonical_path = event_data.get("canonical_file_path")
+        if isinstance(canonical_path, str):
+            touched_paths.append(canonical_path)
+
+    try:
+        from gobby.workflows.enforcement.blocking import get_touched_file_paths
+
+        touched_paths.extend(get_touched_file_paths(tool_input))
+    except (AttributeError, TypeError, ValueError):
+        logger.debug("Unable to derive touched paths for task commit guardrail", exc_info=True)
+
+    return any(_is_task_commit_guard_file(path) for path in touched_paths)
+
+
+def _is_task_commit_guard_file(path: str) -> bool:
+    normalized = path.replace("\\", "/").lstrip("./")
+    return any(
+        normalized.endswith(suffix) for suffix in _TASK_COMMIT_PROJECT_PATH_GUARD_FILE_SUFFIXES
+    )
+
+
+def _iter_source_fragments(value: Any) -> Iterable[str]:
+    if isinstance(value, Mapping):
+        for key in _SOURCE_FRAGMENT_KEYS:
+            fragment = value.get(key)
+            if isinstance(fragment, str) and fragment.strip():
+                yield fragment
+        for key in _NESTED_EDIT_KEYS:
+            nested = value.get(key)
+            if isinstance(nested, list | tuple):
+                for item in nested:
+                    yield from _iter_source_fragments(item)
+        return
+
+    if isinstance(value, list | tuple):
+        for item in value:
+            yield from _iter_source_fragments(item)
+
+
+def _source_fragment_uses_direct_project_path_cwd(fragment: str) -> bool:
+    module = _parse_source_fragment(fragment)
+    if module is None:
+        return bool(_DIRECT_PROJECT_PATH_CWD_RE.search(fragment))
+    return _statements_use_direct_project_path_cwd(module.body, {"project_path"})
+
+
+def _parse_source_fragment(fragment: str) -> ast.Module | None:
+    dedented = textwrap.dedent(fragment)
+    for candidate in (
+        dedented,
+        "def _gobby_task_commit_guardrail_wrapper():\n" + textwrap.indent(dedented, "    "),
+    ):
+        try:
+            return ast.parse(candidate)
+        except SyntaxError:
+            continue
+    return None
+
+
+def _statements_use_direct_project_path_cwd(
+    statements: Sequence[ast.stmt],
+    tainted_names: set[str],
+) -> bool:
+    local_tainted = set(tainted_names)
+    for statement in statements:
+        if _statement_uses_tainted_cwd(statement, local_tainted):
+            return True
+        if _nested_statements_use_direct_project_path_cwd(statement, local_tainted):
+            return True
+        _update_project_path_taint(statement, local_tainted)
+    return False
+
+
+def _nested_statements_use_direct_project_path_cwd(
+    statement: ast.stmt,
+    tainted_names: set[str],
+) -> bool:
+    for body, taint in _iter_nested_statement_bodies(statement, tainted_names):
+        if _statements_use_direct_project_path_cwd(body, taint):
+            return True
+    return False
+
+
+def _iter_nested_statement_bodies(
+    statement: ast.stmt,
+    tainted_names: set[str],
+) -> Iterable[tuple[Sequence[ast.stmt], set[str]]]:
+    if isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef):
+        function_taint = {
+            arg.arg
+            for arg in (
+                *statement.args.posonlyargs,
+                *statement.args.args,
+                *statement.args.kwonlyargs,
+            )
+            if arg.arg == "project_path"
+        }
+        function_taint.add("project_path")
+        yield statement.body, function_taint
+        return
+
+    if isinstance(statement, ast.If | ast.While | ast.For | ast.AsyncFor):
+        yield statement.body, set(tainted_names)
+        yield statement.orelse, set(tainted_names)
+        return
+
+    if isinstance(statement, ast.With | ast.AsyncWith):
+        yield statement.body, set(tainted_names)
+        return
+
+    if isinstance(statement, ast.Try):
+        yield statement.body, set(tainted_names)
+        yield statement.orelse, set(tainted_names)
+        yield statement.finalbody, set(tainted_names)
+        for handler in statement.handlers:
+            yield handler.body, set(tainted_names)
+
+
+def _statement_uses_tainted_cwd(statement: ast.stmt, tainted_names: set[str]) -> bool:
+    return any(
+        isinstance(node, ast.Call) and _call_uses_tainted_cwd(node, tainted_names)
+        for node in ast.walk(statement)
+    )
+
+
+def _call_uses_tainted_cwd(call: ast.Call, tainted_names: set[str]) -> bool:
+    return any(
+        keyword.arg == "cwd" and _expression_uses_tainted_name(keyword.value, tainted_names)
+        for keyword in call.keywords
+    )
+
+
+def _expression_uses_tainted_name(expression: ast.AST, tainted_names: set[str]) -> bool:
+    return any(
+        isinstance(node, ast.Name) and node.id in tainted_names for node in ast.walk(expression)
+    )
+
+
+def _update_project_path_taint(statement: ast.stmt, tainted_names: set[str]) -> None:
+    if isinstance(statement, ast.Assign):
+        _update_assigned_names(statement.targets, statement.value, tainted_names)
+    elif isinstance(statement, ast.AnnAssign):
+        _update_assigned_names([statement.target], statement.value, tainted_names)
+    elif isinstance(statement, ast.AugAssign):
+        _update_assigned_names([statement.target], statement.value, tainted_names)
+
+
+def _update_assigned_names(
+    targets: Sequence[ast.expr],
+    value: ast.AST | None,
+    tainted_names: set[str],
+) -> None:
+    assigned_names = [name for target in targets for name in _iter_assigned_names(target)]
+    if not assigned_names:
+        return
+    if value is None or _is_project_path_resolver_call(value):
+        for name in assigned_names:
+            tainted_names.discard(name)
+        return
+
+    value_is_tainted = _expression_uses_tainted_name(value, tainted_names)
+    for name in assigned_names:
+        if value_is_tainted:
+            tainted_names.add(name)
+        else:
+            tainted_names.discard(name)
+
+
+def _iter_assigned_names(target: ast.expr) -> Iterable[str]:
+    if isinstance(target, ast.Name):
+        yield target.id
+        return
+    if isinstance(target, ast.Tuple | ast.List):
+        for item in target.elts:
+            yield from _iter_assigned_names(item)
+
+
+def _is_project_path_resolver_call(value: ast.AST) -> bool:
+    return isinstance(value, ast.Call) and _call_name(value) in _PROJECT_PATH_RESOLVER_CALLS
+
+
+def _call_name(call: ast.Call) -> str | None:
+    if isinstance(call.func, ast.Name):
+        return call.func.id
+    if isinstance(call.func, ast.Attribute):
+        return call.func.attr
+    return None
 
 
 class TaskProvider(Protocol):

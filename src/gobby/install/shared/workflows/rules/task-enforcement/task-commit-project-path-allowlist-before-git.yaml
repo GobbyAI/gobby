@@ -1,0 +1,16 @@
+tags: [task-enforcement, enforcement, tasks, gobby, default, guardrail]
+
+rules:
+  task-commit-project-path-allowlist-before-git:
+    description: "Block task commit/diff code edits that pass raw project_path to Git helpers"
+    event: before_tool
+    enabled: true
+    priority: 30
+    when: >
+      event.data.get('canonical_repo_mutation')
+      and task_commit_project_path_allowlist_violation(event.data, tool_input)
+    effects:
+      - type: block
+        reason: |
+          Task commit and diff tools must resolve explicit project_path through
+          resolve_task_repo_path or _get_task_and_repo_path before passing cwd to Git helpers.

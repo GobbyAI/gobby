@@ -5,6 +5,8 @@ Sync tools (sync_tasks, get_sync_status, sync_import, sync_export) have been
 removed from MCP — they are CLI-only operations.
 """
 
+import ast
+import inspect
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -271,6 +273,39 @@ class TestUnlinkCommit:
             cwd=str(repo_path),
         )
 
+    def test_unlink_commit_rejects_unknown_project_path_before_git(
+        self, mock_sync_registry, tmp_path: Path
+    ) -> None:
+        """Unknown explicit repo paths are rejected before unlink Git work."""
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+
+        repo_path = tmp_path / "repo"
+        outside = tmp_path / "outside"
+        repo_path.mkdir()
+        outside.mkdir()
+        task_manager = MagicMock()
+        mock_task = MagicMock()
+        mock_task.id = "task-1"
+        mock_task.project_id = "project-1"
+        mock_task.parent_task_id = None
+        mock_task.commits = ["abc123"]
+        task_manager.get_task.return_value = mock_task
+        project_manager = MagicMock()
+        project_manager.get.return_value = MagicMock(repo_path=str(repo_path))
+
+        registry = create_commit_registry(
+            task_manager=task_manager,
+            sync_manager=MagicMock(),
+            project_manager=project_manager,
+        )
+
+        unlink = registry.get_tool("unlink_commit")
+        result = unlink(task_id="task-1", commit_sha="abc123", project_path=str(outside))
+
+        assert "error" in result
+        assert "outside the task project repo" in result["error"]
+        task_manager.unlink_commit.assert_not_called()
+
 
 class TestAutoLinkCommits:
     """Tests for auto_link_commits MCP tool."""
@@ -333,6 +368,77 @@ class TestAutoLinkCommits:
         call_kwargs = mock_fn.call_args.kwargs
         assert call_kwargs["task_id"] == "task-1"
         assert result["linked_tasks"] == ["task-1"]
+
+    def test_auto_link_commits_task_filter_uses_registered_project_path_override(
+        self, mock_sync_registry, tmp_path: Path
+    ) -> None:
+        """Task-filtered auto-link supports registered explicit repo paths."""
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+
+        repo_path = tmp_path / "external" / "repo"
+        repo_path.mkdir(parents=True)
+        task_manager = MagicMock()
+        mock_task = MagicMock()
+        mock_task.id = "task-1"
+        mock_task.project_id = "project-1"
+        mock_task.parent_task_id = None
+        task_manager.get_task.return_value = mock_task
+        project_manager = MagicMock()
+        project_manager.get.return_value = MagicMock(repo_path=str(repo_path))
+
+        mock_fn = MagicMock()
+        mock_result = MagicMock()
+        mock_result.linked_tasks = ["task-1"]
+        mock_result.total_linked = 1
+        mock_result.skipped = []
+        mock_fn.return_value = mock_result
+
+        registry = create_commit_registry(
+            task_manager=task_manager,
+            sync_manager=MagicMock(),
+            project_manager=project_manager,
+            auto_link_commits_fn=mock_fn,
+        )
+
+        auto_link = registry.get_tool("auto_link_commits")
+        result = auto_link(task_id="task-1", project_path=str(repo_path))
+
+        assert result["linked_tasks"] == ["task-1"]
+        assert mock_fn.call_args.kwargs["cwd"] == str(repo_path)
+
+    def test_auto_link_commits_task_filter_rejects_unknown_project_path_before_git(
+        self, mock_sync_registry, tmp_path: Path
+    ) -> None:
+        """Task-filtered auto-link rejects unknown explicit repo paths before Git scan."""
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+
+        repo_path = tmp_path / "repo"
+        outside = tmp_path / "outside"
+        repo_path.mkdir()
+        outside.mkdir()
+        task_manager = MagicMock()
+        mock_task = MagicMock()
+        mock_task.id = "task-1"
+        mock_task.project_id = "project-1"
+        mock_task.parent_task_id = None
+        task_manager.get_task.return_value = mock_task
+        project_manager = MagicMock()
+        project_manager.get.return_value = MagicMock(repo_path=str(repo_path))
+        mock_fn = MagicMock()
+
+        registry = create_commit_registry(
+            task_manager=task_manager,
+            sync_manager=MagicMock(),
+            project_manager=project_manager,
+            auto_link_commits_fn=mock_fn,
+        )
+
+        auto_link = registry.get_tool("auto_link_commits")
+        result = auto_link(task_id="task-1", project_path=str(outside))
+
+        assert "error" in result
+        assert "outside the task project repo" in result["error"]
+        mock_fn.assert_not_called()
 
     def test_auto_link_commits_task_filter_not_found(self, mock_sync_registry) -> None:
         """Filtered auto-link returns structured missing-task errors."""
@@ -550,6 +656,39 @@ class TestGetTaskDiff:
         assert result["diff"] == "external diff"
         assert mock_get_task_diff.call_args.kwargs["cwd"] == str(repo_path)
 
+    def test_get_task_diff_rejects_unknown_project_path_before_git(
+        self, mock_sync_registry, tmp_path: Path
+    ) -> None:
+        """Unknown explicit repo paths are rejected before diff Git work."""
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+
+        repo_path = tmp_path / "repo"
+        outside = tmp_path / "outside"
+        repo_path.mkdir()
+        outside.mkdir()
+        task_manager = MagicMock()
+        mock_task = MagicMock()
+        mock_task.project_id = "project-1"
+        mock_task.parent_task_id = None
+        task_manager.get_task.return_value = mock_task
+        project_manager = MagicMock()
+        project_manager.get.return_value = MagicMock(repo_path=str(repo_path))
+        mock_get_task_diff = MagicMock()
+
+        registry = create_commit_registry(
+            task_manager=task_manager,
+            sync_manager=MagicMock(),
+            project_manager=project_manager,
+            get_task_diff_fn=mock_get_task_diff,
+        )
+
+        get_diff = registry.get_tool("get_task_diff")
+        result = get_diff(task_id="task-1", project_path=str(outside))
+
+        assert "error" in result
+        assert "outside the task project repo" in result["error"]
+        mock_get_task_diff.assert_not_called()
+
 
 class TestGitIntegrationEdgeCases:
     """Tests for git integration edge cases."""
@@ -671,3 +810,61 @@ def mock_sync_registry():
     with patch("gobby.mcp_proxy.tools.task_sync.get_project_context") as mock_proj:
         mock_proj.return_value = {"id": "test-project-id"}
         yield mock_proj
+
+
+def test_task_sync_git_helper_calls_follow_repo_path_resolution() -> None:
+    """Commit/diff helpers must resolve project_path before Git helper cwd use."""
+    import gobby.mcp_proxy.tools.task_sync as task_sync
+
+    source = inspect.getsource(task_sync.create_commit_registry)
+    tree = ast.parse(source)
+    function_lines = _nested_function_line_numbers(tree)
+
+    assert (
+        function_lines["link_commit"]["_get_task_and_repo_path"]
+        < function_lines["link_commit"]["task_manager.link_commit"]
+    )
+    assert (
+        function_lines["unlink_commit"]["_get_task_and_repo_path"]
+        < function_lines["unlink_commit"]["task_manager.unlink_commit"]
+    )
+    assert (
+        function_lines["auto_link_commits"]["_get_task_and_repo_path"]
+        < function_lines["auto_link_commits"]["auto_link_commits_fn"]
+    )
+    assert (
+        function_lines["get_task_diff_tool"]["_get_task_and_repo_path"]
+        < function_lines["get_task_diff_tool"]["get_task_diff_fn"]
+    )
+
+
+def _nested_function_line_numbers(tree: ast.Module) -> dict[str, dict[str, int]]:
+    line_numbers: dict[str, dict[str, int]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef):
+            line_numbers[node.name] = _call_line_numbers(node)
+    return line_numbers
+
+
+def _call_line_numbers(function: ast.FunctionDef) -> dict[str, int]:
+    lines: dict[str, int] = {}
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Call):
+            continue
+        call_name = _call_name(node)
+        if call_name and call_name not in lines:
+            lines[call_name] = node.lineno
+    return lines
+
+
+def _call_name(call: ast.Call) -> str | None:
+    if isinstance(call.func, ast.Name):
+        return call.func.id
+    if isinstance(call.func, ast.Attribute):
+        value = call.func.value
+        if isinstance(value, ast.Name):
+            return f"{value.id}.{call.func.attr}"
+        if isinstance(value, ast.Attribute) and isinstance(value.value, ast.Name):
+            return f"{value.value.id}.{value.attr}.{call.func.attr}"
+        return call.func.attr
+    return None

@@ -59,6 +59,7 @@ TASK_ENFORCEMENT_RULES = {
     "require-clean-tree-before-status",
     "block-direct-verification-evidence-variable-set",
     "strip-skip-validation-with-commit",
+    "task-commit-project-path-allowlist-before-git",
     "block-ask-during-stop-compliance",
     "block-needs-review-interactive",
     "track-task-claim",

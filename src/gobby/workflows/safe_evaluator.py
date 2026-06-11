@@ -502,6 +502,7 @@ def build_condition_helpers(
         completion_evidence_ready,
         is_gobby_build_command,
         is_validation_command,
+        task_commit_project_path_allowlist_violation,
         task_needs_human_review,
         task_state_in,
         task_tree_complete,
@@ -522,6 +523,9 @@ def build_condition_helpers(
         "completion_evidence_ready": completion_evidence_ready,
         "is_gobby_build_command": is_gobby_build_command,
         "is_validation_command": is_validation_command,
+        "task_commit_project_path_allowlist_violation": (
+            task_commit_project_path_allowlist_violation
+        ),
     }
 
     # --- Task helpers ---
