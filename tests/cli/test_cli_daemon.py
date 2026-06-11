@@ -1418,6 +1418,37 @@ class TestStatusCommand:
             assert "Stopped" in result.output
             assert "Stale PID file found" in result.output
 
+    @patch("gobby.cli.daemon._is_process_alive", return_value=False)
+    @patch("gobby.cli.daemon.get_gobby_home")
+    @patch("gobby.cli.load_full_config_from_db")
+    def test_status_uses_process_alive_check(
+        self,
+        mock_load_config: MagicMock,
+        mock_get_gobby_home: MagicMock,
+        mock_is_process_alive: MagicMock,
+        runner: CliRunner,
+        mock_daemon_config: MagicMock,
+        temp_dir: Path,
+    ) -> None:
+        """Test status treats a PID rejected by the liveness helper as stopped."""
+        mock_load_config.return_value = mock_daemon_config
+
+        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+            gobby_dir = temp_dir / ".gobby"
+            gobby_dir.mkdir(parents=True, exist_ok=True)
+            (gobby_dir / "logs").mkdir(parents=True, exist_ok=True)
+            mock_get_gobby_home.return_value = gobby_dir
+
+            pid_file = gobby_dir / "gobby.pid"
+            pid_file.write_text(str(os.getpid()))
+
+            result = runner.invoke(cli, ["status"])
+
+            assert result.exit_code == 0
+            assert "Stopped" in result.output
+            assert "Stale PID file found" in result.output
+            mock_is_process_alive.assert_called_once_with(os.getpid())
+
     @patch("gobby.utils.deps.check_config_mismatches", return_value=[])
     @patch(
         "gobby.utils.deps.collect_all_deps",
@@ -1471,10 +1502,12 @@ class TestStatusCommand:
     )
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.psutil.Process")
+    @patch("gobby.cli.daemon._is_process_alive", return_value=True)
     @patch("gobby.cli.load_full_config_from_db")
     def test_status_psutil_error(
         self,
         mock_load_config: MagicMock,
+        mock_is_process_alive: MagicMock,
         mock_psutil_process: MagicMock,
         mock_fetch_status: MagicMock,
         mock_collect_deps: MagicMock,
@@ -1503,6 +1536,7 @@ class TestStatusCommand:
             # Should still work, just without uptime info
             assert result.exit_code == 0
             assert "Running" in result.output
+            mock_is_process_alive.assert_called_once_with(os.getpid())
 
 
 class TestDaemonCommandsIntegration:

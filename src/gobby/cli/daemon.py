@@ -696,9 +696,7 @@ def status(ctx: click.Context) -> None:
             sys.exit(0)
 
     # Check if process is actually running
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
+    if not _is_process_alive(pid):
         click.echo(format_status_message(running=False))
         click.echo(f"Note: Stale PID file found (PID {pid})")
         sys.exit(0)
