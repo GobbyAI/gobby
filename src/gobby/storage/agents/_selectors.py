@@ -48,17 +48,7 @@ class _AgentRunSelectorMixin:
                 ar.agent_name,
                 ar.provider,
                 ar.model,
-                COALESCE(
-                    ar.is_local,
-                    CASE
-                        WHEN lower(COALESCE(ar.provider, '')) IN (
-                            'lmstudio', 'ollama', 'llamacpp', 'local'
-                        )
-                            OR lower(COALESCE(ar.model, '')) LIKE '%%gpt-oss%%'
-                        THEN TRUE
-                        ELSE FALSE
-                    END
-                ) AS is_local,
+                COALESCE(ar.is_local, FALSE) AS is_local,
                 ar.requested_reasoning_effort,
                 ar.effective_reasoning_effort,
                 ar.reasoning_required,

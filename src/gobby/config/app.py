@@ -46,7 +46,6 @@ from gobby.config.features import (
     ToolSummarizerConfig,
 )
 from gobby.config.indexing import IndexingConfig
-from gobby.config.local import LocalConfig
 from gobby.config.persistence import (
     DatabasesConfig,
     EmbeddingsConfig,
@@ -217,6 +216,11 @@ class DaemonConfig(BaseModel):
             if "memory_recall_helper" in data:
                 raise ValueError(
                     "memory_recall_helper config has been removed. Use memory_recall instead."
+                )
+            if "local" in data:
+                raise ValueError(
+                    "local config has been removed. Use "
+                    "ai.generation.local.endpoints.<name> instead."
                 )
         return data
 
@@ -466,11 +470,6 @@ class DaemonConfig(BaseModel):
         default="~/.gobby/worktrees",
         description="Base directory for git worktrees (survives reboots, unlike /tmp).",
     )
-    local: LocalConfig | None = Field(
-        default=None,
-        description="Local model endpoint configuration (e.g., LMStudio). "
-        "When configured, agents with model='local' resolve endpoint and model from here.",
-    )
 
     def get_recommend_tools_config(self) -> RecommendToolsConfig:
         """Get recommend_tools configuration."""
@@ -698,6 +697,7 @@ _LEGACY_KEYS_TO_DROP = frozenset(
     {"_meta", "review", "task_description", "title_synthesis", "rules", "ui_settings"}
 )
 _REMOVED_CONFIG_STORE_KEYS = frozenset({"databases.falkordb.requirepass"})
+_REMOVED_CONFIG_STORE_PREFIXES = ("local.",)
 _UI_MODE_CONFIG_KEY = "ui.mode"
 
 # Mapping from old logging.* field names to new telemetry.* field names
@@ -770,7 +770,13 @@ def _drop_legacy_embedding_config_store_keys(
 def _drop_removed_config_store_keys(
     flat_config: dict[str, Any], config_store: Any | None
 ) -> dict[str, Any]:
-    removed_keys = sorted(key for key in flat_config if key in _REMOVED_CONFIG_STORE_KEYS)
+    removed_keys = sorted(
+        key
+        for key in flat_config
+        if key in _REMOVED_CONFIG_STORE_KEYS
+        or key == "local"
+        or key.startswith(_REMOVED_CONFIG_STORE_PREFIXES)
+    )
     if not removed_keys:
         return flat_config
 

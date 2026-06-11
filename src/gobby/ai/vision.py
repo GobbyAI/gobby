@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
+from gobby.ai.local_endpoints import local_endpoint_provider
 from gobby.ai.registry import (
     AICapability,
     AICapabilityRegistry,
@@ -100,10 +101,10 @@ class ClaudeVisionExtractAdapter:
 class LocalVisionExtractAdapter:
     """Native vision_extract adapter backed by a local OpenAI-compatible endpoint."""
 
-    def __init__(self, config: DaemonConfig) -> None:
+    def __init__(self, config: DaemonConfig, endpoint_name: str) -> None:
         from gobby.llm.local import LocalLLMProvider
 
-        self._provider = LocalLLMProvider(config)
+        self._provider = LocalLLMProvider(config, endpoint_name=endpoint_name)
 
     async def extract(self, request: VisionExtractRequest) -> str:
         return await self._provider.describe_image(
@@ -129,8 +130,9 @@ def _daemon_vision_extract_adapters(config: DaemonConfig) -> dict[str, VisionExt
     adapters: dict[str, VisionExtractAdapter] = {
         "claude": ClaudeVisionExtractAdapter(config),
     }
-    if config.local:
-        adapters["local"] = LocalVisionExtractAdapter(config)
+    for name, endpoint in config.ai.generation.local.endpoints.items():
+        if endpoint.vision_extract:
+            adapters[local_endpoint_provider(name)] = LocalVisionExtractAdapter(config, name)
     return adapters
 
 

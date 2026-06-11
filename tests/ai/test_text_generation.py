@@ -325,7 +325,39 @@ async def test_text_generation_service_falls_back_between_named_local_endpoints(
 
 
 @pytest.mark.asyncio
-async def test_text_generation_service_resolves_bare_local_candidate_to_named_endpoint() -> None:
+async def test_text_generation_service_routes_named_local_candidate_with_slashed_model_id() -> None:
+    model = "google/gemma-4-26b-a4b-qat"
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local:lm-studio",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=(model,),
+            ),
+        ]
+    )
+    local = RecordingAdapter("local:lm-studio")
+    service = TextGenerationService(registry, {"local:lm-studio": local})
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="summarize",
+            profile="feature_low",
+            candidates=(f"local:lm-studio/{model}",),
+        )
+    )
+
+    assert result.text == "local:lm-studio:summarize"
+    assert result.provider == "local:lm-studio"
+    assert result.model == model
+    assert local.requests[0].provider == "local:lm-studio"
+    assert local.requests[0].model == model
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_rejects_bare_local_candidate() -> None:
     registry = AICapabilityRegistry(
         [
             CapabilityBinding.unavailable(
@@ -346,19 +378,16 @@ async def test_text_generation_service_resolves_bare_local_candidate_to_named_en
     ollama = RecordingAdapter("local:ollama")
     service = TextGenerationService(registry, {"local:ollama": ollama})
 
-    result = await service.generate_result(
-        TextGenerationRequest(
-            prompt="summarize",
-            profile="feature_low",
-            candidates=("local/qwen-ollama", "claude/haiku"),
+    with pytest.raises(CapabilityUnavailableError, match="named local generation endpoint"):
+        await service.generate_result(
+            TextGenerationRequest(
+                prompt="summarize",
+                profile="feature_low",
+                candidates=("local/qwen-ollama",),
+            )
         )
-    )
 
-    assert result.text == "local:ollama:summarize"
-    assert result.provider == "local:ollama"
-    assert result.model == "qwen-ollama"
-    assert ollama.requests[0].provider == "local"
-    assert ollama.requests[0].model == "qwen-ollama"
+    assert ollama.requests == []
 
 
 @pytest.mark.asyncio

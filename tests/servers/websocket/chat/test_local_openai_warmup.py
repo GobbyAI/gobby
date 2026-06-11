@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 import pytest
 
+from gobby.config.ai import LocalGenerationEndpointConfig
 from gobby.servers.websocket.chat import local_openai_warmup as warmup
 
 pytestmark = pytest.mark.unit
@@ -79,6 +80,15 @@ def _write_qwen_settings(settings_path: Path, payload: dict[str, Any]) -> None:
     settings_path.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def _endpoint(
+    *,
+    api_base: str = "http://localhost:1234/v1",
+    model: str = "qwen3.6-35b-a3b-q8-local",
+    api_key: str | None = "endpoint-token",
+) -> LocalGenerationEndpointConfig:
+    return LocalGenerationEndpointConfig(api_base=api_base, model=model, api_key=api_key)
+
+
 def test_resolve_qwen_local_openai_target_reads_model_config(
     temp_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -105,15 +115,14 @@ def test_resolve_qwen_local_openai_target_reads_model_config(
     target = warmup.resolve_qwen_local_openai_target(
         "qwen3.6-35b-a3b-q8-local(openai)",
         project_path=None,
+        local_generation_endpoints={"lm-studio": _endpoint()},
     )
 
-    # The dummy "lm-studio" placeholder is dropped (it 401s against newer
-    # LM Studio builds); with no configured fallback the token resolves to None.
     assert target == warmup.LocalOpenAIModelTarget(
         backend="lm_studio",
         request_model="qwen3.6-35b-a3b-q8-local",
         base_url="http://localhost:1234/v1",
-        api_key=None,
+        api_key="endpoint-token",
     )
 
 
@@ -167,12 +176,10 @@ async def test_ensure_qwen_local_openai_model_ready_loads_lm_studio_model(
     )
     monkeypatch.setattr(warmup.httpx, "AsyncClient", lambda: fake_client)
 
-    # A real configured fallback (the embeddings credential) is sent once the
-    # placeholder is dropped.
     await warmup.ensure_qwen_local_openai_model_ready(
         "qwen3.6-35b-a3b-q8-local(openai)",
         project_path=None,
-        local_api_key_fallback="real-lm-studio-token",
+        local_generation_endpoints={"lm-studio": _endpoint(api_key="real-lm-studio-token")},
     )
 
     assert fake_client.calls == [
@@ -243,6 +250,13 @@ async def test_ensure_qwen_local_openai_model_ready_preloads_ollama_model(
     await warmup.ensure_qwen_local_openai_model_ready(
         "qwen3-coder:32b(openai)",
         project_path=None,
+        local_generation_endpoints={
+            "ollama": _endpoint(
+                api_base="http://localhost:11434/v1",
+                model="qwen3-coder:32b",
+                api_key=None,
+            )
+        },
     )
 
     assert fake_client.calls == [
@@ -289,51 +303,54 @@ def _resolve_lm_studio_target(
     settings_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
-    fallback: str | None,
+    endpoint: LocalGenerationEndpointConfig | None = None,
 ) -> warmup.LocalOpenAIModelTarget | None:
     monkeypatch.setattr(warmup, "_QWEN_SETTINGS_PATH", settings_path)
+    endpoints = {"lm-studio": endpoint or _endpoint()}
     return warmup.resolve_qwen_local_openai_target(
         "qwen3.6-35b-a3b-q8-local(openai)",
         project_path=None,
-        local_api_key_fallback=fallback,
+        local_generation_endpoints=endpoints,
     )
 
 
-def test_resolve_uses_configured_fallback_when_env_is_placeholder(
+def test_resolve_uses_endpoint_api_key_when_qwen_env_is_placeholder(
     temp_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings_path = temp_dir / ".qwen" / "settings.json"
     _write_lm_studio_settings(settings_path, {"LMSTUDIO_API_KEY": "lm-studio"})
 
-    target = _resolve_lm_studio_target(settings_path, monkeypatch, fallback="embeddings-token")
+    target = _resolve_lm_studio_target(settings_path, monkeypatch)
 
     assert target is not None
-    assert target.api_key == "embeddings-token"
+    assert target.api_key == "endpoint-token"
 
 
-def test_resolve_prefers_real_env_token_over_fallback(
+def test_resolve_ignores_qwen_env_token_in_favor_of_endpoint_config(
     temp_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings_path = temp_dir / ".qwen" / "settings.json"
     _write_lm_studio_settings(settings_path, {"LMSTUDIO_API_KEY": "user-set-token"})
 
-    target = _resolve_lm_studio_target(settings_path, monkeypatch, fallback="embeddings-token")
+    target = _resolve_lm_studio_target(settings_path, monkeypatch)
 
     assert target is not None
-    assert target.api_key == "user-set-token"
+    assert target.api_key == "endpoint-token"
 
 
-def test_resolve_ignores_unresolved_secret_fallback(
+def test_resolve_returns_no_api_key_when_endpoint_has_no_api_key(
     temp_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings_path = temp_dir / ".qwen" / "settings.json"
-    _write_lm_studio_settings(settings_path, {"LMSTUDIO_API_KEY": "lm-studio"})
+    _write_lm_studio_settings(settings_path, {"LMSTUDIO_API_KEY": "user-set-token"})
 
     target = _resolve_lm_studio_target(
-        settings_path, monkeypatch, fallback="$secret:embeddings_api_key"
+        settings_path,
+        monkeypatch,
+        endpoint=_endpoint(api_key=None),
     )
 
     assert target is not None
@@ -367,11 +384,13 @@ async def test_ensure_raises_actionable_error_on_lm_studio_401(
         await warmup.ensure_qwen_local_openai_model_ready(
             "qwen3.6-35b-a3b-q8-local(openai)",
             project_path=None,
+            local_generation_endpoints={"lm-studio": _endpoint(api_key="bad-token")},
         )
 
     message = str(exc_info.value)
     assert "401" in message
     assert "LM Studio API token" in message
+    assert "ai.generation.local.endpoints" in message
     assert "disable API-key auth" in message
     # No model-load attempt once auth fails.
     assert all(call[0] != "POST" for call in fake_client.calls)

@@ -111,16 +111,22 @@ call_tool(
     "set_config_batch",
     {
         "entries": [
-            {"key": "local.url", "value": "http://localhost:1234/v1"},
-            {"key": "local.model", "value": "local-model"},
+            {
+                "key": "ai.generation.local.endpoints.lm-studio.api_base",
+                "value": "http://localhost:1234/v1",
+            },
+            {
+                "key": "ai.generation.local.endpoints.lm-studio.model",
+                "value": "local-model",
+            },
         ]
     },
 )
 ```
 
 Use `set_config_batch` when a section has multiple required fields. For example,
-`local` requires both `url` and `model`, so setting only one key does not produce
-a valid `DaemonConfig`.
+a named local generation endpoint requires both `api_base` and `model`, so
+setting only one key does not produce a valid `DaemonConfig`.
 
 ### HTTP Configuration API
 

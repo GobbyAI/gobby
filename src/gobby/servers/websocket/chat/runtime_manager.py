@@ -11,6 +11,7 @@ from gobby.agents.sandbox import (
     web_chat_sandbox_config,
     web_chat_sandbox_policy_hash,
 )
+from gobby.config.ai import LocalGenerationEndpointConfig
 from gobby.config.app import DaemonConfig
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.chat_session_base import ChatSessionProtocol
@@ -44,12 +45,12 @@ class WebChatRuntimeManager:
     ) -> None:
         self._sandbox_config = web_chat_sandbox_config(daemon_config)
         self._sandbox_policy_hash = web_chat_sandbox_policy_hash(daemon_config)
-        # The embeddings backend's configured credential doubles as the token
-        # for the shared local OpenAI-compatible endpoint (LM Studio), used as a
-        # fallback when the Qwen provider config only carries the dummy
-        # placeholder token.
-        embeddings = getattr(daemon_config, "embeddings", None) if daemon_config else None
-        local_openai_api_key = getattr(embeddings, "api_key", None)
+        local_generation_endpoints: dict[str, LocalGenerationEndpointConfig] = {}
+        if daemon_config is not None:
+            ai_config = getattr(daemon_config, "ai", None)
+            generation_config = getattr(ai_config, "generation", None)
+            local_config = getattr(generation_config, "local", None)
+            local_generation_endpoints = getattr(local_config, "endpoints", {}) or {}
         self._claude_backend = ClaudeWebChatBackend(
             sandbox_config=self._sandbox_config.model_copy(deep=True)
         )
@@ -68,7 +69,7 @@ class WebChatRuntimeManager:
         )
         self._qwen_backend = QwenWebChatBackend(
             sandbox_config=self._sandbox_config.model_copy(deep=True),
-            local_openai_api_key=local_openai_api_key,
+            local_generation_endpoints=local_generation_endpoints,
         )
         self._droid_backend = DroidWebChatBackend(
             sandbox_config=self._sandbox_config.model_copy(deep=True)

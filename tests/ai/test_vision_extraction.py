@@ -32,8 +32,9 @@ class _FakeVisionAdapter:
 class _FakeNativeVisionProvider:
     last_instance: ClassVar[_FakeNativeVisionProvider | None] = None
 
-    def __init__(self, config: DaemonConfig) -> None:
+    def __init__(self, config: DaemonConfig, endpoint_name: str | None = None) -> None:
         self.config = config
+        self.endpoint_name = endpoint_name
         self.calls: list[tuple[str, str | None, str | None]] = []
         self.__class__.last_instance = self
 
@@ -52,7 +53,7 @@ def _registry() -> AICapabilityRegistry:
         [
             CapabilityBinding(
                 capability=AICapability.VISION_EXTRACT,
-                provider="local",
+                provider="local:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("llava",),
@@ -70,12 +71,12 @@ def _registry() -> AICapabilityRegistry:
 @pytest.mark.asyncio
 async def test_vision_service_selects_extract_provider() -> None:
     adapter = _FakeVisionAdapter()
-    service = VisionExtractService(_registry(), {"local": adapter})
+    service = VisionExtractService(_registry(), {"local:lm-studio": adapter})
 
     result = await service.extract(
         VisionExtractRequest(
             image_path="/tmp/image.png",
-            provider="local",
+            provider="local:lm-studio",
             model="llava",
             context="screenshot",
         )
@@ -83,13 +84,13 @@ async def test_vision_service_selects_extract_provider() -> None:
 
     assert result.text == "extracted:/tmp/image.png"
     assert result.capability == AICapability.VISION_EXTRACT
-    assert result.provider == "local"
+    assert result.provider == "local:lm-studio"
     assert result.model == "llava"
     assert result.ocr_text == "extracted:/tmp/image.png"
     assert adapter.requests == [
         VisionExtractRequest(
             image_path="/tmp/image.png",
-            provider="local",
+            provider="local:lm-studio",
             model="llava",
             context="screenshot",
         )
@@ -98,7 +99,7 @@ async def test_vision_service_selects_extract_provider() -> None:
 
 @pytest.mark.asyncio
 async def test_vision_service_rejects_unproven_provider() -> None:
-    service = VisionExtractService(_registry(), {"local": _FakeVisionAdapter()})
+    service = VisionExtractService(_registry(), {"local:lm-studio": _FakeVisionAdapter()})
 
     with pytest.raises(CapabilityUnavailableError, match="proven image payload support"):
         await service.extract(VisionExtractRequest(image_path="/tmp/image.png", provider="droid"))
@@ -124,6 +125,7 @@ async def test_claude_vision_adapter_forwards_image_context_and_model(
     provider = _FakeNativeVisionProvider.last_instance
     assert provider is not None
     assert provider.config is config
+    assert provider.endpoint_name is None
     assert result == "described"
     assert provider.calls == [("/tmp/screenshot.png", "settings page", "vision-model")]
 
@@ -135,7 +137,7 @@ async def test_local_vision_adapter_forwards_image_context_and_model(
     _FakeNativeVisionProvider.last_instance = None
     monkeypatch.setattr("gobby.llm.local.LocalLLMProvider", _FakeNativeVisionProvider)
     config = DaemonConfig()
-    adapter = LocalVisionExtractAdapter(config)
+    adapter = LocalVisionExtractAdapter(config, "lm-studio")
 
     result = await adapter.extract(
         VisionExtractRequest(
@@ -148,5 +150,6 @@ async def test_local_vision_adapter_forwards_image_context_and_model(
     provider = _FakeNativeVisionProvider.last_instance
     assert provider is not None
     assert provider.config is config
+    assert provider.endpoint_name == "lm-studio"
     assert result == "described"
     assert provider.calls == [("/tmp/screenshot.png", "settings page", "vision-model")]

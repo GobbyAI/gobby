@@ -365,6 +365,7 @@ class TestProviderModelsRoute:
         assert local["available"] is True
         assert local["display_name"] == "Local (lm-studio)"
         assert local["source"] == "config"
+        assert local["supports_web_chat"] is False
         assert local["models"] == [{"value": "qwen-coder-32b", "label": "qwen-coder-32b"}]
 
     def test_current_catalog_uses_static_catalog_without_provider_config(self) -> None:

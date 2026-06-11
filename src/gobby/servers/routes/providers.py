@@ -164,7 +164,7 @@ def _local_generation_provider_entries(server: HTTPServer | None) -> list[dict[s
             "installed": True,
             "deprecated": False,
             "deprecation_message": None,
-            "supports_web_chat": True,
+            "supports_web_chat": False,
             "supports_agent_spawn": False,
             "unavailable_reason": None,
         }

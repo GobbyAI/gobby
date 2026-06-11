@@ -190,29 +190,37 @@ class ChatSession(ChatSessionPermissionsMixin):
         self, requested_model: str | None, env: dict[str, str]
     ) -> str | None:
         """Resolve special model aliases and mutate env for endpoint overrides."""
-        if requested_model != "local":
-            return requested_model or self._default_model
-
-        local_cfg = getattr(self._config, "local", None) if self._config else None
-        if not local_cfg:
+        if requested_model == "local":
             raise RuntimeError(
-                "Model 'local' requires a configured local endpoint (local.url, local.model)."
+                "Model 'local' has been removed. Use model 'local:<endpoint>' "
+                "with ai.generation.local.endpoints.<endpoint>."
             )
 
-        env["ANTHROPIC_BASE_URL"] = local_cfg.url
-        if local_cfg.api_key:
-            env["ANTHROPIC_AUTH_TOKEN"] = local_cfg.api_key
+        from gobby.ai.local_endpoints import resolve_local_generation_endpoint_selector
 
-        resolved_model = local_cfg.model
+        selection = resolve_local_generation_endpoint_selector(self._config, requested_model)
+        if selection is None:
+            return requested_model or self._default_model
+
+        endpoint = selection.endpoint
+
+        env["ANTHROPIC_BASE_URL"] = endpoint.api_base
+        if endpoint.api_key:
+            env["ANTHROPIC_AUTH_TOKEN"] = endpoint.api_key
+
+        resolved_model = endpoint.model
         try:
             from gobby.agents.local_model import ensure_local_model
 
-            resolved_model = await ensure_local_model(local_cfg, registry=None)
+            resolved_model = await ensure_local_model(endpoint, registry=None)
         except Exception as e:
             raise RuntimeError(f"Local model pre-flight failed: {e}") from e
 
         logger.info(
-            f"ChatSession {self.conversation_id} using configured local model: {resolved_model}"
+            "ChatSession %s using local endpoint %s model: %s",
+            self.conversation_id,
+            selection.name,
+            resolved_model,
         )
         return resolved_model
 
@@ -904,12 +912,15 @@ class ChatSession(ChatSessionPermissionsMixin):
             raise RuntimeError("ChatSession not connected")
         resolved_model = new_model
         if new_model == "local":
-            local_cfg = getattr(self._config, "local", None) if self._config else None
-            if not local_cfg:
-                raise RuntimeError(
-                    "Model 'local' requires a configured local endpoint (local.url, local.model)."
-                )
-            resolved_model = local_cfg.model
+            raise RuntimeError(
+                "Model 'local' has been removed. Use model 'local:<endpoint>' "
+                "with ai.generation.local.endpoints.<endpoint>."
+            )
+        from gobby.ai.local_endpoints import resolve_local_generation_endpoint_selector
+
+        selection = resolve_local_generation_endpoint_selector(self._config, new_model)
+        if selection is not None:
+            resolved_model = selection.endpoint.model
         await self._client.set_model(resolved_model)
         self._model = new_model
 

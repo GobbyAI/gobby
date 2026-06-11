@@ -1,26 +1,34 @@
-"""Red tests for authoritative local-model detection."""
+"""Tests for explicit local-model detection."""
 
 from __future__ import annotations
 
 import pytest
 
-from gobby.llm.local_detection import is_local_agent_definition, is_local_legacy_fallback
+from gobby.llm.local_detection import is_local_agent_definition
 
 pytestmark = pytest.mark.unit
 
 
-def test_legacy_row_detection_uses_provider_and_known_local_model_signals() -> None:
-    assert is_local_legacy_fallback(provider="lmstudio", model="qwen2.5-coder") is True
-    assert is_local_legacy_fallback(provider="ollama", model="llama3.1") is True
-    assert is_local_legacy_fallback(provider="claude", model="gpt-oss-20b") is True
+def test_agent_definition_detection_accepts_named_local_endpoint_provider() -> None:
+    assert is_local_agent_definition(provider="local:lm-studio", model="qwen2.5-coder") is True
 
 
-def test_legacy_row_detection_does_not_treat_literal_local_as_authoritative() -> None:
-    assert is_local_legacy_fallback(provider="claude", model="local") is False
-    assert is_local_legacy_fallback(provider="claude", model="qwen-coder-32b") is False
+def test_agent_definition_detection_accepts_named_local_endpoint_model() -> None:
+    assert is_local_agent_definition(provider="claude", model="local:lm-studio") is True
 
 
-def test_agent_definition_detection_accepts_literal_local_alias() -> None:
-    assert is_local_agent_definition(provider="claude", model="local") is True
-    assert is_local_agent_definition(provider="lmstudio", model="auto") is True
-    assert is_local_agent_definition(provider="claude", model="gpt-oss-20b") is True
+@pytest.mark.parametrize(
+    ("provider", "model"),
+    [
+        ("claude", "local"),
+        ("lmstudio", "auto"),
+        ("ollama", "llama3.1"),
+        ("claude", "gpt-oss-20b"),
+        ("claude", "qwen-coder-32b"),
+    ],
+)
+def test_agent_definition_detection_rejects_legacy_local_signals(
+    provider: str,
+    model: str,
+) -> None:
+    assert is_local_agent_definition(provider=provider, model=model) is False

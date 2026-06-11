@@ -356,9 +356,7 @@ async def spawn_agent_impl(
     )
     if effective_model is None and agent_body and not provider_differs_from_agent:
         effective_model = _normalize_optional_model(agent_body.model)
-    from gobby.llm.local_detection import is_local_agent_definition
-
-    is_local_run = is_local_agent_definition(effective_provider, effective_model)
+    is_local_run = False
 
     requested_reasoning_effort = reasoning_effort
     if requested_reasoning_effort is None and agent_body:
@@ -395,32 +393,22 @@ async def spawn_agent_impl(
             else:
                 effective_api_token = token
 
-    # Resolve model: local from daemon config
-    if effective_model == "local":
-        from gobby.config.local import LocalConfig
+    from gobby.mcp_proxy.tools.spawn_agent._local_endpoint import resolve_spawn_local_endpoint
 
-        local_cfg: LocalConfig | None = (
-            getattr(daemon_config, "local", None) if daemon_config else None
+    try:
+        local_resolution = await resolve_spawn_local_endpoint(
+            model=effective_model,
+            api_base=effective_api_base,
+            api_token=effective_api_token,
+            daemon_config=daemon_config,
+            registry=runner.registry if hasattr(runner, "registry") else None,
         )
-        if not local_cfg:
-            return {
-                "success": False,
-                "error": "model: local requires a 'local' section in daemon config "
-                "(local.url, local.model)",
-            }
-        effective_api_base = effective_api_base or local_cfg.url
-        effective_model = local_cfg.model
-        if not effective_api_token and local_cfg.api_key:
-            effective_api_token = local_cfg.api_key
-
-        # Pre-flight: ensure correct model is loaded (returns resolved name for auto mode)
-        try:
-            from gobby.agents.local_model import ensure_local_model
-
-            registry = runner.registry if hasattr(runner, "registry") else None
-            effective_model = await ensure_local_model(local_cfg, registry=registry)
-        except Exception as e:
-            return {"success": False, "error": f"Local model pre-flight failed: {e}"}
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    effective_model = local_resolution.model
+    effective_api_base = local_resolution.api_base
+    effective_api_token = local_resolution.api_token
+    is_local_run = local_resolution.is_local
 
     effective_timeout = timeout
     if effective_timeout is None and agent_body and agent_body.timeout:

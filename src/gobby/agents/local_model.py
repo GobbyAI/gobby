@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 if TYPE_CHECKING:
-    from gobby.config.local import LocalConfig
+    from gobby.config.ai import LocalGenerationEndpointConfig
 
 __all__ = ["ensure_local_model", "LocalModelError"]
 
@@ -25,7 +25,7 @@ class LocalModelError(Exception):
 
 async def _get_loaded_models(client: httpx.AsyncClient, base_url: str) -> list[dict[str, Any]]:
     """Query the local endpoint for currently loaded models."""
-    url = f"{base_url.rstrip('/')}/v1/models"
+    url = f"{_model_api_base(base_url)}/v1/models"
     resp = await client.get(url, timeout=10.0)
     resp.raise_for_status()
     data = resp.json()
@@ -35,7 +35,7 @@ async def _get_loaded_models(client: httpx.AsyncClient, base_url: str) -> list[d
 
 async def _load_model(client: httpx.AsyncClient, base_url: str, model: str) -> None:
     """Load a model at the local endpoint."""
-    url = f"{base_url.rstrip('/')}/v1/models/load"
+    url = f"{_model_api_base(base_url)}/v1/models/load"
     resp = await client.post(url, json={"model": model}, timeout=120.0)
     resp.raise_for_status()
     logger.info(f"Loaded local model: {model}")
@@ -43,14 +43,14 @@ async def _load_model(client: httpx.AsyncClient, base_url: str, model: str) -> N
 
 async def _unload_model(client: httpx.AsyncClient, base_url: str, model: str) -> None:
     """Unload a model from the local endpoint."""
-    url = f"{base_url.rstrip('/')}/v1/models/unload"
+    url = f"{_model_api_base(base_url)}/v1/models/unload"
     resp = await client.post(url, json={"model": model}, timeout=30.0)
     resp.raise_for_status()
     logger.info(f"Unloaded local model: {model}")
 
 
 def count_active_local_agents(registry: Any) -> int:
-    """Count running agents that were spawned with model: local.
+    """Count running agents that were spawned against a local endpoint.
 
     Args:
         registry: AgentRegistry instance
@@ -60,13 +60,21 @@ def count_active_local_agents(registry: Any) -> int:
     """
     count = 0
     for run in registry.list_running():
-        if getattr(run, "model", None) == "local":
+        if bool(getattr(run, "is_local", False)):
             count += 1
     return count
 
 
+def _model_api_base(api_base: str) -> str:
+    """Return base URL for local model-management endpoints."""
+    normalized = api_base.rstrip("/")
+    if normalized.endswith("/v1"):
+        return normalized.removesuffix("/v1")
+    return normalized
+
+
 async def ensure_local_model(
-    config: LocalConfig,
+    config: LocalGenerationEndpointConfig,
     registry: Any | None = None,
 ) -> str:
     """Ensure the configured model is loaded at the local endpoint.
@@ -79,7 +87,7 @@ async def ensure_local_model(
     - If no model loaded → load configured model
 
     Args:
-        config: Local model configuration
+        config: Named local generation endpoint configuration
         registry: Optional AgentRegistry for active-agent checking
 
     Returns:
@@ -90,10 +98,10 @@ async def ensure_local_model(
     """
     async with httpx.AsyncClient() as client:
         try:
-            loaded = await _get_loaded_models(client, config.url)
+            loaded = await _get_loaded_models(client, config.api_base)
         except httpx.ConnectError as e:
             raise LocalModelError(
-                f"Cannot connect to local model endpoint at {config.url}. Is LMStudio running?"
+                f"Cannot connect to local model endpoint at {config.api_base}. Is LMStudio running?"
             ) from e
         except httpx.HTTPStatusError as e:
             raise LocalModelError(
@@ -131,18 +139,20 @@ async def ensure_local_model(
             # Unload current model(s)
             for model_id in loaded_ids:
                 try:
-                    await _unload_model(client, config.url, model_id)
+                    await _unload_model(client, config.api_base, model_id)
                 except httpx.HTTPStatusError:
                     logger.warning(f"Failed to unload model: {model_id}")
 
         # Load configured model
         try:
-            await _load_model(client, config.url, config.model)
+            await _load_model(client, config.api_base, config.model)
         except httpx.HTTPStatusError as e:
             raise LocalModelError(
                 f"Failed to load model '{config.model}': {e.response.status_code}"
             ) from e
         except httpx.ConnectError as e:
-            raise LocalModelError(f"Lost connection to {config.url} while loading model") from e
+            raise LocalModelError(
+                f"Lost connection to {config.api_base} while loading model"
+            ) from e
 
         return config.model

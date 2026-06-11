@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.config.app import DaemonConfig, LocalConfig
+from gobby.config.app import DaemonConfig
 from gobby.llm.local import _CLOUD_MODEL_ALIASES, LocalLLMProvider
 
 pytestmark = pytest.mark.unit
@@ -16,20 +16,28 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def local_config() -> LocalConfig:
-    return LocalConfig(url="http://localhost:1234/v1", model="qwen2.5-coder-7b")
-
-
-@pytest.fixture
-def daemon_config(local_config: LocalConfig) -> DaemonConfig:
-    return DaemonConfig(local=local_config)
+def daemon_config() -> DaemonConfig:
+    return DaemonConfig(
+        ai={
+            "generation": {
+                "local": {
+                    "endpoints": {
+                        "lm-studio": {
+                            "api_base": "http://localhost:1234/v1",
+                            "model": "qwen2.5-coder-7b",
+                        }
+                    }
+                }
+            }
+        }
+    )
 
 
 @pytest.fixture
 def provider(daemon_config: DaemonConfig) -> LocalLLMProvider:
     with patch("openai.AsyncOpenAI") as mock_cls:
         mock_cls.return_value = MagicMock()
-        p = LocalLLMProvider(daemon_config)
+        p = LocalLLMProvider(daemon_config, endpoint_name="lm-studio")
     return p
 
 
@@ -41,8 +49,8 @@ def provider(daemon_config: DaemonConfig) -> LocalLLMProvider:
 class TestLocalLLMProviderInit:
     def test_init_with_valid_config(self, daemon_config: DaemonConfig) -> None:
         with patch("openai.AsyncOpenAI"):
-            p = LocalLLMProvider(daemon_config)
-        assert p.provider_name == "local"
+            p = LocalLLMProvider(daemon_config, endpoint_name="lm-studio")
+        assert p.provider_name == "local:lm-studio"
         assert p.auth_mode == "api_key"
         assert p._default_model == "qwen2.5-coder-7b"
         assert p._url == "http://localhost:1234/v1"
@@ -83,14 +91,17 @@ class TestLocalLLMProviderInit:
         with pytest.raises(ValueError, match="Unknown local generation endpoint"):
             LocalLLMProvider(DaemonConfig(), endpoint_name="lm-studio")
 
-    def test_init_without_local_config_raises(self) -> None:
-        config = DaemonConfig(local=None)
-        with pytest.raises(ValueError, match="local"):
-            LocalLLMProvider(config)
+    def test_init_without_endpoint_name_raises(self, daemon_config: DaemonConfig) -> None:
+        with pytest.raises(ValueError, match="named local generation endpoint"):
+            LocalLLMProvider(daemon_config, endpoint_name="")
+
+    def test_init_without_matching_endpoint_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unknown local generation endpoint"):
+            LocalLLMProvider(DaemonConfig(), endpoint_name="lm-studio")
 
     def test_api_key_defaults_to_not_needed(self, daemon_config: DaemonConfig) -> None:
         with patch("openai.AsyncOpenAI") as mock_cls:
-            LocalLLMProvider(daemon_config)
+            LocalLLMProvider(daemon_config, endpoint_name="lm-studio")
         mock_cls.assert_called_once_with(
             base_url="http://localhost:1234/v1",
             api_key="not-needed",
@@ -100,14 +111,22 @@ class TestLocalLLMProviderInit:
 
     def test_api_key_passthrough(self) -> None:
         config = DaemonConfig(
-            local=LocalConfig(
-                url="http://localhost:1234/v1",
-                model="test",
-                api_key="my-secret-key",
-            ),
+            ai={
+                "generation": {
+                    "local": {
+                        "endpoints": {
+                            "lm-studio": {
+                                "api_base": "http://localhost:1234/v1",
+                                "model": "test",
+                                "api_key": "my-secret-key",
+                            }
+                        }
+                    }
+                }
+            }
         )
         with patch("openai.AsyncOpenAI") as mock_cls:
-            LocalLLMProvider(config)
+            LocalLLMProvider(config, endpoint_name="lm-studio")
         mock_cls.assert_called_once_with(
             base_url="http://localhost:1234/v1",
             api_key="my-secret-key",

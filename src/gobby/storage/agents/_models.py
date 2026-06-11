@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from gobby.agents.resume_metadata import normalize_resume_metadata
-from gobby.llm.local_detection import is_local_legacy_fallback
 
 from ._constants import AgentRunStatus, AgentRunTerminalReason
 
@@ -59,8 +58,7 @@ class AgentRun:
         if "is_local" in row.keys() and row["is_local"] is not None:
             is_local = bool(row["is_local"])
         else:
-            model = row["model"] if "model" in row.keys() else None
-            is_local = is_local_legacy_fallback(row["provider"], model)
+            is_local = False
 
         return cls(
             id=row["id"],

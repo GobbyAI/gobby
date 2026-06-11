@@ -18,7 +18,6 @@ Module structure:
 - features.py: MCP proxy feature configs (code execution, tool recommendation)
 
 Import from submodules directly for specific configs:
-    from gobby.config.local import LocalConfig
     from gobby.config.ui import UIConfig
     from gobby.config.tasks import TaskValidationConfig
     from gobby.config.extensions import WebhooksConfig

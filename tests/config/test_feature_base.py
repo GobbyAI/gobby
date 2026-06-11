@@ -10,6 +10,7 @@ from gobby.config.feature_base import (
     DEFAULT_PROFILE_CANDIDATES,
     FeatureDefaultConfig,
     FeatureProfile,
+    parse_feature_candidate,
 )
 
 pytestmark = pytest.mark.unit
@@ -111,6 +112,12 @@ class TestFeatureDefaultConfig:
     def test_rejects_malformed_candidate(self, candidate: str) -> None:
         with pytest.raises(ValidationError, match="provider/model"):
             FeatureDefaultConfig(candidates=[candidate])
+
+    def test_parses_named_local_candidate_with_slashed_model_id(self) -> None:
+        assert parse_feature_candidate("local:lm-studio/google/gemma-4-26b-a4b-qat") == (
+            "local:lm-studio",
+            "google/gemma-4-26b-a4b-qat",
+        )
 
 
 class TestGenerationProfileDefaults:

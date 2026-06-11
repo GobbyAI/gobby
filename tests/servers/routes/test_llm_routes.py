@@ -21,8 +21,8 @@ from gobby.ai import (
     VisionExtractResult,
     VisionExtractService,
 )
+from gobby.config.ai import AIConfig, GenerationConfig, LocalGenerationConfig
 from gobby.config.app import DaemonConfig
-from gobby.config.local import LocalConfig
 from gobby.llm.base import LLMTextResult
 from gobby.servers.routes.llm import create_llm_router
 
@@ -60,7 +60,21 @@ class _FakeTextAdapter:
 @pytest.fixture
 def server_with_llm() -> MagicMock:
     server = MagicMock()
-    server.config = DaemonConfig(local=LocalConfig(url="http://localhost:1234/v1", model="llava"))
+    server.config = DaemonConfig(
+        ai=AIConfig(
+            generation=GenerationConfig(
+                local=LocalGenerationConfig(
+                    endpoints={
+                        "lm-studio": {
+                            "api_base": "http://localhost:1234/v1",
+                            "model": "llava",
+                            "vision_extract": True,
+                        }
+                    }
+                )
+            )
+        )
+    )
     return server
 
 
@@ -504,7 +518,8 @@ def test_vision_status_lists_only_proven_providers_as_available(
     available_providers = {
         binding["provider"] for binding in data["bindings"] if binding["available"]
     }
-    assert "local" in available_providers
+    assert "local:lm-studio" in available_providers
+    assert "local" not in available_providers
     assert not {"codex", "droid", "gemini", "grok", "qwen"} & available_providers
 
 
@@ -521,7 +536,7 @@ def test_vision_extract_upload_executes_service(
         response = client.post(
             "/api/llm/vision/extract",
             data={
-                "provider": "local",
+                "provider": "local:lm-studio",
                 "model": "llava",
                 "context": "settings screenshot",
             },
@@ -538,12 +553,12 @@ def test_vision_extract_upload_executes_service(
         "bytes": len(b"image bytes"),
         "content_type": "image/png",
         "capability": "vision_extract",
-        "provider": "local",
+        "provider": "local:lm-studio",
         "model": "llava",
     }
 
     assert service.request is not None
-    assert service.request.provider == "local"
+    assert service.request.provider == "local:lm-studio"
     assert service.request.model == "llava"
     assert service.request.context == "settings screenshot"
     assert Path(service.request.image_path).exists() is False

@@ -666,24 +666,35 @@ class TestSetConfigBatch:
         tool = config_registry.get_tool("set_config_batch")
         result = tool(
             entries=[
-                {"key": "local.url", "value": "http://localhost:1234/v1"},
-                {"key": "local.model", "value": "qwen2.5-coder-7b"},
+                {
+                    "key": "ai.generation.local.endpoints.lm-studio.api_base",
+                    "value": "http://localhost:1234/v1",
+                },
+                {
+                    "key": "ai.generation.local.endpoints.lm-studio.model",
+                    "value": "qwen2.5-coder-7b",
+                },
             ]
         )
 
         assert result["success"] is True
         assert result["count"] == 2
-        assert "local.url" in result["keys_set"]
-        assert "local.model" in result["keys_set"]
+        assert "ai.generation.local.endpoints.lm-studio.api_base" in result["keys_set"]
+        assert "ai.generation.local.endpoints.lm-studio.model" in result["keys_set"]
 
         # Verify in DB
-        assert config_store.get("local.url") == "http://localhost:1234/v1"
-        assert config_store.get("local.model") == "qwen2.5-coder-7b"
+        assert (
+            config_store.get("ai.generation.local.endpoints.lm-studio.api_base")
+            == "http://localhost:1234/v1"
+        )
+        assert (
+            config_store.get("ai.generation.local.endpoints.lm-studio.model") == "qwen2.5-coder-7b"
+        )
 
         # Verify in-memory config
-        assert config_state["config"].local is not None
-        assert config_state["config"].local.url == "http://localhost:1234/v1"
-        assert config_state["config"].local.model == "qwen2.5-coder-7b"
+        endpoint = config_state["config"].ai.generation.local.endpoints["lm-studio"]
+        assert endpoint.api_base == "http://localhost:1234/v1"
+        assert endpoint.model == "qwen2.5-coder-7b"
 
     def test_batch_set_reports_original_canonical_embedding_keys(
         self, config_registry, config_store: ConfigStore
@@ -703,8 +714,8 @@ class TestSetConfigBatch:
         assert config_store.get("ai.embeddings.api_base") == "http://localhost:11434/v1"
         assert config_store.get("ai.embeddings.model") == "nomic-embed-text"
 
-    def test_batch_set_local_single_key_fails(self, config_registry) -> None:
-        """Setting only local.url without local.model fails validation."""
+    def test_batch_set_removed_local_key_fails(self, config_registry) -> None:
+        """Removed local.* keys fail validation."""
         tool = config_registry.get_tool("set_config_batch")
         result = tool(
             entries=[
@@ -713,7 +724,7 @@ class TestSetConfigBatch:
         )
 
         assert result["success"] is False
-        assert "error" in result
+        assert "local config has been removed" in result["error"]
 
     def test_batch_set_digest_profile(
         self, config_registry, config_state: dict[str, DaemonConfig]
@@ -736,8 +747,14 @@ class TestSetConfigBatch:
         tool = config_registry.get_tool("set_config_batch")
         result = tool(
             entries=[
-                {"key": "local.url", "value": "http://localhost:1234/v1"},
-                {"key": "local.model", "value": "qwen2.5-coder-7b"},
+                {
+                    "key": "ai.generation.local.endpoints.lm-studio.api_base",
+                    "value": "http://localhost:1234/v1",
+                },
+                {
+                    "key": "ai.generation.local.endpoints.lm-studio.model",
+                    "value": "qwen2.5-coder-7b",
+                },
                 {"key": "digest.profile", "value": "feature_mid"},
                 {"key": "digest.timeout", "value": 45},
             ]
@@ -745,8 +762,8 @@ class TestSetConfigBatch:
 
         assert result["success"] is True
         assert result["count"] == 4
-        assert config_state["config"].local is not None
-        assert config_state["config"].local.model == "qwen2.5-coder-7b"
+        endpoint = config_state["config"].ai.generation.local.endpoints["lm-studio"]
+        assert endpoint.model == "qwen2.5-coder-7b"
         assert config_state["config"].digest.profile == "feature_mid"
         assert config_state["config"].digest.timeout == 45
 

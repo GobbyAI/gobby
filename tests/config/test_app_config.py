@@ -828,6 +828,38 @@ class TestLoadConfig:
             runtime_embedding_key("provider"),
         ]
 
+    def test_legacy_local_generation_db_keys_are_deleted(self, temp_dir: Path) -> None:
+        """Old top-level local generation rows no longer affect runtime config."""
+
+        class DummyConfigStore:
+            def __init__(self) -> None:
+                self.deleted: list[str] = []
+
+            def get_all(self) -> dict[str, object]:
+                return {
+                    "local": {"url": "http://localhost:1234/v1", "model": "legacy-model"},
+                    "local.url": "http://localhost:1234/v1",
+                    "local.model": "legacy-model",
+                    "ai.generation.local.endpoints.lm-studio.api_base": (
+                        "http://localhost:1234/v1"
+                    ),
+                    "ai.generation.local.endpoints.lm-studio.model": "named-model",
+                }
+
+            def delete(self, key: str) -> bool:
+                self.deleted.append(key)
+                return True
+
+        store = DummyConfigStore()
+
+        config = load_config(
+            config_file=str(temp_dir / "bootstrap.yaml"),
+            config_store=store,
+        )
+
+        assert sorted(store.deleted) == ["local", "local.model", "local.url"]
+        assert config.ai.generation.local.endpoints["lm-studio"].model == "named-model"
+
     def test_load_config_migrates_defaults_seeded_ui_mode_to_auto(self, temp_dir: Path) -> None:
         """Only defaults-sourced legacy ui.mode=production rows migrate to auto."""
 

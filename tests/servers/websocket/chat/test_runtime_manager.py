@@ -13,6 +13,7 @@ import pytest
 
 from gobby.adapters.gemini_acp_client import StreamEvent
 from gobby.agents.sandbox import SandboxConfig
+from gobby.config.ai import LocalGenerationEndpointConfig
 from gobby.config.app import DaemonConfig
 from gobby.llm.claude_models import DoneEvent, TextChunk, ToolCallEvent, ToolResultEvent
 from gobby.servers.chat_session import ChatSession
@@ -122,7 +123,7 @@ class TestWebChatRuntimeManager:
     def test_manager_handles_daemon_config_without_embeddings(self) -> None:
         manager = WebChatRuntimeManager(codex_client=None, daemon_config=SimpleNamespace())
 
-        assert manager._qwen_backend._local_openai_api_key is None
+        assert manager._qwen_backend._local_generation_endpoints == {}
 
     @pytest.mark.asyncio
     async def test_background_start_skips_acp_backends(self) -> None:
@@ -359,7 +360,15 @@ class TestQwenBackend:
         client.is_started = True
         client.create_session = AsyncMock(return_value={"sessionId": "sess-qwen"})
 
-        backend = QwenWebChatBackend(client=client, local_openai_api_key="embeddings-token")
+        endpoint = LocalGenerationEndpointConfig(
+            api_base="http://localhost:1234/v1",
+            model="qwen3.6-35b-a3b-q8-local",
+            api_key="endpoint-token",
+        )
+        backend = QwenWebChatBackend(
+            client=client,
+            local_generation_endpoints={"lm-studio": endpoint},
+        )
         backend._health.available = True
         backend.start = AsyncMock()
 
@@ -376,7 +385,7 @@ class TestQwenBackend:
         mock_warmup.assert_awaited_once_with(
             "qwen3.6-35b-a3b-q8-local(openai)",
             project_path="/tmp/project",
-            local_api_key_fallback="embeddings-token",
+            local_generation_endpoints={"lm-studio": endpoint},
         )
         assert mock_warmup.await_count == 1
         assert mock_warmup.await_args is not None

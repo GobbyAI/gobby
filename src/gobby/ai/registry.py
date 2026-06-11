@@ -13,7 +13,12 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from gobby.config.feature_base import iter_feature_default_configs, normalize_feature_candidate
+from gobby.ai.local_endpoints import local_endpoint_provider
+from gobby.config.feature_base import (
+    iter_feature_default_configs,
+    normalize_feature_candidate,
+    parse_feature_candidate,
+)
 from gobby.providers import AGY_UNAVAILABLE_REASON, ProviderMetadata, provider_metadata
 from gobby.search.embeddings import is_embedding_configured
 
@@ -109,8 +114,11 @@ def _normalize_binding_model(provider: str, model: str) -> str:
         return raw_model
     candidate = raw_model if "/" in raw_model else f"{provider}/{raw_model}"
     normalized = normalize_feature_candidate(candidate)
-    normalized_provider, separator, normalized_model = normalized.partition("/")
-    if separator and _normalize_provider(normalized_provider) == _normalize_provider(provider):
+    try:
+        normalized_provider, normalized_model = parse_feature_candidate(normalized)
+    except ValueError:
+        return raw_model
+    if _normalize_provider(normalized_provider) == _normalize_provider(provider):
         return normalized_model
     return raw_model
 
@@ -320,15 +328,6 @@ class AICapabilityRegistry:
             for binding in self.bindings_for(normalized, provider=provider)
             if binding.supports_model(model)
         )
-        if provider is not None and _normalize_provider(provider) == "local":
-            # Bare "local" is a family alias: the exact "local" binding is an
-            # unavailable placeholder, so also consider named local endpoint
-            # bindings ("local:<name>") that can serve the requested model.
-            candidates += tuple(
-                binding
-                for binding in self.bindings_for(normalized)
-                if binding.provider.startswith("local:") and binding.supports_model(model)
-            )
         for binding in candidates:
             if binding.available:
                 return binding
@@ -370,6 +369,7 @@ def build_daemon_ai_capability_registry(
         _local_vision_extract_binding(config),
     ]
     bindings.extend(_local_text_generate_endpoint_bindings(config, feature_models_by_provider))
+    bindings.extend(_local_vision_extract_endpoint_bindings(config, feature_models_by_provider))
     bindings.extend(_audio_bindings(config))
 
     for entry in provider_metadata():
@@ -402,8 +402,9 @@ def _feature_candidate_models_by_provider(
     models_by_provider: dict[str, list[str]] = {}
     for feature_config in iter_feature_default_configs(config):
         for candidate in feature_config.candidates:
-            provider, separator, model = normalize_feature_candidate(candidate).partition("/")
-            if not separator or not provider.strip() or not model.strip():
+            try:
+                provider, model = parse_feature_candidate(normalize_feature_candidate(candidate))
+            except ValueError:
                 continue
             normalized_provider = _normalize_provider(provider)
             normalized_model = _normalize_binding_model(normalized_provider, model)
@@ -613,7 +614,7 @@ def _local_text_generate_endpoint_bindings(
     endpoints = config.ai.generation.local.endpoints
     bindings: list[CapabilityBinding] = []
     for name, endpoint in endpoints.items():
-        provider = f"local:{name}"
+        provider = local_endpoint_provider(name)
         models = _local_endpoint_models(provider, endpoint.model, feature_models_by_provider)
         bindings.append(
             CapabilityBinding(
@@ -626,6 +627,7 @@ def _local_text_generate_endpoint_bindings(
                     "display_name": f"Local ({name})",
                     "api_base": endpoint.api_base,
                     "endpoint": name,
+                    "vision_extract": endpoint.vision_extract,
                 },
             )
         )
@@ -690,26 +692,48 @@ def _vision_extract_binding(
 
 
 def _local_vision_extract_binding(config: DaemonConfig | None) -> CapabilityBinding:
-    local_config = config.local if config and config.local else None
     metadata: dict[str, object] = {"display_name": "Local"}
-    if local_config:
-        metadata["api_base"] = local_config.url
-        return CapabilityBinding(
-            capability=AICapability.VISION_EXTRACT,
-            provider="local",
-            adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
-            available=True,
-            models=(local_config.model,),
-            metadata=metadata,
-        )
-
     return CapabilityBinding.unavailable(
         AICapability.VISION_EXTRACT,
         "local",
         adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
-        reason="Local vision_extract binding is not configured.",
+        reason="Use a named local generation endpoint provider such as local:lm-studio.",
         metadata=metadata,
     )
+
+
+def _local_vision_extract_endpoint_bindings(
+    config: DaemonConfig | None,
+    feature_models_by_provider: Mapping[str, tuple[str, ...]],
+) -> tuple[CapabilityBinding, ...]:
+    if config is None:
+        return ()
+    endpoints = config.ai.generation.local.endpoints
+    bindings: list[CapabilityBinding] = []
+    for name, endpoint in endpoints.items():
+        if not endpoint.vision_extract:
+            continue
+        provider = local_endpoint_provider(name)
+        bindings.append(
+            CapabilityBinding(
+                capability=AICapability.VISION_EXTRACT,
+                provider=provider,
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=_local_endpoint_models(
+                    provider,
+                    endpoint.model,
+                    feature_models_by_provider,
+                ),
+                metadata={
+                    "display_name": f"Local ({name})",
+                    "api_base": endpoint.api_base,
+                    "endpoint": name,
+                    "vision_extract": True,
+                },
+            )
+        )
+    return tuple(bindings)
 
 
 def _metadata_for_generation_binding(entry: ProviderMetadata) -> dict[str, object]:

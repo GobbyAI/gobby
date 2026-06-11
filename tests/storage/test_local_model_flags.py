@@ -80,7 +80,7 @@ def test_session_manager_persists_is_local_flag(temp_db: HubDatabase) -> None:
     assert reloaded.is_local is True
 
 
-def test_session_row_uses_legacy_local_fallback_when_flag_is_null() -> None:
+def test_session_row_preserves_null_flag_without_legacy_reclassification() -> None:
     row = {
         "id": "session-local-legacy",
         "external_id": "external-local-legacy",
@@ -127,13 +127,16 @@ def test_session_row_uses_legacy_local_fallback_when_flag_is_null() -> None:
         "sandbox_policy_hash": None,
     }
 
+    assert Session.from_row(row).is_local is False
+
+    row["is_local"] = 1
     assert Session.from_row(row).is_local is True
 
     row["is_local"] = 0
     assert Session.from_row(row).is_local is False
 
 
-def test_agent_run_row_uses_legacy_local_fallback_when_flag_is_null() -> None:
+def test_agent_run_row_preserves_null_flag_without_legacy_reclassification() -> None:
     row = {
         "id": "run-local-legacy",
         "parent_session_id": "parent-session",
@@ -170,16 +173,18 @@ def test_agent_run_row_uses_legacy_local_fallback_when_flag_is_null() -> None:
         "terminal_reason": None,
     }
 
+    assert AgentRun.from_row(row).is_local is False
+
+    row["is_local"] = 1
     assert AgentRun.from_row(row).is_local is True
 
     row["is_local"] = 0
     assert AgentRun.from_row(row).is_local is False
 
 
-def test_agent_selector_escapes_literal_percent_for_psycopg() -> None:
+def test_agent_selector_defaults_null_is_local_to_false() -> None:
     sql = _AgentRunSelectorMixin._select_runs_with_live_stats_sql()
 
-    assert "LIKE '%%gpt-oss%%'" in sql
-    assert "LIKE '%gpt-oss%'" not in sql
-    assert "THEN TRUE" in sql
-    assert "ELSE FALSE" in sql
+    assert "COALESCE(ar.is_local, FALSE) AS is_local" in sql
+    assert "lmstudio" not in sql
+    assert "gpt-oss" not in sql

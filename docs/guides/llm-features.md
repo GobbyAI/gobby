@@ -35,6 +35,10 @@ Selection skips to the next candidate when the endpoint is unavailable or does n
 serve the model. Direct HTTP text generation uses `provider="local:<endpoint>"`
 with `model="<model>"`.
 
+Bare `local` is not a daemon text-generation provider. Local vision extraction is
+also exposed through named providers such as `local:lm-studio`, and only for
+endpoints configured with `vision_extract: true`.
+
 ## `call_feature` Features
 
 | Feature | Config path | Default profile | Call path | Caller/use |

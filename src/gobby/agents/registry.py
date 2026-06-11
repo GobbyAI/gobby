@@ -79,7 +79,7 @@ class RunningAgent:
     """LLM provider being used."""
 
     model: str | None = None
-    """Model being used (e.g., 'local' for local model agents)."""
+    """Model being used (e.g., 'local:lm-studio' for local model agents)."""
 
     workflow_name: str | None = None
     """Workflow being executed, if any."""

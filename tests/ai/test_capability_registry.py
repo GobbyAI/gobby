@@ -13,7 +13,6 @@ from gobby.ai import (
 )
 from gobby.config.ai import AIConfig, GenerationConfig, LocalGenerationConfig
 from gobby.config.app import DaemonConfig
-from gobby.config.local import LocalConfig
 from gobby.config.persistence import EmbeddingsConfig
 from gobby.config.voice import OpenAICompatibleAudioBindingConfig, VoiceConfig
 from gobby.providers import AGY_UNAVAILABLE_REASON, ProviderMetadata
@@ -108,26 +107,24 @@ def _local_family_registry() -> AICapabilityRegistry:
     )
 
 
-def test_select_bare_local_resolves_to_named_endpoint_serving_model() -> None:
+def test_select_bare_local_reports_named_endpoint_requirement_for_model() -> None:
     registry = _local_family_registry()
 
-    binding = registry.select(AICapability.TEXT_GENERATE, provider="local", model="qwen-ollama")
+    with pytest.raises(CapabilityUnavailableError, match="named local generation endpoint"):
+        registry.select(AICapability.TEXT_GENERATE, provider="local", model="qwen-ollama")
 
-    assert binding.provider == "local:ollama"
 
-
-def test_select_bare_local_without_model_uses_first_available_endpoint() -> None:
+def test_select_bare_local_without_model_reports_named_endpoint_requirement() -> None:
     registry = _local_family_registry()
 
-    binding = registry.select(AICapability.TEXT_GENERATE, provider="local")
+    with pytest.raises(CapabilityUnavailableError, match="named local generation endpoint"):
+        registry.select(AICapability.TEXT_GENERATE, provider="local")
 
-    assert binding.provider == "local:lm-studio"
 
-
-def test_select_bare_local_unserved_model_raises_unavailable() -> None:
+def test_select_bare_local_unserved_model_reports_named_endpoint_requirement() -> None:
     registry = _local_family_registry()
 
-    with pytest.raises(CapabilityUnavailableError):
+    with pytest.raises(CapabilityUnavailableError, match="named local generation endpoint"):
         registry.select(AICapability.TEXT_GENERATE, provider="local", model="missing-model")
 
 
@@ -270,7 +267,19 @@ def test_daemon_registry_applies_feature_models_to_provider_capabilities() -> No
 def test_daemon_registry_reports_only_proven_vision_extract_bindings_available() -> None:
     registry = build_daemon_ai_capability_registry(
         DaemonConfig(
-            local=LocalConfig(url="http://localhost:1234/v1", model="llava"),
+            ai=AIConfig(
+                generation=GenerationConfig(
+                    local=LocalGenerationConfig(
+                        endpoints={
+                            "lm-studio": {
+                                "api_base": "http://localhost:1234/v1",
+                                "model": "llava",
+                                "vision_extract": True,
+                            }
+                        }
+                    )
+                )
+            ),
         ),
         provider_installed=lambda _entry: True,
     )
@@ -278,12 +287,19 @@ def test_daemon_registry_reports_only_proven_vision_extract_bindings_available()
     status = registry.status(AICapability.VISION_EXTRACT)
     available_providers = {binding.provider for binding in status.bindings if binding.available}
 
-    assert available_providers == {"claude", "local"}
+    assert available_providers == {"claude", "local:lm-studio"}
 
     local = registry.binding(AICapability.VISION_EXTRACT, "local")
     assert local is not None
     assert local.adapter_style == AIAdapterStyle.OPENAI_COMPATIBLE
-    assert local.models == ("llava",)
+    assert local.available is False
+    assert local.models == ()
+
+    lm_studio = registry.binding(AICapability.VISION_EXTRACT, "local:lm-studio")
+    assert lm_studio is not None
+    assert lm_studio.available is True
+    assert lm_studio.adapter_style == AIAdapterStyle.OPENAI_COMPATIBLE
+    assert lm_studio.models == ("llava",)
 
     codex = registry.binding(AICapability.VISION_EXTRACT, "codex")
     assert codex is not None

@@ -21,7 +21,11 @@ from gobby.ai.registry import (
     build_daemon_ai_capability_registry,
 )
 from gobby.config.app import DaemonConfig
-from gobby.config.feature_base import default_candidates_for_profile, normalize_feature_candidate
+from gobby.config.feature_base import (
+    default_candidates_for_profile,
+    normalize_feature_candidate,
+    parse_feature_candidate,
+)
 
 if TYPE_CHECKING:
     from gobby.llm.base import LLMTextResult
@@ -638,10 +642,12 @@ def _candidate_debug_label(candidate: TextGenerationRequest) -> str:
 
 
 def _parse_candidate(candidate: str) -> tuple[str, str]:
-    provider, separator, model = candidate.rpartition("/")
-    if not separator or not provider.strip() or not model.strip():
-        raise ValueError(f"Feature candidate must use provider/model format: {candidate!r}")
-    return provider.strip(), model.strip()
+    try:
+        return parse_feature_candidate(candidate)
+    except ValueError as exc:
+        raise ValueError(
+            f"Feature candidate must use provider/model format: {candidate!r}"
+        ) from exc
 
 
 def _elapsed_ms(start: float) -> float:

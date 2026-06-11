@@ -48,7 +48,7 @@ class QwenWebChatBackend(ACPWebChatBackend):
         await ensure_qwen_local_openai_model_ready(
             resolved_model,
             project_path=session.project_path,
-            local_api_key_fallback=self._local_openai_api_key,
+            local_generation_endpoints=self._local_generation_endpoints,
         )
         await super().attach_session(session, model=model)
 

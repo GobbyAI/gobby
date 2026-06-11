@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from gobby.config.ai import LocalGenerationEndpointConfig
 from gobby.config.app import deep_merge
 
 logger = logging.getLogger(__name__)
@@ -19,10 +20,6 @@ logger = logging.getLogger(__name__)
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _NOISE_TOKENS = {"local", "lmstudio", "openai"}
 _QWEN_SETTINGS_PATH = Path.home() / ".qwen" / "settings.json"
-# The Qwen CLI ships this dummy placeholder in env.LMSTUDIO_API_KEY. Newer
-# LM Studio builds enforce real API tokens and reject it with 401, so treat it
-# as unset and fall back to Gobby's configured credential.
-_LM_STUDIO_PLACEHOLDER_API_KEY = "lm-studio"
 
 
 class LocalOpenAIModelWarmupError(RuntimeError):
@@ -141,36 +138,11 @@ def _resolve_local_backend(base_url: str) -> Literal["lm_studio", "ollama"] | No
     return None
 
 
-def _resolve_lm_studio_api_key(env_value: str | None, fallback: str | None) -> str | None:
-    """Pick the LM Studio token, preferring a real value over the Qwen placeholder.
-
-    Precedence:
-    1. An explicit, non-placeholder token from the Qwen provider config.
-    2. Gobby's configured credential (the embeddings secret) — the same token
-       used to reach the local OpenAI-compatible endpoint elsewhere.
-
-    The dummy ``lm-studio`` placeholder and unresolved ``$secret:``/``${...}``
-    references are treated as unset so we never send a known-bad token.
-    """
-
-    def _usable(value: str | None) -> str | None:
-        if not value:
-            return None
-        stripped = value.strip()
-        if not stripped or stripped == _LM_STUDIO_PLACEHOLDER_API_KEY:
-            return None
-        if stripped.startswith("$secret:") or stripped.startswith("${"):
-            return None
-        return stripped
-
-    return _usable(env_value) or _usable(fallback)
-
-
 def resolve_qwen_local_openai_target(
     model_value: str | None,
     *,
     project_path: str | None,
-    local_api_key_fallback: str | None = None,
+    local_generation_endpoints: dict[str, LocalGenerationEndpointConfig] | None = None,
 ) -> LocalOpenAIModelTarget | None:
     """Resolve a Qwen `(...openai)` model to a local backend target."""
     settings = _load_qwen_settings(project_path)
@@ -226,23 +198,38 @@ def resolve_qwen_local_openai_target(
     if backend is None:
         return None
 
-    api_key: str | None = None
-    env_key = match.get("envKey")
-    env_block = settings.get("env")
-    if isinstance(env_key, str) and env_key.strip() and isinstance(env_block, dict):
-        env_value = env_block.get(env_key)
-        if isinstance(env_value, str) and env_value.strip():
-            api_key = env_value.strip()
+    endpoint = _match_local_generation_endpoint(
+        request_model,
+        base_url,
+        local_generation_endpoints or {},
+    )
+    if endpoint is None:
+        return None
 
-    if backend == "lm_studio":
-        api_key = _resolve_lm_studio_api_key(api_key, local_api_key_fallback)
+    backend = _resolve_local_backend(endpoint.api_base)
+    if backend is None:
+        return None
 
     return LocalOpenAIModelTarget(
         backend=backend,
-        request_model=request_model,
-        base_url=base_url,
-        api_key=api_key,
+        request_model=endpoint.model,
+        base_url=endpoint.api_base,
+        api_key=endpoint.api_key,
     )
+
+
+def _match_local_generation_endpoint(
+    request_model: str,
+    base_url: str,
+    endpoints: dict[str, LocalGenerationEndpointConfig],
+) -> LocalGenerationEndpointConfig | None:
+    for endpoint in endpoints.values():
+        if _candidate_match_score(request_model, endpoint.model) <= 0:
+            continue
+        if _base_origin(base_url) != _base_origin(endpoint.api_base):
+            continue
+        return endpoint
+    return None
 
 
 def _base_headers(api_key: str | None) -> dict[str, str]:
@@ -322,7 +309,7 @@ async def _prepare_lm_studio_model(
             raise LocalOpenAIModelWarmupError(
                 f"LM Studio at {target.base_url} rejected the request "
                 f"({exc.response.status_code}). Set a valid LM Studio API token in "
-                "Gobby's embeddings credential (or the Qwen provider config), or "
+                "ai.generation.local.endpoints.<name>.api_key, or "
                 "disable API-key auth in LM Studio's developer settings."
             ) from exc
         raise
@@ -421,13 +408,13 @@ async def ensure_qwen_local_openai_model_ready(
     model_value: str | None,
     *,
     project_path: str | None,
-    local_api_key_fallback: str | None = None,
+    local_generation_endpoints: dict[str, LocalGenerationEndpointConfig] | None = None,
 ) -> None:
     """Warm the local backend for a Qwen OpenAI-compatible model when needed."""
     target = resolve_qwen_local_openai_target(
         model_value,
         project_path=project_path,
-        local_api_key_fallback=local_api_key_fallback,
+        local_generation_endpoints=local_generation_endpoints,
     )
     if target is None:
         return

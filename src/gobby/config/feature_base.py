@@ -13,6 +13,7 @@ __all__ = [
     "default_candidates_for_profile",
     "iter_feature_default_configs",
     "normalize_feature_candidate",
+    "parse_feature_candidate",
     "validate_feature_candidates",
 ]
 
@@ -53,8 +54,11 @@ def default_candidates_for_profile(profile: FeatureProfile | str) -> tuple[str, 
 
 def normalize_feature_candidate(candidate: str) -> str:
     """Canonicalize provider-scoped feature candidate labels."""
-    provider, separator, model = candidate.partition("/")
-    if not separator or provider != "claude":
+    try:
+        provider, model = parse_feature_candidate(candidate)
+    except ValueError:
+        return candidate
+    if provider != "claude":
         return candidate
     model_label = model.strip().lower()
     if model_label in _CLAUDE_FAMILY_ALIASES:
@@ -64,6 +68,14 @@ def normalize_feature_candidate(candidate: str) -> str:
             if token in _CLAUDE_FAMILY_ALIASES:
                 return f"{provider}/{token}"
     return candidate
+
+
+def parse_feature_candidate(candidate: str) -> tuple[str, str]:
+    """Return provider and model from a provider/model candidate label."""
+    provider, separator, model = candidate.partition("/")
+    if not separator or not provider.strip() or not model.strip():
+        raise ValueError(f"feature candidate must use provider/model format: {candidate!r}")
+    return provider.strip(), model.strip()
 
 
 def _dedupe_normalized_candidates(candidates: list[str]) -> list[str]:
@@ -83,8 +95,9 @@ def validate_feature_candidates(candidates: Sequence[str]) -> list[str]:
     """Validate and deduplicate provider-scoped feature candidates."""
     invalid = []
     for candidate in candidates:
-        provider, separator, model = candidate.partition("/")
-        if not separator or not provider.strip() or not model.strip():
+        try:
+            parse_feature_candidate(candidate)
+        except ValueError:
             invalid.append(candidate)
     if invalid:
         joined = ", ".join(repr(candidate) for candidate in invalid)

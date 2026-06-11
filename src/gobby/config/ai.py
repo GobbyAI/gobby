@@ -26,6 +26,10 @@ class LocalGenerationEndpointConfig(BaseModel):
         default=None,
         description="API key for the local endpoint. Use $secret:NAME for encrypted storage.",
     )
+    vision_extract: bool = Field(
+        default=False,
+        description="Whether this endpoint's model supports daemon vision_extract requests.",
+    )
 
     @model_validator(mode="after")
     def validate_endpoint(self) -> LocalGenerationEndpointConfig:

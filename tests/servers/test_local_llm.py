@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic import ValidationError
 
 from gobby.config.ai import LocalGenerationConfig, LocalGenerationEndpointConfig
-from gobby.config.app import DaemonConfig, LocalConfig
+from gobby.config.app import DaemonConfig
 
 pytestmark = pytest.mark.unit
 
@@ -39,6 +39,7 @@ class TestLocalGenerationConfig:
         assert cfg.endpoints["lm-studio"].api_base == "http://localhost:1234/v1"
         assert cfg.endpoints["lm-studio"].model == "qwen-coder"
         assert cfg.endpoints["lm-studio"].api_key == "local-key"
+        assert cfg.endpoints["lm-studio"].vision_extract is False
         assert cfg.endpoints["ollama"].model == "qwen2.5-coder"
 
     def test_endpoint_requires_api_base(self) -> None:
@@ -66,20 +67,33 @@ class TestLocalGenerationConfig:
 
         assert config.ai.generation.local.endpoints == {}
 
+    def test_daemon_config_rejects_top_level_local(self) -> None:
+        with pytest.raises(ValidationError, match="local config has been removed"):
+            DaemonConfig(local={"url": "http://localhost:1234/v1", "model": "qwen"})
+
 
 class TestChatSessionLocalModel:
-    """Tests for explicit model='local' routing in ChatSession.start()."""
+    """Tests for explicit local:<endpoint> routing in ChatSession.start()."""
 
     @pytest.mark.asyncio
-    async def test_model_local_uses_configured_local_endpoint(self) -> None:
+    async def test_named_local_endpoint_uses_configured_generation_endpoint(self) -> None:
         from gobby.servers.chat_session import ChatSession
 
         session = ChatSession(conversation_id="test-local-model")
-        config = MagicMock()
-        config.local = LocalConfig(
-            url="http://localhost:1234/v1",
-            model="qwen-coder-32b",
-            api_key="test-local-key",
+        config = DaemonConfig(
+            ai={
+                "generation": {
+                    "local": {
+                        "endpoints": {
+                            "lm-studio": {
+                                "api_base": "http://localhost:1234/v1",
+                                "model": "qwen-coder-32b",
+                                "api_key": "test-local-key",
+                            }
+                        }
+                    }
+                }
+            }
         )
         session._config = config
 
@@ -97,11 +111,21 @@ class TestChatSessionLocalModel:
             mock_client = AsyncMock()
             mock_sdk.return_value = mock_client
 
-            await session.start(model="local")
+            await session.start(model="local:lm-studio")
 
             call_kwargs = mock_sdk.call_args
             options = call_kwargs.kwargs.get("options") or call_kwargs.args[0]
             assert options.model == "qwen-coder-32b"
             assert options.env.get("ANTHROPIC_BASE_URL") == "http://localhost:1234/v1"
             assert options.env.get("ANTHROPIC_AUTH_TOKEN") == "test-local-key"
-            assert session.model == "local"
+            assert session.model == "local:lm-studio"
+
+    @pytest.mark.asyncio
+    async def test_model_local_is_rejected(self) -> None:
+        from gobby.servers.chat_session import ChatSession
+
+        session = ChatSession(conversation_id="test-local-model")
+        session._config = DaemonConfig()
+
+        with pytest.raises(RuntimeError, match="Model 'local' has been removed"):
+            await session._resolve_requested_model("local", {})

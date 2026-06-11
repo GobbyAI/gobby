@@ -13,8 +13,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from gobby.llm.local_detection import is_local_legacy_fallback
-
 logger = logging.getLogger(__name__)
 
 
@@ -109,8 +107,7 @@ class Session:
         if "is_local" in row.keys() and row["is_local"] is not None:
             is_local = bool(row["is_local"])
         else:
-            model = cls._get_optional(row, "model")
-            is_local = is_local_legacy_fallback(row["source"], model)
+            is_local = False
 
         return cls(
             id=row["id"],

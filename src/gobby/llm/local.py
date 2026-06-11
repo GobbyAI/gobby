@@ -14,6 +14,10 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from gobby.ai.local_endpoints import (
+    local_endpoint_provider,
+    resolve_local_generation_endpoint,
+)
 from gobby.llm.base import AuthMode, LLMTextResult
 
 logger = logging.getLogger(__name__)
@@ -70,10 +74,9 @@ class LocalLLMProvider:
     Talks to any server that implements the ``/v1/chat/completions``
     endpoint (LM Studio, Ollama, vLLM, etc.) using the ``openai`` SDK.
 
-    Feature text generation passes a named ``DaemonConfig.ai.generation.local``
-    endpoint. ``DaemonConfig.local`` is retained for local vision/local-agent
-    paths:
-    - ``api_base``/``url``: Base URL (e.g. ``http://localhost:1234/v1``)
+    Feature and non-feature local generation pass a named
+    ``DaemonConfig.ai.generation.local`` endpoint:
+    - ``api_base``: Base URL (e.g. ``http://localhost:1234/v1``)
     - ``model``: Default model name to request
     - ``api_key``: Optional API key (some local servers require one)
     """
@@ -86,34 +89,25 @@ class LocalLLMProvider:
     def auth_mode(self) -> AuthMode:
         return "api_key"
 
-    def __init__(self, config: Any, endpoint_name: str | None = None) -> None:
+    def __init__(self, config: Any, endpoint_name: str) -> None:
         """Initialise from DaemonConfig.
 
         Args:
             config: DaemonConfig instance with local endpoint config.
-            endpoint_name: Named generation endpoint, or None for config.local paths.
+            endpoint_name: Named generation endpoint.
 
         Raises:
             ValueError: If no local endpoint is configured.
         """
-        local_cfg = None
-        if endpoint_name is not None:
-            endpoints = config.ai.generation.local.endpoints
-            try:
-                local_cfg = endpoints[endpoint_name]
-            except KeyError as exc:
-                raise ValueError(f"Unknown local generation endpoint: {endpoint_name}") from exc
-            self._provider_name = f"local:{endpoint_name}"
-        else:
-            local_cfg = getattr(config, "local", None)
-            self._provider_name = "local"
-        if not local_cfg:
-            raise ValueError("Provider 'local' requires a local endpoint config")
+        if not endpoint_name:
+            raise ValueError("Local LLM provider requires a named local generation endpoint")
+        local_cfg = resolve_local_generation_endpoint(config, endpoint_name)
+        self._provider_name = local_endpoint_provider(endpoint_name)
 
-        url = getattr(local_cfg, "api_base", None) or getattr(local_cfg, "url", None)
-        model = getattr(local_cfg, "model", None)
+        url = local_cfg.api_base
+        model = local_cfg.model
         if not url or not model:
-            raise ValueError("Provider 'local' requires a local endpoint URL and model")
+            raise ValueError("Local generation endpoint requires api_base and model")
         self._url = str(url)
         self._default_model = str(model)
         self._api_key = str(getattr(local_cfg, "api_key", None) or "not-needed")
@@ -144,7 +138,7 @@ class LocalLLMProvider:
         """Return a model name safe to send to the local endpoint.
 
         If *model* is a known cloud alias (e.g. ``"haiku"``), log a warning
-        and fall back to ``config.local.model``.
+        and fall back to the endpoint's configured model.
         """
         if model is None:
             return self._default_model
