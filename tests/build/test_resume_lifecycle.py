@@ -12,15 +12,20 @@ from gobby.build.observability import get_build_status
 from gobby.build.options import BuildOptions
 from gobby.build.resume_lifecycle import (
     _resume_epic_workspace_refresh_required,
+    apply_stage_caps_to_existing_lifecycle,
     resume_existing_lifecycle,
 )
 from gobby.build.runtime_hooks import RuntimeHooks
 from gobby.build.workspace_common import BuildWorkspaceError
 from gobby.build.workspaces import ensure_epic_integration_workspaces
+from gobby.config.build import StageCapOverride
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.storage.tasks._runtime_mutex import DispatchMutexUnavailableError
 from gobby.storage.worktrees import LocalWorktreeManager
+from tests.storage.tasks._stage_test_helpers import initialize_manifest, spec
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -262,3 +267,23 @@ async def test_development_resume_refreshes_invalid_child_epic_integration_artif
     assert repaired is not None
     assert repaired.id != worktree.id
     assert _git(invalid_path, "rev-parse", "--is-inside-work-tree") == "true"
+
+
+def test_apply_stage_caps_to_existing_lifecycle_uses_dispatch_mutex(
+    temp_db,
+    sample_project,
+) -> None:
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(sample_project["id"], "Resume caps")
+    initialize_manifest(temp_db, task.id, [spec("development", 0)])
+    mutexes = TaskDispatchMutexManager(temp_db)
+    assert mutexes.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="spawn",
+        ttl_seconds=30,
+    )
+    opts = BuildOptions(stage_caps=[StageCapOverride("development", max_work_attempts=4)])
+
+    with pytest.raises(DispatchMutexUnavailableError):
+        apply_stage_caps_to_existing_lifecycle(task_manager, task.id, opts)

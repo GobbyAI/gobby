@@ -11,6 +11,7 @@ import pytest
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskArtifactManager
+from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from tests.storage.tasks._stage_test_helpers import initialize_manifest, set_stage_state, spec
 
 pytestmark = pytest.mark.unit
@@ -133,6 +134,37 @@ def test_recovery_releases_claimed_review_approved_clean_clone(
     assert LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id is None
     payloads = _claim_recovery_payloads(temp_db, task.id)
     assert payloads[-1]["outcome"] == "released"
+
+
+def test_recovery_refuses_claim_release_when_dispatch_mutex_active(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+    tmp_path: Path,
+) -> None:
+    from gobby.build import claim_recovery
+
+    task = _claimed_review_task(
+        temp_db,
+        sample_project,
+        tmp_path,
+        stage_state="review_approved",
+    )
+    TaskDispatchMutexManager(temp_db).acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="spawn",
+        ttl_seconds=30,
+    )
+    monkeypatch.setattr(claim_recovery, "_git_status_lines", lambda _path: ([], None))
+
+    summary = claim_recovery.recover_safe_build_claims(temp_db, sample_project["id"])
+
+    assert summary.refused == 1
+    assert LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id is not None
+    payloads = _claim_recovery_payloads(temp_db, task.id)
+    assert payloads[-1]["outcome"] == "refused"
+    assert payloads[-1]["reason"] == "active_dispatch_mutex"
 
 
 def test_recovery_refuses_claimed_in_progress_task(

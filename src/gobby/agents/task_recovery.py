@@ -7,6 +7,8 @@ from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.storage.tasks._runtime_mutex import RuntimeDispatchMutex
 from gobby.tasks.state_semantics import (
     current_stage,
     is_task_actively_claimed,
@@ -166,7 +168,7 @@ class TaskRecoveryHandler:
             if outcome == "cancelled":
                 await self._release_dispatch_mutex_for_run(db_run)
                 await self._run_db(
-                    self._task_manager.release_task_claim,
+                    self._release_task_claim_with_mutex,
                     task_id,
                 )
                 await self._run_db(self._clear_claim_session_variables, db_run, task_id)
@@ -189,7 +191,8 @@ class TaskRecoveryHandler:
                 )
 
             if lifecycle_stage != "in_progress":
-                await self._run_db(self._task_manager.release_task_claim, task_id)
+                await self._release_dispatch_mutex_for_run(db_run)
+                await self._run_db(self._release_task_claim_with_mutex, task_id)
                 await self._run_db(self._clear_claim_session_variables, db_run, task_id)
                 logger.info(
                     "Released stale ownership on task %s after agent %s failed (status=%s)",
@@ -220,7 +223,7 @@ class TaskRecoveryHandler:
                     by_session_id=db_run.child_session_id or db_run.claimed_session_id,
                 )
                 await self._run_db(
-                    self._task_manager.release_task_claim,
+                    self._release_task_claim_with_mutex,
                     task_id,
                     dispatch_failure_count=0,
                     escalated_at=datetime.now(UTC).isoformat(),
@@ -245,7 +248,7 @@ class TaskRecoveryHandler:
                 by_session_id=db_run.child_session_id or db_run.claimed_session_id,
             )
             await self._run_db(
-                self._task_manager.release_task_claim,
+                self._release_task_claim_with_mutex,
                 task_id,
                 dispatch_failure_count=failure_count,
             )
@@ -344,6 +347,18 @@ class TaskRecoveryHandler:
                 (run_id,),
             )
             return int(cursor.rowcount)
+
+    def _release_task_claim_with_mutex(self, task_id: str, **kwargs: Any) -> Any:
+        if not self._task_manager:
+            return None
+        with RuntimeDispatchMutex(
+            TaskDispatchMutexManager(self._task_manager.db),
+            task_id,
+            "task_recovery",
+            "claim_release",
+            30,
+        ):
+            return self._task_manager.release_task_claim(task_id, **kwargs)
 
     def _clear_claim_session_variables(self, db_run: _AgentRun, task_id: str) -> None:
         """Remove recovered task from any agent-owned session claim variables."""

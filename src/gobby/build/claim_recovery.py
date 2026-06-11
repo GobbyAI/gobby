@@ -11,6 +11,11 @@ from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
 from gobby.storage.build_history import best_effort_record_event
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task, TaskArtifactManager
+from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.storage.tasks._runtime_mutex import (
+    DispatchMutexUnavailableError,
+    RuntimeDispatchMutex,
+)
 
 _REVIEW_SAFE_STATES = frozenset({"needs_review", "review_approved"})
 _RECOVERABLE_STAGE_STATES = ("ready", "in_progress", "needs_review", "review_approved")
@@ -72,7 +77,26 @@ def recover_safe_build_claims(
             )
             continue
 
-        task_manager.release_task_claim(candidate.task.id)
+        try:
+            with RuntimeDispatchMutex(
+                TaskDispatchMutexManager(db),
+                candidate.task.id,
+                "claim_recovery",
+                "claim_release",
+                30,
+            ):
+                task_manager.release_task_claim(candidate.task.id)
+        except DispatchMutexUnavailableError:
+            refused += 1
+            _record_claim_recovery_event(
+                db,
+                candidate,
+                outcome="refused",
+                claim=claim,
+                payload={"reason": "active_dispatch_mutex"},
+            )
+            continue
+
         released += 1
         _record_claim_recovery_event(
             db,

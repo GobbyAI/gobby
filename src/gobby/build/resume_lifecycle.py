@@ -28,6 +28,8 @@ from gobby.build.workspaces import _subtree_tasks
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, StageState, Task
+from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.storage.tasks._runtime_mutex import RuntimeDispatchMutex
 from gobby.storage.worktrees import LocalWorktreeManager
 
 _EXPANDED_EPIC_LEGACY_ROOT_STAGES = frozenset(
@@ -370,34 +372,41 @@ def apply_stage_caps_to_existing_lifecycle(
         stage_name = _canonical_stage_name(override.stage_name)
         if stage_name not in stage_names:
             raise ValueError(f"--stage target stage is not in the existing lifecycle: {stage_name}")
-    for stage_name in stage_names:
-        stage_override = overrides.get(stage_name)
-        updates: list[str] = []
-        params: list[int | str] = []
-        max_work_attempts = (
-            stage_override.max_work_attempts
-            if stage_override and stage_override.max_work_attempts is not None
-            else retry_cap
-        )
-        max_review_rounds = (
-            stage_override.max_review_rounds
-            if stage_override and stage_override.max_review_rounds is not None
-            else retry_cap
-        )
-        if max_work_attempts is not None:
-            updates.append(_STAGE_CAP_UPDATE_ASSIGNMENTS["max_work_attempts"])
-            params.append(max_work_attempts)
-        if max_review_rounds is not None:
-            updates.append(_STAGE_CAP_UPDATE_ASSIGNMENTS["max_review_rounds"])
-            params.append(max_review_rounds)
-        if not updates:
-            continue
-        params.extend([task_id, stage_name])
-        task_manager.db.execute(
-            f"""
-            UPDATE task_stage_states
-               SET {", ".join(updates)}
-             WHERE task_id = %s AND stage_name = %s
-            """,
-            tuple(params),
-        )
+    with RuntimeDispatchMutex(
+        TaskDispatchMutexManager(task_manager.db),
+        task_id,
+        "resume_lifecycle",
+        "stage_caps",
+        30,
+    ):
+        for stage_name in stage_names:
+            stage_override = overrides.get(stage_name)
+            updates: list[str] = []
+            params: list[int | str] = []
+            max_work_attempts = (
+                stage_override.max_work_attempts
+                if stage_override and stage_override.max_work_attempts is not None
+                else retry_cap
+            )
+            max_review_rounds = (
+                stage_override.max_review_rounds
+                if stage_override and stage_override.max_review_rounds is not None
+                else retry_cap
+            )
+            if max_work_attempts is not None:
+                updates.append(_STAGE_CAP_UPDATE_ASSIGNMENTS["max_work_attempts"])
+                params.append(max_work_attempts)
+            if max_review_rounds is not None:
+                updates.append(_STAGE_CAP_UPDATE_ASSIGNMENTS["max_review_rounds"])
+                params.append(max_review_rounds)
+            if not updates:
+                continue
+            params.extend([task_id, stage_name])
+            task_manager.db.execute(
+                f"""
+                UPDATE task_stage_states
+                   SET {", ".join(updates)}
+                 WHERE task_id = %s AND stage_name = %s
+                """,
+                tuple(params),
+            )
