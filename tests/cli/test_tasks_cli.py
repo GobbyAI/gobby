@@ -207,6 +207,52 @@ class TestListTasksCommand:
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.get_project_context")
+    @patch("gobby.cli.tasks.crud.get_claimed_task_owners")
+    def test_list_with_parent_cycle_does_not_recurse_forever(
+        self,
+        mock_claimed: MagicMock,
+        mock_project_ctx: MagicMock,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """Parent cycles in stored data must not crash tree rendering."""
+        mock_project_ctx.return_value = {"id": "proj-123"}
+        mock_claimed.return_value = {}
+
+        first = MagicMock()
+        first.id = "task-1"
+        first.seq_num = 1
+        first.title = "First"
+        first.priority = 2
+        first.parent_task_id = "task-2"
+        first.project_id = "proj-123"
+        first.updated_at = "2024-01-01T00:00:00Z"
+        _set_task_state(first)
+
+        second = MagicMock()
+        second.id = "task-2"
+        second.seq_num = 2
+        second.title = "Second"
+        second.priority = 2
+        second.parent_task_id = "task-1"
+        second.project_id = "proj-123"
+        second.updated_at = "2024-01-01T00:00:00Z"
+        _set_task_state(second)
+
+        mock_manager = MagicMock()
+        mock_manager.list_tasks.return_value = [first, second]
+        mock_manager.db.fetchall.return_value = []
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(cli, ["tasks", "list"])
+
+        assert result.exit_code == 0
+        assert "Found 2 tasks" in result.output
+        assert "First" in result.output
+        assert "Second" in result.output
+
+    @patch("gobby.cli.tasks.crud.get_task_manager")
+    @patch("gobby.cli.tasks.crud.get_project_context")
     def test_list_json_output(
         self,
         mock_project_ctx: MagicMock,
@@ -2811,3 +2857,28 @@ class TestTaskUtilsFunctions:
         assert len(result) == 2
         assert result[0].id == "child-1"
         assert result[1].id == "grandchild-1"
+
+    def test_get_all_descendants_with_parent_cycle(self) -> None:
+        """Descendant collection skips already visited task IDs."""
+        from gobby.cli.tasks._utils import get_all_descendants
+
+        parent = MagicMock()
+        parent.id = "parent-1"
+        child = MagicMock()
+        child.id = "child-1"
+
+        mock_manager = MagicMock()
+
+        def list_tasks_side_effect(**kwargs: str) -> list[MagicMock]:
+            parent_id = kwargs.get("parent_task_id")
+            if parent_id == "parent-1":
+                return [child]
+            if parent_id == "child-1":
+                return [parent]
+            return []
+
+        mock_manager.list_tasks.side_effect = list_tasks_side_effect
+
+        result = get_all_descendants(mock_manager, "parent-1")
+
+        assert [task.id for task in result] == ["child-1"]

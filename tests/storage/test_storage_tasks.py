@@ -91,6 +91,24 @@ class TestLocalTaskManager:
         _assert_stage_state(updated, "ready")
         assert updated.updated_at > task.updated_at
 
+    def test_update_task_rejects_self_parent(self, task_manager, project_id) -> None:
+        task = task_manager.create_task(project_id=project_id, title="Original Title")
+
+        with pytest.raises(ValueError, match="own parent"):
+            task_manager.update_task(task.id, parent_task_id=task.id)
+
+    def test_update_task_rejects_descendant_parent(self, task_manager, project_id) -> None:
+        parent = task_manager.create_task(project_id=project_id, title="Parent")
+        child = task_manager.create_task(
+            project_id=project_id, title="Child", parent_task_id=parent.id
+        )
+        grandchild = task_manager.create_task(
+            project_id=project_id, title="Grandchild", parent_task_id=child.id
+        )
+
+        with pytest.raises(ValueError, match="descendants"):
+            task_manager.update_task(parent.id, parent_task_id=grandchild.id)
+
     def test_update_task_rejects_lifecycle_fields(self, task_manager, project_id) -> None:
         task = task_manager.create_task(project_id=project_id, title="Original Title")
 
