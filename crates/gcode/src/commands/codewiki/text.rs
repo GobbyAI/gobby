@@ -498,9 +498,9 @@ pub(crate) fn frontmatter_with_degradation(
         title,
         kind,
         provenance: source_files,
-        generated_by: "gcode-codewiki",
-        trust: "generated",
-        freshness: "indexed",
+        generated_by: gobby_core::codewiki_contract::GENERATED_BY_CODEWIKI,
+        trust: gobby_core::codewiki_contract::TRUST_GENERATED,
+        freshness: gobby_core::codewiki_contract::FRESHNESS_INDEXED,
         degraded: (!degraded_sources.is_empty()).then_some(true),
         degraded_sources: degraded_sources.iter().map(String::as_str).collect(),
     };

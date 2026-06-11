@@ -340,8 +340,10 @@ fn parse_toml(raw: &str) -> Result<Value, FrontmatterError> {
 }
 
 fn frontmatter_from_object(mut object: Map<String, Value>) -> WikiFrontmatter {
+    use gobby_core::codewiki_contract;
+
     let title = object
-        .remove("title")
+        .remove(codewiki_contract::TITLE_KEY)
         .and_then(|value| string_value(&value));
     let aliases = object
         .remove("aliases")
@@ -358,15 +360,15 @@ fn frontmatter_from_object(mut object: Map<String, Value>) -> WikiFrontmatter {
     let captured_from = object
         .remove("captured_from")
         .and_then(|value| string_value(&value));
-    let provenance = object.remove("provenance");
+    let provenance = object.remove(codewiki_contract::PROVENANCE_KEY);
     let generated_by = object
-        .remove("generated_by")
+        .remove(codewiki_contract::GENERATED_BY_KEY)
         .and_then(|value| string_value(&value));
     let trust = object
-        .remove("trust")
+        .remove(codewiki_contract::TRUST_KEY)
         .and_then(|value| string_value(&value));
     let freshness = object
-        .remove("freshness")
+        .remove(codewiki_contract::FRESHNESS_KEY)
         .and_then(|value| string_value(&value));
     let indexed_at = object
         .remove("indexed_at")
@@ -569,6 +571,54 @@ mod tests {
         assert!(parsed.metadata.provenance.is_some());
         assert!(!parsed.metadata.unknown.contains_key("source"));
         assert!(!parsed.metadata.unknown.contains_key("provenance"));
+    }
+
+    #[test]
+    fn codewiki_contract_golden_page_parses_into_contract_fields() {
+        use gobby_core::codewiki_contract;
+
+        let parsed = parse_frontmatter(codewiki_contract::GOLDEN_PAGE).expect("parse golden page");
+
+        assert_eq!(parsed.metadata.title.as_deref(), Some("src/lib.rs"));
+        assert_eq!(
+            parsed.metadata.generated_by.as_deref(),
+            Some(codewiki_contract::GENERATED_BY_CODEWIKI)
+        );
+        assert_eq!(
+            parsed.metadata.trust.as_deref(),
+            Some(codewiki_contract::TRUST_GENERATED)
+        );
+        assert_eq!(
+            parsed.metadata.freshness.as_deref(),
+            Some(codewiki_contract::FRESHNESS_INDEXED)
+        );
+
+        let provenance = parsed.metadata.provenance.as_ref().expect("provenance");
+        let entry = provenance
+            .as_array()
+            .and_then(|entries| entries.first())
+            .and_then(Value::as_object)
+            .expect("provenance entry");
+        assert_eq!(
+            entry
+                .get(codewiki_contract::PROVENANCE_FILE_KEY)
+                .and_then(Value::as_str),
+            Some("src/lib.rs")
+        );
+        assert!(
+            entry
+                .get(codewiki_contract::PROVENANCE_RANGES_KEY)
+                .and_then(Value::as_array)
+                .is_some_and(|ranges| !ranges.is_empty())
+        );
+
+        let links = crate::links::extract_links(parsed.body, std::iter::empty::<&str>());
+        assert!(
+            links
+                .iter()
+                .any(|link| link.target == "code/files/src/lib.rs"),
+            "golden page wikilink must resolve to the code/files target: {links:?}"
+        );
     }
 
     #[test]

@@ -301,7 +301,7 @@ pub(crate) fn source_files_from_frontmatter(content: &str) -> BTreeSet<String> {
         return files;
     };
 
-    for key in ["provenance"] {
+    for key in [gobby_core::codewiki_contract::PROVENANCE_KEY] {
         let key = serde_yaml::Value::String(key.to_string());
         let Some(serde_yaml::Value::Sequence(sources)) = frontmatter.get(&key) else {
             continue;
@@ -310,7 +310,9 @@ pub(crate) fn source_files_from_frontmatter(content: &str) -> BTreeSet<String> {
             let serde_yaml::Value::Mapping(source) = source else {
                 continue;
             };
-            let file_key = serde_yaml::Value::String("file".to_string());
+            let file_key = serde_yaml::Value::String(
+                gobby_core::codewiki_contract::PROVENANCE_FILE_KEY.to_string(),
+            );
             if let Some(serde_yaml::Value::String(file)) = source.get(&file_key) {
                 files.insert(file.clone());
             }

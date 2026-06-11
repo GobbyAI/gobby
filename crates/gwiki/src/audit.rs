@@ -244,10 +244,15 @@ fn frontmatter_source_has_code_span(value: &Value) -> bool {
     let Value::Object(source) = value else {
         return false;
     };
-    let Some(file) = source.get("file").and_then(Value::as_str) else {
+    let Some(file) = source
+        .get(gobby_core::codewiki_contract::PROVENANCE_FILE_KEY)
+        .and_then(Value::as_str)
+    else {
         return false;
     };
-    let Some(Value::Array(ranges)) = source.get("ranges") else {
+    let Some(Value::Array(ranges)) =
+        source.get(gobby_core::codewiki_contract::PROVENANCE_RANGES_KEY)
+    else {
         return false;
     };
     is_code_source_path(file) && ranges.iter().any(frontmatter_range_is_valid)
@@ -736,6 +741,16 @@ Signature: `fn example() -> bool {`
         );
 
         assert!(claims.is_empty());
+    }
+
+    #[test]
+    fn codewiki_contract_golden_page_counts_as_code_source_spans() {
+        let page = test_codewiki_page(
+            "code/files/src/lib.rs.md",
+            gobby_core::codewiki_contract::GOLDEN_PAGE,
+        );
+
+        assert!(has_codewiki_frontmatter_source_spans(&page));
     }
 
     #[test]

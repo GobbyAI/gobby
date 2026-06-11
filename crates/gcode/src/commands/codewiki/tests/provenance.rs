@@ -124,6 +124,32 @@ fn frontmatter_serializes_scalars_with_serde_yaml() {
 }
 
 #[test]
+fn frontmatter_matches_the_shared_codewiki_contract_golden() {
+    let doc = frontmatter_with_degradation(
+        "src/lib.rs",
+        "file",
+        &[
+            SourceSpan {
+                file: "src/lib.rs".to_string(),
+                line_start: 1,
+                line_end: 2,
+            },
+            SourceSpan {
+                file: "src/lib.rs".to_string(),
+                line_start: 10,
+                line_end: 10,
+            },
+        ],
+        &["model_provider_unavailable".to_string()],
+    );
+
+    assert!(
+        gobby_core::codewiki_contract::GOLDEN_PAGE.starts_with(&doc),
+        "emitted frontmatter drifted from gobby_core::codewiki_contract::GOLDEN_PAGE:\n{doc}"
+    );
+}
+
+#[test]
 fn citations_validated_against_spans() {
     let input = CodewikiInput {
         files: vec!["src/lib.rs".to_string()],

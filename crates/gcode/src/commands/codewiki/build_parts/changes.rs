@@ -120,9 +120,9 @@ fn changes_frontmatter(
     let data = ChangesFrontmatter {
         title: "Index Changes",
         kind: "code_changes",
-        generated_by: "gcode-codewiki",
-        trust: "generated",
-        freshness: "indexed",
+        generated_by: gobby_core::codewiki_contract::GENERATED_BY_CODEWIKI,
+        trust: gobby_core::codewiki_contract::TRUST_GENERATED,
+        freshness: gobby_core::codewiki_contract::FRESHNESS_INDEXED,
         baseline,
         degraded,
         degraded_sources: degraded_sources.iter().map(String::as_str).collect(),
