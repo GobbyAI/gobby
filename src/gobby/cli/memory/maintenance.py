@@ -57,18 +57,19 @@ def _list_all_memories(
 
 @click.command("dedupe")
 @click.option("--dry-run", is_flag=True, help="Show duplicates without deleting")
+@click.option("--yes", "-y", is_flag=True, help="Delete duplicates without confirmation")
 @click.pass_context
-def dedupe_memories(ctx: click.Context, dry_run: bool) -> None:
+def dedupe_memories(ctx: click.Context, dry_run: bool, yes: bool) -> None:
     """Remove duplicate memories (same content, different IDs).
 
-    Identifies memories with identical content but different IDs (caused by
-    project_id variations) and removes duplicates, keeping the earliest one.
+    Identifies memories with identical content in the same project but different
+    IDs and removes duplicates, keeping the earliest one.
 
     Examples:
 
         gobby memory dedupe --dry-run   # Preview duplicates
 
-        gobby memory dedupe             # Remove duplicates
+        gobby memory dedupe --yes       # Remove duplicates
     """
     memory_module = _facade()
     manager = memory_module.get_memory_manager(ctx)
@@ -79,17 +80,18 @@ def dedupe_memories(ctx: click.Context, dry_run: bool) -> None:
         click.echo("No memories found.")
         return
 
-    content_groups: dict[str, list[tuple[str, str, str | None]]] = {}
+    content_groups: dict[tuple[str | None, str], list[tuple[str, str, str | None]]] = {}
     for memory in memories:
         normalized = memory.content.strip()
-        if normalized not in content_groups:
-            content_groups[normalized] = []
-        content_groups[normalized].append((memory.id, memory.created_at, memory.project_id))
+        key = (memory.project_id, normalized)
+        if key not in content_groups:
+            content_groups[key] = []
+        content_groups[key].append((memory.id, memory.created_at, memory.project_id))
 
     duplicates_to_delete: list[str] = []
     duplicate_count = 0
 
-    for content, entries in content_groups.items():
+    for (_project_id, content), entries in content_groups.items():
         if len(entries) > 1:
             duplicate_count += len(entries) - 1
             entries.sort(key=lambda x: x[1])
@@ -113,6 +115,11 @@ def dedupe_memories(ctx: click.Context, dry_run: bool) -> None:
         click.echo(f"\nFound {duplicate_count} duplicate memories.")
         click.echo("Run without --dry-run to delete them.")
     else:
+        if duplicates_to_delete and not yes:
+            click.confirm(
+                f"Delete {len(duplicates_to_delete)} duplicate memories? This cannot be undone.",
+                abort=True,
+            )
         deleted = asyncio.run(_delete_memories(manager, duplicates_to_delete))
 
         click.echo(f"Deleted {deleted} duplicate memories.")

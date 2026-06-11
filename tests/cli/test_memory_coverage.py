@@ -239,7 +239,7 @@ class TestDedupeMemories:
         mem1.id = "mem-a1"
         mem1.content = "same content"
         mem1.created_at = "2024-01-01"
-        mem1.project_id = None
+        mem1.project_id = "proj-1"
         mem2 = MagicMock()
         mem2.id = "mem-a2"
         mem2.content = "same content"
@@ -252,7 +252,7 @@ class TestDedupeMemories:
         assert "Duplicate content (2 copies)" in result.output
         assert "Found 1 duplicate" in result.output
 
-    def test_dedupe_execute(self, runner: CliRunner, mock_manager: MagicMock) -> None:
+    def test_dedupe_requires_confirmation(self, runner: CliRunner, mock_manager: MagicMock) -> None:
         mem1 = MagicMock()
         mem1.id = "mem-a1"
         mem1.content = "dup"
@@ -266,9 +266,84 @@ class TestDedupeMemories:
         mock_manager.list_memories.return_value = [mem1, mem2]
         mock_manager.delete_memory = AsyncMock(return_value=True)
 
-        result = runner.invoke(memory, ["dedupe"])
+        result = runner.invoke(memory, ["dedupe"], input="n\n")
+
+        assert result.exit_code == 1
+        assert "Delete 1 duplicate memories?" in result.output
+        assert "Aborted!" in result.output
+        mock_manager.delete_memory.assert_not_awaited()
+
+    def test_dedupe_execute_with_yes(self, runner: CliRunner, mock_manager: MagicMock) -> None:
+        mem1 = MagicMock()
+        mem1.id = "mem-a1"
+        mem1.content = "dup"
+        mem1.created_at = "2024-01-01"
+        mem1.project_id = None
+        mem2 = MagicMock()
+        mem2.id = "mem-a2"
+        mem2.content = "dup"
+        mem2.created_at = "2024-01-02"
+        mem2.project_id = None
+        mock_manager.list_memories.return_value = [mem1, mem2]
+        mock_manager.delete_memory = AsyncMock(return_value=True)
+
+        result = runner.invoke(memory, ["dedupe", "--yes"])
         assert result.exit_code == 0
         assert "Deleted 1 duplicate" in result.output
+
+    def test_dedupe_keeps_identical_content_per_project(
+        self, runner: CliRunner, mock_manager: MagicMock
+    ) -> None:
+        mem1 = MagicMock()
+        mem1.id = "mem-a1"
+        mem1.content = "dup"
+        mem1.created_at = "2024-01-01"
+        mem1.project_id = "proj-1"
+        mem2 = MagicMock()
+        mem2.id = "mem-a2"
+        mem2.content = "dup"
+        mem2.created_at = "2024-01-02"
+        mem2.project_id = "proj-2"
+        mem3 = MagicMock()
+        mem3.id = "mem-a3"
+        mem3.content = "dup"
+        mem3.created_at = "2024-01-03"
+        mem3.project_id = "proj-1"
+        mock_manager.list_memories.return_value = [mem1, mem2, mem3]
+        mock_manager.delete_memory = AsyncMock(return_value=True)
+
+        result = runner.invoke(memory, ["dedupe", "--yes"])
+
+        assert result.exit_code == 0
+        assert "Deleted 1 duplicate" in result.output
+        mock_manager.delete_memory.assert_awaited_once_with("mem-a3")
+
+    def test_dedupe_multi_project_duplicate_requires_confirmation(
+        self, runner: CliRunner, mock_manager: MagicMock
+    ) -> None:
+        mem1 = MagicMock()
+        mem1.id = "mem-a1"
+        mem1.content = "dup"
+        mem1.created_at = "2024-01-01"
+        mem1.project_id = "proj-1"
+        mem2 = MagicMock()
+        mem2.id = "mem-a2"
+        mem2.content = "dup"
+        mem2.created_at = "2024-01-02"
+        mem2.project_id = "proj-2"
+        mem3 = MagicMock()
+        mem3.id = "mem-a3"
+        mem3.content = "dup"
+        mem3.created_at = "2024-01-03"
+        mem3.project_id = "proj-1"
+        mock_manager.list_memories.return_value = [mem1, mem2, mem3]
+        mock_manager.delete_memory = AsyncMock(return_value=True)
+
+        result = runner.invoke(memory, ["dedupe"], input="n\n")
+
+        assert result.exit_code == 1
+        assert "Delete 1 duplicate memories?" in result.output
+        mock_manager.delete_memory.assert_not_awaited()
 
     def test_dedupe_no_duplicates(self, runner: CliRunner, mock_manager: MagicMock) -> None:
         mem1 = MagicMock()
