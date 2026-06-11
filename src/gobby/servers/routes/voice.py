@@ -225,11 +225,8 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
         Upload an audio file to get transcription text.
         """
         config = server.config
-        if not config or not hasattr(config, "voice") or not config.voice.enabled:
+        if not config or not hasattr(config, "voice"):
             return {"error": "Voice not enabled", "text": ""}
-
-        if not config.voice.stt_enabled:
-            return {"error": "STT disabled in config", "text": ""}
 
         audio_bytes = await file.read()
         content_type = file.content_type or "audio/webm"

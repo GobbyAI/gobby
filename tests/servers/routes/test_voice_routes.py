@@ -355,14 +355,17 @@ class TestVoiceRoutes:
     # -----------------------------------------------------------------
 
     def test_transcribe_voice_disabled(self, client: TestClient) -> None:
-        """Transcribe returns error when voice is disabled."""
+        """Transcribe lets the registry report local voice capability availability."""
         response = client.post(
             "/api/voice/transcribe",
             files={"file": ("test.webm", b"fake audio data", "audio/webm")},
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["error"] == "Voice not enabled"
+        assert data["code"] == "capability_unavailable"
+        assert data["capability"] == "audio_transcribe"
+        assert data["provider"] is None
+        assert "voice.enabled is false" in data["reason"]
         assert data["text"] == ""
 
     def test_transcribe_no_config(self, client: TestClient, server_with_voice: MagicMock) -> None:
@@ -394,7 +397,7 @@ class TestVoiceRoutes:
     def test_transcribe_stt_disabled(
         self, client: TestClient, server_with_voice: MagicMock
     ) -> None:
-        """Transcribe returns error when stt_enabled=False."""
+        """Transcribe lets the registry report disabled local STT availability."""
         server_with_voice.config.voice = VoiceConfig(enabled=True, stt_enabled=False)
         response = client.post(
             "/api/voice/transcribe",
@@ -402,7 +405,10 @@ class TestVoiceRoutes:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["error"] == "STT disabled in config"
+        assert data["code"] == "capability_unavailable"
+        assert data["capability"] == "audio_transcribe"
+        assert data["provider"] is None
+        assert "voice.stt_enabled is false" in data["reason"]
         assert data["text"] == ""
 
     def test_transcribe_stt_not_available(
@@ -459,7 +465,8 @@ class TestVoiceRoutes:
         self, client: TestClient, server_with_voice: MagicMock
     ) -> None:
         server_with_voice.config.voice = VoiceConfig(
-            enabled=True,
+            enabled=False,
+            stt_enabled=False,
             openai_compatible_audio=[
                 OpenAICompatibleAudioBindingConfig(
                     provider="remote-stt",
