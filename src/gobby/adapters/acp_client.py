@@ -271,44 +271,48 @@ class ACPClient:
         self._stderr_drain.start_async(self._process.stderr)
         logger.debug("%s ACP client started (pid=%s)", self.display_name, self._process.pid)
 
-        # Perform initialize handshake
-        init_result = await self._send_request(
-            "initialize",
-            {
-                "protocolVersion": self.protocol_version,
-                "clientInfo": {
-                    "name": "gobby",
-                    "version": "1.0.0",
+        try:
+            # Perform initialize handshake
+            init_result = await self._send_request(
+                "initialize",
+                {
+                    "protocolVersion": self.protocol_version,
+                    "clientInfo": {
+                        "name": "gobby",
+                        "version": "1.0.0",
+                    },
+                    "clientCapabilities": {},
                 },
-                "clientCapabilities": {},
-            },
-        )
-        logger.debug(f"ACP initialize response: {init_result}")
-        await self._maybe_authenticate(init_result)
-        if auto_session:
-            if session_id:
-                session_result = await self.load_session(
-                    session_id,
-                    model=model,
-                    cwd=cwd,
-                    reasoning_effort=reasoning_effort,
-                )
-            else:
-                session_result = await self.create_session(
-                    model=model,
-                    cwd=cwd,
-                    reasoning_effort=reasoning_effort,
-                )
-            self._session_info = session_result if isinstance(session_result, dict) else {}
-            self._session_id = (
-                session_result.get("sessionId")
-                if session_result and session_result.get("sessionId")
-                else session_id
             )
-            logger.debug(f"ACP session ID: {self._session_id}")
-        else:
-            self._session_id = None
-            self._session_info = {}
+            logger.debug(f"ACP initialize response: {init_result}")
+            await self._maybe_authenticate(init_result)
+            if auto_session:
+                if session_id:
+                    session_result = await self.load_session(
+                        session_id,
+                        model=model,
+                        cwd=cwd,
+                        reasoning_effort=reasoning_effort,
+                    )
+                else:
+                    session_result = await self.create_session(
+                        model=model,
+                        cwd=cwd,
+                        reasoning_effort=reasoning_effort,
+                    )
+                self._session_info = session_result if isinstance(session_result, dict) else {}
+                self._session_id = (
+                    session_result.get("sessionId")
+                    if session_result and session_result.get("sessionId")
+                    else session_id
+                )
+                logger.debug(f"ACP session ID: {self._session_id}")
+            else:
+                self._session_id = None
+                self._session_info = {}
+        except BaseException:
+            await self.stop()
+            raise
 
     def _build_launch_command(
         self,
@@ -449,16 +453,10 @@ class ACPClient:
                     continue
 
                 if "id" in data and data.get("method"):
-                    from gobby.adapters.acp_client_requests import write_json_rpc_error
+                    from gobby.adapters.acp_client_requests import handle_client_request
 
-                    await write_json_rpc_error(
-                        self,
-                        data.get("id"),
-                        code=-32601,
-                        message=(
-                            f"Unsupported client request during {method}: {data.get('method')}"
-                        ),
-                    )
+                    async for _ in handle_client_request(self, data):
+                        pass
                     continue
 
                 if "id" in data:
@@ -586,7 +584,7 @@ class ACPClient:
                     timeout=self._prompt_timeout,
                 )
             except asyncio.CancelledError:
-                return
+                raise
             except TimeoutError as exc:
                 raise TimeoutError(
                     "Timed out waiting for ACP session/prompt response "
