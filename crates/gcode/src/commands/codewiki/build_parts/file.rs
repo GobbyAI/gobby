@@ -1,7 +1,9 @@
+use std::collections::BTreeSet;
+
 use super::super::{
-    AiDepth, CodewikiProgress, FileDoc, Generation, SourceSpan, SymbolDoc, TextGenerator,
-    citation_list, component_label, ground_text, maybe_generate, prompts, structural_file_summary,
-    structural_symbol_purpose,
+    AiDepth, CodewikiProgress, FileDoc, Generation, ReusePlan, SourceSpan, SymbolDoc,
+    TextGenerator, citation_list, component_label, file_doc_path, ground_text, maybe_generate,
+    prompts, structural_file_summary, structural_symbol_purpose,
 };
 use crate::models::Symbol;
 
@@ -12,16 +14,27 @@ pub(crate) struct FileDocPosition {
     pub(crate) total: usize,
 }
 
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn build_file_doc(
     file: &str,
     module: String,
     symbols: Vec<Symbol>,
     generate: &mut Option<&mut TextGenerator<'_>>,
+    reuse: &mut Option<&mut ReusePlan>,
     ai_depth: AiDepth,
     progress: &mut CodewikiProgress,
     position: FileDocPosition,
 ) -> FileDoc {
-    let file_verb = if ai_depth.includes_files() {
+    // A file doc's provenance cites only its own file, so reuse is decided by
+    // that single hash. Reuse skips every symbol and file LLM call; the
+    // recorded summary still feeds module prompts and pages.
+    let sources = BTreeSet::from([file.to_string()]);
+    let reused = reuse
+        .as_deref_mut()
+        .and_then(|plan| plan.reusable_page_with_summary(&file_doc_path(file), &sources));
+    let file_verb = if reused.is_some() {
+        "reusing"
+    } else if ai_depth.includes_files() {
         "generating"
     } else {
         "building"
@@ -37,7 +50,7 @@ pub(crate) fn build_file_doc(
         .enumerate()
         .map(|(index, symbol)| {
             let fallback = structural_symbol_purpose(&symbol);
-            let generated = if ai_depth.includes_symbols() {
+            let generated = if reused.is_none() && ai_depth.includes_symbols() {
                 progress.emit(format!(
                     "generating symbol doc file {}/{} symbol {}/{} {}",
                     position.index,
@@ -93,21 +106,27 @@ pub(crate) fn build_file_doc(
         .map(|symbol| symbol.component_id.clone())
         .collect::<Vec<_>>();
     let fallback = structural_file_summary(file, &symbol_docs);
-    let generated = if ai_depth.includes_files() {
-        maybe_generate(
-            generate,
-            &prompts::file_prompt(file, &prompt_symbols),
-            prompts::FILE_SYSTEM,
-        )
-    } else {
-        Generation::Skipped
-    }
-    .unwrap_or_record(fallback, &mut degraded);
-    let summary = ground_text(
-        &generated,
-        &source_spans,
-        Some(&citation_list(&source_spans)),
-    );
+    let (summary, reused_page) = match reused {
+        Some((page, summary)) => (summary, Some(page)),
+        None => {
+            let generated = if ai_depth.includes_files() {
+                maybe_generate(
+                    generate,
+                    &prompts::file_prompt(file, &prompt_symbols),
+                    prompts::FILE_SYSTEM,
+                )
+            } else {
+                Generation::Skipped
+            }
+            .unwrap_or_record(fallback, &mut degraded);
+            let summary = ground_text(
+                &generated,
+                &source_spans,
+                Some(&citation_list(&source_spans)),
+            );
+            (summary, None)
+        }
+    };
 
     FileDoc {
         path: file.to_string(),
@@ -117,5 +136,6 @@ pub(crate) fn build_file_doc(
         symbols: symbol_docs,
         component_ids,
         degraded,
+        reused_page,
     }
 }

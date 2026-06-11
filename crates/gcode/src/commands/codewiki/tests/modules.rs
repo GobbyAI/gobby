@@ -10,6 +10,7 @@ fn module_docs_include_physical_direct_files_for_ancestor_modules() {
         symbols: Vec::new(),
         component_ids: Vec::new(),
         degraded: false,
+        reused_page: None,
     }];
     let mut generate = None;
     let mut progress = CodewikiProgress::silent();
@@ -19,8 +20,11 @@ fn module_docs_include_physical_direct_files_for_ancestor_modules() {
         &[],
         CodewikiGraphAvailability::Available,
         &mut generate,
+        &mut None,
         &mut progress,
-    );
+        &mut |_| Ok(()),
+    )
+    .expect("module docs build");
     let parent = docs
         .iter()
         .find(|doc| doc.module == "src/commands")
@@ -60,5 +64,6 @@ fn file_doc(path: &str, module: &str, component_id: &str) -> FileDoc {
         symbols: Vec::new(),
         component_ids: vec![component_id.to_string()],
         degraded: false,
+        reused_page: None,
     }
 }

@@ -32,6 +32,7 @@ mod paths;
 mod progress;
 mod prompts;
 mod render;
+mod reuse;
 mod text;
 
 // Document builders.
@@ -77,10 +78,12 @@ pub(crate) use text::{
 #[cfg(test)]
 pub(crate) use text::{frontmatter, generate_with_bounded_retry};
 
-pub(crate) use io::{
-    read_ownership_meta, write_incremental_doc_set_with_snapshot, write_ownership_meta,
-};
+#[cfg(test)]
+pub(crate) use io::write_incremental_doc_set_with_snapshot;
+pub(crate) use io::{DocSink, read_ownership_meta, write_ownership_meta};
 pub use io::{write_doc_set, write_incremental_doc_set};
+// Reuse of unchanged docs without regeneration.
+pub(crate) use reuse::{ReusePlan, span_files};
 
 #[derive(Debug, Clone)]
 pub struct CodewikiInput {
@@ -173,6 +176,9 @@ pub(crate) struct FileDoc {
     component_ids: Vec<String>,
     /// True when AI generation was attempted for this doc and failed.
     degraded: bool,
+    /// The on-disk page when the doc was reused without regeneration (#681);
+    /// emitting disk content verbatim keeps a forced rewrite lossless.
+    reused_page: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -197,6 +203,9 @@ pub(crate) struct ModuleDoc {
     graph_availability: CodewikiGraphAvailability,
     /// True when AI generation was attempted for this doc and failed.
     degraded: bool,
+    /// The on-disk page when the doc was reused without regeneration (#681);
+    /// emitting disk content verbatim keeps a forced rewrite lossless.
+    reused_page: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -319,6 +328,15 @@ pub(crate) struct CodewikiDocMeta {
     /// is what lets a later successful run repair the doc (#687).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     degraded: bool,
+    /// The grounded summary this doc feeds into parent prompts and pages,
+    /// recorded so an unchanged doc can be reused without an LLM call (#681).
+    /// Absent for degraded fallbacks and for docs nothing consumes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    summary: Option<String>,
+    /// AI mode the doc on disk was generated under. Entries written before
+    /// per-doc modes existed inherit the run-level `ai_mode` at read time.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    ai_mode: String,
 }
 
 /// One rendered doc plus the degradation outcome of its generation, carried
@@ -328,6 +346,9 @@ pub(crate) struct BuiltDoc {
     pub(crate) path: String,
     pub(crate) content: String,
     pub(crate) degraded: bool,
+    /// Grounded summary persisted to the doc meta so a later run can feed it
+    /// into parent prompts without regenerating this doc (#681).
+    pub(crate) summary: Option<String>,
 }
 
 impl BuiltDoc {
@@ -336,6 +357,7 @@ impl BuiltDoc {
             path: path.into(),
             content,
             degraded: false,
+            summary: None,
         }
     }
 }
@@ -489,42 +511,47 @@ pub fn run(
     let previous_meta = io::read_codewiki_meta(out_path)?;
     let index_snapshot = build_codewiki_index_snapshot(&ctx.project_root, &input)?;
     let mut ownership_meta = read_ownership_meta(out_path)?;
-    let mut docs = generate_hierarchical_docs_with_ownership(
+    let mut reuse_plan = ReusePlan::load(&ctx.project_root, out_path, ai_mode)?;
+    let mut reuse = Some(&mut reuse_plan);
+    let mut sink = DocSink::open(&ctx.project_root, out_path, ai_mode)?;
+    let mut generated_pages = 0_usize;
+    let mut module_count = 0_usize;
+    let mut file_count = 0_usize;
+    // Persist each doc and its meta entry as soon as it is built, so a killed
+    // run keeps everything generated so far and a re-run resumes from disk.
+    let mut emit = |doc: BuiltDoc| -> anyhow::Result<()> {
+        generated_pages += 1;
+        if doc.path.starts_with("code/modules/") {
+            module_count += 1;
+        }
+        if doc.path.starts_with("code/files/") {
+            file_count += 1;
+        }
+        sink.persist(&doc)?;
+        Ok(())
+    };
+    generate_hierarchical_docs_with_ownership(
         &input,
         &ctx.project_root,
         &mut ownership_meta,
         generator.as_deref_mut(),
         ai_depth,
+        &mut reuse,
         &mut progress,
+        &mut emit,
     )?;
     progress.emit("generating changes docs");
-    docs.push(BuiltDoc::healthy(
+    emit(BuiltDoc::healthy(
         "code/_changes.md",
         build_codewiki_changes_doc(previous_meta.index_snapshot.as_ref(), &index_snapshot)?,
-    ));
-    let module_count = docs
-        .iter()
-        .filter(|doc| doc.path.starts_with("code/modules/"))
-        .count();
-    let file_count = docs
-        .iter()
-        .filter(|doc| doc.path.starts_with("code/files/"))
-        .count();
+    ))?;
+    write_ownership_meta(out_path, &ownership_meta)?;
     let symbol_count = input
         .symbols
         .iter()
         .filter(|symbol| is_core_file(&symbol.file_path))
         .count();
-    let changed_paths = write_codewiki_docs(
-        &ctx.project_root,
-        out_path,
-        &docs,
-        Some(index_snapshot),
-        ai_mode,
-        &ownership_meta,
-        &mut progress,
-    )?;
-    let generated_pages = docs.len();
+    let changed_paths = sink.finish(Some(index_snapshot))?;
     let skipped = generated_pages.saturating_sub(changed_paths.len());
 
     let summary = CodewikiRunSummary {
@@ -558,31 +585,6 @@ fn validate_edge_limit(edge_limit: usize) -> anyhow::Result<()> {
     anyhow::bail!("codewiki --edge-limit must be between 1 and {MAX_EDGE_LIMIT}, got {edge_limit}")
 }
 
-fn write_codewiki_docs(
-    project_root: &Path,
-    out_path: &Path,
-    docs: &[BuiltDoc],
-    index_snapshot: Option<CodewikiIndexSnapshot>,
-    ai_mode: &str,
-    ownership_meta: &OwnershipMeta,
-    progress: &mut CodewikiProgress,
-) -> anyhow::Result<Vec<String>> {
-    progress.emit(format!(
-        "writing docs {} pages to {}",
-        docs.len(),
-        out_path.display()
-    ));
-    let changed_paths = write_incremental_doc_set_with_snapshot(
-        project_root,
-        out_path,
-        docs,
-        index_snapshot,
-        ai_mode,
-    )?;
-    write_ownership_meta(out_path, ownership_meta)?;
-    Ok(changed_paths)
-}
-
 pub fn generate_hierarchical_docs(
     input: &CodewikiInput,
     generate: Option<&mut TextGenerator<'_>>,
@@ -598,52 +600,83 @@ fn generate_hierarchical_docs_with_graph_availability(
     mut generate: Option<&mut TextGenerator<'_>>,
 ) -> Vec<BuiltDoc> {
     let mut progress = CodewikiProgress::silent();
-    match generate_hierarchical_docs_core(
+    let mut docs = Vec::new();
+    if let Err(error) = generate_hierarchical_docs_core(
         input,
         None,
         &mut generate,
         AiDepth::Symbols,
+        &mut None,
         &mut progress,
+        &mut |doc| {
+            docs.push(doc);
+            Ok(())
+        },
     ) {
-        Ok(docs) => docs,
-        Err(error) => {
-            log::warn!("codewiki generation failed without ownership metadata: {error}");
-            Vec::new()
-        }
+        log::warn!("codewiki generation failed without ownership metadata: {error}");
+        return Vec::new();
     }
+    docs
 }
 
+#[expect(clippy::too_many_arguments)]
 fn generate_hierarchical_docs_with_ownership(
     input: &CodewikiInput,
     project_root: &Path,
     ownership_meta: &mut OwnershipMeta,
     mut generate: Option<&mut TextGenerator<'_>>,
     ai_depth: AiDepth,
+    reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
-) -> anyhow::Result<Vec<BuiltDoc>> {
+    emit: &mut dyn FnMut(BuiltDoc) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
     generate_hierarchical_docs_core(
         input,
         Some((project_root, ownership_meta)),
         &mut generate,
         ai_depth,
+        reuse,
         progress,
+        emit,
     )
 }
 
 #[cfg(test)]
 fn generate_hierarchical_docs_with_progress(
     input: &CodewikiInput,
-    mut generate: Option<&mut TextGenerator<'_>>,
+    generate: Option<&mut TextGenerator<'_>>,
     ai_depth: AiDepth,
     progress: &mut CodewikiProgress,
 ) -> Vec<BuiltDoc> {
-    match generate_hierarchical_docs_core(input, None, &mut generate, ai_depth, progress) {
-        Ok(docs) => docs,
-        Err(error) => {
-            log::warn!("codewiki generation failed without ownership metadata: {error}");
-            Vec::new()
-        }
+    generate_hierarchical_docs_with_reuse(input, generate, ai_depth, &mut None, progress)
+}
+
+/// Test entry point that exercises the reuse path without the CLI runtime.
+#[cfg(test)]
+fn generate_hierarchical_docs_with_reuse(
+    input: &CodewikiInput,
+    mut generate: Option<&mut TextGenerator<'_>>,
+    ai_depth: AiDepth,
+    reuse: &mut Option<&mut ReusePlan>,
+    progress: &mut CodewikiProgress,
+) -> Vec<BuiltDoc> {
+    let mut docs = Vec::new();
+    if let Err(error) = generate_hierarchical_docs_core(
+        input,
+        None,
+        &mut generate,
+        ai_depth,
+        reuse,
+        progress,
+        &mut |doc| {
+            docs.push(doc);
+            Ok(())
+        },
+    ) {
+        log::warn!("codewiki generation failed without ownership metadata: {error}");
+        return Vec::new();
     }
+    docs
 }
 
 fn generate_hierarchical_docs_core(
@@ -651,8 +684,10 @@ fn generate_hierarchical_docs_core(
     ownership: Option<(&Path, &mut OwnershipMeta)>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     ai_depth: AiDepth,
+    reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
-) -> anyhow::Result<Vec<BuiltDoc>> {
+    emit: &mut dyn FnMut(BuiltDoc) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
     let mut files = input
         .files
         .iter()
@@ -688,45 +723,107 @@ fn generate_hierarchical_docs_core(
     };
     progress.emit(format!("{file_verb} file docs for {} files", files.len()));
     let file_total = files.len();
-    let file_docs = files
-        .iter()
-        .enumerate()
-        .map(|(index, file)| {
-            build_file_doc(
-                file,
-                file_modules
-                    .get(file)
-                    .cloned()
-                    .unwrap_or_else(|| module_for_file(file)),
-                symbols_by_file.remove(file).unwrap_or_default(),
-                generate,
-                ai_depth,
-                progress,
-                FileDocPosition {
-                    index: index + 1,
-                    total: file_total,
-                },
-            )
-        })
-        .collect::<Vec<_>>();
+    let mut file_docs = Vec::with_capacity(file_total);
+    for (index, file) in files.iter().enumerate() {
+        let file_doc = build_file_doc(
+            file,
+            file_modules
+                .get(file)
+                .cloned()
+                .unwrap_or_else(|| module_for_file(file)),
+            symbols_by_file.remove(file).unwrap_or_default(),
+            generate,
+            reuse,
+            ai_depth,
+            progress,
+            FileDocPosition {
+                index: index + 1,
+                total: file_total,
+            },
+        );
+        emit(BuiltDoc {
+            path: file_doc_path(&file_doc.path),
+            content: file_doc
+                .reused_page
+                .clone()
+                .unwrap_or_else(|| render_file_doc(&file_doc)),
+            degraded: file_doc.degraded,
+            summary: Some(file_doc.summary.clone()),
+        })?;
+        file_docs.push(file_doc);
+    }
     progress.emit("generating module docs");
     let module_docs = build_module_docs(
         &file_docs,
         &input.graph_edges,
         input.graph_availability,
         generate,
+        reuse,
         progress,
-    );
-    let (repo_doc, repo_degraded) = build_repo_doc(&file_docs, &module_docs, generate, progress);
+        &mut |module| {
+            emit(BuiltDoc {
+                path: module_doc_path(&module.module),
+                content: module
+                    .reused_page
+                    .clone()
+                    .unwrap_or_else(|| render_module_doc(module)),
+                degraded: module.degraded,
+                summary: Some(module.summary.clone()),
+            })
+        },
+    )?;
+    let (repo_doc, repo_degraded) =
+        build_repo_doc(&file_docs, &module_docs, generate, reuse, progress);
+    emit(BuiltDoc {
+        path: "code/repo.md".to_string(),
+        content: repo_doc,
+        degraded: repo_degraded,
+        summary: None,
+    })?;
     progress.emit("generating architecture docs");
-    let architecture_doc = build_architecture_doc(
-        &file_docs,
-        &module_docs,
-        &input.graph_edges,
-        input.graph_availability,
-        generate,
-        progress,
+    // Architecture provenance covers every subsystem source, so the page is
+    // reusable only when nothing changed at all — then the per-subsystem
+    // generation loop is skipped entirely and the on-disk page kept.
+    let subsystem_names = file_docs
+        .iter()
+        .map(|file| file.module.clone())
+        .collect::<BTreeSet<_>>();
+    let architecture_sources = span_files(
+        &module_docs
+            .iter()
+            .filter(|module| subsystem_names.contains(&module.module))
+            .flat_map(|module| module.source_spans.iter().cloned())
+            .collect::<Vec<_>>(),
     );
+    let reused_architecture = reuse
+        .as_deref_mut()
+        .and_then(|plan| plan.reusable_page("code/_architecture.md", &architecture_sources));
+    let architecture_built = match reused_architecture {
+        Some(page) => {
+            progress.emit("reusing architecture docs (sources unchanged)");
+            BuiltDoc::healthy("code/_architecture.md", page)
+        }
+        None => {
+            let architecture_doc = build_architecture_doc(
+                &file_docs,
+                &module_docs,
+                &input.graph_edges,
+                input.graph_availability,
+                generate,
+                progress,
+            );
+            BuiltDoc {
+                path: "code/_architecture.md".to_string(),
+                content: render_architecture_doc(&architecture_doc),
+                degraded: architecture_doc
+                    .degraded_sources
+                    .iter()
+                    .any(|source| source == "model-unavailable"),
+                summary: None,
+            }
+        }
+    };
+    emit(architecture_built)?;
     progress.emit("generating onboarding docs");
     let onboarding_doc = build_onboarding_doc(
         &file_docs,
@@ -734,32 +831,19 @@ fn generate_hierarchical_docs_core(
         &input.graph_edges,
         input.graph_availability,
     );
+    emit(BuiltDoc::healthy(
+        "code/_onboarding.md",
+        render_onboarding_doc(&onboarding_doc),
+    ))?;
     progress.emit("generating hotspots docs");
     let hotspots_doc = build_hotspots_doc(&file_docs, &input.graph_edges, input.graph_availability);
-
-    let mut docs = vec![
-        BuiltDoc {
-            path: "code/repo.md".to_string(),
-            content: repo_doc,
-            degraded: repo_degraded,
-        },
-        BuiltDoc::healthy(
-            "code/_onboarding.md",
-            render_onboarding_doc(&onboarding_doc),
-        ),
-        BuiltDoc {
-            path: "code/_architecture.md".to_string(),
-            content: render_architecture_doc(&architecture_doc),
-            degraded: architecture_doc
-                .degraded_sources
-                .iter()
-                .any(|source| source == "model-unavailable"),
-        },
-        BuiltDoc::healthy("code/_hotspots.md", render_hotspots_doc(&hotspots_doc)),
-    ];
+    emit(BuiltDoc::healthy(
+        "code/_hotspots.md",
+        render_hotspots_doc(&hotspots_doc),
+    ))?;
     if let Some((project_root, ownership_meta)) = ownership {
         progress.emit("generating ownership docs");
-        docs.push(BuiltDoc::healthy(
+        emit(BuiltDoc::healthy(
             "code/_ownership.md",
             build_ownership_doc(
                 project_root,
@@ -768,23 +852,9 @@ fn generate_hierarchical_docs_core(
                 ownership_meta,
                 OwnershipOptions::default(),
             )?,
-        ));
+        ))?;
     }
-    for module in &module_docs {
-        docs.push(BuiltDoc {
-            path: module_doc_path(&module.module),
-            content: render_module_doc(module),
-            degraded: module.degraded,
-        });
-    }
-    for file in &file_docs {
-        docs.push(BuiltDoc {
-            path: file_doc_path(&file.path),
-            content: render_file_doc(file),
-            degraded: file.degraded,
-        });
-    }
-    Ok(docs)
+    Ok(())
 }
 
 #[cfg(test)]

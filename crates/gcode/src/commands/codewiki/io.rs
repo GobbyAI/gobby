@@ -27,68 +27,147 @@ pub(crate) fn write_incremental_doc_set_with_snapshot(
     index_snapshot: Option<CodewikiIndexSnapshot>,
     ai_mode: &str,
 ) -> anyhow::Result<Vec<String>> {
-    std::fs::create_dir_all(out_dir)?;
-    let previous = read_codewiki_meta(out_dir)?;
-    // Doc content depends on the AI generation mode, which source hashes cannot
-    // capture; a mode change invalidates every doc.
-    let ai_mode_changed = previous.ai_mode != ai_mode;
-    let mut next_docs = BTreeMap::new();
-    let mut generated_docs = Vec::new();
-
+    let mut sink = DocSink::open(project_root, out_dir, ai_mode)?;
     for doc in docs {
-        let source_hashes = source_hashes_for_doc(project_root, &doc.content)?;
-        let target = safe_doc_path(out_dir, &doc.path)?;
-        let previous_meta = previous.docs.get(&doc.path);
+        sink.persist(doc)?;
+    }
+    sink.finish(index_snapshot)
+}
+
+/// Incremental doc writer that persists each doc and its meta entry the
+/// moment the doc is built (#681). A killed run keeps every page written so
+/// far plus a meta log that matches them, so the next run resumes from disk
+/// instead of regenerating everything.
+pub(crate) struct DocSink<'a> {
+    project_root: &'a Path,
+    out_dir: &'a Path,
+    ai_mode: String,
+    previous_docs: BTreeMap<String, CodewikiDocMeta>,
+    next_docs: BTreeMap<String, CodewikiDocMeta>,
+    seen: BTreeSet<String>,
+    generated_docs: Vec<String>,
+    previous_snapshot: Option<CodewikiIndexSnapshot>,
+}
+
+impl<'a> DocSink<'a> {
+    pub(crate) fn open(
+        project_root: &'a Path,
+        out_dir: &'a Path,
+        ai_mode: &str,
+    ) -> anyhow::Result<Self> {
+        std::fs::create_dir_all(out_dir)?;
+        let previous = read_codewiki_meta(out_dir)?;
+        Ok(Self {
+            project_root,
+            out_dir,
+            ai_mode: ai_mode.to_string(),
+            previous_docs: previous.docs.clone(),
+            // An interrupted run must not lose entries for docs it never
+            // reached, so the next meta starts from the previous entries and
+            // is pruned only by a completed run (`finish`).
+            next_docs: previous.docs,
+            seen: BTreeSet::new(),
+            generated_docs: Vec::new(),
+            previous_snapshot: previous.index_snapshot,
+        })
+    }
+
+    /// Write one doc unless it is provably unchanged, then flush the meta log
+    /// so what is on disk always matches what the meta records.
+    pub(crate) fn persist(&mut self, doc: &BuiltDoc) -> anyhow::Result<bool> {
+        let source_hashes = source_hashes_for_doc(self.project_root, &doc.content)?;
+        let target = safe_doc_path(self.out_dir, &doc.path)?;
+        let previous_meta = self.previous_docs.get(&doc.path);
         // Docs without provenance frontmatter have no source hashes to compare,
         // so hash equality is vacuous; always rewrite them so generator changes
         // propagate (e.g. code/_ownership.md). A doc recorded degraded is also
         // always rewritten: hash equality cannot see generation failures, and
-        // skipping would preserve the degraded page forever.
-        let unchanged = !ai_mode_changed
-            && target.exists()
+        // skipping would preserve the degraded page forever (#687). A doc that
+        // should carry a reusable summary but has none recorded is rewritten
+        // once to backfill it (metas written before #681). Doc content depends
+        // on the AI generation mode, which source hashes cannot capture; a
+        // mode change invalidates the doc.
+        let unchanged = target.exists()
             && !source_hashes.is_empty()
-            && previous_meta
-                .is_some_and(|meta| !meta.degraded && meta.source_hashes == source_hashes);
+            && previous_meta.is_some_and(|meta| {
+                !meta.degraded
+                    && meta.ai_mode == self.ai_mode
+                    && meta.source_hashes == source_hashes
+                    && (doc.summary.is_none() || meta.summary.is_some())
+            });
 
-        // A skip keeps the previous healthy content on disk, so the meta entry
-        // stays healthy even when this run's generation failed — degraded
-        // fallback never displaces healthy prose for unchanged sources.
-        let degraded = !unchanged && doc.degraded;
-        if !unchanged {
-            write_doc(out_dir, &doc.path, &doc.content)?;
-            generated_docs.push(doc.path.clone());
-        }
-        next_docs.insert(
-            doc.path.clone(),
+        let entry = if unchanged {
+            // A skip keeps the previous healthy content on disk, so the meta
+            // entry keeps the previous summary and stays healthy even when
+            // this run's generation failed — degraded fallback never displaces
+            // healthy prose for unchanged sources.
+            previous_meta.cloned().unwrap_or_default()
+        } else {
+            write_doc(self.out_dir, &doc.path, &doc.content)?;
+            self.generated_docs.push(doc.path.clone());
             CodewikiDocMeta {
                 source_hashes,
-                degraded,
-            },
-        );
+                degraded: doc.degraded,
+                // Degraded fallbacks are never reused, so their summaries are
+                // never recorded.
+                summary: if doc.degraded {
+                    None
+                } else {
+                    doc.summary.clone()
+                },
+                ai_mode: self.ai_mode.clone(),
+            }
+        };
+        self.next_docs.insert(doc.path.clone(), entry);
+        self.seen.insert(doc.path.clone());
+        self.flush()?;
+        Ok(!unchanged)
     }
 
-    for stale_path in previous
-        .docs
-        .keys()
-        .filter(|key| !next_docs.contains_key(*key))
-    {
-        let target = safe_doc_path(out_dir, stale_path)?;
-        reject_symlinked_doc_path(out_dir, &target)?;
-        match std::fs::remove_file(&target) {
-            Ok(()) => prune_empty_doc_dirs(out_dir, &target)?,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => return Err(err.into()),
+    fn flush(&self) -> anyhow::Result<()> {
+        let meta = CodewikiMeta {
+            docs: self.next_docs.clone(),
+            generated_docs: self.generated_docs.clone(),
+            // The previous snapshot is kept until the run completes so an
+            // interrupted run still diffs changes against the last complete
+            // one.
+            index_snapshot: self.previous_snapshot.clone(),
+            ai_mode: self.ai_mode.clone(),
+        };
+        write_codewiki_meta(self.out_dir, &meta)
+    }
+
+    /// Complete the run: delete docs the run no longer produced, then write
+    /// the final meta log with the new index snapshot.
+    pub(crate) fn finish(
+        mut self,
+        index_snapshot: Option<CodewikiIndexSnapshot>,
+    ) -> anyhow::Result<Vec<String>> {
+        let stale = self
+            .next_docs
+            .keys()
+            .filter(|key| !self.seen.contains(*key))
+            .cloned()
+            .collect::<Vec<_>>();
+        for stale_path in stale {
+            let target = safe_doc_path(self.out_dir, &stale_path)?;
+            reject_symlinked_doc_path(self.out_dir, &target)?;
+            match std::fs::remove_file(&target) {
+                Ok(()) => prune_empty_doc_dirs(self.out_dir, &target)?,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err.into()),
+            }
+            self.next_docs.remove(&stale_path);
         }
+        let meta = CodewikiMeta {
+            docs: self.next_docs,
+            generated_docs: self.generated_docs.clone(),
+            index_snapshot,
+            ai_mode: self.ai_mode,
+        };
+        write_codewiki_meta(self.out_dir, &meta)?;
+        Ok(self.generated_docs)
     }
-
-    let meta = CodewikiMeta {
-        docs: next_docs,
-        generated_docs: generated_docs.clone(),
-        index_snapshot,
-        ai_mode: ai_mode.to_string(),
-    };
-    write_codewiki_meta(out_dir, &meta)?;
-    Ok(generated_docs)
 }
 
 pub(crate) fn write_doc(out_dir: &Path, relative_path: &str, content: &str) -> anyhow::Result<()> {
@@ -145,11 +224,22 @@ pub(crate) fn prune_empty_doc_dirs(out_dir: &Path, target: &Path) -> anyhow::Res
 
 pub(crate) fn read_codewiki_meta(out_dir: &Path) -> anyhow::Result<CodewikiMeta> {
     let path = safe_doc_path(out_dir, CODEWIKI_META_PATH)?;
-    match std::fs::read_to_string(&path) {
-        Ok(raw) => Ok(serde_json::from_str(&raw)?),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(CodewikiMeta::default()),
-        Err(err) => Err(err.into()),
+    let mut meta: CodewikiMeta = match std::fs::read_to_string(&path) {
+        Ok(raw) => serde_json::from_str(&raw)?,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(CodewikiMeta::default());
+        }
+        Err(err) => return Err(err.into()),
+    };
+    // Entries written before per-doc AI modes existed inherit the run-level
+    // mode they were generated under.
+    let run_mode = meta.ai_mode.clone();
+    for doc in meta.docs.values_mut() {
+        if doc.ai_mode.is_empty() {
+            doc.ai_mode = run_mode.clone();
+        }
     }
+    Ok(meta)
 }
 
 pub(crate) fn write_codewiki_meta(out_dir: &Path, meta: &CodewikiMeta) -> anyhow::Result<()> {

@@ -171,15 +171,17 @@ fn incremental_regenerates_only_changed() {
     assert!(unchanged_after.contains("preserve unchanged doc"));
     // _hotspots.md carries no provenance frontmatter, so it is always
     // rewritten (empty source-hash sets cannot prove the doc unchanged).
+    // Docs are listed in build order — leaves before the aggregates that
+    // consume them — because each one is persisted as soon as it is built.
     assert_eq!(
         changed_written,
         vec![
-            "code/repo.md".to_string(),
-            "code/_onboarding.md".to_string(),
-            "code/_architecture.md".to_string(),
-            "code/_hotspots.md".to_string(),
+            "code/files/src/lib.rs.md".to_string(),
             "code/modules/src.md".to_string(),
-            "code/files/src/lib.rs.md".to_string()
+            "code/repo.md".to_string(),
+            "code/_architecture.md".to_string(),
+            "code/_onboarding.md".to_string(),
+            "code/_hotspots.md".to_string()
         ]
     );
     let meta = std::fs::read_to_string(out_dir.join("_meta/codewiki.json")).expect("read meta log");
@@ -188,12 +190,12 @@ fn incremental_regenerates_only_changed() {
     assert_eq!(
         generated_docs,
         &vec![
-            serde_json::Value::String("code/repo.md".to_string()),
-            serde_json::Value::String("code/_onboarding.md".to_string()),
-            serde_json::Value::String("code/_architecture.md".to_string()),
-            serde_json::Value::String("code/_hotspots.md".to_string()),
+            serde_json::Value::String("code/files/src/lib.rs.md".to_string()),
             serde_json::Value::String("code/modules/src.md".to_string()),
-            serde_json::Value::String("code/files/src/lib.rs.md".to_string())
+            serde_json::Value::String("code/repo.md".to_string()),
+            serde_json::Value::String("code/_architecture.md".to_string()),
+            serde_json::Value::String("code/_onboarding.md".to_string()),
+            serde_json::Value::String("code/_hotspots.md".to_string())
         ]
     );
 

@@ -6,8 +6,10 @@ pub(crate) fn build_module_docs(
     graph_edges: &[CodewikiGraphEdge],
     graph_availability: CodewikiGraphAvailability,
     generate: &mut Option<&mut TextGenerator<'_>>,
+    reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
-) -> Vec<ModuleDoc> {
+    emit: &mut dyn FnMut(&ModuleDoc) -> anyhow::Result<()>,
+) -> anyhow::Result<Vec<ModuleDoc>> {
     let mut module_names = BTreeSet::new();
     for file in files {
         for module in module_ancestors(&file.module) {
@@ -75,33 +77,51 @@ pub(crate) fn build_module_docs(
         let call_diagram = render_module_call_mermaid(&module, files, graph_edges);
         let fallback = structural_module_summary(&module, &direct_files, &child_modules);
         let source_spans = collect_link_spans(&direct_files, &child_modules);
+        // A module's provenance rolls up every file under it (child spans
+        // included), so unchanged hashes mean the prompt inputs that hashes
+        // can see are unchanged and the recorded summary can stand in for a
+        // fresh LLM call.
+        let reused = reuse.as_deref_mut().and_then(|plan| {
+            plan.reusable_page_with_summary(&module_doc_path(&module), &span_files(&source_spans))
+        });
         progress.emit(format!(
-            "generating module doc module {}/{} {}",
+            "{} module doc module {}/{} {}",
+            if reused.is_some() {
+                "reusing"
+            } else {
+                "generating"
+            },
             index + 1,
             module_total,
             module
         ));
         let mut degraded = false;
-        let generated = maybe_generate(
-            generate,
-            &prompts::module_prompt(
-                &module,
-                &file_summaries,
-                &child_summaries,
-                &prompt_component_ids,
-            ),
-            prompts::MODULE_SYSTEM,
-        )
-        .unwrap_or_record(fallback, &mut degraded);
-        let summary = ground_text(
-            &generated,
-            &source_spans,
-            Some(&citation_list(&source_spans)),
-        );
+        let (summary, reused_page) = match reused {
+            Some((page, summary)) => (summary, Some(page)),
+            None => {
+                let generated = maybe_generate(
+                    generate,
+                    &prompts::module_prompt(
+                        &module,
+                        &file_summaries,
+                        &child_summaries,
+                        &prompt_component_ids,
+                    ),
+                    prompts::MODULE_SYSTEM,
+                )
+                .unwrap_or_record(fallback, &mut degraded);
+                let summary = ground_text(
+                    &generated,
+                    &source_spans,
+                    Some(&citation_list(&source_spans)),
+                );
+                (summary, None)
+            }
+        };
 
         module_summaries.insert(module.clone(), summary.clone());
         module_sources.insert(module.clone(), source_spans.clone());
-        docs.push(ModuleDoc {
+        let doc = ModuleDoc {
             module,
             summary,
             source_spans,
@@ -112,11 +132,14 @@ pub(crate) fn build_module_docs(
             call_diagram,
             graph_availability,
             degraded,
-        });
+            reused_page,
+        };
+        emit(&doc)?;
+        docs.push(doc);
     }
 
     docs.sort_by(|a, b| a.module.cmp(&b.module));
-    docs
+    Ok(docs)
 }
 
 pub(super) fn prompt_component_ids_for_module(files: &[FileDoc], module: &str) -> Vec<String> {

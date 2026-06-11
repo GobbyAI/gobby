@@ -37,14 +37,12 @@ fn codewiki_verbose_progress_captures_generation_order() {
         AiDepth::Symbols,
         &mut progress,
     );
-    let changed = write_codewiki_docs(
+    let changed = write_incremental_doc_set_with_snapshot(
         project.path(),
         &project.path().join("codewiki"),
         &docs,
         None,
         "symbols",
-        &OwnershipMeta::default(),
-        &mut progress,
     )
     .expect("write docs");
     assert!(!changed.is_empty());
@@ -73,7 +71,12 @@ fn codewiki_verbose_progress_captures_generation_order() {
         "generating onboarding docs",
         "generating hotspots docs",
     );
-    assert_before(&lines, "generating hotspots docs", "writing docs");
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("generating hotspots docs")),
+        "hotspots generation closes the build order: {lines:#?}"
+    );
 }
 
 #[test]

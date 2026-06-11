@@ -18,3 +18,4 @@ mod modules;
 mod onboarding;
 mod progress;
 mod provenance;
+mod reuse;
