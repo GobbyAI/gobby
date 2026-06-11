@@ -73,12 +73,7 @@ fn main() {
     }
 
     // Resolve backend
-    let mut active_backend = resolve_backend(&cli, &cfg);
-
-    // Apply --url override
-    if let Some(ref url) = cli.url {
-        active_backend.url = url.clone();
-    }
+    let active_backend = resolve_backend(&cli, &cfg);
 
     // Resolve client
     let (client_name, client) = resolve_client(&cli, &cfg);
@@ -160,6 +155,8 @@ fn handle_init() {
 }
 
 fn resolve_backend(cli: &Cli, cfg: &Config) -> config::Backend {
+    let url_override = cli.url.as_deref();
+
     if let Some(ref name) = cli.backend {
         let backend = cfg
             .backends
@@ -176,8 +173,8 @@ fn resolve_backend(cli: &Cli, cfg: &Config) -> config::Backend {
                         .join(", ")
                 );
                 std::process::exit(1);
-            })
-            .clone();
+            });
+        let backend = apply_backend_url_override(backend, url_override);
 
         if !local_backend::validate_backend(&backend, cfg.settings.probe_timeout_ms) {
             eprintln!(
@@ -189,7 +186,8 @@ fn resolve_backend(cli: &Cli, cfg: &Config) -> config::Backend {
 
         backend
     } else {
-        match local_backend::detect_backend(&cfg.backends, cfg.settings.probe_timeout_ms) {
+        let backends = backends_with_url_override(&cfg.backends, url_override);
+        match local_backend::detect_backend(&backends, cfg.settings.probe_timeout_ms) {
             Some(backend) => {
                 eprintln!("gloc: detected {} at {}", backend.name, backend.url);
                 backend
@@ -201,6 +199,27 @@ fn resolve_backend(cli: &Cli, cfg: &Config) -> config::Backend {
             }
         }
     }
+}
+
+fn apply_backend_url_override(
+    backend: &config::Backend,
+    url_override: Option<&str>,
+) -> config::Backend {
+    let mut backend = backend.clone();
+    if let Some(url) = url_override {
+        backend.url = url.to_string();
+    }
+    backend
+}
+
+fn backends_with_url_override(
+    backends: &[config::Backend],
+    url_override: Option<&str>,
+) -> Vec<config::Backend> {
+    backends
+        .iter()
+        .map(|backend| apply_backend_url_override(backend, url_override))
+        .collect()
 }
 
 fn resolve_client(cli: &Cli, cfg: &Config) -> (String, config::Client) {
@@ -265,5 +284,45 @@ fn print_status(
     let args = exec::build_args(client, model, &[]);
     if !args.is_empty() {
         eprintln!("Args:     {} {}", client.binary, args.join(" "));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn backend(name: &str, url: &str, probe: &str) -> config::Backend {
+        config::Backend {
+            name: name.into(),
+            url: url.into(),
+            probe: probe.into(),
+            auth_token: String::new(),
+        }
+    }
+
+    #[test]
+    fn backend_candidates_apply_url_override_before_probe() {
+        let backends = vec![
+            backend("ollama", "http://127.0.0.1:11434", "/api/tags"),
+            backend("lmstudio", "http://127.0.0.1:1234", "/v1/models"),
+        ];
+
+        let candidates = backends_with_url_override(&backends, Some("http://remote:11434"));
+
+        assert_eq!(candidates[0].name, "ollama");
+        assert_eq!(candidates[0].url, "http://remote:11434");
+        assert_eq!(candidates[0].probe, "/api/tags");
+        assert_eq!(candidates[1].name, "lmstudio");
+        assert_eq!(candidates[1].url, "http://remote:11434");
+        assert_eq!(candidates[1].probe, "/v1/models");
+    }
+
+    #[test]
+    fn backend_candidates_keep_config_urls_without_override() {
+        let backends = vec![backend("ollama", "http://127.0.0.1:11434", "/api/tags")];
+
+        let candidates = backends_with_url_override(&backends, None);
+
+        assert_eq!(candidates, backends);
     }
 }
