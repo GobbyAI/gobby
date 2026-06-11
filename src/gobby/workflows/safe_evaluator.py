@@ -550,7 +550,7 @@ def build_condition_helpers(
     # --- Stop signal helper ---
 
     if stop_registry:
-        funcs["has_stop_signal"] = lambda session_id: stop_registry.has_pending_signal(session_id)
+        funcs["has_stop_signal"] = lambda session_id: stop_registry.acknowledge(session_id)
     else:
         funcs["has_stop_signal"] = lambda session_id: False
 

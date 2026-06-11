@@ -885,6 +885,53 @@ class TestStopRegistry:
         assert second_signal.reason == "First request"
         assert first_signal.requested_at == second_signal.requested_at
 
+    def test_signal_stop_does_not_pre_read_pending_signal(
+        self,
+        stop_registry: StopRegistry,
+        session_id: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Test that signal_stop relies on the atomic upsert for pending signals."""
+        first_signal = stop_registry.signal_stop(
+            session_id=session_id,
+            source="http",
+            reason="First request",
+        )
+
+        def fail_get_signal(_session_id: str) -> StopSignal | None:
+            raise AssertionError("signal_stop must not pre-read existing signals")
+
+        monkeypatch.setattr(stop_registry, "get_signal", fail_get_signal)
+
+        second_signal = stop_registry.signal_stop(
+            session_id=session_id,
+            source="cli",
+            reason="Second request",
+        )
+
+        assert second_signal.source == "http"
+        assert second_signal.reason == "First request"
+        assert first_signal.requested_at == second_signal.requested_at
+
+    def test_signal_stop_does_not_unacknowledge_existing_signal(
+        self, stop_registry: StopRegistry, session_id: str
+    ) -> None:
+        """Test that signal_stop cannot resurrect an acknowledged stop signal."""
+        stop_registry.signal_stop(session_id=session_id, source="http", reason="First request")
+        assert stop_registry.acknowledge(session_id) is True
+
+        signal = stop_registry.signal_stop(
+            session_id=session_id,
+            source="workflow",
+            reason="Stale racing request",
+        )
+
+        assert signal.source == "http"
+        assert signal.reason == "First request"
+        assert signal.acknowledged_at is not None
+        assert signal.is_pending is False
+        assert stop_registry.has_pending_signal(session_id) is False
+
     def test_get_signal_returns_signal(self, stop_registry: StopRegistry, session_id: str) -> None:
         """Test get_signal returns the signal."""
         stop_registry.signal_stop(session_id, source="mcp")
@@ -1022,17 +1069,36 @@ class TestStopRegistryCleanup:
         # Verify signal is gone
         assert stop_registry.has_pending_signal(session_id) is False
 
-    def test_cleanup_stale_preserves_pending(
+    def test_cleanup_stale_preserves_recent_pending(
         self, stop_registry: StopRegistry, session_id: str
     ) -> None:
-        """Test that cleanup preserves pending (unacknowledged) signals."""
+        """Test that cleanup preserves recent pending signals."""
         stop_registry.signal_stop(session_id, source="test")
 
-        count = stop_registry.cleanup_stale(max_age_hours=0)
+        count = stop_registry.cleanup_stale(max_age_hours=24)
 
-        # Should not clean up pending signals
-        assert count == 0, "Pending signals should not be cleaned up"
+        assert count == 0
         assert stop_registry.has_pending_signal(session_id) is True
+
+    def test_cleanup_stale_removes_old_pending(
+        self, stop_registry: StopRegistry, test_db: HubDatabase, session_id: str
+    ) -> None:
+        """Test that cleanup removes old pending signals."""
+        stop_registry.signal_stop(session_id, source="test")
+
+        test_db.execute(
+            """
+            UPDATE session_stop_signals
+            SET requested_at = %s
+            WHERE session_id = %s
+            """,
+            ((datetime.now(UTC) - timedelta(hours=48)).isoformat(), session_id),
+        )
+
+        count = stop_registry.cleanup_stale(max_age_hours=24)
+
+        assert count == 1
+        assert stop_registry.get_signal(session_id) is None
 
 
 class TestStopRegistryThreadSafety:

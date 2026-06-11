@@ -33,7 +33,7 @@ def mock_task_manager() -> MagicMock:
 def mock_stop_registry() -> MagicMock:
     """Create a mock stop registry."""
     reg = MagicMock()
-    reg.has_pending_signal.return_value = False
+    reg.acknowledge.return_value = False
     return reg
 
 
@@ -133,16 +133,16 @@ class TestTaskTypeIn:
 
 
 class TestHasStopSignal:
-    def test_returns_true_when_signal_pending(self, mock_stop_registry: MagicMock) -> None:
-        mock_stop_registry.has_pending_signal.return_value = True
+    def test_returns_true_when_signal_acknowledged(self, mock_stop_registry: MagicMock) -> None:
+        mock_stop_registry.acknowledge.return_value = True
 
         ctx: dict[str, Any] = {"variables": {}}
         ev = _build_evaluator(ctx, stop_registry=mock_stop_registry)
         assert ev.evaluate("has_stop_signal('session-abc')") is True
-        mock_stop_registry.has_pending_signal.assert_called_once_with("session-abc")
+        mock_stop_registry.acknowledge.assert_called_once_with("session-abc")
 
     def test_returns_false_when_no_signal(self, mock_stop_registry: MagicMock) -> None:
-        mock_stop_registry.has_pending_signal.return_value = False
+        mock_stop_registry.acknowledge.return_value = False
 
         ctx: dict[str, Any] = {"variables": {}}
         ev = _build_evaluator(ctx, stop_registry=mock_stop_registry)
