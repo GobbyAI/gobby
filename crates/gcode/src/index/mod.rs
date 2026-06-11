@@ -1,4 +1,6 @@
 pub mod api;
+#[cfg(test)]
+mod api_tests;
 pub mod chunker;
 pub mod hasher;
 pub mod import_resolution;
