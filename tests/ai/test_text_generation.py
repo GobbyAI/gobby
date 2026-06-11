@@ -1422,6 +1422,40 @@ async def test_codex_app_server_text_generate_adapter_enforces_configured_deadli
 
 
 @pytest.mark.asyncio
+async def test_daemon_codex_text_generate_adapter_uses_configured_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = HangingCodexAppServerClient()
+    monkeypatch.setattr("gobby.ai.text_generation._codex_app_server_client", lambda: client)
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+            )
+        ]
+    )
+    service = build_daemon_text_generation_service(
+        DaemonConfig(ai={"generation": {"timeout_seconds": 0.01}}),
+        registry=registry,
+    )
+
+    with pytest.raises(RuntimeError, match="timed out after 0.01s"):
+        await service.generate(
+            TextGenerationRequest(
+                provider="codex",
+                model="gpt-5",
+                prompt="never completes",
+            )
+        )
+
+    assert client.started is True
+    assert client.stopped is True
+
+
+@pytest.mark.asyncio
 async def test_codex_app_server_text_generate_adapter_raises_when_turn_has_no_output() -> None:
     client = FakeCodexAppServerClient(
         [{"type": "turn/completed", "turn": {"id": "turn-1", "status": "completed", "items": []}}]

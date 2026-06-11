@@ -620,7 +620,9 @@ def _daemon_text_generation_adapter_factories(
 ) -> dict[str, TextGenerateAdapterFactory]:
     factories: dict[str, TextGenerateAdapterFactory] = {
         "claude": lambda: _claude_text_generate_adapter(config),
-        "codex": CodexAppServerTextGenerateAdapter,
+        "codex": lambda: CodexAppServerTextGenerateAdapter(
+            timeout_seconds=config.ai.generation.timeout_seconds
+        ),
         "gemini": lambda: ACPTextGenerateAdapter(_gemini_acp_client),
         "grok": lambda: ACPTextGenerateAdapter(_grok_acp_client),
         "qwen": lambda: ACPTextGenerateAdapter(_qwen_acp_client),
