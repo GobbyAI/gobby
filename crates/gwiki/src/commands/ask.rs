@@ -456,6 +456,7 @@ fn record_synthesis(
     answer: String,
     model: Option<String>,
 ) {
+    let answer = strip_leading_model_narration(&answer);
     output.status = "answered";
     output.ai = Some(AskAiOutput {
         requested: true,
@@ -482,6 +483,53 @@ fn record_synthesis(
         model,
         citation_check,
     });
+}
+
+fn strip_leading_model_narration(answer: &str) -> String {
+    let original = answer.trim_start();
+    let mut remaining = original;
+    let mut stripped = false;
+
+    while let Some(end) = leading_sentence_end(remaining) {
+        let sentence = remaining[..end].trim();
+        if !is_model_narration_sentence(sentence) {
+            break;
+        }
+        remaining = remaining[end..].trim_start();
+        stripped = true;
+    }
+
+    if stripped && !remaining.is_empty() {
+        remaining.to_string()
+    } else {
+        original.to_string()
+    }
+}
+
+fn leading_sentence_end(text: &str) -> Option<usize> {
+    text.char_indices()
+        .find(|(_, ch)| matches!(ch, '.' | '!' | '?'))
+        .map(|(index, ch)| index + ch.len_utf8())
+}
+
+fn is_model_narration_sentence(sentence: &str) -> bool {
+    let normalized = sentence
+        .trim()
+        .replace(['\u{2018}', '\u{2019}'], "'")
+        .to_ascii_lowercase();
+    let starts_like_narration = [
+        "i'm ", "i am ", "i'll ", "i will ", "i've ", "i have ", "let me ",
+    ]
+    .iter()
+    .any(|prefix| normalized.starts_with(prefix));
+    let describes_process = [
+        "check", "look", "review", "read", "summariz", "answer", "question", "docs", "document",
+        "provided", "evidence", "retriev", "wiki",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker));
+
+    starts_like_narration && describes_process
 }
 
 /// Grounding statuses for [`citation_check`]: every extracted claim overlaps
@@ -687,7 +735,7 @@ fn synthesis_prompt(output: &AskOutput) -> String {
 }
 
 fn synthesis_system() -> &'static str {
-    "Answer the user's question using only the provided wiki hits, unified graph context, and code citations. Be concise. Say when the evidence is insufficient."
+    "Answer the user's question using only the provided wiki hits, unified graph context, and code citations. Write only the final answer; do not describe your process, plan, search, or retrieval steps. Be concise. Say when the evidence is insufficient."
 }
 
 fn render(output: AskOutput) -> Result<CommandOutcome, WikiError> {
@@ -1066,6 +1114,40 @@ mod tests {
                 .expect("warning is a string")
                 .contains("lacks citation support")
         );
+    }
+
+    #[test]
+    fn synthesis_strips_leading_model_narration_before_recording() {
+        let mut output = output_with_hooks_hit();
+
+        record_synthesis(
+            &mut output,
+            "daemon",
+            "I'm checking the codewiki docs just enough to answer which page types it emits, \
+             then I'll summarize the set precisely.I've got the documented page categories already. \
+             Hooks run at turn boundaries and dispatch envelopes to the daemon."
+                .to_string(),
+            Some("test-model".to_string()),
+        );
+
+        let synthesis = output.synthesis.as_ref().expect("synthesis recorded");
+        assert_eq!(
+            synthesis.answer,
+            "Hooks run at turn boundaries and dispatch envelopes to the daemon."
+        );
+        assert_eq!(synthesis.citation_check.status, "supported");
+        assert_eq!(synthesis.citation_check.checked_claims, 1);
+        assert!(synthesis.citation_check.unsupported_claims.is_empty());
+        assert!(output.warnings.is_empty());
+    }
+
+    #[test]
+    fn synthesis_system_requests_answer_only_output() {
+        let system = synthesis_system();
+
+        assert!(system.contains("Write only the final answer"));
+        assert!(system.contains("do not describe your process"));
+        assert!(system.contains("retrieval steps"));
     }
 
     #[test]
