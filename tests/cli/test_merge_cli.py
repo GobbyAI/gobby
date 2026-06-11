@@ -8,7 +8,8 @@ Tests for CLI merge commands:
 - gobby merge abort
 """
 
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -316,6 +317,8 @@ class TestMergeStatusCommand:
 class TestMergeResolveCommand:
     """Tests for 'gobby merge resolve' command."""
 
+    @patch("gobby.cli.merge.conflict_hunks_for_ai", new_callable=AsyncMock)
+    @patch("gobby.cli.merge.get_worktree_manager")
     @patch("gobby.cli.merge.get_merge_manager")
     @patch("gobby.cli.merge.get_merge_resolver")
     @patch("gobby.cli.merge.get_project_context")
@@ -324,24 +327,105 @@ class TestMergeResolveCommand:
         mock_project_ctx: MagicMock,
         mock_get_resolver: MagicMock,
         mock_get_manager: MagicMock,
+        mock_get_worktree_manager: MagicMock,
+        mock_conflict_hunks: AsyncMock,
         runner: CliRunner,
         mock_conflict: MagicMock,
+        mock_resolution: MagicMock,
+        tmp_path,
     ) -> None:
-        """Test basic merge resolve command."""
+        """AI resolve writes content and marks the conflict resolved after success."""
         from gobby.cli import cli
 
         mock_project_ctx.return_value = {"id": "proj-123"}
         mock_manager = MagicMock()
         mock_manager.get_conflict_by_path.return_value = mock_conflict
+        mock_manager.get_resolution.return_value = mock_resolution
+        mock_manager.update_conflict.return_value = mock_conflict
         mock_get_manager.return_value = mock_manager
 
+        worktree = MagicMock()
+        worktree.worktree_path = str(tmp_path)
+        mock_worktree_manager = MagicMock()
+        mock_worktree_manager.get.return_value = worktree
+        mock_get_worktree_manager.return_value = mock_worktree_manager
+        mock_conflict_hunks.return_value = [MagicMock()]
+
         mock_resolver = MagicMock()
+        mock_resolver.resolve_file = AsyncMock(
+            return_value=SimpleNamespace(
+                success=True,
+                needs_human_review=False,
+                failure_reason=None,
+                resolved_content_by_file={"src/test.py": "merged version\n"},
+                tier=SimpleNamespace(value="conflict_only_ai"),
+            )
+        )
         mock_get_resolver.return_value = mock_resolver
 
         result = runner.invoke(cli, ["merge", "resolve", "src/test.py"])
 
         assert result.exit_code == 0
         assert result.exception is None
+        assert (tmp_path / "src" / "test.py").read_text() == "merged version\n"
+        mock_resolver.resolve_file.assert_awaited_once()
+        mock_manager.update_conflict.assert_called_once_with(
+            conflict_id="mc-conflict1",
+            status="resolved",
+            resolved_content="merged version\n",
+        )
+
+    @patch("gobby.cli.merge.conflict_hunks_for_ai", new_callable=AsyncMock)
+    @patch("gobby.cli.merge.get_worktree_manager")
+    @patch("gobby.cli.merge.get_merge_manager")
+    @patch("gobby.cli.merge.get_merge_resolver")
+    @patch("gobby.cli.merge.get_project_context")
+    def test_merge_resolve_ai_failure_does_not_mark_resolved(
+        self,
+        mock_project_ctx: MagicMock,
+        mock_get_resolver: MagicMock,
+        mock_get_manager: MagicMock,
+        mock_get_worktree_manager: MagicMock,
+        mock_conflict_hunks: AsyncMock,
+        runner: CliRunner,
+        mock_conflict: MagicMock,
+        mock_resolution: MagicMock,
+        tmp_path,
+    ) -> None:
+        """AI resolve failure exits without a DB status flip."""
+        from gobby.cli import cli
+
+        mock_project_ctx.return_value = {"id": "proj-123"}
+        mock_manager = MagicMock()
+        mock_manager.get_conflict_by_path.return_value = mock_conflict
+        mock_manager.get_resolution.return_value = mock_resolution
+        mock_get_manager.return_value = mock_manager
+
+        worktree = MagicMock()
+        worktree.worktree_path = str(tmp_path)
+        mock_worktree_manager = MagicMock()
+        mock_worktree_manager.get.return_value = worktree
+        mock_get_worktree_manager.return_value = mock_worktree_manager
+        mock_conflict_hunks.return_value = [MagicMock()]
+
+        mock_resolver = MagicMock()
+        mock_resolver.resolve_file = AsyncMock(
+            return_value=SimpleNamespace(
+                success=False,
+                needs_human_review=True,
+                failure_reason="model failed",
+                resolved_content_by_file={},
+                tier=SimpleNamespace(value="human_review"),
+            )
+        )
+        mock_get_resolver.return_value = mock_resolver
+
+        result = runner.invoke(cli, ["merge", "resolve", "src/test.py"])
+
+        assert result.exit_code == 1
+        assert "AI resolution failed" in result.output
+        mock_manager.update_conflict.assert_not_called()
+        assert not (tmp_path / "src" / "test.py").exists()
 
     @patch("gobby.cli.merge.get_merge_manager")
     @patch("gobby.cli.merge.get_project_context")
@@ -402,16 +486,18 @@ class TestMergeResolveCommand:
 class TestMergeApplyCommand:
     """Tests for 'gobby merge apply' command."""
 
+    @patch("gobby.cli.merge._apply_active_resolution", new_callable=AsyncMock)
     @patch("gobby.cli.merge.get_merge_manager")
     @patch("gobby.cli.merge.get_project_context")
     def test_merge_apply_basic(
         self,
         mock_project_ctx: MagicMock,
         mock_get_manager: MagicMock,
+        mock_apply_active_resolution: AsyncMock,
         runner: CliRunner,
         mock_resolution: MagicMock,
     ) -> None:
-        """Test basic merge apply command."""
+        """Apply delegates to real merge machinery instead of flipping DB status."""
         from gobby.cli import cli
 
         mock_project_ctx.return_value = {"id": "proj-123"}
@@ -420,17 +506,27 @@ class TestMergeApplyCommand:
         mock_manager.get_active_resolution.return_value = mock_resolution
         mock_manager.list_conflicts.return_value = []  # All resolved
         mock_get_manager.return_value = mock_manager
+        mock_apply_active_resolution.return_value = {
+            "success": True,
+            "files_merged": ["src/test.py"],
+            "commit_sha": "merged-sha",
+        }
 
         result = runner.invoke(cli, ["merge", "apply"])
 
         assert result.exit_code == 0
+        mock_apply_active_resolution.assert_awaited_once_with(mock_manager, "mr-abc123")
+        mock_manager.update_resolution.assert_not_called()
+        assert "commit: merged-sha" in result.output
 
+    @patch("gobby.cli.merge._apply_active_resolution", new_callable=AsyncMock)
     @patch("gobby.cli.merge.get_merge_manager")
     @patch("gobby.cli.merge.get_project_context")
     def test_merge_apply_with_force(
         self,
         mock_project_ctx: MagicMock,
         mock_get_manager: MagicMock,
+        mock_apply_active_resolution: AsyncMock,
         runner: CliRunner,
         mock_resolution: MagicMock,
     ) -> None:
@@ -440,11 +536,52 @@ class TestMergeApplyCommand:
         mock_project_ctx.return_value = {"id": "proj-123"}
         mock_manager = MagicMock()
         mock_manager.get_active_resolution.return_value = mock_resolution
+        mock_manager.list_conflicts.return_value = []
         mock_get_manager.return_value = mock_manager
+        mock_apply_active_resolution.return_value = {
+            "success": True,
+            "files_merged": [],
+            "commit_sha": "merged-sha",
+        }
 
         result = runner.invoke(cli, ["merge", "apply", "--force"])
 
         assert result.exit_code == 0
+        mock_apply_active_resolution.assert_awaited_once_with(mock_manager, "mr-abc123")
+        mock_manager.update_resolution.assert_not_called()
+        assert "Applied merge: mr-abc123" in result.output
+        assert "commit: merged-sha" in result.output
+
+    @patch("gobby.cli.merge._apply_active_resolution", new_callable=AsyncMock)
+    @patch("gobby.cli.merge.get_merge_manager")
+    @patch("gobby.cli.merge.get_project_context")
+    def test_merge_apply_failure_does_not_report_success(
+        self,
+        mock_project_ctx: MagicMock,
+        mock_get_manager: MagicMock,
+        mock_apply_active_resolution: AsyncMock,
+        runner: CliRunner,
+        mock_resolution: MagicMock,
+    ) -> None:
+        """Apply reports merge-tool failure and avoids success messaging."""
+        from gobby.cli import cli
+
+        mock_project_ctx.return_value = {"id": "proj-123"}
+        mock_manager = MagicMock()
+        mock_manager.get_active_resolution.return_value = mock_resolution
+        mock_manager.list_conflicts.return_value = []
+        mock_get_manager.return_value = mock_manager
+        mock_apply_active_resolution.return_value = {
+            "success": False,
+            "error": "git commit failed",
+        }
+
+        result = runner.invoke(cli, ["merge", "apply"])
+
+        assert result.exit_code == 1
+        assert "git commit failed" in result.output
+        assert "Applied merge" not in result.output
+        mock_manager.update_resolution.assert_not_called()
 
     @patch("gobby.cli.merge.get_merge_manager")
     @patch("gobby.cli.merge.get_project_context")
