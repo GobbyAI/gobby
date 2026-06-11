@@ -512,7 +512,11 @@ class TestClaimTaskSchema:
         assert "description" in schema
         description = schema["description"].lower()
         # Description should mention key behaviors
-        assert "claim" in description or "claimed_by_session_id" in description or "in_progress" in description
+        assert (
+            "claim" in description
+            or "claimed_by_session_id" in description
+            or "in_progress" in description
+        )
 
 
 class TestClaimTaskSessionVariables:
@@ -571,6 +575,7 @@ class TestClaimTaskSessionVariables:
             merged_vars = call_args[0][1]
             assert merged_vars["task_claimed"] is True
             assert merged_vars["claimed_tasks"].get(sample_task.id) == "#42"
+            assert merged_vars["active_task_id"] == sample_task.id
 
     @pytest.mark.asyncio
     async def test_claim_task_sets_required_skill_metadata_via_session_variables(

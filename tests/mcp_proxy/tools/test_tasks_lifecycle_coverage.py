@@ -36,8 +36,6 @@ class TestCloseTaskTool:
     @pytest.mark.asyncio
     async def test_close_task_no_commits_error(self, mock_task_manager, mock_sync_manager):
         """Test close_task requires commits to be linked."""
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
-
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
@@ -45,10 +43,19 @@ class TestCloseTaskTool:
         mock_task_manager.get_task.return_value = mock_task
         mock_task_manager.list_tasks.return_value = []  # leaf task (no children)
 
-        with patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager:
+        with (
+            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
+        ):
             mock_proj_instance = MagicMock()
             mock_proj_instance.get.return_value = None
             MockProjManager.return_value = mock_proj_instance
+            MockSessionManager.return_value.resolve_session_reference.return_value = "test-session"
+            MockSVManager.return_value.get_variables.return_value = {
+                "task_edited_files": {"550e8400-e29b-41d4-a716-446655440000": ["src/owned.py"]},
+            }
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
             result = await registry.call(
                 "close_task",
@@ -276,7 +283,7 @@ class TestCloseTaskTool:
 
     @pytest.mark.asyncio
     async def test_close_task_with_commit_sha_links_first(
-        self, mock_task_manager, mock_sync_manager
+        self, mock_task_manager, mock_sync_manager, tmp_path
     ):
         """Test close_task with commit_sha links the commit first."""
         mock_task = MagicMock()
@@ -301,7 +308,8 @@ class TestCloseTaskTool:
                 side_effect=lambda sha, cwd=None: sha,
             ),
         ):
-            expected_repo_path = "/fake/repo/path"
+            expected_repo_path = str((tmp_path / "repo").resolve())
+            (tmp_path / "repo").mkdir()
             mock_proj_instance = MagicMock()
             mock_project = MagicMock()
             mock_project.repo_path = expected_repo_path
@@ -431,20 +439,16 @@ class TestCloseTaskTool:
         assert result == {"error": "Invalid or unresolved commit SHA: bad-sha"}
 
     @pytest.mark.asyncio
-    async def test_close_task_out_of_repo_blocked_when_session_had_edits(
+    async def test_close_task_out_of_repo_blocked_when_target_task_has_edits(
         self, mock_task_manager, mock_sync_manager
     ):
-        """Test out_of_repo reason still enforces commit check when session had edits."""
+        """Test out_of_repo reason still enforces commit check for target-task edits."""
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
         mock_task.project_id = "proj-1"
         mock_task_manager.get_task.return_value = mock_task
         mock_task_manager.list_tasks.return_value = []  # leaf task (no children)
-
-        # Mock session with had_edits=True
-        mock_session = MagicMock()
-        mock_session.had_edits = True
 
         with (
             patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
@@ -454,6 +458,7 @@ class TestCloseTaskTool:
                 side_effect=lambda sha, cwd=None: sha,
             ),
             patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
         ):
             mock_proj_instance = MagicMock()
             mock_proj_instance.get.return_value = None
@@ -461,8 +466,11 @@ class TestCloseTaskTool:
             mock_git.return_value = "abc123"
 
             mock_session_instance = MagicMock()
-            mock_session_instance.get.return_value = mock_session
+            mock_session_instance.resolve_session_reference.return_value = "test-session"
             MockSessionManager.return_value = mock_session_instance
+            MockSVManager.return_value.get_variables.return_value = {
+                "task_edited_files": {"550e8400-e29b-41d4-a716-446655440000": ["src/owned.py"]},
+            }
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
             result = await registry.call(
@@ -480,10 +488,10 @@ class TestCloseTaskTool:
             assert not mock_task_manager.close_task.called
 
     @pytest.mark.asyncio
-    async def test_close_task_out_of_repo_succeeds_without_session_edits(
+    async def test_close_task_out_of_repo_succeeds_with_unrelated_task_edits(
         self, mock_task_manager, mock_sync_manager
     ):
-        """Test out_of_repo reason succeeds when the session had no in-repo edits."""
+        """Test out_of_repo reason succeeds when only another task has edits."""
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
@@ -498,9 +506,6 @@ class TestCloseTaskTool:
         mock_task_manager.close_task.return_value = mock_task
         mock_task_manager.list_tasks.return_value = []
 
-        mock_session = MagicMock()
-        mock_session.had_edits = False
-
         with (
             patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
             patch("gobby.utils.git.run_git_command") as mock_git,
@@ -509,6 +514,7 @@ class TestCloseTaskTool:
                 side_effect=lambda sha, cwd=None: sha,
             ),
             patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
         ):
             mock_proj_instance = MagicMock()
             mock_proj_instance.get.return_value = None
@@ -516,8 +522,11 @@ class TestCloseTaskTool:
             mock_git.return_value = "abc123"
 
             mock_session_instance = MagicMock()
-            mock_session_instance.get.return_value = mock_session
+            mock_session_instance.resolve_session_reference.return_value = "test-session"
             MockSessionManager.return_value = mock_session_instance
+            MockSVManager.return_value.get_variables.return_value = {
+                "task_edited_files": {"other-task": ["src/other.py"]},
+            }
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
             result = await registry.call(
@@ -572,6 +581,8 @@ class TestCloseTaskTool:
             mock_sv_manager.get_variables.return_value = {
                 "task_claimed": True,
                 "claimed_tasks": {task_uuid: "#42"},
+                "active_task_id": task_uuid,
+                "task_edited_files": {task_uuid: ["src/owned.py"]},
             }
             MockSVManager.return_value = mock_sv_manager
 
@@ -608,10 +619,101 @@ class TestCloseTaskTool:
                 {
                     "task_claimed": False,
                     "claimed_tasks": {},
+                    "active_task_id": None,
+                    "task_edited_files": {},
                 },
             )
             assert mock_sv_manager.merge_variables.call_count == 1
             assert mock_sv_manager.merge_variables.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_close_task_prunes_only_target_task_edit_state(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """close_task must preserve edit state for other claimed tasks."""
+        task_uuid = "550e8400-e29b-41d4-a716-446655440000"
+        other_task_uuid = "550e8400-e29b-41d4-a716-446655440001"
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
+            ) as MockSessionTaskManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
+            patch("gobby.utils.git.run_git_command") as mock_git,
+            patch(
+                "gobby.utils.git.normalize_commit_sha",
+                side_effect=lambda sha, cwd=None: sha,
+            ),
+        ):
+            mock_session_task_manager = MagicMock()
+            MockSessionTaskManager.return_value = mock_session_task_manager
+
+            mock_session_manager = MagicMock()
+            mock_session_manager.resolve_session_reference.return_value = "test-session"
+            mock_session_manager.get.return_value = None
+            MockSessionManager.return_value = mock_session_manager
+
+            mock_sv_manager = MagicMock()
+            mock_sv_manager.get_variables.return_value = {
+                "task_claimed": True,
+                "claimed_tasks": {task_uuid: "#42", other_task_uuid: "#43"},
+                "active_task_id": task_uuid,
+                "task_edited_files": {
+                    task_uuid: ["src/owned.py"],
+                    other_task_uuid: ["src/other.py"],
+                },
+            }
+            MockSVManager.return_value = mock_sv_manager
+
+            mock_proj_instance = MagicMock()
+            mock_proj_instance.get.return_value = None
+            MockProjManager.return_value = mock_proj_instance
+            mock_git.return_value = "abc123"
+
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+            mock_task = MagicMock()
+            mock_task.id = task_uuid
+            mock_task.commits = ["abc123"]
+            mock_task.project_id = "proj-1"
+            mock_task.validation_criteria = None
+            mock_task.requires_user_review = False
+            mock_task.to_brief.return_value = {"id": task_uuid, "status": "closed"}
+            mock_task_manager.get_task.return_value = mock_task
+            mock_task_manager.close_task.return_value = mock_task
+            mock_task_manager.list_tasks.return_value = []
+
+            result = await registry.call(
+                "close_task",
+                {
+                    "task_id": task_uuid,
+                    "changes_summary": "test changes",
+                },
+            )
+
+            assert "error" not in result
+            mock_task_manager.close_task.assert_called_once()
+            close_call = mock_task_manager.close_task.call_args
+            assert close_call.args == (task_uuid,)
+            assert close_call.kwargs["closed_in_session_id"] == "test-session"
+            assert close_call.kwargs["closed_commit_sha"] == "abc123"
+            mock_session_task_manager.link_task.assert_called_once_with(
+                "test-session",
+                task_uuid,
+                "closed",
+            )
+            mock_sv_manager.merge_variables.assert_called_once_with(
+                "test-session",
+                {
+                    "task_claimed": True,
+                    "claimed_tasks": {other_task_uuid: "#43"},
+                    "active_task_id": other_task_uuid,
+                    "task_edited_files": {other_task_uuid: ["src/other.py"]},
+                },
+            )
+            mock_session_manager.clear_had_edits.assert_not_called()
 
 
 # =============================================================================
@@ -776,6 +878,7 @@ class TestSessionVariableMirroring:
             assert merged["task_claimed"] is True
             assert task_uuid in merged["claimed_tasks"]
             assert merged["claimed_tasks"][task_uuid] == "#200"
+            assert merged["active_task_id"] == task_uuid
 
     @pytest.mark.asyncio
     async def test_close_task_mirrors_clear_to_session_variables(
@@ -809,6 +912,8 @@ class TestSessionVariableMirroring:
             mock_sv_manager.get_variables.return_value = {
                 "task_claimed": True,
                 "claimed_tasks": {task_uuid: "#200"},
+                "active_task_id": task_uuid,
+                "task_edited_files": {task_uuid: ["src/owned.py"]},
             }
             MockSVManager.return_value = mock_sv_manager
 
@@ -841,6 +946,8 @@ class TestSessionVariableMirroring:
                 {
                     "task_claimed": False,
                     "claimed_tasks": {},
+                    "active_task_id": None,
+                    "task_edited_files": {},
                 },
             )
             assert mock_sv_manager.merge_variables.call_count == 1
@@ -904,3 +1011,4 @@ class TestSessionVariableMirroring:
                 assert merged["task_claimed"] is True
                 assert task_uuid in merged["claimed_tasks"]
                 assert merged["claimed_tasks"][task_uuid] == "#300"
+                assert merged["active_task_id"] == task_uuid

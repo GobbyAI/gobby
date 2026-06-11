@@ -324,7 +324,8 @@ class TestRequireMemoryReviewBeforeStatus:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.when is not None
         assert "memory_review_completed" in body.when
-        assert "session_edited_files" in body.when
+        assert "target_task_has_edits" in body.when
+        assert "session_edited_files" not in body.when
 
 
 # ═══════════════════════════════════════════════════════════════════════

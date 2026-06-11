@@ -370,6 +370,10 @@ def _baseline_updates(
             updates["baseline_dirty_files"] = []
     if "session_edited_files" not in variables:
         updates["session_edited_files"] = []
+    if "active_task_id" not in variables:
+        updates["active_task_id"] = None
+    if "task_edited_files" not in variables:
+        updates["task_edited_files"] = {}
     return updates
 
 

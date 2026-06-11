@@ -286,10 +286,9 @@ class ToolEventHandlerMixin(EventHandlersBase):
             db = getattr(self._session_manager, "db", None)
             if db:
                 manager = SessionVariableManager(db)
-                manager.append_to_set_variable_and_conditional_merge(
+                manager.record_edited_file(
                     session_id,
-                    "session_edited_files",
-                    [rel_path],
+                    rel_path,
                     condition_name=VERIFICATION_EVIDENCE_RECORDED_VARIABLE,
                     updates=VERIFICATION_EVIDENCE_RESET_UPDATES,
                 )

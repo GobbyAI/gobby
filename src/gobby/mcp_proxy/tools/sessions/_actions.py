@@ -65,7 +65,12 @@ def register_action_tools(
 
                 SessionVariableManager(db).merge_variables(
                     session_id,
-                    {"baseline_dirty_files": baseline, "session_edited_files": []},
+                    {
+                        "baseline_dirty_files": baseline,
+                        "session_edited_files": [],
+                        "active_task_id": None,
+                        "task_edited_files": {},
+                    },
                 )
 
             return {

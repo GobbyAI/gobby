@@ -333,6 +333,66 @@ class SessionVariableManager:
                 )
         return True
 
+    def record_edited_file(
+        self,
+        session_id: str,
+        repo_relative_path: str,
+        *,
+        condition_name: str,
+        updates: dict[str, Any],
+    ) -> bool:
+        """Record a successful repo file edit in session and active-task ledgers."""
+        if not repo_relative_path and not updates:
+            return True
+
+        from gobby.workflows.task_claim_state import active_task_id_for_edit
+
+        now = datetime.now(UTC).isoformat()
+        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
+            row = conn.execute(
+                "SELECT variables FROM session_variables WHERE session_id = %s",
+                (session_id,),
+            ).fetchone()
+            current_vars = json.loads(row["variables"]) if row and row["variables"] else {}
+
+            stored = current_vars.get("session_edited_files", [])
+            if not isinstance(stored, list):
+                stored = [stored] if stored else []
+            session_files = {str(file) for file in stored if file}
+            if repo_relative_path:
+                session_files.add(repo_relative_path)
+            current_vars["session_edited_files"] = sorted(session_files)
+
+            task_id = active_task_id_for_edit(current_vars)
+            if task_id and repo_relative_path:
+                raw_task_files = current_vars.get("task_edited_files") or {}
+                task_files = raw_task_files if isinstance(raw_task_files, dict) else {}
+                stored_for_task = task_files.get(task_id, [])
+                if not isinstance(stored_for_task, list):
+                    stored_for_task = [stored_for_task] if stored_for_task else []
+                files_for_task = {str(file) for file in stored_for_task if file}
+                files_for_task.add(repo_relative_path)
+                task_files = dict(task_files)
+                task_files[task_id] = sorted(files_for_task)
+                current_vars["task_edited_files"] = task_files
+
+            if current_vars.get(condition_name) is True:
+                current_vars.update(updates)
+
+            if row:
+                conn.execute(
+                    "UPDATE session_variables SET variables = %s, updated_at = %s "
+                    "WHERE session_id = %s",
+                    (json.dumps(current_vars), now, session_id),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO session_variables (session_id, variables, updated_at) "
+                    "VALUES (%s, %s, %s)",
+                    (session_id, json.dumps(current_vars), now),
+                )
+        return True
+
     def claim_startup_context(self, session_id: str) -> Literal["full", "live"]:
         """Atomically claim the startup context for this session.
 

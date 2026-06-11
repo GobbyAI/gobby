@@ -208,6 +208,8 @@ variables:
             "max_stop_attempts",
             "max_consecutive_blocked_tool_attempts",
             "task_claimed",
+            "active_task_id",
+            "task_edited_files",
             "require_task_before_edit",
             "require_commit_before_status",
             "verification_evidence_recorded",

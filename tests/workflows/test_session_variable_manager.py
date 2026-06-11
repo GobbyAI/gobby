@@ -320,3 +320,84 @@ def test_append_to_set_variable_and_conditional_merge_preserves_unrecorded_evide
     assert variables["verification_evidence"] == [
         {"command": "uv run pytest old.py", "success": True}
     ]
+
+
+def test_record_edited_file_tracks_sole_claimed_task(db: Any) -> None:
+    """Edited files are recorded in both session and task-scoped ledgers."""
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    mgr.merge_variables("s1", {"claimed_tasks": {"task-1": "#1"}})
+
+    mgr.record_edited_file(
+        "s1",
+        "src/app.py",
+        condition_name="verification_evidence_recorded",
+        updates={"verification_evidence_recorded": False, "verification_evidence": []},
+    )
+
+    variables = mgr.get_variables("s1")
+    assert variables["session_edited_files"] == ["src/app.py"]
+    assert variables["task_edited_files"] == {"task-1": ["src/app.py"]}
+
+
+def test_record_edited_file_without_claim_has_no_task_scoped_entry(db: Any) -> None:
+    """No claimed task means only the session-level edit ledger is updated."""
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+
+    mgr.record_edited_file(
+        "s1",
+        "src/app.py",
+        condition_name="verification_evidence_recorded",
+        updates={"verification_evidence_recorded": False, "verification_evidence": []},
+    )
+
+    variables = mgr.get_variables("s1")
+    assert variables["session_edited_files"] == ["src/app.py"]
+    assert "task_edited_files" not in variables
+
+
+def test_record_edited_file_uses_active_task_when_multiple_claimed(db: Any) -> None:
+    """Multiple claimed tasks require active_task_id for edit attribution."""
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    mgr.merge_variables(
+        "s1",
+        {
+            "active_task_id": "task-2",
+            "claimed_tasks": {"task-1": "#1", "task-2": "#2"},
+        },
+    )
+
+    mgr.record_edited_file(
+        "s1",
+        "src/app.py",
+        condition_name="verification_evidence_recorded",
+        updates={"verification_evidence_recorded": False, "verification_evidence": []},
+    )
+
+    variables = mgr.get_variables("s1")
+    assert variables["session_edited_files"] == ["src/app.py"]
+    assert variables["task_edited_files"] == {"task-2": ["src/app.py"]}
+
+
+def test_record_edited_file_does_not_guess_with_multiple_claims(db: Any) -> None:
+    """Multiple claimed tasks without active_task_id do not receive task-scoped edits."""
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    mgr.merge_variables("s1", {"claimed_tasks": {"task-1": "#1", "task-2": "#2"}})
+
+    mgr.record_edited_file(
+        "s1",
+        "src/app.py",
+        condition_name="verification_evidence_recorded",
+        updates={"verification_evidence_recorded": False, "verification_evidence": []},
+    )
+
+    variables = mgr.get_variables("s1")
+    assert variables["session_edited_files"] == ["src/app.py"]
+    assert "task_edited_files" not in variables

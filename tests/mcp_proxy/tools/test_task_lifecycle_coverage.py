@@ -277,9 +277,14 @@ class TestCloseTask:
             ) as mock_vcr,
             patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
             patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSM,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVM,
         ):
             mock_sm = MagicMock()
+            mock_sm.resolve_session_reference.return_value = "resolved-session"
             MockSM.return_value = mock_sm
+            MockSVM.return_value.get_variables.return_value = {
+                "task_edited_files": {task.id: ["src/owned.py"]},
+            }
 
             mock_vcr.return_value = MagicMock(
                 can_close=False,
@@ -355,6 +360,7 @@ class TestCloseTask:
 
         with (
             patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockPM,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVM,
             patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
             ) as mock_vcr,
@@ -364,6 +370,9 @@ class TestCloseTask:
             ) as mock_norm,
         ):
             MockPM.return_value.get.return_value = MagicMock(repo_path=str(repo_path))
+            MockSVM.return_value.get_variables.return_value = {
+                "task_edited_files": {task.id: ["src/owned.py"]},
+            }
             registry = _create_registry(mock_task_manager, mock_sync_manager)
             mock_vcr.return_value = MagicMock(can_close=True)
             await registry.call(
@@ -693,7 +702,12 @@ class TestReopenTask:
                 "task_claimed": True,
                 "claimed_tasks": {task_id: "#42"},
             }
-            mock_remove.return_value = {"task_claimed": False, "claimed_tasks": {}}
+            mock_remove.return_value = {
+                "task_claimed": False,
+                "claimed_tasks": {},
+                "active_task_id": None,
+                "task_edited_files": {},
+            }
 
             # Patch session_var_manager on the registry context
             with patch(
@@ -932,7 +946,12 @@ class TestEscalateTask:
                 "claimed_tasks": {task_id: "#42"},
             }
             MockSVM.return_value = mock_svm
-            mock_remove.return_value = {"task_claimed": False, "claimed_tasks": {}}
+            mock_remove.return_value = {
+                "task_claimed": False,
+                "claimed_tasks": {},
+                "active_task_id": None,
+                "task_edited_files": {},
+            }
 
             registry = _create_registry(mock_task_manager, mock_sync_manager)
             result = await registry.call(
@@ -944,7 +963,12 @@ class TestEscalateTask:
         mock_remove.assert_called_once_with(mock_svm.get_variables.return_value, task_id)
         mock_svm.merge_variables.assert_called_once_with(
             session_id,
-            {"task_claimed": False, "claimed_tasks": {}},
+            {
+                "task_claimed": False,
+                "claimed_tasks": {},
+                "active_task_id": None,
+                "task_edited_files": {},
+            },
         )
 
 
@@ -1046,7 +1070,12 @@ class TestMarkTaskReviewApproved:
                 "claimed_tasks": {task_id: "#42"},
             }
             MockSVM.return_value = mock_svm
-            mock_remove.return_value = {"task_claimed": False, "claimed_tasks": {}}
+            mock_remove.return_value = {
+                "task_claimed": False,
+                "claimed_tasks": {},
+                "active_task_id": None,
+                "task_edited_files": {},
+            }
 
             registry = _create_stage_ops_registry(mock_task_manager, mock_sync_manager)
             result = await registry.call(
@@ -1058,7 +1087,12 @@ class TestMarkTaskReviewApproved:
         mock_remove.assert_called_once_with(mock_svm.get_variables.return_value, task_id)
         mock_svm.merge_variables.assert_called_once_with(
             session_id,
-            {"task_claimed": False, "claimed_tasks": {}},
+            {
+                "task_claimed": False,
+                "claimed_tasks": {},
+                "active_task_id": None,
+                "task_edited_files": {},
+            },
         )
 
 
@@ -1157,7 +1191,12 @@ class TestMarkTaskNeedsReview:
                 "claimed_tasks": {task_id: "#42"},
             }
             MockSVM.return_value = mock_svm
-            mock_remove.return_value = {"task_claimed": False, "claimed_tasks": {}}
+            mock_remove.return_value = {
+                "task_claimed": False,
+                "claimed_tasks": {},
+                "active_task_id": None,
+                "task_edited_files": {},
+            }
 
             registry = _create_stage_ops_registry(mock_task_manager, mock_sync_manager)
             result = await registry.call(
@@ -1169,7 +1208,12 @@ class TestMarkTaskNeedsReview:
         mock_remove.assert_called_once_with(mock_svm.get_variables.return_value, task_id)
         mock_svm.merge_variables.assert_called_once_with(
             session_id,
-            {"task_claimed": False, "claimed_tasks": {}},
+            {
+                "task_claimed": False,
+                "claimed_tasks": {},
+                "active_task_id": None,
+                "task_edited_files": {},
+            },
         )
 
 

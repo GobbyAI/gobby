@@ -8,6 +8,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.task_claim_state import add_claimed_task
 
 pytestmark = pytest.mark.integration
 
@@ -52,6 +53,10 @@ def test_edit_history_flow(temp_db, tmp_path) -> None:
 
     # 4. Claim the task (EventHandlers checks for claimed tasks)
     task_manager.claim_task(task.id, session.id)
+    session_var_manager.merge_variables(
+        session.id,
+        add_claimed_task({}, task.id, f"#{task.seq_num}"),
+    )
 
     # 5. Simulate Edit Tool execution
     # Ensure tool name is in EDIT_TOOLS (case insensitive test)
@@ -72,9 +77,9 @@ def test_edit_history_flow(temp_db, tmp_path) -> None:
     # 6. Verify had_edits is True
     session = session_manager.get(session.id)
     assert session.had_edits
-    assert session_var_manager.get_variables(session.id)["session_edited_files"] == [
-        "src/edited.py"
-    ]
+    variables = session_var_manager.get_variables(session.id)
+    assert variables["session_edited_files"] == ["src/edited.py"]
+    assert variables["task_edited_files"] == {task.id: ["src/edited.py"]}
 
     # 7. Verify non-edit tool doesn't trigger it (if it was false)
     # Reset session for negative test
@@ -179,3 +184,94 @@ def test_edit_history_not_set_if_task_not_claimed(temp_db) -> None:
 
     session = session_manager.get(session.id)
     assert not session.had_edits
+
+
+def test_edit_history_without_claim_records_no_task_scoped_edits(temp_db, tmp_path) -> None:
+    """Unclaimed edits remain session-scoped only."""
+    repo_root = tmp_path / "repo-no-claim"
+    repo_root.mkdir()
+    in_repo_file = repo_root / "src" / "edited.py"
+    in_repo_file.parent.mkdir(parents=True)
+
+    session_manager = SessionManager(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    project_manager = LocalProjectManager(temp_db)
+    session_var_manager = SessionVariableManager(temp_db)
+    handlers = EventHandlers(session_storage=session_manager, task_manager=task_manager)
+
+    project = project_manager.create("test-project-no-claim", str(repo_root))
+    session = session_manager.register(
+        external_id="test-session-no-claim",
+        machine_id="test-machine",
+        source="gemini",
+        project_id=project.id,
+    )
+
+    event = HookEvent(
+        event_type=HookEventType.AFTER_TOOL,
+        session_id="test-session-no-claim",
+        source=SessionSource.GEMINI,
+        timestamp=datetime.now(UTC),
+        cwd=str(repo_root),
+        data={"tool_name": list(EDIT_TOOLS)[0], "tool_input": {"file_path": str(in_repo_file)}},
+        metadata={"_platform_session_id": session.id},
+    )
+
+    handlers.handle_after_tool(event)
+
+    variables = session_var_manager.get_variables(session.id)
+    assert variables["session_edited_files"] == ["src/edited.py"]
+    assert "task_edited_files" not in variables
+
+
+def test_edit_history_multiple_claims_use_active_task_id(temp_db, tmp_path) -> None:
+    """Multiple claimed tasks attribute edits to active_task_id only."""
+    repo_root = tmp_path / "repo-multi-claim"
+    repo_root.mkdir()
+    in_repo_file = repo_root / "src" / "edited.py"
+    in_repo_file.parent.mkdir(parents=True)
+
+    session_manager = SessionManager(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    project_manager = LocalProjectManager(temp_db)
+    session_var_manager = SessionVariableManager(temp_db)
+    handlers = EventHandlers(session_storage=session_manager, task_manager=task_manager)
+
+    project = project_manager.create("test-project-multi-claim", str(repo_root))
+    session = session_manager.register(
+        external_id="test-session-multi-claim",
+        machine_id="test-machine",
+        source="gemini",
+        project_id=project.id,
+    )
+    first = task_manager.create_task(
+        project_id=project.id, title="First Task", created_in_session_id=session.id
+    )
+    second = task_manager.create_task(
+        project_id=project.id, title="Second Task", created_in_session_id=session.id
+    )
+    task_manager.claim_task(first.id, session.id)
+    task_manager.claim_task(second.id, session.id)
+    session_var_manager.merge_variables(
+        session.id,
+        {
+            "active_task_id": second.id,
+            "claimed_tasks": {first.id: f"#{first.seq_num}", second.id: f"#{second.seq_num}"},
+        },
+    )
+
+    event = HookEvent(
+        event_type=HookEventType.AFTER_TOOL,
+        session_id="test-session-multi-claim",
+        source=SessionSource.GEMINI,
+        timestamp=datetime.now(UTC),
+        cwd=str(repo_root),
+        data={"tool_name": list(EDIT_TOOLS)[0], "tool_input": {"file_path": str(in_repo_file)}},
+        metadata={"_platform_session_id": session.id},
+    )
+
+    handlers.handle_after_tool(event)
+
+    variables = session_var_manager.get_variables(session.id)
+    assert variables["session_edited_files"] == ["src/edited.py"]
+    assert variables["task_edited_files"] == {second.id: ["src/edited.py"]}

@@ -10,6 +10,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import sync_bundled_rules
 
@@ -78,7 +79,7 @@ def _set_variable_event(name: str) -> HookEvent:
 def _ready_variables(**overrides: object) -> dict[str, object]:
     variables: dict[str, object] = {
         "loaded_skills": ["task-transitions"],
-        "session_edited_files": ["src/gobby/workflows/observers.py"],
+        "target_task_has_edits": True,
         "task_has_commits": True,
         "memory_review_completed": True,
         "is_spawned_agent": True,
@@ -93,6 +94,22 @@ def _ready_variables(**overrides: object) -> dict[str, object]:
     }
     variables.update(overrides)
     return variables
+
+
+def test_completion_readiness_when_uses_target_task_edits(
+    db: HubDatabase,
+    manager: LocalWorkflowDefinitionManager,
+) -> None:
+    """Completion readiness should not use session-wide edit state."""
+    _sync_bundled(db)
+
+    row = manager.get_by_name("require-completion-readiness-evidence")
+    assert row is not None
+    body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+    assert body.when is not None
+    assert "target_task_has_edits" in body.when
+    assert "session_edited_files" not in body.when
 
 
 @pytest.mark.asyncio

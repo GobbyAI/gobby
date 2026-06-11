@@ -61,6 +61,35 @@ def _is_known_no_repo_project(project_id: str | None) -> bool:
     return isinstance(project_id, str) and project_id in _NO_REPO_SYSTEM_PROJECTS
 
 
+def _target_task_tool_input(data: dict[str, Any]) -> dict[str, Any]:
+    raw_tool_input = data.get("tool_input") or data.get("arguments") or {}
+    if not isinstance(raw_tool_input, dict):
+        return {}
+
+    tool_name = data.get("tool_name", "")
+    if tool_name in {"call_tool", "mcp__gobby__call_tool"}:
+        inner_args = raw_tool_input.get("arguments")
+        if isinstance(inner_args, dict):
+            return inner_args
+        if isinstance(inner_args, str):
+            try:
+                parsed = json.loads(inner_args)
+            except (json.JSONDecodeError, TypeError):
+                return {}
+            if isinstance(parsed, dict):
+                return parsed
+    return raw_tool_input
+
+
+def _target_task_id_for_event(event: HookEvent, variables: dict[str, Any]) -> str | None:
+    if not isinstance(event.data, dict):
+        return None
+
+    from gobby.workflows.task_claim_state import resolve_target_task_id
+
+    return resolve_target_task_id(variables, _target_task_tool_input(event.data).get("task_id"))
+
+
 class _EvalLockState:
     """Per-session evaluation lock plus registry bookkeeping."""
 
@@ -637,14 +666,30 @@ class WorkflowHookHandler:
                     initial_dirty = sorted(get_dirty_files_categorized(project_path).all)
                     variables["baseline_dirty_files"] = initial_dirty
                     variables.setdefault("session_edited_files", [])
+                    variables.setdefault("active_task_id", None)
+                    variables.setdefault("task_edited_files", {})
                     # Persist so future evaluations have it
                     if self._session_var_manager and session_id:
                         self._session_var_manager.merge_variables(
                             session_id,
-                            {"baseline_dirty_files": initial_dirty, "session_edited_files": []},
+                            {
+                                "baseline_dirty_files": initial_dirty,
+                                "session_edited_files": [],
+                                "active_task_id": None,
+                                "task_edited_files": {},
+                            },
                         )
 
                 session_edited = set(variables.get("session_edited_files", []))
+                target_task_id = _target_task_id_for_event(event, variables)
+                from gobby.workflows.task_claim_state import (
+                    target_task_has_edits,
+                    task_edited_file_set,
+                )
+
+                target_task_edited = task_edited_file_set(variables, target_task_id)
+                target_task_had_edits = target_task_has_edits(variables, target_task_id)
+                variables["target_task_has_edits"] = target_task_had_edits
 
                 def _check_dirty(
                     _edited: set[str] = session_edited,
@@ -658,7 +703,20 @@ class WorkflowHookHandler:
                     session_dirty_untracked = _edited & dirty_untracked
                     return bool(session_dirty_tracked or session_dirty_untracked)
 
-                eval_context = {"has_dirty_files": LazyBool(_check_dirty)}
+                def _check_target_task_dirty(
+                    _edited: set[str] = target_task_edited,
+                    _path: str | None = project_path,
+                ) -> bool:
+                    if not _edited:
+                        return False
+                    result = get_dirty_files_categorized(_path)
+                    return bool(_edited & result.all)
+
+                eval_context = {
+                    "has_dirty_files": LazyBool(_check_dirty),
+                    "target_task_has_edits": target_task_had_edits,
+                    "has_target_task_dirty_files": LazyBool(_check_target_task_dirty),
+                }
 
                 # Snapshot BEFORE observers to capture both observer and rule changes in the diff
                 pre_eval = deepcopy(variables)

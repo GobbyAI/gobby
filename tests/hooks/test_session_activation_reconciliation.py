@@ -622,6 +622,8 @@ def test_baseline_dirty_initializes_once_and_preserves_session_edits(
     variables = _variables(db, session_id)
     assert variables["baseline_dirty_files"] == ["dirty.py", "new.py"]
     assert variables["session_edited_files"] == ["kept.py"]
+    assert variables["active_task_id"] is None
+    assert variables["task_edited_files"] == {}
 
 
 def test_terminal_pickup_metadata_backfills_from_agent_runs(

@@ -60,6 +60,8 @@ class TestCaptureBaselineDirtyFiles:
         svm = SessionVariableManager(db=db)
         variables = svm.get_variables("sess-1")
         assert sorted(variables["baseline_dirty_files"]) == ["file_a.py", "file_b.py"]
+        assert variables["active_task_id"] is None
+        assert variables["task_edited_files"] == {}
 
     @patch("gobby.mcp_proxy.tools.sessions._actions.get_dirty_files")
     def test_no_persist_without_session_id(self, mock_dirty, db) -> None:
@@ -108,3 +110,5 @@ class TestCaptureBaselineDirtyFiles:
         svm = SessionVariableManager(db=db)
         variables = svm.get_variables("sess-1")
         assert variables["baseline_dirty_files"] == []
+        assert variables["active_task_id"] is None
+        assert variables["task_edited_files"] == {}

@@ -27,7 +27,6 @@ from gobby.mcp_proxy.tools.tasks._verification_evidence_context import (
     format_verification_evidence_context,
 )
 from gobby.plans.bootstrap_ledger import BootstrapLedgerMismatchError
-from gobby.storage.session_models import Session
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.workflows.condition_helpers import completion_evidence_ready
@@ -167,13 +166,16 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             except ValueError as e:
                 return {"error": f"Cannot resolve session '{session_id}': {e}"}
 
-        # Resolve session for edit-awareness (used by commit checks below)
-        _session: Session | None = None
+        # Resolve target-task edit attribution for commit checks below.
+        session_vars: dict[str, Any] = {}
         if resolved_session_id:
             try:
-                _session = ctx.session_manager.get(resolved_session_id)
+                session_vars = ctx.session_var_manager.get_variables(resolved_session_id)
             except (KeyError, ValueError, TypeError) as e:
-                logger.debug(f"Best-effort session lookup failed: {e}")
+                logger.debug(f"Best-effort session variable lookup failed: {e}")
+        from gobby.workflows.task_claim_state import target_task_has_edits
+
+        target_task_had_edits = target_task_has_edits(session_vars, resolved_id)
 
         autolink_error = _auto_link_claim_window_commits(
             ctx=ctx,
@@ -188,13 +190,8 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         if not task:
             return {"error": f"Task {task_id} not found after commit autolinking"}
 
-        # Check for linked commits (unless parent with all children closed or epic)
-        # Skip the check if the session made no edits — nothing to commit
-        # Tri-state: True = edits confirmed, False = no edits, None = unknown.
-        # `is not False` treats unknown the same as confirmed — safer to require
-        # a commit when we can't determine edit status.
-        session_had_edits = _session.had_edits if _session else None
-        if not skip_leaf_checks and session_had_edits is not False:
+        # Check for linked commits only when this target task has attributed edits.
+        if not skip_leaf_checks and target_task_had_edits:
             commit_result = validate_commit_requirements(task, reason, repo_path)
             if not commit_result.can_close:
                 return {
@@ -225,20 +222,20 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         # Auto-skip validation for certain close reasons
         should_skip = skip_validation or reason.lower() in SKIP_REASONS
 
-        # Enforce commits if session had edits
+        # Enforce commits if the target task had edits.
         # Only skip for explicit skip_validation, NOT for close reasons like out_of_repo
-        # (if the session edited in-repo files, those need commits regardless of reason)
+        # (if the target task edited in-repo files, those need commits regardless of reason)
         # Also skip for parent tasks with all children closed (no direct edits expected)
         if not skip_leaf_checks and resolved_session_id and not skip_validation:
             # Check if task has commits (including the one being linked right now)
             has_commits = bool(task.commits) or bool(commit_sha)
 
-            if session_had_edits is True and not has_commits:
+            if target_task_had_edits and not has_commits:
                 return {
                     "success": False,
                     "error": "missing_commits_for_edits",
                     "message": (
-                        "This session made edits but no commits are linked to the task. "
+                        "This task has attributed edits but no commits are linked to it. "
                         "You must commit your changes and link them to the task before closing."
                     ),
                     "suggestion": (
@@ -309,7 +306,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         from gobby.utils.git import normalize_commit_sha, run_git_command
 
         requires_closed_commit_sha = bool(
-            commit_sha or task.commits or (not skip_leaf_checks and session_had_edits is True)
+            commit_sha or task.commits or (not skip_leaf_checks and target_task_had_edits)
         )
         current_commit_sha: str | None = None
         if requires_closed_commit_sha:
@@ -407,12 +404,13 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         # Remove closed task from claimed_tasks dict
         # This is done here because Claude Code's post-tool-use hook doesn't include
         # the tool result, so the detection_helpers can't verify close succeeded
+        remaining_task_edit_state: dict[str, Any] | None = None
         if resolved_session_id:
             try:
                 from gobby.workflows.task_claim_state import remove_claimed_task
 
-                session_vars = ctx.session_var_manager.get_variables(resolved_session_id)
                 merge_dict = remove_claimed_task(session_vars, resolved_id)
+                remaining_task_edit_state = merge_dict.get("task_edited_files")
                 ctx.session_var_manager.merge_variables(resolved_session_id, merge_dict)
                 logger.debug(
                     f"Removed task {resolved_id} from claimed_tasks for session {resolved_session_id}",
@@ -422,9 +420,12 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                     f"Failed to update claimed_tasks for session {resolved_session_id}: {e}",
                 )
 
-        # Reset had_edits after successful close with a linked commit
-        # The commit accounts for this task's edits; subsequent tasks start clean
-        if resolved_session_id and (bool(task.commits) or bool(commit_sha)):
+        # Reset had_edits after the last task-scoped edit set is accounted for.
+        if (
+            resolved_session_id
+            and (bool(task.commits) or bool(commit_sha))
+            and not remaining_task_edit_state
+        ):
             try:
                 ctx.session_manager.clear_had_edits(resolved_session_id)
             except Exception as e:
@@ -442,7 +443,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             "Validation auto-skipped for: duplicate, already_implemented, wont_fix, "
             "obsolete, out_of_repo. Note: out_of_repo only skips LLM validation and "
             "the basic commit-linked check; commits are still required if the session "
-            "edited in-repo files (session.had_edits enforcement). skip_validation=True "
+            "attributed edits to the target task. skip_validation=True "
             "is an audited override requiring override_justification and current-session "
             "verification evidence."
         ),

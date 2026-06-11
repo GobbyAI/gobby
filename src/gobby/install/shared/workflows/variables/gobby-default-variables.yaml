@@ -25,6 +25,12 @@ variables:
   claimed_tasks:
     value: {}
     description: "Map of claimed task UUIDs to refs ({uuid: '#N'}) for this session"
+  active_task_id:
+    value: null
+    description: "Task UUID that receives new edit attribution when multiple tasks are claimed"
+  task_edited_files:
+    value: {}
+    description: "Map of claimed task UUIDs to repo-relative files edited by this session"
   require_task_before_edit:
     value: true
     description: Default require_task_before_edit to true

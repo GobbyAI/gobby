@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 import pytest
 
@@ -18,6 +19,9 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.git_utils import DirtyFiles
+from gobby.workflows.hooks import WorkflowHookHandler
+from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
@@ -42,6 +46,62 @@ def _sync_bundled(db):
     # Mark templates as installed so get_by_name() finds them
     db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
     return result
+
+
+def _close_task_event(task_id: str = "#1", *, commit_sha: str | None = "abc123") -> HookEvent:
+    arguments: dict[str, str] = {"task_id": task_id}
+    if commit_sha is not None:
+        arguments["commit_sha"] = commit_sha
+    return HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id="test-session",
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        cwd="/tmp",
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-tasks",
+                "tool_name": "close_task",
+                "arguments": arguments,
+            },
+        },
+        metadata={"_platform_session_id": "test-session", "project_path": "/tmp"},
+    )
+
+
+def _status_gate_variables(
+    *,
+    claimed_tasks: dict[str, str] | None = None,
+    active_task_id: str | None = None,
+    task_edited_files: dict[str, list[str]] | None = None,
+) -> dict[str, object]:
+    claimed = claimed_tasks or {"task-1": "#1"}
+    return {
+        "require_commit_before_status": True,
+        "loaded_skills": ["task-transitions"],
+        "task_claimed": bool(claimed),
+        "claimed_tasks": claimed,
+        "active_task_id": active_task_id,
+        "task_edited_files": task_edited_files or {},
+        "task_has_commits": True,
+        "memory_review_completed": True,
+        "verification_evidence_recorded": True,
+        "verification_evidence": [
+            {
+                "evidence_type": "validation_command",
+                "success": True,
+                "summary": "focused validation passed",
+            }
+        ],
+    }
+
+
+async def _evaluate_close_event(db: HubDatabase, variables: dict[str, object]) -> object:
+    _sync_bundled(db)
+    SessionVariableManager(db).merge_variables("test-session", variables)
+    handler = WorkflowHookHandler(rule_engine=RuleEngine(db))
+    return await handler._evaluate_rules(_close_task_event("#1"))
 
 
 TASK_ENFORCEMENT_RULES = {
@@ -684,16 +744,89 @@ class TestRequireCleanTreeBeforeStatus:
         assert "gobby-tasks:close_task" in body.effects[0].mcp_tools
         assert "gobby-tasks:de_escalate_task" in body.effects[0].mcp_tools
 
-    def test_when_checks_dirty_files(self, db, manager) -> None:
-        """Should check has_dirty_files but not task_has_commits."""
+    def test_when_checks_target_task_dirty_files(self, db, manager) -> None:
+        """Should check only dirty files attributed to the target task."""
         _sync_bundled(db)
 
         row = manager.get_by_name("require-clean-tree-before-status")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
 
         assert body.when is not None
-        assert "has_dirty_files" in body.when
+        assert "has_target_task_dirty_files" in body.when
+        assert "has_dirty_files" not in body.when
         assert "task_has_commits" not in body.when
+
+    @pytest.mark.asyncio
+    async def test_target_task_dirty_file_blocks(self, db) -> None:
+        """Should block when the target task's attributed file is dirty."""
+        variables = _status_gate_variables(
+            active_task_id="task-1",
+            task_edited_files={"task-1": ["src/owned.py"]},
+        )
+
+        with patch(
+            "gobby.workflows.git_utils.get_dirty_files_categorized",
+            return_value=DirtyFiles({"src/owned.py"}, set()),
+        ):
+            response = await _evaluate_close_event(db, variables)
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert "uncommitted" in response.reason.lower()
+
+    @pytest.mark.asyncio
+    async def test_unrelated_dirty_file_allows(self, db) -> None:
+        """Should allow dirty files not attributed to the target task."""
+        variables = _status_gate_variables(
+            active_task_id="task-1",
+            task_edited_files={"task-1": ["src/owned.py"]},
+        )
+
+        with patch(
+            "gobby.workflows.git_utils.get_dirty_files_categorized",
+            return_value=DirtyFiles({"src/unrelated.py"}, set()),
+        ):
+            response = await _evaluate_close_event(db, variables)
+
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_different_task_dirty_file_allows(self, db) -> None:
+        """Should allow dirty files attributed only to another task."""
+        variables = _status_gate_variables(
+            claimed_tasks={"task-1": "#1", "task-2": "#2"},
+            active_task_id="task-1",
+            task_edited_files={"task-2": ["src/other.py"]},
+        )
+
+        with patch(
+            "gobby.workflows.git_utils.get_dirty_files_categorized",
+            return_value=DirtyFiles({"src/other.py"}, set()),
+        ):
+            response = await _evaluate_close_event(db, variables)
+
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_unresolved_target_task_allows(self, db) -> None:
+        """Should not run the clean-tree gate when the target task cannot resolve."""
+        _sync_bundled(db)
+        SessionVariableManager(db).merge_variables(
+            "test-session",
+            _status_gate_variables(
+                active_task_id="task-1",
+                task_edited_files={"task-1": ["src/owned.py"]},
+            ),
+        )
+        handler = WorkflowHookHandler(rule_engine=RuleEngine(db))
+
+        with patch(
+            "gobby.workflows.git_utils.get_dirty_files_categorized",
+            return_value=DirtyFiles({"src/owned.py"}, set()),
+        ):
+            response = await handler._evaluate_rules(_close_task_event("#999"))
+
+        assert response.decision == "allow"
 
     def test_error_message_mentions_uncommitted(self, db, manager) -> None:
         """Error message should specifically mention uncommitted changes."""
@@ -742,15 +875,16 @@ class TestRequireCommitBeforeStatus:
         assert "task_has_commits" in body.when
         assert "commit_sha" in body.when
 
-    def test_when_checks_session_edited_files_and_dirty(self, db, manager) -> None:
-        """Should only require commit when session has changes."""
+    def test_when_checks_target_task_edits(self, db, manager) -> None:
+        """Should only require commit when the target task has edits."""
         _sync_bundled(db)
 
         row = manager.get_by_name("require-commit-before-status")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
 
-        assert "session_edited_files" in body.when
-        assert "has_dirty_files" in body.when
+        assert "target_task_has_edits" in body.when
+        assert "session_edited_files" not in body.when
+        assert "has_dirty_files" not in body.when
 
     def test_error_message_mentions_no_commit(self, db, manager) -> None:
         """Error message should specifically mention no commit linked."""
