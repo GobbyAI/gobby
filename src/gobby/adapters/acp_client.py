@@ -719,6 +719,16 @@ class ACPClient:
                     },
                 )
 
+            if update_type == "tool_call":
+                return StreamEvent(
+                    event_type="tool_call",
+                    data={
+                        "call_id": update.get("toolCallId"),
+                        "tool_name": update.get("title") or update.get("name"),
+                        "tool_input": update.get("rawInput") or update.get("input") or {},
+                    },
+                )
+
             return StreamEvent(event_type=update_type or method, data=update)
 
         if method == "session/result" or method == "result":
