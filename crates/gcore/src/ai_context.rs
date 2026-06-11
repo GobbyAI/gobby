@@ -123,37 +123,6 @@ impl AiBindings {
     }
 }
 
-#[cfg(test)]
-const LOCAL_BACKEND_CAPABILITIES: [AiCapability; 3] = [
-    AiCapability::Embed,
-    AiCapability::VisionExtract,
-    AiCapability::TextGenerate,
-];
-
-#[cfg(test)]
-pub(crate) fn apply_discovered_local_backend(
-    bindings: &mut AiBindings,
-    backend: &crate::local_backend::Backend,
-) {
-    let api_base = crate::local_backend::backend_api_base(backend);
-    for capability in LOCAL_BACKEND_CAPABILITIES {
-        let binding = bindings.get_mut(capability);
-        if binding_needs_local_api_base(binding) {
-            binding.api_base = Some(api_base.clone());
-        }
-    }
-}
-
-#[cfg(test)]
-fn binding_needs_local_api_base(binding: &CapabilityBinding) -> bool {
-    matches!(binding.routing, AiRouting::Auto | AiRouting::Direct)
-        && binding
-            .api_base
-            .as_deref()
-            .map(str::trim)
-            .is_none_or(str::is_empty)
-}
-
 /// Return the config-only desired route for a capability.
 pub fn route(context: &AiContext, capability: AiCapability) -> AiRouting {
     context.binding(capability).routing
@@ -499,21 +468,6 @@ mod tests {
         fs::write(path, contents).unwrap();
     }
 
-    fn binding(routing: AiRouting, api_base: Option<&str>) -> CapabilityBinding {
-        CapabilityBinding {
-            routing,
-            transport: None,
-            api_base: api_base.map(str::to_string),
-            api_key: None,
-            model: None,
-            provider: None,
-            task: None,
-            language: None,
-            target_lang: None,
-            profile: None,
-        }
-    }
-
     #[test]
     fn resolves_in_db_and_no_db_modes() {
         let home = tempfile::tempdir().unwrap();
@@ -781,39 +735,5 @@ ai:
         assert_eq!(context.binding(AiCapability::Embed).api_base, None);
         assert_eq!(context.binding(AiCapability::VisionExtract).api_base, None);
         assert_eq!(context.binding(AiCapability::TextGenerate).api_base, None);
-    }
-
-    #[test]
-    fn stt_not_autodiscovered_to_chat_backend() {
-        let mut bindings = AiBindings {
-            embed: binding(AiRouting::Auto, None),
-            audio_transcribe: binding(AiRouting::Auto, None),
-            audio_translate: binding(AiRouting::Direct, None),
-            vision_extract: binding(AiRouting::Direct, None),
-            text_generate: binding(AiRouting::Auto, None),
-        };
-        let backend = crate::local_backend::Backend {
-            name: "lmstudio".into(),
-            url: "http://localhost:1234".into(),
-            probe: "/v1/models".into(),
-            auth_token: "lmstudio".into(),
-        };
-
-        apply_discovered_local_backend(&mut bindings, &backend);
-
-        assert_eq!(
-            bindings.embed.api_base.as_deref(),
-            Some("http://localhost:1234/v1")
-        );
-        assert_eq!(
-            bindings.vision_extract.api_base.as_deref(),
-            Some("http://localhost:1234/v1")
-        );
-        assert_eq!(
-            bindings.text_generate.api_base.as_deref(),
-            Some("http://localhost:1234/v1")
-        );
-        assert_eq!(bindings.audio_transcribe.api_base, None);
-        assert_eq!(bindings.audio_translate.api_base, None);
     }
 }
