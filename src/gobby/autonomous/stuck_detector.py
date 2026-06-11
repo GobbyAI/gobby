@@ -278,7 +278,9 @@ class StuckDetector:
         for event in recent_events:
             if event.tool_name:
                 # Create a key from tool name and key args
-                key = f"{event.tool_name}:{event.details.get('tool_args_keys', [])}"
+                arg_keys = event.details.get("tool_args_keys", [])
+                arg_fingerprint = event.details.get("tool_args_fingerprint", "<missing>")
+                key = f"{event.tool_name}:{arg_keys}:{arg_fingerprint}"
                 tool_counts[key] = tool_counts.get(key, 0) + 1
 
         # Check for repeated patterns

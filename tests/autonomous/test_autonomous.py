@@ -385,6 +385,21 @@ class TestProgressTrackerToolCall:
         assert event.progress_type == ProgressType.TEST_FAILED
         assert event.is_high_value is False
 
+    def test_record_tool_call_does_not_match_test_substrings(
+        self, progress_tracker: ProgressTracker, session_id: str
+    ) -> None:
+        """Test that shell command classification uses command tokens."""
+        event = progress_tracker.record_tool_call(
+            session_id=session_id,
+            tool_name="Bash",
+            tool_args={"command": "git checkout latest"},
+            tool_result="Already on 'latest'",
+        )
+
+        assert event is not None
+        assert event.progress_type == ProgressType.TOOL_CALL
+        assert event.is_high_value is False
+
     def test_record_tool_call_for_bash_build_success(
         self, progress_tracker: ProgressTracker, session_id: str
     ) -> None:
@@ -399,6 +414,36 @@ class TestProgressTrackerToolCall:
         assert event is not None
         assert event.progress_type == ProgressType.BUILD_SUCCEEDED
         assert event.is_high_value is True
+
+    def test_record_tool_call_does_not_default_build_to_success(
+        self, progress_tracker: ProgressTracker, session_id: str
+    ) -> None:
+        """Test that build commands need explicit success output."""
+        event = progress_tracker.record_tool_call(
+            session_id=session_id,
+            tool_name="Bash",
+            tool_args={"command": "npm run build"},
+            tool_result="",
+        )
+
+        assert event is not None
+        assert event.progress_type == ProgressType.TOOL_CALL
+        assert event.is_high_value is False
+
+    def test_record_tool_call_does_not_treat_negated_build_success_as_success(
+        self, progress_tracker: ProgressTracker, session_id: str
+    ) -> None:
+        """Test that negated success phrases do not count as build success."""
+        event = progress_tracker.record_tool_call(
+            session_id=session_id,
+            tool_name="Bash",
+            tool_args={"command": "npm run build"},
+            tool_result="Not successful",
+        )
+
+        assert event is not None
+        assert event.progress_type == ProgressType.BUILD_FAILED
+        assert event.is_high_value is False
 
     def test_record_tool_call_for_bash_build_failed(
         self, progress_tracker: ProgressTracker, session_id: str
@@ -572,6 +617,25 @@ class TestProgressTrackerStagnation:
 
         # Should not be stagnant because we have high-value events
         assert tracker.is_stagnant(session_id) is False
+
+    def test_stagnant_by_event_count_after_high_value(
+        self, test_db: HubDatabase, session_id: str
+    ) -> None:
+        """Test count-based stagnation resets after each high-value event."""
+        tracker = ProgressTracker(
+            test_db,
+            stagnation_threshold=3600,
+            max_low_value_events=5,
+        )
+
+        tracker.record_event(session_id, ProgressType.FILE_MODIFIED)
+        for _ in range(6):
+            tracker.record_event(session_id, ProgressType.FILE_READ)
+
+        summary = tracker.get_summary(session_id)
+        assert summary.is_stagnant is True
+        assert summary.high_value_events == 1
+        assert summary.total_events == 7
 
     def test_stagnant_by_time(self, test_db: HubDatabase, session_id: str) -> None:
         """Test stagnation detection by time threshold."""
@@ -1239,6 +1303,29 @@ class TestStuckDetectorToolLoop:
 
         assert result.is_stuck is False
 
+    def test_no_tool_loop_with_distinct_bash_commands(
+        self, test_db: HubDatabase, session_id: str
+    ) -> None:
+        """Test no tool loop when commands differ but arg keys match."""
+        tracker = ProgressTracker(test_db)
+        detector = StuckDetector(
+            test_db,
+            progress_tracker=tracker,
+            tool_loop_threshold=4,
+            tool_window_size=10,
+        )
+
+        for index in range(5):
+            tracker.record_tool_call(
+                session_id,
+                "Bash",
+                tool_args={"command": f"echo {index}"},
+            )
+
+        result = detector.detect_tool_loop(session_id)
+
+        assert result.is_stuck is False
+
     def test_tool_loop_detected(self, test_db: HubDatabase, session_id: str) -> None:
         """Test tool loop detection with repeated identical calls."""
         tracker = ProgressTracker(test_db)
@@ -1263,6 +1350,31 @@ class TestStuckDetectorToolLoop:
         assert result.layer == "tool_loop"
         assert "Read" in result.reason
         assert result.suggested_action == "change_approach"
+
+    def test_tool_loop_detected_with_identical_bash_commands(
+        self, test_db: HubDatabase, session_id: str
+    ) -> None:
+        """Test repeated Bash commands still count as a tool loop."""
+        tracker = ProgressTracker(test_db)
+        detector = StuckDetector(
+            test_db,
+            progress_tracker=tracker,
+            tool_loop_threshold=4,
+            tool_window_size=10,
+        )
+
+        for _ in range(5):
+            tracker.record_tool_call(
+                session_id,
+                "Bash",
+                tool_args={"command": "echo same"},
+            )
+
+        result = detector.detect_tool_loop(session_id)
+
+        assert result.is_stuck is True
+        assert result.layer == "tool_loop"
+        assert "Bash" in result.reason
 
 
 class TestStuckDetectorIsStuck:
