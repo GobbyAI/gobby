@@ -452,7 +452,7 @@ fn isolated_marker_rejects_missing_parent_path() {
 }
 
 #[test]
-fn linked_worktree_uses_path_id_and_warns_only_for_copied_project_id() {
+fn linked_worktree_uses_path_id_and_ignores_copied_project_id() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let (_repo, linked) = create_linked_worktree(&tmp);
 
@@ -481,7 +481,7 @@ fn linked_worktree_uses_path_id_and_warns_only_for_copied_project_id() {
         copied.project_id,
         crate::project::code_index_id_for_root(&linked)
     );
-    assert!(copied.warning.as_deref().unwrap_or("").contains("copied"));
+    assert!(copied.warning.is_none());
     assert!(!copied.should_write_gcode_json);
 }
 

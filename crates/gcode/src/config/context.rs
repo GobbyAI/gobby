@@ -378,23 +378,12 @@ fn resolve_non_isolated_project_identity(
     let worktree = git::worktree_info(&root)?;
     if worktree.kind == WorktreeKind::Linked {
         let project_id = crate::project::code_index_id_for_root(&worktree.top_level);
-        let copied_id = read_project_id(&worktree.top_level).ok();
-        let warning = copied_id
-            .filter(|id| id != &project_id)
-            .map(|id| {
-                format!(
-                    "linked git worktree {} has copied .gobby/project.json id {}; using filesystem-scoped code index id {}",
-                    worktree.top_level.display(),
-                    short_id(&id),
-                    short_id(&project_id)
-                )
-            });
 
         return Ok(ProjectIdentity {
             project_id,
             root: worktree.top_level,
             source: ProjectIdentitySource::LinkedWorktree,
-            warning,
+            warning: None,
             should_write_gcode_json: false,
             index_scope: ProjectIndexScope::Single,
         });
