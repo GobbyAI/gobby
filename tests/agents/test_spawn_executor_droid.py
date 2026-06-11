@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.agents.isolation import _copy_cli_hooks
+from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn_executor import SpawnRequest, SpawnResult, execute_spawn
 from gobby.utils.daemon_client import DaemonClient
 
@@ -80,11 +81,32 @@ class TestExecuteSpawnDroid:
         mock_prepare.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_droid_terminal_refuses_requested_sandbox(self) -> None:
+        request = _droid_request(
+            session_manager=MagicMock(),
+            sandbox_config=SandboxConfig(enabled=True),
+        )
+
+        with (
+            patch("gobby.agents.spawn_executor.shutil.which") as mock_which,
+            patch("gobby.agents.spawn_executor.prepare_terminal_spawn") as mock_prepare,
+        ):
+            result = await execute_spawn(request)
+
+        assert result.success is False
+        assert result.child_session_id is None
+        assert "no sandbox enforcement resolver" in (result.error or "")
+        assert "Refusing to spawn unsandboxed" in (result.error or "")
+        mock_which.assert_not_called()
+        mock_prepare.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_droid_terminal_builds_command_and_env(self) -> None:
+        mock_session_manager = MagicMock()
         request = _droid_request(
             prompt="Fix it",
             agent_run_id="run-droid",
-            session_manager=MagicMock(),
+            session_manager=mock_session_manager,
             machine_id="machine-1",
             model="claude-opus-4-7",
             effective_reasoning_effort="high",
@@ -121,6 +143,10 @@ class TestExecuteSpawnDroid:
         assert prepare_kwargs["source"] == "droid"
         assert prepare_kwargs["agent_run_id"] == "run-droid"
         assert prepare_kwargs["prompt"] == "Fix it"
+        mock_session_manager.update_sandbox_enabled.assert_called_once_with(
+            "gobby-sess-123",
+            False,
+        )
         mock_pre_approve.assert_called_once_with("droid", "/tmp/wt")
 
         spawn_kwargs = mock_spawner.spawn.call_args.kwargs
