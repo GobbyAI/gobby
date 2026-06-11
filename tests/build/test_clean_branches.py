@@ -77,6 +77,38 @@ def test_branch_cleanup_ignores_branch_already_deleted(
     assert errors == []
 
 
+def test_branch_cleanup_refuses_missing_project_repo_path(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+) -> None:
+    from gobby.build import branch_cleanup
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.tasks import LocalTaskManager
+
+    project = LocalProjectManager(temp_db).create("missing-repo")
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=project.id,
+        title="missing project repo path",
+        task_type="task",
+        category="code",
+    )
+
+    def fail_git_operation(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("branch cleanup must not inspect or delete branches without repo_path")
+
+    monkeypatch.setattr(branch_cleanup, "local_branches", fail_git_operation)
+    monkeypatch.setattr(branch_cleanup, "current_branch", fail_git_operation)
+    monkeypatch.setattr(branch_cleanup, "git", fail_git_operation)
+
+    with pytest.raises(ValueError, match="project repo_path is required"):
+        branch_cleanup.project_path(temp_db, project.id)
+
+    deleted, errors = branch_cleanup.delete_orphan_build_branches(temp_db, project.id, [task])
+
+    assert deleted == 0
+    assert errors == ["project repo_path is required for build branch cleanup"]
+
+
 @pytest.mark.asyncio
 async def test_clean_deletes_stale_task_branch(temp_db, tmp_path: Path) -> None:
     from gobby.build.branch_cleanup import default_task_branch_name
