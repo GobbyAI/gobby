@@ -142,6 +142,39 @@ class TestImportCommand:
         assert result.exit_code == 0
         assert (target / ".gobby" / "agents" / "my-agent.yaml").exists()
 
+    def test_import_single_file_rejects_absolute_name(
+        self, runner, project_with_resources, tmp_path, monkeypatch
+    ) -> None:
+        """Import rejects an absolute destination name."""
+        target = tmp_path / "target"
+        target.mkdir()
+        (target / ".gobby").mkdir()
+        monkeypatch.chdir(target)
+
+        escaped = tmp_path / "escaped.yaml"
+        source_file = project_with_resources / ".gobby" / "agents" / "my-agent.yaml"
+        result = runner.invoke(import_cmd, ["agent", str(escaped), "--from", str(source_file)])
+
+        assert result.exit_code != 0
+        assert "Import name must be relative" in result.output
+        assert not escaped.exists()
+
+    def test_import_single_file_rejects_parent_traversal_name(
+        self, runner, project_with_resources, tmp_path, monkeypatch
+    ) -> None:
+        """Import rejects a destination name with parent traversal."""
+        target = tmp_path / "target"
+        target.mkdir()
+        (target / ".gobby").mkdir()
+        monkeypatch.chdir(target)
+
+        source_file = project_with_resources / ".gobby" / "agents" / "my-agent.yaml"
+        result = runner.invoke(import_cmd, ["agent", "../escaped.yaml", "--from", str(source_file)])
+
+        assert result.exit_code != 0
+        assert "cannot contain '..'" in result.output
+        assert not (target / ".gobby" / "escaped.yaml").exists()
+
     def test_import_no_source_error(self, runner, tmp_path, monkeypatch) -> None:
         """Import without --from or --from-project shows error."""
         monkeypatch.chdir(tmp_path)

@@ -32,6 +32,19 @@ def _resolve_target_dir(resource_type: str, to: str | None, global_: bool) -> Pa
     return None
 
 
+def _resolve_import_destination(target_dir: Path, dest_name: str) -> Path:
+    """Resolve a single-file import destination within the target resource directory."""
+    dest_path = Path(dest_name)
+    if dest_path.is_absolute() or ".." in dest_path.parts:
+        raise click.ClickException("Import name must be relative and cannot contain '..'.")
+
+    target_root = target_dir.resolve()
+    dest = (target_dir / dest_path).resolve()
+    if not dest.is_relative_to(target_root):
+        raise click.ClickException("Import destination must stay within the target directory.")
+    return dest
+
+
 def _list_resources(source_dir: Path) -> list[Path]:
     """List all resource files in a directory (recursively)."""
     if not source_dir.exists():
@@ -167,9 +180,9 @@ def import_cmd(
             source = Path(from_path)
             if source.is_file():
                 # Import a single file directly
-                target_dir.mkdir(parents=True, exist_ok=True)
                 dest_name = name or source.name
-                dest = target_dir / dest_name
+                dest = _resolve_import_destination(target_dir, dest_name)
+                dest.parent.mkdir(parents=True, exist_ok=True)
                 if dest.exists():
                     if not click.confirm(f"Overwrite {dest}?"):
                         continue
