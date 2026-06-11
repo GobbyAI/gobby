@@ -322,9 +322,14 @@ where
         }
         match self.standalone.as_mut() {
             Some(standalone) => standalone.resolve_value(value),
-            None => Ok(value.to_string()),
+            None => resolve_non_secret_config_value(value),
         }
     }
+}
+
+fn resolve_non_secret_config_value(value: &str) -> anyhow::Result<String> {
+    crate::config::resolve_env_pattern(value)?
+        .ok_or_else(|| anyhow::anyhow!("unresolved pattern: {value}"))
 }
 
 /// Empty primary layer for local-only `gcore.yaml` resolution.
@@ -340,7 +345,7 @@ impl ConfigSource for NoPrimaryAiConfigSource {
         if value.trim().starts_with("$secret:") {
             anyhow::bail!("secret resolution requires a daemon-backed AI config source");
         }
-        Ok(value.to_string())
+        resolve_non_secret_config_value(value)
     }
 }
 
@@ -643,6 +648,37 @@ ai:
                 .api_base
                 .as_deref(),
             Some("http://expanded-text")
+        );
+    }
+
+    #[test]
+    fn primary_only_values_expand_env_patterns_without_standalone() {
+        let primary = TestSource::with_values([(
+            ai_keys::TEXT_GENERATE_API_BASE,
+            "${GOBBY_AI_CONTEXT_PRIMARY_FALLBACK_TEST_MISSING:-http://fallback}",
+        )]);
+        let mut source = AiConfigSource::with_primary(primary, None);
+
+        let context = AiContext::resolve(None, &mut source);
+
+        assert_eq!(
+            context
+                .binding(AiCapability::TextGenerate)
+                .api_base
+                .as_deref(),
+            Some("http://fallback")
+        );
+    }
+
+    #[test]
+    fn no_primary_source_expands_env_patterns() {
+        let mut source = NoPrimaryAiConfigSource;
+
+        assert_eq!(
+            source
+                .resolve_value("${GOBBY_AI_CONTEXT_NO_PRIMARY_TEST_MISSING:-http://fallback}")
+                .unwrap(),
+            "http://fallback"
         );
     }
 
