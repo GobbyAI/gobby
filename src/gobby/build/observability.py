@@ -30,10 +30,7 @@ from gobby.storage.tasks._ancestor_gate import (
     find_child_development_ancestor_gate,
 )
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
-from gobby.storage.tasks._holistic_gate import (
-    HolisticDescendantGate,
-    find_holistic_descendant_gate,
-)
+from gobby.storage.tasks._holistic_gate import find_holistic_descendant_gate
 from gobby.storage.worktrees import LocalWorktreeManager
 
 MAX_ACTIVE_AGENTS = 10
@@ -114,7 +111,6 @@ def explain_dispatch(
         mutex,
         active_agents,
         ancestor_gate,
-        holistic_descendant_gate,
     )
     action = None
     if reason is None:
@@ -504,7 +500,6 @@ def _dispatch_block_reason(
     mutex: Mapping[str, Any],
     active_agents: Mapping[str, Any],
     ancestor_gate: AncestorStageGate | None,
-    holistic_descendant_gate: HolisticDescendantGate | None,
 ) -> str | None:
     if task.closed_at is not None:
         return "closed"
@@ -520,8 +515,6 @@ def _dispatch_block_reason(
         return "dependency_block"
     if ancestor_gate is not None:
         return ancestor_gate.reason
-    if holistic_descendant_gate is not None:
-        return holistic_descendant_gate.reason
     if current_stage is None:
         return "no_current_stage"
     if _field(current_stage, "state") not in {

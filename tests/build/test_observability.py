@@ -508,12 +508,18 @@ def test_explain_dispatch_reports_holistic_descendant_gate(temp_db) -> None:
 
     explanation = explain_dispatch(root.id, db=temp_db, project_id=project_id)
 
-    assert explanation["eligible"] is False
-    assert explanation["reason"] == "holistic_descendants_nonterminal"
+    assert explanation["eligible"] is True
+    assert explanation["reason"] is None
     gate = explanation["holistic_descendant_gate"]
     assert gate["reason"] == "holistic_descendants_nonterminal"
     assert gate["blockers"][0]["task_id"] == child.id
     assert gate["blockers"][0]["task_ref"] == f"#{child.seq_num}"
     assert gate["blockers"][0]["stage_name"] == "development"
     assert gate["blockers"][0]["stage_state"] == "ready"
-    assert explanation["proposed_action"] is None
+    action = explanation["proposed_action"]
+    assert action["action"] == "append_audit_marker"
+    assert action["task_id"] == root.id
+    assert action["heading"] == "Holistic QA deferred"
+    assert action["body"].startswith("Holistic QA is waiting for nonterminal descendants:")
+    assert f"#{child.seq_num}" in action["body"]
+    assert "[stage=development:ready, escalated=false]" in action["body"]
