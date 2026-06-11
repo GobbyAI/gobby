@@ -56,6 +56,14 @@ pub fn delete_file_facts(
         "DELETE FROM code_symbols WHERE project_id = $1 AND file_path = $2",
         &[&project_id, &file_path],
     )?;
+    delete_file_non_symbol_facts(conn, project_id, file_path)
+}
+
+pub fn delete_file_non_symbol_facts(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_path: &str,
+) -> anyhow::Result<()> {
     conn.execute(
         "DELETE FROM code_indexed_files WHERE project_id = $1 AND file_path = $2",
         &[&project_id, &file_path],
@@ -73,6 +81,30 @@ pub fn delete_file_facts(
         &[&project_id, &file_path],
     )?;
     Ok(())
+}
+
+pub fn delete_stale_file_symbols(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_path: &str,
+    current_symbol_ids: &[String],
+) -> anyhow::Result<usize> {
+    let deleted = if current_symbol_ids.is_empty() {
+        conn.execute(
+            "DELETE FROM code_symbols WHERE project_id = $1 AND file_path = $2",
+            &[&project_id, &file_path],
+        )?
+    } else {
+        let current_symbol_ids = current_symbol_ids.to_vec();
+        conn.execute(
+            "DELETE FROM code_symbols
+             WHERE project_id = $1
+               AND file_path = $2
+               AND NOT (id = ANY($3::text[]))",
+            &[&project_id, &file_path, &current_symbol_ids],
+        )?
+    };
+    usize::try_from(deleted).map_err(|_| anyhow::anyhow!("deleted symbol count exceeds usize"))
 }
 
 pub fn file_facts_exist(

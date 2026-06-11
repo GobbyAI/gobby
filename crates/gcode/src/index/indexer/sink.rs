@@ -5,6 +5,17 @@ use crate::models::{CallRelation, ContentChunk, ImportRelation, IndexedFile, Sym
 
 pub(super) trait CodeFactSink {
     fn delete_file_facts(&mut self, project_id: &str, file_path: &str) -> anyhow::Result<()>;
+    fn delete_file_non_symbol_facts(
+        &mut self,
+        project_id: &str,
+        file_path: &str,
+    ) -> anyhow::Result<()>;
+    fn delete_stale_file_symbols(
+        &mut self,
+        project_id: &str,
+        file_path: &str,
+        current_symbol_ids: &[String],
+    ) -> anyhow::Result<usize>;
     fn upsert_symbols(&mut self, symbols: &[Symbol]) -> anyhow::Result<usize>;
     fn upsert_file(&mut self, file: &IndexedFile) -> anyhow::Result<()>;
     fn upsert_imports(
@@ -38,6 +49,23 @@ where
 {
     fn delete_file_facts(&mut self, project_id: &str, file_path: &str) -> anyhow::Result<()> {
         api::delete_file_facts(self.conn, project_id, file_path)
+    }
+
+    fn delete_file_non_symbol_facts(
+        &mut self,
+        project_id: &str,
+        file_path: &str,
+    ) -> anyhow::Result<()> {
+        api::delete_file_non_symbol_facts(self.conn, project_id, file_path)
+    }
+
+    fn delete_stale_file_symbols(
+        &mut self,
+        project_id: &str,
+        file_path: &str,
+        current_symbol_ids: &[String],
+    ) -> anyhow::Result<usize> {
+        api::delete_stale_file_symbols(self.conn, project_id, file_path, current_symbol_ids)
     }
 
     fn upsert_symbols(&mut self, symbols: &[Symbol]) -> anyhow::Result<usize> {

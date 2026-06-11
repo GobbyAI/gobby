@@ -185,8 +185,14 @@ pub(super) fn write_parsed_file_facts(
     byte_size: usize,
     parse_result: &ParseResult,
 ) -> anyhow::Result<FileIndexCounts> {
-    sink.delete_file_facts(project_id, rel)?;
     let symbols_indexed = sink.upsert_symbols(&parse_result.symbols)?;
+    let current_symbol_ids = parse_result
+        .symbols
+        .iter()
+        .map(|symbol| symbol.id.clone())
+        .collect::<Vec<_>>();
+    sink.delete_stale_file_symbols(project_id, rel, &current_symbol_ids)?;
+    sink.delete_file_non_symbol_facts(project_id, rel)?;
     sink.upsert_file(&IndexedFile {
         id: IndexedFile::make_id(project_id, rel),
         project_id: project_id.to_string(),
