@@ -39,10 +39,13 @@ class MiscEventHandlerMixin(EventHandlersBase):
         if session_id:
             self.logger.debug(f"NOTIFICATION ({notification_type}): session {session_id}")
             if self._session_manager:
-                try:
-                    self._session_manager.update_session_status(session_id, "paused")
-                except Exception as e:
-                    self.logger.warning(f"Failed to update session status: {e}")
+                if not self._skip_session_status_update_during_shutdown(
+                    "NOTIFICATION", session_id, "paused"
+                ):
+                    try:
+                        self._session_manager.update_session_status(session_id, "paused")
+                    except Exception as e:
+                        self.logger.warning(f"Failed to update session status: {e}")
         else:
             self.logger.debug(f"NOTIFICATION ({notification_type})")
 

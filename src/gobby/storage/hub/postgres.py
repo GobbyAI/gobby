@@ -98,14 +98,24 @@ class PostgresHubDatabase:
         self._state = threading.local()
         self._open_lock = threading.Lock()
         self._pool_opened = False
+        self._pool_closed = False
 
     def open(self, *, wait: bool = True, timeout: float | None = None) -> None:
         """Open the lazy connection pool before first use."""
+        if getattr(self, "_pool_closed", False):
+            raise RuntimeError(
+                "PostgresHubDatabase connection pool is closed and cannot be reopened"
+            )
+
         open_pool = getattr(self._pool, "open", None)
         if not callable(open_pool):
             return
 
         with self._open_lock:
+            if getattr(self, "_pool_closed", False):
+                raise RuntimeError(
+                    "PostgresHubDatabase connection pool is closed and cannot be reopened"
+                )
             if getattr(self, "_pool_opened", False):
                 return
             open_timeout = timeout
@@ -258,6 +268,9 @@ class PostgresHubDatabase:
             )
 
     def close(self) -> None:
+        if getattr(self, "_pool_closed", False):
+            return
+        self._pool_closed = True
         self._pool.close()
         self._pool_opened = False
 

@@ -5,6 +5,7 @@ import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from gobby.app_context import get_app_context
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.session_types import HookSessionManager
 
@@ -49,6 +50,27 @@ class EventHandlersBase:
     def get_session_manager(self) -> HookSessionManager | None:
         """Return the configured hook session manager, if available."""
         return self._session_manager
+
+    def _shutdown_in_progress(self) -> bool:
+        """Return whether the daemon app context is tearing down."""
+        app_context = get_app_context()
+        return bool(getattr(app_context, "shutdown_in_progress", False))
+
+    def _skip_session_status_update_during_shutdown(
+        self,
+        event_name: str,
+        session_id: str,
+        status: str,
+    ) -> bool:
+        if not self._shutdown_in_progress():
+            return False
+        self.logger.debug(
+            "%s: skipping session %s status update to %s during daemon shutdown",
+            event_name,
+            session_id,
+            status,
+        )
+        return True
 
     def _apply_debug_echo(self, response: HookResponse) -> None:
         """Append additionalContext to system_message when debug_echo_context is enabled.
