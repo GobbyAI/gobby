@@ -79,7 +79,9 @@ class TestPackCommand:
         result = runner.invoke(pack, [str(out_path)])
         assert result.exit_code == 0
         assert "Packing Gobby data" in result.output
+        assert "Warning: pack archives contain secrets" in result.output
         assert out_path.exists()
+        assert out_path.stat().st_mode & 0o777 == 0o600
 
         # Verify tarball
         with tarfile.open(out_path, "r:gz") as tar:

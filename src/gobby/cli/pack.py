@@ -439,15 +439,38 @@ def _do_pack(
         items.insert(0, ("gobby/manifest.json", manifest_path))
 
         # Create tarball
-        with tarfile.open(output_path, "w:gz") as tar:
-            for archive_name, path in items:
-                click.echo(f"  Adding: {archive_name}")
-                tar.add(str(path), arcname=archive_name)
+        _write_restricted_archive(output_path, items)
 
     final_size = output_path.stat().st_size
     click.echo(f"\nPacked: {output_path} ({_human_size(final_size)})")
+    click.echo("Warning: pack archives contain secrets; keep this file private.")
     if missing:
         click.echo(f"Skipped (not found): {', '.join(missing)}")
+
+
+def _write_restricted_archive(output_path: Path, items: list[tuple[str, Path]]) -> None:
+    """Write a gzip tarball without exposing it through permissive umask defaults."""
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{output_path.name}.",
+        suffix=".tmp",
+        dir=output_path.parent,
+    )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "wb") as raw_file:
+            with tarfile.open(fileobj=raw_file, mode="w:gz") as tar:
+                for archive_name, path in items:
+                    click.echo(f"  Adding: {archive_name}")
+                    tar.add(str(path), arcname=archive_name)
+        temp_path.chmod(0o600)
+        os.replace(temp_path, output_path)
+        output_path.chmod(0o600)
+    except Exception:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
 
 
 @click.command("unpack")
