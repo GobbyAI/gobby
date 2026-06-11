@@ -1,17 +1,22 @@
-use std::io::{self, ErrorKind, Read, Write};
+#[cfg(any(feature = "ai", feature = "qdrant"))]
+use std::io::Write;
+use std::io::{self, ErrorKind, Read};
+#[cfg(any(feature = "ai", feature = "qdrant"))]
 use std::net::TcpListener;
+#[cfg(any(feature = "ai", feature = "qdrant"))]
 use std::thread;
+#[cfg(any(feature = "ai", feature = "qdrant"))]
 use std::time::Duration;
 
-#[allow(dead_code)] // Used by integration-style test targets outside the lib test target.
+#[cfg(any(feature = "ai", feature = "qdrant"))]
 pub(crate) type RequestHandle = thread::JoinHandle<io::Result<String>>;
 
-#[allow(dead_code)] // Used by integration-style test targets outside the lib test target.
+#[cfg(feature = "ai")]
 pub(crate) fn spawn_json_response(body: impl Into<String>) -> io::Result<(String, RequestHandle)> {
     spawn_response(200, "OK", "application/json", body.into())
 }
 
-#[allow(dead_code)] // Used by integration-style test targets outside the lib test target.
+#[cfg(any(feature = "ai", feature = "qdrant"))]
 pub(crate) fn spawn_json_response_with_status(
     status: u16,
     body: impl Into<String>,
@@ -24,7 +29,7 @@ pub(crate) fn spawn_json_response_with_status(
     )
 }
 
-#[allow(dead_code)] // Used when status-response helpers are compiled into caller test targets.
+#[cfg(any(feature = "ai", feature = "qdrant"))]
 fn reason_phrase(status: u16) -> &'static str {
     match status {
         200 => "OK",
@@ -46,7 +51,7 @@ fn reason_phrase(status: u16) -> &'static str {
     }
 }
 
-#[allow(dead_code)] // Used by integration-style test targets outside the lib test target.
+#[cfg(any(feature = "ai", feature = "qdrant"))]
 pub(crate) fn spawn_response(
     status: u16,
     reason: &'static str,
