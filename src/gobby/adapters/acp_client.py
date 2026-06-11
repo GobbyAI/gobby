@@ -23,7 +23,7 @@ import json
 import logging
 import os
 import shutil
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, ClassVar
@@ -497,6 +497,8 @@ class ACPClient:
         session_id: str | None = None,
         model: str | None = None,
         reasoning_effort: str | None = None,
+        pre_tool_callback: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]]
+        | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Send a prompt and yield normalized stream events.
 
@@ -553,14 +555,19 @@ class ACPClient:
             await self._process.stdin.drain()
             logger.debug("Sent prompt to %s ACP: %r", self.display_name, message[:80])
 
-            async for event in self._read_stream():
+            async for event in self._read_stream(pre_tool_callback=pre_tool_callback):
                 yield event
         finally:
             if lock_acquired:
                 self._io_lock.release()
             self._active_operations = max(0, self._active_operations - 1)
 
-    async def _read_stream(self) -> AsyncIterator[StreamEvent]:
+    async def _read_stream(
+        self,
+        *,
+        pre_tool_callback: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]]
+        | None = None,
+    ) -> AsyncIterator[StreamEvent]:
         """Read and parse NDJSON lines from the subprocess stdout.
 
         Handles two types of messages:
@@ -605,7 +612,9 @@ class ACPClient:
             if "id" in data and data.get("method"):
                 from gobby.adapters.acp_client_requests import handle_client_request
 
-                async for event in handle_client_request(self, data):
+                async for event in handle_client_request(
+                    self, data, pre_tool_callback=pre_tool_callback
+                ):
                     yield event
                 continue
 
