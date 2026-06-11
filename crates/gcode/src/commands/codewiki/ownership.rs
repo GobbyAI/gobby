@@ -1,17 +1,14 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, btree_map::Entry};
 use std::fmt::Write;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-    mpsc,
-};
-use std::thread;
+use std::process::{ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
-use gix::bstr::ByteSlice;
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use wait_timeout::ChildExt;
 
 use super::{file_wikilink, module_wikilink};
 use crate::index::hasher;
@@ -57,12 +54,6 @@ enum BlameContributorsOutcome {
     Success(Vec<OwnershipContributor>),
     Timeout,
     Error(anyhow::Error),
-}
-
-enum WorkerRecv<T> {
-    Completed(T),
-    TimedOut,
-    Disconnected,
 }
 
 #[derive(Debug)]
@@ -234,15 +225,13 @@ fn derived_owners_for_files(
     options: &OwnershipOptions,
     status: &mut OwnershipStatus,
 ) -> BTreeMap<String, Vec<OwnershipContributor>> {
-    let Ok(mut repo) = gix::discover(project_root) else {
+    let Ok(repo) = gix::discover(project_root) else {
         return BTreeMap::new();
     };
-    repo.object_cache_size_if_unset(4 * 1024 * 1024);
     let Ok(head) = repo.head_id() else {
         return BTreeMap::new();
     };
     let head = head.detach();
-    let repo = Arc::new(repo.into_sync());
     status.blame_available = true;
 
     let started = Instant::now();
@@ -270,8 +259,7 @@ fn derived_owners_for_files(
         }
         blame_misses += 1;
         let remaining_timeout = options.blame_timeout.saturating_sub(started.elapsed());
-        match blame_file_contributors_with_timeout(Arc::clone(&repo), head, file, remaining_timeout)
-        {
+        match blame_file_contributors_with_timeout(project_root, head, file, remaining_timeout) {
             BlameContributorsOutcome::Success(contributors) => {
                 meta.files.insert(
                     file.clone(),
@@ -301,112 +289,116 @@ fn content_hash(project_root: &Path, file: &str) -> Option<String> {
 }
 
 fn blame_file_contributors_with_timeout(
-    repo: Arc<gix::ThreadSafeRepository>,
+    project_root: &Path,
     head: gix::ObjectId,
     file: &str,
     timeout: Duration,
 ) -> BlameContributorsOutcome {
-    let file = file.to_string();
-    match run_with_timeout(timeout, move |cancelled| {
-        if cancelled.load(Ordering::Relaxed) {
-            anyhow::bail!("git blame cancelled before start");
-        }
-        let repo = repo.to_thread_local();
-        if cancelled.load(Ordering::Relaxed) {
-            anyhow::bail!("git blame cancelled before blame");
-        }
-        let outcome = blame_file_contributors(&repo, head, &file);
-        if cancelled.load(Ordering::Relaxed) {
-            anyhow::bail!("git blame cancelled after blame");
-        }
-        outcome
-    }) {
-        Some(Ok(contributors)) => BlameContributorsOutcome::Success(contributors),
-        Some(Err(error)) => BlameContributorsOutcome::Error(error),
-        None => BlameContributorsOutcome::Timeout,
+    match blame_file_contributors(project_root, head, file, timeout) {
+        Ok(Some(contributors)) => BlameContributorsOutcome::Success(contributors),
+        Ok(None) => BlameContributorsOutcome::Timeout,
+        Err(error) => BlameContributorsOutcome::Error(error),
     }
 }
 
-fn run_with_timeout<T, F>(timeout: Duration, work: F) -> Option<T>
-where
-    T: Send + 'static,
-    F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
-{
-    let (sender, receiver) = mpsc::channel();
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let worker_cancelled = Arc::clone(&cancelled);
-    let handle = thread::spawn(move || {
-        if worker_cancelled.load(Ordering::Relaxed) {
-            return;
-        }
-        let _ = sender.send(work(worker_cancelled));
-    });
-    match recv_with_timeout(receiver, timeout, &cancelled) {
-        WorkerRecv::Completed(value) => {
-            let _ = handle.join();
-            Some(value)
-        }
-        WorkerRecv::TimedOut => {
-            cancelled.store(true, Ordering::Relaxed);
-            // recv_with_timeout has already set `cancelled`, so the worker exits
-            // at its next cooperative cancellation check. Rust threads cannot be
-            // forcibly killed, so a worker blocked inside a long-running gix
-            // blame operation may keep running past this timeout; joining it
-            // here could stall ownership reporting indefinitely, which is why
-            // the handle is intentionally leaked via mem::forget instead.
-            // TODO: restructure blame work into cancellable tasks or a child
-            // process so timed-out work can be reaped rather than leaked.
-            std::mem::forget(handle);
-            None
-        }
-        WorkerRecv::Disconnected => {
-            let _ = handle.join();
-            None
-        }
-    }
-}
-
-fn recv_with_timeout<T>(
-    receiver: mpsc::Receiver<T>,
-    timeout: Duration,
-    cancelled: &AtomicBool,
-) -> WorkerRecv<T> {
-    match receiver.recv_timeout(timeout) {
-        Ok(value) => WorkerRecv::Completed(value),
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            cancelled.store(true, Ordering::Relaxed);
-            WorkerRecv::TimedOut
-        }
-        Err(mpsc::RecvTimeoutError::Disconnected) => WorkerRecv::Disconnected,
-    }
+struct GitBlameOutput {
+    status: ExitStatus,
+    stdout: String,
+    stderr: String,
 }
 
 fn blame_file_contributors(
-    repo: &gix::Repository,
+    project_root: &Path,
     head: gix::ObjectId,
     file: &str,
-) -> anyhow::Result<Vec<OwnershipContributor>> {
-    let outcome = repo.blame_file(
-        file.as_bytes().as_bstr(),
-        head,
-        gix::repository::blame_file::Options::default(),
-    )?;
+    timeout: Duration,
+) -> anyhow::Result<Option<Vec<OwnershipContributor>>> {
+    let head = head.to_string();
+    let Some(output) =
+        git_blame_output_with_timeout(Path::new("git"), project_root, &head, file, timeout)?
+    else {
+        return Ok(None);
+    };
+    if !output.status.success() {
+        let stderr = output.stderr.trim();
+        if stderr.is_empty() {
+            anyhow::bail!("git blame failed for `{file}`");
+        }
+        anyhow::bail!("git blame failed for `{file}`: {stderr}");
+    }
+
+    Ok(Some(parse_git_blame_porcelain(&output.stdout)))
+}
+
+fn git_blame_output_with_timeout(
+    git: &Path,
+    project_root: &Path,
+    head: &str,
+    file: &str,
+    timeout: Duration,
+) -> anyhow::Result<Option<GitBlameOutput>> {
+    let mut stdout_file = tempfile::tempfile().context("create git blame stdout temp file")?;
+    let mut stderr_file = tempfile::tempfile().context("create git blame stderr temp file")?;
+    let mut child = std::process::Command::new(git)
+        .arg("-C")
+        .arg(project_root)
+        .args(["blame", "--line-porcelain", head, "--", file])
+        .stdout(Stdio::from(stdout_file.try_clone()?))
+        .stderr(Stdio::from(stderr_file.try_clone()?))
+        .spawn()
+        .with_context(|| format!("spawn git blame for `{file}`"))?;
+    let status = match child.wait_timeout(timeout)? {
+        Some(status) => status,
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(None);
+        }
+    };
+    Ok(Some(GitBlameOutput {
+        status,
+        stdout: read_tempfile(&mut stdout_file)?,
+        stderr: read_tempfile(&mut stderr_file)?,
+    }))
+}
+
+fn read_tempfile(file: &mut std::fs::File) -> anyhow::Result<String> {
+    file.seek(SeekFrom::Start(0))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn parse_git_blame_porcelain(raw: &str) -> Vec<OwnershipContributor> {
     let mut line_counts: BTreeMap<String, (String, Option<String>, usize)> = BTreeMap::new();
-    for entry in outcome.entries {
-        let commit = repo.find_commit(entry.commit_id)?;
-        let author = commit.author()?;
-        let name = author.name.to_string();
-        let email = (!author.email.is_empty()).then(|| author.email.to_string());
+    let mut current_name: Option<String> = None;
+    let mut current_email: Option<String> = None;
+    for line in raw.lines() {
+        if let Some(name) = line.strip_prefix("author ") {
+            current_name = Some(name.to_string());
+            continue;
+        }
+        if let Some(email) = line.strip_prefix("author-mail ") {
+            current_email = git_blame_email(email);
+            continue;
+        }
+        if !line.starts_with('\t') {
+            continue;
+        }
+
+        let name = current_name
+            .clone()
+            .unwrap_or_else(|| "Unknown".to_string());
+        let email = current_email.clone();
         let contributor_id = contributor_id(&name, email.as_deref());
-        let line_count = entry.len.get() as usize;
         match line_counts.entry(contributor_id) {
             Entry::Occupied(mut stored) => {
                 let (stored_name, stored_email, lines) = stored.get_mut();
                 retain_deterministic_identity(stored_name, stored_email, &name, &email);
-                *lines += line_count;
+                *lines += 1;
             }
             Entry::Vacant(stored) => {
-                stored.insert((name, email, line_count));
+                stored.insert((name, email, 1));
             }
         }
     }
@@ -429,7 +421,16 @@ fn blame_file_contributors(
             .then_with(|| left.contributor_id.cmp(&right.contributor_id))
     });
     contributors.truncate(5);
-    Ok(contributors)
+    contributors
+}
+
+fn git_blame_email(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    let trimmed = trimmed
+        .strip_prefix('<')
+        .and_then(|inner| inner.strip_suffix('>'))
+        .unwrap_or(trimmed);
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
 fn contributor_id(name: &str, email: Option<&str>) -> String {
@@ -655,6 +656,10 @@ fn write_contributor_line(doc: &mut String, contributors: &[OwnershipContributor
     let _ = writeln!(doc, "Top contributors: {rendered}");
 }
 
+#[cfg(all(test, unix))]
+#[path = "ownership_timeout_tests.rs"]
+mod ownership_timeout_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -694,7 +699,7 @@ mod tests {
     }
 
     #[test]
-    fn codewiki_ownership_derives_top_committers_from_gix_blame() {
+    fn codewiki_ownership_derives_top_committers_from_git_blame() {
         let project = git_project_with_history();
         let mut meta = OwnershipMeta::default();
 
@@ -875,23 +880,6 @@ mod tests {
         assert!(doc.contains("partial: true"));
         assert!(doc.contains("git_blame_errors"));
         assert!(meta.files.is_empty());
-    }
-
-    #[test]
-    fn codewiki_ownership_recv_timeout_returns_none() {
-        let (_sender, receiver) = mpsc::channel::<usize>();
-        let cancelled = AtomicBool::new(false);
-        let result = recv_with_timeout(receiver, Duration::from_millis(1), &cancelled);
-
-        assert!(matches!(result, WorkerRecv::TimedOut));
-        assert!(cancelled.load(Ordering::Relaxed));
-    }
-
-    #[test]
-    fn codewiki_ownership_run_with_timeout_joins_completed_worker() {
-        let result = run_with_timeout(Duration::from_secs(1), |_| 42);
-
-        assert_eq!(result, Some(42));
     }
 
     fn modules<const N: usize>(items: [(&str, &str); N]) -> HashMap<String, String> {
