@@ -52,6 +52,22 @@ def _make_rule_row(
     return row
 
 
+def _make_http_response(
+    status_code: int = 200,
+    payload: dict[str, object] | None = None,
+    text: str = "",
+) -> MagicMock:
+    """Create a mock daemon HTTP response."""
+    response = MagicMock()
+    response.status_code = status_code
+    response.text = text
+    if payload is None:
+        response.json.side_effect = ValueError("no json")
+    else:
+        response.json.return_value = payload
+    return response
+
+
 # ==============================================================================
 # Tests for list command
 # ==============================================================================
@@ -202,28 +218,64 @@ class TestShowRule:
 
 
 class TestEnableRule:
-    def test_enable(self, cli_runner, mock_manager) -> None:
+    def test_enable(self, cli_runner) -> None:
         from gobby.cli.rules import rules
 
-        row = _make_rule_row("my-rule", enabled=False)
-        mock_manager.get_by_name.return_value = row
-        mock_manager.update.return_value = row
+        mock_client = MagicMock()
+        mock_client.call_http_api.return_value = _make_http_response()
 
-        with patch("gobby.cli.rules._get_manager", return_value=mock_manager):
+        with patch("gobby.cli.rules._get_daemon_client", return_value=mock_client):
             result = cli_runner.invoke(rules, ["enable", "my-rule"])
             assert result.exit_code == 0
             assert "Enabled" in result.output
-            mock_manager.update.assert_called_once_with(row.id, enabled=True)
+            mock_client.call_http_api.assert_called_once_with(
+                "/api/rules/my-rule/toggle",
+                method="PUT",
+                json_data={"enabled": True},
+            )
 
-    def test_enable_not_found(self, cli_runner, mock_manager) -> None:
+    def test_enable_quotes_rule_name(self, cli_runner) -> None:
         from gobby.cli.rules import rules
 
-        mock_manager.get_by_name.return_value = None
+        mock_client = MagicMock()
+        mock_client.call_http_api.return_value = _make_http_response()
 
-        with patch("gobby.cli.rules._get_manager", return_value=mock_manager):
+        with patch("gobby.cli.rules._get_daemon_client", return_value=mock_client):
+            result = cli_runner.invoke(rules, ["enable", "group/my rule"])
+            assert result.exit_code == 0
+            mock_client.call_http_api.assert_called_once_with(
+                "/api/rules/group%2Fmy%20rule/toggle",
+                method="PUT",
+                json_data={"enabled": True},
+            )
+
+    def test_enable_not_found(self, cli_runner) -> None:
+        from gobby.cli.rules import rules
+
+        mock_client = MagicMock()
+        mock_client.call_http_api.return_value = _make_http_response(
+            status_code=404,
+            payload={"detail": "Rule 'missing' not found"},
+        )
+
+        with patch("gobby.cli.rules._get_daemon_client", return_value=mock_client):
             result = cli_runner.invoke(rules, ["enable", "missing"])
             assert result.exit_code == 1
-            assert "not found" in result.output
+            assert "Rule not found: missing" in result.output
+
+    def test_enable_daemon_error(self, cli_runner) -> None:
+        from gobby.cli.rules import rules
+
+        mock_client = MagicMock()
+        mock_client.call_http_api.return_value = _make_http_response(
+            status_code=500,
+            payload={"detail": "Internal server error"},
+        )
+
+        with patch("gobby.cli.rules._get_daemon_client", return_value=mock_client):
+            result = cli_runner.invoke(rules, ["enable", "my-rule"])
+            assert result.exit_code == 1
+            assert "HTTP 500: Internal server error" in result.output
 
 
 # ==============================================================================
@@ -232,28 +284,32 @@ class TestEnableRule:
 
 
 class TestDisableRule:
-    def test_disable(self, cli_runner, mock_manager) -> None:
+    def test_disable(self, cli_runner) -> None:
         from gobby.cli.rules import rules
 
-        row = _make_rule_row("my-rule", enabled=True)
-        mock_manager.get_by_name.return_value = row
-        mock_manager.update.return_value = row
+        mock_client = MagicMock()
+        mock_client.call_http_api.return_value = _make_http_response()
 
-        with patch("gobby.cli.rules._get_manager", return_value=mock_manager):
+        with patch("gobby.cli.rules._get_daemon_client", return_value=mock_client):
             result = cli_runner.invoke(rules, ["disable", "my-rule"])
             assert result.exit_code == 0
             assert "Disabled" in result.output
-            mock_manager.update.assert_called_once_with(row.id, enabled=False)
+            mock_client.call_http_api.assert_called_once_with(
+                "/api/rules/my-rule/toggle",
+                method="PUT",
+                json_data={"enabled": False},
+            )
 
-    def test_disable_not_found(self, cli_runner, mock_manager) -> None:
+    def test_disable_not_found(self, cli_runner) -> None:
         from gobby.cli.rules import rules
 
-        mock_manager.get_by_name.return_value = None
+        mock_client = MagicMock()
+        mock_client.call_http_api.return_value = _make_http_response(status_code=404)
 
-        with patch("gobby.cli.rules._get_manager", return_value=mock_manager):
+        with patch("gobby.cli.rules._get_daemon_client", return_value=mock_client):
             result = cli_runner.invoke(rules, ["disable", "missing"])
             assert result.exit_code == 1
-            assert "not found" in result.output
+            assert "Rule not found: missing" in result.output
 
 
 # ==============================================================================
