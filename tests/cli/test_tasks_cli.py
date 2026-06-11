@@ -1492,6 +1492,7 @@ class TestValidateCommand:
 
         result = runner.invoke(cli, ["tasks", "validate", "gt-abc123", "--summary", "   "])
 
+        assert result.exit_code == 1
         assert "Changes summary is required" in result.output
 
 
@@ -1652,7 +1653,7 @@ class TestValidateCommandExtended:
 
         result = runner.invoke(cli, ["tasks", "validate", "gt-nonexistent", "--summary", "test"])
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
     @patch("gobby.cli.tasks.ai.resolve_task_id")
@@ -1712,8 +1713,9 @@ class TestValidateCommandExtended:
 
         result = runner.invoke(cli, ["tasks", "validate", "gt-abc123", "--file", str(summary_file)])
 
-        # Command should attempt to validate (may fail on config but accepts the file)
-        assert result.exit_code == 0
+        # Command should attempt to validate, accept the file, and report init failures.
+        assert result.exit_code == 1
+        assert "Error initializing validator" in result.output
         assert summary_file.read_text() == "This is a test summary from file"
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
@@ -1802,11 +1804,20 @@ class TestValidateCommandExtended:
 
             validator_mock.validate_task.side_effect = async_result
 
-            # Max retries is 3 in code. With 2 failures + 1 new failure = 3 -> Exceeded if check is < MAX
-            # Code: if new_fail_count < MAX_RETRIES (3): create fix task
-            # 2 + 1 = 3. 3 < 3 is False. So it should mark as failed.
+            # With 2 failures + 1 new failure = 3, --max-iterations 3 is exceeded.
 
-            result = runner.invoke(cli, ["tasks", "validate", "gt-abc123", "--summary", "fix"])
+            result = runner.invoke(
+                cli,
+                [
+                    "tasks",
+                    "validate",
+                    "gt-abc123",
+                    "--max-iterations",
+                    "3",
+                    "--summary",
+                    "fix",
+                ],
+            )
 
             assert result.exit_code == 0
             assert "Exceeded max retries" in result.output
