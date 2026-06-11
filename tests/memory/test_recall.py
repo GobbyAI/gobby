@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from gobby.config.feature_base import FeatureProfile
 from gobby.config.sessions import MemoryRecallConfig
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.memory.recall import MemoryRecallRunner, is_memory_recall_eligible
@@ -34,8 +35,9 @@ class FakeMemoryManager:
 
 
 class FakeLLMService:
-    def __init__(self, response: Any | None = None):
+    def __init__(self, response: Any | None = None, responses: list[Any] | None = None):
         self.response = {"memory_ids": []} if response is None else response
+        self.responses = list(responses or [])
         self.calls: list[dict[str, Any]] = []
         self.error: Exception | None = None
 
@@ -57,6 +59,11 @@ class FakeLLMService:
         )
         if self.error is not None:
             raise self.error
+        if self.responses:
+            response = self.responses.pop(0)
+            if isinstance(response, Exception):
+                raise response
+            return response
         return self.response
 
 
@@ -162,6 +169,92 @@ def test_recall_eligibility_only_accepts_real_parent_user_turns(
     assert is_memory_recall_eligible(event, variables, MemoryRecallConfig()) is expected
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        SessionSource.AGY,
+        SessionSource.CLAUDE,
+        SessionSource.CODEX,
+        SessionSource.DROID,
+        SessionSource.GEMINI,
+        SessionSource.GROK,
+        SessionSource.QWEN,
+    ],
+)
+def test_recall_eligibility_accepts_real_parent_prompts_from_supported_sources(
+    source: SessionSource,
+) -> None:
+    event = _event(source=source, metadata={"role": "user", "prompt_kind": "user"})
+
+    assert is_memory_recall_eligible(event, _variables(), MemoryRecallConfig()) is True
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "AGENTS.md instructions for /Users/josh/Projects/gobby\n\n# Personality\nStay concise.",
+        "# AGENTS.md instructions for /Users/josh/Projects/gobby\n\n<INSTRUCTIONS>\nRules here.",
+        "<codex_internal_context><cwd>/tmp</cwd></codex_internal_context>",
+        "<turn_aborted>The user interrupted the previous turn.</turn_aborted>",
+        "\n".join(
+            [
+                "<permissions instructions>",
+                "Filesystem sandboxing defines which files can be read or written.",
+                "</permissions instructions>",
+                "<collaboration_mode>",
+                "Known mode names are Default and Plan.",
+                "</collaboration_mode>",
+                "Gobby Session ID: #3426 (47bafb0e-c69c-440b-ba8f-890fab976145)",
+                "",
+                "## Instructions",
+                "LIFECYCLE MODEL:",
+            ]
+        ),
+        (
+            "Continue where you last left off. Before continuing, call "
+            '`gobby-sessions.wait_for_summary(session_id="s1")`. If it returns '
+            "`completed=false`, repeat the same wait call. Once complete, use the "
+            "returned `context` and continue."
+        ),
+        "Task #123 has incomplete subtasks. Use suggest_next_task() and continue working.",
+    ],
+)
+def test_recall_eligibility_rejects_unmarked_protocol_prompt_bodies(prompt: str) -> None:
+    assert (
+        is_memory_recall_eligible(_event(prompt=prompt), _variables(), MemoryRecallConfig())
+        is False
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "event",
+    [
+        _event(metadata={"prompt_kind": "protocol"}),
+        _event(metadata={"role": "system"}),
+        _event(data={"prompt_type": "wait"}),
+        _event(prompt="<turn_aborted>The user interrupted the previous turn.</turn_aborted>"),
+    ],
+)
+async def test_runner_skips_synthetic_prompts_without_search(
+    temp_db: HubDatabase,
+    event: HookEvent,
+) -> None:
+    SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
+    memory_manager = FakeMemoryManager([_memory("mem-1")])
+    llm = FakeLLMService({"memory_ids": ["mem-1"]})
+    runner = MemoryRecallRunner(
+        db=temp_db,
+        memory_manager=memory_manager,  # type: ignore[arg-type]
+        llm_service=llm,
+        config=MemoryRecallConfig(),
+    )
+
+    assert await runner.run(event, SESSION_ID, _variables()) is None
+    assert memory_manager.calls == []
+    assert llm.calls == []
+
+
 @pytest.mark.asyncio
 async def test_runner_selects_memory_with_json_feature_call_and_no_child_session(
     temp_db: HubDatabase,
@@ -209,6 +302,87 @@ async def test_runner_selects_memory_with_json_feature_call_and_no_child_session
     assert llm.calls[0]["caller"] == "memory.recall"
     assert llm.calls[0]["feature_config"] is config
     assert LocalAgentRunManager(temp_db).list_by_parent(SESSION_ID) == []
+
+
+@pytest.mark.asyncio
+async def test_runner_synthesizes_large_prompt_query_before_search(
+    temp_db: HubDatabase,
+) -> None:
+    SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
+    long_prompt = (
+        "please recall the memory for task gobby-123 about prompt origin " * 20
+        + "UNSEARCHABLE_RAW_CONTEXT_TOKEN " * 20
+    )
+    memory_manager = FakeMemoryManager([_memory("mem-1", "Prompt origin recall fix.")])
+    llm = FakeLLMService(
+        responses=[
+            {"query": "gobby-123 memory recall prompt origin"},
+            {"memory_ids": ["mem-1"]},
+        ]
+    )
+    config = MemoryRecallConfig(
+        profile=FeatureProfile.HIGH,
+        candidates=["claude/sonnet"],
+        query_synthesis_threshold=80,
+        query_max_chars=64,
+    )
+    runner = MemoryRecallRunner(
+        db=temp_db,
+        memory_manager=memory_manager,  # type: ignore[arg-type]
+        llm_service=llm,
+        config=config,
+    )
+
+    payload = await runner.run(_event(prompt=long_prompt), SESSION_ID, _variables())
+
+    assert payload is not None
+    assert [memory["id"] for memory in payload.memories] == ["mem-1"]
+    assert memory_manager.calls[0]["query"] == "gobby-123 memory recall prompt origin"
+    assert llm.calls[0]["caller"] == "memory.recall.query"
+    assert llm.calls[0]["feature_config"].profile == FeatureProfile.LOW
+    assert llm.calls[0]["feature_config"].candidates != config.candidates
+    assert llm.calls[1]["caller"] == "memory.recall"
+    assert llm.calls[1]["feature_config"] is config
+    assert "gobby-123 memory recall prompt origin" in llm.calls[1]["prompt"]
+    assert "UNSEARCHABLE_RAW_CONTEXT_TOKEN" not in llm.calls[1]["prompt"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "query_response",
+    [
+        TimeoutError("query synthesis timed out"),
+        RuntimeError("query synthesis failed"),
+        {"query": ""},
+    ],
+)
+async def test_runner_falls_back_when_large_prompt_query_synthesis_fails(
+    temp_db: HubDatabase,
+    query_response: Any,
+) -> None:
+    SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
+    long_prompt = (
+        "AlphaMemorySpecific BetaMemorySpecific GammaMemorySpecific DeltaMemorySpecific "
+        + "copied boilerplate text " * 20
+    )
+    memory_manager = FakeMemoryManager([_memory("mem-1", "Fallback target.")])
+    llm = FakeLLMService(responses=[query_response, {"memory_ids": []}])
+    runner = MemoryRecallRunner(
+        db=temp_db,
+        memory_manager=memory_manager,  # type: ignore[arg-type]
+        llm_service=llm,
+        config=MemoryRecallConfig(query_synthesis_threshold=80, query_max_chars=72),
+    )
+
+    payload = await runner.run(_event(prompt=long_prompt), SESSION_ID, _variables())
+
+    assert payload is None
+    assert memory_manager.calls[0]["query"].startswith(
+        "AlphaMemorySpecific BetaMemorySpecific GammaMemorySpecific"
+    )
+    assert len(memory_manager.calls[0]["query"]) <= 72
+    assert llm.calls[0]["caller"] == "memory.recall.query"
+    assert llm.calls[1]["caller"] == "memory.recall"
 
 
 @pytest.mark.asyncio
