@@ -358,34 +358,61 @@ pub fn visible_symbols_for_file(
     ctx: &Context,
     file_path: &str,
 ) -> anyhow::Result<Vec<Symbol>> {
+    visible_symbols_for_files(conn, ctx, &[file_path.to_string()])
+}
+
+pub fn visible_symbols_for_files(
+    conn: &mut Client,
+    ctx: &Context,
+    file_paths: &[String],
+) -> anyhow::Result<Vec<Symbol>> {
+    if file_paths.is_empty() {
+        return Ok(Vec::new());
+    }
+
     match &ctx.index_scope {
-        ProjectIndexScope::Single => query_symbols_for_file(conn, &ctx.project_id, file_path),
+        ProjectIndexScope::Single => query_symbols_for_files(conn, &ctx.project_id, file_paths),
         ProjectIndexScope::Overlay {
             overlay_project_id,
             parent_project_id,
             ..
         } => {
-            if overlay_has_row(conn, overlay_project_id, file_path) {
-                return query_symbols_for_file(conn, overlay_project_id, file_path);
-            }
-            query_symbols_for_file(conn, parent_project_id, file_path)
+            query_overlay_symbols_for_files(conn, overlay_project_id, parent_project_id, file_paths)
         }
     }
 }
 
-fn query_symbols_for_file(
+fn query_symbols_for_files(
     conn: &mut Client,
     project_id: &str,
-    file_path: &str,
+    file_paths: &[String],
 ) -> anyhow::Result<Vec<Symbol>> {
     let rows = conn.query(
-        &symbols_for_file_sql(),
-        &[&project_id, &file_path, &TOMBSTONE_LANGUAGE],
+        &symbols_for_files_sql(),
+        &[&project_id, &file_paths, &TOMBSTONE_LANGUAGE],
     )?;
     rows.iter().map(Symbol::from_row).collect()
 }
 
-fn symbols_for_file_sql() -> String {
+fn query_overlay_symbols_for_files(
+    conn: &mut Client,
+    overlay_project_id: &str,
+    parent_project_id: &str,
+    file_paths: &[String],
+) -> anyhow::Result<Vec<Symbol>> {
+    let rows = conn.query(
+        &overlay_symbols_for_files_sql(),
+        &[
+            &overlay_project_id,
+            &parent_project_id,
+            &file_paths,
+            &TOMBSTONE_LANGUAGE,
+        ],
+    )?;
+    rows.iter().map(Symbol::from_row).collect()
+}
+
+fn symbols_for_files_sql() -> String {
     let columns = db::symbol_select_columns("cs");
     format!(
         "SELECT {columns}
@@ -393,9 +420,32 @@ fn symbols_for_file_sql() -> String {
          JOIN code_indexed_files cf
            ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path
          WHERE cs.project_id = $1
-           AND cs.file_path = $2
+           AND cs.file_path = ANY($2)
            AND cf.language != $3
-         ORDER BY cs.line_start, cs.byte_start"
+         ORDER BY cs.file_path, cs.line_start, cs.byte_start"
+    )
+}
+
+fn overlay_symbols_for_files_sql() -> String {
+    let columns = db::symbol_select_columns("cs");
+    format!(
+        "SELECT {columns}
+         FROM code_symbols cs
+         JOIN code_indexed_files cf
+           ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path
+         WHERE cs.file_path = ANY($3)
+           AND cf.language != $4
+           AND (
+               cs.project_id = $1
+               OR (
+                   cs.project_id = $2
+                   AND NOT EXISTS (
+                       SELECT 1 FROM code_indexed_files shadow
+                       WHERE shadow.project_id = $1 AND shadow.file_path = cs.file_path
+                   )
+               )
+           )
+         ORDER BY cs.file_path, cs.line_start, cs.byte_start"
     )
 }
 
@@ -538,11 +588,25 @@ mod tests {
 
     #[test]
     fn symbols_for_file_sql_qualifies_joined_symbol_columns() {
-        let sql = symbols_for_file_sql();
+        let sql = symbols_for_files_sql();
 
         assert!(sql.contains("SELECT cs.id, cs.project_id, cs.file_path"));
         assert!(sql.contains("FROM code_symbols cs"));
         assert!(sql.contains("JOIN code_indexed_files cf"));
+        assert!(sql.contains("cs.file_path = ANY($2)"));
         assert!(!sql.contains("SELECT id, project_id, file_path"));
+    }
+
+    #[test]
+    fn overlay_symbols_for_files_sql_batches_paths_and_preserves_overlay_shadowing() {
+        let sql = overlay_symbols_for_files_sql();
+
+        assert!(sql.contains("SELECT cs.id, cs.project_id, cs.file_path"));
+        assert!(sql.contains("cs.file_path = ANY($3)"));
+        assert!(sql.contains("cs.project_id = $1"));
+        assert!(sql.contains("cs.project_id = $2"));
+        assert!(sql.contains("NOT EXISTS"));
+        assert!(sql.contains("shadow.project_id = $1 AND shadow.file_path = cs.file_path"));
+        assert!(!sql.contains("cs.file_path = $3"));
     }
 }

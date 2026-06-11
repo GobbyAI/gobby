@@ -494,17 +494,9 @@ pub fn run(
         .map(|file| file.file_path)
         .filter(|file| in_scope(file, &scopes))
         .collect::<Vec<_>>();
-    progress.emit(format!("loading symbols for {} files", files.len()));
-    let mut symbols = Vec::new();
-    for (index, file) in files.iter().enumerate() {
-        progress.emit(format!(
-            "loading symbols file {}/{} {}",
-            index + 1,
-            files.len(),
-            file
-        ));
-        symbols.extend(visibility::visible_symbols_for_file(&mut conn, ctx, file)?);
-    }
+    let symbols = load_symbols_for_codewiki(&files, &mut progress, |paths| {
+        visibility::visible_symbols_for_files(&mut conn, ctx, paths)
+    })?;
 
     progress.emit(format!(
         "fetching graph edges for {} files and {} symbols (limit {})",
@@ -609,6 +601,15 @@ fn validate_edge_limit(edge_limit: usize) -> anyhow::Result<()> {
         return Ok(());
     }
     anyhow::bail!("codewiki --edge-limit must be between 1 and {MAX_EDGE_LIMIT}, got {edge_limit}")
+}
+
+fn load_symbols_for_codewiki(
+    files: &[String],
+    progress: &mut CodewikiProgress,
+    mut load_symbols: impl FnMut(&[String]) -> anyhow::Result<Vec<Symbol>>,
+) -> anyhow::Result<Vec<Symbol>> {
+    progress.emit(format!("loading symbols for {} files", files.len()));
+    load_symbols(files)
 }
 
 pub fn generate_hierarchical_docs(

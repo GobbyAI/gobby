@@ -171,6 +171,37 @@ fn codewiki_verbose_progress_reflects_ai_depth_gating() {
     );
 }
 
+#[test]
+fn codewiki_symbol_loading_batches_files_once() {
+    let files = vec![
+        "src/a.rs".to_string(),
+        "src/b.rs".to_string(),
+        "src/c.rs".to_string(),
+    ];
+    let mut calls = 0;
+    let mut progress = CodewikiProgress::capture();
+
+    let symbols = load_symbols_for_codewiki(&files, &mut progress, |paths| {
+        calls += 1;
+        assert_eq!(paths, files.as_slice());
+        Ok(vec![test_symbol(
+            "src/a.rs",
+            "load",
+            "function",
+            1,
+            "pub fn load() {}",
+        )])
+    })
+    .expect("symbol batch loads");
+
+    assert_eq!(calls, 1);
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(
+        progress.into_lines(),
+        vec!["codewiki: loading symbols for 3 files".to_string()]
+    );
+}
+
 fn progress_input() -> CodewikiInput {
     CodewikiInput {
         files: vec!["src/lib.rs".to_string()],
