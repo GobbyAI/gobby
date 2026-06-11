@@ -393,10 +393,12 @@ def merge_apply(force: bool, json_format: bool) -> None:
         raise SystemExit(1)
 
     manager = get_merge_manager()
+    worktree = get_worktree_context()
+    worktree_id = worktree["id"] if worktree else None
 
     try:
         # Get active resolution
-        resolution = manager.get_active_resolution()
+        resolution = manager.get_active_resolution(worktree_id=worktree_id)
         if not resolution:
             click.echo("Error: No active merge operation found.", err=True)
             raise SystemExit(1)
@@ -455,10 +457,12 @@ def merge_abort(json_format: bool) -> None:
         raise SystemExit(1)
 
     manager = get_merge_manager()
+    worktree = get_worktree_context()
+    worktree_id = worktree["id"] if worktree else None
 
     try:
         # Get active resolution
-        resolution = manager.get_active_resolution()
+        resolution = manager.get_active_resolution(worktree_id=worktree_id)
         if not resolution:
             click.echo("Error: No active merge operation to abort.", err=True)
             raise SystemExit(1)
