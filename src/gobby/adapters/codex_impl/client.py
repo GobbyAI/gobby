@@ -93,6 +93,7 @@ class CodexAppServerClient:
 
         # Reader task
         self._reader_task: asyncio.Task[None] | None = None
+        self._incoming_request_tasks: set[asyncio.Task[None]] = set()
         self._stderr_drain = SubprocessStderrDrain("Codex app-server", logger=logger)
         self._shutdown_event = asyncio.Event()
 
@@ -210,6 +211,14 @@ class CodexAppServerClient:
                 await self._reader_task
             except asyncio.CancelledError:
                 pass
+
+        # Cancel request handlers spawned by the reader loop
+        if self._incoming_request_tasks:
+            tasks = tuple(self._incoming_request_tasks)
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            self._incoming_request_tasks.clear()
 
         # Terminate process
         if self._process:
@@ -866,6 +875,19 @@ class CodexAppServerClient:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, write_response)
 
+    def _dispatch_incoming_request(self, message: dict[str, Any]) -> None:
+        task = asyncio.create_task(self._handle_incoming_request(message))
+        self._incoming_request_tasks.add(task)
+
+        def discard_task(done_task: asyncio.Task[None]) -> None:
+            self._incoming_request_tasks.discard(done_task)
+            if done_task.cancelled():
+                return
+            if exc := done_task.exception():
+                logger.error("Incoming Codex request handler failed", exc_info=exc)
+
+        task.add_done_callback(discard_task)
+
     async def _read_loop(self) -> None:
         """Background task to read responses and notifications."""
         if not self._process or not self._process.stdout:
@@ -903,7 +925,7 @@ class CodexAppServerClient:
                 if "method" in message and "id" in message:
                     # Codex uses an independent id space for inbound requests,
                     # so these ids can collide with our outgoing request ids.
-                    await self._handle_incoming_request(message)
+                    self._dispatch_incoming_request(message)
 
                 # Handle response to our outgoing request (has "id" without "method")
                 elif "id" in message:

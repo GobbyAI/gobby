@@ -3347,6 +3347,97 @@ class TestCodexClientApprovalResponseRouting:
         assert response["result"]["decision"] == "accept"
 
     @pytest.mark.asyncio
+    async def test_slow_approval_handler_does_not_block_other_messages(self) -> None:
+        """Pending approvals don't block unrelated responses or notifications."""
+        notification_received = asyncio.Event()
+        approval_started = asyncio.Event()
+        release_approval = asyncio.Event()
+        response_written = asyncio.Event()
+        written_lines: list[str] = []
+        notifications: list[tuple[str, dict[str, Any]]] = []
+
+        def on_notification(method: str, params: dict[str, Any]) -> None:
+            notifications.append((method, params))
+            notification_received.set()
+
+        client = CodexAppServerClient(on_notification=on_notification)
+
+        async def handler(method: str, params: dict[str, Any]) -> dict[str, str]:
+            approval_started.set()
+            await release_approval.wait()
+            return {"decision": "accept"}
+
+        client.register_approval_handler(handler)
+
+        loop = asyncio.get_running_loop()
+        pending_future = loop.create_future()
+        client._pending_requests[1] = pending_future
+
+        approval_msg = {
+            "jsonrpc": "2.0",
+            "id": 42,
+            "method": "item/commandExecution/requestApproval",
+            "params": {"threadId": "thr-1", "parsedCmd": "echo test"},
+        }
+        response_msg = {"jsonrpc": "2.0", "id": 1, "result": {"ok": True}}
+        notification_msg = {
+            "jsonrpc": "2.0",
+            "method": "item/completed",
+            "params": {"thread_id": "thr-1", "item": {"id": "item-1"}},
+        }
+
+        mock_process = MagicMock()
+        lines = [
+            json.dumps(approval_msg) + "\n",
+            json.dumps(response_msg) + "\n",
+            json.dumps(notification_msg) + "\n",
+        ]
+        read_idx = 0
+
+        def mock_readline() -> str:
+            nonlocal read_idx
+            if read_idx < len(lines):
+                line = lines[read_idx]
+                read_idx += 1
+                return line
+            return ""
+
+        def write_response(line: str) -> None:
+            written_lines.append(line)
+            loop.call_soon_threadsafe(response_written.set)
+
+        mock_process.stdout.readline = mock_readline
+        mock_process.poll.return_value = None
+        mock_process.stdin.write = write_response
+        mock_process.stdin.flush = MagicMock()
+
+        client._process = mock_process
+        client._state = CodexConnectionState.CONNECTED
+
+        reader_task = asyncio.create_task(client._read_loop())
+        try:
+            await asyncio.wait_for(approval_started.wait(), timeout=2.0)
+            await asyncio.wait_for(asyncio.shield(pending_future), timeout=2.0)
+            await asyncio.wait_for(notification_received.wait(), timeout=2.0)
+
+            assert pending_future.result() == {"ok": True}
+            assert notifications == [("item/completed", notification_msg["params"])]
+            assert written_lines == []
+
+            release_approval.set()
+            await asyncio.wait_for(response_written.wait(), timeout=2.0)
+
+            response = json.loads(written_lines[0].strip())
+            assert response["id"] == 42
+            assert response["result"]["decision"] == "accept"
+        finally:
+            release_approval.set()
+            reader_task.cancel()
+            await asyncio.gather(reader_task, return_exceptions=True)
+            if client._incoming_request_tasks:
+                await asyncio.gather(*client._incoming_request_tasks, return_exceptions=True)
+
+    @pytest.mark.asyncio
     async def test_response_preserves_request_id(self) -> None:
         """Response id matches the incoming request id."""
         client = CodexAppServerClient()
