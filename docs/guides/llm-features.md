@@ -9,10 +9,10 @@ their external form; for task features that is `gobby-tasks`, matching the MCP s
 | --- | --- |
 | `feature_low` | `codex/gpt-5.4-mini`, `claude/haiku` |
 | `feature_mid` | `codex/gpt-5.3-codex-spark`, `claude/sonnet` |
-| `feature_high` | `codex/gpt-5.3-codex`, `claude/opus` |
+| `feature_high` | `codex/gpt-5.5`, `claude/opus` |
 
-Built-in defaults mix cloud providers with bare `local/<model>` candidates. Local
-OpenAI-compatible runtimes are opt-in named endpoints:
+Built-in defaults are cloud-only. Local OpenAI-compatible runtimes are opt-in
+named endpoints and should be explicit final fallbacks:
 
 ```yaml
 ai:
@@ -21,25 +21,19 @@ ai:
       endpoints:
         lm-studio:
           api_base: http://localhost:1234/v1
-          model: Qwen3-Coder-30B-A3B-Instruct
+          model: google/gemma-4-26b-a4b-qat
           api_key: $secret:LM_STUDIO_KEY
-        ollama:
-          api_base: http://localhost:11434/v1
-          model: qwen2.5-coder
     profile_defaults:
       feature_low:
-        - local:lm-studio/Qwen3-Coder-30B-A3B-Instruct
+        - codex/gpt-5.4-mini
         - claude/haiku
-      feature_mid:
-        - codex/gpt-5.3-codex-spark
-        - local:ollama/qwen2.5-coder
+        - local:lm-studio/google/gemma-4-26b-a4b-qat
 ```
 
-Feature candidates use `local:<endpoint>/<model>` to pin a specific endpoint, or bare
-`local/<model>` to resolve across named endpoints: selection picks the first available
-endpoint that serves the model and skips to the next candidate when none does. Direct
-HTTP text generation uses `provider="local:<endpoint>"` (or `provider="local"` for
-family resolution) with `model="<model>"`.
+Feature candidates use `local:<endpoint>/<model>` to pin a specific endpoint.
+Selection skips to the next candidate when the endpoint is unavailable or does not
+serve the model. Direct HTTP text generation uses `provider="local:<endpoint>"`
+with `model="<model>"`.
 
 ## `call_feature` Features
 

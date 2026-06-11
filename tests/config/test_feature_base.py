@@ -32,26 +32,22 @@ class TestFeatureProfile:
         assert DEFAULT_PROFILE_CANDIDATES[FeatureProfile.LOW] == (
             "codex/gpt-5.4-mini",
             "claude/haiku",
-            "local/Qwen3-Coder-30B-A3B-Instruct",
         )
         assert DEFAULT_PROFILE_CANDIDATES[FeatureProfile.MID] == (
             "codex/gpt-5.3-codex-spark",
             "claude/sonnet",
-            "local/Qwen3-Coder-Next",
         )
         assert DEFAULT_PROFILE_CANDIDATES[FeatureProfile.HIGH] == (
-            "codex/gpt-5.3-codex",
+            "codex/gpt-5.5",
             "claude/opus",
-            "local/Qwen3-Coder-Next",
         )
         for candidates in DEFAULT_PROFILE_CANDIDATES.values():
             assert "claude/fable" not in candidates
 
-    def test_profiles_mix_cloud_and_local_candidates(self) -> None:
+    def test_profiles_use_cloud_only_candidates(self) -> None:
         for candidates in DEFAULT_PROFILE_CANDIDATES.values():
             providers = {candidate.split("/", 1)[0] for candidate in candidates}
-            assert "local" in providers
-            assert providers - {"local"}
+            assert providers == {"codex", "claude"}
 
 
 class TestFeatureDefaultConfig:
@@ -75,12 +71,12 @@ class TestFeatureDefaultConfig:
         cfg = FeatureDefaultConfig(
             candidates=[
                 "claude/claude-haiku-4-5",
-                "codex/gpt-5.3-codex",
+                "codex/gpt-5.5",
                 "claude/haiku",
             ],
         )
 
-        assert cfg.candidates == ["claude/haiku", "codex/gpt-5.3-codex"]
+        assert cfg.candidates == ["claude/haiku", "codex/gpt-5.5"]
 
     @pytest.mark.parametrize(
         ("candidate", "expected"),
@@ -124,8 +120,9 @@ class TestGenerationProfileDefaults:
                 "generation": {
                     "profile_defaults": {
                         "feature_low": [
-                            "local:lm-studio/Qwen3-Coder-30B-A3B-Instruct",
+                            "codex/gpt-5.4-mini",
                             "claude/haiku",
+                            "local:lm-studio/google/gemma-4-26b-a4b-qat",
                         ],
                     }
                 }
@@ -133,8 +130,9 @@ class TestGenerationProfileDefaults:
         )
 
         assert config.session_summary.candidates == [
-            "local:lm-studio/Qwen3-Coder-30B-A3B-Instruct",
+            "codex/gpt-5.4-mini",
             "claude/haiku",
+            "local:lm-studio/google/gemma-4-26b-a4b-qat",
         ]
 
     def test_daemon_config_keeps_explicit_feature_candidates_authoritative(self) -> None:
@@ -145,7 +143,11 @@ class TestGenerationProfileDefaults:
             ai={
                 "generation": {
                     "profile_defaults": {
-                        "feature_low": ["local:lm-studio/Qwen3-Coder-30B-A3B-Instruct"],
+                        "feature_low": [
+                            "codex/gpt-5.4-mini",
+                            "claude/haiku",
+                            "local:lm-studio/google/gemma-4-26b-a4b-qat",
+                        ],
                     }
                 }
             },

@@ -214,8 +214,8 @@ search.
 chat:
   profile: high
   candidates:
-    - claude/sonnet
-    - codex/gpt-5.3-codex-spark
+    - codex/gpt-5.5
+    - claude/opus
 gobby-tasks:
   validation:
     profile: mid
