@@ -10,6 +10,7 @@ rules:
     effects:
       - type: inject_context
         template: |
+          <!-- gobby:injected-context:begin -->
           ## Continuation Context
           *Injected by Gobby session handoff*
 
@@ -22,6 +23,7 @@ rules:
 
           {{ skill_fetch_batch_directive(resume_skills) }}
           {% endif %}
+          <!-- gobby:injected-context:end -->
       - type: set_variable
         variable: compact_resume_required_skills
         value: []

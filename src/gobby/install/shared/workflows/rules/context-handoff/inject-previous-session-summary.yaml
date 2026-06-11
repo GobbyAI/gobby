@@ -10,7 +10,9 @@ rules:
     effects:
       - type: inject_context
         template: |
+          <!-- gobby:injected-context:begin -->
           ## Previous Session Context
           *Injected by Gobby session handoff*
 
           {{ handoff_summary_injectable or full_session_summary or '' }}
+          <!-- gobby:injected-context:end -->

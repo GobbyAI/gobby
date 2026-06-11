@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any
 from gobby.hooks.events import HookEvent
 from gobby.hooks.normalization import is_shell_tool
 from gobby.storage.workflow_definitions import WorkflowDefinitionRow
-from gobby.utils.injected_context import INJECTED_CONTEXT_BEGIN, INJECTED_CONTEXT_END
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
 logger = logging.getLogger(__name__)
@@ -111,9 +110,11 @@ class EffectsMixin:
             # them available as {{ session_summary }}, {{ task_context }} in templates.
             if effect.template:
                 template_text = self._render_template(effect.template, ctx, allowed_funcs)
-                context_parts.append(
-                    f"{INJECTED_CONTEXT_BEGIN}\n{template_text}\n{INJECTED_CONTEXT_END}"
-                )
+                # Injected-context fencing lives in the handoff/compact templates
+                # themselves (session_start only), not here, so per-turn injections
+                # (brevity, memory, task context) stay un-tagged. See
+                # context-handoff/inject-previous-session-summary.yaml.
+                context_parts.append(template_text)
 
         elif effect.type == "observe":
             obs_list = variables.get("_observations", [])
