@@ -126,6 +126,43 @@ fn ask_cli_flags_map_to_command_options() {
 }
 
 #[test]
+fn compile_positional_topic_never_populates_scope_selection() {
+    let cli = Cli::try_parse_from([
+        "gwiki",
+        "--project",
+        "/tmp/example-project",
+        "compile",
+        "Borrow Checker",
+        "--kind",
+        "concept",
+    ])
+    .expect("parse compile with project scope and positional topic");
+    assert_eq!(cli.scope.topic, None);
+    assert_eq!(
+        cli.scope.project.as_deref(),
+        Some(std::path::Path::new("/tmp/example-project"))
+    );
+    let CliCommand::Compile(args) = cli.command else {
+        panic!("expected parsed compile command");
+    };
+    assert_eq!(args.topic.as_deref(), Some("Borrow Checker"));
+
+    let cli = Cli::try_parse_from([
+        "gwiki",
+        "--topic",
+        "rust-async",
+        "compile",
+        "Borrow Checker",
+    ])
+    .expect("parse compile with topic scope and positional topic");
+    assert_eq!(cli.scope.topic.as_deref(), Some("rust-async"));
+    let CliCommand::Compile(args) = cli.command else {
+        panic!("expected parsed compile command");
+    };
+    assert_eq!(args.topic.as_deref(), Some("Borrow Checker"));
+}
+
+#[test]
 fn graph_context_cli_maps_to_command() {
     let cli = Cli::try_parse_from([
         "gwiki",

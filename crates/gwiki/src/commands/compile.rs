@@ -16,7 +16,14 @@ pub(crate) fn execute(
     let resolved_scope = resolve_command_scope(&scope)?;
     let research_scope = session::ResearchScope::from(&resolved_scope);
     let mut session = session::ResearchSession::load_checkpoint(research_scope.root())?;
-    let topic = topic.unwrap_or_else(|| {
+    // Article topic precedence: explicit positional, then the topic scope's
+    // own name (a topic vault compiles its topic by default), then the
+    // session's compile state or research question.
+    let scope_topic = match &research_scope {
+        session::ResearchScope::Topic { name, .. } => Some(name.clone()),
+        _ => None,
+    };
+    let topic = topic.or(scope_topic).unwrap_or_else(|| {
         session
             .compile_state
             .as_ref()

@@ -352,7 +352,10 @@ struct ResearchArgs {
 
 #[derive(Debug, Args)]
 struct CompileArgs {
-    #[arg(value_name = "TOPIC")]
+    // The id must differ from the global `--topic` scope arg: clap propagates
+    // global args by id, so an id of `topic` lets this positional hijack the
+    // scope selection (#701).
+    #[arg(id = "compile_topic", value_name = "TOPIC")]
     topic: Option<String>,
 
     #[arg(long = "outline", value_name = "HEADING")]
