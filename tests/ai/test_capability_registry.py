@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from gobby.ai import (
@@ -15,6 +17,7 @@ from gobby.config.ai import AIConfig, GenerationConfig, LocalGenerationConfig
 from gobby.config.app import DaemonConfig
 from gobby.config.persistence import EmbeddingsConfig
 from gobby.config.voice import OpenAICompatibleAudioBindingConfig, VoiceConfig
+from gobby.llm.service import LLMService
 from gobby.providers import AGY_UNAVAILABLE_REASON, ProviderMetadata
 
 pytestmark = pytest.mark.unit
@@ -463,3 +466,40 @@ def test_daemon_registry_marks_missing_provider_binaries_unavailable() -> None:
     assert codex is not None
     assert codex.available is False
     assert codex.reason == "Codex CLI is not installed."
+
+
+def test_daemon_registry_reprobes_provider_installation_after_startup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gobby.ai.registry.PROVIDER_INSTALL_PROBE_TTL_SECONDS", 0.0)
+    installed_state = {"codex": False}
+
+    def installed(entry: ProviderMetadata) -> bool:
+        return installed_state.get(entry.provider, False)
+
+    class TextGenerationStub:
+        def __init__(self, registry: AICapabilityRegistry) -> None:
+            self.registry = registry
+
+        async def generate(self, request: Any) -> str:
+            raise AssertionError("not called")
+
+        async def generate_json(self, request: Any) -> dict[str, Any]:
+            raise AssertionError("not called")
+
+    registry = build_daemon_ai_capability_registry(DaemonConfig(), provider_installed=installed)
+    service = LLMService(DaemonConfig(), text_generation=TextGenerationStub(registry))
+
+    with pytest.raises(CapabilityUnavailableError):
+        registry.select(AICapability.TEXT_GENERATE, provider="codex")
+    assert "codex" not in service.enabled_providers
+
+    installed_state["codex"] = True
+
+    assert registry.select(AICapability.TEXT_GENERATE, provider="codex").provider == "codex"
+    fresh_registry = build_daemon_ai_capability_registry(
+        DaemonConfig(),
+        provider_installed=installed,
+    )
+    assert fresh_registry.select(AICapability.TEXT_GENERATE, provider="codex").provider == "codex"
+    assert "codex" in service.enabled_providers

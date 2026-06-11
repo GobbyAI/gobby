@@ -8,6 +8,7 @@ surface; they do not define their own capability names.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -28,6 +29,8 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+PROVIDER_INSTALL_PROBE_TTL_SECONDS = 2.0
 
 
 class AICapability(StrEnum):
@@ -134,10 +137,14 @@ class CapabilityBinding:
     capability: AICapability
     provider: str
     adapter_style: AIAdapterStyle
-    available: bool
-    reason: str | None = None
     models: tuple[str, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    _available: bool = field(repr=False)
+    _reason: str | None = field(default=None, repr=False)
+    _availability_probe: Callable[[], bool] | None = field(default=None, repr=False)
+    _availability_probe_ttl_seconds: float = field(default=PROVIDER_INSTALL_PROBE_TTL_SECONDS)
+    _availability_checked_at: float | None = field(default=None, repr=False, compare=False)
+    _availability_probe_result: bool | None = field(default=None, repr=False, compare=False)
 
     def __init__(
         self,
@@ -149,6 +156,8 @@ class CapabilityBinding:
         reason: str | None = None,
         models: Sequence[str] = (),
         metadata: Mapping[str, Any] | None = None,
+        availability_probe: Callable[[], bool] | None = None,
+        availability_probe_ttl_seconds: float | None = None,
     ) -> None:
         normalized_capability = normalize_capability(capability)
         normalized_provider = _normalize_provider(provider)
@@ -166,10 +175,20 @@ class CapabilityBinding:
         object.__setattr__(self, "capability", normalized_capability)
         object.__setattr__(self, "provider", normalized_provider)
         object.__setattr__(self, "adapter_style", normalized_adapter_style)
-        object.__setattr__(self, "available", available)
-        object.__setattr__(self, "reason", normalized_reason)
         object.__setattr__(self, "models", normalized_models)
         object.__setattr__(self, "metadata", normalized_metadata)
+        object.__setattr__(self, "_available", available)
+        object.__setattr__(self, "_reason", normalized_reason)
+        object.__setattr__(self, "_availability_probe", availability_probe)
+        object.__setattr__(
+            self,
+            "_availability_probe_ttl_seconds",
+            PROVIDER_INSTALL_PROBE_TTL_SECONDS
+            if availability_probe_ttl_seconds is None
+            else max(0.0, availability_probe_ttl_seconds),
+        )
+        object.__setattr__(self, "_availability_checked_at", None)
+        object.__setattr__(self, "_availability_probe_result", None)
 
     @classmethod
     def unavailable(
@@ -192,6 +211,35 @@ class CapabilityBinding:
             models=models,
             metadata=metadata or {},
         )
+
+    @property
+    def available(self) -> bool:
+        """Return current availability, re-probing CLI-backed bindings with a short TTL."""
+        probe = self._availability_probe
+        if probe is None:
+            return self._available
+
+        now = time.monotonic()
+        checked_at = self._availability_checked_at
+        cached = self._availability_probe_result
+        if (
+            checked_at is not None
+            and cached is not None
+            and now - checked_at < self._availability_probe_ttl_seconds
+        ):
+            return cached
+
+        current = bool(probe())
+        object.__setattr__(self, "_availability_checked_at", now)
+        object.__setattr__(self, "_availability_probe_result", current)
+        return current
+
+    @property
+    def reason(self) -> str | None:
+        """Return current unavailable reason, clearing stale install errors when available."""
+        if self.available:
+            return None
+        return self._reason
 
     def supports_model(self, model: str | None) -> bool:
         """Return whether this binding can satisfy the requested model."""
@@ -621,23 +669,16 @@ def _text_generate_binding(
     if adapter_style is None:
         return None
 
-    if provider_installed(entry):
-        return CapabilityBinding(
-            capability=AICapability.TEXT_GENERATE,
-            provider=entry.provider,
-            adapter_style=adapter_style,
-            available=True,
-            models=models,
-            metadata=metadata,
-        )
-
-    return CapabilityBinding.unavailable(
-        AICapability.TEXT_GENERATE,
-        entry.provider,
+    installed = provider_installed(entry)
+    return CapabilityBinding(
+        capability=AICapability.TEXT_GENERATE,
+        provider=entry.provider,
         adapter_style=adapter_style,
+        available=installed,
         reason=f"{entry.display_name} CLI is not installed.",
         models=models,
         metadata=metadata,
+        availability_probe=lambda: provider_installed(entry),
     )
 
 
@@ -707,23 +748,16 @@ def _vision_extract_binding(
             metadata=metadata,
         )
 
-    if provider_installed(entry):
-        return CapabilityBinding(
-            capability=AICapability.VISION_EXTRACT,
-            provider=entry.provider,
-            adapter_style=adapter_style,
-            available=True,
-            models=models,
-            metadata=metadata,
-        )
-
-    return CapabilityBinding.unavailable(
-        AICapability.VISION_EXTRACT,
-        entry.provider,
+    installed = provider_installed(entry)
+    return CapabilityBinding(
+        capability=AICapability.VISION_EXTRACT,
+        provider=entry.provider,
         adapter_style=adapter_style,
+        available=installed,
         reason=f"{entry.display_name} CLI is not installed.",
         models=models,
         metadata=metadata,
+        availability_probe=lambda: provider_installed(entry),
     )
 
 
@@ -822,23 +856,16 @@ def _provider_binding(
             metadata=metadata,
         )
 
-    if provider_installed(entry):
-        return CapabilityBinding(
-            capability=capability,
-            provider=entry.provider,
-            adapter_style=adapter_style,
-            available=True,
-            models=models,
-            metadata=metadata,
-        )
-
-    return CapabilityBinding.unavailable(
-        capability,
-        entry.provider,
+    installed = provider_installed(entry)
+    return CapabilityBinding(
+        capability=capability,
+        provider=entry.provider,
         adapter_style=adapter_style,
+        available=installed,
         reason=f"{entry.display_name} CLI is not installed.",
         models=models,
         metadata=metadata,
+        availability_probe=lambda: provider_installed(entry),
     )
 
 
