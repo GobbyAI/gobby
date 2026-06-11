@@ -264,11 +264,40 @@ pub(crate) fn collect_link_spans(files: &[FileLink], modules: &[ModuleLink]) -> 
     spans.into_iter().collect()
 }
 
+/// Hard cap on fallback citations appended when generated prose carries no
+/// valid inline citation. Aggregate pages can cover thousands of spans;
+/// appending the full set produced megabyte citation walls that re-entered
+/// downstream summaries and prompts (#699).
+pub(crate) const MAX_FALLBACK_CITATIONS: usize = 5;
+
+/// Representative subset of `spans` for fallback citations: at most
+/// [`MAX_FALLBACK_CITATIONS`] entries, preferring one span per distinct file
+/// so broad pages cite breadth rather than one file's span run.
+fn fallback_spans(spans: &[SourceSpan]) -> Vec<SourceSpan> {
+    let deduped = spans.iter().cloned().collect::<BTreeSet<_>>();
+    let mut picked = Vec::new();
+    let mut seen_files = BTreeSet::new();
+    for span in &deduped {
+        if picked.len() == MAX_FALLBACK_CITATIONS {
+            return picked;
+        }
+        if seen_files.insert(span.file.clone()) {
+            picked.push(span.clone());
+        }
+    }
+    for span in deduped {
+        if picked.len() == MAX_FALLBACK_CITATIONS {
+            break;
+        }
+        if !picked.contains(&span) {
+            picked.push(span);
+        }
+    }
+    picked
+}
+
 pub(crate) fn citation_list(spans: &[SourceSpan]) -> String {
-    spans
-        .iter()
-        .cloned()
-        .collect::<BTreeSet<_>>()
+    fallback_spans(spans)
         .into_iter()
         .map(|span| span.citation())
         .collect::<Vec<_>>()
@@ -298,9 +327,14 @@ where
 }
 
 pub(crate) fn citation_markers(spans: &[SourceSpan]) -> String {
+    let fallback = fallback_spans(spans)
+        .into_iter()
+        .map(|span| span.citation())
+        .collect::<BTreeSet<_>>();
     wrap_citation_items(
         citation_references(spans)
             .into_iter()
+            .filter(|(_, citation)| fallback.contains(citation))
             .map(|(index, _)| format!("[{index}]")),
         FALLBACK_CITATION_LINE_WIDTH,
     )
@@ -325,8 +359,14 @@ pub(crate) fn replace_citations_with_markers(text: &str, spans: &[SourceSpan]) -
     marked
 }
 
+/// Appends a References section resolving only the `[N]` markers that appear
+/// in `doc`; unreferenced spans stay out so the section scales with the prose
+/// rather than with everything the page covers (#699).
 pub(crate) fn write_references(doc: &mut String, spans: &[SourceSpan]) {
-    let references = citation_references(spans);
+    let references = citation_references(spans)
+        .into_iter()
+        .filter(|(index, _)| doc.contains(&format!("[{index}]")))
+        .collect::<Vec<_>>();
     if references.is_empty() {
         return;
     }
@@ -513,20 +553,78 @@ mod tests {
     }
 
     #[test]
-    fn citation_markers_use_shared_width_wrapper() {
+    fn citation_list_caps_oversized_span_sets() {
+        let spans = (0..200)
+            .map(|index| span(format!("src/file_{index:03}.rs"), 1, 10))
+            .collect::<Vec<_>>();
+
+        let citations = citation_list(&spans);
+
+        assert_eq!(
+            citations.lines().count(),
+            MAX_FALLBACK_CITATIONS,
+            "{citations}"
+        );
+    }
+
+    #[test]
+    fn fallback_spans_prefer_distinct_files_over_one_files_span_run() {
+        let mut spans = (1..100)
+            .map(|line| span("src/big.rs", line, line))
+            .collect::<Vec<_>>();
+        spans.push(span("src/other.rs", 1, 5));
+
+        let picked = fallback_spans(&spans);
+
+        assert!(picked.len() <= MAX_FALLBACK_CITATIONS);
+        assert!(
+            picked.iter().any(|span| span.file == "src/other.rs"),
+            "distinct file must be represented: {picked:?}"
+        );
+    }
+
+    #[test]
+    fn citation_markers_are_capped_and_keep_reference_numbering() {
         let spans = (0..80)
             .map(|index| span(format!("src/file_{index:02}.rs"), 1, 1))
             .collect::<Vec<_>>();
 
         let markers = citation_markers(&spans);
 
-        assert!(markers.lines().count() > 1, "{markers}");
-        assert!(
-            markers
-                .lines()
-                .all(|line| line.len() <= FALLBACK_CITATION_LINE_WIDTH),
+        assert_eq!(
+            markers.split_whitespace().count(),
+            MAX_FALLBACK_CITATIONS,
             "{markers}"
         );
+        assert!(markers.starts_with("[1]"), "{markers}");
+    }
+
+    #[test]
+    fn references_resolve_only_markers_present_in_doc() {
+        let spans = (0..40)
+            .map(|index| span(format!("src/file_{index:02}.rs"), 1, 1))
+            .collect::<Vec<_>>();
+        let mut doc = "Prose citing [2] and [17] only.\n\n".to_string();
+
+        write_references(&mut doc, &spans);
+
+        let references = doc
+            .lines()
+            .filter(|line| line.starts_with("- ["))
+            .collect::<Vec<_>>();
+        assert_eq!(references.len(), 2, "{doc}");
+        assert!(references[0].starts_with("- [2] "), "{doc}");
+        assert!(references[1].starts_with("- [17] "), "{doc}");
+    }
+
+    #[test]
+    fn wrap_citation_items_bounds_line_width() {
+        let items = (0..80).map(|index| format!("[{index}]"));
+
+        let wrapped = wrap_citation_items(items, 40);
+
+        assert!(wrapped.lines().count() > 1, "{wrapped}");
+        assert!(wrapped.lines().all(|line| line.len() <= 40), "{wrapped}");
     }
 
     #[test]

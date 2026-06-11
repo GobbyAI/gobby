@@ -124,7 +124,10 @@ fn repo_structural_fallback_omits_marker_wall_but_generated_text_stays_grounded(
     let generated_overview = markdown_section(generated_repo, "## Overview");
 
     assert!(generated_overview.contains("Generated repository overview."));
-    assert_eq!(inline_marker_count(generated_overview), 6);
+    assert_eq!(
+        inline_marker_count(generated_overview),
+        super::super::text::MAX_FALLBACK_CITATIONS
+    );
 }
 
 #[test]
