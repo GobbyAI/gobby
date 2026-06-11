@@ -366,32 +366,6 @@ fn chat_completion_model(value: &serde_json::Value) -> Option<String> {
         .map(str::to_string)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LocalBackendProbe {
-    pub url: String,
-    pub status: u16,
-    pub body: Option<String>,
-}
-
-pub fn probe_local_backend(api_base: &str) -> Result<LocalBackendProbe, AiError> {
-    let url = format!("{}/models", api_base.trim_end_matches('/'));
-    // Keep the lightweight local-backend probe on ureq to avoid constructing the
-    // shared AI transport for a short, unauthenticated discovery request.
-    match ureq::get(&url).timeout(Duration::from_secs(2)).call() {
-        Ok(response) => Ok(LocalBackendProbe {
-            url,
-            status: response.status(),
-            body: response.into_string().ok(),
-        }),
-        Err(ureq::Error::Status(status, response)) => Ok(LocalBackendProbe {
-            url,
-            status,
-            body: response.into_string().ok(),
-        }),
-        Err(error) => Err(AiError::transport_failure(None, None, error.to_string())),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -489,29 +463,6 @@ mod tests {
             chat_api_root("http://localhost:11434/v10"),
             "http://localhost:11434/v10"
         );
-    }
-
-    #[test]
-    fn probe_local_backend_returns_non_success_status() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test server");
-        let addr = listener.local_addr().expect("test server address");
-        let handle = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept probe request");
-            let mut request = [0; 1024];
-            let _ = std::io::Read::read(&mut stream, &mut request);
-            std::io::Write::write_all(
-                &mut stream,
-                b"HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nnot found",
-            )
-            .expect("write probe response");
-        });
-
-        let probe = probe_local_backend(&format!("http://{addr}")).expect("probe returns status");
-        handle.join().expect("server thread");
-
-        assert_eq!(probe.url, format!("http://{addr}/models"));
-        assert_eq!(probe.status, 404);
-        assert_eq!(probe.body.as_deref(), Some("not found"));
     }
 
     #[test]

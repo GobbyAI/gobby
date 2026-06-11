@@ -1,6 +1,6 @@
 use super::*;
 
-const FALKORDB_DEFAULT_PORT: u16 = 16379;
+pub(crate) const FALKORDB_DEFAULT_PORT: u16 = 16379;
 pub(crate) const EMBEDDING_DEFAULT_MODEL: &str = "nomic-embed-text";
 pub(crate) const EMBEDDING_DEFAULT_TIMEOUT_SECONDS: u64 = 10;
 const AI_DEFAULT_MAX_CONCURRENCY: u8 = 1;
@@ -181,8 +181,8 @@ pub fn resolve_embedding_config(source: &mut impl ConfigSource) -> Option<Embedd
 /// Resolve indexing config from env/config_store/gcore.yaml/defaults.
 pub fn resolve_indexing_config(source: &mut impl ConfigSource) -> anyhow::Result<IndexingConfig> {
     let respect_gitignore = match env_value(INDEXING_RESPECT_GITIGNORE_ENV) {
-        Some(value) => parse_config_bool(INDEXING_RESPECT_GITIGNORE_KEY, &value)?,
-        None => resolve_config_bool(source, INDEXING_RESPECT_GITIGNORE_KEY)?.unwrap_or(true),
+        Some(value) => parse_config_bool_or_default(INDEXING_RESPECT_GITIGNORE_ENV, &value, true),
+        None => resolve_config_bool(source, INDEXING_RESPECT_GITIGNORE_KEY, true),
     };
 
     Ok(IndexingConfig { respect_gitignore })
@@ -346,25 +346,31 @@ fn resolve_ai_routing_value(source: &mut impl ConfigSource, config_key: &str) ->
 
 fn resolve_ai_config_value(source: &mut impl ConfigSource, config_key: &str) -> Option<String> {
     let value = source.config_value(config_key)?;
-    resolve_ai_non_empty(source, &value)
+    resolve_ai_non_empty(source, config_key, &value)
 }
 
 fn resolve_config_bool(
     source: &mut impl ConfigSource,
     config_key: &'static str,
-) -> anyhow::Result<Option<bool>> {
+    default: bool,
+) -> bool {
     let Some(value) = source.config_value(config_key) else {
-        return Ok(None);
+        return default;
     };
-    let resolved = source.resolve_value(&value)?;
-    parse_config_bool(config_key, &resolved).map(Some)
+    let Some(resolved) = resolve_non_empty(source, config_key, &value) else {
+        return default;
+    };
+    parse_config_bool_or_default(config_key, &resolved, default)
 }
 
-fn parse_config_bool(config_key: &'static str, value: &str) -> anyhow::Result<bool> {
+fn parse_config_bool_or_default(source_key: &str, value: &str, default: bool) -> bool {
     match value.trim().to_ascii_lowercase().as_str() {
-        "true" | "1" | "yes" | "on" => Ok(true),
-        "false" | "0" | "no" | "off" => Ok(false),
-        _ => anyhow::bail!("invalid boolean for {config_key}: `{value}`"),
+        "true" | "1" | "yes" | "on" => true,
+        "false" | "0" | "no" | "off" => false,
+        _ => {
+            log::warn!("invalid boolean for config key {source_key:?}; using default {default}");
+            default
+        }
     }
 }
 
@@ -373,15 +379,28 @@ fn parse_config_bool(config_key: &'static str, value: &str) -> anyhow::Result<bo
 /// AI config resolves from `config_store`/gcore.yaml, but stored values may
 /// reference secrets or `${VAR}`. Unresolved placeholders must not masquerade as
 /// usable endpoints, models, or keys.
-fn resolve_ai_non_empty(source: &mut impl ConfigSource, value: &str) -> Option<String> {
+fn resolve_ai_non_empty(
+    source: &mut impl ConfigSource,
+    source_key: &str,
+    value: &str,
+) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return None;
     }
-    source.resolve_value(trimmed).ok().filter(|resolved| {
-        let resolved = resolved.trim();
-        !resolved.is_empty() && !contains_unresolved_env_pattern(resolved)
-    })
+    let resolved = match source.resolve_value(trimmed) {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            log::warn!("failed to resolve config key {source_key:?}: {error}");
+            return None;
+        }
+    };
+    let resolved_trimmed = resolved.trim();
+    if resolved_trimmed.is_empty() || contains_unresolved_env_pattern(resolved_trimmed) {
+        None
+    } else {
+        Some(resolved)
+    }
 }
 
 fn contains_unresolved_env_pattern(value: &str) -> bool {
@@ -402,13 +421,13 @@ fn resolve_setting_from_keys(
     config_keys: &[&str],
 ) -> Option<String> {
     if let Some(value) = env_value(env_key) {
-        return resolve_non_empty(source, &value);
+        return resolve_non_empty(source, env_key, &value);
     }
     for config_key in config_keys {
         let Some(value) = source.config_value(config_key) else {
             continue;
         };
-        if let Some(resolved) = resolve_non_empty(source, &value) {
+        if let Some(resolved) = resolve_non_empty(source, config_key, &value) {
             return Some(resolved);
         }
     }
@@ -421,23 +440,48 @@ fn resolve_port(
     config_key: &str,
     default: u16,
 ) -> u16 {
-    let Some(raw_port) = env_value(env_key).or_else(|| source.config_value(config_key)) else {
+    let (source_key, raw_port) = if let Some(raw_port) = env_value(env_key) {
+        (env_key, raw_port)
+    } else {
+        let Some(raw_port) = source.config_value(config_key) else {
+            return default;
+        };
+        (config_key, raw_port)
+    };
+    let Some(resolved) = resolve_non_empty(source, source_key, &raw_port) else {
         return default;
     };
-    let Some(resolved) = resolve_non_empty(source, &raw_port) else {
-        return default;
-    };
-    resolved.parse::<u16>().unwrap_or(default)
+    match resolved.parse::<u16>() {
+        Ok(port) => port,
+        Err(error) => {
+            log::warn!(
+                "invalid port for config key {source_key:?}: {error}; using default {default}"
+            );
+            default
+        }
+    }
 }
 
-fn resolve_non_empty(source: &mut impl ConfigSource, value: &str) -> Option<String> {
+fn resolve_non_empty(
+    source: &mut impl ConfigSource,
+    source_key: &str,
+    value: &str,
+) -> Option<String> {
     if value.trim().is_empty() {
         return None;
     }
-    source
-        .resolve_value(value)
-        .ok()
-        .filter(|resolved| !resolved.trim().is_empty())
+    let resolved = match source.resolve_value(value) {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            log::warn!("failed to resolve config key {source_key:?}: {error}");
+            return None;
+        }
+    };
+    if resolved.trim().is_empty() {
+        None
+    } else {
+        Some(resolved)
+    }
 }
 
 fn env_value(key: &str) -> Option<String> {

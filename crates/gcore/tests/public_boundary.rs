@@ -76,7 +76,6 @@ fn lib_rs_exposes_lightweight_and_feature_gated_modules() {
         "pub mod ai_types;",
         "pub mod codewiki_contract;",
         "pub mod config;",
-        "pub mod context;",
         "pub mod degradation;",
         "pub mod layered_config;",
         "pub mod local_backend;",
@@ -110,7 +109,7 @@ fn development_guide_documents_foundation_boundary() {
     let guide = repo_file("docs/guides/gcore-development-guide.md");
 
     for expected in [
-        "shared Rust migration substrate",
+        "shared Rust foundation crate",
         "Feature Gates",
         "`postgres`",
         "`falkor`",
