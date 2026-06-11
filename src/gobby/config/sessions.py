@@ -173,6 +173,19 @@ class MemoryRecallConfig(FeatureDefaultConfig):
         le=1.0,
         description="Minimum candidate relevance score for memory recall.",
     )
+    query_synthesis_threshold: int = Field(
+        default=8_000,
+        gt=0,
+        description=(
+            "Prompt length in characters above which memory recall synthesizes a compact "
+            "search query before candidate retrieval."
+        ),
+    )
+    query_max_chars: int = Field(
+        default=1_200,
+        gt=0,
+        description="Maximum characters in a synthesized or fallback memory recall query.",
+    )
 
 
 class MessageTrackingConfig(BaseModel):

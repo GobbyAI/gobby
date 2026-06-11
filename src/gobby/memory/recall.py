@@ -5,9 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from gobby.config.feature_base import FeatureProfile, default_candidates_for_profile
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.prompts.loader import PromptLoader
 from gobby.workflows.state_manager import SessionVariableManager
@@ -22,10 +25,94 @@ logger = logging.getLogger(__name__)
 
 WAKE_PROMPT_PREFIX = "Message from Gobby daemon: New activity available."
 SYSTEM_ACTIVITY_SOURCES = frozenset({"daemon", "system", "pipeline", "gobby_build", "build"})
+PARENT_USER_PROMPT_SOURCES = frozenset(
+    {
+        SessionSource.AGY,
+        SessionSource.CLAUDE,
+        SessionSource.CODEX,
+        SessionSource.DROID,
+        SessionSource.GEMINI,
+        SessionSource.GROK,
+        SessionSource.QWEN,
+    }
+)
+SYNTHETIC_BOOLEAN_KEYS = frozenset({"synthetic", "_synthetic", "is_synthetic"})
+SYNTHETIC_METADATA_KEYS = frozenset(
+    {
+        "actor",
+        "kind",
+        "message_kind",
+        "origin",
+        "prompt_kind",
+        "prompt_origin",
+        "prompt_source",
+        "prompt_type",
+        "role",
+        "session_type",
+        "source",
+        "type",
+    }
+)
+SYNTHETIC_METADATA_VALUES = SYSTEM_ACTIVITY_SOURCES | frozenset(
+    {
+        "assistant",
+        "bootstrap",
+        "control",
+        "daemon_wake",
+        "developer",
+        "gobby",
+        "gobby_daemon",
+        "hook",
+        "internal",
+        "protocol",
+        "resume",
+        "system_protocol",
+        "tool",
+        "wait",
+        "workflow",
+    }
+)
+PROTOCOL_PROMPT_PREFIXES = (
+    "<codex_internal_context",
+    "<turn_aborted",
+    "<permissions instructions>",
+    "<collaboration_mode>",
+    "<environment_context>",
+)
+KEYWORD_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_./:-]{2,}")
+KEYWORD_STOPWORDS = frozenset(
+    {
+        "about",
+        "after",
+        "again",
+        "also",
+        "because",
+        "before",
+        "between",
+        "could",
+        "from",
+        "have",
+        "into",
+        "need",
+        "please",
+        "should",
+        "that",
+        "their",
+        "there",
+        "these",
+        "this",
+        "those",
+        "with",
+        "would",
+    }
+)
 REVIEW_LESSON_TAG = "review-lesson"
 RECALL_SYSTEM_PROMPT = (
     "Select only memories that are directly useful for the user's current turn. "
     "Return strict JSON and no prose."
+)
+QUERY_SYNTHESIS_SYSTEM_PROMPT = (
+    "Write a compact search query for memory recall. Return strict JSON with a query string."
 )
 
 
@@ -37,32 +124,68 @@ class MemoryRecallResult:
     memories: list[dict[str, Any]]
 
 
+@dataclass(frozen=True)
+class MemoryRecallPromptDecision:
+    """Classified prompt eligibility for daemon-owned memory recall."""
+
+    eligible: bool
+    kind: str
+    reason: str
+    prompt: str
+    source: str
+    raw_length: int
+
+
+@dataclass(frozen=True)
+class MemoryRecallQuery:
+    """Search query derived from a real user prompt."""
+
+    text: str
+    kind: str
+    latency_ms: float
+    timeout_reason: str | None = None
+
+
 def is_memory_recall_eligible(
     event: HookEvent,
     variables: dict[str, Any],
     config: MemoryRecallConfig | None,
 ) -> bool:
     """Return whether this hook event is a real parent user turn."""
-    if config is not None and not config.enabled:
-        return False
-    if event.event_type != HookEventType.BEFORE_AGENT:
-        return False
-    if event.source == SessionSource.PIPELINE:
-        return False
-    if variables.get("is_spawned_agent"):
-        return False
-    if not event.metadata.get("_platform_session_id"):
-        return False
-    if _is_synthetic_or_system_activity(event):
-        return False
+    return classify_memory_recall_prompt(event, variables, config).eligible
 
+
+def classify_memory_recall_prompt(
+    event: HookEvent,
+    variables: dict[str, Any],
+    config: MemoryRecallConfig | None,
+) -> MemoryRecallPromptDecision:
+    """Classify whether this event carries a real parent user prompt."""
     prompt = event.data.get("prompt")
-    if not isinstance(prompt, str) or len(prompt.split()) < 6:
-        return False
-    if prompt.strip().startswith(WAKE_PROMPT_PREFIX):
-        return False
+    prompt_text = prompt if isinstance(prompt, str) else ""
+    source = _source_value(event.source)
 
-    return isinstance(variables.get("parent_turn_seq"), int)
+    if config is not None and not config.enabled:
+        return _prompt_decision(False, "disabled", "config_disabled", prompt_text, source)
+    if event.event_type != HookEventType.BEFORE_AGENT:
+        return _prompt_decision(False, "event", "not_before_agent", prompt_text, source)
+    if event.source not in PARENT_USER_PROMPT_SOURCES:
+        return _prompt_decision(False, "source", "unsupported_source", prompt_text, source)
+    if variables.get("is_spawned_agent"):
+        return _prompt_decision(False, "spawned_agent", "spawned_agent", prompt_text, source)
+    if not event.metadata.get("_platform_session_id"):
+        return _prompt_decision(False, "session", "missing_platform_session", prompt_text, source)
+    synthetic_reason = _synthetic_prompt_reason(event, prompt_text)
+    if synthetic_reason is not None:
+        return _prompt_decision(False, "synthetic", synthetic_reason, prompt_text, source)
+
+    if len(prompt_text.split()) < 6:
+        return _prompt_decision(False, "empty_or_short", "prompt_too_short", prompt_text, source)
+
+    if not isinstance(variables.get("parent_turn_seq"), int):
+        return _prompt_decision(False, "turn", "missing_parent_turn_seq", prompt_text, source)
+
+    return _prompt_decision(True, "real_user", "eligible", prompt_text, source)
 
 
 class MemoryRecallRunner:
@@ -90,24 +213,81 @@ class MemoryRecallRunner:
         variables: dict[str, Any],
     ) -> MemoryRecallResult | None:
         """Return fresh memory recall results for an eligible parent turn."""
-        if not is_memory_recall_eligible(event, variables, self.config):
+        decision = classify_memory_recall_prompt(event, variables, self.config)
+        if not decision.eligible:
+            self._log_recall_diagnostic(
+                "Memory recall skipped",
+                decision=decision,
+                session_id=session_id,
+                reason=decision.reason,
+                event=event,
+            )
             return None
         if self.llm_service is None or not hasattr(self.llm_service, "call_json_feature"):
-            self.logger.debug("Memory recall skipped: LLM service unavailable")
+            self._log_recall_diagnostic(
+                "Memory recall skipped",
+                decision=decision,
+                session_id=session_id,
+                reason="llm_unavailable",
+                event=event,
+            )
             return None
 
         origin_turn_seq = variables["parent_turn_seq"]
-        prompt = event.data["prompt"]
+        prompt = decision.prompt
 
-        candidates = await self._search_candidates(prompt, event.project_id)
+        query = await self._query_for_prompt(prompt, decision, session_id, event)
+        retrieval_start = time.monotonic()
+        candidates = await self._search_candidates(query.text, event.project_id)
+        retrieval_latency_ms = _elapsed_ms(retrieval_start)
+        self._log_recall_diagnostic(
+            "Memory recall retrieval completed",
+            decision=decision,
+            session_id=session_id,
+            query=query,
+            retrieval_latency_ms=retrieval_latency_ms,
+            candidate_count=len(candidates),
+            event=event,
+        )
         candidate_dicts = self._filter_candidates(candidates, session_id)
         if not candidate_dicts:
-            self.logger.debug("Memory recall skipped: no candidate memories")
+            self._log_recall_diagnostic(
+                "Memory recall skipped",
+                decision=decision,
+                session_id=session_id,
+                query=query,
+                retrieval_latency_ms=retrieval_latency_ms,
+                reason="no_candidate_memories",
+                event=event,
+            )
             return None
 
-        selected_ids = await self._select_candidate_ids(prompt, candidate_dicts)
+        selector_start = time.monotonic()
+        selected_ids = await self._select_candidate_ids(
+            query.text, candidate_dicts, decision, event
+        )
+        selector_latency_ms = _elapsed_ms(selector_start)
+        self._log_recall_diagnostic(
+            "Memory recall selector completed",
+            decision=decision,
+            session_id=session_id,
+            query=query,
+            retrieval_latency_ms=retrieval_latency_ms,
+            selector_latency_ms=selector_latency_ms,
+            selected_count=len(selected_ids),
+            event=event,
+        )
         if not selected_ids:
-            self.logger.debug("Memory recall skipped: LLM selected no memories")
+            self._log_recall_diagnostic(
+                "Memory recall skipped",
+                decision=decision,
+                session_id=session_id,
+                query=query,
+                retrieval_latency_ms=retrieval_latency_ms,
+                selector_latency_ms=selector_latency_ms,
+                reason="no_selected_memories",
+                event=event,
+            )
             return None
 
         candidate_by_id = {memory["id"]: memory for memory in candidate_dicts}
@@ -125,16 +305,80 @@ class MemoryRecallRunner:
                 break
 
         if not selected:
-            self.logger.debug("Memory recall skipped: selected IDs did not match candidates")
+            self._log_recall_diagnostic(
+                "Memory recall skipped",
+                decision=decision,
+                session_id=session_id,
+                query=query,
+                retrieval_latency_ms=retrieval_latency_ms,
+                selector_latency_ms=selector_latency_ms,
+                reason="selected_ids_not_in_candidates",
+                event=event,
+            )
             return None
         if not self._is_fresh(session_id, origin_turn_seq):
-            self.logger.debug(
-                "Dropping stale memory_recall: origin=%r no longer current",
-                origin_turn_seq,
+            self._log_recall_diagnostic(
+                "Dropping stale memory_recall",
+                decision=decision,
+                session_id=session_id,
+                query=query,
+                retrieval_latency_ms=retrieval_latency_ms,
+                selector_latency_ms=selector_latency_ms,
+                reason="stale_turn",
+                origin_turn_seq=origin_turn_seq,
+                event=event,
             )
             return None
 
         return MemoryRecallResult(origin_turn_seq=origin_turn_seq, memories=selected)
+
+    async def _query_for_prompt(
+        self,
+        prompt: str,
+        decision: MemoryRecallPromptDecision,
+        session_id: str,
+        event: HookEvent,
+    ) -> MemoryRecallQuery:
+        if len(prompt) <= self.config.query_synthesis_threshold:
+            return MemoryRecallQuery(text=prompt, kind="original", latency_ms=0.0)
+
+        start = time.monotonic()
+        try:
+            response = await asyncio.wait_for(
+                self._call_query_synthesis_feature(prompt),
+                timeout=self.config.timeout,
+            )
+            query = _parse_synthesized_query(response, self.config.query_max_chars)
+            return MemoryRecallQuery(text=query, kind="synthesized", latency_ms=_elapsed_ms(start))
+        except TimeoutError:
+            latency_ms = _elapsed_ms(start)
+            self._log_recall_diagnostic(
+                "Memory recall query synthesis timed out",
+                decision=decision,
+                session_id=session_id,
+                query=MemoryRecallQuery(
+                    text="",
+                    kind="synthesis_timeout",
+                    latency_ms=latency_ms,
+                    timeout_reason="query_synthesis_timeout",
+                ),
+                reason="query_synthesis_timeout",
+                event=event,
+            )
+            return MemoryRecallQuery(
+                text=_fallback_query(prompt, self.config.query_max_chars),
+                kind="fallback_keywords",
+                latency_ms=latency_ms,
+                timeout_reason="query_synthesis_timeout",
+            )
+        except Exception as exc:  # noqa: BLE001 - recall must fail open
+            latency_ms = _elapsed_ms(start)
+            self.logger.warning("Memory recall query synthesis failed: %s", exc)
+            return MemoryRecallQuery(
+                text=_fallback_query(prompt, self.config.query_max_chars),
+                kind="fallback_keywords",
+                latency_ms=latency_ms,
+            )
 
     async def _search_candidates(self, prompt: str, project_id: str | None) -> list[Memory]:
         try:
@@ -173,6 +417,8 @@ class MemoryRecallRunner:
         self,
         prompt: str,
         candidates: list[dict[str, Any]],
+        decision: MemoryRecallPromptDecision,
+        event: HookEvent,
     ) -> list[str]:
         if self.llm_service is None:
             self.logger.debug("Memory recall skipped: LLM service unavailable")
@@ -185,7 +431,13 @@ class MemoryRecallRunner:
                 timeout=self.config.timeout,
             )
         except TimeoutError:
-            self.logger.warning("Memory recall LLM call timed out")
+            self._log_recall_diagnostic(
+                "Memory recall LLM call timed out",
+                decision=decision,
+                session_id=str(event.metadata.get("_platform_session_id") or ""),
+                reason="selection_timeout",
+                event=event,
+            )
             return []
         except Exception as exc:  # noqa: BLE001 - hook recall must fail open
             self.logger.warning("Memory recall LLM call failed: %s", exc)
@@ -212,6 +464,46 @@ class MemoryRecallRunner:
             system_prompt=RECALL_SYSTEM_PROMPT,
             caller="memory.recall",
         )
+
+    async def _call_query_synthesis_feature(self, prompt: str) -> Any:
+        llm_service = self.llm_service
+        if llm_service is None:
+            raise RuntimeError("LLM service unavailable")
+
+        call_json_feature = getattr(llm_service, "call_json_feature", None)
+        if not callable(call_json_feature):
+            raise RuntimeError("LLM service unavailable")
+
+        return await call_json_feature(
+            self._query_synthesis_config(),
+            self._render_query_prompt(prompt),
+            system_prompt=QUERY_SYNTHESIS_SYSTEM_PROMPT,
+            caller="memory.recall.query",
+        )
+
+    def _query_synthesis_config(self) -> MemoryRecallConfig:
+        return self.config.model_copy(
+            update={
+                "profile": FeatureProfile.LOW,
+                "candidates": list(default_candidates_for_profile(FeatureProfile.LOW)),
+            }
+        )
+
+    def _render_query_prompt(self, prompt: str) -> str:
+        variables = {
+            "user_prompt": prompt,
+            "max_query_chars": self.config.query_max_chars,
+        }
+        try:
+            return PromptLoader(db=self.db).render("memory/recall_query_synthesize", variables)
+        except Exception as exc:  # noqa: BLE001 - fallback keeps recall available
+            self.logger.debug("Falling back to built-in memory recall query prompt: %s", exc)
+            return (
+                "Condense this user prompt into one memory search query. "
+                f"Keep it under {self.config.query_max_chars} characters. "
+                'Return strict JSON only: {"query":"..."}\n\n'
+                f"User prompt:\n{prompt}"
+            )
 
     def _render_prompt(self, prompt: str, candidates: list[dict[str, Any]]) -> str:
         variables = {
@@ -249,18 +541,130 @@ class MemoryRecallRunner:
             return False
         return variables.get("parent_turn_seq") == origin_turn_seq
 
+    def _log_recall_diagnostic(
+        self,
+        message: str,
+        *,
+        decision: MemoryRecallPromptDecision,
+        session_id: str,
+        event: HookEvent,
+        query: MemoryRecallQuery | None = None,
+        reason: str | None = None,
+        retrieval_latency_ms: float | None = None,
+        selector_latency_ms: float | None = None,
+        candidate_count: int | None = None,
+        selected_count: int | None = None,
+        origin_turn_seq: int | None = None,
+    ) -> None:
+        self.logger.debug(
+            (
+                "%s: prompt_kind=%s source=%s session=%s raw_len=%d query_kind=%s "
+                "query_len=%d retrieval_ms=%s selector_ms=%s timeout_reason=%s "
+                "reason=%s candidates=%s selected=%s origin_turn_seq=%s caller_metadata=%s"
+            ),
+            message,
+            decision.kind,
+            decision.source,
+            session_id,
+            decision.raw_length,
+            query.kind if query else None,
+            len(query.text) if query else 0,
+            _rounded_latency(retrieval_latency_ms),
+            _rounded_latency(selector_latency_ms),
+            query.timeout_reason if query else None,
+            reason,
+            candidate_count,
+            selected_count,
+            origin_turn_seq,
+            _bounded_caller_metadata(event),
+        )
 
-def _is_synthetic_or_system_activity(event: HookEvent) -> bool:
-    for key in ("synthetic", "_synthetic", "is_synthetic"):
+
+def _prompt_decision(
+    eligible: bool,
+    kind: str,
+    reason: str,
+    prompt: str,
+    source: str,
+) -> MemoryRecallPromptDecision:
+    return MemoryRecallPromptDecision(
+        eligible=eligible,
+        kind=kind,
+        reason=reason,
+        prompt=prompt,
+        source=source,
+        raw_length=len(prompt),
+    )
+
+
+def _source_value(source: SessionSource | str) -> str:
+    return source.value if isinstance(source, SessionSource) else str(source)
+
+
+def _synthetic_prompt_reason(event: HookEvent, prompt: str) -> str | None:
+    for key in SYNTHETIC_BOOLEAN_KEYS:
         if event.metadata.get(key) or event.data.get(key):
-            return True
-    for key in ("source", "origin", "actor"):
-        value = event.metadata.get(key) or event.data.get(key)
-        if isinstance(value, str) and value.lower() in SYSTEM_ACTIVITY_SOURCES:
-            return True
-    if event.metadata.get("session_type") == "system":
-        return True
-    return False
+            return f"metadata_{key}"
+
+    for key in SYNTHETIC_METADATA_KEYS:
+        value = event.metadata.get(key)
+        reason = _synthetic_metadata_reason(key, value)
+        if reason is not None:
+            return reason
+        value = event.data.get(key)
+        reason = _synthetic_metadata_reason(key, value)
+        if reason is not None:
+            return reason
+
+    return _synthetic_body_reason(prompt)
+
+
+def _synthetic_metadata_reason(key: str, value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    if normalized in SYNTHETIC_METADATA_VALUES:
+        return f"metadata_{key}_{normalized}"
+    return None
+
+
+def _synthetic_body_reason(prompt: str) -> str | None:
+    stripped = prompt.strip()
+    lowered = stripped.lower()
+    if not stripped:
+        return "empty_prompt"
+    if stripped.startswith(WAKE_PROMPT_PREFIX) or stripped.startswith("Message from Gobby daemon:"):
+        return "daemon_wake_prompt"
+    if stripped.startswith("AGENTS.md instructions for ") or stripped.startswith(
+        "# AGENTS.md instructions for "
+    ):
+        return "agents_md_instructions"
+    if lowered.startswith(PROTOCOL_PROMPT_PREFIXES):
+        return "protocol_prompt"
+    if _looks_like_codex_bootstrap_prompt(stripped):
+        return "codex_bootstrap_prompt"
+    if _looks_like_wait_directive(stripped):
+        return "wait_directive"
+    return None
+
+
+def _looks_like_codex_bootstrap_prompt(prompt: str) -> bool:
+    return (
+        "<permissions instructions>" in prompt
+        and "<collaboration_mode>" in prompt
+        and "Gobby Session ID:" in prompt
+        and "## Instructions" in prompt
+    )
+
+
+def _looks_like_wait_directive(prompt: str) -> bool:
+    return (
+        prompt.startswith("Continue where you last left off. Before continuing, call ")
+        and "gobby-sessions.wait_for_summary(" in prompt
+    ) or (
+        prompt.startswith("Task ")
+        and " has incomplete subtasks. Use suggest_next_task() and continue working." in prompt
+    )
 
 
 def _memory_to_payload(memory: Memory) -> dict[str, Any]:
@@ -305,3 +709,72 @@ def _parse_selected_memory_ids(response: Any) -> list[str]:
         if isinstance(item, str) and item:
             selected.append(item)
     return selected
+
+
+def _parse_synthesized_query(response: Any, max_chars: int) -> str:
+    if not isinstance(response, dict):
+        raise ValueError("response is not an object")
+    query = response.get("query")
+    if not isinstance(query, str):
+        raise ValueError("query must be a string")
+    query = _bounded_query(query, max_chars)
+    if not query:
+        raise ValueError("query must be non-empty")
+    return query
+
+
+def _fallback_query(prompt: str, max_chars: int) -> str:
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for match in KEYWORD_PATTERN.findall(prompt):
+        keyword = match.strip(".,:;()[]{}<>").lower()
+        if keyword in KEYWORD_STOPWORDS or keyword in seen:
+            continue
+        seen.add(keyword)
+        keywords.append(match)
+        if len(keywords) >= 80:
+            break
+    if len(keywords) >= 4:
+        return _bounded_query(" ".join(keywords), max_chars)
+    return _bounded_query(prompt, max_chars)
+
+
+def _bounded_query(text: str, max_chars: int) -> str:
+    return " ".join(text.split())[:max_chars].rstrip()
+
+
+def _elapsed_ms(start: float) -> float:
+    return (time.monotonic() - start) * 1000
+
+
+def _rounded_latency(value: float | None) -> float | None:
+    return None if value is None else round(value, 1)
+
+
+def _bounded_caller_metadata(event: HookEvent) -> dict[str, Any]:
+    keys = (
+        "_platform_session_id",
+        "actor",
+        "kind",
+        "origin",
+        "prompt_kind",
+        "prompt_origin",
+        "prompt_source",
+        "prompt_type",
+        "role",
+        "session_type",
+        "source",
+        "synthetic",
+        "_synthetic",
+        "is_synthetic",
+        "type",
+    )
+    metadata: dict[str, Any] = {}
+    for key in keys:
+        if key not in event.metadata:
+            continue
+        value = event.metadata[key]
+        if isinstance(value, str) and len(value) > 80:
+            value = f"{value[:77]}..."
+        metadata[key] = value
+    return metadata

@@ -22,6 +22,8 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
         "candidate_limit",
         "selected_limit",
         "min_score",
+        "query_synthesis_threshold",
+        "query_max_chars",
     }
     cfg = MemoryRecallConfig()
     assert cfg.enabled is True
@@ -31,6 +33,8 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
     assert cfg.candidate_limit == 8
     assert cfg.selected_limit == 3
     assert cfg.min_score == 0.5
+    assert cfg.query_synthesis_threshold == 8_000
+    assert cfg.query_max_chars == 1_200
     assert DaemonConfig().memory_recall.enabled is True
 
     disabled_config_file = temp_dir / "disabled.yaml"
@@ -44,6 +48,8 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
                     "candidate_limit": 5,
                     "selected_limit": 2,
                     "min_score": 0.25,
+                    "query_synthesis_threshold": 100,
+                    "query_max_chars": 80,
                 }
             }
         )
@@ -55,6 +61,8 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
     assert disabled_config.memory_recall.candidate_limit == 5
     assert disabled_config.memory_recall.selected_limit == 2
     assert disabled_config.memory_recall.min_score == 0.25
+    assert disabled_config.memory_recall.query_synthesis_threshold == 100
+    assert disabled_config.memory_recall.query_max_chars == 80
 
     default_config_file = temp_dir / "default.yaml"
     default_config_file.write_text(yaml.safe_dump({"daemon_port": 60999}))

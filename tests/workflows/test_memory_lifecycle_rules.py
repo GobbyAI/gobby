@@ -205,26 +205,19 @@ class TestBootstrapSessionTitleOnPrompt:
 
 
 class TestMemoryRecallOnPrompt:
-    """Recall relevant memories before agent prompt."""
+    """Legacy raw recall rule is neutralized; daemon-owned recall handles prompts."""
 
-    def test_event_and_effect(self, db, manager) -> None:
+    def test_neutralized_and_inert(self, db, manager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("memory-recall-on-prompt")
         assert row is not None
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "turn_start"
-        assert body.effects[0].type == "mcp_call"
-        assert body.effects[0].server == "gobby-memory"
-        assert body.effects[0].tool == "search_memories"
-        assert body.effects[0].arguments["min_score"] == 0.7
-        assert body.effects[0].arguments["tags_none"] == ["review-lesson"]
-
-    def test_not_background(self, db, manager) -> None:
-        """Recall must block to inject context."""
-        _sync_bundled(db)
-        row = manager.get_by_name("memory-recall-on-prompt")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.effects[0].background is False
+        assert body.when == "false"
+        assert body.effects[0].type == "set_variable"
+        assert body.effects[0].variable == "legacy_memory_recall_rule_disabled"
+        assert body.effects[0].value is True
+        assert all(effect.tool != "search_memories" for effect in body.effects)
 
 
 # ═══════════════════════════════════════════════════════════════════════
