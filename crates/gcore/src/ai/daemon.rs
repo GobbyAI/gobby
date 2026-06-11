@@ -52,7 +52,7 @@ pub fn transcribe_via_daemon(
     let binding = cfg.binding(capability);
     let client = daemon_client()?;
     let token = read_local_cli_token()?;
-    let url = daemon_url(VOICE_TRANSCRIBE_PATH)?;
+    let url = daemon_url(VOICE_TRANSCRIBE_PATH);
     let file_name = file_name.to_string();
     let mime = mime.to_string();
     let language = options
@@ -105,7 +105,7 @@ pub fn describe_image_via_daemon(
     let binding = cfg.binding(capability);
     let client = daemon_client()?;
     let token = read_local_cli_token()?;
-    let url = daemon_url(VISION_EXTRACT_PATH)?;
+    let url = daemon_url(VISION_EXTRACT_PATH);
     let file_name = file_name.to_string();
     let mime = mime.to_string();
     let provider = binding.provider.clone();
@@ -157,7 +157,7 @@ pub fn generate_via_daemon_with_max_tokens(
     let binding = cfg.binding(capability);
     let client = daemon_client()?;
     let token = read_local_cli_token()?;
-    let url = daemon_url(TEXT_GENERATE_PATH)?;
+    let url = daemon_url(TEXT_GENERATE_PATH);
     let body = text_request_body(
         prompt,
         system,
@@ -195,7 +195,7 @@ pub fn embed_via_daemon(
     let binding = cfg.binding(capability);
     let client = daemon_client()?;
     let token = read_local_cli_token()?;
-    let url = daemon_url(EMBEDDINGS_PATH)?;
+    let url = daemon_url(EMBEDDINGS_PATH);
     let body = embeddings_request_body(
         input,
         is_query,
@@ -236,13 +236,12 @@ fn daemon_client() -> Result<Client, AiError> {
     Client::builder().build().map_err(super::reqwest_error)
 }
 
-fn daemon_url(path: &str) -> Result<String, AiError> {
-    let bootstrap_path = gobby_home()?.join("bootstrap.yaml");
-    Ok(format!(
+fn daemon_url(path: &str) -> String {
+    format!(
         "{}{}",
-        crate::daemon_url::daemon_url_at(&bootstrap_path).trim_end_matches('/'),
+        crate::daemon_url::daemon_url().trim_end_matches('/'),
         path
-    ))
+    )
 }
 
 fn read_local_cli_token() -> Result<String, AiError> {
@@ -748,6 +747,26 @@ mod tests {
             "audio_transcribe"
         ));
         assert!(!multipart_has_field(&request, "capability", "transcribe"));
+    }
+
+    #[test]
+    fn probe_and_transport_resolve_same_custom_port_url_under_gobby_home() {
+        let home = temp_home();
+        let _env = EnvGuard::set_home(home.path());
+        write_daemon_files(home.path(), 61999, "parity-token");
+
+        let base = crate::daemon_url::daemon_url();
+        assert_eq!(base, "http://127.0.0.1:61999");
+
+        // Probe composes its base URL from the same shared resolver; nothing
+        // listens on the port, so only the resolved URL is asserted.
+        let report = crate::ai::probe::probe_daemon_capabilities();
+        assert_eq!(report.base_url, base);
+
+        assert_eq!(
+            daemon_url(TEXT_GENERATE_PATH),
+            format!("{base}{TEXT_GENERATE_PATH}")
+        );
     }
 
     fn spawn_server(response: &'static str) -> (u16, RequestHandle) {

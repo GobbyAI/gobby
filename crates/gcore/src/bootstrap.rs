@@ -22,7 +22,7 @@ pub const DEFAULT_DAEMON_PORT: u16 = 60887;
 /// Default bind host when bootstrap.yaml is missing or malformed.
 pub const DEFAULT_BIND_HOST: &str = "127.0.0.1";
 
-const BOOTSTRAP_RELATIVE_PATH: &str = ".gobby/bootstrap.yaml";
+const BOOTSTRAP_FILENAME: &str = "bootstrap.yaml";
 
 /// A daemon endpoint as advertised by bootstrap.yaml.
 ///
@@ -44,11 +44,13 @@ impl Default for DaemonEndpoint {
     }
 }
 
-/// Resolve the path to `~/.gobby/bootstrap.yaml`.
+/// Resolve the path to `bootstrap.yaml` inside the Gobby home directory.
 ///
-/// Returns `None` when the home directory cannot be determined.
+/// Respects `GOBBY_HOME` via [`crate::gobby_home`], falling back to
+/// `~/.gobby`. Returns `None` when neither `GOBBY_HOME` nor the home
+/// directory can be determined.
 pub fn bootstrap_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(BOOTSTRAP_RELATIVE_PATH))
+    crate::gobby_home().ok().map(|h| h.join(BOOTSTRAP_FILENAME))
 }
 
 /// Read the daemon endpoint from the default bootstrap path.
@@ -152,5 +154,26 @@ mod tests {
         let path = dir.path().join("bootstrap.yaml");
         fs::write(&path, "daemon_port: 70000\n").unwrap();
         assert_eq!(read_daemon_endpoint_at(&path).port, DEFAULT_DAEMON_PORT);
+    }
+
+    #[test]
+    fn bootstrap_path_respects_gobby_home() {
+        let _lock = crate::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous = std::env::var_os("GOBBY_HOME");
+        let dir = tempdir().unwrap();
+        // SAFETY: GOBBY_HOME mutation is serialized through TEST_ENV_LOCK and
+        // restored before the lock is released.
+        unsafe { std::env::set_var("GOBBY_HOME", dir.path()) };
+        let path = bootstrap_path();
+        // SAFETY: still holding TEST_ENV_LOCK; restores the original value.
+        unsafe {
+            match &previous {
+                Some(value) => std::env::set_var("GOBBY_HOME", value),
+                None => std::env::remove_var("GOBBY_HOME"),
+            }
+        }
+        assert_eq!(path, Some(dir.path().join("bootstrap.yaml")));
     }
 }
