@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use gobby_core::ai::effective_route;
 use gobby_core::ai_context::{AiContext, AiContextOptions};
 use gobby_core::config::{AiCapability, AiRouting};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::credibility::{CredibilityInput, CredibilityScore, CredibilitySourceType};
 use crate::health;
@@ -15,6 +15,12 @@ use crate::provenance::ProvenanceGraph;
 use crate::sources::{SourceKind, SourceManifest, SourceRecord};
 use crate::support::scope::{resolve_selection_context, scope_includes_page};
 use crate::{CommandOutcome, ScopeIdentity, ScopeSelection, WikiError};
+
+mod contradictions;
+
+#[cfg(test)]
+use contradictions::parse_contradiction_findings;
+use contradictions::{SectionClaimComparison, contradiction_section, model_contradiction_findings};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct CitationQualityReport {
@@ -76,7 +82,7 @@ pub(crate) struct ContradictionSection {
     pub(crate) findings: Vec<ContradictionFinding>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 pub(crate) struct ContradictionFinding {
     pub(crate) claim: String,
     pub(crate) source_ids: Vec<String>,
@@ -160,12 +166,30 @@ pub(crate) fn build_report(
     scope: ScopeIdentity,
     ai_available: bool,
 ) -> Result<CitationQualityReport, WikiError> {
+    build_report_with_contradiction_detector(
+        vault_root,
+        scope,
+        ai_available,
+        model_contradiction_findings,
+    )
+}
+
+fn build_report_with_contradiction_detector<F>(
+    vault_root: &Path,
+    scope: ScopeIdentity,
+    ai_available: bool,
+    mut contradiction_detector: F,
+) -> Result<CitationQualityReport, WikiError>
+where
+    F: FnMut(&[SectionClaimComparison]) -> Result<Vec<ContradictionFinding>, WikiError>,
+{
     let manifest = SourceManifest::read(vault_root)?;
     let provenance = ProvenanceGraph::load_from_vault(vault_root)?;
     let health = health::inspect(vault_root, scope.clone())?;
     let credibility = credibility_section(&manifest.entries, &provenance);
     let coverage_gaps = coverage_gap_section(vault_root, &scope, &provenance)?;
-    let contradictions = contradiction_section(&provenance, ai_available);
+    let contradictions =
+        contradiction_section(&provenance, ai_available, &mut contradiction_detector)?;
     let stale_sources = stale_source_section(&health);
     let confidence = confidence_section(
         &credibility,
@@ -308,37 +332,6 @@ fn coverage_gap_section(
         available: true,
         gaps,
     })
-}
-
-fn contradiction_section(
-    _provenance: &ProvenanceGraph,
-    ai_available: bool,
-) -> ContradictionSection {
-    if !ai_available {
-        return ContradictionSection {
-            available: false,
-            note: Some(
-                "AI-assisted contradiction detection unavailable; no contradictions fabricated."
-                    .to_string(),
-            ),
-            findings: Vec::new(),
-        };
-    }
-
-    // TODO: implement AI-assisted contradiction detection over the provenance
-    // graph (compare claims that share sections across sources). Until then
-    // this section is an explicit placeholder: it runs no detection, never
-    // reports findings, and repeated support is not treated as contradiction
-    // evidence.
-    ContradictionSection {
-        available: false,
-        note: Some(
-            "placeholder — AI-assisted contradiction detection not yet implemented; \
-             no findings reported."
-                .to_string(),
-        ),
-        findings: Vec::new(),
-    }
 }
 
 fn stale_source_section(report: &health::HealthReport) -> StaleSourceSection {
@@ -646,6 +639,83 @@ mod tests {
     }
 
     #[test]
+    fn citation_quality_report_detects_ai_contradictions_when_available() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_page(
+            temp.path(),
+            "knowledge/topics/topic.md",
+            "# Topic\n\n## Claim\nLaunch timing claim.\n",
+        );
+        SourceManifest {
+            entries: vec![
+                source_record("src-1", "https://example.com/one", "2026-01-01T00:00:00Z"),
+                source_record("src-2", "https://example.com/two", "2026-01-02T00:00:00Z"),
+            ],
+        }
+        .write(temp.path())
+        .expect("write source manifest");
+        let mut provenance = ProvenanceGraph::default();
+        for (source_id, claim) in [
+            ("src-1", "The launch date is March 1."),
+            ("src-2", "The launch date is April 1."),
+        ] {
+            provenance.add_link(ProvenanceLink {
+                section: WikiSectionRef {
+                    page_path: PathBuf::from("knowledge/topics/topic.md"),
+                    heading: "Claim".to_string(),
+                    section_id: "claim".to_string(),
+                },
+                source: SourceChunkRef {
+                    source_id: source_id.to_string(),
+                    chunk_id: format!("{source_id}-chunk"),
+                    path: PathBuf::from(format!("raw/{source_id}.md")),
+                    byte_start: 0,
+                    byte_end: 20,
+                },
+                claim: Some(claim.to_string()),
+            });
+        }
+        provenance
+            .save_to_vault(temp.path())
+            .expect("save provenance");
+
+        let report = build_report_with_contradiction_detector(
+            temp.path(),
+            ScopeIdentity::global(),
+            true,
+            |comparisons| {
+                assert_eq!(comparisons.len(), 1);
+                assert_eq!(comparisons[0].section, "knowledge/topics/topic.md#claim");
+                assert_eq!(comparisons[0].claims.len(), 2);
+                Ok(vec![ContradictionFinding {
+                    claim: "Launch date differs between sources".to_string(),
+                    source_ids: vec![
+                        "src-2".to_string(),
+                        "missing-source".to_string(),
+                        "src-1".to_string(),
+                    ],
+                }])
+            },
+        )
+        .expect("report");
+
+        assert!(report.sections.contradictions.available);
+        assert_eq!(
+            report.sections.contradictions.findings,
+            vec![ContradictionFinding {
+                claim: "Launch date differs between sources".to_string(),
+                source_ids: vec!["src-1".to_string(), "src-2".to_string()],
+            }]
+        );
+        assert!(report.markdown.contains("available: true"));
+        assert!(
+            report
+                .markdown
+                .contains("Launch date differs between sources: conflicting sources src-1, src-2")
+        );
+    }
+
+    #[test]
     fn citation_quality_report_ignores_repeated_support_when_ai_available() {
         let temp = tempfile::tempdir().expect("tempdir");
         write_page(
@@ -683,13 +753,36 @@ mod tests {
             .save_to_vault(temp.path())
             .expect("save provenance");
 
-        let report = build_report(temp.path(), ScopeIdentity::global(), true).expect("report");
+        let report = build_report_with_contradiction_detector(
+            temp.path(),
+            ScopeIdentity::global(),
+            true,
+            |_| panic!("repeated support should not call the AI detector"),
+        )
+        .expect("report");
 
         assert!(report.markdown.contains("## Contradictions"));
-        assert!(report.markdown.contains("available: false"));
+        assert!(report.markdown.contains("available: true"));
         assert!(!report.markdown.contains("Shared claim."));
         assert!(!report.markdown.contains("src-1, src-2"));
         assert!(report.markdown.contains("No contradictions reported."));
+    }
+
+    #[test]
+    fn citation_quality_parses_fenced_contradiction_json() {
+        let findings = parse_contradiction_findings(
+            "```json\n{\"findings\":[{\"claim\":\"A conflicts with B\",\
+             \"source_ids\":[\"src-1\",\"src-2\"]}]}\n```",
+        )
+        .expect("parse findings");
+
+        assert_eq!(
+            findings,
+            vec![ContradictionFinding {
+                claim: "A conflicts with B".to_string(),
+                source_ids: vec!["src-1".to_string(), "src-2".to_string()],
+            }]
+        );
     }
 
     #[test]
