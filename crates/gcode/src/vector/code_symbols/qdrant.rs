@@ -4,6 +4,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use crate::config::{CODE_SYMBOL_COLLECTION_PREFIX, QdrantConfig};
+use gobby_core::degradation::ServiceState;
 use gobby_core::qdrant::{CollectionNameError, CollectionScope, SearchRequest};
 
 use super::types::{ExistingVectorCollectionSchema, VectorLifecycleError};
@@ -85,13 +86,28 @@ pub fn vector_search(
         limit,
         filter: None,
     };
-    let (hits, _) = gobby_core::qdrant::with_qdrant(Some(config), Vec::new(), |config| {
+    let (hits, state) = gobby_core::qdrant::with_qdrant(Some(config), Vec::new(), |config| {
         gobby_core::qdrant::search(config, collection, request)
     })?;
+    if let Some(message) = vector_search_degradation_warning(&state) {
+        log::warn!("{message}");
+    }
     Ok(hits
         .into_iter()
         .map(|hit| (hit.id, f64::from(hit.score)))
         .collect())
+}
+
+fn vector_search_degradation_warning(state: &ServiceState) -> Option<String> {
+    match state {
+        ServiceState::Available => None,
+        ServiceState::NotConfigured => {
+            Some("semantic vector search skipped: Qdrant is not configured".to_string())
+        }
+        ServiceState::Unreachable { message } => Some(format!(
+            "semantic vector search skipped: Qdrant is unreachable: {message}"
+        )),
+    }
 }
 
 pub(super) fn parse_collection_schema(data: &Value) -> Option<ExistingVectorCollectionSchema> {
@@ -291,5 +307,31 @@ pub(super) fn qdrant_http_error(
         operation,
         status: status.as_u16(),
         body: resp.text().unwrap_or_default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vector_search_degradation_warning_mentions_missing_qdrant_config() {
+        assert_eq!(
+            vector_search_degradation_warning(&ServiceState::NotConfigured),
+            Some("semantic vector search skipped: Qdrant is not configured".to_string())
+        );
+    }
+
+    #[test]
+    fn vector_search_degradation_warning_mentions_unreachable_qdrant() {
+        assert_eq!(
+            vector_search_degradation_warning(&ServiceState::Unreachable {
+                message: "connection refused".to_string()
+            }),
+            Some(
+                "semantic vector search skipped: Qdrant is unreachable: connection refused"
+                    .to_string()
+            )
+        );
     }
 }

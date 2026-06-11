@@ -9,6 +9,24 @@ fn services_for(args: &[&str]) -> config::ServiceConfigSelection {
 }
 
 #[test]
+fn stderr_logger_defaults_to_warnings_for_non_quiet_runs() {
+    assert_eq!(stderr_log_level(false, None), log::LevelFilter::Warn);
+}
+
+#[test]
+fn stderr_logger_respects_plain_rust_log_level() {
+    assert_eq!(
+        stderr_log_level(false, Some("debug")),
+        log::LevelFilter::Debug
+    );
+}
+
+#[test]
+fn stderr_logger_uses_quiet_as_hard_mute() {
+    assert_eq!(stderr_log_level(true, Some("warn")), log::LevelFilter::Off);
+}
+
+#[test]
 fn setup_early_dispatch_uses_parsed_request_without_context() {
     let project = tempfile::tempdir().expect("temp project");
     let cli = Cli::try_parse_from([

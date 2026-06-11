@@ -3,6 +3,39 @@ use gobby_code::{commands, config, freshness, output, setup};
 
 use crate::cli::{self, AiRouteArg, Cli, Command, EmbeddingsCommand, GraphCommand, VectorCommand};
 
+static STDERR_LOGGER: StderrLogger = StderrLogger;
+
+struct StderrLogger;
+
+impl log::Log for StderrLogger {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        metadata.level() <= log::max_level()
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if self.enabled(record.metadata()) {
+            eprintln!("{}: {}", record.level(), record.args());
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+fn init_logger(quiet: bool) {
+    let rust_log = std::env::var("RUST_LOG").ok();
+    let _ = log::set_logger(&STDERR_LOGGER);
+    log::set_max_level(stderr_log_level(quiet, rust_log.as_deref()));
+}
+
+fn stderr_log_level(quiet: bool, rust_log: Option<&str>) -> log::LevelFilter {
+    if quiet {
+        return log::LevelFilter::Off;
+    }
+    rust_log
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(log::LevelFilter::Warn)
+}
+
 fn ensure_project_fresh(ctx: &config::Context, disabled: bool) -> anyhow::Result<()> {
     if !disabled {
         warn_if_busy(
@@ -202,6 +235,7 @@ pub(crate) fn run_with_exit_code() -> std::process::ExitCode {
 
 fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    init_logger(cli.quiet);
     let format = cli::effective_format(cli.format, &cli.command);
 
     // Commands that must run before Context::resolve() (work on uninitialized projects)
