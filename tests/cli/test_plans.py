@@ -5,10 +5,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import click
 import pytest
 from click.testing import CliRunner
 
 from gobby.cli.plans import _root_ref_from_file, plans
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.plans import LocalPlanManager
+from gobby.storage.projects import LocalProjectManager
 
 pytestmark = pytest.mark.unit
 plans_module = importlib.import_module("gobby.cli.plans")
@@ -23,6 +27,17 @@ class _Symbol:
 
 
 class _FakeDb:
+    def close(self) -> None:
+        pass
+
+
+class _NonClosingDb:
+    def __init__(self, db: HubDatabase) -> None:
+        self._db = db
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._db, name)
+
     def close(self) -> None:
         pass
 
@@ -88,6 +103,56 @@ Update docs/demo.md.
     return path
 
 
+def _write_register_plan(root: Path, *, name: str = "cli-register-plan") -> Path:
+    path = root / ".gobby" / "plans" / f"{name}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"""---
+root_task_ref: "#100"
+---
+> **Plan ID:** {name}
+
+## P1 Phase 1
+`kind: framing`
+
+### 1.1 Register Plan [category: code]
+`kind: deliverable`
+
+Register the plan.
+
+**Acceptance:**
+- 1.1.1 - Plan row exists. file: `src/gobby/cli/plans.py`
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_malformed_register_plan(root: Path) -> Path:
+    path = root / ".gobby" / "plans" / "cli-malformed-plan.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        """---
+root_task_ref: "#100"
+---
+> **Plan ID:** cli-malformed-plan
+
+## P1 Phase 1
+`kind: framing`
+
+### 1.1 Missing Kind [category: code]
+
+This deliverable is malformed.
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _create_project(temp_db: HubDatabase, root: Path) -> str:
+    return LocalProjectManager(temp_db).create(name=f"plans-{root.name}", repo_path=str(root)).id
+
+
 def _write_consumer_plan(
     tmp_path: Path,
     *,
@@ -116,6 +181,48 @@ Rename the service implementation.
         encoding="utf-8",
     )
     return path
+
+
+def test_register_command_writes_plan_row(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_id = _create_project(temp_db, tmp_path)
+    plan = _write_register_plan(tmp_path)
+    monkeypatch.setattr(plans_module, "resolve_project_ref", lambda *_args, **_kwargs: project_id)
+    monkeypatch.setattr(plans_module, "_open_db", lambda: _NonClosingDb(temp_db))
+
+    result = CliRunner().invoke(plans, ["register", str(plan), "--project", "gobby"])
+
+    assert result.exit_code == 0, result.output
+    assert "Registered cli-register-plan (active)" in result.output
+    record = LocalPlanManager(temp_db).get_plan("cli-register-plan", project_id=project_id)
+    assert record.project_id == project_id
+    assert record.plan_id == "cli-register-plan"
+    assert record.plan_path == ".gobby/plans/cli-register-plan.md"
+    assert record.plan_kind == "implementation"
+    assert record.root_task_ref == "#100"
+    assert record.state == "active"
+
+
+def test_register_command_malformed_plan_raises_click_exception(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_id = _create_project(temp_db, tmp_path)
+    plan = _write_malformed_register_plan(tmp_path)
+    monkeypatch.setattr(plans_module, "resolve_project_ref", lambda *_args, **_kwargs: project_id)
+    monkeypatch.setattr(plans_module, "_open_db", lambda: _NonClosingDb(temp_db))
+
+    with pytest.raises(click.ClickException) as exc_info:
+        plans_module.register_plan_command.callback(
+            plan_path=plan,
+            plan_id=None,
+            plan_kind="implementation",
+            root_task_ref=None,
+            project="gobby",
+        )
+
+    assert str(plan) in exc_info.value.message
+    assert "missing kind: front-matter" in exc_info.value.message
 
 
 def test_root_ref_from_file_reads_front_matter(tmp_path: Path) -> None:
