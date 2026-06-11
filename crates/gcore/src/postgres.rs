@@ -6,7 +6,7 @@
 //! schema-agnostic; consumers supply any table or index validation.
 
 use anyhow::Context;
-use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
+use openssl::ssl::{SslConnector, SslConnectorBuilder, SslMethod, SslVerifyMode};
 use postgres::{Client, NoTls, config::SslMode};
 use postgres_openssl::MakeTlsConnector;
 
@@ -189,50 +189,92 @@ fn normalize_sslmode_token(value: &str) -> String {
 }
 
 fn connect_with_tls_unverified(config: &postgres::Config) -> anyhow::Result<Client> {
-    connect_with_tls_verification(config, false)
+    connect_with_tls(config, TlsConnectorMode::Unverified)
 }
 
 fn connect_with_tls_verify_ca(config: &postgres::Config) -> anyhow::Result<Client> {
-    let connector = verified_tls_connector(false)?;
-    config
-        .connect(connector)
-        .context("failed to connect to the Gobby PostgreSQL hub")
+    connect_with_tls(config, TlsConnectorMode::VerifyCa)
 }
 
 fn connect_with_tls_verification(
     config: &postgres::Config,
     verify: bool,
 ) -> anyhow::Result<Client> {
-    let connector = if verify {
-        verified_tls_connector(true)?
+    let mode = if verify {
+        TlsConnectorMode::VerifyFull
     } else {
-        unverified_tls_connector()?
+        TlsConnectorMode::Unverified
     };
+    connect_with_tls(config, mode)
+}
+
+fn connect_with_tls(config: &postgres::Config, mode: TlsConnectorMode) -> anyhow::Result<Client> {
+    let connector = tls_connector(mode)?;
     config
         .connect(connector)
         .context("failed to connect to the Gobby PostgreSQL hub")
 }
 
-fn unverified_tls_connector() -> anyhow::Result<MakeTlsConnector> {
-    let mut builder = SslConnector::builder(SslMethod::tls())
-        .context("failed to build PostgreSQL TLS connector")?;
-    builder.set_verify(SslVerifyMode::NONE);
-    Ok(MakeTlsConnector::new(builder.build()))
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TlsConnectorMode {
+    Unverified,
+    VerifyCa,
+    VerifyFull,
 }
 
-fn verified_tls_connector(verify_hostname: bool) -> anyhow::Result<MakeTlsConnector> {
-    let mut builder = SslConnector::builder(SslMethod::tls())
-        .context("failed to build PostgreSQL TLS connector")?;
-    builder.set_default_verify_paths()?;
-    builder.set_verify(SslVerifyMode::PEER);
-    let mut connector = MakeTlsConnector::new(builder.build());
-    if !verify_hostname {
+impl TlsConnectorMode {
+    fn verify_mode(self) -> SslVerifyMode {
+        match self {
+            Self::Unverified => SslVerifyMode::NONE,
+            Self::VerifyCa | Self::VerifyFull => SslVerifyMode::PEER,
+        }
+    }
+
+    fn uses_default_verify_paths(self) -> bool {
+        matches!(self, Self::VerifyCa | Self::VerifyFull)
+    }
+
+    fn disables_hostname_verification(self) -> bool {
+        matches!(self, Self::VerifyCa)
+    }
+}
+
+struct TlsConnectorBuilder {
+    builder: SslConnectorBuilder,
+    #[cfg(test)]
+    verify_mode: SslVerifyMode,
+    disables_hostname_verification: bool,
+}
+
+fn tls_connector(mode: TlsConnectorMode) -> anyhow::Result<MakeTlsConnector> {
+    let builder = tls_connector_builder(mode)?;
+    let disables_hostname_verification = builder.disables_hostname_verification;
+    let mut connector = MakeTlsConnector::new(builder.builder.build());
+    if disables_hostname_verification {
         connector.set_callback(|config, _domain| {
             config.set_verify_hostname(false);
             Ok(())
         });
     }
     Ok(connector)
+}
+
+fn tls_connector_builder(mode: TlsConnectorMode) -> anyhow::Result<TlsConnectorBuilder> {
+    let mut builder = SslConnector::builder(SslMethod::tls())
+        .context("failed to build PostgreSQL TLS connector")?;
+    if mode.uses_default_verify_paths() {
+        builder
+            .set_default_verify_paths()
+            .context("failed to load PostgreSQL TLS default verify paths")?;
+    }
+    let verify_mode = mode.verify_mode();
+    builder.set_verify(verify_mode);
+    Ok(TlsConnectorBuilder {
+        builder,
+        #[cfg(test)]
+        verify_mode,
+        disables_hostname_verification: mode.disables_hostname_verification(),
+    })
 }
 
 fn run_schema_validator<C>(
@@ -336,5 +378,37 @@ mod tests {
             requested_ssl_mode("host=localhost password='my pass' sslmode='verify-full'"),
             Some(RequestedSslMode::VerifyFull)
         );
+    }
+
+    #[test]
+    fn tls_connector_construction_unverified_disables_peer_verification() -> anyhow::Result<()> {
+        let builder = tls_connector_builder(TlsConnectorMode::Unverified)?;
+        assert_eq!(builder.verify_mode, SslVerifyMode::NONE);
+        assert!(!builder.disables_hostname_verification);
+
+        let _connector = tls_connector(TlsConnectorMode::Unverified)?;
+        Ok(())
+    }
+
+    #[test]
+    fn tls_connector_construction_verify_ca_keeps_peer_verification_without_hostname()
+    -> anyhow::Result<()> {
+        let builder = tls_connector_builder(TlsConnectorMode::VerifyCa)?;
+        assert_eq!(builder.verify_mode, SslVerifyMode::PEER);
+        assert!(builder.disables_hostname_verification);
+
+        let _connector = tls_connector(TlsConnectorMode::VerifyCa)?;
+        Ok(())
+    }
+
+    #[test]
+    fn tls_connector_construction_verify_full_keeps_peer_and_hostname_verification()
+    -> anyhow::Result<()> {
+        let builder = tls_connector_builder(TlsConnectorMode::VerifyFull)?;
+        assert_eq!(builder.verify_mode, SslVerifyMode::PEER);
+        assert!(!builder.disables_hostname_verification);
+
+        let _connector = tls_connector(TlsConnectorMode::VerifyFull)?;
+        Ok(())
     }
 }
