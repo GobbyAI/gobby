@@ -509,6 +509,11 @@ fn main() -> ExitCode {
     }
 }
 
+/// Pre-parse workaround for bare `--project` (optional value): clap would
+/// otherwise consume the following subcommand name as the project root
+/// (`gwiki --project status` → project "status"). Inserting an explicit "."
+/// keeps bare `--project` meaning the current directory. Deliberate — do not
+/// "simplify" by making the value required or removing the lookahead.
 fn normalize_project_flag_args<I, S>(args: I) -> Vec<OsString>
 where
     I: IntoIterator<Item = S>,

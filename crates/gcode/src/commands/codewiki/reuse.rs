@@ -60,8 +60,10 @@ impl ReusePlan {
         let Some(entry) = self.docs.get(doc_path) else {
             return false;
         };
-        // An empty hash set cannot prove the doc unchanged (#672), and a mode
-        // change invalidates content that hashes cannot see (#677).
+        // A degraded doc is never "unchanged" — re-runs must repair it even
+        // when its sources match (#687). An empty hash set cannot prove the
+        // doc unchanged (#672), and a mode change invalidates content that
+        // hashes cannot see (#677).
         if entry.degraded || entry.ai_mode != self.ai_mode || entry.source_hashes.is_empty() {
             return false;
         }
@@ -79,6 +81,9 @@ impl ReusePlan {
                 return false;
             }
         }
+        // Meta alone is not proof the page exists: deleting a page from disk
+        // must force regeneration, which is also the supported manual way to
+        // invalidate a single doc (#681).
         let Ok(target) = safe_doc_path(&self.out_dir, doc_path) else {
             return false;
         };
