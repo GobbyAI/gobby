@@ -2243,7 +2243,6 @@ dependencies = [
  "postgres",
  "quick-xml 0.38.4",
  "regex",
- "reqwest",
  "scraper",
  "serde",
  "serde_json",

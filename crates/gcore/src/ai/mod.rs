@@ -11,6 +11,7 @@ use crate::ai_types::{AiError, TextResult, TranscriptionResult, VisionResult};
 use crate::config::{AiCapability, AiRouting, CapabilityBinding};
 
 pub mod daemon;
+pub mod embeddings;
 pub mod probe;
 pub mod text;
 pub mod transcription;

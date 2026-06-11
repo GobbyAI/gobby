@@ -1,4 +1,3 @@
-use serde_json::{Value, json};
 use std::collections::{HashMap, hash_map::Entry};
 use std::sync::{Mutex, OnceLock};
 
@@ -10,6 +9,7 @@ use gobby_core::ai::{daemon, effective_route};
 use gobby_core::ai_context::{
     AiConfigSource, AiContext, NoPrimaryAiConfigSource, PostgresAiConfigSource,
 };
+use gobby_core::ai_types::AiError;
 use gobby_core::config::AiCapability;
 
 use super::types::VectorLifecycleError;
@@ -207,19 +207,7 @@ pub fn embed_text(
     config: &EmbeddingConfig,
     text: &str,
 ) -> Result<Vec<f32>, VectorLifecycleError> {
-    let body = json!({
-        "model": config.model,
-        "input": text,
-    });
-
-    let data = send_embedding_request(client, config, body)?;
-    data.get("data")
-        .and_then(Value::as_array)
-        .and_then(|values| values.first())
-        .ok_or_else(|| {
-            VectorLifecycleError::EmbeddingResponse("missing data[0] object".to_string())
-        })
-        .and_then(parse_embedding)
+    gobby_core::ai::embeddings::embed_one(client, config, text).map_err(embedding_error)
 }
 
 pub fn probe_embedding_dim(config: &EmbeddingConfig) -> Result<usize, VectorLifecycleError> {
@@ -232,109 +220,30 @@ pub fn embed_text_batch(
     config: &EmbeddingConfig,
     texts: &[String],
 ) -> Result<Vec<Vec<f32>>, VectorLifecycleError> {
-    if texts.is_empty() {
-        return Ok(Vec::new());
-    }
-    let body = json!({
-        "model": config.model,
-        "input": texts,
-    });
-
-    let data = send_embedding_request(client, config, body)?;
-    let data = data
-        .get("data")
-        .and_then(Value::as_array)
-        .ok_or_else(|| VectorLifecycleError::EmbeddingResponse("missing data array".to_string()))?;
-    if data.len() != texts.len() {
-        return Err(VectorLifecycleError::EmbeddingResponse(format!(
-            "embedding response returned {} vector(s) for {} input(s)",
-            data.len(),
-            texts.len()
-        )));
-    }
-
-    let mut ordered = vec![None; texts.len()];
-    for (position, item) in data.iter().enumerate() {
-        let index = item
-            .get("index")
-            .and_then(Value::as_u64)
-            .and_then(|index| usize::try_from(index).ok())
-            .unwrap_or(position);
-        if index >= texts.len() || ordered[index].is_some() {
-            return Err(VectorLifecycleError::EmbeddingResponse(
-                "embedding response contained an invalid index".to_string(),
-            ));
-        }
-        ordered[index] = Some(parse_embedding(item)?);
-    }
-
-    ordered
-        .into_iter()
-        .map(|embedding| {
-            embedding.ok_or_else(|| {
-                VectorLifecycleError::EmbeddingResponse(
-                    "embedding response omitted an input index".to_string(),
-                )
-            })
-        })
-        .collect()
+    gobby_core::ai::embeddings::embed_batch(client, config, texts).map_err(embedding_error)
 }
 
-fn send_embedding_request(
-    client: &reqwest::blocking::Client,
-    config: &EmbeddingConfig,
-    body: Value,
-) -> Result<Value, VectorLifecycleError> {
-    let url = format!("{}/embeddings", config.api_base.trim_end_matches('/'));
-    let mut req = client.post(&url).json(&body);
-
-    if let Some(key) = &config.api_key {
-        req = req.header("Authorization", format!("Bearer {key}"));
+fn embedding_error(error: AiError) -> VectorLifecycleError {
+    match error {
+        AiError::HttpStatus { status, body } => VectorLifecycleError::EmbeddingHttp {
+            status,
+            body: body.unwrap_or_default(),
+        },
+        AiError::RateLimited {
+            status: Some(status),
+            body,
+            ..
+        } => VectorLifecycleError::EmbeddingHttp {
+            status,
+            body: body.unwrap_or_default(),
+        },
+        AiError::TransportFailure {
+            status: Some(status),
+            body: Some(body),
+            ..
+        } => VectorLifecycleError::EmbeddingHttp { status, body },
+        other => VectorLifecycleError::EmbeddingResponse(other.to_string()),
     }
-
-    let resp = req
-        .send()
-        .map_err(|err| VectorLifecycleError::EmbeddingResponse(err.to_string()))?;
-    if !resp.status().is_success() {
-        let status = resp.status().as_u16();
-        let body = resp.text().unwrap_or_default();
-        return Err(VectorLifecycleError::EmbeddingHttp { status, body });
-    }
-
-    resp.json()
-        .map_err(|err| VectorLifecycleError::EmbeddingResponse(err.to_string()))
-}
-
-fn parse_embedding(value: &Value) -> Result<Vec<f32>, VectorLifecycleError> {
-    let embedding = value
-        .get("embedding")
-        .and_then(Value::as_array)
-        .ok_or_else(|| {
-            VectorLifecycleError::EmbeddingResponse("missing embedding array".to_string())
-        })?
-        .iter()
-        .map(|value| {
-            let f = value.as_f64().ok_or_else(|| {
-                VectorLifecycleError::EmbeddingResponse(
-                    "embedding array contains a non-number".to_string(),
-                )
-            })?;
-            let converted = f as f32;
-            if !f.is_finite() || converted.is_infinite() {
-                return Err(VectorLifecycleError::EmbeddingResponse(
-                    "embedding contains value outside f32 range".to_string(),
-                ));
-            }
-            Ok(converted)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    if embedding.is_empty() {
-        return Err(VectorLifecycleError::EmbeddingResponse(
-            "embedding vector was empty".to_string(),
-        ));
-    }
-    Ok(embedding)
 }
 
 pub fn embed_query(config: &EmbeddingConfig, text: &str) -> Option<Vec<f32>> {

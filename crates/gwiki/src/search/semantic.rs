@@ -1,6 +1,4 @@
 use std::path::PathBuf;
-#[cfg(feature = "embeddings-http")]
-use std::time::Duration;
 
 #[cfg(feature = "ai")]
 use gobby_core::ai::daemon;
@@ -249,14 +247,14 @@ where
 #[cfg(feature = "embeddings-http")]
 #[derive(Debug, Clone)]
 pub struct OpenAiEmbeddingBackend {
-    client: reqwest::blocking::Client,
+    client: gobby_core::ai::embeddings::Client,
 }
 
 #[cfg(feature = "embeddings-http")]
 impl Default for OpenAiEmbeddingBackend {
     fn default() -> Self {
         Self {
-            client: reqwest::blocking::Client::new(),
+            client: gobby_core::ai::embeddings::Client::new(),
         }
     }
 }
@@ -308,63 +306,19 @@ impl QueryEmbedder for OpenAiEmbeddingBackend {
 
 #[cfg(feature = "embeddings-http")]
 fn embed_direct_queries(
-    client: &reqwest::blocking::Client,
+    client: &gobby_core::ai::embeddings::Client,
     config: &EmbeddingConfig,
     queries: &[String],
 ) -> Result<Vec<Vec<f32>>, SearchError> {
-    if queries.is_empty() {
-        return Ok(Vec::new());
-    }
-    let url = format!("{}/embeddings", config.api_base.trim_end_matches('/'));
-    let mut request = client
-        .post(url)
-        .timeout(Duration::from_secs(config.timeout_seconds))
-        .json(&json!({
-            "model": config.model,
-            "input": queries,
-        }));
-    if let Some(api_key) = &config.api_key {
-        request = request.bearer_auth(api_key);
-    }
+    use gobby_core::ai_types::AiError;
 
-    let response = request
-        .send()
-        .map_err(|error| SearchError::Backend(error.to_string()))?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response
-            .text()
-            .unwrap_or_else(|error| format!("<failed to read response body: {error}>"));
-        return Err(SearchError::Backend(format!(
-            "embedding request failed: HTTP {status}: {body}"
-        )));
-    }
-
-    let data = response
-        .json::<Value>()
-        .map_err(|error| SearchError::Backend(error.to_string()))?;
-    let embeddings = data
-        .get("data")
-        .and_then(Value::as_array)
-        .ok_or_else(|| SearchError::Backend("embedding API returned empty data array".to_string()))?
-        .iter()
-        .enumerate()
-        .map(|(index, item)| {
-            item.get("embedding")
-                .and_then(Value::as_array)
-                .ok_or_else(|| {
-                    SearchError::Backend(format!("missing data[{index}].embedding array"))
-                })?
-                .iter()
-                .map(|value| {
-                    value.as_f64().map(|value| value as f32).ok_or_else(|| {
-                        SearchError::Backend(format!("data[{index}].embedding has non-number"))
-                    })
-                })
-                .collect()
-        })
-        .collect::<Result<Vec<Vec<f32>>, SearchError>>()?;
-    Ok(embeddings)
+    gobby_core::ai::embeddings::embed_batch(client, config, queries).map_err(|error| match error {
+        AiError::HttpStatus { status, body } => SearchError::Backend(format!(
+            "embedding request failed: HTTP {status}: {}",
+            body.unwrap_or_default()
+        )),
+        other => SearchError::Backend(other.to_string()),
+    })
 }
 
 #[cfg(not(feature = "embeddings-http"))]
