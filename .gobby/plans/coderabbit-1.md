@@ -72,3 +72,4 @@ Verify each finding against current code. Fix only still-valid issues, skip the 
 
 In @docs/guides/code-index.md at line 149, The docs currently only mention the blast-radius `--depth` flag but the implementation in src/gobby/code_index/gcode_gateway.py passes both ["--depth", str(depth), "--limit", str(limit)]; update docs/guides/code-index.md to document that blast-radius supports both `--depth` and `--limit` (include brief usage examples or parameter descriptions) so the README matches the gcode_gateway.py implementation.
 
+we
