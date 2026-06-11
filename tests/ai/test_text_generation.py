@@ -1410,6 +1410,18 @@ async def test_codex_app_server_text_generate_adapter_times_out_and_stops_client
 
 
 @pytest.mark.asyncio
+async def test_codex_app_server_text_generate_adapter_enforces_configured_deadline() -> None:
+    client = HangingCodexAppServerClient()
+    adapter = CodexAppServerTextGenerateAdapter(lambda: client, timeout_seconds=0.01)
+
+    with pytest.raises(RuntimeError, match="timed out after 0.01s"):
+        await adapter.generate(TextGenerationRequest(provider="codex", prompt="never completes"))
+
+    assert client.started is True
+    assert client.stopped is True
+
+
+@pytest.mark.asyncio
 async def test_codex_app_server_text_generate_adapter_raises_when_turn_has_no_output() -> None:
     client = FakeCodexAppServerClient(
         [{"type": "turn/completed", "turn": {"id": "turn-1", "status": "completed", "items": []}}]

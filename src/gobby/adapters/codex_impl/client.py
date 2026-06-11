@@ -640,14 +640,36 @@ class CodexAppServerClient:
         turn_completed = asyncio.Event()
 
         def on_event(method: str, params: dict[str, Any]) -> None:
+            if method == "thread/closed" and self._notification_thread_id(params) != thread_id:
+                return
             event_queue.put_nowait({"type": method, **params})
-            if method == "turn/completed":
+            if method in {"turn/completed", "turn/failed"}:
                 turn_completed.set()
+            elif method == "thread/closed":
+                turn_completed.set()
+
+        def raise_for_terminal_error(event: dict[str, Any]) -> None:
+            method = event.get("type")
+            if method == "thread/closed" and self._notification_thread_id(event) == thread_id:
+                raise RuntimeError(f"Codex thread {thread_id} closed before turn completed")
+            if method not in {"turn/completed", "turn/failed"}:
+                return
+
+            turn = event.get("turn")
+            payload = turn if isinstance(turn, dict) else event
+            error = payload.get("error") or event.get("error")
+            if error:
+                raise RuntimeError(f"Codex turn failed: {error}")
+            status = payload.get("status")
+            if isinstance(status, str) and status.lower() in {"error", "failed"}:
+                raise RuntimeError(f"Codex turn failed with status {status}")
 
         # Register handlers for all turn-related events
         event_methods = [
             "turn/started",
             "turn/completed",
+            "turn/failed",
+            "thread/closed",
             "item/started",
             "item/completed",
             "item/agentMessage/delta",
@@ -667,17 +689,32 @@ class CodexAppServerClient:
                 try:
                     event = await asyncio.wait_for(event_queue.get(), timeout=0.1)
                     yield event
+                    raise_for_terminal_error(event)
                 except TimeoutError:
                     continue
 
             # Drain remaining events
             while not event_queue.empty():
-                yield event_queue.get_nowait()
+                event = event_queue.get_nowait()
+                yield event
+                raise_for_terminal_error(event)
 
         finally:
             # Unregister handlers
             for method in event_methods:
                 self.remove_notification_handler(method, on_event)
+
+    @staticmethod
+    def _notification_thread_id(params: dict[str, Any]) -> str | None:
+        thread_id = params.get("threadId")
+        if isinstance(thread_id, str):
+            return thread_id
+        thread = params.get("thread")
+        if isinstance(thread, dict):
+            thread_id = thread.get("id")
+            if isinstance(thread_id, str):
+                return thread_id
+        return None
 
     # ===== Authentication =====
 

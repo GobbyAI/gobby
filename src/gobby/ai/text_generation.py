@@ -498,16 +498,21 @@ class CodexAppServerTextGenerateAdapter:
     async def generate(self, request: TextGenerationRequest) -> str:
         client = self._client_factory()
         try:
-            return await asyncio.wait_for(
-                self._generate_with_client(client, request),
-                timeout=self._timeout_seconds,
-            )
+            return await self._generate_with_deadline(client, request)
         except TimeoutError as exc:
             raise RuntimeError(
                 f"Codex app-server text generation timed out after {self._timeout_seconds:g}s"
             ) from exc
         finally:
             await client.stop()
+
+    async def _generate_with_deadline(
+        self, client: CodexAppServerClientLike, request: TextGenerationRequest
+    ) -> str:
+        return await asyncio.wait_for(
+            self._generate_with_client(client, request),
+            timeout=self._timeout_seconds,
+        )
 
     async def _generate_with_client(
         self, client: CodexAppServerClientLike, request: TextGenerationRequest
