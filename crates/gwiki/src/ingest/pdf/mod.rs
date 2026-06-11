@@ -18,11 +18,13 @@ pub(crate) use types::{PdfFileSnapshot, PdfIngestOptions, pdf_fetched_at};
 #[cfg(feature = "documents")]
 use types::PdfRenderedPage;
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 struct PdfPageMarkdown {
     number: usize,
     markdown: String,
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 struct PdfMarkdownSummary {
     page_count: usize,
     has_text_layer: bool,

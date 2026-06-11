@@ -8,6 +8,7 @@ use crate::sources::{SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub struct MediaWikiPageSnapshot {
     pub title: String,
     pub source_url: String,
@@ -18,6 +19,7 @@ pub struct MediaWikiPageSnapshot {
     pub category: Option<String>,
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn ingest_page(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
@@ -38,6 +40,7 @@ pub fn ingest_page(
     write_raw_then_index(vault_root, store, record, &markdown, None)
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn render_mediawiki_markdown(
     snapshot: &MediaWikiPageSnapshot,
     title: &str,

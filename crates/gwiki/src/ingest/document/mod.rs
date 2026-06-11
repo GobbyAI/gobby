@@ -67,11 +67,13 @@ pub trait DocumentExtractor {
 
 pub enum DocumentEndpoint<'a> {
     Available(&'a dyn DocumentExtractor),
+    #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
     Unavailable(DocumentDegradation),
 }
 
 struct LocalDocumentExtractor;
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn ingest_document(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
@@ -97,6 +99,7 @@ pub(crate) fn ingest_document_without_index(
     )
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn ingest_document_with_endpoint(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,

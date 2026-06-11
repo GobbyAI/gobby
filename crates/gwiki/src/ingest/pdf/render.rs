@@ -14,7 +14,7 @@ use super::PdfRenderOutcome;
 #[cfg(feature = "documents")]
 use super::types::{PdfFileSnapshot, PdfPage, PdfRenderedPage};
 
-#[cfg(any(feature = "documents", test))]
+#[cfg(feature = "documents")]
 const MAX_RENDERED_PDF_PAGES: usize = 32;
 #[cfg(any(feature = "documents", test))]
 const MAX_RENDERED_PDF_TOTAL_BYTES: usize = 32 * 1024 * 1024;

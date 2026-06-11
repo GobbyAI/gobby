@@ -7,15 +7,18 @@ use crate::ingest::{
 use crate::sources::{SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 const MAX_CODE_FENCE_LEN: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub struct GitFileSnapshot {
     pub path: String,
     pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub struct GitRepositorySnapshot {
     pub remote_url: String,
     pub commit_sha: String,
@@ -23,6 +26,7 @@ pub struct GitRepositorySnapshot {
     pub files: Vec<GitFileSnapshot>,
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn ingest_repository(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
@@ -50,6 +54,7 @@ pub fn ingest_repository(
     write_raw_then_index(vault_root, store, record, &markdown, None)
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn snapshot_content_bytes(snapshot: &GitRepositorySnapshot) -> Vec<u8> {
     let mut content = Vec::new();
     content.extend_from_slice(snapshot.remote_url.as_bytes());
@@ -68,6 +73,7 @@ fn snapshot_content_bytes(snapshot: &GitRepositorySnapshot) -> Vec<u8> {
     content
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn render_git_markdown(snapshot: &GitRepositorySnapshot, title: &str, source_hash: &str) -> String {
     let mut markdown = git_markdown_metadata(&[
         ("source_kind", "git_repository".to_string()),
@@ -102,6 +108,7 @@ fn render_git_markdown(snapshot: &GitRepositorySnapshot, title: &str, source_has
     markdown
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn git_markdown_metadata(fields: &[(&str, String)]) -> String {
     let mut mapping = serde_yaml::Mapping::new();
     for (key, value) in fields {
@@ -119,6 +126,7 @@ fn git_markdown_metadata(fields: &[(&str, String)]) -> String {
     metadata
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn code_fence_info(path: &str) -> String {
     Path::new(path)
         .extension()
@@ -133,6 +141,7 @@ fn code_fence_info(path: &str) -> String {
         .unwrap_or_else(|| "text".to_string())
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn markdown_code_fence(text: &str) -> String {
     let backticks = bounded_max_run(text, '`');
     let tildes = bounded_max_run(text, '~');
@@ -144,6 +153,7 @@ fn markdown_code_fence(text: &str) -> String {
     std::iter::repeat_n(delimiter, max_run.saturating_add(1).max(3)).collect()
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn bounded_max_run(text: &str, delimiter: char) -> usize {
     let mut max_run = 0usize;
     let mut current_run = 0usize;

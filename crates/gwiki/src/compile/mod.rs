@@ -90,6 +90,7 @@ pub struct AcceptedCompileChunkOffset {
     pub byte_end: usize,
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn compile_to_wiki(
     session: &mut ResearchSession,
     request: CompileRequest,

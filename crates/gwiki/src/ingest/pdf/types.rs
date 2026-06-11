@@ -3,15 +3,18 @@ use chrono::TimeZone;
 use chrono::{DateTime, Utc};
 
 /// Default rasterization density for PDF page images sent to vision extraction.
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub const DEFAULT_PDF_RENDER_DPI: u16 = 150;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub struct PdfPage {
     pub number: usize,
     pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub struct PdfSnapshot {
     pub location: String,
     pub file_name: String,
@@ -21,6 +24,7 @@ pub struct PdfSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub struct PdfFileSnapshot {
     pub location: String,
     pub file_name: String,
@@ -29,6 +33,7 @@ pub struct PdfFileSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub struct PdfRenderedPage {
     pub number: usize,
     pub bytes: Vec<u8>,
@@ -38,6 +43,7 @@ pub struct PdfRenderedPage {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub struct PdfIngestOptions {
     pub render_dpi: u16,
 }

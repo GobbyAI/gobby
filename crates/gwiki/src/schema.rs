@@ -5,6 +5,7 @@ use gobby_core::setup::{
 
 use crate::setup::{GWIKI_POSTGRES_INDEXES, GWIKI_POSTGRES_TABLES};
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub const MIGRATION_HINT: &str = "Run Gobby hub migrations, then `gwiki setup` to validate gwiki-owned PostgreSQL tables and indexes.";
 const DEFAULT_SCHEMA: &str = "public";
 

@@ -116,6 +116,7 @@ pub(crate) fn index_after_ingest(
     })
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub(crate) fn write_raw_then_index(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,

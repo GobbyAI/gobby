@@ -67,6 +67,7 @@ impl ProvenanceGraph {
         self.links.push(link);
     }
 
+    #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
     pub fn links_for_section(&self, section_id: &str) -> Vec<&ProvenanceLink> {
         self.section_index
             .get(section_id)

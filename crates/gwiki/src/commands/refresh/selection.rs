@@ -75,11 +75,13 @@ pub(crate) fn select_sources(entries: &[SourceRecord], source_ids: &[String]) ->
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub(crate) struct ChangeTriggeredSelection {
     pub(crate) source_ids_to_refresh: Vec<String>,
     pub(crate) pages_to_mark_stale: Vec<PathBuf>,
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub(crate) fn select_change_triggered_refresh(
     entries: &[SourceRecord],
     affected_pages: &[AffectedPage],
@@ -149,6 +151,7 @@ pub(crate) fn local_file_replay(record: &SourceRecord) -> Option<(&Path, &Source
     }
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn is_markdown_replay(record: &SourceRecord) -> bool {
     let Some((path, _options)) = local_file_replay(record) else {
         return false;

@@ -14,6 +14,7 @@ use crate::sources::{SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub struct WaybackCaptureSnapshot {
     pub original_url: String,
     pub capture_url: String,
@@ -23,6 +24,7 @@ pub struct WaybackCaptureSnapshot {
     pub content_type: Option<String>,
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn ingest_capture(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
@@ -44,6 +46,7 @@ pub fn ingest_capture(
     write_raw_then_index(vault_root, store, record, &markdown, None)
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn decode_wayback_html(snapshot: &WaybackCaptureSnapshot) -> Result<String, WikiError> {
     ensure_html_content_type(snapshot.content_type.as_deref())?;
     let html = decode_html_bytes(&snapshot.body, snapshot.content_type.as_deref());
@@ -56,6 +59,7 @@ fn decode_wayback_html(snapshot: &WaybackCaptureSnapshot) -> Result<String, Wiki
     Ok(html)
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn ensure_html_content_type(content_type: Option<&str>) -> Result<(), WikiError> {
     match content_type_media_type(content_type).as_deref() {
         Some("text/html" | "application/xhtml+xml") => Ok(()),
@@ -70,6 +74,7 @@ fn ensure_html_content_type(content_type: Option<&str>) -> Result<(), WikiError>
     }
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn decode_html_bytes(bytes: &[u8], content_type: Option<&str>) -> String {
     if let Some(encoding) = charset_from_content_type(content_type)
         .and_then(|charset| Encoding::for_label(charset.as_bytes()))
@@ -92,6 +97,7 @@ fn decode_html_bytes(bytes: &[u8], content_type: Option<&str>) -> String {
     decoded.into_owned()
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn content_type_media_type(content_type: Option<&str>) -> Option<String> {
     content_type?
         .split(';')
@@ -101,6 +107,7 @@ fn content_type_media_type(content_type: Option<&str>) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn charset_from_content_type(content_type: Option<&str>) -> Option<String> {
     content_type?.split(';').skip(1).find_map(|part| {
         let (name, value) = part.split_once('=')?;
@@ -110,6 +117,7 @@ fn charset_from_content_type(content_type: Option<&str>) -> Option<String> {
     })
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn charset_from_html_meta(bytes: &[u8]) -> Option<String> {
     let scan_len = bytes.len().min(4096);
     let head = String::from_utf8_lossy(&bytes[..scan_len]);
@@ -120,6 +128,7 @@ fn charset_from_html_meta(bytes: &[u8]) -> Option<String> {
         .map(|value| value.as_str().to_string())
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn trim_charset_label(value: &str) -> String {
     value
         .trim()
@@ -129,11 +138,13 @@ fn trim_charset_label(value: &str) -> String {
         .to_string()
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn html_looks_like_document(html: &str) -> bool {
     let lower = html.trim_start().to_ascii_lowercase();
     lower.starts_with("<!doctype html") || lower.starts_with("<html") || lower.contains("<body")
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn wayback_title(snapshot: &WaybackCaptureSnapshot, document: &Html) -> String {
     html_title(document)
         .or_else(|| title_from_url_path(&snapshot.original_url))
@@ -141,6 +152,7 @@ fn wayback_title(snapshot: &WaybackCaptureSnapshot, document: &Html) -> String {
         .unwrap_or_else(|| markdown_title(&snapshot.original_url))
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn html_title(document: &Html) -> Option<String> {
     let title_selector = Selector::parse("title").expect("title selector parses");
     document
@@ -150,6 +162,7 @@ fn html_title(document: &Html) -> Option<String> {
         .filter(|title| !title.is_empty())
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn title_from_url_path(url: &str) -> Option<String> {
     let url = Url::parse(url).ok()?;
     let segment = url.path_segments()?.rfind(|segment| !segment.is_empty())?;
@@ -157,6 +170,7 @@ fn title_from_url_path(url: &str) -> Option<String> {
     (!title.is_empty()).then_some(title)
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn url_host(url: &str) -> Option<String> {
     Url::parse(url)
         .ok()?
@@ -165,10 +179,12 @@ fn url_host(url: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn percent_decode_lossy(value: &str) -> String {
     percent_decode_str(value).decode_utf8_lossy().into_owned()
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn render_wayback_markdown(
     snapshot: &WaybackCaptureSnapshot,
     document: &Html,
@@ -198,6 +214,7 @@ fn render_wayback_markdown(
     markdown
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn html_to_text(document: &Html) -> String {
     let output = extract_html_text(document);
     output
@@ -208,6 +225,7 @@ fn html_to_text(document: &Html) -> String {
         .join("\n\n")
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn extract_html_text(document: &Html) -> String {
     let body_selector = Selector::parse("body").expect("body selector parses");
     let mut parts = Vec::new();
@@ -219,6 +237,7 @@ fn extract_html_text(document: &Html) -> String {
     parts.join("\n")
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn collect_visible_text(element: ElementRef<'_>, parts: &mut Vec<String>) {
     if matches!(element.value().name(), "head" | "script" | "style") {
         return;
@@ -246,6 +265,7 @@ fn collect_visible_text(element: ElementRef<'_>, parts: &mut Vec<String>) {
     push_text_part(parts, &mut inline);
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn collect_inline_text(element: ElementRef<'_>, parts: &mut Vec<String>, inline: &mut String) {
     if matches!(element.value().name(), "head" | "script" | "style") {
         return;
@@ -271,6 +291,7 @@ fn collect_inline_text(element: ElementRef<'_>, parts: &mut Vec<String>, inline:
     }
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn append_inline_text(inline: &mut String, text: &str) {
     let text = single_line(text);
     if text.is_empty() {
@@ -282,6 +303,7 @@ fn append_inline_text(inline: &mut String, text: &str) {
     inline.push_str(&text);
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn push_text_part(parts: &mut Vec<String>, inline: &mut String) {
     let text = single_line(inline);
     inline.clear();
@@ -290,6 +312,7 @@ fn push_text_part(parts: &mut Vec<String>, inline: &mut String) {
     }
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn is_block_boundary(name: &str) -> bool {
     matches!(
         name,

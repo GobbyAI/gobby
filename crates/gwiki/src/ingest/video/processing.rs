@@ -42,6 +42,7 @@ impl VideoMediaExtractor for ProductionVideoMediaExtractor {
     }
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub(crate) fn ingest_video_file_with_processing(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,

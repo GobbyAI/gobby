@@ -27,6 +27,7 @@ pub struct VisionDegradation {
     pub fallback: String,
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub(crate) fn disabled_degradation() -> VisionDegradation {
     VisionDegradation {
         reason: ModalityDegradationReason::Disabled,
@@ -49,6 +50,7 @@ pub struct VisionRequest<'a> {
 }
 
 pub enum VisionEndpoint<'a> {
+    #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
     Available(&'a dyn VisionClient),
     Unavailable(VisionDegradation),
 }

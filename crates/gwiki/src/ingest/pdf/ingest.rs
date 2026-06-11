@@ -19,6 +19,7 @@ use super::text::normalize_page_text;
 use super::types::{PdfFileSnapshot, PdfIngestOptions};
 use super::types::{PdfRenderedPage, PdfSnapshot};
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn ingest_pages(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
@@ -36,6 +37,7 @@ pub fn ingest_pages(
 }
 
 #[cfg(feature = "documents")]
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn ingest_pdf_file(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
@@ -105,6 +107,7 @@ pub(crate) fn ingest_pdf_file_without_index(
     )
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn ingest_pages_with_vision(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
@@ -124,6 +127,7 @@ pub fn ingest_pages_with_vision(
     Ok(result)
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub(crate) fn ingest_pages_with_vision_without_index(
     vault_root: &Path,
     scope: &ScopeIdentity,
@@ -141,6 +145,7 @@ pub(crate) fn ingest_pages_with_vision_without_index(
     )
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn ingest_pages_with_vision_inner(
     vault_root: &Path,
     scope: &ScopeIdentity,
@@ -214,6 +219,7 @@ fn ingest_pages_with_vision_inner(
     })
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn rollback_registered_pdf_source<T>(
     vault_root: &Path,
     previous_manifest: &SourceManifest,
@@ -240,6 +246,7 @@ fn rollback_registered_pdf_source<T>(
     })
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn cleanup_pdf_file(vault_root: &Path, relative_path: &Path, cleanup_errors: &mut Vec<String>) {
     let path = vault_root.join(relative_path);
     match fs::remove_file(&path) {
@@ -249,6 +256,7 @@ fn cleanup_pdf_file(vault_root: &Path, relative_path: &Path, cleanup_errors: &mu
     }
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn pdf_cleanup_detail(cleanup_errors: &[String]) -> String {
     if cleanup_errors.is_empty() {
         String::new()

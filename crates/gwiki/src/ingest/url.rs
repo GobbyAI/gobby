@@ -61,6 +61,7 @@ impl UrlBatchIngest {
     }
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn ingest_snapshot(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,

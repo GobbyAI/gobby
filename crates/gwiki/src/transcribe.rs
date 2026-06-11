@@ -49,6 +49,7 @@ pub trait TranscriptionClient {
         request: &TranscriptionRequest<'_>,
     ) -> Result<TranscriptionOutput, WikiError>;
 
+    #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
     fn translate_to_english(
         &self,
         _request: &TranscriptionRequest<'_>,
@@ -59,6 +60,7 @@ pub trait TranscriptionClient {
         })
     }
 
+    #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
     fn translate_segments(
         &self,
         _segments: &[TranscriptSegment],
@@ -80,7 +82,9 @@ pub struct TranscriptionRequest<'a> {
 }
 
 pub enum TranscriptionEndpoint<'a> {
+    #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
     Available(Box<dyn TranscriptionClient + 'a>),
+    #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
     Translating {
         client: Box<dyn TranscriptionClient + 'a>,
         target_lang: Option<String>,

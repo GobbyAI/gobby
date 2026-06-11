@@ -15,6 +15,7 @@ use crate::{ScopeIdentity, WikiError};
 
 const AVERAGE_GREGORIAN_YEAR_SECONDS: u64 = 31_556_952;
 const STALE_CITATION_YEARS_ENV: &str = "GWIKI_STALE_CITATION_YEARS";
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 const REGEX_CACHE_CAPACITY: usize = 1_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -260,6 +261,7 @@ fn load_provenance(vault_root: &Path) -> Result<ProvenanceGraph, WikiError> {
     }
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn change_triggered_affected_pages(
     vault_root: &Path,
     graph_config: Option<&gobby_core::config::FalkorConfig>,
@@ -378,10 +380,12 @@ fn markdown_without_fenced_code(markdown: &str) -> String {
     output
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn markdown_link_target_matches(markdown: &str, needle: &str) -> bool {
     cached_regex_is_match(markdown_link_target_pattern(needle), markdown)
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn bounded_text_matches(markdown: &str, needle: &str) -> bool {
     cached_regex_is_match(bounded_text_pattern(needle), markdown)
 }
@@ -398,6 +402,7 @@ fn bounded_text_pattern(needle: &str) -> String {
     format!(r#"(^|[^\p{{L}}\p{{N}}_]){escaped}($|[^\p{{L}}\p{{N}}_])"#)
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn cached_regex_is_match(pattern: String, haystack: &str) -> bool {
     static CACHE: OnceLock<Mutex<RegexCache>> = OnceLock::new();
     let mut cache = match CACHE
@@ -430,11 +435,13 @@ fn cached_regex_is_match(pattern: String, haystack: &str) -> bool {
 }
 
 #[derive(Default)]
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 struct RegexCache {
     entries: LinkedHashMap<String, regex::Regex>,
 }
 
 impl RegexCache {
+    #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
     fn get(&mut self, pattern: &str) -> Option<regex::Regex> {
         let regex = self.entries.remove(pattern)?;
         let cloned = regex.clone();

@@ -47,6 +47,7 @@ impl WikiFrontmatter {
         }
     }
 
+    #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
     pub fn as_json(&self) -> Value {
         let mut object = Map::new();
         for (key, value) in &self.unknown {
@@ -168,6 +169,7 @@ pub fn parse_frontmatter(markdown: &str) -> Result<ParsedFrontmatter<'_>, Frontm
     })
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn mark_stale_markdown(markdown: &str, reason: &str) -> Result<String, FrontmatterError> {
     let mut parsed = parse_frontmatter(markdown)?;
     parsed
@@ -283,6 +285,7 @@ fn parse_metadata(
     Ok(frontmatter_from_object(object))
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn serialize_yaml_frontmatter(metadata: &WikiFrontmatter) -> Result<String, FrontmatterError> {
     let mut yaml = serde_yaml::to_string(&metadata.as_json()).map_err(|error| {
         FrontmatterError::new(format!("failed to serialize YAML frontmatter: {error}"))
@@ -299,6 +302,7 @@ fn serialize_yaml_frontmatter(metadata: &WikiFrontmatter) -> Result<String, Fron
     Ok(yaml)
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn serialize_toml_frontmatter(metadata: &WikiFrontmatter) -> Result<String, FrontmatterError> {
     let mut toml = toml::to_string(&metadata.as_json()).map_err(|error| {
         FrontmatterError::new(format!("failed to serialize TOML frontmatter: {error}"))

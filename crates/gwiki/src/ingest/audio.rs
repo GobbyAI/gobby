@@ -36,6 +36,7 @@ pub struct AudioIngestResult {
     pub transcription_degradation: Option<TranscriptionDegradation>,
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn ingest_audio(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
@@ -126,6 +127,7 @@ fn available_production_transcription_endpoint(
     TranscriptionEndpoint::Unavailable(transcription_degradation(route, translate))
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn ingest_audio_with_transcription(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,

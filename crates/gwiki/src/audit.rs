@@ -43,6 +43,7 @@ impl AuditOptions {
         options
     }
 
+    #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
     pub fn with_additional_ignored_sections<I, S>(mut self, sections: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -109,6 +110,7 @@ pub struct AuditSourceContext {
     pub location: Option<String>,
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn run(vault_root: &Path, scope: ScopeIdentity) -> Result<AuditReport, WikiError> {
     run_with_options(vault_root, scope, AuditOptions::from_env())
 }

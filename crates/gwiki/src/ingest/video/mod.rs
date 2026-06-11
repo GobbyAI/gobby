@@ -28,6 +28,7 @@ use crate::{ScopeIdentity, WikiError};
 pub const DEFAULT_FRAME_INTERVAL_SECONDS: u32 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub struct VideoSnapshot {
     pub location: String,
     pub file_name: String,
@@ -71,6 +72,7 @@ pub struct VideoIngestResult {
     pub transcription_degradation: Option<TranscriptionDegradation>,
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn ingest_video(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
@@ -91,6 +93,7 @@ pub fn ingest_video(
     Ok(result)
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn ingest_video_file(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
@@ -100,6 +103,7 @@ pub fn ingest_video_file(
     ingest_video_file_with_degradations(vault_root, store, scope, snapshot, &[], None, false)
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn ingest_video_file_with_degradations(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
@@ -158,6 +162,7 @@ fn ingest_video_file_with_degradations_without_index(
     )
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn ingest_video_file_with_production_processing(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,

@@ -11,6 +11,7 @@ use super::text::normalize_page_text;
 use super::types::{PdfRenderedPage, PdfSnapshot};
 use super::{PdfMarkdownSummary, PdfPageMarkdown};
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub(crate) fn render_pdf_markdown(
     scope: &ScopeIdentity,
     snapshot: &PdfSnapshot,
@@ -87,6 +88,7 @@ pub(crate) fn render_pdf_markdown(
     markdown
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub(crate) fn sanitize_pdf_page_markdown(markdown: &str) -> String {
     markdown
         .lines()
@@ -104,6 +106,7 @@ pub(crate) fn sanitize_pdf_page_markdown(markdown: &str) -> String {
         .join("\n")
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn neutralize_gwiki_page_marker_variants(line: &str) -> String {
     let lower = line.to_ascii_lowercase();
     let bytes = lower.as_bytes();
@@ -131,6 +134,7 @@ fn neutralize_gwiki_page_marker_variants(line: &str) -> String {
     output
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn is_markdown_horizontal_rule(trimmed: &str) -> bool {
     let mut marker = None;
     let mut count = 0usize;
@@ -151,6 +155,7 @@ fn is_markdown_horizontal_rule(trimmed: &str) -> bool {
     count >= 3
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub(crate) fn merge_pdf_pages(
     snapshot: &PdfSnapshot,
     asset_path: &Path,
@@ -233,6 +238,7 @@ pub(crate) fn merge_pdf_pages(
     )
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn extract_vision_for_page(
     snapshot: &PdfSnapshot,
     asset_path: &Path,
@@ -257,6 +263,7 @@ fn extract_vision_for_page(
         .map(Some)
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn rendered_page_asset_path(asset_path: &Path, file_name: &str) -> PathBuf {
     asset_path
         .parent()
@@ -264,6 +271,7 @@ fn rendered_page_asset_path(asset_path: &Path, file_name: &str) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(file_name))
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn merge_page_markdown(text_layer: &str, vision: Option<&VisionExtraction>) -> String {
     let text = normalize_page_text(text_layer);
     let mut sections = Vec::new();
@@ -286,6 +294,7 @@ fn merge_page_markdown(text_layer: &str, vision: Option<&VisionExtraction>) -> S
     sections.join("\n\n")
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn dedupe_ocr_text(text_layer: &str, ocr_text: &str) -> Option<String> {
     let ocr = normalize_page_text(ocr_text);
     if ocr.is_empty() {
@@ -309,6 +318,7 @@ fn dedupe_ocr_text(text_layer: &str, ocr_text: &str) -> Option<String> {
     (!retained.is_empty()).then(|| retained.join("\n\n"))
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn overlap_key(value: &str) -> String {
     single_line(value)
         .chars()
@@ -317,12 +327,14 @@ fn overlap_key(value: &str) -> String {
         .collect()
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn vision_model(vision: &VisionExtraction) -> Option<&str> {
     vision.metadata.iter().find_map(|(key, value)| {
         (key == "model" && !value.trim().is_empty()).then_some(value.as_str())
     })
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn rendered_page_file_name(file_name: &str, page_number: usize) -> String {
     let stem = Path::new(file_name)
         .file_stem()

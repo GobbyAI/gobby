@@ -48,6 +48,7 @@ use gobby_core::ai::effective_route;
 const TEXT_INLINE_LIMIT_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub struct StdinSnapshot {
     pub label: String,
     pub fetched_at: String,
@@ -372,6 +373,7 @@ fn read_source_file(path: &Path) -> Result<Vec<u8>, WikiError> {
     })
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn ingest_stdin(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
@@ -500,6 +502,7 @@ fn render_file_markdown(
     markdown
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn vision_degradation(routing: AiRouting) -> VisionDegradation {
     let reason = match routing {
         AiRouting::Off => gobby_core::degradation::ModalityDegradationReason::Disabled,

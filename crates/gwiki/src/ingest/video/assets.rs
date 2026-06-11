@@ -1,5 +1,6 @@
 use super::*;
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub(crate) fn ingest_video_with_asset(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,

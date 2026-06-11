@@ -39,6 +39,7 @@ pub(crate) struct VideoSnapshotRef<'a> {
 }
 
 impl<'a> VideoSnapshotRef<'a> {
+    #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
     pub(crate) fn from_snapshot(snapshot: &'a VideoSnapshot) -> Self {
         Self {
             location: &snapshot.location,

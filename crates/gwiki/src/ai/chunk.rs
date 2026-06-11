@@ -9,9 +9,13 @@ use crate::transcribe::{
 };
 
 pub(crate) const MAX_AUDIO_UPLOAD_BYTES: usize = 24 * 1024 * 1024;
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub(crate) const FIXED_PCM_SAMPLE_RATE_HZ: u64 = 16_000;
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub(crate) const FIXED_PCM_CHANNELS: u64 = 1;
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub(crate) const FIXED_PCM_BYTES_PER_SAMPLE: u64 = 2;
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub(crate) const FIXED_PCM_WAV_HEADER_BYTES: u64 = 44;
 pub(crate) const DEFAULT_CHUNK_WINDOW: Duration = Duration::from_secs(10 * 60);
 pub(crate) const CHUNK_OVERLAP: Duration = Duration::from_secs(3);
@@ -112,6 +116,7 @@ pub(crate) fn requires_chunking(byte_len: usize) -> bool {
     byte_len > MAX_AUDIO_UPLOAD_BYTES
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub(crate) fn fixed_codec_bytes_for_duration(duration: Duration) -> u64 {
     const NANOS_PER_SECOND: u128 = 1_000_000_000;
     let bytes_per_second =

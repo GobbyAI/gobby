@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::{ScopeIdentity, WikiError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub struct LogEntry {
     pub timestamp: String,
     pub scope: ScopeIdentity,
@@ -14,11 +15,13 @@ pub struct LogEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub struct LogWriteReport {
     pub scope_log: PathBuf,
     pub global_log: Option<PathBuf>,
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn append_logs(
     scope_root: &Path,
     global_hub_root: Option<&Path>,
@@ -45,6 +48,7 @@ pub fn append_logs(
     })
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn append_log(path: &Path, entry: &LogEntry) -> Result<(), WikiError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| WikiError::Io {
@@ -85,6 +89,7 @@ fn append_log(path: &Path, entry: &LogEntry) -> Result<(), WikiError> {
         })
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn render_entry(entry: &LogEntry) -> String {
     let mut rendered = format!(
         "## {} - {}\nScope: {}\n\n{}\n",
@@ -102,6 +107,7 @@ fn render_entry(entry: &LogEntry) -> String {
     rendered
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn same_log_path(left: &Path, right: &Path) -> bool {
     // Compare after resolving existing parents; append_logs relies on this
     // before writing so scope/global aliases do not receive duplicate entries.
@@ -111,6 +117,7 @@ fn same_log_path(left: &Path, right: &Path) -> bool {
 }
 
 #[cfg(unix)]
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn same_file_identity(left: &Path, right: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
 
@@ -147,6 +154,7 @@ fn same_file_identity(_left: &Path, _right: &Path) -> bool {
     false
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn resolved_log_path(path: &Path) -> PathBuf {
     if let Ok(resolved) = path.canonicalize() {
         return resolved;
@@ -155,6 +163,7 @@ fn resolved_log_path(path: &Path) -> PathBuf {
     resolve_log_path_fallback(path)
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn resolve_log_path_fallback(path: &Path) -> PathBuf {
     if let (Some(parent), Some(file_name)) = (path.parent(), path.file_name())
         && let Ok(parent) = parent.canonicalize()

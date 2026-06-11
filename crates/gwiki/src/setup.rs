@@ -72,6 +72,7 @@ impl GwikiStandaloneSetup {
         }
     }
 
+    #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
     pub fn schema(&self) -> &str {
         &self.schema
     }

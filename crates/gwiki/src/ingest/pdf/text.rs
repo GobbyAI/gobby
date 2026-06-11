@@ -1,5 +1,6 @@
 use crate::ingest::single_line;
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub(crate) fn normalize_page_text(text: &str) -> String {
     let mut paragraphs = Vec::new();
     let mut current = Vec::new();

@@ -90,6 +90,7 @@ pub fn analyze_facts(facts: &WikiGraphFacts) -> Result<GraphExportAnalytics, Gra
     )))
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn analytics_graph_from_memory(
     graph: &MemoryWikiGraph,
 ) -> Result<AnalyticsGraph, GraphAnalyticsError> {

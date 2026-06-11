@@ -15,6 +15,7 @@ pub const KNOWLEDGE_ROOT: &str = "knowledge";
 pub const SHARED_META_ROOT: &str = "_meta";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub struct VaultPaths {
     pub directories: &'static [&'static str],
     pub files: Vec<&'static str>,
@@ -50,6 +51,7 @@ pub const DEFAULT_FILES: &[(&str, &str)] = &[
     ("log.md", "# Log\n\n"),
 ];
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn required_paths() -> VaultPaths {
     VaultPaths {
         directories: DIRECTORIES,

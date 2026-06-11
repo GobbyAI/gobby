@@ -39,6 +39,7 @@ pub struct ImageIngestResult {
     pub vision_degradation: Option<VisionDegradation>,
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn ingest_image(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
@@ -54,6 +55,7 @@ pub fn ingest_image(
     )
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn ingest_image_with_production_vision(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
@@ -95,6 +97,7 @@ pub(crate) fn ingest_image_with_production_vision_without_index(
     }
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn ingest_image_with_vision(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
@@ -201,6 +204,7 @@ fn render_raw_image_markdown(
     markdown
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn default_vision_degradation() -> VisionDegradation {
     VisionDegradation {
         reason: gobby_core::degradation::ModalityDegradationReason::MissingEndpoint,

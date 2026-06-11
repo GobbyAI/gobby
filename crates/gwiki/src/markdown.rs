@@ -115,6 +115,7 @@ where
     })
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn parse_index_file<I, S>(
     path: impl AsRef<Path>,
     known_targets: I,

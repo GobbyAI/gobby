@@ -50,6 +50,7 @@ pub trait GraphBoostBackend {
     ) -> Result<GraphBoostOutcome, SearchError>;
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub struct NoopGraphBoostBackend;
 
 impl GraphBoostBackend for NoopGraphBoostBackend {
