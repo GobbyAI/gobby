@@ -1,9 +1,7 @@
 use super::file::{ExplicitFileRoute, explicit_file_route, write_parsed_file_facts};
 use super::lifecycle::{cleanup_deleted_file_projections, current_file_state};
 use super::overlay::{IndexedFileState, OverlayReconcileAction, overlay_reconcile_action};
-use super::pipeline::{
-    cleanup_skipped_explicit_file_if_indexed, explicit_route_with_discovery_options,
-};
+use super::pipeline::{cleanup_skipped_file_if_indexed, explicit_route_with_discovery_options};
 use super::sink::{CodeFactSink, PostgresCodeFactSink};
 use super::util::DEFAULT_EXCLUDES;
 use super::*;
@@ -763,7 +761,7 @@ fn explicit_skip_cleanup_deletes_stale_facts_and_projections() {
     let mut outcome = IndexOutcome::new("project-1");
     let mut deleted = false;
 
-    cleanup_skipped_explicit_file_if_indexed(
+    cleanup_skipped_file_if_indexed(
         &ctx,
         "src/setup.mjs",
         &mut outcome,
@@ -814,7 +812,7 @@ fn explicit_skip_cleanup_ignores_never_indexed_files() {
     };
     let mut outcome = IndexOutcome::new("project-1");
 
-    cleanup_skipped_explicit_file_if_indexed(
+    cleanup_skipped_file_if_indexed(
         &ctx,
         "src/secret.txt",
         &mut outcome,

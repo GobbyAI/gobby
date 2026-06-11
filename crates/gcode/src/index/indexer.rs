@@ -21,4 +21,6 @@ pub use types::{
 };
 
 #[cfg(test)]
+mod stale_cleanup_tests;
+#[cfg(test)]
 mod tests;

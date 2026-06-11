@@ -125,7 +125,16 @@ fn index_discovered_files(
         )? {
             Some(counts) => outcome.add_counts(counts),
             None => {
-                outcome.skipped_files += 1;
+                let file_facts_exist = api::file_facts_exist(conn, project_id, &rel)?;
+                let file_vectors_synced = db::file_vectors_synced(conn, project_id, &rel)?;
+                cleanup_skipped_file_if_indexed(
+                    ctx,
+                    &rel,
+                    &mut outcome,
+                    file_facts_exist,
+                    file_vectors_synced,
+                    || api::delete_file_facts(conn, project_id, &rel),
+                )?;
             }
         }
     }
@@ -217,7 +226,7 @@ fn index_explicit_files_with_connection(
                 };
                 let file_facts_exist = api::file_facts_exist(conn, project_id, &rel)?;
                 let file_vectors_synced = db::file_vectors_synced(conn, project_id, &rel)?;
-                cleanup_skipped_explicit_file_if_indexed(
+                cleanup_skipped_file_if_indexed(
                     ctx,
                     &rel,
                     &mut outcome,
@@ -314,7 +323,7 @@ pub(super) fn explicit_route_with_discovery_options(
     }
 }
 
-pub(super) fn cleanup_skipped_explicit_file_if_indexed(
+pub(super) fn cleanup_skipped_file_if_indexed(
     ctx: &Context,
     rel: &str,
     outcome: &mut IndexOutcome,
