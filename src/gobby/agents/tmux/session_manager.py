@@ -48,6 +48,15 @@ def _write_secret_env_file(env: dict[str, str]) -> Path:
     return path
 
 
+def _split_tmux_env(env: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
+    """Split env into values safe for tmux ``-e`` and values requiring shell sourcing."""
+    public_env, file_env = split_credential_env(env)
+    for key, value in list(public_env.items()):
+        if ";" in value:
+            file_env[key] = public_env.pop(key)
+    return public_env, file_env
+
+
 def _source_secret_env_command(command: str | None, env_file: str) -> str:
     env_file_arg = shlex.quote(env_file)
     command_text = command or 'exec "${SHELL:-/bin/sh}"'
@@ -65,6 +74,11 @@ def _is_missing_tmux_target_error(stderr: str) -> bool:
     """Return True for tmux errors that mean the target disappeared."""
     message = stderr.lower()
     return any(fragment in message for fragment in _MISSING_TARGET_ERRORS)
+
+
+def _exact_session_target(name: str) -> str:
+    """Return a tmux target that requires an exact session-name match."""
+    return f"={name}:"
 
 
 @dataclass
@@ -302,7 +316,7 @@ class TmuxSessionManager:
 
         # Inject env vars via -e (tmux 3.2+)
         if env:
-            public_env, credential_env = split_credential_env(env)
+            public_env, credential_env = _split_tmux_env(env)
             for key, val in public_env.items():
                 args.extend(["-e", f"{key}={val}"])
             if credential_env:
@@ -409,7 +423,7 @@ class TmuxSessionManager:
         rc, stdout, _stderr = await self._run(
             "list-panes",
             "-t",
-            name,
+            _exact_session_target(name),
             "-F",
             "#{session_name}\t#{pane_pid}\t#{pane_id}\t#{window_name}\t#{pane_title}\t#{pane_dead}",
             timeout=2.0,
@@ -455,7 +469,8 @@ class TmuxSessionManager:
         pids = await self._get_session_pids(name)
 
         # Kill the tmux session
-        rc, _stdout, stderr = await self._run("kill-session", "-t", name)
+        target = _exact_session_target(name)
+        rc, _stdout, stderr = await self._run("kill-session", "-t", target)
         if rc != 0:
             message = stderr.strip()
             if any(error in message.lower() for error in _MISSING_SESSION_ERRORS):
@@ -490,7 +505,13 @@ class TmuxSessionManager:
 
     async def _get_session_pids(self, name: str) -> list[int]:
         """Get all pane PIDs in a tmux session."""
-        rc, stdout, _ = await self._run("list-panes", "-t", name, "-F", "#{pane_pid}")
+        rc, stdout, _ = await self._run(
+            "list-panes",
+            "-t",
+            _exact_session_target(name),
+            "-F",
+            "#{pane_pid}",
+        )
         if rc != 0:
             return []
         pids: list[int] = []
@@ -504,7 +525,11 @@ class TmuxSessionManager:
     async def get_pane_pid(self, session_name: str) -> int | None:
         """Get the PID of the process running in the first pane."""
         rc, stdout, _stderr = await self._run(
-            "display-message", "-t", session_name, "-p", "#{pane_pid}"
+            "display-message",
+            "-t",
+            _exact_session_target(session_name),
+            "-p",
+            "#{pane_pid}",
         )
         if rc != 0 or not stdout.strip():
             return None
@@ -623,7 +648,7 @@ class TmuxSessionManager:
         rc, stdout, _stderr = await self._run(
             "capture-pane",
             "-t",
-            session_name,
+            _exact_session_target(session_name),
             "-p",  # print to stdout
             "-J",  # join wrapped lines
             f"-S-{lines}",  # start N lines from bottom
@@ -655,7 +680,7 @@ class TmuxSessionManager:
             rc, _stdout, stderr = await self._run(
                 "send-keys",
                 "-t",
-                session_name,
+                _exact_session_target(session_name),
                 keys,
             )
             if rc != 0:
@@ -667,7 +692,7 @@ class TmuxSessionManager:
 
         try:
             await send_literal_text_to_tmux_target(
-                session_name,
+                _exact_session_target(session_name),
                 keys,
                 tmux_cmd=self._base_args(),
             )

@@ -538,7 +538,7 @@ class TestTmuxSessionManager:
         mock_run.assert_awaited_once_with(
             "list-panes",
             "-t",
-            "session1",
+            "=session1:",
             "-F",
             "#{session_name}\t#{pane_pid}\t#{pane_id}\t#{window_name}\t#{pane_title}\t#{pane_dead}",
             timeout=2.0,
@@ -659,11 +659,11 @@ class TestTmuxSessionManager:
             new_callable=AsyncMock,
         ) as mock_send:
             assert await mgr.send_keys("test", "hello") is True
-        mock_send.assert_awaited_once_with(
-            "test",
-            "hello",
-            tmux_cmd=["tmux", "-L", "gobby", "-f", "/dev/null"],
-        )
+            mock_send.assert_awaited_once_with(
+                "=test:",
+                "hello",
+                tmux_cmd=["tmux", "-L", "gobby", "-f", "/dev/null"],
+            )
 
     @pytest.mark.asyncio
     async def test_get_pane_pid(self) -> None:
@@ -1496,7 +1496,7 @@ class TestTmuxSessionManagerExtended:
             result = await mgr.send_keys("test-sess", "hello\n")
         assert result is True
         mock_send.assert_awaited_once_with(
-            "test-sess",
+            "=test-sess:",
             "hello\n",
             tmux_cmd=["tmux", "-S", "/tmp/tmux-501/gobby", "-f", "/dev/null"],
         )
@@ -1512,7 +1512,7 @@ class TestTmuxSessionManagerExtended:
             result = await mgr.send_keys("test-sess", "hello")
         assert result is True
         mock_send.assert_awaited_once_with(
-            "test-sess",
+            "=test-sess:",
             "hello",
             tmux_cmd=["tmux", "-L", "gobby", "-f", "/dev/null"],
         )
@@ -1542,7 +1542,7 @@ class TestTmuxSessionManagerExtended:
             mock_run.return_value = (0, "", "")
             result = await mgr.send_keys("test", "C-c", literal=False)
         assert result is True
-        mock_run.assert_awaited_once_with("send-keys", "-t", "test", "C-c")
+        mock_run.assert_awaited_once_with("send-keys", "-t", "=test:", "C-c")
 
     @pytest.mark.asyncio
     async def test_get_pane_pid_invalid_output(self) -> None:
