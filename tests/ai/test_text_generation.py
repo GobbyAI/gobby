@@ -572,7 +572,7 @@ async def test_text_generation_service_falls_back_between_named_local_endpoints(
 
 @pytest.mark.asyncio
 async def test_text_generation_service_routes_named_local_candidate_with_slashed_model_id() -> None:
-    model = "google/gemma-4-26b-a4b-qat"
+    model = "qwen/qwen3-coder-30b"
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
