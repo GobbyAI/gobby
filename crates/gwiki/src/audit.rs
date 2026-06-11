@@ -658,7 +658,7 @@ mod tests {
         let knowledge_claim = report
             .unsupported_claims
             .iter()
-            .find(|claim| claim.path == PathBuf::from("knowledge/topics/claims.md"))
+            .find(|claim| claim.path == Path::new("knowledge/topics/claims.md"))
             .expect("knowledge claim");
         assert_eq!(knowledge_claim.source_context[0].source_id, source.id);
     }

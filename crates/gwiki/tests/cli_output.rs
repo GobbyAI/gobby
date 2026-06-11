@@ -115,7 +115,12 @@ fn accept_with_timeout(listener: TcpListener, timeout: Duration) -> io::Result<T
     let deadline = Instant::now() + timeout;
     loop {
         match listener.accept() {
-            Ok((stream, _)) => return Ok(stream),
+            Ok((stream, _)) => {
+                // BSD/macOS accepted sockets inherit the listener's
+                // non-blocking flag; restore blocking reads for the request.
+                stream.set_nonblocking(false)?;
+                return Ok(stream);
+            }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                 if Instant::now() >= deadline {
                     return Err(io::Error::new(
