@@ -2210,9 +2210,12 @@ version = "0.4.6"
 dependencies = [
  "clap",
  "dirs 6.0.0",
+ "gobby-core",
  "regex",
  "serde",
  "serde_json",
+ "temp-env",
+ "tempfile",
  "ureq",
  "yaml_serde",
 ]

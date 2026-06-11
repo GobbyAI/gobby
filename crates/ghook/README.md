@@ -37,7 +37,8 @@ For Stop hooks only, `ghook` recognizes fresh daemon shutdown markers in
 and the daemon health endpoint is unreachable, `ghook` returns
 `{"continue":true}` before reading stdin or enqueueing.
 
-`GOBBY_DAEMON_URL` overrides the daemon URL for health probes and live POSTs.
+`GOBBY_DAEMON_URL` overrides the daemon URL for health probes, live POSTs, and
+the statusline POST.
 `GOBBY_SHUTDOWN_HOOK_ALLOW_SECONDS` overrides marker freshness when it is a
 positive number; the default is 120 seconds.
 

@@ -402,12 +402,12 @@ pub fn prune(force: bool) -> anyhow::Result<()> {
         }
     }
 
-    let daemon_url = config::resolve_daemon_url();
+    let daemon_url = gobby_core::daemon_url::daemon_url();
     let database_url = db::resolve_database_url()?;
     let mut conn = db::connect_readwrite(&database_url)?;
 
     for stale_project in &stale {
-        indexer::invalidate(&mut conn, &stale_project.project.id, daemon_url.as_deref())?;
+        indexer::invalidate(&mut conn, &stale_project.project.id, Some(&daemon_url))?;
     }
 
     eprintln!("Pruned {} stale project(s).", stale.len());

@@ -51,10 +51,8 @@ pub fn outline(
                     + 20 // line numbers, separators
             })
             .sum();
-        if outline_bytes > 0
-            && file_bytes > outline_bytes
-            && let Some(url) = savings::resolve_daemon_url(None)
-        {
+        if outline_bytes > 0 && file_bytes > outline_bytes {
+            let url = gobby_core::daemon_url::daemon_url();
             savings::report_savings(&url, file_bytes, outline_bytes);
         }
     }
@@ -273,10 +271,8 @@ pub fn symbol(ctx: &Context, id: &str, format: Format) -> anyhow::Result<()> {
                 let snippet = String::from_utf8_lossy(&source[start..end]);
 
                 // Report savings: symbol bytes vs full file bytes
-                if symbol_bytes > 0
-                    && file_bytes > symbol_bytes
-                    && let Some(url) = savings::resolve_daemon_url(None)
-                {
+                if symbol_bytes > 0 && file_bytes > symbol_bytes {
+                    let url = gobby_core::daemon_url::daemon_url();
                     savings::report_savings(&url, file_bytes, symbol_bytes);
                 }
 
@@ -325,10 +321,8 @@ pub fn symbols(ctx: &Context, ids: &[String], format: Format) -> anyhow::Result<
             total_symbol_bytes += s.byte_end - s.byte_start;
         }
     }
-    if total_symbol_bytes > 0
-        && total_file_bytes > total_symbol_bytes
-        && let Some(url) = savings::resolve_daemon_url(None)
-    {
+    if total_symbol_bytes > 0 && total_file_bytes > total_symbol_bytes {
+        let url = gobby_core::daemon_url::daemon_url();
         savings::report_savings(&url, total_file_bytes, total_symbol_bytes);
     }
 

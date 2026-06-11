@@ -216,7 +216,7 @@ fn run_gobby_owned(args: &Args) -> ExitCode {
     }
 
     // Best-effort POST. Enqueue file is deleted on 2xx; otherwise kept.
-    let daemon_url = planned_shutdown::daemon_url();
+    let daemon_url = gobby_core::daemon_url::daemon_url();
     let report = transport::post_and_cleanup(&env, &enqueued_path, &daemon_url);
     let action = match report.outcome {
         transport::DeliveryOutcome::Delivered => {

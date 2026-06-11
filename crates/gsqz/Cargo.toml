@@ -18,7 +18,7 @@ path = "src/main.rs"
 
 [features]
 default = ["gobby"]
-gobby = ["ureq", "serde_json"]
+gobby = ["ureq", "serde_json", "dep:gobby-core"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -28,5 +28,10 @@ serde = { version = "1", features = ["derive"] }
 serde_yaml = { package = "yaml_serde", version = "0.10.4" }
 
 # Gobby-specific (daemon HTTP integration)
+gobby-core = { path = "../gcore", version = "0.4.0", default-features = false, optional = true }
 ureq = { version = "2", features = ["json"], optional = true }
 serde_json = { version = "1", optional = true }
+
+[dev-dependencies]
+temp-env = "0.3"
+tempfile = "3"

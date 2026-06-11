@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::context::project_name_suffixes;
-use super::context::resolve_daemon_url;
 use super::context::resolve_project_id;
 use super::services::{
     resolve_code_vector_settings_from_values, resolve_embedding_config_from_values,
@@ -152,13 +151,14 @@ fn project_name_lookup_suffixes_cover_unix_and_windows_paths() {
 fn daemon_url_falls_back_when_bootstrap_path_is_unavailable() {
     temp_env::with_vars(
         [
+            ("GOBBY_DAEMON_URL", None::<&str>),
             ("GOBBY_PORT", None::<&str>),
             ("GOBBY_HOME", Some("/dev/null/not-a-directory")),
         ],
         || {
             assert_eq!(
-                resolve_daemon_url().as_deref(),
-                Some("http://localhost:60887")
+                gobby_core::daemon_url::daemon_url(),
+                "http://127.0.0.1:60887"
             );
         },
     );
@@ -176,13 +176,14 @@ fn daemon_url_normalizes_wildcard_bootstrap_bind_host() {
 
     temp_env::with_vars(
         [
+            ("GOBBY_DAEMON_URL", None::<&str>),
             ("GOBBY_PORT", None::<&str>),
             ("GOBBY_HOME", Some(temp.path().to_str().expect("utf8 path"))),
         ],
         || {
             assert_eq!(
-                resolve_daemon_url().as_deref(),
-                Some("http://localhost:61234")
+                gobby_core::daemon_url::daemon_url(),
+                "http://127.0.0.1:61234"
             );
         },
     );

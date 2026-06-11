@@ -266,7 +266,7 @@ impl Context {
             CodeVectorSettings::default()
         };
 
-        let daemon_url = resolve_daemon_url();
+        let daemon_url = Some(gobby_core::daemon_url::daemon_url());
 
         Ok(Self {
             database_url,
@@ -298,7 +298,7 @@ impl Context {
         let falkordb = resolve_falkordb_config(&mut conn, standalone_config.clone(), quiet)?;
         let indexing = resolve_indexing_settings(&mut conn, standalone_config)?;
 
-        let daemon_url = resolve_daemon_url();
+        let daemon_url = Some(gobby_core::daemon_url::daemon_url());
 
         Ok(Self {
             database_url,
@@ -589,47 +589,6 @@ pub fn detect_project_root_from(start: &Path) -> anyhow::Result<PathBuf> {
             Some(parent) => dir = parent,
             None => return Ok(start), // Last resort: start
         }
-    }
-}
-
-/// Resolve Gobby daemon base URL.
-///
-/// Resolution order:
-/// 1. Non-empty `GOBBY_PORT` env var, composed as `http://localhost:{GOBBY_PORT}`.
-/// 2. `~/.gobby/bootstrap.yaml` `daemon_port` plus optional `bind_host`.
-/// 3. `http://localhost:60887` when the env var is empty/missing or bootstrap
-///    is unavailable, unreadable, malformed, or missing `daemon_port`.
-pub(crate) fn resolve_daemon_url() -> Option<String> {
-    // Env var override takes priority (empty value falls through to defaults)
-    if let Ok(port) = std::env::var("GOBBY_PORT")
-        && !port.is_empty()
-    {
-        return Some(format!("http://localhost:{port}"));
-    }
-
-    // Read from bootstrap.yaml
-    let bootstrap_path = db::bootstrap_path().ok();
-    if let Some(bootstrap_path) = bootstrap_path
-        && let Ok(contents) = std::fs::read_to_string(&bootstrap_path)
-        && let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&contents)
-        && let Some(port) = yaml.get("daemon_port").and_then(|v| v.as_u64())
-    {
-        let host = yaml
-            .get("bind_host")
-            .and_then(|v| v.as_str())
-            .unwrap_or("localhost");
-        return Some(format!("http://{}:{port}", client_daemon_host(host)));
-    }
-
-    // Well-known default (matches gsqz)
-    Some("http://localhost:60887".to_string())
-}
-
-fn client_daemon_host(host: &str) -> String {
-    match host.trim() {
-        "" | "0.0.0.0" | "::" | "[::]" => "localhost".to_string(),
-        host if host.contains(':') && !host.starts_with('[') => format!("[{host}]"),
-        host => host.to_string(),
     }
 }
 

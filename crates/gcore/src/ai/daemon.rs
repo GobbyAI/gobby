@@ -851,6 +851,8 @@ mod tests {
         _lock: MutexGuard<'static, ()>,
         home: Option<OsString>,
         gobby_home: Option<OsString>,
+        daemon_url: Option<OsString>,
+        port: Option<OsString>,
     }
 
     impl EnvGuard {
@@ -861,13 +863,18 @@ mod tests {
                     .unwrap_or_else(|poisoned| poisoned.into_inner()),
                 home: std::env::var_os("HOME"),
                 gobby_home: std::env::var_os("GOBBY_HOME"),
+                daemon_url: std::env::var_os("GOBBY_DAEMON_URL"),
+                port: std::env::var_os("GOBBY_PORT"),
             };
-            // SAFETY: these tests serialize HOME/GOBBY_HOME mutation through
-            // TEST_ENV_LOCK, and EnvGuard restores the original values while
-            // still holding that lock.
+            // SAFETY: these tests serialize env mutation through TEST_ENV_LOCK,
+            // and EnvGuard restores the original values while still holding
+            // that lock. GOBBY_DAEMON_URL/GOBBY_PORT are cleared so ambient
+            // overrides cannot leak into bootstrap-derived URL assertions.
             unsafe {
                 std::env::set_var("HOME", home);
                 std::env::set_var("GOBBY_HOME", home.join(".gobby"));
+                std::env::remove_var("GOBBY_DAEMON_URL");
+                std::env::remove_var("GOBBY_PORT");
             }
             guard
         }
@@ -876,16 +883,19 @@ mod tests {
     impl Drop for EnvGuard {
         fn drop(&mut self) {
             // SAFETY: EnvGuard owns the TEST_ENV_LOCK guard for the lifetime of
-            // the temporary HOME/GOBBY_HOME override, so restoration cannot race
-            // with another test using this helper.
+            // the temporary env override, so restoration cannot race with
+            // another test using this helper.
             unsafe {
-                match &self.home {
-                    Some(value) => std::env::set_var("HOME", value),
-                    None => std::env::remove_var("HOME"),
-                }
-                match &self.gobby_home {
-                    Some(value) => std::env::set_var("GOBBY_HOME", value),
-                    None => std::env::remove_var("GOBBY_HOME"),
+                for (name, value) in [
+                    ("HOME", &self.home),
+                    ("GOBBY_HOME", &self.gobby_home),
+                    ("GOBBY_DAEMON_URL", &self.daemon_url),
+                    ("GOBBY_PORT", &self.port),
+                ] {
+                    match value {
+                        Some(value) => std::env::set_var(name, value),
+                        None => std::env::remove_var(name),
+                    }
                 }
             }
         }

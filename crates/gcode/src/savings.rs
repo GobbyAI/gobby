@@ -28,31 +28,6 @@ pub fn report_savings(base_url: &str, original_chars: usize, actual_chars: usize
         .send_json(payload);
 }
 
-/// Resolve the daemon URL from config or environment.
-///
-/// Resolution order: config `daemon_url` → `GOBBY_PORT` env → default port 60887
-pub fn resolve_daemon_url(config_url: Option<&str>) -> Option<String> {
-    if let Some(url) = config_url {
-        // Expand ${GOBBY_PORT} if present
-        if url.contains("${GOBBY_PORT}") {
-            if let Ok(port) = std::env::var("GOBBY_PORT") {
-                return Some(url.replace("${GOBBY_PORT}", &port));
-            }
-            // Fall through to defaults if GOBBY_PORT not set
-        } else {
-            return Some(url.to_string());
-        }
-    }
-
-    // Fall back to GOBBY_PORT env var
-    if let Ok(port) = std::env::var("GOBBY_PORT") {
-        return Some(format!("http://localhost:{}", port));
-    }
-
-    // Default to well-known Gobby daemon (matches bootstrap.yaml defaults)
-    Some("http://localhost:60887".to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,37 +46,5 @@ mod tests {
     #[test]
     fn test_savings_pct_no_savings() {
         assert!((savings_pct(100, 100)).abs() < 0.01);
-    }
-
-    #[test]
-    fn test_resolve_daemon_url_config_value() {
-        let url = resolve_daemon_url(Some("http://custom:9999"));
-        assert_eq!(url, Some("http://custom:9999".to_string()));
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_resolve_daemon_url_env_var() {
-        unsafe { std::env::set_var("GOBBY_PORT", "12345") };
-        let url = resolve_daemon_url(None);
-        assert_eq!(url, Some("http://localhost:12345".to_string()));
-        unsafe { std::env::remove_var("GOBBY_PORT") };
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_resolve_daemon_url_default() {
-        unsafe { std::env::remove_var("GOBBY_PORT") };
-        let url = resolve_daemon_url(None);
-        assert_eq!(url, Some("http://localhost:60887".to_string()));
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_resolve_daemon_url_expand_port() {
-        unsafe { std::env::set_var("GOBBY_PORT", "54321") };
-        let url = resolve_daemon_url(Some("http://myhost:${GOBBY_PORT}"));
-        assert_eq!(url, Some("http://myhost:54321".to_string()));
-        unsafe { std::env::remove_var("GOBBY_PORT") };
     }
 }

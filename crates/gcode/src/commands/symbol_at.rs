@@ -104,10 +104,8 @@ pub fn run(
     let lookup = lookup_for_selection(requested_file, &request, &selected);
     let (snippet, symbol_bytes) = symbol_source(&source, selected.symbol);
 
-    if symbol_bytes > 0
-        && source.len() > symbol_bytes
-        && let Some(url) = savings::resolve_daemon_url(None)
-    {
+    if symbol_bytes > 0 && source.len() > symbol_bytes {
+        let url = gobby_core::daemon_url::daemon_url();
         savings::report_savings(&url, source.len(), symbol_bytes);
     }
 

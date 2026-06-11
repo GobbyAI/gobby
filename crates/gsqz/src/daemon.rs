@@ -52,11 +52,13 @@ pub fn report_savings(
     // No-op without gobby feature
 }
 
-/// Resolve the daemon URL from config or environment.
+/// Resolve the daemon URL from config or the shared gobby-core resolver.
 ///
-/// Resolution order: config `daemon_url` → `GOBBY_PORT` env → default port 60887
-/// (gobby feature only). The well-known default ensures savings reporting works
-/// even when GOBBY_PORT isn't in the shell environment.
+/// Resolution order: config `daemon_url` (with `${GOBBY_PORT}` expansion) →
+/// `gobby_core::daemon_url` (GOBBY_DAEMON_URL → GOBBY_PORT → bootstrap.yaml).
+/// Reading bootstrap.yaml means a custom `daemon_port` reaches config-override
+/// fetch and savings reporting without any env vars in the shell.
+#[cfg(feature = "gobby")]
 pub fn resolve_daemon_url(config_url: Option<&str>) -> Option<String> {
     if let Some(url) = config_url {
         // Expand ${GOBBY_PORT} if present
@@ -64,17 +66,62 @@ pub fn resolve_daemon_url(config_url: Option<&str>) -> Option<String> {
             if let Ok(port) = std::env::var("GOBBY_PORT") {
                 return Some(url.replace("${GOBBY_PORT}", &port));
             }
-            // Fall through to defaults if GOBBY_PORT not set
+            // Fall through to the shared resolver if GOBBY_PORT not set
         } else {
             return Some(url.to_string());
         }
     }
 
-    // Fall back to GOBBY_PORT env var
-    if let Ok(port) = std::env::var("GOBBY_PORT") {
-        return Some(format!("http://localhost:{}", port));
+    Some(gobby_core::daemon_url::daemon_url())
+}
+
+#[cfg(not(feature = "gobby"))]
+pub fn resolve_daemon_url(_config_url: Option<&str>) -> Option<String> {
+    // Without the gobby feature the daemon calls are no-ops, so there is
+    // no URL to resolve.
+    None
+}
+
+#[cfg(all(test, feature = "gobby"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_url_passes_through() {
+        assert_eq!(
+            resolve_daemon_url(Some("http://custom:9999")),
+            Some("http://custom:9999".to_string())
+        );
     }
 
-    // Default to well-known Gobby daemon (matches bootstrap.yaml defaults)
-    Some("http://localhost:60887".to_string())
+    #[test]
+    fn config_url_expands_gobby_port() {
+        temp_env::with_var("GOBBY_PORT", Some("54321"), || {
+            assert_eq!(
+                resolve_daemon_url(Some("http://myhost:${GOBBY_PORT}")),
+                Some("http://myhost:54321".to_string())
+            );
+        });
+    }
+
+    #[test]
+    fn no_config_reads_bootstrap_daemon_port() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("bootstrap.yaml"), "daemon_port: 61234\n")
+            .expect("write bootstrap");
+
+        temp_env::with_vars(
+            [
+                ("GOBBY_DAEMON_URL", None::<&str>),
+                ("GOBBY_PORT", None::<&str>),
+                ("GOBBY_HOME", Some(temp.path().to_str().expect("utf8 path"))),
+            ],
+            || {
+                assert_eq!(
+                    resolve_daemon_url(None),
+                    Some("http://127.0.0.1:61234".to_string())
+                );
+            },
+        );
+    }
 }

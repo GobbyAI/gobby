@@ -22,7 +22,7 @@ pub fn should_skip_dispatch(hook_type: &str) -> bool {
     should_skip_dispatch_with(
         hook_type,
         || marker_home().is_some_and(|home| fresh_shutdown_marker(&home)),
-        || daemon_is_reachable(&daemon_url()),
+        || daemon_is_reachable(&gobby_core::daemon_url::daemon_url()),
     )
 }
 
@@ -47,19 +47,6 @@ fn suppress_after_failed_post_with_marker(
     }
 
     delete_enqueued(enqueued_path)
-}
-
-pub fn daemon_url() -> String {
-    daemon_url_from_env(std::env::var("GOBBY_DAEMON_URL").ok().as_deref(), || {
-        gobby_core::daemon_url::daemon_url()
-    })
-}
-
-fn daemon_url_from_env(value: Option<&str>, fallback: impl FnOnce() -> String) -> String {
-    match value {
-        Some(value) if !value.is_empty() => value.to_string(),
-        _ => fallback(),
-    }
 }
 
 pub fn is_stop_hook(hook_type: &str) -> bool {
@@ -307,24 +294,6 @@ mod tests {
         assert_eq!(allow_seconds_from_env(Some("0")), DEFAULT_ALLOW_SECONDS);
         assert_eq!(allow_seconds_from_env(Some("-1")), DEFAULT_ALLOW_SECONDS);
         assert_eq!(allow_seconds_from_env(Some("nope")), DEFAULT_ALLOW_SECONDS);
-    }
-
-    #[test]
-    fn daemon_url_prefers_non_empty_env_override() {
-        assert_eq!(
-            daemon_url_from_env(Some("http://example.invalid:1234"), || {
-                "http://fallback.invalid:60887".to_string()
-            }),
-            "http://example.invalid:1234"
-        );
-        assert_eq!(
-            daemon_url_from_env(Some(""), || "http://fallback.invalid:60887".to_string()),
-            "http://fallback.invalid:60887"
-        );
-        assert_eq!(
-            daemon_url_from_env(None, || "http://fallback.invalid:60887".to_string()),
-            "http://fallback.invalid:60887"
-        );
     }
 
     #[test]

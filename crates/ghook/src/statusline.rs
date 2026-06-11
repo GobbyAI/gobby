@@ -298,6 +298,33 @@ mod tests {
     }
 
     #[test]
+    fn statusline_post_honors_gobby_daemon_url_override() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_http_request(&mut stream);
+            assert!(request.contains("POST /api/sessions/statusline HTTP/1.1"));
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}")
+                .unwrap();
+        });
+
+        // The env-reading entry point must route the POST through the
+        // GOBBY_DAEMON_URL override, not the bootstrap-derived URL.
+        let exit = temp_env::with_vars(
+            [
+                ("GOBBY_DAEMON_URL", Some(format!("http://{addr}"))),
+                ("GOBBY_STATUSLINE_DOWNSTREAM", None),
+            ],
+            || handle(VALID_INPUT.as_bytes()),
+        );
+        server.join().unwrap();
+
+        assert_eq!(exit, ExitCode::SUCCESS);
+    }
+
+    #[test]
     fn downstream_stdout_passthrough_preserves_bytes() {
         let mut stdout = Vec::new();
         let exit = handle_with(
