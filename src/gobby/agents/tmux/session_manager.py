@@ -9,11 +9,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shlex
 import shutil
 import signal
+import tempfile
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
+from gobby.agents.spawners.auth_env import split_credential_env
 from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
 from gobby.agents.tmux.text_injection import (
     TmuxTextInjectionError,
@@ -31,6 +35,30 @@ _MISSING_TARGET_ERRORS = (
     "no such pane",
 )
 TMUX_COMMAND_TIMEOUT_SECONDS = 10.0
+
+
+def _write_secret_env_file(env: dict[str, str]) -> Path:
+    """Write credential env vars to a private shell file."""
+    fd, tmp_path = tempfile.mkstemp(prefix="gobby-agent-env-", suffix=".sh")
+    path = Path(tmp_path)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        for key, value in env.items():
+            handle.write(f"{key}={shlex.quote(value)}\n")
+    path.chmod(0o600)
+    return path
+
+
+def _source_secret_env_command(command: str | None, env_file: str) -> str:
+    env_file_arg = shlex.quote(env_file)
+    command_text = command or 'exec "${SHELL:-/bin/sh}"'
+    return (
+        f"__gobby_env_file={env_file_arg}; "
+        'set -a; . "$__gobby_env_file"; __gobby_env_status=$?; set +a; '
+        'rm -f "$__gobby_env_file"; unset __gobby_env_file; '
+        'if [ "$__gobby_env_status" -ne 0 ]; then exit "$__gobby_env_status"; fi; '
+        "unset __gobby_env_status; "
+        f"{command_text}"
+    )
 
 
 def _is_missing_tmux_target_error(stderr: str) -> bool:
@@ -269,19 +297,31 @@ class TmuxSessionManager:
             ]
         )
 
+        secret_env_file: Path | None = None
+        secret_env_file_arg: str | None = None
+
         # Inject env vars via -e (tmux 3.2+)
         if env:
-            for key, val in env.items():
+            public_env, credential_env = split_credential_env(env)
+            for key, val in public_env.items():
                 args.extend(["-e", f"{key}={val}"])
+            if credential_env:
+                secret_env_file = _write_secret_env_file(credential_env)
+                secret_env_file_arg = str(secret_env_file)
+                if needs_wsl():
+                    secret_env_file_arg = convert_windows_path_to_wsl(secret_env_file_arg)
 
         # Append shell command
+        command_text: str | None = None
         if command:
             if isinstance(command, list):
-                import shlex
-
-                args.append(shlex.join(command))
+                command_text = shlex.join(command)
             else:
-                args.append(command)
+                command_text = command
+        if secret_env_file_arg:
+            command_text = _source_secret_env_command(command_text, secret_env_file_arg)
+        if command_text:
+            args.append(command_text)
 
         # Chain set-option to disable destroy-unattached atomically
         args.extend(
@@ -320,8 +360,15 @@ class TmuxSessionManager:
             ]
         )
 
-        rc, _stdout, stderr = await self._run(*args)
+        try:
+            rc, _stdout, stderr = await self._run(*args)
+        except Exception:
+            if secret_env_file:
+                secret_env_file.unlink(missing_ok=True)
+            raise
         if rc != 0:
+            if secret_env_file:
+                secret_env_file.unlink(missing_ok=True)
             raise TmuxSessionError(
                 f"Failed to create session (rc={rc}): {stderr.strip()}",
                 session_name=safe_name,

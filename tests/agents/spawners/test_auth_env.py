@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from gobby.agents.spawners.auth_env import has_auth_env, terminal_env_passthrough
+from gobby.agents.spawners.auth_env import (
+    has_auth_env,
+    split_credential_env,
+    terminal_env_passthrough,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -36,6 +40,30 @@ def test_terminal_env_passthrough_filters_empty_values() -> None:
 
     assert terminal_env_passthrough("codex", source=source) == {
         "OPENAI_BASE_URL": "https://example.test"
+    }
+
+
+def test_split_credential_env_separates_provider_secrets() -> None:
+    public_env, credential_env = split_credential_env(
+        {
+            "GOBBY_SESSION_ID": "session-123",
+            "ANTHROPIC_BASE_URL": "https://api.example.test",
+            "ANTHROPIC_AUTH_TOKEN": "anthropic-token",
+            "QWEN_API_KEY": "qwen-token",
+            "XAI_API_KEY": "xai-token",
+            "FACTORY_API_KEY": "factory-token",
+        }
+    )
+
+    assert public_env == {
+        "GOBBY_SESSION_ID": "session-123",
+        "ANTHROPIC_BASE_URL": "https://api.example.test",
+    }
+    assert credential_env == {
+        "ANTHROPIC_AUTH_TOKEN": "anthropic-token",
+        "QWEN_API_KEY": "qwen-token",
+        "XAI_API_KEY": "xai-token",
+        "FACTORY_API_KEY": "factory-token",
     }
 
 

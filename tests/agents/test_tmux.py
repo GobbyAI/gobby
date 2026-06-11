@@ -1360,6 +1360,110 @@ class TestTmuxSessionManagerExtended:
         assert info.pane_pid == 999
 
     @pytest.mark.asyncio
+    async def test_create_session_routes_credentials_through_private_env_file(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Credential env vars are kept out of tmux new-session argv."""
+        env_file = tmp_path / "agent-env.sh"
+
+        def fake_mkstemp(*, prefix: str, suffix: str) -> tuple[int, str]:
+            assert prefix == "gobby-agent-env-"
+            assert suffix == ".sh"
+            fd = os.open(env_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            return fd, str(env_file)
+
+        monkeypatch.setattr(
+            "gobby.agents.tmux.session_manager.tempfile.mkstemp",
+            fake_mkstemp,
+        )
+
+        mgr = TmuxSessionManager()
+        with (
+            patch.object(mgr, "is_available", return_value=True),
+            patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
+        ):
+            mock_run.side_effect = [
+                (1, "", ""),  # has_session
+                (0, "", ""),  # new-session
+                (0, "999\n", ""),  # display-message for pane_pid
+            ]
+            await mgr.create_session(
+                name="test",
+                command=["claude", "--session-id=abc"],
+                cwd="/tmp",
+                env={
+                    "GOBBY_SESSION_ID": "session-123",
+                    "ANTHROPIC_AUTH_TOKEN": "anthropic secret",
+                    "QWEN_API_KEY": "qwen-secret",
+                    "XAI_API_KEY": "xai-secret",
+                    "FACTORY_API_KEY": "factory-secret",
+                },
+            )
+
+        new_session_args = mock_run.await_args_list[1].args
+        argv_text = "\0".join(str(arg) for arg in new_session_args)
+        assert "GOBBY_SESSION_ID=session-123" in argv_text
+        assert "ANTHROPIC_AUTH_TOKEN" not in argv_text
+        assert "anthropic secret" not in argv_text
+        assert "QWEN_API_KEY" not in argv_text
+        assert "qwen-secret" not in argv_text
+        assert "XAI_API_KEY" not in argv_text
+        assert "xai-secret" not in argv_text
+        assert "FACTORY_API_KEY" not in argv_text
+        assert "factory-secret" not in argv_text
+
+        command_arg = next(arg for arg in new_session_args if "__gobby_env_file=" in str(arg))
+        assert str(env_file) in command_arg
+        assert '. "$__gobby_env_file"' in command_arg
+        assert 'rm -f "$__gobby_env_file"' in command_arg
+
+        assert env_file.stat().st_mode & 0o777 == 0o600
+        env_file_text = env_file.read_text(encoding="utf-8")
+        assert "ANTHROPIC_AUTH_TOKEN='anthropic secret'\n" in env_file_text
+        assert "QWEN_API_KEY=qwen-secret\n" in env_file_text
+        assert "XAI_API_KEY=xai-secret\n" in env_file_text
+        assert "FACTORY_API_KEY=factory-secret\n" in env_file_text
+
+    @pytest.mark.asyncio
+    async def test_create_session_removes_private_env_file_when_tmux_create_fails(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Parent process removes the credential file if tmux rejects launch."""
+        env_file = tmp_path / "agent-env.sh"
+
+        def fake_mkstemp(*, prefix: str, suffix: str) -> tuple[int, str]:
+            fd = os.open(env_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            return fd, str(env_file)
+
+        monkeypatch.setattr(
+            "gobby.agents.tmux.session_manager.tempfile.mkstemp",
+            fake_mkstemp,
+        )
+
+        mgr = TmuxSessionManager()
+        with (
+            patch.object(mgr, "is_available", return_value=True),
+            patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
+            pytest.raises(TmuxSessionError, match="launch failed"),
+        ):
+            mock_run.side_effect = [
+                (1, "", ""),  # has_session
+                (1, "", "launch failed"),  # new-session
+            ]
+            await mgr.create_session(
+                name="test",
+                command="claude",
+                cwd="/tmp",
+                env={"ANTHROPIC_AUTH_TOKEN": "anthropic secret"},
+            )
+
+        assert not env_file.exists()
+
+    @pytest.mark.asyncio
     async def test_capture_pane_success(self) -> None:
         """capture_pane returns captured output."""
         mgr = TmuxSessionManager()
