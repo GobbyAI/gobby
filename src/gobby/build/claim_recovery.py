@@ -52,12 +52,15 @@ class _WorkspaceCheck:
 def recover_safe_build_claims(
     db: HubDatabase,
     project_id: str | None,
+    *,
+    max_workspace_inspections: int | None = None,
 ) -> ClaimRecoverySummary:
     """Release review-safe build claims whose isolation workspace is clean."""
     task_manager = LocalTaskManager(db)
     considered = 0
     released = 0
     refused = 0
+    workspace_inspections = 0
 
     for candidate in _claimed_automation_candidates(db, project_id=project_id):
         considered += 1
@@ -65,7 +68,18 @@ def recover_safe_build_claims(
         if not claim:
             continue
 
-        refusal = _refusal_payload(db, task_manager, candidate, claim)
+        inspect_workspace = (
+            max_workspace_inspections is None or workspace_inspections < max_workspace_inspections
+        )
+        refusal = _refusal_payload(
+            db,
+            task_manager,
+            candidate,
+            claim,
+            inspect_workspace=inspect_workspace,
+        )
+        if _workspace_was_inspected(candidate, refusal):
+            workspace_inspections += 1
         if refusal is not None:
             refused += 1
             _record_claim_recovery_event(
@@ -162,6 +176,8 @@ def _refusal_payload(
     task_manager: LocalTaskManager,
     candidate: _ClaimCandidate,
     claim: str,
+    *,
+    inspect_workspace: bool = True,
 ) -> dict[str, Any] | None:
     if candidate.stage_state not in _REVIEW_SAFE_STATES:
         return {"reason": "unsafe_stage"}
@@ -170,12 +186,29 @@ def _refusal_payload(
     if agent_claim is not None:
         return agent_claim
 
+    if not inspect_workspace:
+        return {"reason": "workspace_inspection_deferred"}
+
     workspace = _workspace_check(task_manager, candidate.task)
     if workspace.error is not None:
         return {"reason": "workspace_inspection_failed", "workspace": _workspace_payload(workspace)}
     if workspace.dirty_files:
         return {"reason": "dirty_workspace", "workspace": _workspace_payload(workspace)}
     return None
+
+
+def _workspace_was_inspected(
+    candidate: _ClaimCandidate,
+    refusal: dict[str, Any] | None,
+) -> bool:
+    if candidate.stage_state not in _REVIEW_SAFE_STATES:
+        return False
+    if refusal is None:
+        return True
+    return refusal.get("reason") in {
+        "dirty_workspace",
+        "workspace_inspection_failed",
+    }
 
 
 def _agent_claim_payload(

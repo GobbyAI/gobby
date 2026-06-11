@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
@@ -454,6 +457,90 @@ def test_post_api_build_clean_returns_success_envelope() -> None:
     assert data["error"] is None
     assert data["result"]["action"] == "clean"
     clean.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_post_api_build_status_responds_while_clean_is_blocked() -> None:
+    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+    from gobby.servers.routes.build import create_build_router
+
+    clean_started = threading.Event()
+    release_clean = threading.Event()
+    target_result = BuildTargetControlResult(
+        action="clean",
+        project_id="project-1",
+        root_task_id="task-1",
+        affected_tasks=[
+            BuildTaskSummary("task-1", "#1", "Task", "task"),
+        ],
+    )
+    server = SimpleNamespace(
+        services=SimpleNamespace(
+            database=MagicMock(),
+            task_manager=MagicMock(),
+            config=MagicMock(),
+        ),
+        resolve_project_id=MagicMock(return_value="project-1"),
+    )
+    app = FastAPI()
+    app.include_router(create_build_router(server))
+
+    async def blocking_clean(*_args: object, **_kwargs: object) -> BuildTargetControlResult:
+        clean_started.set()
+        release_clean.wait(1)
+        return target_result
+
+    with (
+        patch("gobby.servers.routes.build.build_clean_target", new=blocking_clean),
+        patch(
+            "gobby.servers.routes.build.get_build_status",
+            return_value={"ok": True, "root": {"task_id": "task-1"}},
+        ),
+    ):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            clean_task = asyncio.create_task(
+                client.post("/api/build/clean", json={"input_ref": "#1", "yes": True})
+            )
+            assert await asyncio.to_thread(clean_started.wait, 1)
+
+            status_response = await client.get("/api/build/status", params={"input_ref": "#1"})
+
+            assert clean_task.done() is False
+            assert status_response.status_code == 200
+            assert status_response.json() == {"ok": True, "root": {"task_id": "task-1"}}
+            release_clean.set()
+            clean_response = await asyncio.wait_for(clean_task, timeout=1)
+
+    assert clean_response.status_code == 200
+    assert clean_response.json()["result"]["action"] == "clean"
+
+
+@pytest.mark.asyncio
+async def test_blocking_build_call_delegates_to_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.servers.routes import build as build_routes
+
+    async def blocking_control_call() -> str:
+        return "done"
+
+    to_thread_calls: list[tuple[object, tuple[object, ...]]] = []
+
+    async def to_thread_stub(func: object, /, *args: object, **_kwargs: object) -> str:
+        to_thread_calls.append((func, args))
+        coro = args[0]
+        assert hasattr(coro, "close")
+        coro.close()
+        return "done"
+
+    monkeypatch.setattr(build_routes.asyncio, "to_thread", to_thread_stub)
+
+    result = await build_routes._run_blocking_build_call(blocking_control_call())
+
+    assert result == "done"
+    assert to_thread_calls[0][0] is build_routes._run_coroutine
+    assert len(to_thread_calls[0][1]) == 1
 
 
 def test_post_api_build_restart_forwards_destructive_flags() -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Coroutine
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -37,6 +38,14 @@ from gobby.config.build import StageCapOverride as BuildStageCapOverride
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
+
+
+def _run_coroutine(coro: Coroutine[Any, Any, Any]) -> Any:
+    return asyncio.run(coro)
+
+
+async def _run_blocking_build_call(coro: Coroutine[Any, Any, Any]) -> Any:
+    return await asyncio.to_thread(_run_coroutine, coro)
 
 
 class BuildRequest(BaseModel):
@@ -352,12 +361,14 @@ def create_build_router(server: HTTPServer) -> APIRouter:
         """Start lifecycle automation for a plan, epic, or automated leaf task."""
         try:
             project_id = _resolve_request_project_id(server, request_data)
-            result = await build(
-                request_data.input_ref,
-                _build_options(request_data),
-                db=server.services.database,
-                project_id=project_id,
-                services=server.services,
+            result = await _run_blocking_build_call(
+                build(
+                    request_data.input_ref,
+                    _build_options(request_data),
+                    db=server.services.database,
+                    project_id=project_id,
+                    services=server.services,
+                )
             )
             return _build_result_json(result)
         except BuildProfileError as e:
@@ -426,15 +437,17 @@ def create_build_router(server: HTTPServer) -> APIRouter:
             )
         try:
             project_id = _resolve_request_project_id(server, request_data)
-            result = await build_clean_target(
-                request_data.input_ref,
-                db=server.services.database,
-                project_id=project_id,
-                dry_run=request_data.dry_run,
-                force=request_data.force,
-                delete_dirty_worktrees=request_data.delete_dirty_worktrees,
-                yes=request_data.yes,
-                services=server.services,
+            result = await _run_blocking_build_call(
+                build_clean_target(
+                    request_data.input_ref,
+                    db=server.services.database,
+                    project_id=project_id,
+                    dry_run=request_data.dry_run,
+                    force=request_data.force,
+                    delete_dirty_worktrees=request_data.delete_dirty_worktrees,
+                    yes=request_data.yes,
+                    services=server.services,
+                )
             )
             return _success_envelope(result.to_dict())
         except ValueError as e:
@@ -455,20 +468,22 @@ def create_build_router(server: HTTPServer) -> APIRouter:
             )
         try:
             project_id = _resolve_request_project_id(server, request_data)
-            result = await build_restart_target(
-                request_data.input_ref,
-                db=server.services.database,
-                project_id=project_id,
-                dry_run=request_data.dry_run,
-                force=request_data.force,
-                yes=request_data.yes,
-                no_resume=request_data.no_resume,
-                opts=(
-                    _restart_options(request_data)
-                    if _restart_options_were_supplied(request_data)
-                    else None
-                ),
-                services=server.services,
+            result = await _run_blocking_build_call(
+                build_restart_target(
+                    request_data.input_ref,
+                    db=server.services.database,
+                    project_id=project_id,
+                    dry_run=request_data.dry_run,
+                    force=request_data.force,
+                    yes=request_data.yes,
+                    no_resume=request_data.no_resume,
+                    opts=(
+                        _restart_options(request_data)
+                        if _restart_options_were_supplied(request_data)
+                        else None
+                    ),
+                    services=server.services,
+                )
             )
             return _success_envelope(result.to_dict())
         except ValueError as e:
