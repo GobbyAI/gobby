@@ -83,12 +83,6 @@ def test_select_reports_unavailable_provider_reason() -> None:
 def _local_family_registry() -> AICapabilityRegistry:
     return AICapabilityRegistry(
         [
-            CapabilityBinding.unavailable(
-                AICapability.TEXT_GENERATE,
-                "local",
-                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
-                reason="Use a named local generation endpoint provider such as local:lm-studio.",
-            ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
                 provider="local:lm-studio",
@@ -105,27 +99,6 @@ def _local_family_registry() -> AICapabilityRegistry:
             ),
         ]
     )
-
-
-def test_select_bare_local_reports_named_endpoint_requirement_for_model() -> None:
-    registry = _local_family_registry()
-
-    with pytest.raises(CapabilityUnavailableError, match="named local generation endpoint"):
-        registry.select(AICapability.TEXT_GENERATE, provider="local", model="qwen-ollama")
-
-
-def test_select_bare_local_without_model_reports_named_endpoint_requirement() -> None:
-    registry = _local_family_registry()
-
-    with pytest.raises(CapabilityUnavailableError, match="named local generation endpoint"):
-        registry.select(AICapability.TEXT_GENERATE, provider="local")
-
-
-def test_select_bare_local_unserved_model_reports_named_endpoint_requirement() -> None:
-    registry = _local_family_registry()
-
-    with pytest.raises(CapabilityUnavailableError, match="named local generation endpoint"):
-        registry.select(AICapability.TEXT_GENERATE, provider="local", model="missing-model")
 
 
 def test_select_named_local_provider_does_not_match_other_endpoints() -> None:
@@ -193,10 +166,7 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
         assert binding.provider == provider
         assert binding.adapter_style == adapter_style
 
-    local = registry.binding(AICapability.TEXT_GENERATE, "local")
-    assert local is not None
-    assert local.available is False
-    assert local.models == ()
+    assert registry.binding(AICapability.TEXT_GENERATE, "local") is None
 
     lm_studio = registry.binding(AICapability.TEXT_GENERATE, "local:lm-studio")
     assert lm_studio is not None
@@ -289,11 +259,7 @@ def test_daemon_registry_reports_only_proven_vision_extract_bindings_available()
 
     assert available_providers == {"claude", "local:lm-studio"}
 
-    local = registry.binding(AICapability.VISION_EXTRACT, "local")
-    assert local is not None
-    assert local.adapter_style == AIAdapterStyle.OPENAI_COMPATIBLE
-    assert local.available is False
-    assert local.models == ()
+    assert registry.binding(AICapability.VISION_EXTRACT, "local") is None
 
     lm_studio = registry.binding(AICapability.VISION_EXTRACT, "local:lm-studio")
     assert lm_studio is not None

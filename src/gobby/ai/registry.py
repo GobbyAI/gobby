@@ -365,8 +365,6 @@ def build_daemon_ai_capability_registry(
     feature_models_by_provider = _feature_candidate_models_by_provider(config)
     bindings: list[CapabilityBinding] = [
         _embedding_binding(config),
-        _local_text_generate_binding(config),
-        _local_vision_extract_binding(config),
     ]
     bindings.extend(_local_text_generate_endpoint_bindings(config, feature_models_by_provider))
     bindings.extend(_local_vision_extract_endpoint_bindings(config, feature_models_by_provider))
@@ -595,16 +593,6 @@ def _text_generate_binding(
     )
 
 
-def _local_text_generate_binding(config: DaemonConfig | None) -> CapabilityBinding:
-    return CapabilityBinding.unavailable(
-        AICapability.TEXT_GENERATE,
-        "local",
-        adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
-        reason="Use a named local generation endpoint provider such as local:lm-studio.",
-        metadata={"display_name": "Local"},
-    )
-
-
 def _local_text_generate_endpoint_bindings(
     config: DaemonConfig | None,
     feature_models_by_provider: Mapping[str, tuple[str, ...]],
@@ -687,17 +675,6 @@ def _vision_extract_binding(
         adapter_style=adapter_style,
         reason=f"{entry.display_name} CLI is not installed.",
         models=models,
-        metadata=metadata,
-    )
-
-
-def _local_vision_extract_binding(config: DaemonConfig | None) -> CapabilityBinding:
-    metadata: dict[str, object] = {"display_name": "Local"}
-    return CapabilityBinding.unavailable(
-        AICapability.VISION_EXTRACT,
-        "local",
-        adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
-        reason="Use a named local generation endpoint provider such as local:lm-studio.",
         metadata=metadata,
     )
 

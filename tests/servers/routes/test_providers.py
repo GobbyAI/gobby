@@ -362,6 +362,7 @@ class TestProviderModelsRoute:
         providers = {p["provider"]: p for p in response.json()["providers"]}
         local = providers["local:lm-studio"]
 
+        assert "local" not in providers
         assert local["available"] is True
         assert local["display_name"] == "Local (lm-studio)"
         assert local["source"] == "config"

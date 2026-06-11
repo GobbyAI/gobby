@@ -95,6 +95,11 @@ def test_llm_status_returns_registry_snapshot(client: TestClient) -> None:
     assert "text_generate" in data["capabilities"]
     assert "vision_extract" in data["capabilities"]
     assert data["capabilities"]["vision_extract"]["capability"] == "vision_extract"
+    for capability in ("text_generate", "vision_extract"):
+        providers = {
+            binding["provider"] for binding in data["capabilities"][capability]["bindings"]
+        }
+        assert "local" not in providers
 
 
 def test_create_llm_router_does_not_run_vision_temp_cleanup(
@@ -590,8 +595,9 @@ def test_vision_status_lists_only_proven_providers_as_available(
     available_providers = {
         binding["provider"] for binding in data["bindings"] if binding["available"]
     }
+    providers = {binding["provider"] for binding in data["bindings"]}
     assert "local:lm-studio" in available_providers
-    assert "local" not in available_providers
+    assert "local" not in providers
     assert not {"codex", "droid", "gemini", "grok", "qwen"} & available_providers
 
 
