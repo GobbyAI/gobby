@@ -1,0 +1,41 @@
+{
+  "sessionId": "qwen-session",
+  "messages": [
+    {
+      "id": "msg-1",
+      "timestamp": "2024-05-02T11:00:00Z",
+      "type": "user",
+      "content": [{"text": "Summarize pyproject."}]
+    },
+    {
+      "id": "msg-2",
+      "timestamp": "2024-05-02T11:00:01Z",
+      "type": "gemini",
+      "content": "I found the project metadata.",
+      "thoughts": [
+        {"subject": "Inspect file", "description": "Need to read pyproject.toml."},
+        {"subject": "Summarize", "description": "Extract package details."}
+      ],
+      "toolCalls": [
+        {
+          "name": "read_file",
+          "args": {"path": "pyproject.toml"},
+          "result": [
+            {
+              "functionResponse": {
+                "content": "name = \"gobby\"",
+                "status": "ok"
+              }
+            }
+          ]
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 1000,
+        "cachedContentTokenCount": 250,
+        "candidatesTokenCount": 70,
+        "thoughtsTokenCount": 30
+      }
+    }
+  ]
+}

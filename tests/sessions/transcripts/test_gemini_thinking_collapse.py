@@ -5,15 +5,13 @@ from __future__ import annotations
 import pytest
 
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
-from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 
 pytestmark = pytest.mark.unit
 
 
-@pytest.fixture(params=[GeminiTranscriptParser, QwenTranscriptParser])
-def parser(request: pytest.FixtureRequest) -> GeminiTranscriptParser:
-    cls = request.param
-    return cls(session_id="s1")
+@pytest.fixture
+def parser() -> GeminiTranscriptParser:
+    return GeminiTranscriptParser(session_id="s1")
 
 
 def _msg(thoughts: list[dict[str, str]], content: str = "") -> dict[str, object]:

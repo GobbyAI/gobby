@@ -1836,29 +1836,6 @@ class TestGeminiTranscriptParser:
         assert msg.usage.cache_read_tokens == 750
         assert msg.usage.output_tokens == 100
 
-    def test_qwen_uses_gemini_compatible_usage_mapping(self) -> None:
-        parser = QwenTranscriptParser()
-        line = json.dumps(
-            {
-                "type": "message",
-                "role": "model",
-                "content": "Qwen response",
-                "usageMetadata": {
-                    "promptTokenCount": 800,
-                    "cachedContentTokenCount": 300,
-                    "candidatesTokenCount": 60,
-                },
-            }
-        )
-
-        msg = parser.parse_line(line, 0)
-
-        assert msg is not None
-        assert msg.usage is not None
-        assert msg.usage.input_tokens == 500
-        assert msg.usage.cache_read_tokens == 300
-        assert msg.usage.output_tokens == 60
-
     def test_gemini_parse_session_json_consumes_usage_once(self, parser) -> None:
         data = {
             "sessionId": "abc-123",

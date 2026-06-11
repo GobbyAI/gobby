@@ -7,7 +7,6 @@ import json
 import pytest
 
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
-from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 
 pytestmark = pytest.mark.unit
 
@@ -72,30 +71,20 @@ def _parse_session_twice(parser_cls: type[GeminiTranscriptParser]) -> tuple[list
     return first_ids, second_ids
 
 
-@pytest.mark.parametrize("parser_cls", [GeminiTranscriptParser, QwenTranscriptParser])
-def test_jsonl_synthetic_ids_are_stable_across_reparses(
-    parser_cls: type[GeminiTranscriptParser],
-) -> None:
-    first, second = _parse_jsonl_twice(parser_cls)
+def test_jsonl_synthetic_ids_are_stable_across_reparses() -> None:
+    first, second = _parse_jsonl_twice(GeminiTranscriptParser)
     assert first == second
     assert len(first) >= 2  # tool_use + tool_result × 2 — pairing reuses last id for results
 
 
-@pytest.mark.parametrize("parser_cls", [GeminiTranscriptParser, QwenTranscriptParser])
-def test_session_json_synthetic_ids_are_stable_across_reparses(
-    parser_cls: type[GeminiTranscriptParser],
-) -> None:
-    first, second = _parse_session_twice(parser_cls)
+def test_session_json_synthetic_ids_are_stable_across_reparses() -> None:
+    first, second = _parse_session_twice(GeminiTranscriptParser)
     assert first == second
 
 
 def test_synthetic_ids_carry_provider_specific_prefix() -> None:
     gemini_ids, _ = _parse_jsonl_twice(GeminiTranscriptParser)
-    qwen_ids, _ = _parse_jsonl_twice(QwenTranscriptParser)
     assert all(tid.startswith("gemini-tu-") for tid in gemini_ids)
-    assert all(tid.startswith("qwen-tu-") for tid in qwen_ids)
-    # Same logical input should produce different IDs across providers (cli_name in hash).
-    assert set(gemini_ids).isdisjoint(set(qwen_ids))
 
 
 def test_session_id_changes_synthetic_ids() -> None:

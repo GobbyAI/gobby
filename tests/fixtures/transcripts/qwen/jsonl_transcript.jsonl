@@ -1,0 +1,5 @@
+{"type":"init","session_id":"qwen-session","timestamp":"2024-05-01T09:59:59Z"}
+{"type":"message","role":"user","id":"user-1","content":"List the files.","timestamp":"2024-05-01T10:00:00Z"}
+{"type":"message","role":"model","id":"model-1","content":"I will inspect the directory.","timestamp":"2024-05-01T10:00:01Z","usageMetadata":{"promptTokenCount":800,"cachedContentTokenCount":300,"candidatesTokenCount":60}}
+{"type":"tool_use","tool_name":"Bash","parameters":{"cmd":"ls -la"},"timestamp":"2024-05-01T10:00:02Z"}
+{"type":"tool_result","output":"total 8\n-rw-r--r-- README.md","status":"success","timestamp":"2024-05-01T10:00:03Z"}

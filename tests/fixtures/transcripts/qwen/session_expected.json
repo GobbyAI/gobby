@@ -1,0 +1,78 @@
+[
+  {
+    "index": 0,
+    "role": "user",
+    "content": "Summarize pyproject.",
+    "content_type": "text",
+    "tool_name": null,
+    "tool_input": null,
+    "tool_result": null,
+    "usage": null,
+    "tool_use_id": null,
+    "message_id": "qwen-session:json:0:msg-1",
+    "timestamp": "2024-05-02T11:00:00+00:00"
+  },
+  {
+    "index": 1,
+    "role": "assistant",
+    "content": "**Inspect file**\n\nNeed to read pyproject.toml.\n\n**Summarize**\n\nExtract package details.",
+    "content_type": "thinking",
+    "tool_name": null,
+    "tool_input": null,
+    "tool_result": null,
+    "usage": {
+      "input_tokens": 750,
+      "output_tokens": 100,
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 250
+    },
+    "tool_use_id": null,
+    "message_id": "qwen-session:json:1:msg-2",
+    "timestamp": "2024-05-02T11:00:01+00:00"
+  },
+  {
+    "index": 2,
+    "role": "assistant",
+    "content": "I found the project metadata.",
+    "content_type": "text",
+    "tool_name": null,
+    "tool_input": null,
+    "tool_result": null,
+    "usage": null,
+    "tool_use_id": null,
+    "message_id": "qwen-session:json:2:msg-2",
+    "timestamp": "2024-05-02T11:00:01+00:00"
+  },
+  {
+    "index": 3,
+    "role": "assistant",
+    "content": "Tool call: read_file",
+    "content_type": "tool_use",
+    "tool_name": "read_file",
+    "tool_input": {"path": "pyproject.toml"},
+    "tool_result": null,
+    "usage": null,
+    "tool_use_id": "qwen-tu-01dd4f98d94623ad",
+    "message_id": "qwen-session:json:3",
+    "timestamp": "2024-05-02T11:00:01+00:00"
+  },
+  {
+    "index": 4,
+    "role": "tool",
+    "content": "{'content': 'name = \"gobby\"', 'status': 'ok'}",
+    "content_type": "tool_result",
+    "tool_name": "read_file",
+    "tool_input": null,
+    "tool_result": {
+      "output": {
+        "content": "name = \"gobby\"",
+        "status": "ok"
+      },
+      "status": "success"
+    },
+    "usage": null,
+    "tool_use_id": "qwen-tu-01dd4f98d94623ad",
+    "message_id": "qwen-session:json:4",
+    "timestamp": "2024-05-02T11:00:01+00:00"
+  }
+]

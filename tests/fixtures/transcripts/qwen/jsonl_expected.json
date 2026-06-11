@@ -1,0 +1,62 @@
+[
+  {
+    "index": 0,
+    "role": "user",
+    "content": "List the files.",
+    "content_type": "text",
+    "tool_name": null,
+    "tool_input": null,
+    "tool_result": null,
+    "usage": null,
+    "tool_use_id": null,
+    "message_id": "qwen-session:jsonl:0:user-1",
+    "timestamp": "2024-05-01T10:00:00+00:00"
+  },
+  {
+    "index": 1,
+    "role": "assistant",
+    "content": "I will inspect the directory.",
+    "content_type": "text",
+    "tool_name": null,
+    "tool_input": null,
+    "tool_result": null,
+    "usage": {
+      "input_tokens": 500,
+      "output_tokens": 60,
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 300
+    },
+    "tool_use_id": null,
+    "message_id": "qwen-session:jsonl:1:model-1",
+    "timestamp": "2024-05-01T10:00:01+00:00"
+  },
+  {
+    "index": 2,
+    "role": "assistant",
+    "content": "Tool call: Bash",
+    "content_type": "tool_use",
+    "tool_name": "Bash",
+    "tool_input": {"cmd": "ls -la"},
+    "tool_result": null,
+    "usage": null,
+    "tool_use_id": "qwen-tu-213967ff2b5fbf7b",
+    "message_id": "qwen-session:jsonl:2",
+    "timestamp": "2024-05-01T10:00:02+00:00"
+  },
+  {
+    "index": 3,
+    "role": "tool",
+    "content": "total 8\n-rw-r--r-- README.md",
+    "content_type": "tool_result",
+    "tool_name": null,
+    "tool_input": null,
+    "tool_result": {
+      "output": "total 8\n-rw-r--r-- README.md",
+      "status": "success"
+    },
+    "usage": null,
+    "tool_use_id": "qwen-tu-213967ff2b5fbf7b",
+    "message_id": "qwen-session:jsonl:3",
+    "timestamp": "2024-05-01T10:00:03+00:00"
+  }
+]
