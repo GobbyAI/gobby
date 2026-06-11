@@ -284,6 +284,7 @@ fn env_overrides_config_store() {
 }
 
 #[test]
+#[serial_test::serial(config_log_capture)]
 fn invalid_falkordb_env_port_warns_and_uses_default() {
     let env = EnvGuard::new();
     env.set("GOBBY_FALKORDB_HOST", "env-falkor.local");
@@ -778,6 +779,7 @@ fn indexing_config_resolves_config_store_values_before_yaml() {
 }
 
 #[test]
+#[serial_test::serial(config_log_capture)]
 fn indexing_config_invalid_boolean_warns_and_uses_default() {
     let _env = EnvGuard::new();
     let mut source = TestSource::with_values([(INDEXING_RESPECT_GITIGNORE_KEY, "sometimes")]);
@@ -811,6 +813,7 @@ fn indexing_config_env_overrides_config_sources() {
 }
 
 #[test]
+#[serial_test::serial(config_log_capture)]
 fn indexing_config_invalid_environment_boolean_warns_and_uses_default() {
     let env = EnvGuard::new();
     env.set("GOBBY_INDEXING_RESPECT_GITIGNORE", "sometimes");
