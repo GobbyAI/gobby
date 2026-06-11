@@ -126,13 +126,11 @@ fn semantic_search_global_scope_degrades_without_fake_collection() {
     .expect("global semantic search degrades");
 
     assert!(outcome.hits.is_empty());
-    assert!(matches!(
-        outcome.degradation,
-        Some(DegradationKind::ServiceUnavailable {
-            service,
-            state: ServiceState::Unreachable { .. },
-        }) if service == "qdrant"
-    ));
+    let Some(DegradationKind::PartialData { component, message }) = outcome.degradation else {
+        panic!("expected global semantic search to report partial semantic data");
+    };
+    assert_eq!(component, "semantic");
+    assert_eq!(message, "global scope: semantic fan-out not implemented");
     assert_eq!(vector.collection, None);
 }
 

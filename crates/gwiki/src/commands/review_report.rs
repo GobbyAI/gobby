@@ -731,6 +731,16 @@ mod tests {
     }
 
     #[test]
+    fn review_report_maps_semantic_partial_data_degradation() {
+        let source = degradation_source(&DegradationKind::PartialData {
+            component: "semantic".to_string(),
+            message: "global scope: semantic fan-out not implemented".to_string(),
+        });
+
+        assert_eq!(source, "semantic_partial");
+    }
+
+    #[test]
     fn parse_unified_diff_files_uses_new_rename_path_and_skips_empty_right_path() {
         let files = parse_unified_diff_files(
             "diff --git a/src/old.rs b/src/new.rs\n\

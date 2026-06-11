@@ -87,12 +87,13 @@ where
         });
     }
     let Some(collection) = collection_for_scope(&request.scope) else {
-        return Ok(degraded(
-            "qdrant",
-            gobby_core::degradation::ServiceState::Unreachable {
-                message: "global semantic search requires collection fan-out".to_string(),
-            },
-        ));
+        return Ok(SemanticSearchOutcome {
+            hits: Vec::new(),
+            degradation: Some(DegradationKind::PartialData {
+                component: "semantic".to_string(),
+                message: "global scope: semantic fan-out not implemented".to_string(),
+            }),
+        });
     };
     let Some(embedding) = embedding else {
         return Err(required_service_error(
