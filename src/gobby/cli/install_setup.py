@@ -8,6 +8,7 @@ import logging
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -41,7 +42,7 @@ from .utils import get_install_dir
 logger = logging.getLogger(__name__)
 # Helper modules resolve these names dynamically from this module to preserve
 # existing patch targets in tests and callers.
-_HELPER_EXPORTS = (os, platform, tempfile, UTC, datetime)
+_HELPER_EXPORTS = (os, platform, shutil, tempfile, UTC, datetime)
 
 
 def _module() -> Any:

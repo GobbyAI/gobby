@@ -220,9 +220,11 @@ class TestInstallGhookFromCargoInstall:
 
 class TestProbeGhookVersion:
     def test_returns_last_token(self, tmp_path: Path) -> None:
+        ghook_path = tmp_path / "ghook"
+        ghook_path.touch()
         with patch("gobby.cli.install_setup.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="ghook 0.1.1\n", stderr="")
-            assert _probe_ghook_version(tmp_path / "ghook") == "0.1.1"
+            assert _probe_ghook_version(ghook_path) == "0.1.1"
 
 
 class TestInstallGhook:

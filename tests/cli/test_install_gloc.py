@@ -173,9 +173,11 @@ class TestInstallGlocFromCargo:
 
 class TestProbeGlocVersion:
     def test_returns_last_token(self, tmp_path: Path) -> None:
+        gloc_path = tmp_path / "gloc"
+        gloc_path.touch()
         with patch("gobby.cli.install_setup.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="gloc 0.1.1\n", stderr="")
-            assert _probe_gloc_version(tmp_path / "gloc") == "0.1.1"
+            assert _probe_gloc_version(gloc_path) == "0.1.1"
 
 
 class TestInstallGloc:
