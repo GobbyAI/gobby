@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import click
+import httpx
 import pytest
 from click.testing import CliRunner
 
@@ -226,6 +227,71 @@ class TestRunPipeline:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["status"] == "waiting_approval"
+
+    @patch("gobby.cli.pipelines._get_project_id", return_value="proj-1")
+    @patch("gobby.cli.pipelines.get_project_path", return_value=Path("/proj"))
+    @patch("gobby.cli.pipelines.get_workflow_loader")
+    @patch("gobby.cli.pipelines.get_pipeline_executor")
+    def test_run_daemon_failure_does_not_fall_back(
+        self,
+        mock_executor: MagicMock,
+        mock_loader: MagicMock,
+        mock_pp: MagicMock,
+        mock_proj_id: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        mock_loader.return_value.load_pipeline_sync.return_value = MagicMock()
+        response = MagicMock()
+        response.status_code = 500
+        response.text = "Internal Server Error"
+        response.json.return_value = {"detail": "step failed"}
+        client = MagicMock()
+        client.call_http_api.return_value = response
+
+        with (
+            patch("gobby.config.app.load_config") as mock_config,
+            patch("gobby.utils.daemon_client.DaemonClient", return_value=client),
+        ):
+            mock_config.return_value.daemon_port = 9999
+            result = runner.invoke(pipelines, ["run", "deploy"])
+
+        assert result.exit_code == 1
+        assert "Pipeline execution failed in daemon: step failed" in result.output
+        client.call_http_api.assert_called_once()
+        mock_executor.assert_not_called()
+
+    @patch("gobby.cli.pipelines._get_project_id", return_value="proj-1")
+    @patch("gobby.cli.pipelines.get_project_path", return_value=Path("/proj"))
+    @patch("gobby.cli.pipelines.get_workflow_loader")
+    @patch("gobby.cli.pipelines.get_pipeline_executor")
+    def test_run_daemon_connect_error_falls_back_locally(
+        self,
+        mock_executor: MagicMock,
+        mock_loader: MagicMock,
+        mock_pp: MagicMock,
+        mock_proj_id: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        mock_loader.return_value.load_pipeline_sync.return_value = MagicMock()
+        client = MagicMock()
+        client.call_http_api.side_effect = httpx.ConnectError("refused")
+        execution = MagicMock()
+        execution.id = "ex-local"
+        execution.status.value = "completed"
+        execution.pipeline_name = "deploy"
+        execution.outputs_json = None
+
+        with (
+            patch("gobby.config.app.load_config") as mock_config,
+            patch("gobby.utils.daemon_client.DaemonClient", return_value=client),
+            patch("gobby.cli.pipelines.asyncio.run", return_value=execution),
+        ):
+            mock_config.return_value.daemon_port = 9999
+            result = runner.invoke(pipelines, ["run", "deploy"])
+
+        assert result.exit_code == 0
+        assert "ex-local" in result.output
+        mock_executor.assert_called_once_with()
 
     def test_run_no_name(self, runner: CliRunner) -> None:
         result = runner.invoke(pipelines, ["run"])

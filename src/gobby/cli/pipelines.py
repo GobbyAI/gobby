@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import click
+import httpx
 import yaml
 
 from gobby.workflows.loader import WorkflowLoader
@@ -73,17 +74,32 @@ def get_pipeline_executor() -> Any:
     )
 
 
+def _daemon_error_message(response: Any) -> str:
+    status_code = getattr(response, "status_code", "unknown")
+    fallback = str(getattr(response, "text", "") or "").strip() or f"HTTP {status_code}"
+    try:
+        payload = response.json()
+    except Exception:
+        return fallback
+
+    if isinstance(payload, dict):
+        detail = payload.get("detail") or payload.get("error") or payload.get("message")
+        if isinstance(detail, str) and detail.strip():
+            return detail.strip()
+        if detail:
+            return json.dumps(detail)
+
+    return fallback
+
+
 def _try_daemon_run(name: str, inputs: dict[str, str], project_id: str) -> dict[str, Any] | None:
-    """Try to run pipeline via daemon HTTP API. Returns None if unavailable."""
+    """Try to run pipeline via daemon HTTP API. Returns None only if unavailable."""
     try:
         from gobby.config.app import load_config
         from gobby.utils.daemon_client import DaemonClient
 
         config = load_config()
         client = DaemonClient(port=config.daemon_port)
-        is_healthy, _ = client.check_health()
-        if not is_healthy:
-            return None
         response = client.call_http_api(
             "/api/pipelines/run",
             method="POST",
@@ -91,10 +107,18 @@ def _try_daemon_run(name: str, inputs: dict[str, str], project_id: str) -> dict[
             timeout=300.0,
         )
         if response.status_code in (200, 202):
-            result: dict[str, Any] = response.json()
+            try:
+                result: dict[str, Any] = response.json()
+            except Exception as e:
+                click.echo(f"Pipeline execution failed in daemon: invalid response: {e}", err=True)
+                raise SystemExit(1) from None
             return result
-        return None
-    except Exception as e:
+        click.echo(
+            f"Pipeline execution failed in daemon: {_daemon_error_message(response)}",
+            err=True,
+        )
+        raise SystemExit(1)
+    except (httpx.RequestError, ConnectionError, OSError) as e:
         logger.debug(f"Daemon run failed for {name}: {e}", exc_info=True)
         return None
 
