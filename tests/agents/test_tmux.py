@@ -170,6 +170,7 @@ class TestTmuxTextInjection:
             *tmux_cmd,
             "paste-buffer",
             "-d",
+            "-p",
             "-b",
             buffer_name,
             "-t",
@@ -218,6 +219,7 @@ class TestTmuxTextInjection:
                 "tmux",
                 "paste-buffer",
                 "-d",
+                "-p",
                 "-b",
                 buffer_name,
                 "-t",
@@ -292,6 +294,7 @@ class TestTmuxTextInjection:
                 "tmux",
                 "paste-buffer",
                 "-d",
+                "-p",
                 "-b",
                 buffer_name,
                 "-t",
@@ -328,8 +331,8 @@ class TestTmuxTextInjection:
             )
 
         buffer_name = commands[0][3]
-        assert commands[1][:4] == ["tmux", "paste-buffer", "-d", "-b"]
-        assert commands[1][4] == buffer_name
+        assert commands[1][:5] == ["tmux", "paste-buffer", "-d", "-p", "-b"]
+        assert commands[1][5] == buffer_name
         assert commands[2] == ["tmux", "delete-buffer", "-b", buffer_name]
 
     @pytest.mark.asyncio
