@@ -210,13 +210,13 @@ source of truth for code-index rows.
 
 ```text
 codebase → tree-sitter → PostgreSQL hub + pg_search BM25
-                          FalkorDB              → call graphs, blast radius, imports
-                          Qdrant + embeddings   → semantic vector search
-                          Gobby daemon          → auto-indexing, graph/vector orchestration,
-                                                  config, secrets, sessions, agents
+FalkorDB              → call graphs, blast radius, imports
+Qdrant + embeddings   → semantic vector search
+gcode projection sync → code graph/vector projection writes
+Gobby daemon          → auto-indexing triggers, config/secrets, sessions, agents
 ```
 
-Gobby adds graph queries, graph lifecycle orchestration, semantic search, and infrastructure that makes gcode better at its core job — not just more features bolted on.
+Gobby adds scheduling, shared runtime config, semantic services, and infrastructure that makes gcode better at its core job. Rust still owns code graph/vector projection writes; daemon and UI callers delegate that work to gcode APIs or commands.
 
 **Search quality improves.** With FalkorDB, `gcode search` blends BM25 text matching with call-graph relevance. With Qdrant plus a configured embeddings API, conceptual queries like "database connection pooling" can find semantically similar code even when the exact words don't match.
 
