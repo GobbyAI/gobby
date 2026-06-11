@@ -1,6 +1,6 @@
 # Gobby Technology Stack
 
-> Generated: 2025-12-15
+> Updated: 2026-06-11
 
 ## Core Technologies
 
@@ -16,15 +16,15 @@
 
 | Technology | Version | Purpose |
 |------------|---------|---------|
-| **FastAPI** | >=0.115.0 | HTTP REST API server |
+| **FastAPI** | >=0.136.0,!=0.136.3 | HTTP REST API server |
 | **Uvicorn** | >=0.30.0 | ASGI server |
-| **websockets** | >=12.0 | WebSocket support |
+| **websockets** | >=15.0 | WebSocket support |
 
 ### MCP Framework
 
 | Technology | Version | Purpose |
 |------------|---------|---------|
-| **FastMCP** | >=0.2.0 | MCP server implementation |
+| **FastMCP** | >=3.2.0 | MCP server implementation (security floor: CVE-2025-64340, CVE-2026-27124) |
 | **httpx** | >=0.27.0 | Async HTTP client for MCP |
 
 ### CLI Framework
@@ -57,8 +57,9 @@
 
 | Technology | Version | Purpose |
 |------------|---------|---------|
-| **claude-agent-sdk** | >=0.1.5 | Claude subscription execution |
-| **LiteLLM** | >=1.0.0 | Multi-provider abstraction |
+| **claude-agent-sdk** | >=0.1.81 | Claude subscription execution |
+| **anthropic** | >=0.75.0 | Claude API client |
+| **openai** | >=1.0.0 | OpenAI-compatible API client (incl. local endpoints) |
 
 ### System Utilities
 
@@ -73,10 +74,9 @@
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| **pytest** | >=8.4.2 | Test framework |
+| **pytest** | >=9.0.3 | Test framework |
 | **pytest-asyncio** | >=1.2.0 | Async test support |
 | **pytest-cov** | >=7.0.0 | Coverage reporting |
-| **pytest-httpx** | >=0.30.0 | HTTP mocking |
 | **pytest-mock** | >=3.14.0 | General mocking |
 
 ### Code Quality
@@ -91,7 +91,7 @@
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| **setuptools** | >=61.0 | Package building |
+| **setuptools** | >=64.0 | Package building (via a custom `build_backend` wrapper) |
 | **uv** | latest | Dependency management |
 
 ## Architecture Patterns
@@ -103,7 +103,7 @@
 | **Adapter** | `adapters/` | CLI-specific hook translation |
 | **Factory** | `llm/factory.py` | LLM provider creation |
 | **Repository** | `storage/*.py` | Data access abstraction |
-| **Service** | `sessions/manager.py` | Business logic encapsulation |
+| **Service** | `sessions/lifecycle.py` | Business logic encapsulation |
 | **Coordinator** | `hooks/hook_manager.py` | Central event handling |
 
 ### Concurrency Model
@@ -122,6 +122,10 @@ Outbound: MCP Tool → MCPClientManager → Downstream Server → Response
 
 ## Dependency Graph
 
+Key runtime dependencies (see `pyproject.toml` for the full, current list —
+it also includes aiohttp, aiofiles, jinja2, msgspec, croniter, falkordb,
+qdrant-client, cryptography, and opentelemetry instrumentation):
+
 ```
 gobby
 ├── click (CLI)
@@ -132,11 +136,16 @@ gobby
 ├── pydantic (validation)
 ├── pyyaml (config)
 ├── websockets (WS)
+├── psycopg (PostgreSQL)
 ├── psutil (process)
 ├── py-machineid (ID)
 ├── claude-agent-sdk (Claude)
-└── litellm (LLM)
+├── anthropic (Claude API)
+└── openai (OpenAI-compatible APIs)
 ```
+
+The web UI under `web/` is a separate TypeScript stack (React + Vite +
+Tailwind, tested with Vitest); see `web/package.json`.
 
 ## Version Constraints
 
@@ -144,8 +153,8 @@ gobby
 |------------|--------|
 | Python >=3.13 | Type hints, async improvements |
 | Pydantic >=2.9.0 | V2 API required |
-| FastAPI >=0.115.0 | Pydantic v2 compatibility |
-| FastMCP >=0.2.0 | Latest MCP protocol support |
+| FastAPI >=0.136.0,!=0.136.3 | Pydantic v2 compatibility; excluded broken release |
+| FastMCP >=3.2.0 | Security floor (CVE-2025-64340, CVE-2026-27124) |
 
 ## CI/CD Stack
 
@@ -156,3 +165,5 @@ gobby
 | **Coverage** | Codecov |
 | **Release** | PyPI trusted publishing |
 | **Code Review** | CodeRabbit AI |
+
+_Last verified: 2026-06-11_

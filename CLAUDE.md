@@ -224,15 +224,15 @@ src/gobby/
 │   └── transcripts/      # Parsers for Claude/Gemini/Codex
 │
 ├── tasks/                # Task system
-│   ├── expansion.py      # TaskExpander (LLM-based decomposition)
+│   ├── expansion/        # ExpansionService (LLM-based decomposition)
 │   ├── validation.py     # TaskValidator
 │   └── prompts/          # LLM prompts for expansion
 │
-├── workflows/            # Rule engine and workflow system (~47 modules)
-│   ├── rule_engine.py    # RuleEngine (declarative enforcement)
+├── workflows/            # Rule engine and workflow system (~56 modules)
+│   ├── engine/           # RuleEngine (engine/core.py, declarative enforcement)
 │   ├── definitions.py    # Rule/workflow/agent definition models
 │   ├── safe_evaluator.py # Safe expression evaluator (AST-based)
-│   ├── engine.py         # WorkflowEngine (on-demand state machines)
+│   ├── state_manager.py  # WorkflowInstanceManager (per-session state)
 │   ├── pipeline_executor.py  # PipelineExecutor (sequential execution)
 │   ├── loader.py         # YAML workflow/rule loading and sync
 │   └── ...               # Actions, observers, state, templates
@@ -256,15 +256,15 @@ src/gobby/
 ├── storage/              # PostgreSQL hub storage and legacy import helpers
 │   ├── hub/postgres.py   # PostgresHubDatabase (connection management)
 │   ├── migrations.py     # PostgreSQL schema migrations
-│   ├── sessions.py       # Session CRUD
-│   ├── tasks.py          # Task CRUD
+│   ├── sessions/         # Session CRUD (SessionManager)
+│   ├── tasks/            # Task CRUD (LocalTaskManager)
 │   └── ...               # Memory, skills, agents, workflows, etc.
 │
 ├── llm/                  # Multi-provider LLM abstraction
 │   ├── service.py        # LLMService manager
-│   ├── claude.py         # Claude provider
-│   ├── gemini.py         # Gemini provider
-│   └── litellm.py        # LiteLLM fallback
+│   ├── claude.py         # Claude provider (API)
+│   ├── claude_cli.py     # Claude CLI execution
+│   └── local.py          # Local endpoint provider
 │
 ├── config/               # Configuration (~15 modules)
 │   ├── app.py            # DaemonConfig (YAML config model)
@@ -274,7 +274,7 @@ src/gobby/
 ├── autonomous/           # Autonomous execution support
 ├── clones/               # Git clone management
 ├── scheduler/            # Cron job scheduler
-├── search/               # TF-IDF and semantic search
+├── search/               # Keyword and semantic search
 ├── sync/                 # Task/memory sync (JSONL)
 ├── voice/                # Voice chat support
 ├── worktrees/            # Git worktree management
@@ -286,7 +286,7 @@ src/gobby/
 | Path | Purpose |
 | --- | --- |
 | `~/.gobby/bootstrap.yaml` | Pre-DB bootstrap settings, including ports, bind host, and Postgres install metadata |
-| OS keyring `gobby:postgres_database_url` / bootstrap `database_url_ref` | Runtime PostgreSQL hub DSN |
+| `~/.gobby/bootstrap.yaml` `database_url` | Runtime PostgreSQL hub DSN (`database_url_ref` is no longer supported) |
 | `~/.gobby/logs/` | Log files |
 | `.gobby/project.json` | Project metadata |
 | `.gobby/tasks.jsonl` | Task sync file (git-native) |

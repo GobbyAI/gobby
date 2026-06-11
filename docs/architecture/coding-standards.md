@@ -30,8 +30,8 @@ uv run ruff format src/
 # Type checking (strict mode)
 uv run mypy src/
 
-# Tests with 80% coverage minimum
-uv run pytest
+# Tests with coverage (80% minimum is enforced in CI and pre-push, not by bare pytest)
+uv run pytest --cov=gobby --cov-report=term-missing --cov-fail-under=80
 ```
 
 ### Configuration Reference
@@ -93,7 +93,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.hub.protocol import HubDatabase
 
 class SessionManager:
     def __init__(self, config: DaemonConfig) -> None:
@@ -135,7 +135,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 from gobby.config.app import DaemonConfig
-from gobby.storage.database import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase
 ```
 
 ### Import Rules
@@ -157,7 +157,7 @@ from gobby.storage.database import HubDatabase
 - Suffix `-Error` or `-Exception` for custom exceptions
 
 ```python
-class LocalSessionManager:      # Manager pattern
+class SessionManager:           # Manager pattern
 class ClaudeLLMProvider:        # Provider pattern
 class TaskIDCollisionError:     # Custom exception
 ```
@@ -181,8 +181,8 @@ def find_task_by_prefix(prefix: str) -> Task | None:
 - Private attributes prefixed with single underscore
 
 ```python
-DEFAULT_DAEMON_PORT = 60887                    # Module constant
-DAEMON_STATUS_TEXT = "running"               # Module constant
+DEFAULT_DAEMON_PORT = 60887                  # Module constant
+DEFAULT_WEBSOCKET_PORT = 60888               # Module constant
 
 self._session_mapping: dict[str, str] = {}   # Private attribute
 self._cache_lock = threading.Lock()          # Private attribute
@@ -558,7 +558,7 @@ def get_request_id() -> str | None:
 
 ### Test File Organization
 
-- Test files mirror source structure: `src/storage/tasks.py` -> `tests/test_storage_tasks.py`
+- Test files mirror the source directory structure: `src/gobby/storage/tasks/` -> `tests/storage/tasks/`
 - Use descriptive test names that explain the scenario
 
 ```python
@@ -592,7 +592,8 @@ def task_manager(database):
 
 ### Async Tests
 
-Use `pytest-asyncio` for async test functions:
+Use `pytest-asyncio` for async test functions (`asyncio_mode = "auto"` is set in
+`pyproject.toml`, so the explicit marker is optional):
 
 ```python
 import pytest
@@ -631,7 +632,7 @@ def test_full_session_lifecycle():
 Organize code into distinct layers with clear responsibilities:
 
 ```
-src/
+src/gobby/
 ├── cli/              # CLI entry points (Click commands)
 ├── config/           # Configuration management (Pydantic models)
 ├── hooks/            # Hook system (events, handlers)
@@ -676,11 +677,10 @@ Use `__init__.py` to define public API:
 
 ```python
 # storage/__init__.py
-from gobby.storage.database import HubDatabase
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 
-__all__ = ["HubDatabase", "LocalSessionManager", "LocalTaskManager"]
+__all__ = ["SessionManager", "LocalTaskManager"]
 ```
 
 ---
@@ -699,7 +699,7 @@ __all__ = ["HubDatabase", "LocalSessionManager", "LocalTaskManager"]
 | Constants | UPPER_SNAKE_CASE |
 | Private members | Single underscore prefix |
 | Docstrings | Google style (Args, Returns, Raises) |
-| Tests | pytest with 80% coverage minimum |
+| Tests | pytest; 80% coverage enforced in CI and pre-push |
 | Async | Always use timeouts for external calls |
 
 ---
@@ -708,12 +708,18 @@ __all__ = ["HubDatabase", "LocalSessionManager", "LocalTaskManager"]
 
 These standards are enforced through:
 
-1. **Pre-commit hooks**: Run ruff and mypy before commit
+1. **Pre-push hooks**: ruff, ruff-format, and mypy run at the pre-push stage
+   (`.pre-commit-config.yaml`); commit-stage hooks cover file hygiene and
+   gitleaks. Gobby's installed git pre-push hook runs `gobby hooks run
+   pre-push` verification.
 2. **CI pipeline**: All checks must pass for PR merge
 3. **Code review**: Reviewers verify adherence to standards
 
-To set up pre-commit hooks:
+To set up the commit-stage hooks (ruff/mypy run via Gobby's own pre-push hook,
+so `--hook-type pre-push` is deliberately not installed through pre-commit):
 
 ```bash
 uv run pre-commit install
 ```
+
+_Last verified: 2026-06-11_

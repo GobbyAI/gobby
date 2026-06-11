@@ -1,16 +1,18 @@
 # Review: docs accuracy — code bugs surfaced by guide verification
 
-- **Scope:** `docs/guides/*.md`, both halves alphabetical. Guides A:
-  `README.md` through `memory.md` (20 of 47 guides, 7,196 lines, reviewed at
-  `07db2d036`). Guides B: `observability.md` through `worktrees.md` (27
-  guides, 7,118 lines, reviewed at `f2a540306`). Entries here are cases
-  where the doc states the clearly-intended contract and the CODE violates it;
-  pure doc drift was fixed directly in the guides in the same commits.
-- **Reviewer:** Claude Fable 5 (7 parallel verifier agents per half; every
+- **Scope:** `docs/guides/*.md`, both halves alphabetical, plus
+  `docs/architecture/*.md`. Guides A: `README.md` through `memory.md` (20 of
+  47 guides, 7,196 lines, reviewed at `07db2d036`). Guides B:
+  `observability.md` through `worktrees.md` (27 guides, 7,118 lines, reviewed
+  at `f2a540306`). Architecture: 6 docs, 1,947 lines, reviewed at
+  `daac005bb`. Entries here are cases where the doc states the
+  clearly-intended contract and the CODE violates it; pure doc drift was
+  fixed directly in the docs in the same commits.
+- **Reviewer:** Claude Fable 5 (parallel verifier agents per batch; every
   MAJOR finding re-verified against source by the synthesizer)
 - **Commit / branch:** `0.5.0` @ `07db2d036` (guides A) / `f2a540306`
-  (guides B)
-- **Summary:** 0 Blocker · 8 Important · 3 Nit — the guides were largely
+  (guides B) / `daac005bb` (architecture)
+- **Summary:** 0 Blocker · 8 Important · 4 Nit — the guides were largely
   honest; where doc and code disagree on intent, the code is the drifted side
   in these cases.
 
@@ -181,6 +183,27 @@
   field, so any call would fail the "'effects' is required" validator — but
   it has zero callers in `src/` and `tests/`. Delete it or fix the field
   name if it is meant to be public API.
+
+## Findings — architecture docs (docs/architecture/)
+
+### [NIT] Phantom `gobby.storage.mcp_db` import in route dependencies
+
+- **Where:** `src/gobby/servers/routes/dependencies.py:23`
+  (`from gobby.storage.mcp_db import MCPDatabaseManager` under
+  `TYPE_CHECKING`), used as return annotation at
+  `src/gobby/servers/routes/dependencies.py:82`
+- **Failure mode:** The module does not exist — `uv run python -c "import
+  gobby.storage.mcp_db"` raises `ModuleNotFoundError`. The real class is
+  `LocalMCPManager` at `src/gobby/storage/mcp.py:142`. The phantom import is
+  masked by `ignore_missing_imports = true` in mypy config, so the
+  annotation is silently unchecked.
+- **Why it matters:** A type annotation referencing a nonexistent module
+  documents an API that was removed; type checking on that dependency
+  function is a no-op, and the stale name propagated into architecture docs
+  (now corrected to `LocalMCPManager`).
+- **Minimal fix:** Repoint `dependencies.py:23` and `:82` to
+  `gobby.storage.mcp.LocalMCPManager`.
+- **Confidence:** high
 
 ## Systemic patterns
 

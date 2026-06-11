@@ -1,10 +1,10 @@
 # Gobby Architecture Documentation
 
-> Updated: 2026-02-22 | Version: 0.2.21
+> Updated: 2026-06-11 | Version: 0.5.0
 
 ## Overview
 
-Gobby is a **local-first daemon** that unifies AI coding assistants (Claude Code, Gemini CLI, Codex) through a hook interface for session tracking. It provides a rule engine for declarative behavior enforcement, an MCP proxy with progressive tool discovery, agent spawning with P2P messaging, and persistent memory.
+Gobby is a **local-first daemon** that unifies AI coding assistants (Claude Code, Codex, Gemini CLI, Qwen, Droid, and Grok) through a hook interface for session tracking. It provides a rule engine for declarative behavior enforcement, an MCP proxy with progressive tool discovery, agent spawning with P2P messaging, and persistent memory.
 
 ### Key Characteristics
 
@@ -50,14 +50,15 @@ Gobby is a **local-first daemon** that unifies AI coding assistants (Claude Code
 │  └────────┬────────┘  └────────┬────────┘  └────────┬────────┘        │
 │           │                    │                     │                  │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐        │
-│  │  WorkflowEngine │  │   AgentRunner   │  │  MemoryManager  │        │
-│  │  (state machine)│  │ (spawn/monitor) │  │  (recall/store) │        │
+│  │ WorkflowInstance│  │   AgentRunner   │  │  MemoryManager  │        │
+│  │ Manager (state) │  │ (spawn/monitor) │  │  (recall/store) │        │
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘        │
 │                                                                        │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐        │
 │  │    Adapters     │  │  LLMService     │  │ MCPClientManager│        │
-│  │ Claude/Gemini/  │  │  (multi-prov)   │  │ (conn pooling)  │        │
-│  │ Codex Adapters  │  │                 │  │                 │        │
+│  │ Claude/Codex/   │  │  (multi-prov)   │  │ (conn pooling)  │        │
+│  │ Gemini/Droid/   │  │                 │  │                 │        │
+│  │ Qwen/Grok       │  │                 │  │                 │        │
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘        │
 └────────────────────────────────┬───────────────────────────────────────┘
                                  │
@@ -65,7 +66,7 @@ Gobby is a **local-first daemon** that unifies AI coding assistants (Claude Code
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                          DATA LAYER                                     │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐        │
-│  │   HubDatabase   │  │  MCPDBManager   │  │ File Storage    │        │
+│  │   HubDatabase   │  │ LocalMCPManager │  │ File Storage    │        │
 │  │  (PostgreSQL)   │  │ (tool caching)  │  │ (sync, logs)    │        │
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘        │
 │                    bootstrap.yaml database_url                          │
@@ -78,7 +79,7 @@ Gobby is a **local-first daemon** that unifies AI coding assistants (Claude Code
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| **CLI** | `src/gobby/cli/` | Click-based commands (~25 modules) |
+| **CLI** | `src/gobby/cli/` | Click-based commands (50+ modules) |
 | **Daemon Runner** | `src/gobby/runner.py` | Main daemon process, starts all servers |
 
 ### Server Layer
@@ -94,10 +95,10 @@ Gobby is a **local-first daemon** that unifies AI coding assistants (Claude Code
 
 | Component | File | Responsibility |
 |-----------|------|----------------|
-| **RuleEngine** | `workflows/rule_engine.py` | Declarative rule evaluation and enforcement |
+| **RuleEngine** | `workflows/engine/core.py` | Declarative rule evaluation and enforcement |
 | **HookManager** | `hooks/hook_manager.py` | Central coordinator for all hook events |
-| **SessionManager** | `sessions/manager.py` | Session registration, lookup, status updates |
-| **WorkflowEngine** | `workflows/engine.py` | On-demand step-based state machines |
+| **SessionManager** | `storage/sessions/_manager.py` | Session registration, lookup, status updates |
+| **WorkflowInstanceManager** | `workflows/state_manager.py` | Per-session workflow instance state |
 | **AgentRunner** | `agents/runner.py` | Agent process spawning and lifecycle |
 | **MemoryManager** | `memory/manager.py` | Persistent fact storage and recall |
 | **LLMService** | `llm/service.py` | Multi-provider LLM management |
@@ -110,17 +111,20 @@ Gobby is a **local-first daemon** that unifies AI coding assistants (Claude Code
 |---------|------|-----|
 | **ClaudeCodeAdapter** | `adapters/claude_code.py` | Claude Code |
 | **GeminiAdapter** | `adapters/gemini.py` | Gemini CLI |
-| **CodexAdapter** | `adapters/codex.py` | Codex CLI |
+| **CodexAdapter** | `adapters/codex_impl/app_server_adapter.py` | Codex CLI |
+| **DroidAdapter** | `adapters/droid.py` | Droid |
+| **QwenAdapter** | `adapters/qwen.py` | Qwen Code |
+| **GrokAdapter** | `adapters/grok.py` | Grok CLI |
 
 ### Data Layer
 
 | Component | File | Storage |
 |-----------|------|---------|
 | **PostgresHubDatabase** | `storage/hub/postgres.py` | PostgreSQL hub storage |
-| **LocalSessionManager** | `storage/sessions.py` | Session CRUD operations |
-| **LocalTaskManager** | `storage/tasks.py` | Task CRUD with dependency graphs |
+| **SessionManager** | `storage/sessions/_manager.py` | Session CRUD operations |
+| **LocalTaskManager** | `storage/tasks/_manager.py` | Task CRUD with dependency graphs |
 | **LocalProjectManager** | `storage/projects.py` | Project CRUD operations |
-| **MCPDatabaseManager** | `storage/mcp.py` | MCP server and tool caching |
+| **LocalMCPManager** | `storage/mcp.py` | MCP server and tool caching |
 
 ## Data Flows
 
@@ -139,7 +143,10 @@ Hook event fired (e.g., before_tool)
             ├─ block: check tool matching → if match, STOP
             ├─ set_variable: mutate variable immediately
             ├─ inject_context: append to context list
-            └─ mcp_call: record for dispatch
+            ├─ mcp_call: record for dispatch
+            ├─ observe: record observation
+            ├─ rewrite_input: rewrite the tool input
+            └─ load_skill: load a skill into context
 ```
 
 ### Session Lifecycle
@@ -147,7 +154,7 @@ Hook event fired (e.g., before_tool)
 ```
 1. CLI Hook Invoked (SessionStart)
    └─> Hook Dispatcher Script (per CLI)
-       └─> HTTP POST /api/v1/hooks/session-start
+       └─> HTTP POST /api/hooks/execute (hook_type: session-start in body)
            └─> Adapter.translate_to_hook_event()
                └─> HookManager.handle()
                    └─> RuleEngine.evaluate(session_start)
@@ -159,7 +166,7 @@ Hook event fired (e.g., before_tool)
 
 3. Session End
    └─> HookManager.handle()
-       └─> SummaryGenerator.generate() (LLM)
+       └─> generate_session_summaries() (sessions/summarize.py, LLM)
            └─> SessionManager.update_status("handoff_ready")
 ```
 
@@ -177,10 +184,10 @@ Hook event fired (e.g., before_tool)
 |-------------|----------|-----------|
 | **Claude Code** | HTTP hooks | Inbound |
 | **Gemini CLI** | HTTP hooks | Inbound |
-| **Codex CLI** | WebSocket events | Inbound |
+| **Codex CLI** | HTTP hooks (+ app-server JSON-RPC subprocess) | Inbound |
 | **Claude API** | HTTP | Outbound |
 | **OpenAI API** | HTTP | Outbound |
-| **Gemini API** | HTTP | Outbound |
+| **Gemini CLI** | ACP subprocess | Outbound |
 | **Downstream MCP** | HTTP/stdio/WS | Outbound |
 
 ## Key Design Decisions
@@ -189,7 +196,9 @@ Hook event fired (e.g., before_tool)
 2. **CLI-Agnostic**: Adapter pattern normalizes different CLI hook formats to unified events
 3. **Rules-First Enforcement**: Declarative rules enforce behavior without relying on prompt compliance
 4. **Progressive Discovery**: MCP tools loaded on-demand to reduce token usage
-5. **Multi-Provider LLM**: Abstraction layer supports Claude, Gemini, OpenAI, and LiteLLM
+5. **Multi-Provider LLM**: Abstraction layer supports Claude (API + CLI), Codex, Gemini, Qwen, and Droid providers plus local endpoints
 6. **Event-Driven Hooks**: Hook events feed into RuleEngine for enforcement and context injection
 7. **P2P Agent Messaging**: Agents communicate via target-based `send_message` without parent relay
 8. **Thread-Safe Storage**: Bounded database execution and PostgreSQL transactions for concurrent access
+
+_Last verified: 2026-06-11_

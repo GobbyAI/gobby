@@ -1,6 +1,6 @@
 # Gobby Development Guide
 
-> Generated: 2025-12-15
+> Updated: 2026-06-11
 
 ## Prerequisites
 
@@ -12,7 +12,7 @@
 
 ```bash
 # Clone repository
-git clone https://github.com/<owner>/gobby.git
+git clone https://github.com/GobbyAI/gobby.git
 cd gobby
 
 # Install dependencies
@@ -59,7 +59,7 @@ uv run gobby status
 ### Run Tests
 
 ```bash
-# All tests with coverage
+# All tests (no coverage by default; 15k+ tests, 30+ minutes)
 uv run pytest
 
 # Single file
@@ -78,18 +78,18 @@ uv run pytest -m integration
 ### Coverage
 
 ```bash
-# Terminal report (default)
-uv run pytest
+# Terminal report
+uv run pytest --cov=gobby --cov-report=term-missing
 
 # HTML report
-uv run pytest --cov-report=html
+uv run pytest --cov=gobby --cov-report=html
 open htmlcov/index.html
 
 # XML report (for CI)
-uv run pytest --cov-report=xml
+uv run pytest --cov=gobby --cov-report=xml
 ```
 
-**Coverage Threshold:** 80%
+**Coverage Threshold:** 80% (enforced in CI and pre-push, not by bare `pytest`)
 
 ## Code Quality
 
@@ -103,7 +103,7 @@ uv run ruff check src/
 uv run ruff check src/ --fix
 
 # Check specific file
-uv run ruff check src/cli.py
+uv run ruff check src/gobby/cli/daemon.py
 ```
 
 ### Formatting
@@ -123,7 +123,7 @@ uv run ruff format --check src/
 uv run mypy src/
 
 # Single file
-uv run mypy src/cli.py
+uv run mypy src/gobby/runner.py
 ```
 
 ## Common Workflows
@@ -154,7 +154,7 @@ uv add <package>
 # Development dependency
 uv add --group dev <package>
 
-# Update lock file
+# Sync environment from lockfile
 uv sync
 ```
 
@@ -184,8 +184,8 @@ claude mcp add --transport stdio gobby-daemon -- gobby mcp-server
 ## Project Structure
 
 ```
-src/
-├── cli.py              # Entry point - start here for CLI changes
+src/gobby/
+├── cli/                # CLI commands (Click); entry point gobby.cli:cli
 ├── runner.py           # Daemon process - start here for server changes
 ├── adapters/           # Add new CLI support here
 ├── hooks/              # Hook event handling
@@ -200,7 +200,7 @@ src/
 
 | File | When to Edit |
 |------|--------------|
-| `cli.py` | Adding new CLI commands |
+| `cli/` (package) | Adding new CLI commands |
 | `adapters/*.py` | Supporting new CLI tools |
 | `hooks/events.py` | Adding new hook event types |
 | `mcp_proxy/server.py` | Adding new MCP tools |
@@ -211,7 +211,7 @@ src/
 
 | Variable | Purpose |
 |----------|---------|
-| `GOBBY_CONFIG` | Custom config file path |
+| `GOBBY_HOME` | Custom Gobby home directory (default `~/.gobby`); runtime config lives in the PostgreSQL hub, with pre-DB settings in `~/.gobby/bootstrap.yaml` |
 | `ANTHROPIC_API_KEY` | Claude API (BYOK mode) |
 | `OPENAI_API_KEY` | OpenAI API (BYOK mode) |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Gemini ADC |
@@ -257,3 +257,5 @@ uv run mypy src/ --show-error-codes
 # Check specific module
 uv run mypy src/module.py
 ```
+
+_Last verified: 2026-06-11_
