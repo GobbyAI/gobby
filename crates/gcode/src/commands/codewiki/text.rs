@@ -29,6 +29,7 @@ struct Frontmatter<'a> {
 #[derive(Clone, serde::Serialize)]
 struct FrontmatterSourceFile<'a> {
     file: &'a str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     ranges: Vec<String>,
 }
 
@@ -470,6 +471,25 @@ pub(crate) fn frontmatter_with_degradation(
     source_spans: &[SourceSpan],
     degraded_sources: &[String],
 ) -> String {
+    frontmatter_with_options(title, kind, source_spans, degraded_sources, true)
+}
+
+pub(crate) fn frontmatter_with_degradation_without_ranges(
+    title: &str,
+    kind: &str,
+    source_spans: &[SourceSpan],
+    degraded_sources: &[String],
+) -> String {
+    frontmatter_with_options(title, kind, source_spans, degraded_sources, false)
+}
+
+fn frontmatter_with_options(
+    title: &str,
+    kind: &str,
+    source_spans: &[SourceSpan],
+    degraded_sources: &[String],
+    include_ranges: bool,
+) -> String {
     let mut files: BTreeMap<&str, BTreeSet<(usize, usize)>> = BTreeMap::new();
     for span in source_spans {
         files
@@ -482,16 +502,11 @@ pub(crate) fn frontmatter_with_degradation(
         .into_iter()
         .map(|(file, ranges)| FrontmatterSourceFile {
             file,
-            ranges: ranges
-                .into_iter()
-                .map(|(line_start, line_end)| {
-                    if line_start == line_end {
-                        line_start.to_string()
-                    } else {
-                        format!("{line_start}-{line_end}")
-                    }
-                })
-                .collect(),
+            ranges: if include_ranges {
+                format_frontmatter_ranges(ranges)
+            } else {
+                Vec::new()
+            },
         })
         .collect();
     let data = Frontmatter {
@@ -517,6 +532,32 @@ pub(crate) fn frontmatter_with_degradation(
     out
 }
 
+fn format_frontmatter_ranges(ranges: BTreeSet<(usize, usize)>) -> Vec<String> {
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (line_start, line_end) in ranges {
+        let start = line_start.min(line_end);
+        let end = line_start.max(line_end);
+        if let Some((_, previous_end)) = merged.last_mut()
+            && start <= previous_end.saturating_add(1)
+        {
+            *previous_end = (*previous_end).max(end);
+            continue;
+        }
+        merged.push((start, end));
+    }
+
+    merged
+        .into_iter()
+        .map(|(line_start, line_end)| {
+            if line_start == line_end {
+                line_start.to_string()
+            } else {
+                format!("{line_start}-{line_end}")
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,6 +568,28 @@ mod tests {
             line_start,
             line_end,
         }
+    }
+
+    #[test]
+    fn frontmatter_coalesces_contiguous_provenance_ranges() {
+        let doc = frontmatter(
+            "Repository Overview",
+            "code_repo",
+            &[
+                span("src/lib.rs", 2, 2),
+                span("src/lib.rs", 3, 3),
+                span("src/lib.rs", 4, 6),
+                span("src/lib.rs", 8, 8),
+                span("src/lib.rs", 9, 10),
+                span("src/lib.rs", 12, 12),
+            ],
+        );
+
+        assert!(doc.contains("- 2-6"), "{doc}");
+        assert!(doc.contains("- 8-10"), "{doc}");
+        assert!(doc.contains("- '12'"), "{doc}");
+        assert!(!doc.contains("- '3'"), "{doc}");
+        assert!(!doc.contains("- '9'"), "{doc}");
     }
 
     #[test]

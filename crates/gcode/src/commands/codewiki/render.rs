@@ -416,7 +416,7 @@ pub(crate) fn render_repo_doc(
     source_spans: &[SourceSpan],
     degraded: bool,
 ) -> String {
-    let mut doc = frontmatter_with_degradation(
+    let mut doc = frontmatter_with_degradation_without_ranges(
         "Repository Overview",
         "code_repo",
         source_spans,

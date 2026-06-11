@@ -104,6 +104,26 @@ fn codewiki_unified_vault_emits_code_paths_frontmatter_and_wikilinks() {
 }
 
 #[test]
+fn repo_frontmatter_lists_source_files_without_range_blocks() {
+    let docs = generate_hierarchical_docs(&repo_marker_input(), None);
+    let repo = rendered_doc(&docs, "code/repo.md");
+    let yaml = repo
+        .strip_prefix("---\n")
+        .and_then(|content| content.split_once("---\n\n"))
+        .map(|(yaml, _)| yaml)
+        .expect("frontmatter block");
+    let frontmatter: serde_yaml::Value = serde_yaml::from_str(yaml).expect("parse frontmatter");
+    let provenance = frontmatter
+        .get("provenance")
+        .and_then(serde_yaml::Value::as_sequence)
+        .expect("provenance entries");
+
+    assert_eq!(source_files_from_frontmatter(repo).len(), 6);
+    assert!(provenance.iter().all(|entry| entry.get("file").is_some()));
+    assert!(provenance.iter().all(|entry| entry.get("ranges").is_none()));
+}
+
+#[test]
 fn repo_structural_fallback_omits_marker_wall_but_generated_text_stays_grounded() {
     let fallback_docs = generate_hierarchical_docs(&repo_marker_input(), None);
     let fallback_repo = rendered_doc(&fallback_docs, "code/repo.md");

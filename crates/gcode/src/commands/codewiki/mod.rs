@@ -73,9 +73,10 @@ pub(crate) use render::{
 // AI and structural text helpers.
 pub(crate) use text::{
     Generation, citation_list, citation_markers, collect_link_spans, frontmatter_with_degradation,
-    ground_text, maybe_generate, replace_citations_with_markers, resolve_text_generator,
-    structural_file_summary, structural_module_summary, structural_repo_summary,
-    structural_symbol_purpose, write_references, write_section,
+    frontmatter_with_degradation_without_ranges, ground_text, maybe_generate,
+    replace_citations_with_markers, resolve_text_generator, structural_file_summary,
+    structural_module_summary, structural_repo_summary, structural_symbol_purpose,
+    write_references, write_section,
 };
 #[cfg(test)]
 pub(crate) use text::{frontmatter, generate_with_bounded_retry};
