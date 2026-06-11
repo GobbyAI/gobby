@@ -24,6 +24,7 @@ from gobby.adapters.codex_impl.types import (
     CodexTurn,
     NotificationHandler,
 )
+from gobby.adapters.subprocess_stderr import SubprocessStderrDrain
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,7 @@ class CodexAppServerClient:
 
         # Reader task
         self._reader_task: asyncio.Task[None] | None = None
+        self._stderr_drain = SubprocessStderrDrain("Codex app-server", logger=logger)
         self._shutdown_event = asyncio.Event()
 
         # Thread tracking for session management
@@ -166,6 +168,7 @@ class CodexAppServerClient:
             # Start the reader task
             self._shutdown_event.clear()
             self._reader_task = asyncio.create_task(self._read_loop())
+            self._stderr_drain.start_text(self._process.stderr)
 
             # Send initialize request
             result = await self._send_request(
@@ -221,6 +224,7 @@ class CodexAppServerClient:
                 self._process.kill()
             finally:
                 self._process = None
+        await self._stderr_drain.stop()
 
         # Cancel pending requests
         with self._pending_requests_lock:

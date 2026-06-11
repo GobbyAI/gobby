@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, ClassVar
 
+from gobby.adapters.subprocess_stderr import SubprocessStderrDrain
+
 logger = logging.getLogger(__name__)
 
 # JSON-RPC request ID counter
@@ -111,7 +113,7 @@ def _compact_stderr(data: bytes | str | None, *, limit: int = 300) -> str | None
     if not compact:
         return None
     if len(compact) > limit:
-        return f"{compact[: limit - 3]}..."
+        return f"...{compact[-limit:]}"
     return compact
 
 
@@ -198,6 +200,7 @@ class ACPClient:
         self._session_info: dict[str, Any] = {}
         self._io_lock = asyncio.Lock()
         self._active_operations = 0
+        self._stderr_drain = SubprocessStderrDrain(f"{self.display_name} ACP", logger=logger)
 
     @property
     def is_started(self) -> bool:
@@ -265,6 +268,7 @@ class ACPClient:
             limit=ACP_STREAM_READER_LIMIT_BYTES,
         )
         self._started = True
+        self._stderr_drain.start_async(self._process.stderr)
         logger.debug("%s ACP client started (pid=%s)", self.display_name, self._process.pid)
 
         # Perform initialize handshake
@@ -480,18 +484,11 @@ class ACPClient:
 
     async def _read_exit_stderr(self) -> str | None:
         """Read stderr when the subprocess has already exited."""
-        if not self._process or not self._process.stderr or self._process.returncode is None:
+        if not self._process:
             return None
-
-        try:
-            stderr_data = await asyncio.wait_for(self._process.stderr.read(), timeout=0.1)
-        except TimeoutError:
-            return None
-        except Exception:
-            logger.debug("%s ACP stderr read failed", self.display_name, exc_info=True)
-            return None
-
-        return _compact_stderr(stderr_data)
+        if self._process.returncode is not None:
+            await self._stderr_drain.wait_finished(timeout=0.1)
+        return _compact_stderr(self._stderr_drain.snapshot())
 
     async def send(
         self,
@@ -763,6 +760,7 @@ class ACPClient:
         this is a no-op.
         """
         if not self._process:
+            await self._stderr_drain.stop()
             self._started = False
             self._session_id = None
             self._session_info = {}
@@ -807,6 +805,7 @@ class ACPClient:
         except Exception as e:
             logger.debug("%s stop error (expected): %s", type(self).__name__, e)
         finally:
+            await self._stderr_drain.stop()
             self._process = None
             self._started = False
             self._session_id = None
