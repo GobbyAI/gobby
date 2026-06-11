@@ -201,6 +201,15 @@ class CapabilityBinding:
             or _normalize_binding_model(self.provider, model) in self.models
         )
 
+    def accepts_explicit_model_override(self, model: str | None) -> bool:
+        """Return whether explicit routing may pass an off-list model to the adapter."""
+        return model is not None and self.adapter_style in {
+            AIAdapterStyle.ACP,
+            AIAdapterStyle.CLI,
+            AIAdapterStyle.DAEMON,
+            AIAdapterStyle.LOCAL,
+        }
+
     def to_dict(self) -> dict[str, Any]:
         """Return API-safe binding status data."""
         return {
@@ -327,16 +336,25 @@ class AICapabilityRegistry:
     ) -> CapabilityBinding:
         """Select the first available binding that satisfies the request."""
         normalized = normalize_capability(capability)
+        provider_bindings = self.bindings_for(normalized, provider=provider)
+        allow_explicit_model_override = provider is not None
         candidates = tuple(
             binding
-            for binding in self.bindings_for(normalized, provider=provider)
+            for binding in provider_bindings
             if binding.supports_model(model)
+            or (allow_explicit_model_override and binding.accepts_explicit_model_override(model))
         )
         for binding in candidates:
             if binding.available:
                 return binding
 
-        reason = self._selection_failure_reason(normalized, candidates, provider=provider)
+        reason = self._selection_failure_reason(
+            normalized,
+            candidates,
+            provider=provider,
+            model=model,
+            provider_bindings=provider_bindings,
+        )
         raise CapabilityUnavailableError(
             normalized,
             provider=provider,
@@ -350,9 +368,24 @@ class AICapabilityRegistry:
         candidates: tuple[CapabilityBinding, ...],
         *,
         provider: str | None,
+        model: str | None,
+        provider_bindings: tuple[CapabilityBinding, ...],
     ) -> str:
-        if provider and not candidates:
+        if provider and not provider_bindings:
             return f"No {capability.value} binding registered for provider {provider!r}."
+        if provider and model and provider_bindings and not candidates:
+            configured_models = sorted(
+                {model_name for binding in provider_bindings for model_name in binding.models}
+            )
+            suffix = (
+                f" Configured models: {', '.join(repr(name) for name in configured_models)}."
+                if configured_models
+                else ""
+            )
+            return (
+                f"{capability.value} binding for provider {provider!r} does not support "
+                f"requested model {model!r}.{suffix}"
+            )
         if not candidates:
             return self.status(capability).reason or f"No available binding for {capability.value}."
         reasons = tuple(binding.reason for binding in candidates if binding.reason)

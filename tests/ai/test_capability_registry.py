@@ -104,8 +104,40 @@ def _local_family_registry() -> AICapabilityRegistry:
 def test_select_named_local_provider_does_not_match_other_endpoints() -> None:
     registry = _local_family_registry()
 
-    with pytest.raises(CapabilityUnavailableError):
+    with pytest.raises(
+        CapabilityUnavailableError,
+        match="provider 'local:lm-studio' does not support requested model 'qwen-ollama'",
+    ):
         registry.select(AICapability.TEXT_GENERATE, provider="local:lm-studio", model="qwen-ollama")
+
+
+@pytest.mark.parametrize(
+    ("provider", "adapter_style"),
+    [
+        ("codex", AIAdapterStyle.DAEMON),
+        ("local", AIAdapterStyle.LOCAL),
+    ],
+)
+def test_select_explicit_cli_backed_provider_model_bypasses_feature_model_list(
+    provider: str, adapter_style: AIAdapterStyle
+) -> None:
+    binding = CapabilityBinding(
+        capability=AICapability.TEXT_GENERATE,
+        provider=provider,
+        adapter_style=adapter_style,
+        available=True,
+        models=("allowlisted-default",),
+    )
+    registry = AICapabilityRegistry([binding])
+
+    assert (
+        registry.select(
+            AICapability.TEXT_GENERATE,
+            provider=provider,
+            model="explicit-off-list-model",
+        )
+        is binding
+    )
 
 
 def test_daemon_registry_keeps_web_chat_and_text_generate_separate() -> None:
