@@ -21,8 +21,9 @@ from gobby.build.task_lifecycle import (
     set_automation_for_task_tree,
 )
 from gobby.build.validation import _validate_task_ref_isolation_artifacts
-from gobby.build.workspace_common import WorkspaceBackend
+from gobby.build.workspace_common import BuildWorkspaceError, WorkspaceBackend
 from gobby.build.workspace_git import _is_git_workspace_dir
+from gobby.build.workspace_recovery import _active_workspace_message, _active_workspace_run
 from gobby.build.workspaces import _subtree_tasks
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -125,6 +126,7 @@ async def resume_existing_lifecycle(
                 raise ValueError("target_branch is required for epic integration workspaces")
             if not resume_opts.dry_run and _resume_epic_workspace_refresh_required(
                 initial_lifecycle,
+                db=db,
                 task_manager=task_manager,
                 root_task_id=task.id,
                 backend=resume_opts.workspace_backend,
@@ -181,6 +183,7 @@ async def resume_existing_lifecycle(
 def _resume_epic_workspace_refresh_required(
     stage_name: str | None,
     *,
+    db: HubDatabase | None = None,
     task_manager: LocalTaskManager | None = None,
     root_task_id: str | None = None,
     backend: WorkspaceBackend | None = None,
@@ -191,7 +194,36 @@ def _resume_epic_workspace_refresh_required(
         return False
     if task_manager is None or root_task_id is None or backend is None:
         return False
+    if db is not None:
+        _raise_if_subtree_integration_workspace_has_active_run(
+            db,
+            task_manager,
+            root_task_id,
+            backend,
+        )
     return _subtree_has_invalid_integration_artifacts(task_manager, root_task_id, backend)
+
+
+def _raise_if_subtree_integration_workspace_has_active_run(
+    db: HubDatabase,
+    task_manager: LocalTaskManager,
+    root_task_id: str,
+    backend: WorkspaceBackend,
+) -> None:
+    for task in _subtree_tasks(task_manager.db, root_task_id):
+        if task.task_type != "epic" or task.closed_at is not None:
+            continue
+        artifacts = task_manager.artifacts.get_artifacts(task.id)
+        workspace_id = (
+            artifacts.integration_workspace_id
+            if backend == "worktree"
+            else artifacts.integration_clone_id
+        )
+        if not workspace_id:
+            continue
+        active_run = _active_workspace_run(db, backend, workspace_id)
+        if active_run is not None:
+            raise BuildWorkspaceError(_active_workspace_message(backend, workspace_id, active_run))
 
 
 def _subtree_has_invalid_integration_artifacts(
