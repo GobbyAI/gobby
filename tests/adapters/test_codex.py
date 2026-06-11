@@ -484,6 +484,29 @@ class TestCodexAppServerClientStop:
         assert client._pending_requests == {}
 
 
+class TestCodexAppServerClientReadLoop:
+    """Tests for _read_loop process lifecycle handling."""
+
+    @pytest.mark.asyncio
+    async def test_process_death_fails_pending_requests(self) -> None:
+        client = CodexAppServerClient()
+        mock_process = MagicMock()
+        mock_process.stdout.readline.return_value = ""
+        mock_process.poll.return_value = 1
+        client._process = mock_process
+
+        future1 = asyncio.get_running_loop().create_future()
+        future2 = asyncio.get_running_loop().create_future()
+        client._pending_requests = {1: future1, 2: future2}
+
+        await client._read_loop()
+
+        assert client.state == CodexConnectionState.ERROR
+        assert isinstance(future1.exception(), ConnectionError)
+        assert isinstance(future2.exception(), ConnectionError)
+        assert client._pending_requests == {}
+
+
 class TestCodexAppServerClientContextManager:
     """Tests for async context manager support."""
 
@@ -529,6 +552,17 @@ class TestCodexAppServerClientSendRequest:
         client = CodexAppServerClient()
 
         with pytest.raises(RuntimeError, match="Not connected"):
+            await client._send_request("test", {})
+
+    @pytest.mark.asyncio
+    async def test_send_request_error_state_stays_dead(self) -> None:
+        client = CodexAppServerClient()
+        mock_process = MagicMock()
+        mock_process.stdin = MagicMock()
+        client._process = mock_process
+        client._state = CodexConnectionState.ERROR
+
+        with pytest.raises(ConnectionError, match="unavailable"):
             await client._send_request("test", {})
 
     @pytest.mark.asyncio

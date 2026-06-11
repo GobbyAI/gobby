@@ -742,6 +742,8 @@ class CodexAppServerClient:
         """
         if not self._process or not self._process.stdin:
             raise RuntimeError("Not connected to Codex app-server")
+        if self._state is CodexConnectionState.ERROR:
+            raise ConnectionError("Codex app-server process is unavailable")
 
         request_id = self._next_request_id()
         request = {
@@ -912,6 +914,13 @@ class CodexAppServerClient:
                     if proc.poll() is not None:
                         logger.warning("Codex app-server process terminated")
                         self._state = CodexConnectionState.ERROR
+                        with self._pending_requests_lock:
+                            for pending_future in self._pending_requests.values():
+                                if not pending_future.done():
+                                    pending_future.set_exception(
+                                        ConnectionError("Codex app-server process terminated")
+                                    )
+                            self._pending_requests.clear()
                         break
                     continue
 
