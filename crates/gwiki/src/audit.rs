@@ -201,6 +201,7 @@ fn unsupported_claims(
     let claims = claim_lines(page, options);
     let supported_lines = supported_claim_lines(page, provenance, &claims);
     let has_page_source_support = has_codewiki_frontmatter_source_spans(page);
+    let claim_source_context = claim_source_context(page, source_context);
     claims
         .into_iter()
         .filter_map(|claim| {
@@ -216,10 +217,28 @@ fn unsupported_claims(
                 heading: claim.heading,
                 claim: claim.text,
                 reason: "claim has no source provenance or inline citation".to_string(),
-                source_context: Arc::clone(source_context),
+                source_context: Arc::clone(&claim_source_context),
             })
         })
         .collect()
+}
+
+fn claim_source_context(
+    page: &WikiPage,
+    source_context: &Arc<Vec<AuditSourceContext>>,
+) -> Arc<Vec<AuditSourceContext>> {
+    if is_generated_codewiki_page(page) {
+        Arc::new(Vec::new())
+    } else {
+        Arc::clone(source_context)
+    }
+}
+
+fn is_generated_codewiki_page(page: &WikiPage) -> bool {
+    let page_path = page.relative_path.to_string_lossy().replace('\\', "/");
+    page_path.starts_with("code/")
+        && page.parsed.frontmatter.trust.as_deref()
+            == Some(gobby_core::codewiki_contract::TRUST_GENERATED)
 }
 
 fn has_codewiki_frontmatter_source_spans(page: &WikiPage) -> bool {
@@ -571,6 +590,75 @@ mod tests {
             claim.source_context[0].citation.as_deref(),
             Some("Example Source")
         );
+    }
+
+    #[test]
+    fn generated_codewiki_numeric_claims_do_not_inherit_raw_source_context() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let source = SourceManifest::register(
+            root,
+            SourceDraft::url(
+                "https://example.com/raw-source",
+                "2026-05-29T12:00:00Z",
+                "raw source body",
+            )
+            .with_citation("Raw Source"),
+        )
+        .expect("source registered");
+        let code_page = root.join("code/_changes.md");
+        std::fs::create_dir_all(code_page.parent().expect("code parent")).expect("create code dir");
+        std::fs::write(
+            &code_page,
+            "---\ntitle: Index Changes\nkind: code_changes\ngenerated_by: gcode-codewiki\ntrust: generated\nfreshness: indexed\n---\n# Index Changes\n\n## Current Snapshot\n\n- Files: 457\n- Symbols: 7901\n",
+        )
+        .expect("write code page");
+        let knowledge_page = root.join("knowledge/topics/claims.md");
+        std::fs::create_dir_all(knowledge_page.parent().expect("knowledge parent"))
+            .expect("create knowledge dir");
+        std::fs::write(
+            &knowledge_page,
+            "---\ntitle: Claims\nsource_kind: topic\n---\n# Claims\nUnsupported operational claim.\n",
+        )
+        .expect("write knowledge page");
+
+        let report = run(root, ScopeIdentity::project("project-123")).expect("audit runs");
+
+        let code_path = PathBuf::from("code/_changes.md");
+        let generated_claims = report
+            .unsupported_claims
+            .iter()
+            .filter(|claim| claim.path.as_path() == code_path.as_path())
+            .collect::<Vec<_>>();
+        assert_eq!(generated_claims.len(), 2);
+        assert!(
+            generated_claims
+                .iter()
+                .any(|claim| claim.claim == "Files: 457")
+        );
+        assert!(
+            generated_claims
+                .iter()
+                .any(|claim| claim.claim == "Symbols: 7901")
+        );
+        assert!(
+            generated_claims
+                .iter()
+                .all(|claim| claim.source_context.is_empty())
+        );
+        let rendered = render_text(&report);
+        assert!(
+            rendered
+                .lines()
+                .filter(|line| line.contains("code/_changes.md"))
+                .all(|line| !line.contains("[sources:"))
+        );
+        let knowledge_claim = report
+            .unsupported_claims
+            .iter()
+            .find(|claim| claim.path == PathBuf::from("knowledge/topics/claims.md"))
+            .expect("knowledge claim");
+        assert_eq!(knowledge_claim.source_context[0].source_id, source.id);
     }
 
     #[test]
