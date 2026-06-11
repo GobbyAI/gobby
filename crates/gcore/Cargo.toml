@@ -20,8 +20,8 @@ indexing = ["dep:ignore", "dep:sha2"]
 search = []
 # Enables the in-memory graph analytics module; no optional dependency is needed.
 graph-analytics = []
-local-backend = ["dep:ureq"]
-ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:httpdate", "dep:rand", "local-backend", "reqwest/multipart"]
+local-backend = []
+ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:httpdate", "dep:rand", "dep:ureq", "local-backend", "reqwest/multipart"]
 full = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics", "ai"]
 
 [dependencies]
