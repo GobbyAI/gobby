@@ -65,6 +65,7 @@ class CommunicationsManager:
         self._adapters: dict[str, BaseChannelAdapter] = {}
         self._channel_by_name: dict[str, ChannelConfig] = {}
         self._channel_init_errors: dict[str, str] = {}
+        self._websocket_broadcast: Any | None = None
 
         # Extracted managers
         self._identity_manager = IdentityManager(store, session_store, config)
@@ -99,6 +100,8 @@ class CommunicationsManager:
                 adapter = await self._init_adapter(channel)
                 self._adapters[channel.name] = adapter
                 self._channel_by_name[channel.name] = channel
+                if channel.name == "gobby_chat" and self._websocket_broadcast is not None:
+                    self.set_websocket_broadcast(self._websocket_broadcast)
                 # Configure rate limiter with per-channel overrides
                 rate = channel.config_json.get(
                     "rate_limit_per_minute",
@@ -190,6 +193,8 @@ class CommunicationsManager:
         adapter = await self._init_adapter(channel)
         self._adapters[channel.name] = adapter
         self._channel_by_name[channel.name] = channel
+        if channel.name == "gobby_chat" and self._websocket_broadcast is not None:
+            self.set_websocket_broadcast(self._websocket_broadcast)
         self._channel_init_errors.pop(channel.name, None)
         self._configure_channel_rate_limit(channel)
 
@@ -745,6 +750,7 @@ class CommunicationsManager:
         Args:
             broadcast: The WebSocketServer.broadcast async method.
         """
+        self._websocket_broadcast = broadcast
         from gobby.communications.adapters.gobby_chat import GobbyChatAdapter
 
         adapter = self._adapters.get("gobby_chat")

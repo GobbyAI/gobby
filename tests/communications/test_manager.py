@@ -202,6 +202,48 @@ async def test_send_message_adapter_failure_marks_failed():
 
 
 @pytest.mark.asyncio
+async def test_send_message_gobby_chat_without_broadcast_marks_failed():
+    channel = make_channel(
+        name="gobby_chat",
+        channel_type="gobby_chat",
+        channel_id="gobby-chat-1",
+    )
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+
+    await manager.start()
+
+    msg = await manager.send_message("gobby_chat", "Hello!")
+
+    assert msg.status == "failed"
+    assert "broadcast callable is not configured" in (msg.error or "")
+    store.create_message.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_set_websocket_broadcast_before_start_wires_gobby_chat_on_start():
+    channel = make_channel(
+        name="gobby_chat",
+        channel_type="gobby_chat",
+        channel_id="gobby-chat-1",
+    )
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    broadcast = AsyncMock()
+
+    manager.set_websocket_broadcast(broadcast)
+    await manager.start()
+
+    msg = await manager.send_message("gobby_chat", "Hello!")
+
+    assert msg.status == "sent"
+    assert msg.platform_message_id is not None
+    broadcast.assert_awaited_once()
+    payload = broadcast.await_args.args[0]
+    assert payload["content"] == "Hello!"
+
+
+@pytest.mark.asyncio
 async def test_send_message_telegram_4xx_redacts_token_from_logs_and_storage(caplog):
     token = "test-telegram-token"
     channel = make_channel(

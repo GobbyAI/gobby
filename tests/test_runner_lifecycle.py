@@ -1618,6 +1618,7 @@ class TestMessageProcessorWebSocketIntegration:
         mock_ws_server.start = AsyncMock()
 
         mock_message_processor = MagicMock()
+        mock_communications_manager = MagicMock()
 
         patches = create_base_patches(
             mock_config=mock_config_with_websocket,
@@ -1630,6 +1631,12 @@ class TestMessageProcessorWebSocketIntegration:
                 return_value=mock_message_processor,
             )
         )
+        patches.append(
+            patch(
+                "gobby.communications.manager.CommunicationsManager",
+                return_value=mock_communications_manager,
+            )
+        )
 
         with ExitStack() as stack:
             [stack.enter_context(p) for p in patches]
@@ -1638,6 +1645,9 @@ class TestMessageProcessorWebSocketIntegration:
 
             assert runner.message_processor is not None
             assert runner.message_processor.websocket_server == mock_ws_server
+            mock_communications_manager.set_websocket_broadcast.assert_called_once_with(
+                mock_ws_server.broadcast
+            )
 
 
 class TestShutdownLoop:

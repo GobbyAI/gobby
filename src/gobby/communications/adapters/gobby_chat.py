@@ -93,10 +93,14 @@ class GobbyChatAdapter(BaseChannelAdapter):
         clients can render cross-channel messages (e.g., a Telegram
         message routed to web chat).
 
-        Returns the message ID as the platform message ID.
+        Returns the message ID as the platform message ID after the
+        WebSocket broadcast succeeds.
         """
         if not self._initialized:
             raise RuntimeError("GobbyChatAdapter not initialized")
+
+        if self._broadcast is None:
+            raise RuntimeError("GobbyChatAdapter broadcast callable is not configured")
 
         payload = {
             "type": "comms_message",
@@ -109,16 +113,11 @@ class GobbyChatAdapter(BaseChannelAdapter):
             "metadata": message.metadata_json,
         }
 
-        if self._broadcast is not None:
-            try:
-                await self._broadcast(payload)
-            except Exception as e:
-                logger.error(f"Failed to broadcast Gobby Chat message: {e}", exc_info=True)
-                raise
-        else:
-            logger.warning(
-                "GobbyChatAdapter: no broadcast callable set, message not delivered to WebSocket clients"
-            )
+        try:
+            await self._broadcast(payload)
+        except Exception as e:
+            logger.error(f"Failed to broadcast Gobby Chat message: {e}", exc_info=True)
+            raise
 
         return message.id
 

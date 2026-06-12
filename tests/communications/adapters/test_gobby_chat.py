@@ -136,9 +136,8 @@ async def test_send_message_without_broadcast(
     initialized_adapter: GobbyChatAdapter,
     outbound_message: CommsMessage,
 ) -> None:
-    """When no broadcast is set, message should still succeed but log a warning."""
-    result = await initialized_adapter.send_message(outbound_message)
-    assert result == "msg-001"
+    with pytest.raises(RuntimeError, match="broadcast callable is not configured"):
+        await initialized_adapter.send_message(outbound_message)
 
 
 @pytest.mark.asyncio

@@ -138,6 +138,9 @@ def init_servers(runner: GobbyRunner) -> None:
         runner.http_server.services.websocket_server = runner.websocket_server
         runner.http_server.broadcaster.websocket_server = runner.websocket_server
 
+        if runner.communications_manager:
+            runner.communications_manager.set_websocket_broadcast(runner.websocket_server.broadcast)
+
         if runner.message_processor:
             runner.message_processor.websocket_server = runner.websocket_server
             runner.message_processor.session_manager = runner.session_manager
