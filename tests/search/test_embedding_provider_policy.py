@@ -111,6 +111,55 @@ async def test_explicit_openai_prefix_is_stripped_for_cloud_api() -> None:
     assert mock_client.embeddings.create.await_args.kwargs["model"] == "text-embedding-3-small"
 
 
+@pytest.mark.asyncio
+async def test_local_endpoint_with_configured_key_uses_it_as_bearer_credential() -> None:
+    """A configured embedding api_key reaches the SDK client for local endpoints.
+
+    Regression for gobby-cli#719: gcode routes query embeddings through the
+    daemon's /api/embeddings proxy; when LM Studio requires an API token the
+    configured key must be the client credential (the SDK sends it as
+    ``Authorization: Bearer <key>``), not the local placeholder.
+    """
+    mock_client = _make_openai_client(dim=768)
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client) as mock_openai:
+        result = await generate_embedding(
+            "hello",
+            model="nomic-embed-text",
+            api_base="http://localhost:1234/v1",
+            api_key="lm-studio-token",
+            expected_dim=768,
+        )
+
+    assert len(result) == 768
+    mock_openai.assert_called_once_with(
+        base_url="http://localhost:1234/v1", api_key="lm-studio-token"
+    )
+    mock_client.embeddings.create.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_local_endpoint_without_key_falls_back_to_placeholder_credential() -> None:
+    """Without a configured key, local endpoints get the documented placeholder.
+
+    Pins the ``api_key or "unused"`` fallback so an auth failure against a
+    token-protected LM Studio is attributable to missing configuration, not
+    to the daemon dropping a configured key (gobby-cli#719).
+    """
+    mock_client = _make_openai_client(dim=768)
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client) as mock_openai:
+        result = await generate_embedding(
+            "hello world",
+            model="nomic-embed-text",
+            api_base="http://localhost:1234/v1",
+            expected_dim=768,
+        )
+
+    assert len(result) == 768
+    mock_openai.assert_called_once_with(base_url="http://localhost:1234/v1", api_key="unused")
+
+
 def test_embedding_configured_requires_api_base_for_local_even_with_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
