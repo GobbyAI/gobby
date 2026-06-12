@@ -366,6 +366,47 @@ def test_reinstall_preserves_custom_and_project_definitions(
     assert manager.get_by_name("project-pipeline", project_id=project.id) is not None
 
 
+@pytest.mark.parametrize("workflow_type", ("rule", "agent", "variable"))
+def test_reinstall_type_deletes_bundled_row_for_requested_type(
+    cli_runner: CliRunner, temp_db: HubDatabase, workflow_type: str
+) -> None:
+    """Typed reinstall deletes stale bundled rows for that workflow type."""
+    manager = LocalWorkflowDefinitionManager(temp_db)
+    stale_name = f"stale-{workflow_type}"
+    unrelated_type = {"rule": "agent", "agent": "variable", "variable": "rule"}[workflow_type]
+    unrelated_name = f"unrelated-{unrelated_type}"
+
+    manager.create(
+        name=stale_name,
+        definition_json=json.dumps({"name": stale_name, "type": workflow_type}),
+        workflow_type=workflow_type,
+        source="installed",
+        tags=["gobby"],
+    )
+    manager.create(
+        name=unrelated_name,
+        definition_json=json.dumps({"name": unrelated_name, "type": unrelated_type}),
+        workflow_type=unrelated_type,
+        source="installed",
+        tags=["gobby"],
+    )
+
+    with (
+        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=temp_db),
+        patch(
+            "gobby.cli.workflows.manage._run_sync",
+            return_value={workflow_type: {"synced": 0, "updated": 0}},
+        ) as sync,
+        patch("gobby.cli.workflows.manage._notify_daemon_reload"),
+    ):
+        result = cli_runner.invoke(workflows, ["reinstall", "--force", "--type", workflow_type])
+
+    assert result.exit_code == 0, result.output
+    assert manager.get_by_name(stale_name) is None
+    assert manager.get_by_name(unrelated_name) is not None
+    sync.assert_called_once_with(temp_db, workflow_type)
+
+
 def test_import_workflow_not_yaml(cli_runner, tmp_path) -> None:
     """Test importing a non-YAML file fails."""
     source_file = tmp_path / "source.txt"
