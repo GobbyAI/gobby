@@ -300,7 +300,8 @@ class ACPHookAdapter(BaseAdapter):
 
         Gemini CLI expects responses in this format:
         {
-            "decision": "allow" | "deny",     # Whether to allow the action
+            "decision": "allow" | "deny" | "block",
+            "continue": True/False,            # False for deny/block decisions
             "reason": "...",                   # Optional reason for decision
             "hookSpecificOutput": {            # Hook-specific response data
                 "additionalContext": "...",    # Context to inject
@@ -310,7 +311,8 @@ class ACPHookAdapter(BaseAdapter):
         }
 
         Exit codes: always 0 — Gemini CLI treats non-zero as "hook failed".
-        Block decisions are conveyed via decision="block" in the JSON body.
+        Block decisions are conveyed via decision="block" and continue=false
+        in the JSON body.
 
         Args:
             response: Unified HookResponse from HookManager.
@@ -320,7 +322,8 @@ class ACPHookAdapter(BaseAdapter):
         Returns:
             Dict in Gemini CLI's expected format.
         """
-        should_continue = response.decision != "deny"
+        is_denied = response.decision in ("deny", "block")
+        should_continue = not is_denied
         capabilities = get_provider_capabilities(self.source)
         capability = capabilities.get_hook(hook_type)
         event_logger = self._event_logger()
