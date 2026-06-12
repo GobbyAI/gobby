@@ -318,53 +318,136 @@ class TestCloneGitManagerDeleteClone:
     """Tests for CloneGitManager.delete_clone method."""
 
     @pytest.fixture
-    def manager(self, tmp_path: Path):
+    def clones_root(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        """Point clone deletion safety checks at the temp clones root."""
+        clones_root = tmp_path / ".gobby" / "clones"
+        monkeypatch.setattr("gobby.clones.git.CLONES_ROOT", clones_root)
+        return clones_root
+
+    @pytest.fixture
+    def manager(self, tmp_path: Path, clones_root: Path):
         """Create manager with temp directory as repo path."""
         from gobby.clones.git import CloneGitManager
 
         return CloneGitManager(repo_path=tmp_path)
 
-    def test_delete_clone_success(self, manager, tmp_path: Path) -> None:
+    def test_delete_clone_success(self, manager, clones_root: Path) -> None:
         """Delete clone removes directory successfully."""
-        clone_path = tmp_path / "clone"
-        clone_path.mkdir()
+        from gobby.clones.git import CloneStatus
+
+        clone_path = clones_root / "project" / "clone"
+        clone_path.mkdir(parents=True)
         (clone_path / "file.txt").write_text("content")
 
-        result = manager.delete_clone(clone_path)
+        status = CloneStatus(
+            has_uncommitted_changes=False,
+            has_staged_changes=False,
+            has_untracked_files=False,
+            branch="main",
+            commit="abc1234",
+        )
+        with patch.object(manager, "get_clone_status", return_value=status):
+            result = manager.delete_clone(clone_path)
 
         assert result.success is True
         assert not clone_path.exists()
 
-    def test_delete_clone_nonexistent_path(self, manager, tmp_path: Path) -> None:
+    def test_delete_clone_nonexistent_path(self, manager, clones_root: Path) -> None:
         """Delete clone handles nonexistent path gracefully."""
-        clone_path = tmp_path / "nonexistent"
+        clone_path = clones_root / "project" / "nonexistent"
 
         result = manager.delete_clone(clone_path)
 
         # Should succeed (or report already gone) - idempotent
         assert result.success is True or "not exist" in result.message.lower()
 
-    def test_delete_clone_with_nested_dirs(self, manager, tmp_path: Path) -> None:
+    def test_delete_clone_with_nested_dirs(self, manager, clones_root: Path) -> None:
         """Delete clone removes nested directory structure."""
-        clone_path = tmp_path / "clone"
+        from gobby.clones.git import CloneStatus
+
+        clone_path = clones_root / "project" / "clone"
         (clone_path / "nested" / "deep").mkdir(parents=True)
         (clone_path / "nested" / "deep" / "file.txt").write_text("content")
 
-        result = manager.delete_clone(clone_path)
+        status = CloneStatus(
+            has_uncommitted_changes=False,
+            has_staged_changes=False,
+            has_untracked_files=False,
+            branch="main",
+            commit="abc1234",
+        )
+        with patch.object(manager, "get_clone_status", return_value=status):
+            result = manager.delete_clone(clone_path)
 
         assert result.success is True
         assert not clone_path.exists()
 
-    def test_delete_clone_force_option(self, manager, tmp_path: Path) -> None:
+    def test_delete_clone_force_option(self, manager, clones_root: Path) -> None:
         """Delete clone respects force option."""
-        clone_path = tmp_path / "clone"
-        clone_path.mkdir()
+        clone_path = clones_root / "project" / "clone"
+        clone_path.mkdir(parents=True)
         (clone_path / "file.txt").write_text("content")
 
         result = manager.delete_clone(clone_path, force=True)
 
         assert result.success is True
         assert not clone_path.exists()
+
+    def test_delete_clone_plain_non_git_directory_fails_closed(
+        self, manager, clones_root: Path
+    ) -> None:
+        """Do not delete a plain directory when force is false."""
+        clone_path = clones_root / "project" / "plain-directory"
+        clone_path.mkdir(parents=True)
+        (clone_path / "file.txt").write_text("content")
+
+        result = manager.delete_clone(clone_path, force=False)
+
+        assert result.success is False
+        assert result.error == "invalid_clone_path"
+        assert clone_path.exists()
+        assert (clone_path / "file.txt").exists()
+
+    def test_delete_clone_rejects_status_without_branch_or_commit(
+        self, manager, clones_root: Path
+    ) -> None:
+        """Do not delete when status lacks git identity metadata."""
+        from gobby.clones.git import CloneStatus
+
+        clone_path = clones_root / "project" / "unknown"
+        clone_path.mkdir(parents=True)
+        (clone_path / "file.txt").write_text("content")
+        status = CloneStatus(
+            has_uncommitted_changes=False,
+            has_staged_changes=False,
+            has_untracked_files=False,
+            branch=None,
+            commit=None,
+        )
+
+        with patch.object(manager, "get_clone_status", return_value=status):
+            result = manager.delete_clone(clone_path, force=False)
+
+        assert result.success is False
+        assert result.error == "invalid_clone_path"
+        assert clone_path.exists()
+        assert (clone_path / "file.txt").exists()
+
+    @pytest.mark.parametrize("force", [False, True])
+    def test_delete_clone_rejects_paths_outside_clones_root(
+        self, manager, tmp_path: Path, force: bool
+    ) -> None:
+        """Never delete paths outside the managed clones root."""
+        clone_path = tmp_path / "outside"
+        clone_path.mkdir()
+        (clone_path / "file.txt").write_text("content")
+
+        result = manager.delete_clone(clone_path, force=force)
+
+        assert result.success is False
+        assert "outside clones root" in result.message
+        assert clone_path.exists()
+        assert (clone_path / "file.txt").exists()
 
 
 class TestCloneGitManagerGetRemoteUrl:
@@ -474,6 +557,23 @@ class TestCloneGitManagerGetCloneStatus:
     def test_get_clone_status_nonexistent_path(self, manager, mock_run, tmp_path: Path) -> None:
         """Get clone status returns None for nonexistent path."""
         clone_path = tmp_path / "nonexistent"
+
+        status = manager.get_clone_status(clone_path)
+
+        assert status is None
+
+    def test_get_clone_status_returns_none_when_git_status_fails(
+        self, manager, mock_run, tmp_path: Path
+    ) -> None:
+        """Get clone status fails closed when git status cannot inspect the path."""
+        clone_path = tmp_path / "clone"
+        clone_path.mkdir()
+
+        mock_run.side_effect = [
+            MagicMock(returncode=1, stdout="", stderr="not a git repository"),
+            MagicMock(returncode=1, stdout="", stderr="not a git repository"),
+            MagicMock(returncode=128, stdout="", stderr="not a git repository"),
+        ]
 
         status = manager.get_clone_status(clone_path)
 
