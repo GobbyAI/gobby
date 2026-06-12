@@ -7,7 +7,11 @@ extracted from the monolithic codex.py using the Strangler Fig pattern.
 Modules:
 - types.py: Type definitions and data classes
 - protocol.py: Protocol/interface definitions
-- client.py: CodexAppServerClient implementation
+- client.py: Public CodexAppServerClient facade
+- client_lifecycle.py: Codex app-server subprocess start/stop helpers
+- client_rpc.py: JSON-RPC send/read/dispatch helpers
+- client_api.py: Thread, model, turn, auth, and account API helpers
+- client_notifications.py: Notification handler registration and enrichment
 - app_server_adapter.py: CodexAdapter implementation
 - hooks_adapter.py: CodexHooksAdapter implementation
 

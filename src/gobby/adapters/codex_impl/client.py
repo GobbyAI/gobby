@@ -1,23 +1,26 @@
 """
-CodexAppServerClient implementation.
+CodexAppServerClient public facade.
 
-Extracted from codex.py as part of Phase 3 Strangler Fig decomposition.
-This module contains the CodexAppServerClient for communicating with
-the Codex app-server subprocess via JSON-RPC.
+This module keeps the stable CodexAppServerClient import path while delegating
+implementation details to focused helper modules.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import os
 import subprocess  # nosec B404 # subprocess needed for Codex app-server process
 import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
+from gobby.adapters.codex_impl import (
+    client_api,
+    client_lifecycle,
+    client_notifications,
+    client_rpc,
+)
 from gobby.adapters.codex_impl.types import (
     CodexConnectionState,
     CodexThread,
@@ -130,155 +133,19 @@ class CodexAppServerClient:
         await self.stop()
 
     async def start(self) -> None:
-        """
-        Start the Codex app-server subprocess and initialize connection.
-
-        Raises:
-            RuntimeError: If already connected or failed to start
-        """
-        if self._state == CodexConnectionState.CONNECTED:
-            logger.warning("CodexAppServerClient already connected")
-            return
-
-        self._state = CodexConnectionState.CONNECTING
-        logger.debug("Starting Codex app-server...")
-
-        try:
-            env = os.environ.copy()
-            # Prevent installed Codex hooks from registering nested daemon sessions.
-            env["GOBBY_HOOKS_DISABLED"] = "1"
-            command = [self._codex_command, "app-server"]
-            for override in self._config_overrides:
-                command.extend(["-c", override])
-            for feature in self._enabled_features:
-                command.extend(["--enable", feature])
-            for feature in self._disabled_features:
-                command.extend(["--disable", feature])
-
-            # Start the subprocess
-            self._process = subprocess.Popen(  # nosec B603 # hardcoded argument list
-                command,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,  # Line buffered
-                env=env,
-            )
-
-            # Start the reader task
-            self._shutdown_event.clear()
-            self._reader_task = asyncio.create_task(self._read_loop())
-            self._stderr_drain.start_text(self._process.stderr)
-
-            # Send initialize request
-            result = await self._send_request(
-                "initialize",
-                {
-                    "clientInfo": {
-                        "name": self.CLIENT_NAME,
-                        "title": self.CLIENT_TITLE,
-                        "version": self.CLIENT_VERSION,
-                    }
-                },
-            )
-
-            user_agent = result.get("userAgent", "unknown")
-            logger.debug(f"Codex app-server initialized: {user_agent}")
-
-            # Send initialized notification
-            await self._send_notification("initialized", {})
-
-            self._state = CodexConnectionState.CONNECTED
-            logger.debug("Codex app-server connection established")
-
-        except Exception as e:
-            self._state = CodexConnectionState.ERROR
-            logger.error(f"Failed to start Codex app-server: {e}", exc_info=True)
-            await self.stop()
-            raise RuntimeError(f"Failed to start Codex app-server: {e}") from e
+        await client_lifecycle.start(self, subprocess)
 
     async def stop(self) -> None:
-        """Stop the Codex app-server subprocess."""
-        logger.debug("Stopping Codex app-server...")
-
-        self._shutdown_event.set()
-
-        # Cancel reader task
-        if self._reader_task and not self._reader_task.done():
-            self._reader_task.cancel()
-            try:
-                await self._reader_task
-            except asyncio.CancelledError:
-                pass
-
-        # Cancel request handlers spawned by the reader loop
-        if self._incoming_request_tasks:
-            tasks = tuple(self._incoming_request_tasks)
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            self._incoming_request_tasks.clear()
-
-        # Terminate process
-        if self._process:
-            try:
-                if self._process.stdin:
-                    self._process.stdin.close()
-                self._process.terminate()
-                loop = asyncio.get_running_loop()
-                await asyncio.wait_for(loop.run_in_executor(None, self._process.wait), timeout=5.0)
-            except Exception as e:
-                logger.warning(f"Error terminating Codex app-server: {e}")
-                self._process.kill()
-            finally:
-                self._process = None
-        await self._stderr_drain.stop()
-
-        # Cancel pending requests
-        with self._pending_requests_lock:
-            for future in self._pending_requests.values():
-                if not future.done():
-                    future.cancel()
-            self._pending_requests.clear()
-
-        self._state = CodexConnectionState.DISCONNECTED
-        logger.debug("Codex app-server stopped")
+        await client_lifecycle.stop(self)
 
     def add_notification_handler(self, method: str, handler: NotificationHandler) -> None:
-        """
-        Register a handler for a specific notification method.
-
-        Args:
-            method: Notification method name (e.g., "turn/started", "item/completed")
-            handler: Callback function(method, params)
-        """
-        if method not in self._notification_handlers:
-            self._notification_handlers[method] = []
-        self._notification_handlers[method].append(handler)
+        client_notifications.add_notification_handler(self, method, handler)
 
     def remove_notification_handler(self, method: str, handler: NotificationHandler) -> None:
-        """Remove a notification handler."""
-        if method in self._notification_handlers:
-            self._notification_handlers[method] = [
-                h for h in self._notification_handlers[method] if h != handler
-            ]
+        client_notifications.remove_notification_handler(self, method, handler)
 
     def register_approval_handler(self, handler: Any | None) -> None:
-        """Register an async handler for incoming approval requests.
-
-        The handler receives JSON-RPC requests from Codex (messages with both
-        id and method) and returns a decision dict.
-
-        Args:
-            handler: Async callback with signature:
-                async def handler(method: str, params: dict) -> dict
-                Returns {"decision": "accept"} or {"decision": "decline"}.
-                Pass None to clear the handler.
-        """
-        self._approval_handler = handler
-
-    # ===== Thread Management =====
+        client_notifications.register_approval_handler(self, handler)
 
     async def start_thread(
         self,
@@ -288,143 +155,25 @@ class CodexAppServerClient:
         sandbox: str | None = None,
         terminal_context: dict[str, Any] | None = None,
     ) -> CodexThread:
-        """
-        Start a new Codex conversation thread.
-
-        Args:
-            cwd: Working directory for the session
-            model: Model override (e.g., "gpt-5.1-codex")
-            approval_policy: Approval policy ("never", "unlessTrusted", etc.)
-            sandbox: Sandbox mode ("workspaceWrite", "readOnly", etc.)
-
-        Returns:
-            CodexThread object with thread ID
-        """
-        params: dict[str, Any] = {}
-        if cwd:
-            params["cwd"] = cwd
-        if model:
-            params["model"] = model
-        if approval_policy:
-            params["approvalPolicy"] = approval_policy
-        if sandbox:
-            params["sandbox"] = {
-                "readOnly": "read-only",
-                "workspaceWrite": "workspace-write",
-                "dangerFullAccess": "danger-full-access",
-            }.get(sandbox, sandbox)
-
-        pending_context: dict[str, Any] | None = None
-        if terminal_context:
-            pending_context = {
-                "cwd": cwd,
-                "terminal_context": dict(terminal_context),
-            }
-            self._pending_thread_terminal_contexts.append(pending_context)
-
-        try:
-            result = await self._send_request("thread/start", params)
-        except Exception:
-            if pending_context in self._pending_thread_terminal_contexts:
-                self._pending_thread_terminal_contexts.remove(pending_context)
-            raise
-        if pending_context in self._pending_thread_terminal_contexts:
-            self._pending_thread_terminal_contexts.remove(pending_context)
-
-        thread_data = result.get("thread", {})
-        thread = CodexThread(
-            id=thread_data.get("id", ""),
-            preview=thread_data.get("preview", ""),
-            model_provider=thread_data.get("modelProvider", "openai"),
-            created_at=thread_data.get("createdAt", 0),
-            path=thread_data.get("path"),
+        return await client_api.start_thread(
+            self,
+            cwd=cwd,
+            model=model,
+            approval_policy=approval_policy,
+            sandbox=sandbox,
+            terminal_context=terminal_context,
         )
-
-        self._threads[thread.id] = thread
-        result_cwd = result.get("cwd") or thread_data.get("cwd") or cwd
-        if isinstance(result_cwd, str) and result_cwd:
-            self._thread_cwds[thread.id] = result_cwd
-        if terminal_context and thread.id:
-            self._thread_terminal_contexts[thread.id] = dict(terminal_context)
-        logger.debug(f"Started Codex thread: {thread.id}")
-        return thread
 
     async def resume_thread(self, thread_id: str) -> CodexThread:
-        """
-        Resume an existing Codex conversation thread.
-
-        Args:
-            thread_id: ID of the thread to resume
-
-        Returns:
-            CodexThread object
-        """
-        result = await self._send_request("thread/resume", {"threadId": thread_id})
-
-        thread_data = result.get("thread", {})
-        thread = CodexThread(
-            id=thread_data.get("id", thread_id),
-            preview=thread_data.get("preview", ""),
-            model_provider=thread_data.get("modelProvider", "openai"),
-            created_at=thread_data.get("createdAt", 0),
-            path=thread_data.get("path"),
-        )
-
-        self._threads[thread.id] = thread
-        result_cwd = result.get("cwd") or thread_data.get("cwd")
-        if isinstance(result_cwd, str) and result_cwd:
-            self._thread_cwds[thread.id] = result_cwd
-        logger.debug(f"Resumed Codex thread: {thread.id}")
-        return thread
+        return await client_api.resume_thread(self, thread_id)
 
     async def list_threads(
         self, cursor: str | None = None, limit: int = 25
     ) -> tuple[list[CodexThread], str | None]:
-        """
-        List stored Codex threads with pagination.
-
-        Args:
-            cursor: Pagination cursor from previous call
-            limit: Maximum threads to return
-
-        Returns:
-            Tuple of (threads list, next_cursor or None)
-        """
-        params: dict[str, Any] = {"limit": limit}
-        if cursor:
-            params["cursor"] = cursor
-
-        result = await self._send_request("thread/list", params)
-
-        threads = []
-        for item in result.get("data", []):
-            thread = CodexThread(
-                id=item.get("id", ""),
-                preview=item.get("preview", ""),
-                model_provider=item.get("modelProvider", "openai"),
-                created_at=item.get("createdAt", 0),
-            )
-            threads.append(thread)
-            if thread.id:
-                self._threads[thread.id] = thread
-            item_cwd = item.get("cwd")
-            if isinstance(item_cwd, str) and item_cwd:
-                self._thread_cwds[thread.id] = item_cwd
-
-        next_cursor = result.get("nextCursor")
-        return threads, next_cursor
+        return await client_api.list_threads(self, cursor=cursor, limit=limit)
 
     async def archive_thread(self, thread_id: str) -> None:
-        """
-        Archive a Codex thread.
-
-        Args:
-            thread_id: ID of the thread to archive
-        """
-        await self._send_request("thread/archive", {"threadId": thread_id})
-        self._threads.pop(thread_id, None)
-        self._thread_cwds.pop(thread_id, None)
-        logger.debug(f"Archived Codex thread: {thread_id}")
+        await client_api.archive_thread(self, thread_id)
 
     async def list_models(
         self,
@@ -432,37 +181,7 @@ class CodexAppServerClient:
         limit: int = 100,
         include_hidden: bool = False,
     ) -> list[dict[str, Any]]:
-        """List Codex app-server models, following pagination when present."""
-        models: list[dict[str, Any]] = []
-        cursor: str | None = None
-        seen_cursors: set[str] = set()
-
-        while True:
-            params: dict[str, Any] = {
-                "limit": limit,
-                "includeHidden": include_hidden,
-            }
-            if cursor:
-                params["cursor"] = cursor
-
-            result = await self._send_request("model/list", params)
-            page = result.get("data", [])
-            if isinstance(page, list):
-                models.extend(item for item in page if isinstance(item, dict))
-
-            next_cursor_raw = result.get("nextCursor")
-            cursor = str(next_cursor_raw) if next_cursor_raw else None
-            if not cursor:
-                break
-            if cursor in seen_cursors:
-                logger.warning(
-                    "Codex model/list returned a repeated cursor (%s); stopping pagination",
-                    cursor,
-                )
-                break
-            seen_cursors.add(cursor)
-
-        return models
+        return await client_api.list_models(self, limit=limit, include_hidden=include_hidden)
 
     async def start_turn(
         self,
@@ -473,152 +192,21 @@ class CodexAppServerClient:
         effort: str | None = None,
         **config_overrides: Any,
     ) -> CodexTurn:
-        """
-        Start a new turn (send user input and trigger generation).
-
-        Args:
-            thread_id: Thread ID to add turn to
-            prompt: User's input text
-            images: Optional list of image paths or URLs
-            context_prefix: Optional context to prepend to instructions field.
-                           Used for injecting session metadata and workflow context.
-            effort: Optional reasoning effort override for this and subsequent turns.
-            **config_overrides: Optional config overrides (cwd, model, etc.)
-
-        Returns:
-            CodexTurn object (initial state, updates via notifications)
-        """
-        inputs: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-
-        if images:
-            for img in images:
-                if img.startswith(("http://", "https://")):
-                    inputs.append({"type": "image", "url": img})
-                else:
-                    inputs.append({"type": "localImage", "path": img})
-
-        params: dict[str, Any] = {
-            "threadId": thread_id,
-            "input": inputs,
-        }
-        self._pending_turn_prompts_by_thread[thread_id] = prompt
-
-        if context_prefix:
-            params["instructions"] = context_prefix
-
-        # App-server v2 uses `effort` for per-turn reasoning overrides.
-        if effort:
-            params["effort"] = effort
-        elif "reasoningEffort" in config_overrides and "effort" not in config_overrides:
-            params["effort"] = config_overrides.pop("reasoningEffort")
-
-        params.update(config_overrides)
-        try:
-            result = await self._send_request("turn/start", params)
-        except Exception:
-            self._pending_turn_prompts_by_thread.pop(thread_id, None)
-            raise
-
-        turn_data = result.get("turn", {})
-        turn = CodexTurn(
-            id=turn_data.get("id", ""),
-            thread_id=thread_id,
-            status=turn_data.get("status", "inProgress"),
-            items=turn_data.get("items", []),
-            error=turn_data.get("error"),
+        return await client_api.start_turn(
+            self,
+            thread_id,
+            prompt,
+            images=images,
+            context_prefix=context_prefix,
+            effort=effort,
+            **config_overrides,
         )
-        if turn.id:
-            self._turn_prompts[turn.id] = prompt
-
-        logger.debug(f"Started turn {turn.id} in thread {thread_id}")
-        return turn
 
     def _enrich_notification(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
-        """Attach best-effort client-side context to app-server notifications."""
-        thread = params.get("thread")
-        thread_id = params.get("threadId")
-        if not isinstance(thread_id, str) or not thread_id:
-            thread_id = thread.get("id") if isinstance(thread, dict) else None
-
-        cwd = params.get("cwd")
-        if not isinstance(cwd, str) and isinstance(thread, dict):
-            cwd = thread.get("cwd")
-        if isinstance(thread_id, str) and thread_id:
-            if isinstance(cwd, str) and cwd:
-                self._thread_cwds[thread_id] = cwd
-            else:
-                cached_cwd = self._thread_cwds.get(thread_id)
-                if cached_cwd:
-                    enriched = dict(params)
-                    enriched["cwd"] = cached_cwd
-                    params = enriched
-
-        if method == "thread/started" and isinstance(thread_id, str) and thread_id:
-            terminal_context = self._thread_terminal_contexts.get(thread_id)
-            if terminal_context is None:
-                for idx, pending in enumerate(self._pending_thread_terminal_contexts):
-                    pending_cwd = pending.get("cwd")
-                    if not pending_cwd or not cwd or pending_cwd == cwd:
-                        terminal_context = pending.get("terminal_context")
-                        self._pending_thread_terminal_contexts.pop(idx)
-                        break
-            if isinstance(terminal_context, dict) and terminal_context:
-                self._thread_terminal_contexts[thread_id] = dict(terminal_context)
-                if not isinstance(params.get("terminal_context"), dict):
-                    enriched = dict(params)
-                    enriched["terminal_context"] = dict(terminal_context)
-                    params = enriched
-
-        if method == "turn/started":
-            prompt = params.get("prompt")
-            if not isinstance(prompt, str) or not prompt:
-                turn = params.get("turn")
-                turn_id = turn.get("id") if isinstance(turn, dict) else None
-                if isinstance(turn_id, str) and turn_id:
-                    prompt = self._turn_prompts.get(turn_id)
-                if not prompt:
-                    thread_id = params.get("threadId")
-                    if isinstance(thread_id, str) and thread_id:
-                        prompt = self._pending_turn_prompts_by_thread.get(thread_id)
-                if prompt:
-                    enriched = dict(params)
-                    enriched["prompt"] = prompt
-                    params = enriched
-
-            thread_id = params.get("threadId")
-            turn = params.get("turn")
-            turn_id = turn.get("id") if isinstance(turn, dict) else None
-            if isinstance(turn_id, str) and turn_id and isinstance(thread_id, str) and thread_id:
-                self._pending_turn_prompts_by_thread.pop(thread_id, None)
-            return params
-
-        if method == "turn/completed":
-            turn = params.get("turn")
-            turn_id = turn.get("id") if isinstance(turn, dict) else None
-            if isinstance(turn_id, str) and turn_id:
-                self._turn_prompts.pop(turn_id, None)
-            return params
-
-        if (
-            method in ("thread/archive", "thread/closed")
-            and isinstance(thread_id, str)
-            and thread_id
-        ):
-            self._thread_cwds.pop(thread_id, None)
-            self._thread_terminal_contexts.pop(thread_id, None)
-
-        return params
+        return client_notifications.enrich_notification(self, method, params)
 
     async def interrupt_turn(self, thread_id: str, turn_id: str) -> None:
-        """
-        Interrupt an in-progress turn.
-
-        Args:
-            thread_id: Thread ID containing the turn
-            turn_id: Turn ID to interrupt
-        """
-        await self._send_request("turn/interrupt", {"threadId": thread_id, "turnId": turn_id})
-        logger.debug(f"Interrupted turn {turn_id}")
+        await client_api.interrupt_turn(self, thread_id, turn_id)
 
     async def run_turn(
         self,
@@ -627,413 +215,47 @@ class CodexAppServerClient:
         images: list[str] | None = None,
         **config_overrides: Any,
     ) -> AsyncIterator[dict[str, Any]]:
-        """
-        Run a turn and yield streaming events.
-
-        This is the primary method for interacting with Codex. It starts a turn
-        and yields all events until completion.
-
-        Args:
-            thread_id: Thread ID
-            prompt: User's input text
-            images: Optional image paths/URLs
-            **config_overrides: Config overrides
-
-        Yields:
-            Event dicts with "type" and event-specific data
-
-        Example:
-            async for event in client.run_turn(thread.id, "Help me refactor"):
-                if event["type"] == "item.completed":
-                    print(event["item"]["text"])
-        """
-        # Queue to receive notifications
-        event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-        turn_completed = asyncio.Event()
-        turn_id: str | None = None
-
-        def on_event(method: str, params: dict[str, Any]) -> None:
-            turn = params.get("turn")
-            if method == "thread/closed":
-                if self._notification_thread_id(params) != thread_id:
-                    return
-                event_queue.put_nowait({"type": method, **params})
-                turn_completed.set()
-                return
-
-            event_thread_id = params.get("threadId")
-            if not isinstance(event_thread_id, str) and isinstance(turn, dict):
-                event_thread_id = turn.get("threadId")
-            event_turn_id = params.get("turnId")
-            if not isinstance(event_turn_id, str) and isinstance(turn, dict):
-                event_turn_id = turn.get("id")
-            if event_thread_id not in (None, thread_id) or (
-                turn_id and event_turn_id not in (None, turn_id)
-            ):
-                return
-            event_queue.put_nowait({"type": method, **params})
-            if method in {"turn/completed", "turn/failed"} and event_turn_id in (None, turn_id):
-                turn_completed.set()
-
-        def raise_for_terminal_error(event: dict[str, Any]) -> None:
-            method = event.get("type")
-            if method == "thread/closed" and self._notification_thread_id(event) == thread_id:
-                raise RuntimeError(f"Codex thread {thread_id} closed before turn completed")
-            if method not in {"turn/completed", "turn/failed"}:
-                return
-
-            turn = event.get("turn")
-            payload = turn if isinstance(turn, dict) else event
-            error = payload.get("error") or event.get("error")
-            if error:
-                raise RuntimeError(f"Codex turn failed: {error}")
-            status = payload.get("status")
-            if isinstance(status, str) and status.lower() in {"error", "failed"}:
-                raise RuntimeError(f"Codex turn failed with status {status}")
-
-        # Register handlers for all turn-related events
-        event_methods = [
-            "turn/started",
-            "turn/completed",
-            "turn/failed",
-            "thread/closed",
-            "item/started",
-            "item/completed",
-            "item/agentMessage/delta",
-        ]
-
-        for method in event_methods:
-            self.add_notification_handler(method, on_event)
-
-        try:
-            # Start the turn
-            turn = await self.start_turn(thread_id, prompt, images=images, **config_overrides)
-            turn_id = turn.id or None
-
-            yield {"type": "turn/created", "turn": turn.__dict__}
-
-            # Yield events until turn completes
-            while not turn_completed.is_set():
-                try:
-                    event = await asyncio.wait_for(event_queue.get(), timeout=0.1)
-                    yield event
-                    raise_for_terminal_error(event)
-                except TimeoutError:
-                    continue
-
-            # Drain remaining events
-            while not event_queue.empty():
-                event = event_queue.get_nowait()
-                yield event
-                raise_for_terminal_error(event)
-
-        finally:
-            # Unregister handlers
-            for method in event_methods:
-                self.remove_notification_handler(method, on_event)
+        async for event in client_api.run_turn(
+            self,
+            thread_id,
+            prompt,
+            images=images,
+            **config_overrides,
+        ):
+            yield event
 
     @staticmethod
     def _notification_thread_id(params: dict[str, Any]) -> str | None:
-        thread_id = params.get("threadId")
-        if isinstance(thread_id, str):
-            return thread_id
-        thread = params.get("thread")
-        if isinstance(thread, dict):
-            thread_id = thread.get("id")
-            if isinstance(thread_id, str):
-                return thread_id
-        return None
-
-    # ===== Authentication =====
+        return client_notifications.notification_thread_id(params)
 
     async def login_with_api_key(self, api_key: str) -> dict[str, Any]:
-        """
-        Authenticate using an OpenAI API key.
-
-        Args:
-            api_key: OpenAI API key (sk-...)
-
-        Returns:
-            Login result dict
-        """
-        result = await self._send_request(
-            "account/login/start", {"type": "apiKey", "apiKey": api_key}
-        )
-        logger.debug("Logged in with API key")
-        return result
+        return await client_api.login_with_api_key(self, api_key)
 
     async def get_account_status(self) -> dict[str, Any]:
-        """Get current account/authentication status."""
-        return await self._send_request("account/status", {})
-
-    # ===== Internal Methods =====
+        return await client_api.get_account_status(self)
 
     def _next_request_id(self) -> int:
-        """Generate unique request ID."""
-        with self._request_id_lock:
-            self._request_id += 1
-            return self._request_id
+        return client_rpc.next_request_id(self)
 
     async def _send_request(
         self, method: str, params: dict[str, Any], timeout: float = 60.0
     ) -> dict[str, Any]:
-        """
-        Send a JSON-RPC request and wait for response.
-
-        Args:
-            method: RPC method name
-            params: Method parameters
-            timeout: Response timeout in seconds
-
-        Returns:
-            Result dict from response
-
-        Raises:
-            RuntimeError: If not connected or request fails
-            TimeoutError: If response times out
-        """
-        if not self._process or not self._process.stdin:
-            raise RuntimeError("Not connected to Codex app-server")
-        if self._state is CodexConnectionState.ERROR:
-            raise ConnectionError("Codex app-server process is unavailable")
-
-        request_id = self._next_request_id()
-        request = {
-            "jsonrpc": "2.0",
-            "method": method,
-            "id": request_id,
-            "params": params,
-        }
-
-        # Create future for response
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[Any] = loop.create_future()
-
-        with self._pending_requests_lock:
-            self._pending_requests[request_id] = future
-
-        try:
-            # Send request - offload blocking I/O to thread executor
-            request_line = json.dumps(request) + "\n"
-
-            # Capture local references to avoid race with stop()
-            process = self._process
-            stdin = process.stdin if process is not None else None
-
-            def write_request() -> None:
-                if stdin is None:
-                    return
-                stdin.write(request_line)
-                stdin.flush()
-
-            if stdin is None:
-                raise RuntimeError("Not connected to Codex app-server")
-
-            await loop.run_in_executor(None, write_request)
-
-            logger.debug(f"Sent request: {method} (id={request_id})")
-
-            # Wait for response
-            result = await asyncio.wait_for(future, timeout=timeout)
-            return cast(dict[str, Any], result)
-
-        except TimeoutError:
-            logger.error(f"Request {method} (id={request_id}) timed out")
-            raise
-        finally:
-            with self._pending_requests_lock:
-                self._pending_requests.pop(request_id, None)
+        return await client_rpc.send_request(self, method, params, timeout=timeout)
 
     async def _send_notification(self, method: str, params: dict[str, Any]) -> None:
-        """Send a JSON-RPC notification (no response expected)."""
-        if not self._process or not self._process.stdin:
-            raise RuntimeError("Not connected to Codex app-server")
-
-        notification = {"jsonrpc": "2.0", "method": method, "params": params}
-
-        notification_line = json.dumps(notification) + "\n"
-
-        # Capture local references to avoid race with stop()
-        process = self._process
-        stdin = process.stdin if process is not None else None
-
-        def write_notification() -> None:
-            if stdin is None:
-                return
-            stdin.write(notification_line)
-            stdin.flush()
-
-        if stdin is None:
-            raise RuntimeError("Not connected to Codex app-server")
-
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, write_notification)
-
-        logger.debug(f"Sent notification: {method}")
+        await client_rpc.send_notification(self, method, params)
 
     async def _handle_incoming_request(self, message: dict[str, Any]) -> None:
-        """Handle an incoming JSON-RPC request from Codex (e.g., approval requests).
-
-        Routes the request to the registered approval handler and sends back
-        a JSON-RPC response with the handler's decision.
-
-        Args:
-            message: JSON-RPC request with id, method, and params.
-        """
-        request_id = message["id"]
-        method = message["method"]
-        params = message.get("params", {})
-
-        if not self._approval_handler:
-            logger.debug(f"No approval handler for incoming request: {method}")
-            response = {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "error": {"code": -32601, "message": f"No handler registered for {method}"},
-            }
-            await self._send_stdin_response(response)
-            return
-
-        logger.debug(f"Handling incoming request: {method} (id={request_id})")
-
-        try:
-            result = await self._approval_handler(method, params)
-            response = {"jsonrpc": "2.0", "id": request_id, "result": result}
-        except Exception as e:
-            logger.error(f"Approval handler error for {method}: {e}")
-            response = {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "error": {"code": -32603, "message": str(e)},
-            }
-
-        await self._send_stdin_response(response)
-
-    async def _send_stdin_response(self, response: dict[str, Any]) -> None:
-        """Send a JSON-RPC response to the Codex process via stdin.
-
-        Uses run_in_executor since proc.stdin is a synchronous pipe (subprocess.Popen).
-        """
-        proc = self._process
-        if proc and proc.stdin:
-            response_line = json.dumps(response) + "\n"
-
-            def write_response() -> None:
-                if proc and proc.stdin:
-                    try:
-                        proc.stdin.write(response_line)
-                        proc.stdin.flush()
-                    except OSError:
-                        pass
-
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, write_response)
+        await client_rpc.handle_incoming_request(self, message)
 
     def _dispatch_incoming_request(self, message: dict[str, Any]) -> None:
-        task = asyncio.create_task(self._handle_incoming_request(message))
-        self._incoming_request_tasks.add(task)
+        client_rpc.dispatch_incoming_request(self, message)
 
-        def discard_task(done_task: asyncio.Task[None]) -> None:
-            self._incoming_request_tasks.discard(done_task)
-            if done_task.cancelled():
-                return
-            if exc := done_task.exception():
-                logger.error("Incoming Codex request handler failed", exc_info=exc)
-
-        task.add_done_callback(discard_task)
+    async def _send_stdin_response(self, response: dict[str, Any]) -> None:
+        await client_rpc.send_stdin_response(self, response)
 
     async def _read_loop(self) -> None:
-        """Background task to read responses and notifications."""
-        if not self._process or not self._process.stdout:
-            return
-
-        loop = asyncio.get_running_loop()
-
-        while not self._shutdown_event.is_set():
-            try:
-                # Capture local references to avoid race with stop()
-                proc = self._process
-                if proc is None:
-                    break
-                stdout = proc.stdout
-                if stdout is None:
-                    break
-
-                # Read line in thread pool to avoid blocking
-                line = await loop.run_in_executor(None, stdout.readline)
-
-                if not line:
-                    return_code = proc.poll()
-                    if return_code is not None:
-                        logger.warning("Codex app-server process terminated")
-                        self._state = CodexConnectionState.ERROR
-                        if return_code:
-                            with self._pending_requests_lock:
-                                for pending_future in self._pending_requests.values():
-                                    if not pending_future.done():
-                                        pending_future.set_exception(
-                                            ConnectionError("Codex app-server process terminated")
-                                        )
-                                self._pending_requests.clear()
-                        break
-                    continue
-
-                try:
-                    message = json.loads(line.strip())
-                except json.JSONDecodeError as e:
-                    logger.warning(f"Invalid JSON from app-server: {e}")
-                    continue
-
-                if "method" in message and "id" in message:
-                    # Codex uses an independent id space for inbound requests,
-                    # so these ids can collide with our outgoing request ids.
-                    self._dispatch_incoming_request(message)
-
-                # Handle response to our outgoing request (has "id" without "method")
-                elif "id" in message:
-                    request_id = message["id"]
-                    with self._pending_requests_lock:
-                        future = self._pending_requests.get(request_id)
-
-                    if future and not future.done():
-                        # Response to our outgoing request
-                        if "error" in message:
-                            error = message["error"]
-                            future.set_exception(
-                                RuntimeError(
-                                    f"RPC error {error.get('code')}: {error.get('message')}"
-                                )
-                            )
-                        else:
-                            future.set_result(message.get("result", {}))
-
-                elif "method" in message:
-                    method = message["method"]
-                    params = message.get("params", {})
-                    if isinstance(params, dict):
-                        params = self._enrich_notification(method, params)
-
-                    logger.debug(f"Received notification: {method}")
-
-                    if self._on_notification:
-                        try:
-                            self._on_notification(method, params)
-                        except Exception as e:
-                            logger.error(f"Notification handler error: {e}")
-
-                    handlers = self._notification_handlers.get(method, [])
-                    for handler in handlers:
-                        try:
-                            handler(method, params)
-                        except Exception as e:
-                            logger.error(f"Handler error for {method}: {e}")
-
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"Error in read loop: {e}", exc_info=True)
-                if self._shutdown_event.is_set():
-                    break
+        await client_rpc.read_loop(self)
 
 
 __all__ = [
