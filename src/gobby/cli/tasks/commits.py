@@ -43,7 +43,8 @@ def link_commit(task_id: str, commit_sha: str) -> None:
     try:
         cwd = _get_project_cwd()
         updated_task = manager.link_commit(task.id, commit_sha, cwd=cwd)
-        click.echo(f"Linked commit {commit_sha} to task {task.id}")
+        stored_sha = updated_task.commits[-1] if updated_task.commits else commit_sha
+        click.echo(f"Linked commit {stored_sha} to task {task.id}")
         if updated_task.commits:
             click.echo(f"Total commits: {len(updated_task.commits)}")
     except ValueError as e:

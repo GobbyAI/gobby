@@ -109,8 +109,17 @@ def sessions() -> None:
 
 @sessions.command("list")
 @click.option("--project", "-p", "project_ref", help="Filter by project (name or UUID)")
-@click.option("--status", "-s", help="Filter by status (active, completed, handoff_ready)")
-@click.option("--source", help="Filter by source (claude, gemini, qwen, codex, droid)")
+@click.option(
+    "--status",
+    "-s",
+    type=click.Choice(["active", "completed", "handoff_ready", "expired"]),
+    help="Filter by status",
+)
+@click.option(
+    "--source",
+    type=click.Choice(["claude", "gemini", "qwen", "codex", "droid"]),
+    help="Filter by source",
+)
 @click.option("--limit", "-n", default=20, help="Max sessions to show")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def list_sessions(
@@ -216,7 +225,12 @@ def show_session(session_id: str, json_format: bool) -> None:
 @sessions.command("messages")
 @click.argument("session_id")
 @click.option("--limit", "-n", default=50, help="Max messages to show")
-@click.option("--role", "-r", help="Filter by role (user, assistant, tool)")
+@click.option(
+    "--role",
+    "-r",
+    type=click.Choice(["user", "assistant", "tool"]),
+    help="Filter by role",
+)
 @click.option("--offset", "-o", default=0, help="Skip first N messages")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def show_messages(
@@ -697,6 +711,9 @@ def restore_transcript(
 
     if skipped:
         click.echo(f"\nSkipped {len(skipped)} session(s)")
+        for r in skipped:
+            display_ref = r.get("session_id") or r.get("external_id") or "?"
+            click.echo(f"  {str(display_ref)[:12]}: {r.get('reason', 'skipped')}")
 
     click.echo(f"\nRestored {len(restored_list)} transcript(s)")
 

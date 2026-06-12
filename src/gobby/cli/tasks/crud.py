@@ -13,6 +13,7 @@ from gobby.cli.tasks._utils import (
     format_task_list,
     get_claimed_task_owners,
     get_task_manager,
+    parse_task_refs,
     resolve_task_id,
     sort_tasks_for_tree,
 )
@@ -146,12 +147,9 @@ def list_tasks(
             project_id=project_id,
             claimed=claimed_filter,
             closed=closed_filter,
-            limit=10000 if stage_name or escalated else limit,
+            escalated=True if escalated else None,
+            limit=10000 if stage_name else limit,
         )
-        if escalated:
-            tasks_list = [
-                task for task in tasks_list if serialize_task_state(task)["is_escalated"]
-            ][:limit]
         tasks_list = filter_tasks_by_stage(
             manager,
             tasks_list,
@@ -357,6 +355,7 @@ def task_stats(project_ref: str | None, json_format: bool) -> None:
     total = len(all_tasks)
     by_stage_state: dict[str, int] = {}
     by_priority = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
+    other_priority_count = 0
     by_type: dict[str, int] = {}
     claimed_count = 0
     unclaimed_count = 0
@@ -380,8 +379,10 @@ def task_stats(project_ref: str | None, json_format: bool) -> None:
             if state["is_merge_ready"]:
                 merge_ready_count += 1
 
-        if task.priority is not None:
+        if task.priority in by_priority:
             by_priority[task.priority] = by_priority.get(task.priority, 0) + 1
+        elif task.priority is not None:
+            other_priority_count += 1
         if task.task_type:
             by_type[task.task_type] = by_type.get(task.task_type, 0) + 1
 
@@ -397,6 +398,7 @@ def task_stats(project_ref: str | None, json_format: bool) -> None:
             "medium": by_priority.get(2, 0),
             "low": by_priority.get(3, 0),
             "backlog": by_priority.get(4, 0),
+            "other": other_priority_count,
         },
         "by_type": by_type,
         "claimed": claimed_count,
@@ -429,6 +431,7 @@ def task_stats(project_ref: str | None, json_format: bool) -> None:
     click.echo(f"  Medium Priority: {by_priority.get(2, 0)}")
     click.echo(f"  Low Priority: {by_priority.get(3, 0)}")
     click.echo(f"  Backlog Priority: {by_priority.get(4, 0)}")
+    click.echo(f"  Other Priority: {other_priority_count}")
     if by_type:
         click.echo("\n  By Type:")
         for t, count in sorted(by_type.items(), key=lambda x: -x[1]):
@@ -679,13 +682,7 @@ def close_task_cmd(
     manager = get_task_manager()
     skip = skip_validation or force
 
-    # Expand comma-separated values into individual IDs
-    expanded_ids: list[str] = []
-    for task_id in task_ids:
-        if "," in task_id:
-            expanded_ids.extend(part.strip() for part in task_id.split(",") if part.strip())
-        else:
-            expanded_ids.append(task_id)
+    expanded_ids = parse_task_refs(task_ids)
 
     closed_count = 0
     failed_count = 0
@@ -786,8 +783,6 @@ def delete_task(task_refs: tuple[str, ...], cascade: bool, unlink: bool, yes: bo
         gobby tasks delete #42 #43 #44 --yes
         gobby tasks delete #42 --unlink
     """
-    from gobby.cli.tasks._utils import parse_task_refs
-
     manager = get_task_manager()
 
     # Parse and resolve all task refs

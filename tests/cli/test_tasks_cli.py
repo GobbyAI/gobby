@@ -337,6 +337,29 @@ class TestListTasksCommand:
         call_kwargs = mock_manager.list_tasks.call_args.kwargs
         assert call_kwargs["closed"] is False
 
+    @patch("gobby.cli.tasks.crud.get_task_manager")
+    @patch("gobby.cli.tasks.crud.get_project_context")
+    def test_list_with_escalated_filter_uses_storage_query(
+        self,
+        mock_project_ctx: MagicMock,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+        mock_task: MagicMock,
+    ) -> None:
+        """Test --escalated is pushed into the task query."""
+        mock_project_ctx.return_value = {"id": "proj-123"}
+        mock_manager = MagicMock()
+        mock_manager.list_tasks.return_value = [mock_task]
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(cli, ["tasks", "list", "--escalated", "--limit", "7", "--json"])
+
+        assert result.exit_code == 0
+        call_kwargs = mock_manager.list_tasks.call_args.kwargs
+        assert call_kwargs["closed"] is False
+        assert call_kwargs["escalated"] is True
+        assert call_kwargs["limit"] == 7
+
     @patch("gobby.cli.tasks.crud.filter_tasks_by_stage")
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.get_project_context")
@@ -726,6 +749,35 @@ class TestTaskStatsCommand:
         assert "by_stage_state" in data
         assert "by_priority" in data
         assert "closed" in data
+
+    @patch("gobby.cli.tasks.crud.get_task_manager")
+    def test_stats_groups_out_of_range_priorities_as_other(
+        self,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """Test stats surfaces unexpected priority values explicitly."""
+        mock_task = MagicMock()
+        _set_task_state(mock_task, "ready")
+        mock_task.priority = 9
+        mock_task.task_type = "chore"
+
+        mock_manager = MagicMock()
+        mock_manager.list_tasks.return_value = [mock_task]
+        mock_manager.list_ready_tasks.return_value = []
+        mock_manager.list_blocked_tasks.return_value = []
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(cli, ["tasks", "stats", "--json"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["by_priority"]["other"] == 1
+
+        result = runner.invoke(cli, ["tasks", "stats"])
+
+        assert result.exit_code == 0
+        assert "Other Priority: 1" in result.output
 
 
 # ==============================================================================
@@ -1140,6 +1192,27 @@ class TestCloseTaskCommand:
 
         assert result.exit_code == 0
         assert "Closed task" in result.output
+
+    @patch("gobby.cli.tasks.crud.get_task_manager")
+    @patch("gobby.cli.tasks.crud.resolve_task_id")
+    def test_close_task_uses_shared_ref_parser(
+        self,
+        mock_resolve: MagicMock,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+        mock_task: MagicMock,
+    ) -> None:
+        """Test close expands comma and numeric refs through parse_task_refs."""
+        mock_resolve.return_value = mock_task
+        mock_manager = MagicMock()
+        mock_manager.list_tasks.return_value = []
+        mock_manager.close_task.return_value = mock_task
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(cli, ["tasks", "close", "1,2"])
+
+        assert result.exit_code == 0
+        assert [call.args[1] for call in mock_resolve.call_args_list] == ["#1", "#2"]
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")

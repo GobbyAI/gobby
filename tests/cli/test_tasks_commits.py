@@ -46,6 +46,23 @@ class TestCommitLink:
             mock_task_manager.link_commit.assert_called_with("gt-abc123", "abc123", cwd=ANY)
             assert "abc123" in result.output
 
+    def test_link_commit_echoes_normalized_stored_sha(self, runner, mock_task_manager) -> None:
+        """Test linking echoes the SHA stored by the task manager."""
+        mock_task = MagicMock()
+        mock_task.id = "gt-abc123"
+        mock_task.commits = []
+        updated_task = MagicMock()
+        updated_task.commits = ["abcdef1234567890"]
+        mock_task_manager.get_task.return_value = mock_task
+        mock_task_manager.link_commit.return_value = updated_task
+
+        with patch("gobby.cli.tasks.commits.get_task_manager", return_value=mock_task_manager):
+            result = runner.invoke(tasks, ["commit", "link", "gt-abc123", "abc"])
+
+        assert result.exit_code == 0
+        assert "Linked commit abcdef1234567890 to task gt-abc123" in result.output
+        assert "Linked commit abc to task gt-abc123" not in result.output
+
     def test_link_commit_uses_project_cwd_from_subdirectory(
         self, runner, mock_task_manager, tmp_path, monkeypatch
     ) -> None:

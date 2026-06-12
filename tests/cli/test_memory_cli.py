@@ -26,6 +26,43 @@ class _FakeHTTPResponse:
         return self.payload
 
 
+class TestMemoryCreateCommand:
+    """Tests for gobby memory create command."""
+
+    @pytest.fixture
+    def runner(self) -> CliRunner:
+        """Create a CLI test runner."""
+        return CliRunner()
+
+    @patch("gobby.cli.memory.resolve_project_ref")
+    @patch("gobby.cli.memory.get_memory_manager")
+    def test_create_without_project_uses_current_project_context(
+        self,
+        mock_get_manager: MagicMock,
+        mock_resolve_project: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """Test create resolves current project when --project is omitted."""
+        mock_resolve_project.return_value = "proj-current"
+        mock_manager = MagicMock()
+        mock_manager.create_memory = AsyncMock(
+            return_value=SimpleNamespace(id="mem-1", content="remember this")
+        )
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(cli, ["memory", "create", "remember this"])
+
+        assert result.exit_code == 0
+        assert "Created memory: mem-1 - remember this" in result.output
+        mock_resolve_project.assert_called_once_with(None)
+        mock_manager.create_memory.assert_awaited_once_with(
+            content="remember this",
+            memory_type="fact",
+            project_id="proj-current",
+            source_type="user",
+        )
+
+
 class TestMemoryShowCommand:
     """Tests for gobby memory show command."""
 

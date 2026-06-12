@@ -23,7 +23,7 @@ def _facade() -> ModuleType:
 def create(ctx: click.Context, content: str, memory_type: str, project_ref: str | None) -> None:
     """Create a new memory."""
     memory_module = _facade()
-    project_id = memory_module.resolve_project_ref(project_ref) if project_ref else None
+    project_id = memory_module.resolve_project_ref(project_ref)
     manager = memory_module.get_memory_manager(ctx)
     memory = asyncio.run(
         manager.create_memory(

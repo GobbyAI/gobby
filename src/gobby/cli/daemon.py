@@ -315,7 +315,8 @@ def _read_pid_file() -> int | None:
     try:
         with open(pid_file) as f:
             return int(f.read().strip())
-    except Exception:
+    except (ValueError, OSError, psutil.Error) as exc:
+        logger.debug("Ignoring unreadable daemon PID file %s: %s", pid_file, exc)
         return None
 
 
@@ -455,14 +456,15 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
     # Check port availability
     http_port = config.daemon_port
     ws_port = config.websocket.port
+    bind_host = config.bind_host
 
-    if not is_port_available(http_port):
-        if not wait_for_port_available(http_port, timeout=5.0):
+    if not is_port_available(http_port, host=bind_host):
+        if not wait_for_port_available(http_port, host=bind_host, timeout=5.0):
             _step(f"Port {http_port} still in use", error=True)
             sys.exit(1)
 
-    if not is_port_available(ws_port):
-        if not wait_for_port_available(ws_port, timeout=5.0):
+    if not is_port_available(ws_port, host=bind_host):
+        if not wait_for_port_available(ws_port, host=bind_host, timeout=5.0):
             _step(f"Port {ws_port} still in use", error=True)
             sys.exit(1)
 
