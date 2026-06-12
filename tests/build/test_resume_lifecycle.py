@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from gobby.build.options import BuildOptions
 from gobby.build.resume_lifecycle import (
     _resume_epic_workspace_refresh_required,
     apply_stage_caps_to_existing_lifecycle,
+    repair_expanded_epic_root_manifest_for_resume,
     resume_existing_lifecycle,
 )
 from gobby.build.runtime_hooks import RuntimeHooks
@@ -287,3 +289,123 @@ def test_apply_stage_caps_to_existing_lifecycle_uses_dispatch_mutex(
 
     with pytest.raises(DispatchMutexUnavailableError):
         apply_stage_caps_to_existing_lifecycle(task_manager, task.id, opts)
+
+
+def test_repair_expanded_epic_root_manifest_replaces_under_dispatch_mutex(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Resume expanded epic",
+        category="code",
+        task_type="epic",
+    )
+    initialize_manifest(
+        temp_db,
+        task.id,
+        [
+            spec("planning", 0),
+            spec("development", 1),
+            spec("holistic_qa", 2),
+            spec("pr", 3),
+            spec("merge", 4),
+        ],
+    )
+    monkeypatch.setattr(
+        "gobby.build.resume_lifecycle.has_existing_expansion_output",
+        lambda *_args: True,
+    )
+
+    original_acquire = TaskDispatchMutexManager.acquire_mutex
+    heartbeat_attempts: list[bool] = []
+
+    def acquire_and_probe(
+        self: TaskDispatchMutexManager,
+        task_id: str,
+        holder: str,
+        kind: str,
+        ttl_seconds: int,
+        run_id: str | None = None,
+        now: datetime | str | None = None,
+    ) -> bool:
+        acquired = original_acquire(self, task_id, holder, kind, ttl_seconds, run_id, now)
+        if acquired and task_id == task.id and kind == "stage_state:replace_manifest":
+            heartbeat_attempts.append(
+                original_acquire(
+                    TaskDispatchMutexManager(temp_db),
+                    task_id,
+                    "heartbeat",
+                    "heartbeat",
+                    30,
+                )
+            )
+        return acquired
+
+    monkeypatch.setattr(TaskDispatchMutexManager, "acquire_mutex", acquire_and_probe)
+
+    repaired = repair_expanded_epic_root_manifest_for_resume(
+        task_manager,
+        task,
+        BuildOptions(isolation="worktree"),
+        skip_stages=[],
+    )
+
+    assert repaired is True
+    assert heartbeat_attempts == [False]
+    rows = task_manager.stage_states.list_for_task(task.id)
+    assert [(row.stage_name, row.position) for row in rows] == [
+        ("development", 0),
+        ("holistic_qa", 1),
+        ("pr", 2),
+        ("merge", 3),
+    ]
+
+
+def test_manifest_replacement_skips_when_expected_shape_changed(
+    temp_db,
+    sample_project,
+) -> None:
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Stale manifest shape",
+        category="code",
+        task_type="epic",
+    )
+    initialize_manifest(
+        temp_db,
+        task.id,
+        [spec("planning", 0), spec("development", 1)],
+    )
+    rows = task_manager.stage_states.list_for_task(task.id)
+    expected_shape = [
+        (row.stage_name, row.position, row.max_work_attempts, row.max_review_rounds) for row in rows
+    ]
+    temp_db.execute(
+        """
+        UPDATE task_stage_states
+           SET max_work_attempts = %s
+         WHERE task_id = %s AND stage_name = %s
+        """,
+        (9, task.id, "planning"),
+    )
+
+    replaced = task_manager.stage_states.replace_manifest(
+        task.id,
+        [spec("development", 0)],
+        expected_existing_shape=expected_shape,
+        from_state="manifest:planning,development",
+        reason="test_manifest_replacement_shape_guard",
+        by_session_id=None,
+        by_actor="build",
+    )
+
+    assert replaced is None
+    rows = task_manager.stage_states.list_for_task(task.id)
+    assert [(row.stage_name, row.position, row.max_work_attempts) for row in rows] == [
+        ("planning", 0, 9),
+        ("development", 1, None),
+    ]

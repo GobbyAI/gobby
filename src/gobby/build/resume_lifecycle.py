@@ -329,20 +329,19 @@ def repair_expanded_epic_root_manifest_for_resume(
     if not all(is_pristine_resume_stage(row) for row in desired_rows):
         return False
 
-    task_manager.db.execute("DELETE FROM task_stage_states WHERE task_id = %s", (task.id,))
-    task_manager.stage_states.initialize_manifest(
+    expected_existing_shape = [
+        (row.stage_name, row.position, row.max_work_attempts, row.max_review_rounds) for row in rows
+    ]
+    replaced = task_manager.stage_states.replace_manifest(
         task.id,
         desired_specs,
-        by_session_id=None,
-    )
-    task_manager.lifecycle_events.record_lifecycle_event(
-        task.id,
+        expected_existing_shape=expected_existing_shape,
         from_state="manifest:" + ",".join(current_names),
-        to_state="manifest:" + ",".join(desired_names),
         reason="repair_expanded_epic_root_manifest",
+        by_session_id=None,
         by_actor="build",
     )
-    return True
+    return replaced is not None
 
 
 def is_pristine_resume_stage(row: StageState) -> bool:
