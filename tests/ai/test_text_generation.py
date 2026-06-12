@@ -25,7 +25,8 @@ from gobby.ai import (
     build_daemon_text_generation_service,
 )
 from gobby.config.app import DaemonConfig
-from gobby.llm.base import LLMTextResult
+from gobby.config.feature_base import FeatureProfile
+from gobby.llm.base import LLMProviderCancellation, LLMTextResult
 
 pytestmark = pytest.mark.unit
 
@@ -336,6 +337,85 @@ async def test_text_generation_service_falls_back_across_profile_candidates() ->
 
 
 @pytest.mark.asyncio
+async def test_text_generation_service_propagates_provider_cancellation() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                available=True,
+                models=("haiku",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.4-mini",),
+            ),
+        ]
+    )
+    claude = ProviderFailureAdapter(LLMProviderCancellation("shutdown"))
+    codex = RecordingAdapter("codex")
+    service = TextGenerationService(registry, {"claude": claude, "codex": codex})
+
+    with pytest.raises(LLMProviderCancellation, match="shutdown"):
+        await service.generate_result(
+            TextGenerationRequest(
+                prompt="summarize",
+                profile="feature_low",
+                candidates=("claude/haiku", "codex/gpt-5.4-mini"),
+            )
+        )
+
+    assert claude.requests[0].model == "haiku"
+    assert codex.requests == []
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_falls_back_when_candidate_returns_blank_output(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local:lm-studio",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("qwen-local",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                available=True,
+                models=("haiku",),
+            ),
+        ]
+    )
+    claude = RecordingAdapter("claude")
+    service = TextGenerationService(
+        registry,
+        {"local:lm-studio": StaticTextAdapter("   "), "claude": claude},
+    )
+    caplog.set_level(logging.DEBUG, logger=TEXT_GENERATION_LOGGER)
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="summarize",
+            profile="feature_low",
+            candidates=("local:lm-studio/qwen-local", "claude/haiku"),
+        )
+    )
+
+    assert result.text == "claude:summarize"
+    records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
+    assert [record.success for record in records] == [False, True]
+
+
+@pytest.mark.asyncio
 async def test_text_generation_service_falls_back_when_candidate_echoes_prompt() -> None:
     prompt = "Summarize this module once from lower-level summaries."
     registry = AICapabilityRegistry(
@@ -493,7 +573,7 @@ async def test_text_generation_service_falls_back_between_named_local_endpoints(
 
 @pytest.mark.asyncio
 async def test_text_generation_service_routes_named_local_candidate_with_slashed_model_id() -> None:
-    model = "google/gemma-4-26b-a4b-qat"
+    model = "qwen/qwen3-coder-30b"
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
@@ -695,6 +775,61 @@ async def test_text_generation_service_profile_only_expands_profile_defaults() -
 
 
 @pytest.mark.asyncio
+async def test_text_generation_service_profile_only_uses_configured_profile_defaults() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.4-mini",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local:lm-studio",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("qwen-local",),
+            ),
+        ]
+    )
+    config = DaemonConfig(
+        ai={
+            "generation": {
+                "profile_defaults": {
+                    FeatureProfile.LOW: ["local:lm-studio/qwen-local"],
+                }
+            }
+        }
+    )
+    codex = RecordingAdapter("codex")
+    local = RecordingAdapter("local:lm-studio")
+    service = TextGenerationService(
+        registry,
+        {"codex": codex, "local:lm-studio": local},
+        profile_defaults=config.ai.generation.profile_defaults,
+    )
+
+    result = await service.generate_result(
+        TextGenerationRequest(prompt="summarize", profile="feature_low")
+    )
+
+    assert result.text == "local:lm-studio:summarize"
+    assert result.provider == "local:lm-studio"
+    assert result.model == "qwen-local"
+    assert codex.requests == []
+    assert local.requests == [
+        TextGenerationRequest(
+            prompt="summarize",
+            provider="local:lm-studio",
+            profile="feature_low",
+            model="qwen-local",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_text_generation_service_candidate_list_is_exhaustive_for_unavailable_override() -> (
     None
 ):
@@ -732,6 +867,84 @@ async def test_text_generation_service_candidate_list_is_exhaustive_for_unavaila
     assert codex.requests == []
 
 
+async def test_text_generation_service_aggregates_all_unavailable_candidates() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding.unavailable(
+                AICapability.TEXT_GENERATE,
+                "claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                reason="Claude CLI is not installed.",
+                models=("haiku",),
+            ),
+            CapabilityBinding.unavailable(
+                AICapability.TEXT_GENERATE,
+                "codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                reason="Codex app server is not available.",
+                models=("gpt-5.4-mini",),
+            ),
+        ]
+    )
+    service = TextGenerationService(registry, {})
+
+    with pytest.raises(CapabilityUnavailableError) as exc_info:
+        await service.generate_result(
+            TextGenerationRequest(
+                prompt="summarize",
+                profile="feature_low",
+                candidates=("claude/haiku", "codex/gpt-5.4-mini"),
+            )
+        )
+
+    error = exc_info.value
+    assert error.provider is None
+    assert error.model is None
+    assert error.reason is not None
+    assert error.reason.startswith("All text generation candidates unavailable:")
+    assert "provider=claude" in error.reason
+    assert "provider=codex" in error.reason
+
+
+async def test_text_generation_service_aggregates_all_unavailable_json_candidates() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding.unavailable(
+                AICapability.TEXT_GENERATE,
+                "claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                reason="Claude CLI is not installed.",
+                models=("haiku",),
+            ),
+            CapabilityBinding.unavailable(
+                AICapability.TEXT_GENERATE,
+                "codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                reason="Codex app server is not available.",
+                models=("gpt-5.4-mini",),
+            ),
+        ]
+    )
+    service = TextGenerationService(registry, {})
+
+    with pytest.raises(CapabilityUnavailableError) as exc_info:
+        await service.generate_json(
+            TextGenerationRequest(
+                prompt="summarize",
+                profile="feature_low",
+                candidates=("claude/haiku", "codex/gpt-5.4-mini"),
+            )
+        )
+
+    error = exc_info.value
+    assert error.provider is None
+    assert error.model is None
+    assert error.reason is not None
+    assert error.reason.startswith("All JSON generation candidates unavailable:")
+    assert "provider=claude" in error.reason
+    assert "provider=codex" in error.reason
+
+
 @pytest.mark.asyncio
 async def test_text_generation_service_json_candidates_do_not_fallback_to_profile_defaults() -> (
     None
@@ -767,6 +980,43 @@ async def test_text_generation_service_json_candidates_do_not_fallback_to_profil
                 profile="feature_low",
                 candidates=("claude/haiku",),
                 caller="session_summary",
+            )
+        )
+
+    assert claude.requests[0].model == "haiku"
+    assert codex.requests == []
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_json_propagates_provider_cancellation() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                available=True,
+                models=("haiku",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.4-mini",),
+            ),
+        ]
+    )
+    claude = ProviderFailureAdapter(LLMProviderCancellation("shutdown"))
+    codex = JSONAdapter("codex")
+    service = TextGenerationService(registry, {"claude": claude, "codex": codex})
+
+    with pytest.raises(LLMProviderCancellation, match="shutdown"):
+        await service.generate_json(
+            TextGenerationRequest(
+                prompt="classify",
+                profile="feature_low",
+                candidates=("claude/haiku", "codex/gpt-5.4-mini"),
             )
         )
 
@@ -1105,10 +1355,15 @@ async def test_local_text_generate_adapter_forwards_json_request(
 
 
 class FakeACPClient:
-    def __init__(self) -> None:
+    def __init__(self, events: list[StreamEvent] | None = None) -> None:
         self.started: dict[str, object] | None = None
         self.sent: list[dict[str, object]] = []
         self.stopped = False
+        self.events = events or [
+            StreamEvent(event_type="content_delta", data={"content": "hello "}),
+            StreamEvent(event_type="content_delta", data={"content": "world"}),
+            StreamEvent(event_type="result", data={"content": "ignored fallback"}),
+        ]
 
     async def start(self, **kwargs: object) -> None:
         self.started = kwargs
@@ -1118,9 +1373,8 @@ class FakeACPClient:
 
     async def send(self, message: str, **kwargs: object) -> AsyncIterator[StreamEvent]:
         self.sent.append({"message": message, **kwargs})
-        yield StreamEvent(event_type="content_delta", data={"content": "hello "})
-        yield StreamEvent(event_type="content_delta", data={"content": "world"})
-        yield StreamEvent(event_type="result", data={"content": "ignored fallback"})
+        for event in self.events:
+            yield event
 
 
 class FakeCodexAppServerClient:
@@ -1170,6 +1424,24 @@ class FakeCodexAppServerClient:
         }
         for event in self.events:
             yield event
+
+
+class HangingCodexAppServerClient(FakeCodexAppServerClient):
+    async def run_turn(
+        self,
+        thread_id: str,
+        prompt: str,
+        images: list[str] | None = None,
+        **config_overrides: Any,
+    ) -> AsyncIterator[dict[str, Any]]:
+        self.turn_kwargs = {
+            "thread_id": thread_id,
+            "prompt": prompt,
+            "images": images,
+            **config_overrides,
+        }
+        await asyncio.Event().wait()
+        yield {"type": "item/agentMessage/delta", "delta": "unreachable"}
 
 
 @pytest.mark.asyncio
@@ -1231,6 +1503,106 @@ async def test_codex_app_server_text_generate_adapter_ignores_completed_user_mes
 
 
 @pytest.mark.asyncio
+async def test_codex_app_server_text_generate_adapter_raises_on_completed_error() -> None:
+    client = FakeCodexAppServerClient(
+        [
+            {
+                "type": "turn/completed",
+                "turn": {
+                    "id": "turn-1",
+                    "status": "error",
+                    "error": "quota exceeded",
+                    "items": [],
+                },
+            }
+        ]
+    )
+    adapter = CodexAppServerTextGenerateAdapter(lambda: client)
+
+    with pytest.raises(RuntimeError, match="quota exceeded"):
+        await adapter.generate(TextGenerationRequest(provider="codex", prompt="user prompt"))
+
+    assert client.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_codex_app_server_text_generate_adapter_times_out_and_stops_client() -> None:
+    client = HangingCodexAppServerClient()
+    adapter = CodexAppServerTextGenerateAdapter(lambda: client, timeout_seconds=0.01)
+
+    with pytest.raises(RuntimeError, match="timed out after 0.01s"):
+        await adapter.generate(TextGenerationRequest(provider="codex", prompt="user prompt"))
+
+    assert client.started is True
+    assert client.stopped is True
+    assert client.turn_kwargs == {
+        "thread_id": "thread-1",
+        "prompt": "user prompt",
+        "images": None,
+        "context_prefix": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_codex_app_server_text_generate_adapter_enforces_configured_deadline() -> None:
+    client = HangingCodexAppServerClient()
+    adapter = CodexAppServerTextGenerateAdapter(lambda: client, timeout_seconds=0.01)
+
+    with pytest.raises(RuntimeError, match="timed out after 0.01s"):
+        await adapter.generate(TextGenerationRequest(provider="codex", prompt="never completes"))
+
+    assert client.started is True
+    assert client.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_daemon_codex_text_generate_adapter_uses_configured_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = HangingCodexAppServerClient()
+    monkeypatch.setattr("gobby.ai.text_generation._codex_app_server_client", lambda: client)
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+            )
+        ]
+    )
+    service = build_daemon_text_generation_service(
+        DaemonConfig(ai={"generation": {"timeout_seconds": 0.01}}),
+        registry=registry,
+    )
+
+    with pytest.raises(RuntimeError, match="timed out after 0.01s"):
+        await service.generate(
+            TextGenerationRequest(
+                provider="codex",
+                model="gpt-5",
+                prompt="never completes",
+            )
+        )
+
+    assert client.started is True
+    assert client.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_codex_app_server_text_generate_adapter_raises_when_turn_has_no_output() -> None:
+    client = FakeCodexAppServerClient(
+        [{"type": "turn/completed", "turn": {"id": "turn-1", "status": "completed", "items": []}}]
+    )
+    adapter = CodexAppServerTextGenerateAdapter(lambda: client)
+
+    with pytest.raises(RuntimeError, match="returned no output"):
+        await adapter.generate(TextGenerationRequest(provider="codex", prompt="user prompt"))
+
+    assert client.stopped is True
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["gemini", "grok", "qwen"])
 async def test_acp_text_generate_adapter_runs_one_shot_prompt_turn(provider: str) -> None:
     client = FakeACPClient()
@@ -1259,6 +1631,50 @@ async def test_acp_text_generate_adapter_runs_one_shot_prompt_turn(provider: str
         }
     ]
     assert client.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_falls_back_when_acp_candidate_errors() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="gemini",
+                adapter_style=AIAdapterStyle.ACP,
+                available=True,
+                models=("gemini-pro",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                available=True,
+                models=("haiku",),
+            ),
+        ]
+    )
+    acp_client = FakeACPClient(
+        [StreamEvent(event_type="error", data={"message": "provider unavailable"})]
+    )
+    claude = RecordingAdapter("claude")
+    service = TextGenerationService(
+        registry,
+        {
+            "gemini": ACPTextGenerateAdapter(lambda: acp_client),  # type: ignore[arg-type]
+            "claude": claude,
+        },
+    )
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="summarize",
+            profile="feature_low",
+            candidates=("gemini/gemini-pro", "claude/haiku"),
+        )
+    )
+
+    assert result.text == "claude:summarize"
+    assert acp_client.stopped is True
 
 
 class FakeProcess:

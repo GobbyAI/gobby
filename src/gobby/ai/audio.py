@@ -13,6 +13,7 @@ import httpx
 from gobby.ai.registry import (
     AICapability,
     AICapabilityRegistry,
+    CapabilityBinding,
     build_daemon_ai_capability_registry,
     normalize_capability,
 )
@@ -159,11 +160,47 @@ class AudioCapabilityService:
         if capability not in (AICapability.AUDIO_TRANSCRIBE, AICapability.AUDIO_TRANSLATE):
             raise ValueError(f"{capability.value} is not an audio capability")
 
-        binding = self._registry.select(
+        last_unavailable: AudioProviderUnavailableError | None = None
+        bindings = self._matching_bindings(capability, request)
+        for binding in bindings:
+            try:
+                return await self._execute_binding(binding, capability, request)
+            except AudioProviderUnavailableError as exc:
+                last_unavailable = exc
+
+        if last_unavailable is not None:
+            raise last_unavailable
+
+        self._registry.select(capability, provider=request.provider, model=request.model)
+        raise AssertionError("unreachable capability selection state")
+
+    def _matching_bindings(
+        self,
+        capability: AICapability,
+        request: AudioCapabilityRequest,
+    ) -> tuple[CapabilityBinding, ...]:
+        provider_bindings = self._registry.bindings_for(
             capability,
             provider=request.provider,
-            model=request.model,
+            include_unavailable=False,
         )
+        allow_explicit_model_override = request.provider is not None
+        return tuple(
+            binding
+            for binding in provider_bindings
+            if binding.supports_model(request.model)
+            or (
+                allow_explicit_model_override
+                and binding.accepts_explicit_model_override(request.model)
+            )
+        )
+
+    async def _execute_binding(
+        self,
+        binding: CapabilityBinding,
+        capability: AICapability,
+        request: AudioCapabilityRequest,
+    ) -> AudioCapabilityResult:
         adapter = self._adapters.get(_provider_key(binding.provider))
         if adapter is None:
             raise RuntimeError(

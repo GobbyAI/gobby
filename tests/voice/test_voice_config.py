@@ -70,6 +70,50 @@ class TestVoiceConfig:
         assert config.voice.tts_chatterbox_max_generation_tokens == 144
         assert config.voice.tts_clause_max_chars == 220
 
+    @pytest.mark.parametrize(
+        "openai_compatible_audio, match",
+        [
+            (
+                [
+                    {
+                        "provider": "remote-stt",
+                        "url": "http://localhost:8080/v1",
+                        "model": "whisper-large-v3",
+                    },
+                    {
+                        "provider": "Remote-STT",
+                        "url": "http://localhost:8081/v1",
+                        "model": "whisper-large-v3",
+                    },
+                ],
+                "unique case-insensitively",
+            ),
+            (
+                [
+                    {
+                        "provider": "Whisper",
+                        "url": "http://localhost:8080/v1",
+                        "model": "whisper-large-v3",
+                    }
+                ],
+                "reserved by built-in audio bindings",
+            ),
+        ],
+    )
+    def test_daemon_config_rejects_invalid_audio_provider_ids(
+        self,
+        openai_compatible_audio: list[dict[str, str]],
+        match: str,
+    ) -> None:
+        from gobby.config.app import DaemonConfig
+
+        with pytest.raises(ValidationError, match=match):
+            DaemonConfig(
+                voice={
+                    "openai_compatible_audio": openai_compatible_audio,
+                }
+            )
+
     def test_openai_compatible_audio_binding(self):
         config = VoiceConfig(
             openai_compatible_audio=[
@@ -92,6 +136,54 @@ class TestVoiceConfig:
         assert binding.transcription_enabled is True
         assert binding.translation_enabled is False
         assert binding.timeout_seconds == 30.0
+
+    @pytest.mark.parametrize(
+        "bindings, match",
+        [
+            (
+                [
+                    OpenAICompatibleAudioBindingConfig(
+                        provider="remote-stt",
+                        url="http://localhost:8080/v1",
+                        model="whisper-large-v3",
+                    ),
+                    OpenAICompatibleAudioBindingConfig(
+                        provider="Remote-STT",
+                        url="http://localhost:8081/v1",
+                        model="whisper-large-v3",
+                    ),
+                ],
+                "unique case-insensitively",
+            ),
+            (
+                [
+                    OpenAICompatibleAudioBindingConfig(
+                        provider="Whisper",
+                        url="http://localhost:8080/v1",
+                        model="whisper-large-v3",
+                    )
+                ],
+                "reserved by built-in audio bindings",
+            ),
+            (
+                [
+                    OpenAICompatibleAudioBindingConfig(
+                        provider="   ",
+                        url="http://localhost:8080/v1",
+                        model="whisper-large-v3",
+                    )
+                ],
+                "provider must not be empty",
+            ),
+        ],
+    )
+    def test_openai_compatible_audio_provider_ids_are_validated(
+        self,
+        bindings: list[OpenAICompatibleAudioBindingConfig],
+        match: str,
+    ) -> None:
+        with pytest.raises(ValidationError, match=match):
+            VoiceConfig(openai_compatible_audio=bindings)
 
     @pytest.mark.parametrize("value", [0, 1001])
     def test_generation_token_bounds_validation(self, value: int):

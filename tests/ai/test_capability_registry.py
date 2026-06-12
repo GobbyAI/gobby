@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from gobby.ai import (
@@ -15,6 +17,7 @@ from gobby.config.ai import AIConfig, GenerationConfig, LocalGenerationConfig
 from gobby.config.app import DaemonConfig
 from gobby.config.persistence import EmbeddingsConfig
 from gobby.config.voice import OpenAICompatibleAudioBindingConfig, VoiceConfig
+from gobby.llm.service import LLMService
 from gobby.providers import AGY_UNAVAILABLE_REASON, ProviderMetadata
 
 pytestmark = pytest.mark.unit
@@ -104,8 +107,40 @@ def _local_family_registry() -> AICapabilityRegistry:
 def test_select_named_local_provider_does_not_match_other_endpoints() -> None:
     registry = _local_family_registry()
 
-    with pytest.raises(CapabilityUnavailableError):
+    with pytest.raises(
+        CapabilityUnavailableError,
+        match="provider 'local:lm-studio' does not support requested model 'qwen-ollama'",
+    ):
         registry.select(AICapability.TEXT_GENERATE, provider="local:lm-studio", model="qwen-ollama")
+
+
+@pytest.mark.parametrize(
+    ("provider", "adapter_style"),
+    [
+        ("codex", AIAdapterStyle.DAEMON),
+        ("local", AIAdapterStyle.LOCAL),
+    ],
+)
+def test_select_explicit_cli_backed_provider_model_bypasses_feature_model_list(
+    provider: str, adapter_style: AIAdapterStyle
+) -> None:
+    binding = CapabilityBinding(
+        capability=AICapability.TEXT_GENERATE,
+        provider=provider,
+        adapter_style=adapter_style,
+        available=True,
+        models=("allowlisted-default",),
+    )
+    registry = AICapabilityRegistry([binding])
+
+    assert (
+        registry.select(
+            AICapability.TEXT_GENERATE,
+            provider=provider,
+            model="explicit-off-list-model",
+        )
+        is binding
+    )
 
 
 def test_daemon_registry_keeps_web_chat_and_text_generate_separate() -> None:
@@ -314,7 +349,10 @@ def test_daemon_registry_reports_embedding_configured_state() -> None:
     assert binding.metadata["dim"] == 768
 
 
-def test_daemon_registry_reports_voice_transcribe_configured_state() -> None:
+def test_daemon_registry_reports_voice_transcribe_configured_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gobby.ai.registry._whisper_runtime_available", lambda _config: True)
     registry = build_daemon_ai_capability_registry(
         DaemonConfig(voice=VoiceConfig(enabled=True, stt_enabled=True)),
         provider_installed=lambda _entry: False,
@@ -330,6 +368,41 @@ def test_daemon_registry_reports_voice_transcribe_configured_state() -> None:
     assert translate.provider == "whisper"
     assert translate.adapter_style == AIAdapterStyle.LOCAL
     assert translate.models == ("base",)
+
+
+def test_daemon_registry_reports_whisper_runtime_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gobby.ai.registry._whisper_runtime_available", lambda _config: False)
+    registry = build_daemon_ai_capability_registry(
+        DaemonConfig(
+            voice=VoiceConfig(
+                enabled=True,
+                stt_enabled=True,
+                openai_compatible_audio=[
+                    OpenAICompatibleAudioBindingConfig(
+                        provider="remote-stt",
+                        url="http://localhost:8080/v1",
+                        model="whisper-large-v3",
+                    )
+                ],
+            )
+        ),
+        provider_installed=lambda _entry: False,
+    )
+
+    whisper = registry.binding(AICapability.AUDIO_TRANSCRIBE, "whisper")
+    assert whisper is not None
+    assert whisper.available is False
+    assert whisper.reason == "faster-whisper is not installed."
+    assert registry.select(AICapability.AUDIO_TRANSCRIBE).provider == "remote-stt"
+
+    audio_status = registry.status_snapshot()["capabilities"][AICapability.AUDIO_TRANSCRIBE.value]
+    whisper_status = next(
+        binding for binding in audio_status["bindings"] if binding["provider"] == "whisper"
+    )
+    assert whisper_status["available"] is False
+    assert whisper_status["metadata"]["runtime_available"] is False
 
 
 def test_daemon_registry_reports_openai_compatible_audio_bindings() -> None:
@@ -354,6 +427,43 @@ def test_daemon_registry_reports_openai_compatible_audio_bindings() -> None:
         assert binding.adapter_style == AIAdapterStyle.OPENAI_COMPATIBLE
         assert binding.models == ("whisper-large-v3",)
         assert binding.metadata["url"] == "http://localhost:8080/v1"
+
+
+def test_daemon_registry_skips_colliding_openai_audio_binding(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    bad_audio_binding = OpenAICompatibleAudioBindingConfig.model_construct(
+        provider="WHISPER",
+        url="http://localhost:8080/v1",
+        model="whisper-large-v3",
+        transcription_enabled=True,
+        translation_enabled=True,
+        timeout_seconds=30.0,
+    )
+    voice = VoiceConfig().model_copy(
+        update={
+            "enabled": True,
+            "openai_compatible_audio": [bad_audio_binding],
+        }
+    )
+    config = DaemonConfig().model_copy(update={"voice": voice})
+
+    caplog.set_level("WARNING", logger="gobby.ai.registry")
+    registry = build_daemon_ai_capability_registry(
+        config,
+        provider_installed=lambda _entry: False,
+    )
+
+    bindings = [
+        binding
+        for binding in registry.bindings_for(AICapability.AUDIO_TRANSCRIBE)
+        if binding.provider == "whisper"
+    ]
+    assert len(bindings) == 1
+    assert bindings[0].adapter_style == AIAdapterStyle.LOCAL
+    assert (
+        "Skipping duplicate OpenAI-compatible audio binding for audio_transcribe provider 'whisper'"
+    ) in caplog.text
 
 
 def test_daemon_registry_reports_disabled_openai_audio_capability() -> None:
@@ -394,3 +504,57 @@ def test_daemon_registry_marks_missing_provider_binaries_unavailable() -> None:
     assert codex is not None
     assert codex.available is False
     assert codex.reason == "Codex CLI is not installed."
+
+
+def test_daemon_registry_reprobes_provider_installation_after_startup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gobby.ai.registry.PROVIDER_INSTALL_PROBE_TTL_SECONDS", 0.0)
+    installed_state = {"codex": False}
+
+    def installed(entry: ProviderMetadata) -> bool:
+        return installed_state.get(entry.provider, False)
+
+    class TextGenerationStub:
+        def __init__(self, registry: AICapabilityRegistry) -> None:
+            self.registry = registry
+
+        async def generate(self, request: Any) -> str:
+            raise AssertionError("not called")
+
+        async def generate_json(self, request: Any) -> dict[str, Any]:
+            raise AssertionError("not called")
+
+    registry = build_daemon_ai_capability_registry(DaemonConfig(), provider_installed=installed)
+    service = LLMService(DaemonConfig(), text_generation=TextGenerationStub(registry))
+    initial_route_status = build_daemon_ai_capability_registry(
+        DaemonConfig(),
+        provider_installed=installed,
+    ).status_snapshot()
+    initial_route_binding = next(
+        binding
+        for binding in initial_route_status["capabilities"]["text_generate"]["bindings"]
+        if binding["provider"] == "codex"
+    )
+
+    with pytest.raises(CapabilityUnavailableError):
+        registry.select(AICapability.TEXT_GENERATE, provider="codex")
+    assert "codex" not in service.enabled_providers
+    assert initial_route_binding["available"] is False
+
+    installed_state["codex"] = True
+
+    assert registry.select(AICapability.TEXT_GENERATE, provider="codex").provider == "codex"
+    fresh_registry = build_daemon_ai_capability_registry(
+        DaemonConfig(),
+        provider_installed=installed,
+    )
+    assert fresh_registry.select(AICapability.TEXT_GENERATE, provider="codex").provider == "codex"
+    route_status = fresh_registry.status_snapshot()
+    route_binding = next(
+        binding
+        for binding in route_status["capabilities"]["text_generate"]["bindings"]
+        if binding["provider"] == "codex"
+    )
+    assert route_binding["available"] is True
+    assert "codex" in service.enabled_providers

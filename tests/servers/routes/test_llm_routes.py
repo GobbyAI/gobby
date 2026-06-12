@@ -332,6 +332,53 @@ def test_generate_explicit_candidates_bypass_default_profile_and_provider(
     ]
 
 
+def test_generate_selects_candidate_with_slashed_local_model_id(client: TestClient) -> None:
+    local = _FakeTextAdapter()
+    model = "qwen/qwen3-coder-30b"
+    candidate = f"local:lm-studio/{model}"
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local:lm-studio",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=(model,),
+            )
+        ]
+    )
+    service = TextGenerationService(registry, {"local:lm-studio": local})
+
+    with patch(
+        "gobby.servers.routes.llm.build_daemon_text_generation_service",
+        return_value=service,
+    ):
+        response = client.post(
+            "/api/llm/generate",
+            json={
+                "prompt": "Summarize this",
+                "candidates": [candidate],
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "text": "Generated text",
+        "capability": "text_generate",
+        "provider": "local:lm-studio",
+        "model": model,
+    }
+    assert local.requests == [
+        TextGenerationRequest(
+            prompt="Summarize this",
+            provider="local:lm-studio",
+            candidates=(candidate,),
+            model=model,
+            caller="llm-generate-route",
+        )
+    ]
+
+
 def test_generate_falls_back_when_feature_mid_candidate_echoes_prompt(
     client: TestClient,
     server_with_llm: MagicMock,
@@ -580,6 +627,53 @@ def test_generate_returns_deterministic_unavailable_error(client: TestClient) ->
         "model": "gemini-pro",
         "reason": "Gemini CLI is not installed.",
     }
+
+
+def test_generate_returns_aggregated_unavailable_error_for_profile_candidates(
+    client: TestClient,
+) -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding.unavailable(
+                AICapability.TEXT_GENERATE,
+                "claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                reason="Claude CLI is not installed.",
+                models=("haiku",),
+            ),
+            CapabilityBinding.unavailable(
+                AICapability.TEXT_GENERATE,
+                "codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                reason="Codex app server is not available.",
+                models=("gpt-5.4-mini",),
+            ),
+        ]
+    )
+    service = TextGenerationService(registry, {})
+
+    with patch(
+        "gobby.servers.routes.llm.build_daemon_text_generation_service",
+        return_value=service,
+    ):
+        response = client.post(
+            "/api/llm/generate",
+            json={
+                "prompt": "Summarize this",
+                "profile": "feature_low",
+                "candidates": ("claude/haiku", "codex/gpt-5.4-mini"),
+            },
+        )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["code"] == "capability_unavailable"
+    assert body["capability"] == "text_generate"
+    assert body["provider"] is None
+    assert body["model"] is None
+    assert body["reason"].startswith("All text generation candidates unavailable:")
+    assert "provider=claude" in body["reason"]
+    assert "provider=codex" in body["reason"]
 
 
 def test_vision_status_lists_only_proven_providers_as_available(

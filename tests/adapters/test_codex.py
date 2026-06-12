@@ -1036,6 +1036,57 @@ class TestCodexAppServerClientRunTurn:
         assert [event["threadId"] for event in first_events] == ["first", "first"]
         assert [event["threadId"] for event in second_events] == ["second", "second"]
 
+    @pytest.mark.asyncio
+    async def test_run_turn_raises_on_turn_failed(self):
+        """run_turn raises when the app-server reports a failed turn."""
+        client = CodexAppServerClient()
+
+        mock_result = {"turn": {"id": "turn-stream", "status": "inProgress", "items": []}}
+
+        with patch.object(
+            client, "_send_request", new_callable=AsyncMock, return_value=mock_result
+        ):
+            events = []
+
+            with pytest.raises(RuntimeError, match="Codex turn failed: model exploded"):
+                async for event in client.run_turn("thr-1", "Test"):
+                    events.append(event)
+                    if event["type"] == "turn/created":
+                        for handler in client._notification_handlers.get("turn/failed", []):
+                            handler(
+                                "turn/failed",
+                                {
+                                    "turn": {
+                                        "id": "turn-stream",
+                                        "status": "failed",
+                                        "error": "model exploded",
+                                    }
+                                },
+                            )
+
+            assert [event["type"] for event in events] == ["turn/created", "turn/failed"]
+
+    @pytest.mark.asyncio
+    async def test_run_turn_raises_on_thread_closed_before_completion(self):
+        """run_turn raises when the active thread closes before turn completion."""
+        client = CodexAppServerClient()
+
+        mock_result = {"turn": {"id": "turn-stream", "status": "inProgress", "items": []}}
+
+        with patch.object(
+            client, "_send_request", new_callable=AsyncMock, return_value=mock_result
+        ):
+            events = []
+
+            with pytest.raises(RuntimeError, match="thread thr-1 closed before turn completed"):
+                async for event in client.run_turn("thr-1", "Test"):
+                    events.append(event)
+                    if event["type"] == "turn/created":
+                        for handler in client._notification_handlers.get("thread/closed", []):
+                            handler("thread/closed", {"threadId": "thr-1"})
+
+            assert [event["type"] for event in events] == ["turn/created", "thread/closed"]
+
 
 class TestCodexAppServerClientAuthentication:
     """Tests for authentication methods."""

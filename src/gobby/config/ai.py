@@ -72,6 +72,11 @@ class GenerationConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    timeout_seconds: float = Field(
+        default=600.0,
+        gt=0.0,
+        description="Maximum seconds to wait for a daemon-owned text generation attempt.",
+    )
     local: LocalGenerationConfig = Field(
         default_factory=LocalGenerationConfig,
         description="Named local OpenAI-compatible generation endpoints.",

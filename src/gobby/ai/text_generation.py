@@ -10,7 +10,7 @@ import os
 import shlex
 import shutil
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -18,14 +18,17 @@ from gobby.ai.registry import (
     AICapability,
     AICapabilityRegistry,
     CapabilityBinding,
+    CapabilityUnavailableError,
     build_daemon_ai_capability_registry,
 )
 from gobby.config.app import DaemonConfig
 from gobby.config.feature_base import (
+    FeatureProfile,
     default_candidates_for_profile,
     normalize_feature_candidate,
     parse_feature_candidate,
 )
+from gobby.llm.base import LLMProviderCancellation
 
 if TYPE_CHECKING:
     from gobby.llm.base import LLMTextResult
@@ -119,10 +122,17 @@ class TextGenerationService:
         registry: AICapabilityRegistry,
         adapters: Mapping[str, TextGenerateAdapter] | None = None,
         adapter_factories: Mapping[str, TextGenerateAdapterFactory] | None = None,
+        profile_defaults: Mapping[FeatureProfile, Sequence[str]] | None = None,
     ) -> None:
         self._registry = registry
         self._adapters = dict(adapters or {})
         self._adapter_factories = dict(adapter_factories or {})
+        self._profile_defaults = {
+            FeatureProfile(profile): tuple(
+                normalize_feature_candidate(candidate) for candidate in candidates
+            )
+            for profile, candidates in (profile_defaults or {}).items()
+        }
 
     @property
     def registry(self) -> AICapabilityRegistry:
@@ -138,16 +148,25 @@ class TextGenerationService:
         candidates = self._candidate_requests(request)
         attempted_candidates: list[str] = []
         candidate_errors: dict[str, str] = {}
+        candidate_unavailable_errors: list[CapabilityUnavailableError] = []
         text_result, last_error = await self._try_generate_result_candidates(
             candidates,
             attempted_candidates=attempted_candidates,
             candidate_errors=candidate_errors,
+            candidate_unavailable_errors=candidate_unavailable_errors,
         )
         if text_result is not None:
             return text_result
 
         if len(attempted_candidates) == 1 and last_error is not None:
             raise last_error
+        if unavailable_error := self._aggregate_unavailable_candidates_error(
+            attempted_candidates=attempted_candidates,
+            candidate_errors=candidate_errors,
+            candidate_unavailable_errors=candidate_unavailable_errors,
+            operation="text generation",
+        ):
+            raise unavailable_error from last_error
         raise RuntimeError(
             "No text generation candidate succeeded "
             f"(tried: {attempted_candidates}; errors: {candidate_errors})"
@@ -158,16 +177,25 @@ class TextGenerationService:
         candidates = self._candidate_requests(request)
         attempted_candidates: list[str] = []
         candidate_errors: dict[str, str] = {}
+        candidate_unavailable_errors: list[CapabilityUnavailableError] = []
         result, last_error = await self._try_generate_json_candidates(
             candidates,
             attempted_candidates=attempted_candidates,
             candidate_errors=candidate_errors,
+            candidate_unavailable_errors=candidate_unavailable_errors,
         )
         if result is not None:
             return result
 
         if len(attempted_candidates) == 1 and last_error is not None:
             raise last_error
+        if unavailable_error := self._aggregate_unavailable_candidates_error(
+            attempted_candidates=attempted_candidates,
+            candidate_errors=candidate_errors,
+            candidate_unavailable_errors=candidate_unavailable_errors,
+            operation="JSON generation",
+        ):
+            raise unavailable_error from last_error
         raise RuntimeError(
             "No JSON generation candidate succeeded; "
             f"attempted candidates: {attempted_candidates}; errors: {candidate_errors}"
@@ -179,6 +207,7 @@ class TextGenerationService:
         *,
         attempted_candidates: list[str],
         candidate_errors: dict[str, str],
+        candidate_unavailable_errors: list[CapabilityUnavailableError],
     ) -> tuple[LLMTextResult | None, Exception | None]:
         last_error: Exception | None = None
         for index, candidate in enumerate(candidates):
@@ -208,9 +237,13 @@ class TextGenerationService:
                     ),
                     None,
                 )
+            except LLMProviderCancellation:
+                raise
             except Exception as exc:
                 last_error = exc
                 candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
+                if isinstance(exc, CapabilityUnavailableError):
+                    candidate_unavailable_errors.append(exc)
                 self._log_generation_event(
                     request=candidate,
                     binding=binding,
@@ -228,6 +261,7 @@ class TextGenerationService:
         *,
         attempted_candidates: list[str],
         candidate_errors: dict[str, str],
+        candidate_unavailable_errors: list[CapabilityUnavailableError],
     ) -> tuple[dict[str, Any] | None, Exception | None]:
         last_error: Exception | None = None
         for index, candidate in enumerate(candidates):
@@ -261,9 +295,13 @@ class TextGenerationService:
                     json_parse_outcome=parse_outcome,
                 )
                 return result, None
+            except LLMProviderCancellation:
+                raise
             except Exception as exc:
                 last_error = exc
                 candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
+                if isinstance(exc, CapabilityUnavailableError):
+                    candidate_unavailable_errors.append(exc)
                 if parse_outcome == "not_attempted" and isinstance(
                     exc, (ValueError, json.JSONDecodeError)
                 ):
@@ -278,6 +316,29 @@ class TextGenerationService:
                     terminal_failure=not has_remaining_candidates,
                 )
         return None, last_error
+
+    @staticmethod
+    def _aggregate_unavailable_candidates_error(
+        *,
+        attempted_candidates: list[str],
+        candidate_errors: dict[str, str],
+        candidate_unavailable_errors: list[CapabilityUnavailableError],
+        operation: str,
+    ) -> CapabilityUnavailableError | None:
+        if not attempted_candidates or len(candidate_unavailable_errors) != len(
+            attempted_candidates
+        ):
+            return None
+
+        details = "; ".join(
+            f"{candidate}: {candidate_errors[candidate]}"
+            for candidate in attempted_candidates
+            if candidate in candidate_errors
+        )
+        return CapabilityUnavailableError(
+            AICapability.TEXT_GENERATE,
+            reason=f"All {operation} candidates unavailable: {details}",
+        )
 
     def _candidate_requests(
         self, request: TextGenerationRequest
@@ -299,7 +360,10 @@ class TextGenerationService:
         if has_provider and has_model:
             return (request,)
         if request.profile:
-            candidates = default_candidates_for_profile(request.profile)
+            profile = FeatureProfile(request.profile)
+            candidates = self._profile_defaults.get(profile)
+            if candidates is None:
+                candidates = default_candidates_for_profile(profile)
             return tuple(
                 replace(request, provider=provider, model=model)
                 for provider, model in (
@@ -481,35 +545,62 @@ CodexAppServerClientFactory = Callable[[], CodexAppServerClientLike]
 class CodexAppServerTextGenerateAdapter:
     """One-shot text_generate adapter backed by Codex app-server."""
 
-    def __init__(self, client_factory: CodexAppServerClientFactory | None = None) -> None:
+    def __init__(
+        self,
+        client_factory: CodexAppServerClientFactory | None = None,
+        *,
+        timeout_seconds: float = 600.0,
+    ) -> None:
         self._client_factory = client_factory or _codex_app_server_client
+        self._timeout_seconds = timeout_seconds
 
     async def generate(self, request: TextGenerationRequest) -> str:
         client = self._client_factory()
-        await client.start()
         try:
-            thread = await client.start_thread(cwd=request.cwd, model=request.model)
-            chunks: list[str] = []
-            fallback_chunks: list[str] = []
-            async for event in client.run_turn(
-                thread.id,
-                request.prompt,
-                context_prefix=request.system_prompt,
-            ):
-                event_type = event.get("type")
-                text = _codex_event_text(event)
-                if not text:
-                    continue
-                if event_type in {"agent/messageDelta", "item/agentMessage/delta"}:
-                    chunks.append(text)
-                elif (
-                    event_type == "item/completed"
-                    and _codex_completed_item_type(event) == "agentMessage"
-                ):
-                    fallback_chunks.append(text)
-            return "".join(chunks or fallback_chunks).strip()
+            return await self._generate_with_deadline(client, request)
+        except TimeoutError as exc:
+            raise RuntimeError(
+                f"Codex app-server text generation timed out after {self._timeout_seconds:g}s"
+            ) from exc
         finally:
             await client.stop()
+
+    async def _generate_with_deadline(
+        self, client: CodexAppServerClientLike, request: TextGenerationRequest
+    ) -> str:
+        return await asyncio.wait_for(
+            self._generate_with_client(client, request),
+            timeout=self._timeout_seconds,
+        )
+
+    async def _generate_with_client(
+        self, client: CodexAppServerClientLike, request: TextGenerationRequest
+    ) -> str:
+        await client.start()
+        thread = await client.start_thread(cwd=request.cwd, model=request.model)
+        chunks: list[str] = []
+        fallback_chunks: list[str] = []
+        async for event in client.run_turn(
+            thread.id,
+            request.prompt,
+            context_prefix=request.system_prompt,
+        ):
+            _raise_for_codex_error_event(event)
+            event_type = event.get("type")
+            text = _codex_event_text(event)
+            if not text:
+                continue
+            if event_type in {"agent/messageDelta", "item/agentMessage/delta"}:
+                chunks.append(text)
+            elif (
+                event_type == "item/completed"
+                and _codex_completed_item_type(event) == "agentMessage"
+            ):
+                fallback_chunks.append(text)
+        output = "".join(chunks or fallback_chunks).strip()
+        if not output:
+            raise RuntimeError("Codex text generation returned no output")
+        return output
 
 
 class DroidCLITextGenerateAdapter:
@@ -580,6 +671,7 @@ def build_daemon_text_generation_service(
     return TextGenerationService(
         registry or build_daemon_ai_capability_registry(config),
         adapter_factories=_daemon_text_generation_adapter_factories(config),
+        profile_defaults=config.ai.generation.profile_defaults,
     )
 
 
@@ -588,7 +680,9 @@ def _daemon_text_generation_adapter_factories(
 ) -> dict[str, TextGenerateAdapterFactory]:
     factories: dict[str, TextGenerateAdapterFactory] = {
         "claude": lambda: _claude_text_generate_adapter(config),
-        "codex": CodexAppServerTextGenerateAdapter,
+        "codex": lambda: CodexAppServerTextGenerateAdapter(
+            timeout_seconds=config.ai.generation.timeout_seconds
+        ),
         "gemini": lambda: ACPTextGenerateAdapter(_gemini_acp_client),
         "grok": lambda: ACPTextGenerateAdapter(_grok_acp_client),
         "qwen": lambda: ACPTextGenerateAdapter(_qwen_acp_client),
@@ -741,6 +835,8 @@ async def _collect_acp_text(events: AsyncIterator[ACPStreamEventLike]) -> str:
     chunks: list[str] = []
     result_chunks: list[str] = []
     async for event in events:
+        if event.event_type == "error":
+            raise RuntimeError(f"ACP text generation failed: {_event_error_message(event.data)}")
         text = _stream_event_text(event)
         if not text:
             continue
@@ -750,6 +846,16 @@ async def _collect_acp_text(events: AsyncIterator[ACPStreamEventLike]) -> str:
             result_chunks.append(text)
 
     return "".join(chunks or result_chunks).strip()
+
+
+def _event_error_message(data: Mapping[str, Any]) -> str:
+    for key in ("message", "error", "details", "code"):
+        value = data.get(key)
+        if value:
+            if isinstance(value, str):
+                return value
+            return json.dumps(value, sort_keys=True, default=str)
+    return "unknown error"
 
 
 def _stream_event_text(event: ACPStreamEventLike) -> str:
@@ -786,6 +892,38 @@ def _codex_event_text(event: dict[str, Any]) -> str:
             if isinstance(text, str) and text:
                 chunks.append(text)
     return "".join(chunks)
+
+
+def _raise_for_codex_error_event(event: dict[str, Any]) -> None:
+    event_type = event.get("type")
+    if event_type not in {"turn/created", "turn/completed"}:
+        return
+
+    for payload in _codex_turn_payloads(event):
+        error = payload.get("error")
+        if error:
+            raise RuntimeError(f"Codex text generation failed: {_codex_error_message(error)}")
+        status = payload.get("status")
+        if isinstance(status, str) and status.lower() in {"error", "failed"}:
+            raise RuntimeError(
+                f"Codex text generation failed with status {status}: "
+                f"{_codex_error_message(payload)}"
+            )
+
+
+def _codex_turn_payloads(event: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    turn = event.get("turn")
+    if isinstance(turn, dict):
+        return event, turn
+    return (event,)
+
+
+def _codex_error_message(error: object) -> str:
+    if isinstance(error, str):
+        return error
+    if isinstance(error, Mapping):
+        return _event_error_message(error)
+    return json.dumps(error, sort_keys=True, default=str)
 
 
 def _codex_completed_item_type(event: dict[str, Any]) -> str | None:
