@@ -185,27 +185,44 @@ fn run_gobby_owned(args: &Args) -> ExitCode {
 
     let env = build_dispatch_envelope(&cfg, hook_type, input_data, project_id.as_deref());
 
+    let direct_post_after_enqueue_failure = |failure_detail: String| -> HookAction {
+        let daemon_url = gobby_core::daemon_url::daemon_url();
+        // No inbox file exists here; post_and_cleanup ignores remove errors after 2xx.
+        let missing_enqueued_path = PathBuf::new();
+        let report = transport::post_and_cleanup(&env, &missing_enqueued_path, &daemon_url);
+        match report.outcome {
+            transport::DeliveryOutcome::Delivered => {
+                let body = report.response_body.as_deref().unwrap_or_default();
+                match action_from_success_response(cfg.source, hook_type, body) {
+                    Ok(action) => action,
+                    Err(error) => action_from_failure(
+                        hook_type,
+                        &cfg,
+                        transport::DeliveryFailureKind::Other,
+                        &error,
+                    ),
+                }
+            }
+            transport::DeliveryOutcome::Enqueued => action_from_failure(
+                hook_type,
+                &cfg,
+                transport::DeliveryFailureKind::Other,
+                &failure_detail,
+            ),
+        }
+    };
+
     // Enqueue first (atomic write to ~/.gobby/hooks/inbox/).
     let inbox = match transport::inbox_dir() {
         Ok(d) => d,
         Err(e) => {
-            return emit_action(action_from_failure(
-                hook_type,
-                &cfg,
-                transport::DeliveryFailureKind::Other,
-                &e.to_string(),
-            ));
+            return emit_action(direct_post_after_enqueue_failure(e.to_string()));
         }
     };
     let enqueued_path = match transport::enqueue_to(&env, &inbox) {
         Ok(p) => p,
         Err(e) => {
-            return emit_action(action_from_failure(
-                hook_type,
-                &cfg,
-                transport::DeliveryFailureKind::Other,
-                &e.to_string(),
-            ));
+            return emit_action(direct_post_after_enqueue_failure(e.to_string()));
         }
     };
 
