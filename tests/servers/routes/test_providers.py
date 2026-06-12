@@ -156,12 +156,20 @@ class TestProviderModelsRoute:
         # Gemini should expose the hardcoded web-chat defaults
         gemini = providers["gemini"]["models"]
         assert [m["value"] for m in gemini] == [
+            "gemini-3.5-flash",
             "gemini-3.1-pro-preview",
             "gemini-3-flash-preview",
         ]
-        assert [m["label"] for m in gemini] == ["pro-3.1", "flash-3"]
-        assert [m["context_length"] for m in gemini] == [1_000_000, 1_000_000]
-        assert gemini[0]["reasoning"] == {"supported_efforts": ["low", "medium", "high"]}
+        assert [m["label"] for m in gemini] == [
+            "Gemini 3.5 Flash",
+            "Gemini 3.1 Pro",
+            "Gemini 3 Flash",
+        ]
+        assert [m["context_length"] for m in gemini] == [1_048_576, 1_000_000, 1_000_000]
+        assert gemini[0]["reasoning"] == {
+            "supported_efforts": ["minimal", "low", "medium", "high"],
+            "default_effort": "medium",
+        }
 
         # Qwen intentionally owns its provider slot even before a static model catalog exists
         qwen = providers["qwen"]["models"]
@@ -206,10 +214,11 @@ class TestProviderModelsRoute:
         assert {m["context_length_source"] for m in codex} == {"static_default"}
 
         droid_values = [m["value"] for m in providers["droid"]["models"]]
-        assert len(droid_values) == 25
+        assert len(droid_values) == 26
         assert "claude-fable-5" in droid_values
         assert "claude-opus-4-7" in droid_values
         assert "gpt-5.4" in droid_values
+        assert "gemini-3.5-flash" in droid_values
         assert "gemini-3-flash-preview" in droid_values
         assert "minimax-m2.7" in droid_values
         droid_by_id = {m["value"]: m for m in providers["droid"]["models"]}
@@ -337,6 +346,61 @@ class TestProviderModelsRoute:
         assert providers["agy"]["source"] == "unsupported"
         assert providers["codex"]["source"] == "live"
 
+    def test_models_route_merges_live_gemini_models_with_static_metadata(self) -> None:
+        app = FastAPI()
+        provider_model_catalog = MagicMock()
+        provider_model_catalog.get_provider_snapshot.side_effect = lambda provider: {
+            "source": "live",
+            "models": [{"value": "gemini-3.5-flash"}] if provider == "gemini" else [],
+        }
+        server = SimpleNamespace(
+            services=SimpleNamespace(
+                config=DaemonConfig(),
+                provider_model_catalog=provider_model_catalog,
+            )
+        )
+        app.include_router(create_providers_router(server))
+        client = TestClient(app)
+
+        response = client.get("/api/providers/models")
+
+        providers = {p["provider"]: p for p in response.json()["providers"]}
+        gemini = providers["gemini"]["models"]
+        assert providers["gemini"]["source"] == "live"
+        assert gemini[0]["value"] == "gemini-3.5-flash"
+        assert gemini[0]["label"] == "Gemini 3.5 Flash"
+        assert gemini[0]["context_length"] == 1_048_576
+        assert gemini[0]["reasoning"] == {
+            "supported_efforts": ["minimal", "low", "medium", "high"],
+            "default_effort": "medium",
+        }
+
+    def test_models_route_falls_back_to_static_gemini_when_catalog_empty(self) -> None:
+        app = FastAPI()
+        provider_model_catalog = MagicMock()
+        provider_model_catalog.get_provider_snapshot.side_effect = lambda _provider: {
+            "source": "failed",
+            "models": [],
+        }
+        server = SimpleNamespace(
+            services=SimpleNamespace(
+                config=DaemonConfig(),
+                provider_model_catalog=provider_model_catalog,
+            )
+        )
+        app.include_router(create_providers_router(server))
+        client = TestClient(app)
+
+        response = client.get("/api/providers/models")
+
+        providers = {p["provider"]: p for p in response.json()["providers"]}
+        assert providers["gemini"]["source"] == "static"
+        assert [m["value"] for m in providers["gemini"]["models"]] == [
+            "gemini-3.5-flash",
+            "gemini-3.1-pro-preview",
+            "gemini-3-flash-preview",
+        ]
+
     def test_includes_named_local_generation_provider_when_configured(self) -> None:
         """Provider model catalog exposes named local generation endpoints."""
         app = FastAPI()
@@ -383,6 +447,7 @@ class TestProviderModelsRoute:
         assert providers["gemini"]["source"] == "static"
         assert providers["codex"]["source"] == "static"
         assert [m["value"] for m in providers["gemini"]["models"]] == [
+            "gemini-3.5-flash",
             "gemini-3.1-pro-preview",
             "gemini-3-flash-preview",
         ]
@@ -422,7 +487,7 @@ class TestProviderModelsRoute:
 
         assert providers["codex"]["models"][0]["value"] == "gpt-5.5"
 
-    def test_current_catalog_uses_static_gemini_preview_models(self) -> None:
+    def test_current_catalog_uses_static_gemini_models(self) -> None:
         """Gemini models come from current provider catalog/static defaults."""
         app = FastAPI()
         config = DaemonConfig()
@@ -434,13 +499,17 @@ class TestProviderModelsRoute:
         providers = {p["provider"]: p for p in response.json()["providers"]}
 
         assert [m["value"] for m in providers["gemini"]["models"]] == [
+            "gemini-3.5-flash",
             "gemini-3.1-pro-preview",
             "gemini-3-flash-preview",
         ]
         assert [m["label"] for m in providers["gemini"]["models"]] == [
-            "pro-3.1",
-            "flash-3",
+            "Gemini 3.5 Flash",
+            "Gemini 3.1 Pro",
+            "Gemini 3 Flash",
         ]
+        assert providers["gemini"]["models"][0]["context_length"] == 1_048_576
+        assert providers["gemini"]["models"][0]["reasoning"]["default_effort"] == "medium"
 
     def test_filters_hidden_codex_models_from_web_chat_surface(self) -> None:
         app = FastAPI()

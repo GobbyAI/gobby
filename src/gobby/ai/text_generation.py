@@ -181,8 +181,9 @@ class TextGenerationService:
         candidate_errors: dict[str, str],
     ) -> tuple[LLMTextResult | None, Exception | None]:
         last_error: Exception | None = None
-        for candidate in candidates:
+        for index, candidate in enumerate(candidates):
             candidate_label = _candidate_debug_label(candidate)
+            has_remaining_candidates = index < len(candidates) - 1
             attempted_candidates.append(candidate_label)
             start = time.perf_counter()
             binding: CapabilityBinding | None = None
@@ -216,6 +217,7 @@ class TextGenerationService:
                     latency_ms=_elapsed_ms(start),
                     success=False,
                     error=exc,
+                    terminal_failure=not has_remaining_candidates,
                 )
                 continue
         return None, last_error
@@ -228,8 +230,9 @@ class TextGenerationService:
         candidate_errors: dict[str, str],
     ) -> tuple[dict[str, Any] | None, Exception | None]:
         last_error: Exception | None = None
-        for candidate in candidates:
+        for index, candidate in enumerate(candidates):
             candidate_label = _candidate_debug_label(candidate)
+            has_remaining_candidates = index < len(candidates) - 1
             attempted_candidates.append(candidate_label)
             start = time.perf_counter()
             binding: CapabilityBinding | None = None
@@ -272,6 +275,7 @@ class TextGenerationService:
                     success=False,
                     error=exc,
                     json_parse_outcome=parse_outcome,
+                    terminal_failure=not has_remaining_candidates,
                 )
         return None, last_error
 
@@ -342,10 +346,16 @@ class TextGenerationService:
         success: bool,
         error: Exception | None = None,
         json_parse_outcome: str | None = None,
+        terminal_failure: bool = False,
     ) -> None:
         provider = binding.provider if binding else request.provider
         model = request.model or (next(iter(binding.models), None) if binding else None)
-        log_event = logger.debug if success else logger.info
+        if success:
+            log_event = logger.debug
+        elif terminal_failure:
+            log_event = logger.error
+        else:
+            log_event = logger.warning
         log_event(
             "feature_llm_call",
             extra={

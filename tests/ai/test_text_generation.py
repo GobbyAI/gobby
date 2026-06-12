@@ -222,7 +222,52 @@ async def test_successful_text_generation_logs_feature_llm_call_at_debug(
 
 
 @pytest.mark.asyncio
-async def test_failed_text_generation_logs_feature_llm_call_at_info(
+async def test_recoverable_candidate_failure_logs_feature_llm_call_at_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local:bad",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("bad-model",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local:good",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("good-model",),
+            ),
+        ]
+    )
+    service = TextGenerationService(
+        registry,
+        {
+            "local:bad": FailingAdapter("temporary"),
+            "local:good": RecordingAdapter("local:good"),
+        },
+    )
+    caplog.set_level(logging.DEBUG, logger=TEXT_GENERATION_LOGGER)
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="summarize",
+            candidates=("local:bad/bad-model", "local:good/good-model"),
+        )
+    )
+
+    assert result.provider == "local:good"
+    records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
+    assert [record.levelno for record in records] == [logging.WARNING, logging.DEBUG]
+    assert records[0].success is False
+    assert records[1].success is True
+
+
+@pytest.mark.asyncio
+async def test_failed_text_generation_logs_feature_llm_call_at_error(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     registry = AICapabilityRegistry(
@@ -236,7 +281,7 @@ async def test_failed_text_generation_logs_feature_llm_call_at_info(
         ]
     )
     service = TextGenerationService(registry, {"local:lm-studio": FailingAdapter("boom")})
-    caplog.set_level(logging.INFO, logger=TEXT_GENERATION_LOGGER)
+    caplog.set_level(logging.ERROR, logger=TEXT_GENERATION_LOGGER)
 
     with pytest.raises(RuntimeError, match="boom"):
         await service.generate_result(
@@ -247,7 +292,7 @@ async def test_failed_text_generation_logs_feature_llm_call_at_info(
 
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
     assert len(records) == 1
-    assert records[0].levelno == logging.INFO
+    assert records[0].levelno == logging.ERROR
     assert records[0].success is False
 
 

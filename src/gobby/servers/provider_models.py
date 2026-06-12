@@ -28,6 +28,7 @@ from gobby.llm.context_windows import (
 )
 from gobby.providers import provider_metadata
 from gobby.servers.provider_model_defaults import DROID_MODEL_CATALOG as _DROID_MODEL_CATALOG
+from gobby.servers.provider_model_defaults import GEMINI_MODEL_CATALOG as _GEMINI_MODEL_CATALOG
 from gobby.servers.provider_models_grok import models_from_acp_session as grok_models_from_acp
 from gobby.servers.provider_models_grok import models_from_cache as grok_models_from_cache
 from gobby.servers.provider_models_grok import static_models as grok_static_models
@@ -126,6 +127,15 @@ def _cached_models(provider: str, models: Any) -> list[dict[str, Any]]:
 
 
 DROID_MODEL_CATALOG: list[dict[str, Any]] = with_context_lengths("droid", _DROID_MODEL_CATALOG)
+GEMINI_MODEL_CATALOG: list[dict[str, Any]] = with_context_lengths("gemini", _GEMINI_MODEL_CATALOG)
+
+
+def _static_provider_models(provider: str) -> list[dict[str, Any]]:
+    if provider == "gemini":
+        return copy.deepcopy(GEMINI_MODEL_CATALOG)
+    if provider == "droid":
+        return copy.deepcopy(DROID_MODEL_CATALOG)
+    return []
 
 
 def _gobby_home() -> Path:
@@ -523,13 +533,23 @@ class ProviderModelCatalog:
                         "generated_at": previous.get("generated_at") or self._generated_at,
                     }
                 else:
-                    results[provider] = {
-                        "source": "failed",
-                        "cli_version": cli_version,
-                        "error": error,
-                        "models": [],
-                        "generated_at": generated_at,
-                    }
+                    static_models = _static_provider_models(provider)
+                    if static_models:
+                        results[provider] = {
+                            "source": "static",
+                            "cli_version": cli_version,
+                            "error": error,
+                            "models": static_models,
+                            "generated_at": generated_at,
+                        }
+                    else:
+                        results[provider] = {
+                            "source": "failed",
+                            "cli_version": cli_version,
+                            "error": error,
+                            "models": [],
+                            "generated_at": generated_at,
+                        }
 
         self._providers = results
         self._generated_at = generated_at
@@ -553,7 +573,7 @@ class ProviderModelCatalog:
         if provider == "codex":
             return await self._discover_codex_models(codex_client=codex_client)
         if provider == "droid":
-            return copy.deepcopy(DROID_MODEL_CATALOG)
+            return _static_provider_models(provider)
         if provider == "agy":
             return []
         raise ValueError(f"Unknown provider: {provider}")

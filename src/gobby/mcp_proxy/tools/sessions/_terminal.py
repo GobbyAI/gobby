@@ -362,7 +362,7 @@ def _valid_existing_summary_markdown(session: Any) -> str | None:
     from gobby.sessions.summary_validity import is_summary_markdown_valid
 
     summary_markdown = getattr(session, "summary_markdown", None)
-    if is_summary_markdown_valid(summary_markdown):
+    if isinstance(summary_markdown, str) and is_summary_markdown_valid(summary_markdown):
         return summary_markdown.strip()
     return None
 

@@ -77,17 +77,17 @@ def _parse_json_session(
     from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 
     if source == "gemini":
-        parser = GeminiTranscriptParser(session_id=session_id)
+        gemini_parser = GeminiTranscriptParser(session_id=session_id)
         return [
             r
-            for r in normalize_transcript_records(parser.parse_session_json(data), source)
+            for r in normalize_transcript_records(gemini_parser.parse_session_json(data), source)
             if isinstance(r, ParsedMessage)
         ]
     if source == "qwen":
-        parser = QwenTranscriptParser(session_id=session_id)
+        qwen_parser = QwenTranscriptParser(session_id=session_id)
         return [
             r
-            for r in normalize_transcript_records(parser.parse_session_json(data), source)
+            for r in normalize_transcript_records(qwen_parser.parse_session_json(data), source)
             if isinstance(r, ParsedMessage)
         ]
     return _parse_lines(
