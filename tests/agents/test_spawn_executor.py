@@ -1120,17 +1120,29 @@ class TestExecuteSpawnSandbox:
         assert result.success is True
 
     @pytest.mark.asyncio
-    async def test_gemini_terminal_spawn_with_sandbox_config(self) -> None:
+    async def test_gemini_terminal_spawn_with_sandbox_config(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         """Test that Gemini terminal spawn applies sandbox config correctly."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        git_dir = tmp_path / "repo" / ".git"
+        git_worktree_dir = git_dir / "worktrees" / "agent"
+        extra_write_path = tmp_path / "extra" / "path"
+        uv_cache_dir = tmp_path / "gobby" / "uv-cache" / "gobby-sess-123"
+        monkeypatch.setattr(
+            "gobby.agents.sandbox._git_metadata_write_paths",
+            lambda _workspace: [str(git_dir), str(git_worktree_dir)],
+        )
         sandbox_config = SandboxConfig(
             enabled=True,
             mode="permissive",
-            extra_write_paths=["/tmp/gobby-gemini-git"],
+            extra_write_paths=[str(extra_write_path)],
         )
         mock_session_manager = MagicMock()
         request = SpawnRequest(
             prompt="Test with sandbox",
-            cwd="/path",
+            cwd=str(workspace),
             provider="gemini",
             session_id="sess",
             run_id="run",
@@ -1146,7 +1158,7 @@ class TestExecuteSpawnSandbox:
                 agent_run_id="run-abc123",
                 env_vars={
                     "GOBBY_SESSION_ID": "gobby-sess-123",
-                    UV_CACHE_DIR: "/tmp/gobby/uv-cache/gobby-sess-123",
+                    UV_CACHE_DIR: str(uv_cache_dir),
                 },
             )
         )
@@ -1187,10 +1199,19 @@ class TestExecuteSpawnSandbox:
         assert "yolo" in command
         assert "-s" in command
         assert "--include-directories" in command
-        assert command[command.index("--include-directories") + 1] == str(
-            Path("/tmp/gobby-gemini-git").resolve(strict=False)
-        )
-        assert str(Path("/tmp/gobby/uv-cache/gobby-sess-123").resolve(strict=False)) in command
+        include_dirs = [
+            Path(command[index + 1])
+            for index, arg in enumerate(command)
+            if arg == "--include-directories"
+        ]
+        assert len(include_dirs) <= 5
+        for expected_path in [extra_write_path, uv_cache_dir, git_dir, git_worktree_dir]:
+            resolved_expected_path = expected_path.resolve(strict=False)
+            assert any(
+                resolved_expected_path == include_dir
+                or resolved_expected_path.is_relative_to(include_dir)
+                for include_dir in include_dirs
+            )
         assert command[-1] == request.prompt
         assert command.index("-s") < len(command) - 1
         assert command.index("--include-directories") < len(command) - 1
