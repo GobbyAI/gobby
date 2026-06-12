@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import Callable
@@ -10,6 +11,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from websockets.exceptions import ConnectionClosedError
+from websockets.frames import Close
 
 from gobby.communications.adapters.discord import DiscordAdapter
 from gobby.communications.models import ChannelConfig, CommsMessage
@@ -100,14 +103,16 @@ async def test_send_message_success(
         assert msg_id == "1234567890"
         mock_post.assert_called_once_with(
             "/channels/channel_123/messages",
-            json={"content": "Hello Discord"},
+            json={"content": "Hello Discord", "allowed_mentions": {"parse": []}},
         )
 
 
 def test_parse_webhook_ping(adapter: DiscordAdapter) -> None:
     payload = {"type": 1}
     messages = adapter.parse_webhook(payload, {})
-    assert len(messages) == 0
+    assert len(messages) == 1
+    assert messages[0].content_type == "interaction_ping"
+    assert json.loads(messages[0].content) == {"type": 1}
 
 
 def test_parse_webhook_message(adapter: DiscordAdapter) -> None:
@@ -278,7 +283,7 @@ async def test_gateway_resume_logic(adapter: DiscordAdapter) -> None:
     """
     adapter._bot_token = "test-token"
     adapter._session_id = "existing-session"
-    adapter._resume_gateway_url = "wss://resume.discord.gg"
+    adapter._resume_gateway_url = DiscordAdapter._gateway_url_with_query("wss://resume.discord.gg")
     adapter._sequence = 42
 
     # Verify resume payload structure
@@ -295,9 +300,9 @@ async def test_gateway_resume_logic(adapter: DiscordAdapter) -> None:
     assert resume_payload["d"]["seq"] == 42
 
     # Verify gateway URL selection
-    assert adapter._resume_gateway_url == "wss://resume.discord.gg"
+    assert adapter._resume_gateway_url == "wss://resume.discord.gg?v=10&encoding=json"
     gateway_url = adapter._resume_gateway_url or adapter._DEFAULT_GATEWAY_URL
-    assert gateway_url == "wss://resume.discord.gg"
+    assert gateway_url == "wss://resume.discord.gg?v=10&encoding=json"
 
 
 @pytest.mark.asyncio
@@ -334,13 +339,125 @@ async def test_gateway_ready_stores_session(adapter: DiscordAdapter) -> None:
     # Simulate what _run_gateway does on READY
     ready_data = {
         "session_id": "new-session-123",
-        "resume_gateway_url": "wss://resume.discord.gg/?v=10",
+        "resume_gateway_url": "wss://resume.discord.gg/?compress=zlib-stream",
     }
-    adapter._session_id = ready_data.get("session_id")
-    adapter._resume_gateway_url = ready_data.get("resume_gateway_url")
+    await adapter._handle_gateway_dispatch("READY", ready_data)
 
     assert adapter._session_id == "new-session-123"
-    assert adapter._resume_gateway_url == "wss://resume.discord.gg/?v=10"
+    assert adapter._resume_gateway_url == (
+        "wss://resume.discord.gg/?compress=zlib-stream&v=10&encoding=json"
+    )
+
+
+@pytest.mark.asyncio
+async def test_gateway_message_create_forwards_to_manager(adapter: DiscordAdapter) -> None:
+    inbound_callback = AsyncMock(return_value=[])
+    adapter.set_inbound_callback(inbound_callback)
+
+    await adapter._handle_gateway_dispatch(
+        "MESSAGE_CREATE",
+        {
+            "id": "msg_456",
+            "channel_id": "channel_123",
+            "author": {"id": "user_789", "username": "tester"},
+            "content": "Hello from gateway",
+        },
+    )
+
+    inbound_callback.assert_awaited_once()
+    messages = inbound_callback.await_args.args[0]
+    assert len(messages) == 1
+    assert messages[0].content == "Hello from gateway"
+    assert messages[0].metadata_json["platform_channel_id"] == "channel_123"
+
+
+@pytest.mark.asyncio
+async def test_gateway_stops_reconnecting_on_fatal_close(adapter: DiscordAdapter) -> None:
+    fatal_close = ConnectionClosedError(Close(4004, "authentication failed"), None)
+    connect_attempts = 0
+
+    def raise_fatal_close(url: str) -> None:
+        nonlocal connect_attempts
+        connect_attempts += 1
+        assert url == DiscordAdapter._DEFAULT_GATEWAY_URL
+        raise fatal_close
+
+    with (
+        patch("gobby.communications.adapters.discord.HAS_WEBSOCKETS", True),
+        patch(
+            "gobby.communications.adapters.discord.websockets.connect",
+            side_effect=raise_fatal_close,
+        ),
+        patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+    ):
+        await adapter._run_gateway()
+
+    assert connect_attempts == 1
+    mock_sleep.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_gateway_backs_off_after_clean_close(adapter: DiscordAdapter) -> None:
+    class EmptyGateway:
+        send = AsyncMock()
+
+        async def __aenter__(self) -> EmptyGateway:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        def __aiter__(self) -> EmptyGateway:
+            return self
+
+        async def __anext__(self) -> str:
+            raise StopAsyncIteration
+
+    connect_attempts = 0
+
+    def clean_connect(url: str) -> EmptyGateway:
+        nonlocal connect_attempts
+        connect_attempts += 1
+        assert url == DiscordAdapter._DEFAULT_GATEWAY_URL
+        return EmptyGateway()
+
+    with (
+        patch("gobby.communications.adapters.discord.HAS_WEBSOCKETS", True),
+        patch(
+            "gobby.communications.adapters.discord.websockets.connect", side_effect=clean_connect
+        ),
+        patch("random.uniform", return_value=0.0),
+        patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+    ):
+        mock_sleep.side_effect = asyncio.CancelledError
+        await adapter._run_gateway()
+
+    assert connect_attempts == 1
+    mock_sleep.assert_awaited_once_with(1.0)
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_closes_when_ack_is_missing(adapter: DiscordAdapter) -> None:
+    class HeartbeatWebSocket:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+            self.close_kwargs: dict[str, object] | None = None
+
+        async def send(self, payload: str) -> None:
+            self.sent.append(payload)
+
+        async def close(self, **kwargs: object) -> None:
+            self.close_kwargs = kwargs
+
+    adapter._heartbeat_ack_received = False
+    ws = HeartbeatWebSocket()
+
+    with patch("random.random", return_value=0.0):
+        await adapter._heartbeat_loop(ws, 1.0)
+
+    assert adapter._heartbeat_ack_received is False
+    assert ws.sent == []
+    assert ws.close_kwargs == {"code": 4000, "reason": "Heartbeat ACK timeout"}
 
 
 def test_invalid_session_clears_state(adapter: DiscordAdapter) -> None:
@@ -398,6 +515,7 @@ async def test_send_message_embed(
     call_kwargs = mock_post.call_args[1]["json"]
     assert call_kwargs["embeds"] == [{"title": "Test", "description": "Hello embed"}]
     assert call_kwargs["content"] == "Test fallback"
+    assert call_kwargs["allowed_mentions"] == {"parse": []}
 
 
 @pytest.mark.asyncio
@@ -433,6 +551,7 @@ async def test_send_message_embed_list(
     assert msg_id == "embed_msg_2"
     call_kwargs = mock_post.call_args[1]["json"]
     assert len(call_kwargs["embeds"]) == 2
+    assert call_kwargs["allowed_mentions"] == {"parse": []}
 
 
 @pytest.mark.asyncio
@@ -525,7 +644,7 @@ async def test_fetch_gateway_url_success(
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "url": "wss://gateway.discord.gg",
+            "url": "wss://gateway.discord.gg?compress=zlib-stream",
             "shards": 1,
             "session_start_limit": {
                 "total": 1000,
@@ -537,7 +656,9 @@ async def test_fetch_gateway_url_success(
 
         await adapter.initialize(channel_config, secret_resolver)
 
-    assert adapter._gateway_url == "wss://gateway.discord.gg?v=10&encoding=json"
+    assert (
+        adapter._gateway_url == "wss://gateway.discord.gg?compress=zlib-stream&v=10&encoding=json"
+    )
 
 
 @pytest.mark.asyncio

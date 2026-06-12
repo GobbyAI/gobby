@@ -63,6 +63,8 @@ def create_communications_router(server: HTTPServer) -> APIRouter:
             for msg in messages:
                 if msg.content_type == "url_verification":
                     return Response(content=msg.content, media_type="text/plain")
+                if msg.content_type == "interaction_ping":
+                    return json.loads(msg.content)
 
             return {"status": "ok", "messages": len(messages)}
         except ValueError as e:

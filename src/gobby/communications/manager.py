@@ -171,6 +171,9 @@ class CommunicationsManager:
                 self._rate_limiter.set_backoff(cid, duration)
 
         adapter.set_rate_limit_callback(on_rate_limit)
+        adapter.set_inbound_callback(
+            lambda messages: self.handle_inbound_messages(channel.name, messages)
+        )
 
         def resolve_secret_ref(ref: str) -> str | None:
             return self._secret_store.get(ref.removeprefix("$secret:"))
@@ -616,9 +619,9 @@ class CommunicationsManager:
         payload_for_parse: dict[str, Any] | bytes = payload
         parsed: list[CommsMessage] = adapter.parse_webhook(payload_for_parse, headers)
 
-        # If any message is a URL verification challenge, return immediately without storing
+        # If any message is a challenge response, return immediately without storing
         for msg in parsed:
-            if msg.content_type == "url_verification":
+            if msg.content_type in {"url_verification", "interaction_ping"}:
                 if not msg.channel_id:
                     msg.channel_id = channel.id
                 return parsed

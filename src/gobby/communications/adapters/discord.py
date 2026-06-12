@@ -8,9 +8,11 @@ import logging
 import random
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -26,9 +28,12 @@ from gobby.communications.models import (
 logger = logging.getLogger(__name__)
 
 HAS_WEBSOCKETS = False
+ConnectionClosed: type[Exception] = RuntimeError
 try:
     import websockets
+    from websockets.exceptions import ConnectionClosed as WebSocketConnectionClosed
 
+    ConnectionClosed = WebSocketConnectionClosed
     HAS_WEBSOCKETS = True
 except ImportError:
     pass
@@ -47,8 +52,12 @@ class DiscordAdapter(BaseChannelAdapter):
     """Adapter for Discord using Gateway for receiving and REST for sending."""
 
     _DEFAULT_GATEWAY_URL = "wss://gateway.discord.gg/?v=10&encoding=json"
+    _FATAL_CLOSE_CODES = {4004, 4014}
+    _GATEWAY_VERSION = "10"
+    _GATEWAY_ENCODING = "json"
 
     def __init__(self) -> None:
+        super().__init__()
         self._client: httpx.AsyncClient | None = None
         self._gateway_task: asyncio.Task[Any] | None = None
         self._bot_token: str = ""
@@ -57,6 +66,7 @@ class DiscordAdapter(BaseChannelAdapter):
         self._session_id: str | None = None
         self._resume_gateway_url: str | None = None
         self._sequence: int | None = None
+        self._heartbeat_ack_received: bool = True
         # Per-route REST rate limit tracking
         self._route_buckets: dict[str, dict[str, Any]] = {}
 
@@ -116,7 +126,7 @@ class DiscordAdapter(BaseChannelAdapter):
                 data = response.json()
                 url = data.get("url")
                 if url:
-                    self._gateway_url = f"{url}?v=10&encoding=json"
+                    self._gateway_url = self._gateway_url_with_query(url)
                     logger.info("Discord gateway URL fetched: %s", self._gateway_url)
 
                 session_limit = data.get("session_start_limit", {})
@@ -131,6 +141,58 @@ class DiscordAdapter(BaseChannelAdapter):
         except Exception as e:
             logger.warning("Failed to fetch Discord gateway URL: %s, using default", e)
 
+    @staticmethod
+    def _gateway_url_with_query(url: str) -> str:
+        """Ensure Discord gateway URLs carry required version and encoding query params."""
+        parts = urlsplit(url)
+        query = dict(parse_qsl(parts.query, keep_blank_values=True))
+        query["v"] = DiscordAdapter._GATEWAY_VERSION
+        query["encoding"] = DiscordAdapter._GATEWAY_ENCODING
+        return urlunsplit(
+            (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
+        )
+
+    @staticmethod
+    def _allowed_mentions() -> dict[str, Any]:
+        """Disable implicit @everyone/@role/@user parsing for outbound sends."""
+        return {"parse": []}
+
+    async def _send_resume(self, ws: Any) -> None:
+        """Send Discord Gateway RESUME with current session state."""
+        resume_payload = {
+            "op": 6,
+            "d": {
+                "token": self._bot_token,
+                "session_id": self._session_id,
+                "seq": self._sequence,
+            },
+        }
+        await ws.send(json.dumps(resume_payload))
+
+    @staticmethod
+    def _gateway_close_details(exc: Exception) -> tuple[int | None, str]:
+        """Return close code and reason without deprecated websockets properties."""
+        close_frame = getattr(exc, "rcvd", None) or getattr(exc, "sent", None)
+        return getattr(close_frame, "code", None), getattr(close_frame, "reason", "")
+
+    async def _handle_gateway_dispatch(
+        self, event_type: str | None, event_data: dict[str, Any]
+    ) -> None:
+        """Handle Discord Gateway dispatch events."""
+        if event_type == "READY":
+            self._session_id = event_data.get("session_id")
+            resume_url = event_data.get("resume_gateway_url")
+            self._resume_gateway_url = (
+                self._gateway_url_with_query(resume_url) if resume_url else None
+            )
+            logger.info("Discord gateway: READY (session=%s)", self._session_id)
+        elif event_type == "RESUMED":
+            logger.info("Discord gateway: RESUMED successfully")
+        elif event_type == "MESSAGE_CREATE":
+            messages = self.parse_webhook(event_data, {})
+            if messages:
+                await self._handle_inbound_messages(messages)
+
     async def _run_gateway(self) -> None:
         """Background task to connect to Discord Gateway and handle events."""
         if not HAS_WEBSOCKETS:
@@ -142,19 +204,13 @@ class DiscordAdapter(BaseChannelAdapter):
             retry_count = 0
             while True:
                 try:
-                    gateway_url = self._resume_gateway_url or self._gateway_url
+                    gateway_url = self._gateway_url_with_query(
+                        self._resume_gateway_url or self._gateway_url
+                    )
                     async with websockets.connect(gateway_url) as ws:
                         # Attempt RESUME if we have a prior session
                         if self._session_id and self._sequence is not None:
-                            resume_payload = {
-                                "op": 6,
-                                "d": {
-                                    "token": self._bot_token,
-                                    "session_id": self._session_id,
-                                    "seq": self._sequence,
-                                },
-                            }
-                            await ws.send(json.dumps(resume_payload))
+                            await self._send_resume(ws)
                             logger.info(
                                 "Discord gateway: sent RESUME (session=%s)", self._session_id
                             )
@@ -177,6 +233,7 @@ class DiscordAdapter(BaseChannelAdapter):
 
                                 if op == 10:  # Hello — start heartbeating
                                     heartbeat_interval = data["d"]["heartbeat_interval"] / 1000.0
+                                    self._heartbeat_ack_received = True
                                     if heartbeat_task and not heartbeat_task.done():
                                         heartbeat_task.cancel()
                                     heartbeat_task = asyncio.create_task(
@@ -184,7 +241,7 @@ class DiscordAdapter(BaseChannelAdapter):
                                     )
 
                                 elif op == 11:  # Heartbeat ACK
-                                    pass  # Acknowledged
+                                    self._heartbeat_ack_received = True
 
                                 elif op == 9:  # Invalid Session
                                     resumable = data.get("d", False)
@@ -202,48 +259,51 @@ class DiscordAdapter(BaseChannelAdapter):
                                             "Discord gateway: invalid session (resumable), re-sending RESUME"
                                         )
                                         await asyncio.sleep(1 + 4 * random.random())  # nosec B311 # jitter, not crypto
-                                        await ws.send(
-                                            json.dumps(
-                                                {
-                                                    "op": 6,
-                                                    "d": {
-                                                        "token": self._bot_token,
-                                                        "session_id": self._session_id,
-                                                        "seq": self._sequence,
-                                                    },
-                                                }
-                                            )
-                                        )
+                                        await self._send_resume(ws)
 
                                 elif op == 0:  # Dispatch
                                     event_type = data.get("t")
-
-                                    if event_type == "READY":
-                                        d = data.get("d", {})
-                                        self._session_id = d.get("session_id")
-                                        self._resume_gateway_url = d.get("resume_gateway_url")
+                                    await self._handle_gateway_dispatch(
+                                        event_type, data.get("d", {})
+                                    )
+                                    if event_type in {"READY", "RESUMED"}:
                                         backoff = 1.0
                                         retry_count = 0
-                                        logger.info(
-                                            "Discord gateway: READY (session=%s)",
-                                            self._session_id,
-                                        )
-
-                                    elif event_type == "RESUMED":
-                                        backoff = 1.0
-                                        retry_count = 0
-                                        logger.info("Discord gateway: RESUMED successfully")
-
-                                    elif event_type == "MESSAGE_CREATE":
-                                        msg_data = data.get("d", {})
-                                        logger.debug(
-                                            "Discord gateway received MESSAGE_CREATE: %s",
-                                            msg_data.get("id"),
-                                        )
                         finally:
                             if heartbeat_task and not heartbeat_task.done():
                                 heartbeat_task.cancel()
 
+                    retry_count += 1
+                    jitter = random.uniform(0, backoff * 0.5)  # nosec B311
+                    delay = min(backoff + jitter, max_backoff)
+                    logger.info(
+                        "Discord gateway closed cleanly (attempt %d, reconnect in %.1fs)",
+                        retry_count,
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
+                    backoff = min(backoff * 2, max_backoff)
+                except ConnectionClosed as e:
+                    close_code, close_reason = self._gateway_close_details(e)
+                    if close_code in self._FATAL_CLOSE_CODES:
+                        logger.error(
+                            "Discord gateway closed with fatal code %s, not reconnecting: %s",
+                            close_code,
+                            close_reason,
+                        )
+                        return
+                    retry_count += 1
+                    jitter = random.uniform(0, backoff * 0.5)  # nosec B311
+                    delay = min(backoff + jitter, max_backoff)
+                    logger.warning(
+                        "Discord gateway closed (code %s, attempt %d, reconnect in %.1fs): %s",
+                        close_code,
+                        retry_count,
+                        delay,
+                        close_reason,
+                    )
+                    await asyncio.sleep(delay)
+                    backoff = min(backoff * 2, max_backoff)
                 except Exception as e:
                     retry_count += 1
                     jitter = random.uniform(0, backoff * 0.5)  # nosec B311
@@ -281,14 +341,20 @@ class DiscordAdapter(BaseChannelAdapter):
         try:
             # Discord expects a jittered first heartbeat (random fraction of interval)
             await asyncio.sleep(random.random() * interval)  # nosec B311 # jitter, not crypto
-            await ws.send(json.dumps({"op": 1, "d": self._sequence}))
             while True:
-                await asyncio.sleep(interval)
+                if not self._heartbeat_ack_received:
+                    logger.warning("Discord heartbeat ACK not received, closing gateway")
+                    await ws.close(code=4000, reason="Heartbeat ACK timeout")
+                    return
+                self._heartbeat_ack_received = False
                 await ws.send(json.dumps({"op": 1, "d": self._sequence}))
+                await asyncio.sleep(interval)
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.debug("Discord heartbeat error: %s", e)
+            logger.warning("Discord heartbeat error: %s", e)
+            with suppress(Exception):
+                await ws.close(code=4000, reason="Heartbeat error")
 
     async def _rate_limited_request(
         self, route: str, method: str = "post", **kwargs: Any
@@ -355,7 +421,10 @@ class DiscordAdapter(BaseChannelAdapter):
         channel_id = message.platform_thread_id or self.platform_destination(message)
 
         for chunk in chunks:
-            payload: dict[str, Any] = {"content": chunk}
+            payload: dict[str, Any] = {
+                "content": chunk,
+                "allowed_mentions": self._allowed_mentions(),
+            }
             route = f"/channels/{channel_id}/messages"
             response = await self._rate_limited_request(route, "post", json=payload)
             data = response.json()
@@ -390,7 +459,10 @@ class DiscordAdapter(BaseChannelAdapter):
                 raise ValueError(f"Embed has {len(fields)} fields (max 25)")
 
         channel_id = message.platform_thread_id or self.platform_destination(message)
-        payload: dict[str, Any] = {"embeds": embed_data}
+        payload: dict[str, Any] = {
+            "embeds": embed_data,
+            "allowed_mentions": self._allowed_mentions(),
+        }
         fallback = message.metadata_json.get("fallback_text")
         if fallback:
             payload["content"] = fallback
@@ -413,6 +485,7 @@ class DiscordAdapter(BaseChannelAdapter):
         data: dict[str, Any] = {}
         if message.content:
             data["content"] = message.content
+        data["allowed_mentions"] = self._allowed_mentions()
         payload_json = json.dumps(data) if data else json.dumps({})
         files: dict[str, Any] = {
             "files[0]": (attachment.filename, file_bytes, attachment.content_type),
@@ -466,9 +539,16 @@ class DiscordAdapter(BaseChannelAdapter):
 
         # Interaction type 1 is PING
         if payload_dict.get("type") == 1:
-            # The router should return {"type": 1} to acknowledge the ping
-            # But the adapter API doesn't have a way to respond with data,
-            # so we'd normally just return empty and let router handle ping
+            messages.append(
+                CommsMessage(
+                    id=f"discord_ping_{time.time()}",
+                    channel_id="",
+                    direction="inbound",
+                    content=json.dumps({"type": 1}),
+                    created_at=datetime.now(UTC).isoformat(),
+                    content_type="interaction_ping",
+                )
+            )
             return messages
 
         # Handle MESSAGE_REACTION_ADD events

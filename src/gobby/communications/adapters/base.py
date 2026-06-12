@@ -36,6 +36,9 @@ class BaseChannelAdapter(ABC):
 
     def __init__(self) -> None:
         self._rate_limit_callback: Callable[[float, bool], None] | None = None
+        self._inbound_callback: (
+            Callable[[list[CommsMessage]], Awaitable[list[CommsMessage]]] | None
+        ) = None
 
     @property
     @abstractmethod
@@ -133,6 +136,20 @@ class BaseChannelAdapter(ABC):
                       to propagate backoff to the TokenBucketRateLimiter.
         """
         self._rate_limit_callback = callback
+
+    def set_inbound_callback(
+        self,
+        callback: Callable[[list[CommsMessage]], Awaitable[list[CommsMessage]]],
+    ) -> None:
+        """Set a callback invoked when an adapter receives inbound messages directly."""
+        self._inbound_callback = callback
+
+    async def _handle_inbound_messages(self, messages: list[CommsMessage]) -> list[CommsMessage]:
+        """Forward adapter-received inbound messages to the manager."""
+        if self._inbound_callback is None:
+            logger.debug("%s inbound callback is not configured", self.channel_type)
+            return []
+        return await self._inbound_callback(messages)
 
     async def _retry(
         self,
