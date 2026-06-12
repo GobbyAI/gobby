@@ -150,6 +150,9 @@ async def test_sync_reused_worktree_allows_generated_isolation_metadata(
     _git(parent, "commit", "-m", "initial")
     base_sha = _git(parent, "rev-parse", "main").stdout.strip()
     _git(parent, "worktree", "add", "-b", "reuse", str(worktree), "main")
+    parent_exclude_path = parent / ".git" / "info" / "exclude"
+    parent_exclude_before = parent_exclude_path.read_text(encoding="utf-8")
+    (parent / ".mcp.json").write_text('{"mcpServers":{}}\n', encoding="utf-8")
 
     (worktree / ".gobby" / "project.json").write_text(
         (
@@ -168,11 +171,25 @@ async def test_sync_reused_worktree_allows_generated_isolation_metadata(
     )
 
     assert result.base_commit_sha == base_sha
-    assert _git(worktree, "status", "--porcelain").stdout == ""
-    exclude_path = (
-        worktree / _git(worktree, "rev-parse", "--git-path", "info/exclude").stdout.strip()
+    assert parent_exclude_path.read_text(encoding="utf-8") == parent_exclude_before
+    assert (
+        "?? .mcp.json"
+        in _git(
+            parent,
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+        ).stdout.splitlines()
     )
-    assert ".mcp.json" in exclude_path.read_text(encoding="utf-8")
+    assert (
+        "?? .mcp.json"
+        in _git(
+            worktree,
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+        ).stdout.splitlines()
+    )
     ls_files = _git(worktree, "ls-files", "-v", ".gobby/project.json").stdout
     assert ls_files.startswith("S ")
     assert "parent_project_path" in (worktree / ".gobby" / "project.json").read_text(

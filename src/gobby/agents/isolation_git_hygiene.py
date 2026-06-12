@@ -28,8 +28,10 @@ def apply_isolation_git_hygiene(
 ) -> None:
     """Hide Gobby-generated isolation metadata from local Git status.
 
-    This is intentionally local to each worktree/clone. It never edits repo
-    ignore files and only marks ``.gobby/project.json`` when the file matches
+    Exclude writes are only used when Git scopes ``info/exclude`` to this
+    workspace. Linked worktrees share that file with the main checkout, so
+    generated paths there are handled by reuse status filtering and tracked
+    ``.gobby/project.json`` is marked skip-worktree only after it matches
     Gobby's generated parent-project metadata.
     """
     workspace = Path(isolated_path)
@@ -121,14 +123,38 @@ def _add_local_exclude(workspace: Path, pattern: str) -> None:
 
 
 def _git_info_exclude_path(workspace: Path) -> Path | None:
+    if _is_linked_worktree(workspace):
+        return None
     result = _run_git(workspace, ["rev-parse", "--git-path", "info/exclude"])
     if result.returncode != 0:
         return None
     raw_path = result.stdout.strip()
     if not raw_path:
         return None
-    exclude_path = Path(raw_path)
-    return exclude_path if exclude_path.is_absolute() else workspace / exclude_path
+    return _git_path_from_output(workspace, raw_path)
+
+
+def _is_linked_worktree(workspace: Path) -> bool:
+    git_dir = _rev_parse_git_path(workspace, "--git-dir")
+    common_dir = _rev_parse_git_path(workspace, "--git-common-dir")
+    if git_dir is None or common_dir is None:
+        return False
+    return not _same_path(git_dir, common_dir)
+
+
+def _rev_parse_git_path(workspace: Path, arg: str) -> Path | None:
+    result = _run_git(workspace, ["rev-parse", arg])
+    if result.returncode != 0:
+        return None
+    raw_path = result.stdout.strip()
+    if not raw_path:
+        return None
+    return _git_path_from_output(workspace, raw_path)
+
+
+def _git_path_from_output(workspace: Path, raw_path: str) -> Path:
+    parsed_path = Path(raw_path)
+    return parsed_path if parsed_path.is_absolute() else workspace / parsed_path
 
 
 def _git_path_is_tracked(workspace: Path, relative_path: str) -> bool:

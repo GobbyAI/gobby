@@ -103,6 +103,9 @@ async def test_repair_marks_tracked_project_json_skip_worktree(tmp_path: Path) -
     _git(parent, "add", ".gobby/project.json")
     _git(parent, "commit", "-m", "initial")
     _git(parent, "worktree", "add", "-b", "isolation", str(worktree), "main")
+    parent_exclude_path = parent / ".git" / "info" / "exclude"
+    parent_exclude_before = parent_exclude_path.read_text(encoding="utf-8")
+    (parent / ".mcp.json").write_text('{"mcpServers":{}}\n', encoding="utf-8")
 
     await repair_isolation_environment(
         main_repo_path=str(parent),
@@ -113,11 +116,25 @@ async def test_repair_marks_tracked_project_json_skip_worktree(tmp_path: Path) -
     data = json.loads((worktree / ".gobby" / "project.json").read_text(encoding="utf-8"))
     assert data["parent_project_path"] == str(parent.resolve())
     assert data["parent_project_id"] == "parent-proj"
-    assert _git(worktree, "status", "--porcelain").stdout == ""
-    exclude_path = (
-        worktree / _git(worktree, "rev-parse", "--git-path", "info/exclude").stdout.strip()
+    assert parent_exclude_path.read_text(encoding="utf-8") == parent_exclude_before
+    assert (
+        "?? .mcp.json"
+        in _git(
+            parent,
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+        ).stdout.splitlines()
     )
-    assert ".mcp.json" in exclude_path.read_text(encoding="utf-8")
+    assert (
+        "?? .mcp.json"
+        in _git(
+            worktree,
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+        ).stdout.splitlines()
+    )
     assert _git(worktree, "ls-files", "-v", ".gobby/project.json").stdout.startswith("S ")
 
 
