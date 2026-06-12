@@ -233,11 +233,67 @@ def test_get_pending_sync_files_uses_boolean_literals_for_postgres() -> None:
     assert storage.get_pending_sync_files("proj-1") == []
 
     sql, params = db.calls[0]
-    assert params == ("proj-1", 50)
+    assert params[0] == "proj-1"
+    assert params[-1] == 50
+    assert len(params) == 4
     assert "vectors_synced IS FALSE" in sql
     assert "graph_synced IS FALSE" in sql
+    assert "vector_sync_attempted_at" in sql
+    assert "graph_sync_attempted_at" in sql
     assert "vectors_synced = 0" not in sql
     assert "graph_synced = 0" not in sql
+
+
+def test_get_pending_sync_files_deprioritizes_recent_failures(
+    code_storage: CodeIndexStorage,
+) -> None:
+    """Recently failed rows do not pin the pending batch head."""
+    old_file = IndexedFile(
+        id=IndexedFile.make_id("proj-1", "src/old.py"),
+        project_id="proj-1",
+        file_path="src/old.py",
+        language="python",
+        content_hash="old",
+    )
+    new_file = IndexedFile(
+        id=IndexedFile.make_id("proj-1", "src/new.py"),
+        project_id="proj-1",
+        file_path="src/new.py",
+        language="python",
+        content_hash="new",
+    )
+    code_storage.upsert_file(old_file)
+    code_storage.upsert_file(new_file)
+    assert code_storage.mark_vector_sync_attempted(old_file.id) is True
+    assert code_storage.mark_graph_sync_attempted(old_file.id) is True
+
+    pending = code_storage.get_pending_sync_files("proj-1", limit=1)
+
+    assert [file.file_path for file in pending] == ["src/new.py"]
+
+
+def test_get_pending_sync_files_retries_after_failure_cooloff(
+    code_storage: CodeIndexStorage,
+) -> None:
+    """Failed rows become eligible again after the cooloff expires."""
+    file = IndexedFile(
+        id=IndexedFile.make_id("proj-1", "src/retry.py"),
+        project_id="proj-1",
+        file_path="src/retry.py",
+        language="python",
+        content_hash="retry",
+    )
+    code_storage.upsert_file(file)
+    assert code_storage.mark_vector_sync_attempted(file.id) is True
+
+    pending = code_storage.get_pending_sync_files(
+        "proj-1",
+        limit=1,
+        graph=False,
+        failure_cooloff_seconds=0,
+    )
+
+    assert [file.file_path for file in pending] == ["src/retry.py"]
 
 
 def test_upsert_and_get_file(code_storage: CodeIndexStorage) -> None:
@@ -633,6 +689,41 @@ def test_get_unsummarized_symbols(
     assert all(s.id != sample_symbols[0].id for s in unsummarized)
 
 
+def test_get_unsummarized_symbols_deprioritizes_recent_failures(
+    code_storage: CodeIndexStorage, sample_symbols: list[Symbol]
+) -> None:
+    """Recently failed summary attempts are cooled off."""
+    code_storage.upsert_symbols(sample_symbols)
+
+    assert code_storage.mark_symbol_summaries_attempted([sample_symbols[0].id]) == 1
+
+    unsummarized = code_storage.get_unsummarized_symbols("proj-1")
+
+    assert {symbol.id for symbol in unsummarized} == {symbol.id for symbol in sample_symbols[1:]}
+    retried = code_storage.get_unsummarized_symbols(
+        "proj-1",
+        failure_cooloff_seconds=0,
+    )
+    assert {symbol.id for symbol in retried} == {symbol.id for symbol in sample_symbols}
+
+
+def test_upsert_symbols_resets_summary_attempt_on_content_change(
+    code_storage: CodeIndexStorage, sample_symbols: list[Symbol]
+) -> None:
+    """Changed symbol content clears summary and failure bookkeeping."""
+    sym = sample_symbols[0]
+    code_storage.upsert_symbols([sym])
+    assert code_storage.mark_symbol_summaries_attempted([sym.id]) == 1
+
+    sym.content_hash = "changed"
+    code_storage.upsert_symbols([sym])
+
+    retrieved = code_storage.get_symbol(sym.id)
+    assert retrieved is not None
+    assert retrieved.summary is None
+    assert retrieved.summary_attempted_at is None
+
+
 def test_get_unsummarized_symbols_filters_by_kind(
     code_storage: CodeIndexStorage, sample_symbols: list[Symbol]
 ) -> None:
@@ -668,6 +759,7 @@ def test_update_symbol_summary(
     retrieved = code_storage.get_symbol(sym.id)
     assert retrieved is not None
     assert retrieved.summary == "Returns a greeting string."
+    assert retrieved.summary_attempted_at is None
 
 
 def test_update_symbol_summary_nonexistent(code_storage: CodeIndexStorage) -> None:

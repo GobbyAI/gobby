@@ -106,6 +106,13 @@ async def sync_worker_loop(
 
     while not shutdown_flag.is_set():
         gcode_gateway = context.gcode_gateway
+        if config.embedding_enabled and vector_store is not None and embed_model is None:
+            try:
+                embed_model = await _build_embed_model(embeddings_config)
+                logger.info("Sync worker: embedding backend became available")
+            except Exception as e:
+                logger.warning("Sync worker: embedding unavailable: %s", e)
+
         try:
             await _sync_pass(
                 storage=storage,
@@ -165,7 +172,9 @@ async def _sync_pass(
             storage.get_pending_sync_files,
             project.id,
             limit=batch_size,
-            vectors=config.embedding_enabled,
+            vectors=config.embedding_enabled
+            and vector_store is not None
+            and embed_model is not None,
             graph=config.graph_enabled,
         )
         if not files:
@@ -234,6 +243,7 @@ async def _sync_file(
     if not current.vectors_synced and config.embedding_enabled:
         if vector_store is not None and embed_model is not None:
             try:
+                await _run_db(run_db, storage.mark_vector_sync_attempted, current.id)
                 await _sync_vectors(
                     storage=storage,
                     vector_store=vector_store,
@@ -264,6 +274,7 @@ async def _sync_file(
     if not current.graph_synced and config.graph_enabled:
         if gcode_gateway is not None:
             try:
+                await _run_db(run_db, storage.mark_graph_sync_attempted, current.id)
                 graph_synced = await _sync_graph(
                     gcode_gateway=gcode_gateway,
                     project_root=root,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.code_index.models import (
@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
+_SYNC_FAILURE_COOLOFF_SECONDS = 300
 
 
 class CodeIndexStorage:
@@ -58,6 +59,7 @@ class CodeIndexStorage:
                 sym.parent_symbol_id,
                 sym.content_hash,
                 sym.summary,
+                sym.summary_attempted_at,
                 sym.created_at,
                 now,
             )
@@ -70,8 +72,8 @@ class CodeIndexStorage:
                     kind, language, byte_start, byte_end,
                     line_start, line_end, signature, docstring,
                     parent_symbol_id, content_hash, summary,
-                    created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    summary_attempted_at, created_at, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(id) DO UPDATE SET
                     name=excluded.name,
                     qualified_name=excluded.qualified_name,
@@ -87,6 +89,8 @@ class CodeIndexStorage:
                     content_hash=excluded.content_hash,
                     summary=CASE WHEN excluded.content_hash != code_symbols.content_hash
                                  THEN NULL ELSE code_symbols.summary END,
+                    summary_attempted_at=CASE WHEN excluded.content_hash != code_symbols.content_hash
+                                             THEN NULL ELSE code_symbols.summary_attempted_at END,
                     updated_at=excluded.updated_at
                 """,
                 rows,
@@ -213,8 +217,8 @@ class CodeIndexStorage:
                 """INSERT INTO code_indexed_files (
                     id, project_id, file_path, language, content_hash,
                     symbol_count, byte_size, graph_synced, vectors_synced,
-                    graph_sync_attempted_at, indexed_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    graph_sync_attempted_at, vector_sync_attempted_at, indexed_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(id) DO UPDATE SET
                     content_hash=excluded.content_hash,
                     symbol_count=excluded.symbol_count,
@@ -222,6 +226,7 @@ class CodeIndexStorage:
                     graph_synced=FALSE,
                     graph_sync_attempted_at=NULL,
                     vectors_synced=FALSE,
+                    vector_sync_attempted_at=NULL,
                     indexed_at=excluded.indexed_at
                 """,
                 (
@@ -235,6 +240,7 @@ class CodeIndexStorage:
                     bool(file.graph_synced),
                     bool(file.vectors_synced),
                     file.graph_sync_attempted_at,
+                    file.vector_sync_attempted_at,
                     file.indexed_at,
                 ),
             )
@@ -335,6 +341,7 @@ class CodeIndexStorage:
         *,
         vectors: bool = True,
         graph: bool = True,
+        failure_cooloff_seconds: int = _SYNC_FAILURE_COOLOFF_SECONDS,
     ) -> list[IndexedFile]:
         """Get files needing external sync.
 
@@ -344,19 +351,30 @@ class CodeIndexStorage:
             vectors: Include files needing vector sync.
             graph: Include files needing graph sync.
         """
+        retry_cutoff = (datetime.now(UTC) - timedelta(seconds=failure_cooloff_seconds)).isoformat()
         conditions = []
+        params: list[Any] = [project_id]
         if vectors:
-            conditions.append("vectors_synced IS FALSE")
+            conditions.append(
+                """(vectors_synced IS FALSE
+                   AND (vector_sync_attempted_at IS NULL OR vector_sync_attempted_at < %s))"""
+            )
+            params.append(retry_cutoff)
         if graph:
-            conditions.append("graph_synced IS FALSE")
+            conditions.append(
+                """(graph_synced IS FALSE
+                   AND (graph_sync_attempted_at IS NULL OR graph_sync_attempted_at < %s))"""
+            )
+            params.append(retry_cutoff)
         if not conditions:
             return []
         where = " OR ".join(conditions)
+        params.append(limit)
         rows = self.db.fetchall(
             f"""SELECT * FROM code_indexed_files
                 WHERE project_id = %s AND ({where})
                 ORDER BY indexed_at LIMIT %s""",
-            (project_id, limit),
+            tuple(params),
         )
         return [IndexedFile.from_row(r) for r in rows]
 
@@ -364,8 +382,22 @@ class CodeIndexStorage:
         """Mark a file's vectors as synced. Returns True if updated."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE code_indexed_files SET vectors_synced = TRUE WHERE id = %s",
-                (file_id,),
+                """UPDATE code_indexed_files
+                   SET vectors_synced = TRUE, vector_sync_attempted_at = %s
+                   WHERE id = %s""",
+                (datetime.now(UTC).isoformat(), file_id),
+            )
+            return cursor.rowcount > 0
+
+    def mark_vector_sync_attempted(self, file_id: str) -> bool:
+        """Mark that a vector sync was attempted, even if it later fails."""
+        now = datetime.now(UTC).isoformat()
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """UPDATE code_indexed_files
+                   SET vectors_synced = FALSE, vector_sync_attempted_at = %s
+                   WHERE id = %s""",
+                (now, file_id),
             )
             return cursor.rowcount > 0
 
@@ -666,6 +698,7 @@ class CodeIndexStorage:
         project_id: str,
         kinds: list[str] | None = None,
         limit: int = 20,
+        failure_cooloff_seconds: int = _SYNC_FAILURE_COOLOFF_SECONDS,
     ) -> list[Symbol]:
         """Get symbols that have no summary yet.
 
@@ -677,13 +710,15 @@ class CodeIndexStorage:
         if kinds is None:
             kinds = ["function", "class", "method"]
         placeholders = ",".join("%s" for _ in kinds)
+        retry_cutoff = (datetime.now(UTC) - timedelta(seconds=failure_cooloff_seconds)).isoformat()
         rows = self.db.fetchall(
             f"""SELECT * FROM code_symbols
                 WHERE project_id = %s AND summary IS NULL
+                  AND (summary_attempted_at IS NULL OR summary_attempted_at < %s)
                   AND kind IN ({placeholders})
                 ORDER BY updated_at DESC
                 LIMIT %s""",
-            (project_id, *kinds, limit),
+            (project_id, retry_cutoff, *kinds, limit),
         )
         return [Symbol.from_row(r) for r in rows]
 
@@ -691,10 +726,25 @@ class CodeIndexStorage:
         """Set the summary for a symbol. Returns True if updated."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE code_symbols SET summary = %s WHERE id = %s",
+                "UPDATE code_symbols SET summary = %s, summary_attempted_at = NULL WHERE id = %s",
                 (summary, symbol_id),
             )
             return cursor.rowcount > 0
+
+    def mark_symbol_summaries_attempted(self, symbol_ids: list[str]) -> int:
+        """Mark summary generation attempts for symbols that failed to produce summaries."""
+        if not symbol_ids:
+            return 0
+        now = datetime.now(UTC).isoformat()
+        placeholders = ",".join("%s" for _ in symbol_ids)
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                f"""UPDATE code_symbols
+                    SET summary_attempted_at = %s
+                    WHERE id IN ({placeholders}) AND summary IS NULL""",
+                (now, *symbol_ids),
+            )
+            return cursor.rowcount
 
     # ── Counts ───────────────────────────────────────────────────────
 

@@ -160,6 +160,51 @@ async def test_sync_worker_embed_adapter_preserves_embeddings_config(
     }
 
 
+@pytest.mark.asyncio
+async def test_sync_worker_retries_embed_probe_after_startup_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Embedding startup failures are retried on later worker passes."""
+    shutdown = asyncio.Event()
+    captured: dict[str, Any] = {"probe_calls": 0}
+
+    async def fake_generate_embeddings(
+        texts: list[str],
+        *,
+        model: str,
+        api_base: str | None,
+        api_key: str | None,
+        expected_dim: int | None,
+    ) -> list[list[float]]:
+        captured["probe_calls"] += 1
+        if captured["probe_calls"] == 1:
+            raise RuntimeError("embedding backend down")
+        return [[0.1] * expected_dim] if expected_dim else [[0.1]]
+
+    async def fake_sync_pass(**kwargs: Any) -> None:
+        captured["embed_model"] = kwargs["embed_model"]
+        shutdown.set()
+
+    monkeypatch.setattr("gobby.search.embeddings.generate_embeddings", fake_generate_embeddings)
+    monkeypatch.setattr("gobby.code_index.sync_worker._sync_pass", fake_sync_pass)
+
+    await sync_worker_loop(
+        storage=MagicMock(),
+        vector_store=object(),
+        context=SimpleNamespace(gcode_gateway=None, clear_graph=None),
+        config=CodeIndexConfig(
+            embedding_enabled=True,
+            graph_enabled=False,
+            sync_worker_interval_seconds=0.01,
+        ),
+        embeddings_config=EmbeddingsConfig(model="test-model", dim=4),
+        shutdown_flag=shutdown,
+    )
+
+    assert captured["probe_calls"] == 2
+    assert captured["embed_model"] is not None
+
+
 class IndexedFileNotFoundGcodeGateway:
     def __init__(self, *, remove_root: bool = False, remove_source: bool = False) -> None:
         self.remove_root = remove_root
@@ -303,7 +348,7 @@ async def test_sync_worker_keeps_vectors_live_when_graph_gateway_fails(
     ]
     storage.mark_vectors_synced.assert_called_once_with(pending_file.id)
     storage.clear_projection_cleanup_pending.assert_called_once_with("proj-1", "vector")
-    storage.mark_graph_sync_attempted.assert_not_called()
+    storage.mark_graph_sync_attempted.assert_called_once_with(pending_file.id)
     storage.mark_graph_synced.assert_not_called()
 
 
@@ -349,7 +394,7 @@ async def test_sync_worker_delegates_graph_sync_to_gcode_gateway(tmp_path: Path)
     )
 
     assert gcode_gateway.synced_files == [(tmp_path, pending_file.file_path)]
-    storage.mark_graph_sync_attempted.assert_not_called()
+    storage.mark_graph_sync_attempted.assert_called_once_with(pending_file.id)
     storage.mark_graph_synced.assert_called_once_with(pending_file.id)
     storage.clear_projection_cleanup_pending.assert_called_once_with("proj-1", "graph")
 
@@ -582,6 +627,7 @@ async def test_sync_file_warns_and_retries_when_indexed_row_still_exists(
         for record in caplog.records
     )
     storage.mark_graph_synced.assert_not_called()
+    storage.mark_graph_sync_attempted.assert_called_once_with(pending_file.id)
 
 
 @pytest.mark.asyncio
@@ -912,6 +958,7 @@ async def test_sync_file_does_not_mark_vectors_synced_when_later_vector_batch_fa
     synced_file = code_storage.get_file(project_id, file_path)
     assert synced_file is not None
     assert synced_file.vectors_synced is False
+    assert synced_file.vector_sync_attempted_at is not None
 
 
 @pytest.mark.asyncio
@@ -988,6 +1035,7 @@ async def test_sync_file_routes_vector_storage_calls_through_run_db(
     assert did_sync is True
     assert run_db.calls == [
         "get_file",
+        "mark_vector_sync_attempted",
         "get_symbols_for_file",
         "mark_vectors_synced",
         "clear_projection_cleanup_pending",
@@ -1048,7 +1096,7 @@ async def test_sync_file_uses_current_row_for_sync_state_and_marker_id(tmp_path:
     assert did_sync is True
     assert vector_store.calls == []
     storage.mark_vectors_synced.assert_not_called()
-    storage.mark_graph_sync_attempted.assert_not_called()
+    storage.mark_graph_sync_attempted.assert_called_once_with(current_file.id)
     storage.mark_graph_synced.assert_called_once_with(current_file.id)
     storage.clear_projection_cleanup_pending.assert_called_once_with("proj-1", "graph")
     assert gcode_gateway.synced_files == [(tmp_path, file_path)]

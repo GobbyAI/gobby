@@ -346,6 +346,18 @@ async def _summarize_unsummarized(
         return source_by_symbol_id.get(symbol.id)
 
     results = await summarizer.summarize_batch(symbols, read_source)
+    attempted_symbol_ids = {
+        symbol.id for symbol in symbols if source_by_symbol_id.get(symbol.id) is not None
+    }
+    failed_symbol_ids = sorted(attempted_symbol_ids - set(results))
+    if failed_symbol_ids:
+        await context.run_db(context.storage.mark_symbol_summaries_attempted, failed_symbol_ids)
+        logger.warning(
+            "Summary generation failed for %s/%s symbol(s) in project %s",
+            len(failed_symbol_ids),
+            len(attempted_symbol_ids),
+            project.id,
+        )
 
     await _update_symbol_summaries(context, results)
 

@@ -1406,6 +1406,7 @@ CREATE TABLE code_indexed_files (
     graph_synced BOOLEAN NOT NULL DEFAULT FALSE,
     vectors_synced BOOLEAN NOT NULL DEFAULT FALSE,
     graph_sync_attempted_at TIMESTAMPTZ,
+    vector_sync_attempted_at TIMESTAMPTZ,
     indexed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(project_id, file_path)
 );
@@ -1433,6 +1434,7 @@ CREATE TABLE code_symbols (
     parent_symbol_id TEXT,
     content_hash TEXT NOT NULL,
     summary TEXT,
+    summary_attempted_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

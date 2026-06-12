@@ -13,7 +13,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.code_index.maintenance import _run_maintenance, _update_symbol_summaries
+from gobby.code_index.maintenance import (
+    _run_maintenance,
+    _summarize_unsummarized,
+    _update_symbol_summaries,
+)
 from gobby.code_index.models import IndexedProject
 
 pytestmark = pytest.mark.unit
@@ -475,6 +479,71 @@ async def test_summary_updates_are_concurrency_limited() -> None:
 
     assert max_active <= 4
     assert all(waits_completed)
+
+
+@pytest.mark.asyncio
+async def test_summarize_unsummarized_marks_failures_and_logs_aggregate(
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+) -> None:
+    """Failed summary generations are cooled off with one aggregate warning."""
+    source = tmp_path / "src" / "app.py"
+    source.parent.mkdir()
+    source.write_text("def ok():\n    return 1\n\ndef fail():\n    return 2\n", encoding="utf-8")
+    symbols = [
+        SimpleNamespace(id="sym-ok", file_path="src/app.py", line_start=1, line_end=2),
+        SimpleNamespace(id="sym-fail", file_path="src/app.py", line_start=4, line_end=5),
+        SimpleNamespace(id="sym-missing", file_path="src/missing.py", line_start=1, line_end=1),
+    ]
+    attempts: list[list[str]] = []
+    updates: dict[str, str] = {}
+
+    class Storage:
+        def get_unsummarized_symbols(self, _project_id: str, limit: int) -> list[Any]:
+            return symbols[:limit]
+
+        def mark_symbol_summaries_attempted(self, symbol_ids: list[str]) -> int:
+            attempts.append(symbol_ids)
+            return len(symbol_ids)
+
+        def update_symbol_summary(self, symbol_id: str, summary: str) -> bool:
+            updates[symbol_id] = summary
+            return True
+
+    class Summarizer:
+        async def summarize_batch(
+            self,
+            batch: list[Any],
+            read_source: Callable[[Any], str | None],
+        ) -> dict[str, str]:
+            assert {symbol.id for symbol in batch if read_source(symbol)} == {
+                "sym-ok",
+                "sym-fail",
+            }
+            return {"sym-ok": "Returns one."}
+
+    async def run_db(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        return func(*args, **kwargs)
+
+    context: _MaintenanceContext = SimpleNamespace(
+        storage=Storage(),
+        clear_graph=AsyncMock(return_value={"success": True}),
+        vector_store=None,
+        config=SimpleNamespace(graph_enabled=True, qdrant_collection_prefix="code_symbols_"),
+        run_db=run_db,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="gobby.code_index.maintenance"):
+        await _summarize_unsummarized(
+            context,
+            SimpleNamespace(id="proj-1", root_path=str(tmp_path)),
+            Summarizer(),  # type: ignore[arg-type]
+            batch_size=3,
+        )
+
+    assert attempts == [["sym-fail"]]
+    assert updates == {"sym-ok": "Returns one."}
+    assert "Summary generation failed for 1/2 symbol(s) in project proj-1" in caplog.text
 
 
 @pytest.mark.asyncio

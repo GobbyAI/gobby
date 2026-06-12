@@ -181,6 +181,7 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
         "278_session_summary_revisions.sql",
         "279_session_summary_revision_integrity.sql",
         "280_code_index_projection_cleanup_pending.sql",
+        "281_code_index_failure_attempts.sql",
     ]
 
 
@@ -320,6 +321,20 @@ def test_code_index_projection_cleanup_pending_migration_and_baseline_define_sch
     )
     _assert_contains_all("projection cleanup migration", migration, migration_snippets)
     _assert_contains_all("projection cleanup baseline", baseline, baseline_snippets)
+
+
+def test_code_index_failure_attempts_migration_and_baseline_define_columns() -> None:
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "281_code_index_failure_attempts.sql"
+    ).read_text(encoding="utf-8")
+    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
+
+    snippets = (
+        "vector_sync_attempted_at TIMESTAMPTZ",
+        "summary_attempted_at TIMESTAMPTZ",
+    )
+    _assert_contains_all("code index failure attempts migration", migration, snippets)
+    _assert_contains_all("code index failure attempts baseline", baseline, snippets)
 
 
 def test_removed_migration_baseline_and_import_files_are_absent() -> None:

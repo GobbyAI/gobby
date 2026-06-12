@@ -49,6 +49,7 @@ class Symbol:
     parent_symbol_id: str | None = None
     content_hash: str = ""
     summary: str | None = None
+    summary_attempted_at: str | None = None
     created_at: str = ""
     updated_at: str = ""
 
@@ -83,6 +84,9 @@ class Symbol:
             parent_symbol_id=row["parent_symbol_id"],
             content_hash=row["content_hash"],
             summary=row["summary"] if "summary" in row.keys() else None,
+            summary_attempted_at=(
+                row["summary_attempted_at"] if "summary_attempted_at" in row.keys() else None
+            ),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -105,6 +109,7 @@ class Symbol:
             "parent_symbol_id": self.parent_symbol_id,
             "content_hash": self.content_hash,
             "summary": self.summary,
+            "summary_attempted_at": self.summary_attempted_at,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -145,6 +150,7 @@ class IndexedFile:
     graph_synced: bool = False
     vectors_synced: bool = False
     graph_sync_attempted_at: str | None = None
+    vector_sync_attempted_at: str | None = None
     indexed_at: str = ""
 
     def __post_init__(self) -> None:
@@ -171,6 +177,11 @@ class IndexedFile:
             graph_sync_attempted_at=(
                 row["graph_sync_attempted_at"] if "graph_sync_attempted_at" in row.keys() else None
             ),
+            vector_sync_attempted_at=(
+                row["vector_sync_attempted_at"]
+                if "vector_sync_attempted_at" in row.keys()
+                else None
+            ),
             indexed_at=row["indexed_at"],
         )
 
@@ -186,6 +197,7 @@ class IndexedFile:
             "graph_synced": self.graph_synced,
             "vectors_synced": self.vectors_synced,
             "graph_sync_attempted_at": self.graph_sync_attempted_at,
+            "vector_sync_attempted_at": self.vector_sync_attempted_at,
             "indexed_at": self.indexed_at,
         }
 
