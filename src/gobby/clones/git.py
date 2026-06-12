@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Literal
 
 logger = logging.getLogger(__name__)
+CLONES_ROOT = Path.home() / ".gobby" / "clones"
 
 
 def _sanitize_url(url: str) -> str:
@@ -162,6 +163,15 @@ class CloneGitManager:
         """
         return self._run_git(args, cwd=cwd, timeout=timeout, check=check, env=env)
 
+    def _resolve_deletable_clone_path(self, clone_path: str | Path) -> Path | None:
+        """Resolve a clone path and ensure it is a child of the managed clones root."""
+        resolved_path = Path(clone_path).expanduser().resolve()
+        clones_root = CLONES_ROOT.expanduser().resolve()
+
+        if resolved_path == clones_root or not resolved_path.is_relative_to(clones_root):
+            return None
+        return resolved_path
+
     def get_remote_url(self, remote: str = "origin") -> str | None:
         """
         Get the remote URL for the repository.
@@ -250,6 +260,8 @@ class CloneGitManager:
                     output=result.stdout,
                 )
             else:
+                if clone_path.exists():
+                    shutil.rmtree(clone_path, ignore_errors=True)
                 return GitOperationResult(
                     success=False,
                     message=f"Clone failed: {result.stderr}",
@@ -335,6 +347,8 @@ class CloneGitManager:
                     output=result.stdout,
                 )
             else:
+                if clone_path.exists():
+                    shutil.rmtree(clone_path, ignore_errors=True)
                 return GitOperationResult(
                     success=False,
                     message=f"Clone failed: {result.stderr}",
@@ -445,7 +459,16 @@ class CloneGitManager:
         Returns:
             GitOperationResult with success status and message
         """
-        clone_path = Path(clone_path).expanduser()
+        resolved_clone_path = self._resolve_deletable_clone_path(clone_path)
+        if resolved_clone_path is None:
+            clones_root = CLONES_ROOT.expanduser().resolve()
+            return GitOperationResult(
+                success=False,
+                message=f"Refusing to delete path outside clones root: {clone_path}",
+                error=f"clone_path_not_under_{clones_root}",
+            )
+
+        clone_path = resolved_clone_path
 
         if not clone_path.exists():
             return GitOperationResult(
@@ -457,7 +480,13 @@ class CloneGitManager:
             # Check for uncommitted changes unless force
             if not force:
                 status = self.get_clone_status(clone_path)
-                if status and status.has_uncommitted_changes:
+                if status is None or (status.branch is None and status.commit is None):
+                    return GitOperationResult(
+                        success=False,
+                        message="Refusing to delete path because it is not a valid git clone.",
+                        error="invalid_clone_path",
+                    )
+                if status.has_uncommitted_changes:
                     return GitOperationResult(
                         success=False,
                         message="Clone has uncommitted changes. Use force=True to delete anyway.",
@@ -519,24 +548,25 @@ class CloneGitManager:
                 cwd=clone_path,
                 timeout=10,
             )
+            if status_result.returncode != 0:
+                return None
 
             has_staged = False
             has_uncommitted = False
             has_untracked = False
 
-            if status_result.returncode == 0:
-                for line in status_result.stdout.split("\n"):
-                    if not line:
-                        continue
-                    index_status = line[0] if len(line) > 0 else " "
-                    worktree_status = line[1] if len(line) > 1 else " "
+            for line in status_result.stdout.split("\n"):
+                if not line:
+                    continue
+                index_status = line[0] if len(line) > 0 else " "
+                worktree_status = line[1] if len(line) > 1 else " "
 
-                    if index_status != " " and index_status != "?":
-                        has_staged = True
-                    if worktree_status != " " and worktree_status != "?":
-                        has_uncommitted = True
-                    if index_status == "?" or worktree_status == "?":
-                        has_untracked = True
+                if index_status != " " and index_status != "?":
+                    has_staged = True
+                if worktree_status != " " and worktree_status != "?":
+                    has_uncommitted = True
+                if index_status == "?" or worktree_status == "?":
+                    has_untracked = True
 
             return CloneStatus(
                 has_uncommitted_changes=has_uncommitted,

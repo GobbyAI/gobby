@@ -309,43 +309,23 @@ def create_clones_registry(
         if not clone:
             return {"success": False, "error": f"Clone not found: {clone_id}"}
 
-        # Store clone info for potential rollback
         clone_path = clone.clone_path
 
-        # Delete the database record first (can be rolled back more easily)
+        result = git_manager.delete_clone(clone_path, force=force)
+        if not result.success:
+            logger.error(
+                f"Failed to delete clone files for {clone_id}: {result.error or result.message}"
+            )
+            return {
+                "success": False,
+                "error": f"Failed to delete clone files: {result.error or result.message}",
+            }
+
         try:
             clone_storage.delete(clone_id)
         except Exception as e:
             logger.error(f"Failed to delete clone record {clone_id}: {e}")
             return {"success": False, "error": f"Failed to delete clone record: {e}"}
-
-        # Delete the files
-        result = git_manager.delete_clone(clone_path, force=force)
-        if not result.success:
-            # Rollback: recreate the clone record since file deletion failed
-            logger.error(
-                f"Failed to delete clone files for {clone_id}, "
-                f"attempting to restore record: {result.error or result.message}"
-            )
-            try:
-                clone_storage.create(
-                    project_id=clone.project_id,
-                    branch_name=clone.branch_name,
-                    clone_path=clone_path,
-                    base_branch=clone.base_branch,
-                    task_id=clone.task_id,
-                    remote_url=clone.remote_url,
-                )
-                logger.info(f"Restored clone record for {clone_id} after file deletion failure")
-            except Exception as restore_error:
-                logger.error(
-                    f"Failed to restore clone record {clone_id}: {restore_error}. "
-                    f"Clone is now orphaned in database."
-                )
-            return {
-                "success": False,
-                "error": f"Failed to delete clone files: {result.error or result.message}",
-            }
 
         return {"success": True, "message": f"Deleted clone {clone_id}"}
 

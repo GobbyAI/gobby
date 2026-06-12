@@ -48,6 +48,28 @@ class TestCloneGitManagerFullClone:
         assert "--depth" not in cmd
         assert "--single-branch" not in cmd
 
+    def test_full_clone_removes_partial_dir_after_git_error(
+        self, manager, mock_run, tmp_path: Path
+    ) -> None:
+        """Full clone cleans up a partial clone after git exits non-zero."""
+        clone_path = tmp_path / "test_clone"
+
+        def run_clone_with_partial_dir(*_args: object, **_kwargs: object) -> MagicMock:
+            clone_path.mkdir()
+            (clone_path / ".git").mkdir()
+            return MagicMock(returncode=128, stdout="", stderr="fatal: repository not found")
+
+        mock_run.side_effect = run_clone_with_partial_dir
+
+        result = manager.full_clone(
+            remote_url="https://github.com/user/nonexistent.git",
+            clone_path=clone_path,
+            branch="main",
+        )
+
+        assert result.success is False
+        assert not clone_path.exists()
+
 
 class TestCloneGitManagerCreateClone:
     """Tests for CloneGitManager.create_clone method."""
