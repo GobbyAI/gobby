@@ -6,6 +6,7 @@ from typing import Any
 # Import ServiceContainer if available, or just Any for typing
 from gobby.app_context import ServiceContainer
 from gobby.storage.communications import LocalCommunicationsStore
+from gobby.workflows.pipeline.gatekeeper import ApprovalManager
 
 logger = logging.getLogger(__name__)
 
@@ -107,25 +108,34 @@ class ReactionHandler:
         context = message.metadata_json.get("approval_context", {})
         pipeline_run_id = context.get("run_id")
         step_id = context.get("step_id")
+        token = context.get("token")
 
-        if not pipeline_run_id or not step_id:
+        if not pipeline_run_id or not step_id or not token:
             logger.debug("Message does not contain pipeline approval context")
             return
 
-        try:
-            # Check if pipelines service is available
-            pipelines = self._services.pipeline_execution_manager
-            if not pipelines:
-                logger.error("Pipeline manager not available to process approval")
-                return
+        approval_manager = self._get_approval_manager()
+        if not approval_manager:
+            logger.error("Pipeline approval manager not available to process approval")
+            return
 
-            session_id_str = str(identity.session_id) if identity.session_id is not None else None
-            if approved:
-                logger.info(f"Approving pipeline {pipeline_run_id} step {step_id}")
-                await pipelines.approve_step(pipeline_run_id, step_id, session_id_str)
-            else:
-                logger.info(f"Rejecting pipeline {pipeline_run_id} step {step_id}")
-                await pipelines.reject_step(pipeline_run_id, step_id, session_id_str)
+        approver_id = str(identity.id)
+        if approved:
+            logger.info(f"Approving pipeline {pipeline_run_id} step {step_id}")
+            await approval_manager.approve_step(token, approved_by=approver_id)
+        else:
+            logger.info(f"Rejecting pipeline {pipeline_run_id} step {step_id}")
+            await approval_manager.reject_step(token, rejected_by=approver_id)
 
-        except Exception as e:
-            logger.error(f"Failed to process approval action: {e}", exc_info=True)
+    def _get_approval_manager(self) -> Any | None:
+        """Return the pipeline gatekeeper used for token-based approvals."""
+        executor = self._services.pipeline_executor
+        if executor and getattr(executor, "approval_manager", None):
+            return executor.approval_manager
+
+        execution_manager = self._services.pipeline_execution_manager
+        if not execution_manager:
+            return None
+
+        run_db = getattr(self._services, "run_db", None)
+        return ApprovalManager(execution_manager=execution_manager, run_db=run_db)
