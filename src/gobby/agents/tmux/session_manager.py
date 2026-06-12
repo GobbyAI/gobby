@@ -40,7 +40,7 @@ TMUX_HEALTH_CHECK_TIMEOUT_FAILURE_LIMIT = 3
 
 
 def _write_secret_env_file(env: dict[str, str]) -> Path:
-    """Write credential env vars to a private shell file."""
+    """Write env vars that should not ride in tmux ``-e`` to a private shell file."""
     fd, tmp_path = tempfile.mkstemp(prefix="gobby-agent-env-", suffix=".sh")
     path = Path(tmp_path)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -50,11 +50,15 @@ def _write_secret_env_file(env: dict[str, str]) -> Path:
     return path
 
 
+def _requires_tmux_env_file(value: str) -> bool:
+    return ";" in value or value.endswith("\\")
+
+
 def _split_tmux_env(env: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
     """Split env into values safe for tmux ``-e`` and values requiring shell sourcing."""
     public_env, file_env = split_credential_env(env)
     for key, value in list(public_env.items()):
-        if ";" in value:
+        if _requires_tmux_env_file(value):
             file_env[key] = public_env.pop(key)
     return public_env, file_env
 
