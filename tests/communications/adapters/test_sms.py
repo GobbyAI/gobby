@@ -21,6 +21,7 @@ def channel_config() -> ChannelConfig:
         enabled=True,
         config_json={
             "account_sid": "test-account-sid",
+            "auth_token": "$secret:COMMS_SMS_AUTH_TOKEN_TEST",
             "from_number": "+1234567890",
         },
         created_at="2024-01-01T00:00:00Z",
@@ -31,7 +32,7 @@ def channel_config() -> ChannelConfig:
 @pytest.fixture
 def secret_resolver() -> Any:
     def resolver(key: str) -> str | None:
-        if key == "$secret:TWILIO_AUTH_TOKEN":
+        if key == "$secret:COMMS_SMS_AUTH_TOKEN_TEST":
             return "test-auth-token"
         return None
 
@@ -81,7 +82,7 @@ async def test_initialize_missing_config(adapter: SMSAdapter, secret_resolver: A
         channel_type="sms",
         name="Test SMS",
         enabled=True,
-        config_json={},
+        config_json={"auth_token": "$secret:COMMS_SMS_AUTH_TOKEN_TEST"},
         created_at="2024-01-01T00:00:00Z",
         updated_at="2024-01-01T00:00:00Z",
     )
@@ -182,6 +183,7 @@ async def test_messaging_service_sid(secret_resolver: Any) -> None:
         enabled=True,
         config_json={
             "account_sid": "test-account-sid",
+            "auth_token": "$secret:COMMS_SMS_AUTH_TOKEN_TEST",
             "messaging_service_sid": "MG12345",
         },
         created_at="2024-01-01T00:00:00Z",

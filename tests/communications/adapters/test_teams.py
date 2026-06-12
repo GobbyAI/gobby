@@ -21,7 +21,10 @@ def channel_config() -> ChannelConfig:
         channel_type="teams",
         name="Test Teams",
         enabled=True,
-        config_json={},
+        config_json={
+            "app_id": "$secret:COMMS_TEAMS_APP_ID_TEST",
+            "app_password": "$secret:COMMS_TEAMS_APP_PASSWORD_TEST",
+        },
         created_at="2024-01-01T00:00:00Z",
         updated_at="2024-01-01T00:00:00Z",
     )
@@ -30,9 +33,9 @@ def channel_config() -> ChannelConfig:
 @pytest.fixture
 def secret_resolver() -> Any:
     def resolver(key: str) -> str | None:
-        if key == "$secret:TEAMS_APP_ID":
+        if key == "$secret:COMMS_TEAMS_APP_ID_TEST":
             return "test-app-id"
-        if key == "$secret:TEAMS_APP_PASSWORD":
+        if key == "$secret:COMMS_TEAMS_APP_PASSWORD_TEST":
             return "test-app-password"
         return None
 

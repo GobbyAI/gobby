@@ -166,7 +166,11 @@ class CommunicationsManager:
                 self._rate_limiter.set_backoff(cid, duration)
 
         adapter.set_rate_limit_callback(on_rate_limit)
-        await adapter.initialize(channel, self._secret_store.get)
+
+        def resolve_secret_ref(ref: str) -> str | None:
+            return self._secret_store.get(ref.removeprefix("$secret:"))
+
+        await adapter.initialize(channel, resolve_secret_ref)
         return adapter
 
     def _enrich_outbound_metadata(
@@ -597,7 +601,7 @@ class CommunicationsManager:
                 self._secret_store.set(
                     name=secret_name,
                     plaintext_value=str(value),
-                    category="comms",
+                    category="integration",
                     description=f"{channel_type} channel '{name}': {key}",
                 )
                 # Put reference in config so adapter resolves it

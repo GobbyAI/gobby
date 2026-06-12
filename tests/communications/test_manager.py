@@ -7,9 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.communications.adapters.slack import SlackAdapter
 from gobby.communications.manager import CommunicationsManager
 from gobby.communications.models import ChannelConfig, CommsIdentity, CommsMessage
 from gobby.config.communications import ChannelDefaults, CommunicationsConfig
+from gobby.storage.secrets import SecretStore
 
 
 def make_config() -> CommunicationsConfig:
@@ -460,6 +462,51 @@ async def test_add_channel_stores_secrets_in_secret_store():
         created_channel.config_json["signing_secret"]
         == "$secret:COMMS_SLACK_SIGNING_SECRET_MY-SLACK"
     )
+
+
+@pytest.mark.asyncio
+async def test_init_adapter_resolves_secret_refs_with_real_secret_store(
+    temp_db, mock_machine_id: str
+) -> None:
+    """_init_adapter() passes a ref-aware resolver backed by SecretStore.get."""
+    assert mock_machine_id
+    secret_store = SecretStore(temp_db)
+    secret_store.set(
+        name="COMMS_SLACK_BOT_TOKEN_MY-SLACK",
+        plaintext_value="xoxb-scoped-token",
+        category="integration",
+    )
+    secret_store.set(
+        name="COMMS_SLACK_SIGNING_SECRET_MY-SLACK",
+        plaintext_value="scoped-signing-secret",
+        category="integration",
+    )
+    manager = CommunicationsManager(make_config(), make_store(), secret_store, MagicMock())
+    channel = ChannelConfig(
+        id="secret-backed-slack",
+        channel_type="slack",
+        name="my-slack",
+        enabled=True,
+        config_json={
+            "bot_token": "$secret:COMMS_SLACK_BOT_TOKEN_MY-SLACK",
+            "signing_secret": "$secret:COMMS_SLACK_SIGNING_SECRET_MY-SLACK",
+        },
+        created_at="2024-01-01T00:00:00Z",
+        updated_at="2024-01-01T00:00:00Z",
+    )
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"ok": True, "user_id": "U12345"}
+        mock_post.return_value = mock_response
+
+        adapter = await manager._init_adapter(channel)
+
+    assert isinstance(adapter, SlackAdapter)
+    assert adapter._bot_token == "xoxb-scoped-token"
+    assert adapter._signing_secret == "scoped-signing-secret"
+    assert adapter._bot_user_id == "U12345"
+    await adapter.shutdown()
 
 
 @pytest.mark.asyncio

@@ -63,8 +63,11 @@ class TeamsAdapter(BaseChannelAdapter):
         self, config: ChannelConfig, secret_resolver: Callable[[str], str | None]
     ) -> None:
         """Set up API clients, validate credentials."""
-        self._app_id = secret_resolver("$secret:TEAMS_APP_ID") or ""
-        self._app_password = secret_resolver("$secret:TEAMS_APP_PASSWORD") or ""
+        app_id_ref = config.config_json.get("app_id", "")
+        app_password_ref = config.config_json.get("app_password", "")
+
+        self._app_id = (secret_resolver(app_id_ref) if app_id_ref else None) or ""
+        self._app_password = (secret_resolver(app_password_ref) if app_password_ref else None) or ""
 
         if not self._app_id or not self._app_password:
             raise ValueError("TEAMS_APP_ID and TEAMS_APP_PASSWORD secrets are required")

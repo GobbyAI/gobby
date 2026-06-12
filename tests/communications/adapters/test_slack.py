@@ -22,7 +22,10 @@ def channel_config() -> ChannelConfig:
         channel_type="slack",
         name="Test Slack",
         enabled=True,
-        config_json={},
+        config_json={
+            "bot_token": "$secret:COMMS_SLACK_BOT_TOKEN_TEST",
+            "signing_secret": "$secret:COMMS_SLACK_SIGNING_SECRET_TEST",
+        },
         created_at="2024-01-01T00:00:00Z",
         updated_at="2024-01-01T00:00:00Z",
     )
@@ -31,9 +34,9 @@ def channel_config() -> ChannelConfig:
 @pytest.fixture
 def secret_resolver() -> Any:
     def resolver(key: str) -> str | None:
-        if key == "$secret:SLACK_BOT_TOKEN":
+        if key == "$secret:COMMS_SLACK_BOT_TOKEN_TEST":
             return "xoxb-test-token"
-        if key == "$secret:SLACK_SIGNING_SECRET":
+        if key == "$secret:COMMS_SLACK_SIGNING_SECRET_TEST":
             return "test-signing-secret"
         return None
 

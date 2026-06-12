@@ -66,7 +66,9 @@ class SMSAdapter(BaseChannelAdapter):
         self, config: ChannelConfig, secret_resolver: Callable[[str], str | None]
     ) -> None:
         """Set up API clients, validate credentials."""
-        self._auth_token = secret_resolver("$secret:TWILIO_AUTH_TOKEN")
+        auth_token_ref = config.config_json.get("auth_token", "")
+
+        self._auth_token = secret_resolver(auth_token_ref) if auth_token_ref else None
         self._account_sid = config.config_json.get("account_sid")
         self._from_number = config.config_json.get("from_number")
 

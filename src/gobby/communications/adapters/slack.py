@@ -69,8 +69,11 @@ class SlackAdapter(BaseChannelAdapter):
         self, config: ChannelConfig, secret_resolver: Callable[[str], str | None]
     ) -> None:
         """Set up API clients, validate credentials."""
-        self._bot_token = secret_resolver("$secret:SLACK_BOT_TOKEN")
-        self._signing_secret = secret_resolver("$secret:SLACK_SIGNING_SECRET")
+        bot_token_ref = config.config_json.get("bot_token", "")
+        signing_secret_ref = config.config_json.get("signing_secret", "")
+
+        self._bot_token = secret_resolver(bot_token_ref) if bot_token_ref else None
+        self._signing_secret = secret_resolver(signing_secret_ref) if signing_secret_ref else None
 
         if not self._bot_token:
             raise ValueError("SLACK_BOT_TOKEN secret is required")
