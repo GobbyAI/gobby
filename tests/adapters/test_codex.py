@@ -105,6 +105,7 @@ class TestCodexThread:
         assert thread.preview == ""
         assert thread.model_provider == "openai"
         assert thread.created_at == 0
+        assert thread.ephemeral is False
 
     def test_create_full(self) -> None:
         """Create thread with all fields."""
@@ -113,12 +114,14 @@ class TestCodexThread:
             preview="Help me refactor",
             model_provider="anthropic",
             created_at=1704067200,
+            ephemeral=True,
         )
 
         assert thread.id == "thr-456"
         assert thread.preview == "Help me refactor"
         assert thread.model_provider == "anthropic"
         assert thread.created_at == 1704067200
+        assert thread.ephemeral is True
 
 
 class TestCodexTurn:
@@ -650,6 +653,7 @@ class TestCodexAppServerClientThreadManagement:
                 "preview": "",
                 "modelProvider": "openai",
                 "createdAt": 1704067200,
+                "ephemeral": True,
             }
         }
 
@@ -665,8 +669,40 @@ class TestCodexAppServerClientThreadManagement:
 
         assert thread.id == "thr-new"
         assert thread.model_provider == "openai"
+        assert thread.ephemeral is True
         assert "thr-new" in client._threads
         assert client._thread_cwds["thr-new"] == "/project"
+
+    @pytest.mark.asyncio
+    async def test_start_thread_sends_ephemeral_when_requested(self):
+        """start_thread sends ephemeral only when requested."""
+        client = CodexAppServerClient()
+
+        mock_result = {
+            "thread": {
+                "id": "thr-ephemeral",
+                "preview": "",
+                "modelProvider": "openai",
+                "createdAt": 1704067200,
+            }
+        }
+
+        with patch.object(
+            client, "_send_request", new_callable=AsyncMock, return_value=mock_result
+        ) as mock_send:
+            thread = await client.start_thread(
+                cwd="/project",
+                model="gpt-5.4",
+                ephemeral=True,
+            )
+
+            mock_send.assert_called_once_with(
+                "thread/start",
+                {"cwd": "/project", "model": "gpt-5.4", "ephemeral": True},
+            )
+
+        assert thread.id == "thr-ephemeral"
+        assert thread.ephemeral is False
 
     @pytest.mark.asyncio
     async def test_start_thread_tracks_web_chat_terminal_context(self):

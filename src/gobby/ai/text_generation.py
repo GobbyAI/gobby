@@ -556,6 +556,7 @@ class CodexAppServerClientLike(Protocol):
         approval_policy: str | None = None,
         sandbox: str | None = None,
         terminal_context: dict[str, Any] | None = None,
+        ephemeral: bool = False,
     ) -> Any:
         """Start a Codex app-server thread."""
 
@@ -666,6 +667,7 @@ class CodexAppServerTextGenerateAdapter:
                 model=request.model,
                 approval_policy="never",
                 sandbox="readOnly",
+                ephemeral=True,
             )
             thread_id = thread.id
             chunks: list[str] = []

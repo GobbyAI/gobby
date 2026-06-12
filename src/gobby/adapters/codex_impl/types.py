@@ -31,6 +31,7 @@ class CodexThread:
     model_provider: str = "openai"
     created_at: int = 0
     path: str | None = None
+    ephemeral: bool = False
 
 
 @dataclass

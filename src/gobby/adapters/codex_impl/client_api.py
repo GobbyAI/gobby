@@ -22,6 +22,7 @@ async def start_thread(
     approval_policy: str | None = None,
     sandbox: str | None = None,
     terminal_context: dict[str, Any] | None = None,
+    ephemeral: bool = False,
 ) -> CodexThread:
     """
     Start a new Codex conversation thread.
@@ -31,6 +32,7 @@ async def start_thread(
         model: Model override (e.g., "gpt-5.1-codex")
         approval_policy: Approval policy ("never", "unlessTrusted", etc.)
         sandbox: Sandbox mode ("workspaceWrite", "readOnly", etc.)
+        ephemeral: Whether Codex should avoid persisting transcript/history files
 
     Returns:
         CodexThread object with thread ID
@@ -48,6 +50,8 @@ async def start_thread(
             "workspaceWrite": "workspace-write",
             "dangerFullAccess": "danger-full-access",
         }.get(sandbox, sandbox)
+    if ephemeral:
+        params["ephemeral"] = True
 
     pending_context: dict[str, Any] | None = None
     if terminal_context:
@@ -73,6 +77,7 @@ async def start_thread(
         model_provider=thread_data.get("modelProvider", "openai"),
         created_at=thread_data.get("createdAt", 0),
         path=thread_data.get("path"),
+        ephemeral=bool(thread_data.get("ephemeral")),
     )
 
     client._threads[thread.id] = thread
@@ -104,6 +109,7 @@ async def resume_thread(client: CodexAppServerClient, thread_id: str) -> CodexTh
         model_provider=thread_data.get("modelProvider", "openai"),
         created_at=thread_data.get("createdAt", 0),
         path=thread_data.get("path"),
+        ephemeral=bool(thread_data.get("ephemeral")),
     )
 
     client._threads[thread.id] = thread
@@ -142,6 +148,7 @@ async def list_threads(
             preview=item.get("preview", ""),
             model_provider=item.get("modelProvider", "openai"),
             created_at=item.get("createdAt", 0),
+            ephemeral=bool(item.get("ephemeral")),
         )
         threads.append(thread)
         if thread.id:

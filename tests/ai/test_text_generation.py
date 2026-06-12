@@ -1452,12 +1452,14 @@ class FakeCodexAppServerClient:
         approval_policy: str | None = None,
         sandbox: str | None = None,
         terminal_context: dict[str, Any] | None = None,
+        ephemeral: bool = False,
     ) -> SimpleNamespace:
         self.thread_kwargs = {
             "cwd": cwd,
             "model": model,
             "approval_policy": approval_policy,
             "sandbox": sandbox,
+            "ephemeral": ephemeral,
         }
         self.thread_kwargs_list.append(self.thread_kwargs)
         index = len(self.thread_kwargs_list) - 1
@@ -1549,6 +1551,7 @@ async def test_codex_app_server_text_generate_adapter_runs_one_shot_turn() -> No
         "model": "gpt-5.4",
         "approval_policy": "never",
         "sandbox": "readOnly",
+        "ephemeral": True,
     }
     assert client.turn_kwargs == {
         "thread_id": "thread-1",

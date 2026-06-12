@@ -154,6 +154,7 @@ class CodexAppServerClient:
         approval_policy: str | None = None,
         sandbox: str | None = None,
         terminal_context: dict[str, Any] | None = None,
+        ephemeral: bool = False,
     ) -> CodexThread:
         return await client_api.start_thread(
             self,
@@ -162,6 +163,7 @@ class CodexAppServerClient:
             approval_policy=approval_policy,
             sandbox=sandbox,
             terminal_context=terminal_context,
+            ephemeral=ephemeral,
         )
 
     async def resume_thread(self, thread_id: str) -> CodexThread:
