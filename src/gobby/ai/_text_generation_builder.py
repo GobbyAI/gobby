@@ -42,9 +42,9 @@ def _daemon_text_generation_adapter_factories(
             shared_client_provider=codex_client_provider,
             timeout_seconds=config.ai.generation.timeout_seconds,
         ),
-        "gemini": lambda: _adapters.ACPTextGenerateAdapter(_adapters._gemini_acp_client),
-        "grok": lambda: _adapters.ACPTextGenerateAdapter(_adapters._grok_acp_client),
-        "qwen": lambda: _adapters.ACPTextGenerateAdapter(_adapters._qwen_acp_client),
+        "gemini": _adapters._GeminiCLITextGenerateAdapter,
+        "grok": _adapters._GrokCLITextGenerateAdapter,
+        "qwen": _adapters._QwenCLITextGenerateAdapter,
         "droid": _adapters.DroidCLITextGenerateAdapter,
     }
     for endpoint_name in config.ai.generation.local.endpoints:

@@ -8,12 +8,14 @@ import logging
 import os
 import shlex
 import shutil
-from collections.abc import Mapping
+import tempfile
+import uuid
+from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.ai._text_generation_contracts import (
     ACPClientFactory,
-    ACPClientLike,
     CodexAppServerClientFactory,
     CodexAppServerClientLike,
     CodexAppServerClientProvider,
@@ -36,6 +38,14 @@ if TYPE_CHECKING:
     from gobby.llm.base import LLMTextResult
 
 logger = logging.getLogger("gobby.ai.text_generation")
+
+
+_GEMINI_DENY_ALL_POLICY = """[[rule]]
+toolName = "*"
+decision = "deny"
+priority = 999
+denyMessage = "Tool use is disabled for one-shot text generation."
+"""
 
 
 class ClaudeTextGenerateAdapter:
@@ -115,6 +125,220 @@ class ACPTextGenerateAdapter:
             )
         finally:
             await client.stop()
+
+
+async def _run_cli_text_generation_command(
+    provider_name: str,
+    command: Sequence[str],
+    *,
+    cwd: str | None,
+    timeout_seconds: float,
+    env_overrides: Mapping[str, str],
+) -> str:
+    env = os.environ.copy()
+    env.update(env_overrides)
+    env["GOBBY_HOOKS_DISABLED"] = "1"
+    process = await asyncio.create_subprocess_exec(
+        *command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=cwd,
+        env=env,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(),
+            timeout=timeout_seconds,
+        )
+    except TimeoutError as exc:
+        if process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(process.wait(), timeout=2.0)
+        raise RuntimeError(
+            f"{provider_name} CLI timed out after {timeout_seconds:g}s: {shlex.join(command)}"
+        ) from exc
+
+    returncode = process.returncode
+    if returncode:
+        message = _decode(stderr).strip() or _decode(stdout).strip()
+        raise RuntimeError(f"{provider_name} CLI failed with exit code {returncode}: {message}")
+    return _decode(stdout).strip()
+
+
+class _GeminiCLITextGenerateAdapter:
+    """One-shot text_generate adapter for Gemini headless CLI mode."""
+
+    def __init__(
+        self,
+        *,
+        command_path: str | None = None,
+        timeout_seconds: float = 600.0,
+        env: Mapping[str, str] | None = None,
+        session_id_factory: Callable[[], str] | None = None,
+    ) -> None:
+        self._command_path = command_path
+        self._timeout_seconds = timeout_seconds
+        self._env = dict(env or {})
+        self._session_id_factory = session_id_factory or (lambda: str(uuid.uuid4()))
+
+    def _resolve_command_path(self) -> str:
+        path = self._command_path or shutil.which("gemini")
+        if not path:
+            raise FileNotFoundError("Gemini CLI not found in PATH")
+        return path
+
+    def build_command(
+        self, request: TextGenerationRequest, *, session_id: str, policy_path: Path
+    ) -> list[str]:
+        path = self._resolve_command_path()
+        command = [
+            path,
+            "--output-format",
+            "text",
+            "--session-id",
+            session_id,
+            "--admin-policy",
+            str(policy_path),
+            "--approval-mode",
+            "plan",
+        ]
+        if request.model:
+            command.extend(["--model", request.model])
+        command.extend(["--prompt", _compose_prompt(request)])
+        return command
+
+    def build_cleanup_command(self, session_id: str) -> list[str]:
+        return [self._resolve_command_path(), "--delete-session", session_id]
+
+    async def generate(self, request: TextGenerationRequest) -> str:
+        request = _with_one_shot_directive(request)
+        session_id = self._session_id_factory()
+        if not session_id:
+            raise RuntimeError("Gemini CLI session ID factory returned an empty session ID")
+
+        with tempfile.TemporaryDirectory(prefix="gobby-gemini-textgen-") as temp_dir:
+            policy_path = Path(temp_dir) / "deny-all-tools.toml"
+            policy_path.write_text(_GEMINI_DENY_ALL_POLICY, encoding="utf-8")
+            command = self.build_command(request, session_id=session_id, policy_path=policy_path)
+            cleanup_command = self.build_cleanup_command(session_id)
+            try:
+                return await _run_cli_text_generation_command(
+                    "Gemini",
+                    command,
+                    cwd=request.cwd,
+                    timeout_seconds=self._timeout_seconds,
+                    env_overrides=self._env,
+                )
+            finally:
+                await _run_cli_text_generation_command(
+                    "Gemini session cleanup",
+                    cleanup_command,
+                    cwd=request.cwd,
+                    timeout_seconds=self._timeout_seconds,
+                    env_overrides=self._env,
+                )
+
+
+class _QwenCLITextGenerateAdapter:
+    """One-shot text_generate adapter for Qwen positional headless CLI mode."""
+
+    def __init__(
+        self,
+        *,
+        command_path: str | None = None,
+        timeout_seconds: float = 600.0,
+        env: Mapping[str, str] | None = None,
+    ) -> None:
+        self._command_path = command_path
+        self._timeout_seconds = timeout_seconds
+        self._env = dict(env or {})
+
+    def build_command(self, request: TextGenerationRequest) -> list[str]:
+        path = self._command_path or shutil.which("qwen")
+        if not path:
+            raise FileNotFoundError("Qwen CLI not found in PATH")
+
+        command = [
+            path,
+            "--chat-recording=false",
+            "--max-tool-calls",
+            "0",
+            "--max-session-turns",
+            "1",
+            "--output-format",
+            "text",
+        ]
+        if request.model:
+            command.extend(["--model", request.model])
+        command.append(_compose_prompt(request))
+        return command
+
+    async def generate(self, request: TextGenerationRequest) -> str:
+        request = _with_one_shot_directive(request)
+        return await _run_cli_text_generation_command(
+            "Qwen",
+            self.build_command(request),
+            cwd=request.cwd,
+            timeout_seconds=self._timeout_seconds,
+            env_overrides=self._env,
+        )
+
+
+class _GrokCLITextGenerateAdapter:
+    """One-shot text_generate adapter for Grok top-level headless CLI mode."""
+
+    def __init__(
+        self,
+        *,
+        command_path: str | None = None,
+        timeout_seconds: float = 600.0,
+        env: Mapping[str, str] | None = None,
+    ) -> None:
+        self._command_path = command_path
+        self._timeout_seconds = timeout_seconds
+        self._env = dict(env or {})
+
+    def build_command(self, request: TextGenerationRequest, *, leader_socket: Path) -> list[str]:
+        path = self._command_path or shutil.which("grok")
+        if not path:
+            raise FileNotFoundError("Grok CLI not found in PATH")
+
+        command = [
+            path,
+            "--output-format",
+            "plain",
+            "--permission-mode",
+            "plan",
+            "--max-turns",
+            "1",
+            "--no-memory",
+            "--no-subagents",
+            "--disable-web-search",
+            "--deny",
+            "*",
+            "--disallowed-tools",
+            "*",
+            "--leader-socket",
+            str(leader_socket),
+        ]
+        if request.model:
+            command.extend(["--model", request.model])
+        command.extend(["--single", _compose_prompt(request)])
+        return command
+
+    async def generate(self, request: TextGenerationRequest) -> str:
+        request = _with_one_shot_directive(request)
+        with tempfile.TemporaryDirectory(prefix="gobby-grok-textgen-") as temp_dir:
+            leader_socket = Path(temp_dir) / "leader.sock"
+            return await _run_cli_text_generation_command(
+                "Grok",
+                self.build_command(request, leader_socket=leader_socket),
+                cwd=request.cwd,
+                timeout_seconds=self._timeout_seconds,
+                env_overrides=self._env,
+            )
 
 
 class CodexAppServerTextGenerateAdapter:
@@ -331,21 +555,3 @@ def _codex_app_server_client() -> CodexAppServerClientLike:
     from gobby.adapters.codex_impl.client import CodexAppServerClient
 
     return CodexAppServerClient()
-
-
-def _gemini_acp_client() -> ACPClientLike:
-    from gobby.adapters.gemini_acp_client import GeminiACPClient
-
-    return GeminiACPClient()
-
-
-def _grok_acp_client() -> ACPClientLike:
-    from gobby.adapters.grok_acp_client import GrokACPClient
-
-    return GrokACPClient()
-
-
-def _qwen_acp_client() -> ACPClientLike:
-    from gobby.adapters.qwen_acp_client import QwenACPClient
-
-    return QwenACPClient()

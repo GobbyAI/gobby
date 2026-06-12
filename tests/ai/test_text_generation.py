@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar
 
 import pytest
 
+import gobby.ai._text_generation_adapters as text_generation_adapters
 from gobby.adapters.acp_client import StreamEvent
 from gobby.ai import (
     ACPTextGenerateAdapter,
@@ -24,6 +26,7 @@ from gobby.ai import (
     TextGenerationService,
     build_daemon_text_generation_service,
 )
+from gobby.ai._text_generation_builder import _daemon_text_generation_adapter_factories
 from gobby.ai.text_generation import ONE_SHOT_DIRECTIVE
 from gobby.config.app import DaemonConfig
 from gobby.config.feature_base import FeatureProfile
@@ -1273,6 +1276,21 @@ def test_build_daemon_text_generation_service_defers_adapter_instantiation() -> 
     } == set(providers)
 
 
+def test_daemon_text_generation_builder_maps_feature_providers_to_cli_adapters() -> None:
+    factories = _daemon_text_generation_adapter_factories(DaemonConfig())
+
+    gemini_adapter = factories["gemini"]()
+    grok_adapter = factories["grok"]()
+    qwen_adapter = factories["qwen"]()
+
+    assert isinstance(gemini_adapter, text_generation_adapters._GeminiCLITextGenerateAdapter)
+    assert isinstance(grok_adapter, text_generation_adapters._GrokCLITextGenerateAdapter)
+    assert isinstance(qwen_adapter, text_generation_adapters._QwenCLITextGenerateAdapter)
+    assert not isinstance(gemini_adapter, ACPTextGenerateAdapter)
+    assert not isinstance(grok_adapter, ACPTextGenerateAdapter)
+    assert not isinstance(qwen_adapter, ACPTextGenerateAdapter)
+
+
 class FakeNativeTextProvider:
     last_instance: ClassVar[FakeNativeTextProvider | None] = None
 
@@ -2101,14 +2119,18 @@ async def test_text_generation_service_no_candidate_timeout_when_unset() -> None
 async def test_build_daemon_text_generation_service_plumbs_candidate_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = HangingACPClient()
-    monkeypatch.setattr("gobby.ai._text_generation_adapters._gemini_acp_client", lambda: client)
+    slow_adapter = SlowAdapter()
+    monkeypatch.setattr(
+        text_generation_adapters,
+        "_GeminiCLITextGenerateAdapter",
+        lambda: slow_adapter,
+    )
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
                 provider="gemini",
-                adapter_style=AIAdapterStyle.ACP,
+                adapter_style=AIAdapterStyle.DAEMON,
                 available=True,
             )
         ]
@@ -2122,8 +2144,6 @@ async def test_build_daemon_text_generation_service_plumbs_candidate_timeout(
         await service.generate(
             TextGenerationRequest(provider="gemini", model="gemini-pro", prompt="never completes")
         )
-
-    assert client.stopped is True
 
 
 class FakeProcess:
@@ -2154,6 +2174,235 @@ class HangingProcess(FakeProcess):
     def kill(self) -> None:
         self.killed = True
         super().kill()
+
+
+@pytest.mark.asyncio
+async def test_gemini_cli_text_generate_adapter_deletes_headless_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[tuple[str, ...]] = []
+    policy_contents: list[str] = []
+    cwds: list[str | None] = []
+    envs: list[dict[str, str]] = []
+    session_id = "11111111-1111-4111-8111-111111111111"
+
+    async def fake_create_subprocess_exec(
+        *command: str,
+        stdout: int,
+        stderr: int,
+        cwd: str | None,
+        env: dict[str, str],
+    ) -> FakeProcess:
+        commands.append(command)
+        cwds.append(cwd)
+        envs.append(env)
+        if "--admin-policy" in command:
+            policy_path = Path(command[command.index("--admin-policy") + 1])
+            policy_contents.append(policy_path.read_text(encoding="utf-8"))
+            return FakeProcess(b"gemini text\n")
+        return FakeProcess(b"deleted\n")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    adapter = text_generation_adapters._GeminiCLITextGenerateAdapter(
+        command_path="/usr/local/bin/gemini",
+        session_id_factory=lambda: session_id,
+    )
+
+    response = await adapter.generate(
+        TextGenerationRequest(
+            prompt="explain",
+            system_prompt="system",
+            model="gemini-3-pro",
+            cwd="/tmp/project",
+        )
+    )
+
+    assert response == "gemini text"
+    policy_path = commands[0][commands[0].index("--admin-policy") + 1]
+    assert commands == [
+        (
+            "/usr/local/bin/gemini",
+            "--output-format",
+            "text",
+            "--session-id",
+            session_id,
+            "--admin-policy",
+            policy_path,
+            "--approval-mode",
+            "plan",
+            "--model",
+            "gemini-3-pro",
+            "--prompt",
+            f"system\n\n{ONE_SHOT_DIRECTIVE}\n\nexplain",
+        ),
+        ("/usr/local/bin/gemini", "--delete-session", session_id),
+    ]
+    assert policy_contents == [
+        '\n'.join(
+            [
+                "[[rule]]",
+                'toolName = "*"',
+                'decision = "deny"',
+                "priority = 999",
+                'denyMessage = "Tool use is disabled for one-shot text generation."',
+                "",
+            ]
+        )
+    ]
+    assert cwds == ["/tmp/project", "/tmp/project"]
+    assert envs[0]["GOBBY_HOOKS_DISABLED"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_gemini_cli_text_generate_adapter_fails_when_cleanup_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[tuple[str, ...]] = []
+    session_id = "22222222-2222-4222-8222-222222222222"
+
+    async def fake_create_subprocess_exec(
+        *command: str,
+        stdout: int,
+        stderr: int,
+        cwd: str | None,
+        env: dict[str, str],
+    ) -> FakeProcess:
+        commands.append(command)
+        if "--delete-session" in command:
+            return FakeProcess(b"", b"cleanup denied", returncode=1)
+        return FakeProcess(b"gemini text\n")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    adapter = text_generation_adapters._GeminiCLITextGenerateAdapter(
+        command_path="/usr/local/bin/gemini",
+        session_id_factory=lambda: session_id,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Gemini session cleanup CLI failed with exit code 1: cleanup denied",
+    ):
+        await adapter.generate(TextGenerationRequest(prompt="explain"))
+
+    assert commands[1] == ("/usr/local/bin/gemini", "--delete-session", session_id)
+
+
+@pytest.mark.asyncio
+async def test_qwen_cli_text_generate_adapter_disables_recording_and_tool_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[tuple[str, ...]] = []
+    cwds: list[str | None] = []
+    envs: list[dict[str, str]] = []
+
+    async def fake_create_subprocess_exec(
+        *command: str,
+        stdout: int,
+        stderr: int,
+        cwd: str | None,
+        env: dict[str, str],
+    ) -> FakeProcess:
+        commands.append(command)
+        cwds.append(cwd)
+        envs.append(env)
+        return FakeProcess(b"qwen text\n")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    adapter = text_generation_adapters._QwenCLITextGenerateAdapter(
+        command_path="/usr/local/bin/qwen"
+    )
+
+    response = await adapter.generate(
+        TextGenerationRequest(
+            prompt="explain",
+            system_prompt="system",
+            model="qwen3-coder",
+            cwd="/tmp/project",
+        )
+    )
+
+    assert response == "qwen text"
+    assert commands == [
+        (
+            "/usr/local/bin/qwen",
+            "--chat-recording=false",
+            "--max-tool-calls",
+            "0",
+            "--max-session-turns",
+            "1",
+            "--output-format",
+            "text",
+            "--model",
+            "qwen3-coder",
+            f"system\n\n{ONE_SHOT_DIRECTIVE}\n\nexplain",
+        )
+    ]
+    assert "--resume" not in commands[0]
+    assert "--continue" not in commands[0]
+    assert "--session-id" not in commands[0]
+    assert cwds == ["/tmp/project"]
+    assert envs[0]["GOBBY_HOOKS_DISABLED"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_grok_cli_text_generate_adapter_uses_non_session_headless_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[tuple[str, ...]] = []
+    leader_socket_parent_exists: list[bool] = []
+    cwds: list[str | None] = []
+
+    async def fake_create_subprocess_exec(
+        *command: str,
+        stdout: int,
+        stderr: int,
+        cwd: str | None,
+        env: dict[str, str],
+    ) -> FakeProcess:
+        commands.append(command)
+        cwds.append(cwd)
+        leader_socket = Path(command[command.index("--leader-socket") + 1])
+        leader_socket_parent_exists.append(leader_socket.parent.exists())
+        return FakeProcess(b"grok text\n")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    adapter = text_generation_adapters._GrokCLITextGenerateAdapter(command_path="/usr/bin/grok")
+
+    response = await adapter.generate(
+        TextGenerationRequest(
+            prompt="explain",
+            system_prompt="system",
+            model="grok-4",
+            cwd="/tmp/project",
+        )
+    )
+
+    assert response == "grok text"
+    command = commands[0]
+    assert command[:18] == (
+        "/usr/bin/grok",
+        "--output-format",
+        "plain",
+        "--permission-mode",
+        "plan",
+        "--max-turns",
+        "1",
+        "--no-memory",
+        "--no-subagents",
+        "--disable-web-search",
+        "--deny",
+        "*",
+        "--disallowed-tools",
+        "*",
+        "--leader-socket",
+        command[15],
+        "--model",
+        "grok-4",
+    )
+    assert command[-2:] == ("--single", f"system\n\n{ONE_SHOT_DIRECTIVE}\n\nexplain")
+    assert {"--acp", "--session-id", "--resume", "--continue", "-r", "-c"}.isdisjoint(command)
+    assert leader_socket_parent_exists == [True]
+    assert cwds == ["/tmp/project"]
 
 
 @pytest.mark.asyncio
