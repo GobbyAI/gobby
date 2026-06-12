@@ -651,20 +651,27 @@ class CodexAppServerClient:
         # Queue to receive notifications
         event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         turn_completed = asyncio.Event()
+        turn_id: str | None = None
 
         def on_event(method: str, params: dict[str, Any]) -> None:
+            turn = params.get("turn")
+            event_thread_id = params.get("threadId")
+            if not isinstance(event_thread_id, str) and isinstance(turn, dict):
+                event_thread_id = turn.get("threadId")
+            event_turn_id = params.get("turnId")
+            if not isinstance(event_turn_id, str) and isinstance(turn, dict):
+                event_turn_id = turn.get("id")
+            if event_thread_id not in (None, thread_id) or (
+                turn_id and event_turn_id not in (None, turn_id)
+            ):
+                return
             event_queue.put_nowait({"type": method, **params})
-            if method == "turn/completed":
+            if method == "turn/completed" and event_turn_id == turn_id:
                 turn_completed.set()
 
         # Register handlers for all turn-related events
-        event_methods = [
-            "turn/started",
-            "turn/completed",
-            "item/started",
-            "item/completed",
-            "item/agentMessage/delta",
-        ]
+        event_methods = ["turn/started", "turn/completed", "item/started", "item/completed"]
+        event_methods.append("item/agentMessage/delta")
 
         for method in event_methods:
             self.add_notification_handler(method, on_event)
@@ -672,6 +679,7 @@ class CodexAppServerClient:
         try:
             # Start the turn
             turn = await self.start_turn(thread_id, prompt, images=images, **config_overrides)
+            turn_id = turn.id or None
 
             yield {"type": "turn/created", "turn": turn.__dict__}
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -980,6 +981,43 @@ class TestCodexAppServerClientRunTurn:
 
             assert len(events) >= 1
             assert events[0]["type"] == "turn/created"
+
+    @pytest.mark.asyncio
+    async def test_run_turn_filters_concurrent_thread_events(self):
+        """Concurrent run_turn streams ignore events from other turns."""
+        client = CodexAppServerClient()
+
+        async def mock_send_request(method: str, params: dict[str, Any]) -> dict[str, Any]:
+            assert method == "turn/start"
+            thread_id = params["threadId"]
+            turn_id = f"turn-{thread_id}"
+            return {"turn": {"id": turn_id, "status": "inProgress", "items": []}}
+
+        def emit(method: str, params: dict[str, Any]) -> None:
+            for handler in list(client._notification_handlers.get(method, [])):
+                handler(method, params)
+
+        async def drain(iterator: AsyncIterator[dict[str, Any]]) -> list[dict[str, Any]]:
+            return [event async for event in iterator]
+
+        with patch.object(client, "_send_request", new_callable=AsyncMock) as send_request:
+            send_request.side_effect = mock_send_request
+            first = client.run_turn("first", "Prompt one")
+            second = client.run_turn("second", "Prompt two")
+
+            assert (await anext(first))["type"] == "turn/created"
+            assert (await anext(second))["type"] == "turn/created"
+
+            emit("item/completed", {"threadId": "second", "turnId": "turn-second", "item": {}})
+            emit("turn/completed", {"threadId": "second", "turn": {"id": "turn-second"}})
+            emit("item/completed", {"threadId": "first", "turnId": "turn-first", "item": {}})
+            emit("turn/completed", {"threadId": "first", "turn": {"id": "turn-first"}})
+
+            first_events = await drain(first)
+            second_events = await drain(second)
+
+        assert [event["threadId"] for event in first_events] == ["first", "first"]
+        assert [event["threadId"] for event in second_events] == ["second", "second"]
 
 
 class TestCodexAppServerClientAuthentication:
