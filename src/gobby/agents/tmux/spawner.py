@@ -9,6 +9,7 @@ previously owned by the terminal orchestration layer.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import re
 import shlex
@@ -165,12 +166,16 @@ class TmuxSpawner(TerminalSpawnerBase):
         try:
             verified_info, verification_error = await self._verify_live_pane(info.name)
         except Exception as e:
+            with contextlib.suppress(Exception):
+                await self._session_manager.kill_session(info.name, missing_ok=True)
             return SpawnResult(
                 success=False,
                 message=f"tmux session '{info.name}' failed live-pane verification",
                 error=f"tmux session verification failed: {e}",
             )
         if verified_info is None:
+            with contextlib.suppress(Exception):
+                await self._session_manager.kill_session(info.name, missing_ok=True)
             return SpawnResult(
                 success=False,
                 message=f"tmux session '{info.name}' failed live-pane verification",
