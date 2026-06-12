@@ -81,7 +81,6 @@ async def test_gateway_exposes_expected_methods() -> None:
         "ingest_file",
         "ingest_url",
         "collect",
-        "research",
         "compile",
         "audit",
         "trust",
@@ -91,6 +90,7 @@ async def test_gateway_exposes_expected_methods() -> None:
         "refresh",
     ):
         assert callable(getattr(gateway, method_name))
+    assert not hasattr(gateway, "research")
 
 
 async def test_ask_uses_read_only_cli_args(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -99,11 +99,11 @@ async def test_ask_uses_read_only_cli_args(monkeypatch: pytest.MonkeyPatch) -> N
         "query": "How do hooks work?",
         "status": "retrieved",
         "hits": [],
-        "related_pages": [],
         "sources": [],
-        "gaps": [],
-        "stale_candidates": [],
-        "suggested_questions": [],
+        "code_citations": [],
+        "evidence": [],
+        "prompt_token_budget": 12000,
+        "prompt_tokens_estimated": 16,
         "warnings": [],
     }
     calls = _patch_subprocess(monkeypatch, [FakeProcess(stdout=_json_bytes(payload))])

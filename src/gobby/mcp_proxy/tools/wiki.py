@@ -44,7 +44,7 @@ def create_wiki_registry(
         name="gobby-wiki",
         description=(
             "Wiki tools - wiki_search, wiki_ask, wiki_read, wiki_attach, wiki_ingest, "
-            "wiki_compile, wiki_research, wiki_audit, wiki_trust, wiki_health, "
+            "wiki_compile, wiki_audit, wiki_trust, wiki_health, "
             "wiki_list_sources, wiki_remove_source"
         ),
     )
@@ -100,7 +100,13 @@ def create_wiki_registry(
 
     @registry.tool(
         name="wiki_ask",
-        description="Ask a question about the wiki. Read-only; optionally request LLM synthesis.",
+        description=(
+            "Ask a question about the wiki. Read-only thin RAG over wiki search: "
+            "top-k hits become a bounded evidence prompt (~12K-token cap) and one "
+            "completion returns an answer with grounded citations. Output reports "
+            "hits, sources, code_citations, evidence, prompt_token_budget, "
+            "prompt_tokens_estimated, and truncation accounting."
+        ),
     )
     async def wiki_ask(
         query: str,
@@ -193,47 +199,6 @@ def create_wiki_registry(
         topic: str | None = None,
     ) -> dict[str, Any]:
         return await _guard(lambda: write_call(project, topic, lambda gwiki: gwiki.compile(output)))
-
-    @registry.tool(
-        name="wiki_research",
-        description="Run wiki research enrichment, optionally in audit mode.",
-    )
-    async def wiki_research(
-        query: str | None = None,
-        project: str | None = None,
-        topic: str | None = None,
-        audit: bool = False,
-        source_constraints: list[str] | None = None,
-        max_steps: int | None = None,
-        max_tokens: int | None = None,
-        max_sources: int | None = None,
-        ai: str = "daemon",
-        require_ai: bool = False,
-    ) -> dict[str, Any]:
-        async def call() -> dict[str, Any]:
-            if query is None and not audit:
-                return _validation_error("query is required unless audit is true")
-            ai_value = _normalize_ai(ai)
-            _validate_positive_int("max_steps", max_steps)
-            _validate_positive_int("max_tokens", max_tokens)
-            _validate_positive_int("max_sources", max_sources)
-            constraints = _string_sequence(source_constraints)
-            return await write_call(
-                project,
-                topic,
-                lambda gwiki: gwiki.research(
-                    query,
-                    audit=audit is True,
-                    source_constraints=constraints,
-                    max_steps=max_steps,
-                    max_tokens=max_tokens,
-                    max_sources=max_sources,
-                    ai=ai_value,
-                    require_ai=require_ai,
-                ),
-            )
-
-        return await _guard(call)
 
     @registry.tool(
         name="wiki_audit",
@@ -370,15 +335,6 @@ def _normalize_ai(value: str | None) -> str:
     if ai not in _AI_VALUES:
         raise ValueError("ai must be one of auto, daemon, direct, off")
     return ai
-
-
-def _validate_positive_int(name: str, value: int | None) -> None:
-    if value is None:
-        return
-    if type(value) is not int:
-        raise ValueError(f"{name} must be an integer")
-    if value <= 0:
-        raise ValueError(f"{name} must be greater than 0")
 
 
 def _ingest_paths(path: str | None, paths: list[str] | None) -> list[str]:

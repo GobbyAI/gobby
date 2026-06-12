@@ -5,7 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
-from collections.abc import Awaitable, Callable, Iterator, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -105,71 +105,6 @@ class RecordingGcodeGateway(GcodeGateway):
         return json.dumps({"command": command_key}).encode(), b""
 
 
-class RecordingResearchGateway:
-    instances: list[RecordingResearchGateway] = []
-
-    def __init__(
-        self,
-        *,
-        binary: str | None = None,
-        project_root: str | Path | None = None,
-        topic: str | None = None,
-        timeout_seconds: float = 30.0,
-    ) -> None:
-        self.project_root = project_root
-        self.topic = topic
-        self.calls: list[dict[str, Any]] = []
-        RecordingResearchGateway.instances.append(self)
-
-    async def research(
-        self,
-        query: str | None = None,
-        *,
-        audit: bool = False,
-        source_constraints: Sequence[str] | None = None,
-        max_steps: int | None = None,
-        max_tokens: int | None = None,
-        max_sources: int | None = None,
-        ai: str | None = None,
-        require_ai: bool = False,
-    ) -> dict[str, Any]:
-        self.calls.append(
-            {
-                "query": query,
-                "audit": audit,
-                "source_constraints": list(source_constraints or ()),
-                "max_steps": max_steps,
-                "max_tokens": max_tokens,
-                "max_sources": max_sources,
-                "ai": ai,
-                "require_ai": require_ai,
-            }
-        )
-        return {
-            "ok": True,
-            "command": "research",
-            "payload": {"status": "completed", "changed_paths": ["research.md"]},
-            "stderr": "",
-        }
-
-
-class RecordingResearchCoordinator:
-    def __init__(self, gateway: RecordingResearchGateway) -> None:
-        self.gateway = gateway
-
-    async def handle_write_result(self, result: dict[str, Any]) -> dict[str, Any]:
-        handled = dict(result)
-        handled["index_handoff"] = {"status": "completed"}
-        return handled
-
-
-@pytest.fixture(autouse=True)
-def reset_recording_research_gateway_instances() -> Iterator[None]:
-    RecordingResearchGateway.instances = []
-    yield
-    RecordingResearchGateway.instances = []
-
-
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
@@ -189,20 +124,6 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
         ("ingest_file", "ingest-file", lambda: gateway.ingest_file("notes.md")),
         ("ingest_url", "ingest-url", lambda: gateway.ingest_url(["https://example.com"])),
         ("collect", "collect", lambda: gateway.collect("inbox")),
-        (
-            "research",
-            "research",
-            lambda: gateway.research(
-                "freshness",
-                audit=True,
-                source_constraints=["https://example.com"],
-                max_steps=3,
-                max_tokens=1024,
-                max_sources=2,
-                ai="daemon",
-                require_ai=True,
-            ),
-        ),
         ("compile", "compile", lambda: gateway.compile("/tmp/out.md")),
         ("audit", "audit", gateway.audit),
         ("trust", "trust", gateway.trust),
@@ -238,16 +159,6 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
         assert "--scope" not in argv
         assert _observed_flags(argv) <= _allowed_flags(contract, cli_name)
         assert "--format" in argv
-        if cli_name == "research":
-            assert {
-                "--audit",
-                "--source-constraint",
-                "--max-steps",
-                "--max-tokens",
-                "--max-sources",
-                "--ai",
-                "--require-ai",
-            } <= _observed_flags(argv)
         if cli_name == "ask":
             assert {"--llm", "--ai", "--require-ai"} <= _observed_flags(argv)
         if cli_name == "health":
@@ -343,7 +254,6 @@ def test_wiki_mcp_tools_are_backed_by_documented_gwiki_commands() -> None:
         "wiki_attach": "ingest-file",
         "wiki_ingest": "ingest-url",
         "wiki_compile": "compile",
-        "wiki_research": "research",
         "wiki_audit": "audit",
         "wiki_trust": "trust",
         "wiki_health": "health",
@@ -356,111 +266,15 @@ def test_wiki_mcp_tools_are_backed_by_documented_gwiki_commands() -> None:
 
     assert set(tool_to_command) <= tool_names
     assert set(tool_to_command.values()) <= daemon_commands
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_wiki_research_mcp_routes_d5_options_to_gateway() -> None:
-    registry = create_wiki_registry(
-        db=None,
-        gateway_cls=RecordingResearchGateway,
-        update_coordinator_cls=RecordingResearchCoordinator,
-    )
-
-    result = await registry.call(
-        "wiki_research",
-        {
-            "topic": "freshness",
-            "query": "Fill citation gaps",
-            "audit": True,
-            "source_constraints": ["https://example.com"],
-            "max_steps": 4,
-            "max_tokens": 2048,
-            "max_sources": 3,
-            "ai": "direct",
-            "require_ai": True,
-        },
-    )
-
-    gateway = RecordingResearchGateway.instances[-1]
-    assert gateway.topic == "freshness"
-    assert gateway.calls == [
-        {
-            "query": "Fill citation gaps",
-            "audit": True,
-            "source_constraints": ["https://example.com"],
-            "max_steps": 4,
-            "max_tokens": 2048,
-            "max_sources": 3,
-            "ai": "direct",
-            "require_ai": True,
-        }
-    ]
-    assert result["success"] is True
-    assert result["paths"]["changed_paths"] == ["research.md"]
-    assert result["index_handoff"] == {"status": "completed"}
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_wiki_research_mcp_rejects_bool_positive_int_values() -> None:
-    registry = create_wiki_registry(
-        db=None,
-        gateway_cls=RecordingResearchGateway,
-        update_coordinator_cls=RecordingResearchCoordinator,
-    )
-
-    result = await registry.call(
-        "wiki_research",
-        {"topic": "freshness", "query": "Fill citation gaps", "max_steps": True},
-    )
-
-    assert result == {
-        "success": False,
-        "ok": False,
-        "error": "max_steps must be an integer",
-    }
-    assert RecordingResearchGateway.instances == []
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_wiki_research_mcp_requires_query_unless_audit() -> None:
-    registry = create_wiki_registry(
-        db=None,
-        gateway_cls=RecordingResearchGateway,
-        update_coordinator_cls=RecordingResearchCoordinator,
-    )
-
-    missing_query = await registry.call("wiki_research", {})
-    audit = await registry.call("wiki_research", {"audit": True})
-
-    gateway = RecordingResearchGateway.instances[-1]
-    assert missing_query == {
-        "success": False,
-        "ok": False,
-        "error": "query is required unless audit is true",
-    }
-    assert gateway.calls == [
-        {
-            "query": None,
-            "audit": True,
-            "source_constraints": [],
-            "max_steps": None,
-            "max_tokens": None,
-            "max_sources": None,
-            "ai": "daemon",
-            "require_ai": False,
-        }
-    ]
-    assert audit["success"] is True
+    assert "wiki_research" not in tool_names
+    assert "research" not in daemon_commands
 
 
 @pytest.mark.unit
 def test_gwiki_contract_documents_daemon_parsed_keys() -> None:
     contract = _contract("gwiki")
 
-    assert contract["contract_version"] == 1
+    assert contract["contract_version"] == 5
     assert {"changed_paths", "citations", "raw_path", "source_path", "path"} <= _json_keys(
         contract, "ingest-file"
     )
@@ -468,7 +282,19 @@ def test_gwiki_contract_documents_daemon_parsed_keys() -> None:
         contract, "ingest-url"
     )
     assert {"path", "raw_path", "source_path"} <= _json_keys(contract, "sources")
-    assert {"hits", "related_pages", "sources", "warnings"} <= _json_keys(contract, "ask")
+    assert {
+        "hits",
+        "sources",
+        "code_citations",
+        "evidence",
+        "prompt_token_budget",
+        "prompt_tokens_estimated",
+        "warnings",
+    } <= _json_keys(contract, "ask")
+    assert "related_pages" not in _json_keys(contract, "ask")
+    assert {"results", "code_citations", "snippet", "source_path", "result_type"} <= _json_keys(
+        contract, "search"
+    )
     assert {"changed_paths"} <= _json_keys(contract, "refresh")
     assert {
         "trust_status",

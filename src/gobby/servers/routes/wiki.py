@@ -166,24 +166,6 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
         query = _optional_string((body or {}).get("query"))
         return await _write_call(server, project, topic, lambda gateway: gateway.collect(query))
 
-    @router.post("/research")
-    async def research(
-        body: dict[str, Any] | None = Body(default=None),
-        project: str | None = Query(None),
-        topic: str | None = Query(None),
-    ) -> dict[str, Any]:
-        payload = body or {}
-        query = _optional_string(payload.get("query"))
-        audit = payload.get("audit", False) is True
-        if query is None and not audit:
-            raise HTTPException(status_code=400, detail="query is required unless audit is true")
-        return await _write_call(
-            server,
-            project,
-            topic,
-            lambda gateway: gateway.research(query, audit=audit),
-        )
-
     @router.post("/compile")
     async def compile_wiki(
         body: dict[str, Any] | None = Body(default=None),
