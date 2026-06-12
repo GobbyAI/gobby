@@ -137,19 +137,30 @@ fn forward_downstream(command: &OsStr, stdin_raw: &[u8]) -> Option<Vec<u8>> {
         .spawn()
         .ok()?;
 
-    if let Some(mut stdin) = child.stdin.take() {
+    let mut stdout_pipe = child.stdout.take()?;
+    let stdout_reader = thread::spawn(move || {
+        let mut stdout = Vec::new();
+        let _ = stdout_pipe.read_to_end(&mut stdout);
+        stdout
+    });
+
+    let stdin_writer = child.stdin.take().map(|mut stdin| {
         // Python's Popen.communicate(input=...) tolerates a downstream that
         // exits without reading stdin (e.g. `printf`). Still collect stdout.
-        let _ = stdin.write_all(stdin_raw);
-    }
+        let stdin_raw = stdin_raw.to_vec();
+        thread::spawn(move || {
+            let _ = stdin.write_all(&stdin_raw);
+        })
+    });
 
     let started = Instant::now();
     loop {
         match child.try_wait() {
             Ok(Some(_status)) => {
-                let mut stdout = Vec::new();
-                let mut stdout_pipe = child.stdout.take()?;
-                let _ = stdout_pipe.read_to_end(&mut stdout);
+                if let Some(writer) = stdin_writer {
+                    let _ = writer.join();
+                }
+                let stdout = stdout_reader.join().ok()?;
                 return (!stdout.is_empty()).then_some(stdout);
             }
             Ok(None) if started.elapsed() < DOWNSTREAM_TIMEOUT => {
@@ -158,6 +169,10 @@ fn forward_downstream(command: &OsStr, stdin_raw: &[u8]) -> Option<Vec<u8>> {
             Ok(None) | Err(_) => {
                 let _ = child.kill();
                 let _ = child.wait();
+                if let Some(writer) = stdin_writer {
+                    let _ = writer.join();
+                }
+                let _ = stdout_reader.join();
                 return None;
             }
         }
@@ -339,15 +354,39 @@ mod tests {
     }
 
     #[test]
-    fn downstream_timeout_returns_before_six_seconds() {
+    fn downstream_large_stdout_returns_full_output_quickly() {
         if cfg!(target_os = "windows") {
             return;
         }
 
         let started = Instant::now();
+        let stdout = forward_downstream(
+            OsStr::new("yes x | head -c 204800"),
+            br#"{"session_id":"sess-123"}"#,
+        )
+        .expect("large downstream stdout should be captured");
+
+        assert_eq!(stdout.len(), 204_800);
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "large stdout should not wait for the downstream timeout"
+        );
+    }
+
+    #[test]
+    fn downstream_timeout_returns_before_six_seconds() {
+        if cfg!(target_os = "windows") {
+            return;
+        }
+
+        let stdin = format!(
+            r#"{{"session_id":"sess-123","transcript_path":"{}"}}"#,
+            "x".repeat(200 * 1024)
+        );
+        let started = Instant::now();
         let mut stdout = Vec::new();
         let exit = handle_with(
-            br#"{"session_id":"sess-123"}"#,
+            stdin.as_bytes(),
             "http://127.0.0.1:9",
             Some(OsStr::new("sleep 10")),
             &mut stdout,
