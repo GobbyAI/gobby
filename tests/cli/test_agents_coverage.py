@@ -16,6 +16,8 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli.agents import agents, resolve_agent_run_id
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
@@ -144,6 +146,71 @@ class TestResolveAgentRunId:
         mock_mgr_fn.return_value = mgr
         mock_db_cls.return_value.fetchall.return_value = [{"id": "run-abc123"}]
         assert resolve_agent_run_id("run-abc") == "run-abc123"
+        mock_db_cls.return_value.fetchall.assert_called_once_with(
+            "SELECT id FROM agent_runs WHERE id LIKE %s ESCAPE '\\' LIMIT 5",
+            ("run-abc%",),
+        )
+
+    @patch("gobby.cli.agents.open_runtime_hub_database")
+    @patch("gobby.cli.agents.get_agent_run_manager")
+    def test_prefix_escapes_like_wildcards(
+        self, mock_mgr_fn: MagicMock, mock_db_cls: MagicMock
+    ) -> None:
+        mgr = MagicMock()
+        mgr.get.return_value = None
+        mock_mgr_fn.return_value = mgr
+        mock_db_cls.return_value.fetchall.return_value = []
+
+        with pytest.raises(click.ClickException, match="not found"):
+            resolve_agent_run_id("run_%")
+
+        mock_db_cls.return_value.fetchall.assert_called_once_with(
+            "SELECT id FROM agent_runs WHERE id LIKE %s ESCAPE '\\' LIMIT 5",
+            ("run\\_\\%%",),
+        )
+
+    @patch("gobby.cli.agents.open_runtime_hub_database")
+    def test_prefix_with_wildcards_resolves_literal_rows(
+        self,
+        mock_db_fn: MagicMock,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        session = session_manager.register(
+            external_id="agent-wildcard-test",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        temp_db.execute(
+            """
+            INSERT INTO agent_runs (id, parent_session_id, provider, prompt)
+            VALUES (%s, %s, %s, %s)
+            """,
+            ("run_%literal", session.id, "codex", "literal wildcard"),
+        )
+        temp_db.execute(
+            """
+            INSERT INTO agent_runs (id, parent_session_id, provider, prompt)
+            VALUES (%s, %s, %s, %s)
+            """,
+            ("run-abc123", session.id, "codex", "unintended wildcard match"),
+        )
+        mock_db_fn.return_value = temp_db
+
+        assert resolve_agent_run_id("run_%") == "run_%literal"
+
+    @patch("gobby.cli.agents.open_runtime_hub_database")
+    @patch("gobby.cli.agents.get_agent_run_manager")
+    def test_empty_ref_rejected_before_prefix_lookup(
+        self, mock_mgr_fn: MagicMock, mock_db_cls: MagicMock
+    ) -> None:
+        with pytest.raises(click.ClickException, match="cannot be empty"):
+            resolve_agent_run_id("  ")
+
+        mock_mgr_fn.assert_not_called()
+        mock_db_cls.assert_not_called()
 
     @patch("gobby.cli.agents.open_runtime_hub_database")
     @patch("gobby.cli.agents.get_agent_run_manager")

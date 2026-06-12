@@ -54,7 +54,7 @@ def validate_task_cmd(
     manager = get_task_manager()
     resolved = resolve_task_id(manager, task_id)
     if not resolved:
-        return
+        raise SystemExit(1)
 
     # Handle --history flag: show validation history
     if history:
@@ -130,9 +130,8 @@ def validate_task_cmd(
         try:
             with open(summary_file, encoding="utf-8") as f:
                 changes_summary = f.read()
-        except Exception as e:
-            click.echo(f"Error reading summary file: {e}", err=True)
-            return
+        except (OSError, UnicodeError) as e:
+            raise click.ClickException(f"Error reading summary file: {e}") from e
     elif summary:
         changes_summary = summary
     else:
@@ -141,8 +140,7 @@ def validate_task_cmd(
         changes_summary = sys.stdin.read()
 
     if not changes_summary.strip():
-        click.echo("Error: Changes summary is required for leaf tasks.", err=True)
-        return
+        raise click.ClickException("Changes summary is required for leaf tasks.")
 
     click.echo(f"Validating task {resolved.id}...")
 
@@ -152,8 +150,7 @@ def validate_task_cmd(
         llm_service = LLMService(config)
         validator = TaskValidator(config.gobby_tasks.validation, llm_service)
     except Exception as e:
-        click.echo(f"Error initializing validator: {e}", err=True)
-        return
+        raise click.ClickException(f"Error initializing validator: {e}") from e
 
     # Run validation
     try:
@@ -176,7 +173,6 @@ def validate_task_cmd(
             "validation_status": result.status,
             "validation_feedback": result.feedback,
         }
-        MAX_RETRIES = 3
         escalation_reason: str | None = None
 
         if result.status == "valid":
@@ -187,7 +183,7 @@ def validate_task_cmd(
             new_fail_count = current_fail_count + 1
             validation_updates["validation_fail_count"] = new_fail_count
 
-            if new_fail_count < MAX_RETRIES:
+            if new_fail_count < max_iterations:
                 fix_task = manager.create_task(
                     project_id=resolved.project_id,
                     title=f"Fix validation failures for {resolved.title}",
@@ -201,18 +197,19 @@ def validate_task_cmd(
                 ) + f"\n\nCreated fix task: {fix_task.id}"
                 click.echo(f"Created fix task: {fix_task.id}")
             else:
-                escalation_reason = f"exceeded_validation_retries ({MAX_RETRIES})"
-                validation_updates["validation_feedback"] = (
-                    result.feedback or ""
-                ) + f"\n\nExceeded max retries ({MAX_RETRIES}). Escalated for human intervention."
+                escalation_reason = f"exceeded_validation_retries ({max_iterations})"
+                validation_updates["validation_feedback"] = (result.feedback or "") + (
+                    f"\n\nExceeded max retries ({max_iterations}). "
+                    "Escalated for human intervention."
+                )
                 click.echo("Exceeded max retries. Task ESCALATED for human intervention.")
 
         manager.update_task(resolved.id, **validation_updates)
         if escalation_reason is not None:
             manager.escalate_task(resolved.id, reason=escalation_reason)
 
-    except Exception as e:
-        click.echo(f"Validation error: {e}", err=True)
+    except (RuntimeError, ValueError) as e:
+        raise click.ClickException(f"Validation error: {e}") from e
 
 
 @click.command("suggest")

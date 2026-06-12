@@ -14,16 +14,21 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import quote
 
 if TYPE_CHECKING:
     from gobby.storage.workflow_audit import WorkflowAuditManager
 
 import click
 
-from gobby.storage.hub.runtime import open_runtime_hub_database
+from gobby.config.app import DaemonConfig
+from gobby.storage.hub.runtime import open_runtime_hub_database, runtime_hub_database
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.utils.daemon_client import DaemonClient
 
 
 def _get_manager() -> LocalWorkflowDefinitionManager:
@@ -32,11 +37,77 @@ def _get_manager() -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
+@contextmanager
+def _manager_context() -> Iterator[LocalWorkflowDefinitionManager]:
+    """Yield a short-lived workflow definition manager and close its owned database."""
+    manager = _get_manager()
+    try:
+        yield manager
+    finally:
+        manager.db.close()
+
+
 def _get_audit_manager() -> WorkflowAuditManager:
     """Get workflow audit manager."""
     from gobby.storage.workflow_audit import WorkflowAuditManager
 
     return WorkflowAuditManager(open_runtime_hub_database(apply_migrations=False))
+
+
+@contextmanager
+def _audit_manager_context() -> Iterator[WorkflowAuditManager]:
+    """Yield a short-lived workflow audit manager and close its owned database."""
+    manager = _get_audit_manager()
+    try:
+        yield manager
+    finally:
+        manager.db.close()
+
+
+def _get_daemon_client(ctx: click.Context) -> DaemonClient:
+    """Get daemon client from CLI context."""
+    config = (ctx.obj or {}).get("config")
+    if isinstance(config, DaemonConfig):
+        return DaemonClient(host="localhost", port=config.daemon_port)
+    return DaemonClient()
+
+
+def _response_detail(response: Any) -> str:
+    """Extract a useful daemon error detail."""
+    try:
+        payload = response.json()
+    except Exception:
+        return str(getattr(response, "text", ""))
+    if isinstance(payload, dict):
+        detail = payload.get("detail") or payload.get("error")
+        if detail:
+            return str(detail)
+    return str(getattr(response, "text", ""))
+
+
+def _toggle_rule_via_daemon(ctx: click.Context, name: str, *, enabled: bool) -> None:
+    """Toggle a rule through the daemon so live rule state is updated in-process."""
+    client = _get_daemon_client(ctx)
+    endpoint = f"/api/rules/{quote(name, safe='')}/toggle"
+    try:
+        response = client.call_http_api(endpoint, method="PUT", json_data={"enabled": enabled})
+    except Exception as e:
+        click.echo(f"Error toggling rule via daemon: {e}", err=True)
+        sys.exit(1)
+
+    if response.status_code == 200:
+        return
+
+    if response.status_code == 404:
+        click.echo(f"Rule not found: {name}", err=True)
+        sys.exit(1)
+
+    detail = _response_detail(response)
+    message = f"Error toggling rule: HTTP {response.status_code}"
+    if detail:
+        message = f"{message}: {detail}"
+    click.echo(message, err=True)
+    sys.exit(1)
 
 
 def _parse_rule_body(row: Any) -> dict[str, Any]:
@@ -97,14 +168,13 @@ def list_rules(
     json_output: bool,
 ) -> None:
     """List rules with optional filters."""
-    manager = _get_manager()
-
-    if event:
-        rows = manager.list_rules_by_event(event, enabled=enabled_flag)
-    elif group:
-        rows = manager.list_rules_by_group(group, enabled=enabled_flag)
-    else:
-        rows = manager.list_all(workflow_type="rule", enabled=enabled_flag)
+    with _manager_context() as manager:
+        if event:
+            rows = manager.list_rules_by_event(event, enabled=enabled_flag)
+        elif group:
+            rows = manager.list_rules_by_group(group, enabled=enabled_flag)
+        else:
+            rows = manager.list_all(workflow_type="rule", enabled=enabled_flag)
 
     if json_output:
         summaries = [_rule_summary(r) for r in rows]
@@ -130,8 +200,8 @@ def list_rules(
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON")
 def show_rule(name: str, json_output: bool) -> None:
     """Show details of a specific rule."""
-    manager = _get_manager()
-    row = manager.get_by_name(name)
+    with _manager_context() as manager:
+        row = manager.get_by_name(name)
 
     if row is None or row.workflow_type != "rule":
         click.echo(f"Rule not found: {name}", err=True)
@@ -164,31 +234,19 @@ def show_rule(name: str, json_output: bool) -> None:
 
 @rules.command("enable")
 @click.argument("name")
-def enable_rule(name: str) -> None:
+@click.pass_context
+def enable_rule(ctx: click.Context, name: str) -> None:
     """Enable a rule."""
-    manager = _get_manager()
-    row = manager.get_by_name(name)
-
-    if row is None or row.workflow_type != "rule":
-        click.echo(f"Rule not found: {name}", err=True)
-        sys.exit(1)
-
-    manager.update(row.id, enabled=True)
+    _toggle_rule_via_daemon(ctx, name, enabled=True)
     click.echo(f"Enabled rule: {name}")
 
 
 @rules.command("disable")
 @click.argument("name")
-def disable_rule(name: str) -> None:
+@click.pass_context
+def disable_rule(ctx: click.Context, name: str) -> None:
     """Disable a rule."""
-    manager = _get_manager()
-    row = manager.get_by_name(name)
-
-    if row is None or row.workflow_type != "rule":
-        click.echo(f"Rule not found: {name}", err=True)
-        sys.exit(1)
-
-    manager.update(row.id, enabled=False)
+    _toggle_rule_via_daemon(ctx, name, enabled=False)
     click.echo(f"Disabled rule: {name}")
 
 
@@ -210,10 +268,10 @@ def import_rules(file: str) -> None:
         click.echo("Rule file must have .yaml or .yml extension.", err=True)
         sys.exit(1)
 
-    from gobby.workflows.sync_rules import sync_bundled_rules
+    from gobby.workflows.sync_rules import sync_rule_file
 
-    db = open_runtime_hub_database(apply_migrations=False)
-    result = sync_bundled_rules(db, rules_path=path.parent)
+    with runtime_hub_database(apply_migrations=False) as db:
+        result = sync_rule_file(db, rule_file=path)
 
     if result.get("errors"):
         for err in result["errors"]:
@@ -231,12 +289,11 @@ def export_rules(group: str | None) -> None:
     """Export rules as YAML."""
     import yaml
 
-    manager = _get_manager()
-
-    if group:
-        rows = manager.list_rules_by_group(group, enabled=None)
-    else:
-        rows = manager.list_all(workflow_type="rule")
+    with _manager_context() as manager:
+        if group:
+            rows = manager.list_rules_by_group(group, enabled=None)
+        else:
+            rows = manager.list_all(workflow_type="rule")
 
     if not rows:
         click.echo("No rules to export.")
@@ -276,8 +333,8 @@ def export_rules(group: str | None) -> None:
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON")
 def audit_rules(session_id: str | None, limit: int, json_output: bool) -> None:
     """Show rule evaluation audit log."""
-    audit = _get_audit_manager()
-    entries = audit.get_entries(session_id=session_id, limit=limit)
+    with _audit_manager_context() as audit:
+        entries = audit.get_entries(session_id=session_id, limit=limit)
 
     if json_output:
         output = []

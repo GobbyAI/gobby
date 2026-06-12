@@ -89,6 +89,18 @@ def _format_turns_for_llm(turns: list[dict[str, Any]]) -> str:
     return "\n\n".join(formatted)
 
 
+def _append_handoff_notes(markdown: str, notes: str | None) -> str:
+    """Append operator notes to a handoff markdown artifact."""
+    if not notes:
+        return markdown
+
+    stripped_notes = notes.strip()
+    if not stripped_notes:
+        return markdown
+
+    return f"{markdown.rstrip()}\n\n## Notes\n{stripped_notes}"
+
+
 @click.group()
 def sessions() -> None:
     """Manage Gobby sessions."""
@@ -97,8 +109,17 @@ def sessions() -> None:
 
 @sessions.command("list")
 @click.option("--project", "-p", "project_ref", help="Filter by project (name or UUID)")
-@click.option("--status", "-s", help="Filter by status (active, completed, handoff_ready)")
-@click.option("--source", help="Filter by source (claude, gemini, qwen, codex, droid)")
+@click.option(
+    "--status",
+    "-s",
+    type=click.Choice(["active", "completed", "handoff_ready", "expired"]),
+    help="Filter by status",
+)
+@click.option(
+    "--source",
+    type=click.Choice(["claude", "gemini", "qwen", "codex", "droid"]),
+    help="Filter by source",
+)
 @click.option("--limit", "-n", default=20, help="Max sessions to show")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def list_sessions(
@@ -204,7 +225,12 @@ def show_session(session_id: str, json_format: bool) -> None:
 @sessions.command("messages")
 @click.argument("session_id")
 @click.option("--limit", "-n", default=50, help="Max messages to show")
-@click.option("--role", "-r", help="Filter by role (user, assistant, tool)")
+@click.option(
+    "--role",
+    "-r",
+    type=click.Choice(["user", "assistant", "tool"]),
+    help="Filter by role",
+)
 @click.option("--offset", "-o", default=0, help="Skip first N messages")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def show_messages(
@@ -279,14 +305,13 @@ def delete_session(session_id: str) -> None:
     with session_manager_context() as manager:
         session = manager.get(session_id)
         if not session:
-            click.echo(f"Session not found: {session_id}", err=True)
-            return
+            raise click.ClickException(f"Session not found: {session_id}")
 
         success = manager.delete(session.id)
     if success:
         click.echo(f"Deleted session: {session.id}")
     else:
-        click.echo(f"Failed to delete session: {session.id}", err=True)
+        raise click.ClickException(f"Failed to delete session: {session.id}")
 
 
 @sessions.command("stats")
@@ -366,12 +391,14 @@ def renumber_sessions(project_ref: str, apply_changes: bool) -> None:
     default=".gobby/session_summaries/",
     help="Directory path for file output",
 )
-@click.argument("notes", required=False)
+@click.option("--notes", "notes_option", help="Additional notes to include in the handoff")
+@click.argument("notes_arg", required=False)
 def create_handoff(
     session_id: str | None,
     output: str,
     output_path: str,
-    notes: str | None,
+    notes_option: str | None,
+    notes_arg: str | None,
 ) -> None:
     """Create handoff context for a session.
 
@@ -400,6 +427,8 @@ def create_handoff(
 
     from gobby.sessions.analyzer import TranscriptAnalyzer
     from gobby.sessions.formatting import format_handoff_as_markdown
+
+    operator_notes = notes_option if notes_option is not None else notes_arg
 
     # Find session
     with session_manager_context() as manager:
@@ -547,6 +576,9 @@ def create_handoff(
         click.echo(f"Warning: LLM summary failed ({e}), using code-only fallback", err=True)
         full_markdown = format_handoff_as_markdown(handoff_ctx)
 
+    if full_markdown:
+        full_markdown = _append_handoff_notes(full_markdown, operator_notes)
+
     # Determine what to save
     save_to_db = output in ("db", "all")
     save_to_file = output in ("file", "all")
@@ -582,8 +614,8 @@ def create_handoff(
     click.echo(f"  Git commits: {len(handoff_ctx.git_commits)}")
     click.echo(f"  Initial goal: {'Yes' if handoff_ctx.initial_goal else 'No'}")
 
-    if notes:
-        click.echo(f"  Notes: {notes[:50]}{'...' if len(notes) > 50 else ''}")
+    if operator_notes:
+        click.echo(f"  Notes: {operator_notes[:50]}{'...' if len(operator_notes) > 50 else ''}")
     for file_path in files_written:
         click.echo(f"  File: {file_path}")
 
@@ -679,6 +711,9 @@ def restore_transcript(
 
     if skipped:
         click.echo(f"\nSkipped {len(skipped)} session(s)")
+        for r in skipped:
+            display_ref = r.get("session_id") or r.get("external_id") or "?"
+            click.echo(f"  {str(display_ref)[:12]}: {r.get('reason', 'skipped')}")
 
     click.echo(f"\nRestored {len(restored_list)} transcript(s)")
 

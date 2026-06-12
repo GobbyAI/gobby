@@ -207,6 +207,52 @@ class TestListTasksCommand:
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.get_project_context")
+    @patch("gobby.cli.tasks.crud.get_claimed_task_owners")
+    def test_list_with_parent_cycle_does_not_recurse_forever(
+        self,
+        mock_claimed: MagicMock,
+        mock_project_ctx: MagicMock,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """Parent cycles in stored data must not crash tree rendering."""
+        mock_project_ctx.return_value = {"id": "proj-123"}
+        mock_claimed.return_value = {}
+
+        first = MagicMock()
+        first.id = "task-1"
+        first.seq_num = 1
+        first.title = "First"
+        first.priority = 2
+        first.parent_task_id = "task-2"
+        first.project_id = "proj-123"
+        first.updated_at = "2024-01-01T00:00:00Z"
+        _set_task_state(first)
+
+        second = MagicMock()
+        second.id = "task-2"
+        second.seq_num = 2
+        second.title = "Second"
+        second.priority = 2
+        second.parent_task_id = "task-1"
+        second.project_id = "proj-123"
+        second.updated_at = "2024-01-01T00:00:00Z"
+        _set_task_state(second)
+
+        mock_manager = MagicMock()
+        mock_manager.list_tasks.return_value = [first, second]
+        mock_manager.db.fetchall.return_value = []
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(cli, ["tasks", "list"])
+
+        assert result.exit_code == 0
+        assert "Found 2 tasks" in result.output
+        assert "First" in result.output
+        assert "Second" in result.output
+
+    @patch("gobby.cli.tasks.crud.get_task_manager")
+    @patch("gobby.cli.tasks.crud.get_project_context")
     def test_list_json_output(
         self,
         mock_project_ctx: MagicMock,
@@ -290,6 +336,29 @@ class TestListTasksCommand:
         mock_manager.list_tasks.assert_called_once()
         call_kwargs = mock_manager.list_tasks.call_args.kwargs
         assert call_kwargs["closed"] is False
+
+    @patch("gobby.cli.tasks.crud.get_task_manager")
+    @patch("gobby.cli.tasks.crud.get_project_context")
+    def test_list_with_escalated_filter_uses_storage_query(
+        self,
+        mock_project_ctx: MagicMock,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+        mock_task: MagicMock,
+    ) -> None:
+        """Test --escalated is pushed into the task query."""
+        mock_project_ctx.return_value = {"id": "proj-123"}
+        mock_manager = MagicMock()
+        mock_manager.list_tasks.return_value = [mock_task]
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(cli, ["tasks", "list", "--escalated", "--limit", "7", "--json"])
+
+        assert result.exit_code == 0
+        call_kwargs = mock_manager.list_tasks.call_args.kwargs
+        assert call_kwargs["closed"] is False
+        assert call_kwargs["escalated"] is True
+        assert call_kwargs["limit"] == 7
 
     @patch("gobby.cli.tasks.crud.filter_tasks_by_stage")
     @patch("gobby.cli.tasks.crud.get_task_manager")
@@ -681,6 +750,35 @@ class TestTaskStatsCommand:
         assert "by_priority" in data
         assert "closed" in data
 
+    @patch("gobby.cli.tasks.crud.get_task_manager")
+    def test_stats_groups_out_of_range_priorities_as_other(
+        self,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """Test stats surfaces unexpected priority values explicitly."""
+        mock_task = MagicMock()
+        _set_task_state(mock_task, "ready")
+        mock_task.priority = 9
+        mock_task.task_type = "chore"
+
+        mock_manager = MagicMock()
+        mock_manager.list_tasks.return_value = [mock_task]
+        mock_manager.list_ready_tasks.return_value = []
+        mock_manager.list_blocked_tasks.return_value = []
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(cli, ["tasks", "stats", "--json"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["by_priority"]["other"] == 1
+
+        result = runner.invoke(cli, ["tasks", "stats"])
+
+        assert result.exit_code == 0
+        assert "Other Priority: 1" in result.output
+
 
 # ==============================================================================
 # Tests for crud.py - CRUD Commands
@@ -777,6 +875,66 @@ class TestCreateTaskCommand:
             priority=2,
             task_type="task",
         )
+
+    @patch("gobby.cli.tasks.crud.resolve_task_id")
+    @patch("gobby.cli.tasks.crud.get_task_manager")
+    @patch("gobby.cli.tasks.crud.get_project_context")
+    def test_create_task_with_bad_dependency_ref_fails_before_create(
+        self,
+        mock_project_ctx: MagicMock,
+        mock_get_manager: MagicMock,
+        mock_resolve_task_id: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """Test bad dependency refs fail the command instead of creating a partial task."""
+        mock_project_ctx.return_value = {"id": "proj-123", "name": "Test Project"}
+        mock_manager = MagicMock()
+        mock_get_manager.return_value = mock_manager
+        mock_resolve_task_id.return_value = None
+
+        result = runner.invoke(cli, ["tasks", "create", "My new task", "--depends-on", "#404"])
+
+        assert result.exit_code != 0
+        assert "Could not add dependencies" in result.output
+        assert "#404: task not found" in result.output
+        mock_manager.create_task.assert_not_called()
+
+    @patch("gobby.storage.task_dependencies.TaskDependencyManager")
+    @patch("gobby.cli.tasks.crud.resolve_task_id")
+    @patch("gobby.cli.tasks.crud.get_task_manager")
+    @patch("gobby.cli.tasks.crud.get_project_context")
+    def test_create_task_with_dependency_attach_error_fails(
+        self,
+        mock_project_ctx: MagicMock,
+        mock_get_manager: MagicMock,
+        mock_resolve_task_id: MagicMock,
+        mock_dependency_manager_cls: MagicMock,
+        runner: CliRunner,
+        mock_task: MagicMock,
+    ) -> None:
+        """Test dependency attach errors fail the command."""
+        mock_project_ctx.return_value = {"id": "proj-123", "name": "Test Project"}
+        mock_manager = MagicMock()
+        mock_manager.create_task.return_value = mock_task
+        mock_get_manager.return_value = mock_manager
+        blocker = MagicMock(id="blocker-id", seq_num=2)
+        mock_resolve_task_id.return_value = blocker
+        mock_dependency_manager = MagicMock()
+        mock_dependency_manager.add_dependency.side_effect = ValueError(
+            "Task cannot depend on itself"
+        )
+        mock_dependency_manager_cls.return_value = mock_dependency_manager
+
+        result = runner.invoke(cli, ["tasks", "create", "My new task", "--depends-on", "#2"])
+
+        assert result.exit_code != 0
+        assert "Could not add dependencies" in result.output
+        assert "#2: Task cannot depend on itself" in result.output
+        assert "Created task" not in result.output
+        mock_dependency_manager.add_dependency.assert_called_once_with(
+            mock_task.id, "blocker-id", "blocks"
+        )
+        mock_manager.delete_task.assert_called_once_with(mock_task.id, unlink=True)
 
 
 class TestShowTaskCommand:
@@ -1037,6 +1195,27 @@ class TestCloseTaskCommand:
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
+    def test_close_task_uses_shared_ref_parser(
+        self,
+        mock_resolve: MagicMock,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+        mock_task: MagicMock,
+    ) -> None:
+        """Test close expands comma and numeric refs through parse_task_refs."""
+        mock_resolve.return_value = mock_task
+        mock_manager = MagicMock()
+        mock_manager.list_tasks.return_value = []
+        mock_manager.close_task.return_value = mock_task
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(cli, ["tasks", "close", "1,2"])
+
+        assert result.exit_code == 0
+        assert [call.args[1] for call in mock_resolve.call_args_list] == ["#1", "#2"]
+
+    @patch("gobby.cli.tasks.crud.get_task_manager")
+    @patch("gobby.cli.tasks.crud.resolve_task_id")
     def test_close_task_with_reason(
         self,
         mock_resolve: MagicMock,
@@ -1079,7 +1258,7 @@ class TestCloseTaskCommand:
 
         result = runner.invoke(cli, ["tasks", "close", "gt-abc123"])
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Cannot close" in result.output
         assert "child tasks still open" in result.output
 
@@ -1446,6 +1625,7 @@ class TestValidateCommand:
 
         result = runner.invoke(cli, ["tasks", "validate", "gt-abc123", "--summary", "   "])
 
+        assert result.exit_code == 1
         assert "Changes summary is required" in result.output
 
 
@@ -1606,7 +1786,7 @@ class TestValidateCommandExtended:
 
         result = runner.invoke(cli, ["tasks", "validate", "gt-nonexistent", "--summary", "test"])
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
     @patch("gobby.cli.tasks.ai.resolve_task_id")
@@ -1666,8 +1846,9 @@ class TestValidateCommandExtended:
 
         result = runner.invoke(cli, ["tasks", "validate", "gt-abc123", "--file", str(summary_file)])
 
-        # Command should attempt to validate (may fail on config but accepts the file)
-        assert result.exit_code == 0
+        # Command should attempt to validate, accept the file, and report init failures.
+        assert result.exit_code == 1
+        assert "Error initializing validator" in result.output
         assert summary_file.read_text() == "This is a test summary from file"
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
@@ -1756,11 +1937,20 @@ class TestValidateCommandExtended:
 
             validator_mock.validate_task.side_effect = async_result
 
-            # Max retries is 3 in code. With 2 failures + 1 new failure = 3 -> Exceeded if check is < MAX
-            # Code: if new_fail_count < MAX_RETRIES (3): create fix task
-            # 2 + 1 = 3. 3 < 3 is False. So it should mark as failed.
+            # With 2 failures + 1 new failure = 3, --max-iterations 3 is exceeded.
 
-            result = runner.invoke(cli, ["tasks", "validate", "gt-abc123", "--summary", "fix"])
+            result = runner.invoke(
+                cli,
+                [
+                    "tasks",
+                    "validate",
+                    "gt-abc123",
+                    "--max-iterations",
+                    "3",
+                    "--summary",
+                    "fix",
+                ],
+            )
 
             assert result.exit_code == 0
             assert "Exceeded max retries" in result.output
@@ -2585,7 +2775,7 @@ class TestDoctorCommand:
 
             result = runner.invoke(cli, ["tasks", "doctor"])
 
-            assert result.exit_code == 0
+            assert result.exit_code == 1
             assert "Found 1 orphan dependencies" in result.output
 
     @patch("gobby.cli.tasks.main.get_task_manager")
@@ -2611,7 +2801,7 @@ class TestDoctorCommand:
 
             result = runner.invoke(cli, ["tasks", "doctor"])
 
-            assert result.exit_code == 0
+            assert result.exit_code == 1
             assert "Found 1 tasks with invalid projects" in result.output
 
     @patch("gobby.cli.tasks.main.get_task_manager")
@@ -2635,7 +2825,7 @@ class TestDoctorCommand:
 
             result = runner.invoke(cli, ["tasks", "doctor"])
 
-            assert result.exit_code == 0
+            assert result.exit_code == 1
             assert "Found 1 dependency cycles" in result.output
 
 
@@ -2811,3 +3001,28 @@ class TestTaskUtilsFunctions:
         assert len(result) == 2
         assert result[0].id == "child-1"
         assert result[1].id == "grandchild-1"
+
+    def test_get_all_descendants_with_parent_cycle(self) -> None:
+        """Descendant collection skips already visited task IDs."""
+        from gobby.cli.tasks._utils import get_all_descendants
+
+        parent = MagicMock()
+        parent.id = "parent-1"
+        child = MagicMock()
+        child.id = "child-1"
+
+        mock_manager = MagicMock()
+
+        def list_tasks_side_effect(**kwargs: str) -> list[MagicMock]:
+            parent_id = kwargs.get("parent_task_id")
+            if parent_id == "parent-1":
+                return [child]
+            if parent_id == "child-1":
+                return [parent]
+            return []
+
+        mock_manager.list_tasks.side_effect = list_tasks_side_effect
+
+        result = get_all_descendants(mock_manager, "parent-1")
+
+        assert [task.id for task in result] == ["child-1"]

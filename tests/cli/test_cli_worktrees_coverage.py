@@ -162,16 +162,24 @@ def test_delete_worktree(
     assert "Deleted worktree: wt-123" in result.output
 
 
-def test_claim_worktree(runner, mock_worktree_manager, mock_resolve_worktree_id) -> None:
+def test_claim_worktree(
+    runner, mock_httpx, mock_worktree_manager, mock_resolve_worktree_id
+) -> None:
     """Test claim worktree command."""
     mock_resolve_worktree_id.return_value = "wt-123"
-    mock_worktree_manager.claim.return_value = True
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"success": True}
+    mock_httpx.return_value = mock_response
 
     with patch("gobby.cli.worktrees.resolve_session_id", return_value="sess-1"):
         result = runner.invoke(worktrees, ["claim", "wt-123", "sess-1"])
 
     assert result.exit_code == 0
     assert "Claimed worktree wt-123" in result.output
+    assert mock_httpx.call_args[1]["json"] == {"worktree_id": "wt-123", "session_id": "sess-1"}
+    mock_worktree_manager.claim.assert_not_called()
 
 
 def test_sync_worktree(runner, mock_httpx, mock_resolve_worktree_id, mock_worktree_manager) -> None:

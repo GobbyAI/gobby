@@ -338,6 +338,19 @@ class LocalMemoryManager:
         self._notify_listeners()
         return self.get_memory(memory_id)
 
+    def update_memory_project(self, memory_id: str, project_id: str) -> Memory:
+        """Update a memory's project assignment and notify storage listeners."""
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE memories SET project_id = %s, updated_at = %s WHERE id = %s",
+                (project_id, datetime.now(UTC).isoformat(), memory_id),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError(f"Memory {memory_id} not found")
+
+        self._notify_listeners()
+        return self.get_memory(memory_id)
+
     def delete_memory(self, memory_id: str) -> bool:
         with self.db.transaction() as conn:
             cursor = conn.execute("DELETE FROM memories WHERE id = %s", (memory_id,))

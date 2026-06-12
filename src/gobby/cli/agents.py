@@ -13,6 +13,8 @@ Commands for managing subagent runs:
 """
 
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any, cast
 
 import click
@@ -26,16 +28,51 @@ from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, W
 from gobby.workflows.definitions import AgentDefinitionBody
 
 
+@contextmanager
+def _runtime_db_context() -> Iterator[Any]:
+    """Yield a short-lived runtime database and close it deterministically."""
+    db = open_runtime_hub_database(apply_migrations=False)
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 def get_agent_run_manager() -> LocalAgentRunManager:
     """Get initialized agent run manager."""
     db = open_runtime_hub_database(apply_migrations=False)
     return LocalAgentRunManager(db)
 
 
+@contextmanager
+def agent_run_manager_context() -> Iterator[LocalAgentRunManager]:
+    """Yield a short-lived agent run manager and close its owned database."""
+    manager = get_agent_run_manager()
+    try:
+        yield manager
+    finally:
+        manager.db.close()
+
+
 def get_agent_definition_manager() -> LocalWorkflowDefinitionManager:
     """Get initialized workflow definition manager for agent definitions."""
     db = open_runtime_hub_database(apply_migrations=False)
     return LocalWorkflowDefinitionManager(db)
+
+
+@contextmanager
+def agent_definition_manager_context() -> Iterator[LocalWorkflowDefinitionManager]:
+    """Yield a short-lived agent definition manager and close its owned database."""
+    manager = get_agent_definition_manager()
+    try:
+        yield manager
+    finally:
+        manager.db.close()
+
+
+def _escape_like_prefix(prefix: str) -> str:
+    """Escape SQL LIKE wildcard characters in an ID prefix."""
+    return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _agent_body(row: WorkflowDefinitionRow) -> tuple[AgentDefinitionBody, dict[str, Any]]:
@@ -107,19 +144,21 @@ def resolve_agent_run_id(run_ref: str) -> str:
     Raises:
         click.ClickException: If run not found or ambiguous
     """
-    manager = get_agent_run_manager()
+    run_ref = run_ref.strip()
+    if not run_ref:
+        raise click.ClickException("Agent run reference cannot be empty")
 
-    # Try exact match first
-    # Optimization: check 36 chars?
-    if len(run_ref) == 36 and manager.get(run_ref):
-        return run_ref
+    with agent_run_manager_context() as manager:
+        # Try exact match first
+        # Optimization: check 36 chars?
+        if len(run_ref) == 36 and manager.get(run_ref):
+            return run_ref
 
-    # Try prefix match
-    db = open_runtime_hub_database(apply_migrations=False)
-    rows = db.fetchall(
-        "SELECT id FROM agent_runs WHERE id LIKE %s LIMIT 5",
-        (f"{run_ref}%",),
-    )
+    with _runtime_db_context() as db:
+        rows = db.fetchall(
+            "SELECT id FROM agent_runs WHERE id LIKE %s ESCAPE '\\' LIMIT 5",
+            (f"{_escape_like_prefix(run_ref)}%",),
+        )
 
     if not rows:
         raise click.ClickException(f"Agent run not found: {run_ref}")
@@ -312,8 +351,8 @@ def list_agent_definitions(
     json_format: bool,
 ) -> None:
     """List agent definitions."""
-    manager = get_agent_definition_manager()
-    rows = manager.list_all(workflow_type="agent", enabled=enabled_flag)
+    with agent_definition_manager_context() as manager:
+        rows = manager.list_all(workflow_type="agent", enabled=enabled_flag)
     summaries = [_agent_definition_summary(row) for row in rows]
     if surface:
         summaries = [agent for agent in summaries if surface in agent.get("surfaces", ["spawn"])]
@@ -343,8 +382,8 @@ def list_agent_definitions(
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def show_agent_definition(name: str, json_format: bool) -> None:
     """Show details for an agent definition."""
-    manager = get_agent_definition_manager()
-    row = manager.get_by_name(name)
+    with agent_definition_manager_context() as manager:
+        row = manager.get_by_name(name)
     if row is None or row.workflow_type != "agent":
         click.echo(f"Agent definition not found: {name}", err=True)
         raise SystemExit(1)
@@ -403,20 +442,19 @@ def list_agent_runs(
     json_format: bool,
 ) -> None:
     """List agent runs."""
-    manager = get_agent_run_manager()
-
-    if session_id:
-        try:
-            session_id = resolve_session_id(session_id)
-        except click.ClickException as e:
-            raise SystemExit(1) from e
-        runs = manager.list_by_session(
-            session_id, status=cast(AgentRunStatus | None, status), limit=limit
-        )
-    elif status == "running":
-        runs = manager.list_running(limit=limit)
-    else:
-        runs = manager.list_by_status(status=status, limit=limit)
+    with agent_run_manager_context() as manager:
+        if session_id:
+            try:
+                session_id = resolve_session_id(session_id)
+            except click.ClickException as e:
+                raise SystemExit(1) from e
+            runs = manager.list_by_session(
+                session_id, status=cast(AgentRunStatus | None, status), limit=limit
+            )
+        elif status == "running":
+            runs = manager.list_running(limit=limit)
+        else:
+            runs = manager.list_by_status(status=status, limit=limit)
 
     if json_format:
         click.echo(json.dumps([r.to_dict() for r in runs], indent=2, default=str))
@@ -450,13 +488,12 @@ def list_agent_runs(
 def show_agent_run(run_ref: str, json_format: bool) -> None:
     """Show details for an agent run (UUID or prefix)."""
     run_id = resolve_agent_run_id(run_ref)
-    manager = get_agent_run_manager()
-    run = manager.get(run_id)
+    with agent_run_manager_context() as manager:
+        run = manager.get(run_id)
 
     if not run:
         # Should not happen if resolve succeeded, but safe check
-        click.echo(f"Agent run not found: {run_id}", err=True)
-        return
+        raise click.ClickException(f"Agent run not found: {run_id}")
 
     if json_format:
         click.echo(json.dumps(run.to_dict(), indent=2, default=str))
@@ -499,12 +536,11 @@ def show_agent_run(run_ref: str, json_format: bool) -> None:
 def agent_status(run_ref: str) -> None:
     """Check status of an agent run (UUID or prefix)."""
     run_id = resolve_agent_run_id(run_ref)
-    manager = get_agent_run_manager()
-    run = manager.get(run_id)
+    with agent_run_manager_context() as manager:
+        run = manager.get(run_id)
 
     if not run:
-        click.echo(f"Agent run not found: {run_id}", err=True)
-        return
+        raise click.ClickException(f"Agent run not found: {run_id}")
 
     status_icon = {
         "pending": "○",
@@ -535,12 +571,11 @@ def stop_agent(run_ref: str) -> None:
     from gobby.utils.daemon_client import DaemonClient
 
     run_id = resolve_agent_run_id(run_ref)
-    manager = get_agent_run_manager()
-    run = manager.get(run_id)
+    with agent_run_manager_context() as manager:
+        run = manager.get(run_id)
 
     if not run:
-        click.echo(f"Agent run not found: {run_id}", err=True)
-        return
+        raise click.ClickException(f"Agent run not found: {run_id}")
 
     if run.status not in ("pending", "running"):
         click.echo(f"Cannot stop agent in status: {run.status}", err=True)
@@ -554,13 +589,12 @@ def stop_agent(run_ref: str) -> None:
             arguments={"run_id": run.id},
         )
     except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        return
+        raise click.ClickException(str(e)) from e
 
     if result.get("success"):
         click.echo(f"Stopped agent run: {run.id}")
     else:
-        click.echo(f"Failed: {result.get('error')}", err=True)
+        raise click.ClickException(f"Failed: {result.get('error')}")
 
 
 @agents.command("kill")
@@ -606,8 +640,7 @@ def kill_agent(run_ref: str, force: bool, stop: bool, yes: bool) -> None:
             },
         )
     except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        return
+        raise click.ClickException(str(e)) from e
 
     if result.get("success"):
         msg = result.get("message", f"Killed agent {run_id}")
@@ -619,7 +652,7 @@ def kill_agent(run_ref: str, force: bool, stop: bool, yes: bool) -> None:
         if result.get("workflow_stopped"):
             click.echo("  (workflow ended)")
     else:
-        click.echo(f"Failed: {result.get('error')}", err=True)
+        raise click.ClickException(f"Failed: {result.get('error')}")
 
 
 @agents.command("check")
@@ -674,12 +707,14 @@ def check_agent(
             timeout=15.0,
         )
     except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        click.echo("Is the Gobby daemon running? Start with: gobby start", err=True)
-        return
+        raise click.ClickException(
+            f"{e}\nIs the Gobby daemon running? Start with: gobby start"
+        ) from e
 
     if json_format:
         click.echo(json.dumps(result, indent=2, default=str))
+        if not result.get("can_spawn", False):
+            raise SystemExit(1)
         return
 
     # Formatted output
@@ -740,6 +775,9 @@ def check_agent(
         if wf_eval.get("lifecycle_path"):
             click.echo(f"\n  Path: {' -> '.join(wf_eval['lifecycle_path'])}")
 
+    if not can_spawn:
+        raise SystemExit(1)
+
 
 @agents.command("stats")
 @click.option("--session", "-s", "session_id", help="Filter by parent session ID")
@@ -750,28 +788,28 @@ def agent_stats(session_id: str | None) -> None:
             session_id = resolve_session_id(session_id)
         except click.ClickException as e:
             raise SystemExit(1) from e
-        manager = get_agent_run_manager()
-        counts = manager.count_by_session(session_id)
+        with agent_run_manager_context() as manager:
+            counts = manager.count_by_session(session_id)
         total = sum(counts.values())
 
         click.echo(f"Agent Statistics for session {session_id[:12]}:")
         click.echo(f"  Total Runs: {total}")
     else:
-        db = open_runtime_hub_database(apply_migrations=False)
-        # Global stats
-        row = db.fetchone(
-            """
-            SELECT
-                COUNT(*) as total,
-                SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success,
-                SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error,
-                SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as running,
-                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-                SUM(CASE WHEN status = 'timeout' THEN 1 ELSE 0 END) as timeout,
-                SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled
-            FROM agent_runs
-            """
-        )
+        with _runtime_db_context() as db:
+            # Global stats
+            row = db.fetchone(
+                """
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success,
+                    SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error,
+                    SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as running,
+                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+                    SUM(CASE WHEN status = 'timeout' THEN 1 ELSE 0 END) as timeout,
+                    SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled
+                FROM agent_runs
+                """
+            )
 
         if row:
             click.echo("Agent Run Statistics:")
@@ -795,29 +833,27 @@ def agent_stats(session_id: str | None) -> None:
 @click.option("--dry-run", "-d", is_flag=True, help="Show what would be cleaned up")
 def cleanup_agents(timeout: int, dry_run: bool) -> None:
     """Clean up stale agent runs."""
-    manager = get_agent_run_manager()
-
     if dry_run:
         # Show what would be cleaned up
-        db = open_runtime_hub_database(apply_migrations=False)
-        running_age_filter = older_than_now_expr(db, "started_at", "%s", "minute")
-        pending_age_filter = older_than_now_expr(db, "created_at", "%s", "minute")
-        stale_running = db.fetchall(
-            f"""
-            SELECT * FROM agent_runs
-            WHERE status = 'running'
-            AND {running_age_filter}
-            """,  # nosec B608 # filter is generated by sql_dialect helper.
-            (timeout,),
-        )
-        stale_pending = db.fetchall(
-            f"""
-            SELECT * FROM agent_runs
-            WHERE status = 'pending'
-            AND {pending_age_filter}
-            """,  # nosec B608 # filter is generated by sql_dialect helper.
-            (60,),
-        )
+        with _runtime_db_context() as db:
+            running_age_filter = older_than_now_expr(db, "started_at", "%s", "minute")
+            pending_age_filter = older_than_now_expr(db, "created_at", "%s", "minute")
+            stale_running = db.fetchall(
+                f"""
+                SELECT * FROM agent_runs
+                WHERE status = 'running'
+                AND {running_age_filter}
+                """,  # nosec B608 # filter is generated by sql_dialect helper.
+                (timeout,),
+            )
+            stale_pending = db.fetchall(
+                f"""
+                SELECT * FROM agent_runs
+                WHERE status = 'pending'
+                AND {pending_age_filter}
+                """,  # nosec B608 # filter is generated by sql_dialect helper.
+                (60,),
+            )
 
         click.echo(f"Stale running runs (>{timeout}m): {len(stale_running)}")
         for row in stale_running[:5]:
@@ -827,7 +863,8 @@ def cleanup_agents(timeout: int, dry_run: bool) -> None:
         for row in stale_pending[:5]:
             click.echo(f"  {row['id']}: created {row['created_at']}")
     else:
-        timed_out = manager.cleanup_stale_runs(default_timeout_minutes=timeout)
-        failed = manager.cleanup_stale_pending_runs(timeout_minutes=60)
+        with agent_run_manager_context() as manager:
+            timed_out = manager.cleanup_stale_runs(default_timeout_minutes=timeout)
+            failed = manager.cleanup_stale_pending_runs(timeout_minutes=60)
 
         click.echo(f"Cleaned up {timed_out} timed-out runs and {failed} stale pending runs.")

@@ -105,6 +105,24 @@ class TestLocalTaskManager:
         _assert_stage_state(updated, "ready")
         assert updated.updated_at > task.updated_at
 
+    def test_update_task_rejects_self_parent(self, task_manager, project_id) -> None:
+        task = task_manager.create_task(project_id=project_id, title="Original Title")
+
+        with pytest.raises(ValueError, match="own parent"):
+            task_manager.update_task(task.id, parent_task_id=task.id)
+
+    def test_update_task_rejects_descendant_parent(self, task_manager, project_id) -> None:
+        parent = task_manager.create_task(project_id=project_id, title="Parent")
+        child = task_manager.create_task(
+            project_id=project_id, title="Child", parent_task_id=parent.id
+        )
+        grandchild = task_manager.create_task(
+            project_id=project_id, title="Grandchild", parent_task_id=child.id
+        )
+
+        with pytest.raises(ValueError, match="descendants"):
+            task_manager.update_task(parent.id, parent_task_id=grandchild.id)
+
     def test_update_task_rejects_lifecycle_fields(self, task_manager, project_id) -> None:
         task = task_manager.create_task(project_id=project_id, title="Original Title")
 
@@ -609,6 +627,44 @@ class TestLocalTaskManager:
         tasks = task_manager.find_tasks_by_prefix(prefix)
         assert len(tasks) >= 1
         assert t1.id in [t.id for t in tasks]
+
+    @pytest.mark.parametrize(
+        ("prefix", "literal_id", "unintended_id"),
+        [
+            ("abc_", "abc_def", "abcXdef"),
+            ("abc%", "abc%def", "abcXYZdef"),
+        ],
+    )
+    def test_find_tasks_by_prefix_escapes_like_wildcards(
+        self,
+        task_manager: LocalTaskManager,
+        project_id: str,
+        prefix: str,
+        literal_id: str,
+        unintended_id: str,
+    ) -> None:
+        first = task_manager.create_task(project_id, "Literal Wildcard Task")
+        second = task_manager.create_task(project_id, "Potential Wildcard Match")
+        task_manager.db.execute(
+            "UPDATE tasks SET id = %s WHERE id = %s",
+            (literal_id, first.id),
+        )
+        task_manager.db.execute(
+            "UPDATE tasks SET id = %s WHERE id = %s",
+            (unintended_id, second.id),
+        )
+
+        results = task_manager.find_tasks_by_prefix(prefix)
+
+        assert [task.id for task in results] == [literal_id]
+
+    def test_find_task_by_prefix_rejects_empty_before_like_lookup(
+        self, task_manager: LocalTaskManager, project_id: str
+    ) -> None:
+        task_manager.create_task(project_id, "Existing Task")
+
+        assert task_manager.find_task_by_prefix("  ") is None
+        assert task_manager.find_tasks_by_prefix("  ") == []
 
     def test_hierarchical_ordering(self, task_manager, project_id) -> None:
         # Root 1

@@ -122,6 +122,7 @@ def list_tasks(
     claimed_by_session_id: str | None = None,
     claimed: bool | None = None,
     closed: bool | None = None,
+    escalated: bool | None = None,
     task_type: str | None = None,
     label: str | None = None,
     parent_task_id: str | None = None,
@@ -141,6 +142,7 @@ def list_tasks(
         claimed_by_session_id: Filter by canonical owning session
         claimed: Filter by whether canonical ownership exists
         closed: Filter by canonical closed state
+        escalated: Filter by escalated state
         task_type: Filter by task type
         label: Filter by label
         parent_task_id: Filter by parent task
@@ -168,7 +170,7 @@ def list_tasks(
             params.extend(clause_params)
             if closed is None:
                 query += " AND closed_at IS NULL"
-    if priority:
+    if priority is not None:
         query += " AND priority = %s"
         params.append(priority)
     if claimed_by_session_id:
@@ -182,6 +184,10 @@ def list_tasks(
         query += " AND closed_at IS NOT NULL"
     elif closed is False:
         query += " AND closed_at IS NULL"
+    if escalated is True:
+        query += " AND COALESCE(is_escalated, FALSE) IS TRUE"
+    elif escalated is False:
+        query += " AND COALESCE(is_escalated, FALSE) IS FALSE"
     if task_type:
         task_type_values = task_type_filter_values(task_type)
         placeholders = ", ".join("%s" for _ in task_type_values)

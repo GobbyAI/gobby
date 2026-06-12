@@ -23,7 +23,7 @@ def _facade() -> ModuleType:
 def create(ctx: click.Context, content: str, memory_type: str, project_ref: str | None) -> None:
     """Create a new memory."""
     memory_module = _facade()
-    project_id = memory_module.resolve_project_ref(project_ref) if project_ref else None
+    project_id = memory_module.resolve_project_ref(project_ref)
     manager = memory_module.get_memory_manager(ctx)
     memory = asyncio.run(
         manager.create_memory(
@@ -88,13 +88,12 @@ def delete(ctx: click.Context, memory_ref: str, project_ref: str | None = None) 
     try:
         memory_id = memory_module.resolve_memory_id(manager, memory_ref, project_id=project_id)
     except click.ClickException as e:
-        click.echo(f"Error: {e.message}")
-        return
+        raise click.ClickException(e.message) from e
     success = asyncio.run(manager.delete_memory(memory_id))
     if success:
         click.echo(f"Deleted memory: {memory_id}")
     else:
-        click.echo(f"Memory not found: {memory_id}")
+        raise click.ClickException(f"Memory not found: {memory_id}")
 
 
 @click.command("list")
@@ -148,12 +147,10 @@ def show_memory(ctx: click.Context, memory_ref: str, project_ref: str | None = N
     try:
         memory_id = memory_module.resolve_memory_id(manager, memory_ref, project_id=project_id)
     except click.ClickException as e:
-        click.echo(f"Error: {e.message}")
-        return
+        raise click.ClickException(e.message) from e
     memory = manager.get_memory(memory_id, project_id=project_id)
     if not memory:
-        click.echo(f"Memory not found: {memory_id}")
-        return
+        raise click.ClickException(f"Memory not found: {memory_id}")
 
     click.echo(f"ID: {memory.id}")
     click.echo(f"Type: {memory.memory_type}")
@@ -186,8 +183,7 @@ def update_memory(
     try:
         memory_id = memory_module.resolve_memory_id(manager, memory_ref, project_id=project_id)
     except click.ClickException as e:
-        click.echo(f"Error: {e.message}")
-        return
+        raise click.ClickException(e.message) from e
     tag_list = parse_tags(tags, empty_as_none=True)
 
     try:
@@ -201,7 +197,7 @@ def update_memory(
         click.echo(f"Updated memory: {memory.id}")
         click.echo(f"  Content: {truncate(memory.content, 80)}")
     except ValueError as e:
-        click.echo(f"Error: {e}")
+        raise click.ClickException(str(e)) from e
 
 
 @click.command("stats")

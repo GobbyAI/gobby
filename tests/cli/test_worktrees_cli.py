@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 from click.testing import CliRunner
 
@@ -90,8 +91,20 @@ def test_create_worktree_failure(mock_httpx) -> None:
     runner = CliRunner()
     result = runner.invoke(worktrees, ["create", "feature/fail"])
 
-    assert result.exit_code == 0
-    assert "Failed to create worktree: Branch exists" in result.output
+    assert result.exit_code == 1
+    assert "Branch exists" in result.output
+
+
+def test_create_worktree_timeout_fails_without_traceback(mock_httpx) -> None:
+    """Test 'worktrees create' timeout maps to a clean nonzero CLI error."""
+    mock_httpx.side_effect = httpx.ReadTimeout("slow daemon")
+
+    runner = CliRunner()
+    result = runner.invoke(worktrees, ["create", "feature/slow"])
+
+    assert result.exit_code == 1
+    assert "Timed out calling Gobby daemon" in result.output
+    assert "Traceback" not in result.output
 
 
 @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")

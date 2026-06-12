@@ -16,6 +16,26 @@ from gobby.storage.tasks._models import (
 from gobby.storage.tasks._read import get_task
 
 
+def _validate_parent_task_id_update(
+    db: HubDatabase, task_id: str, proposed_parent_task_id: str | None
+) -> None:
+    if proposed_parent_task_id is None:
+        return
+    if proposed_parent_task_id == task_id:
+        raise ValueError("Cannot set a task as its own parent")
+
+    ancestor_id: str | None = proposed_parent_task_id
+    visited: set[str] = set()
+    while ancestor_id:
+        if ancestor_id == task_id:
+            raise ValueError("Cannot set a task parent to one of its descendants")
+        if ancestor_id in visited:
+            raise ValueError("Cannot set task parent because the parent hierarchy has a cycle")
+        visited.add(ancestor_id)
+        ancestor = get_task(db, ancestor_id)
+        ancestor_id = ancestor.parent_task_id
+
+
 def update_task(
     db: HubDatabase,
     task_id: str,
@@ -91,6 +111,7 @@ def update_task(
         else:
             params.append(json.dumps(labels))
     if parent_task_id is not UNSET:
+        _validate_parent_task_id_update(db, task_id, cast(str | None, parent_task_id))
         updates.append("parent_task_id = %s")
         params.append(parent_task_id)
     if validation_status is not UNSET:

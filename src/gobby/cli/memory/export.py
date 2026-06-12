@@ -169,7 +169,7 @@ def restore_memories(ctx: click.Context, input_path: str | None, quiet: bool, fo
         return
 
     from gobby.config.persistence import MemoryBackupConfig
-    from gobby.sync.memories import MemoryBackupManager
+    from gobby.sync.memories import MemoryBackupManager, MemoryImportError
 
     memory_module = _facade()
     manager = memory_module.get_memory_manager(ctx)
@@ -180,7 +180,10 @@ def restore_memories(ctx: click.Context, input_path: str | None, quiet: bool, fo
         config=config,
     )
 
-    count = backup_mgr.import_sync(force=force)
+    try:
+        count = backup_mgr.import_sync(force=force)
+    except MemoryImportError as exc:
+        raise click.ClickException(str(exc)) from exc
     if not quiet:
         if count > 0:
             click.echo(f"Restored {count} memories from {restore_path}")
