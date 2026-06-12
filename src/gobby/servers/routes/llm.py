@@ -22,7 +22,6 @@ from gobby.ai import (
     TextGenerationRequest,
     VisionExtractRequest,
     build_daemon_ai_capability_registry,
-    build_daemon_text_generation_service,
     build_daemon_vision_extract_service,
 )
 from gobby.config.feature_base import FeatureProfile
@@ -79,7 +78,9 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
         if config is None:
             raise HTTPException(status_code=503, detail="Daemon config not found")
 
-        service = build_daemon_text_generation_service(config)
+        service = getattr(server.services, "text_generation_service", None)
+        if service is None:
+            raise HTTPException(status_code=503, detail="Text generation service not initialized")
         try:
             result = await service.generate_result(
                 TextGenerationRequest(

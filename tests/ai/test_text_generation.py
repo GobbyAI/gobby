@@ -1404,11 +1404,24 @@ class HangingACPClient(FakeACPClient):
 
 
 class FakeCodexAppServerClient:
-    def __init__(self, events: list[dict[str, Any]] | None = None) -> None:
+    def __init__(
+        self,
+        events: list[dict[str, Any]] | None = None,
+        *,
+        connected: bool = False,
+        thread_ids: list[str] | None = None,
+    ) -> None:
         self.started = False
         self.stopped = False
+        self.start_calls = 0
+        self.stop_calls = 0
+        self.connected = connected
         self.thread_kwargs: dict[str, object] | None = None
+        self.thread_kwargs_list: list[dict[str, object]] = []
         self.turn_kwargs: dict[str, object] | None = None
+        self.turn_kwargs_list: list[dict[str, object]] = []
+        self.archived_thread_ids: list[str] = []
+        self.thread_ids = thread_ids or ["thread-1"]
         self.events = events or [
             {"type": "item/agentMessage/delta", "delta": "hello "},
             {
@@ -1418,11 +1431,19 @@ class FakeCodexAppServerClient:
             {"type": "item/agentMessage/delta", "delta": "world"},
         ]
 
+    @property
+    def is_connected(self) -> bool:
+        return self.connected
+
     async def start(self) -> None:
+        self.start_calls += 1
         self.started = True
+        self.connected = True
 
     async def stop(self) -> None:
+        self.stop_calls += 1
         self.stopped = True
+        self.connected = False
 
     async def start_thread(
         self,
@@ -1438,7 +1459,12 @@ class FakeCodexAppServerClient:
             "approval_policy": approval_policy,
             "sandbox": sandbox,
         }
-        return SimpleNamespace(id="thread-1")
+        self.thread_kwargs_list.append(self.thread_kwargs)
+        index = len(self.thread_kwargs_list) - 1
+        thread_id = (
+            self.thread_ids[index] if index < len(self.thread_ids) else f"thread-{index + 1}"
+        )
+        return SimpleNamespace(id=thread_id)
 
     async def run_turn(
         self,
@@ -1453,8 +1479,12 @@ class FakeCodexAppServerClient:
             "images": images,
             **config_overrides,
         }
+        self.turn_kwargs_list.append(self.turn_kwargs)
         for event in self.events:
             yield event
+
+    async def archive_thread(self, thread_id: str) -> None:
+        self.archived_thread_ids.append(thread_id)
 
 
 class HangingCodexAppServerClient(FakeCodexAppServerClient):
@@ -1471,7 +1501,28 @@ class HangingCodexAppServerClient(FakeCodexAppServerClient):
             "images": images,
             **config_overrides,
         }
+        self.turn_kwargs_list.append(self.turn_kwargs)
         await asyncio.Event().wait()
+        yield {"type": "item/agentMessage/delta", "delta": "unreachable"}
+
+
+class DisconnectingCodexAppServerClient(FakeCodexAppServerClient):
+    async def run_turn(
+        self,
+        thread_id: str,
+        prompt: str,
+        images: list[str] | None = None,
+        **config_overrides: Any,
+    ) -> AsyncIterator[dict[str, Any]]:
+        self.turn_kwargs = {
+            "thread_id": thread_id,
+            "prompt": prompt,
+            "images": images,
+            **config_overrides,
+        }
+        self.turn_kwargs_list.append(self.turn_kwargs)
+        self.connected = False
+        raise ConnectionError("codex app-server disconnected")
         yield {"type": "item/agentMessage/delta", "delta": "unreachable"}
 
 
@@ -1505,6 +1556,132 @@ async def test_codex_app_server_text_generate_adapter_runs_one_shot_turn() -> No
         "images": None,
         "context_prefix": f"system prompt\n\n{ONE_SHOT_DIRECTIVE}",
     }
+
+
+@pytest.mark.asyncio
+async def test_codex_app_server_text_generate_adapter_borrows_connected_client() -> None:
+    shared_client = FakeCodexAppServerClient(connected=True)
+    owned_client = FakeCodexAppServerClient()
+    adapter = CodexAppServerTextGenerateAdapter(
+        lambda: owned_client,
+        shared_client_provider=lambda: shared_client,
+    )
+
+    response = await adapter.generate(TextGenerationRequest(provider="codex", prompt="user prompt"))
+
+    assert response == "hello world"
+    assert shared_client.start_calls == 0
+    assert shared_client.stop_calls == 0
+    assert shared_client.archived_thread_ids == ["thread-1"]
+    assert owned_client.start_calls == 0
+    assert owned_client.stop_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_codex_app_server_text_generate_adapter_falls_back_when_borrowed_unavailable() -> (
+    None
+):
+    shared_client = FakeCodexAppServerClient(connected=False)
+    owned_client = FakeCodexAppServerClient()
+    adapter = CodexAppServerTextGenerateAdapter(
+        lambda: owned_client,
+        shared_client_provider=lambda: shared_client,
+    )
+
+    response = await adapter.generate(TextGenerationRequest(provider="codex", prompt="user prompt"))
+
+    assert response == "hello world"
+    assert shared_client.start_calls == 0
+    assert shared_client.stop_calls == 0
+    assert shared_client.archived_thread_ids == []
+    assert owned_client.start_calls == 1
+    assert owned_client.stop_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_codex_app_server_text_generate_adapter_retries_owned_after_connection_loss() -> None:
+    shared_client = DisconnectingCodexAppServerClient(connected=True)
+    owned_client = FakeCodexAppServerClient()
+    adapter = CodexAppServerTextGenerateAdapter(
+        lambda: owned_client,
+        shared_client_provider=lambda: shared_client,
+    )
+
+    response = await adapter.generate(TextGenerationRequest(provider="codex", prompt="user prompt"))
+
+    assert response == "hello world"
+    assert shared_client.start_calls == 0
+    assert shared_client.stop_calls == 0
+    assert shared_client.archived_thread_ids == ["thread-1"]
+    assert owned_client.start_calls == 1
+    assert owned_client.stop_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_codex_app_server_text_generate_adapter_keeps_connected_borrowed_errors() -> None:
+    shared_client = FakeCodexAppServerClient(
+        [
+            {
+                "type": "turn/completed",
+                "error": {"message": "bad model"},
+            }
+        ],
+        connected=True,
+    )
+    owned_client = FakeCodexAppServerClient()
+    adapter = CodexAppServerTextGenerateAdapter(
+        lambda: owned_client,
+        shared_client_provider=lambda: shared_client,
+    )
+
+    with pytest.raises(RuntimeError, match="bad model"):
+        await adapter.generate(TextGenerationRequest(provider="codex", prompt="user prompt"))
+
+    assert shared_client.archived_thread_ids == ["thread-1"]
+    assert owned_client.start_calls == 0
+    assert owned_client.stop_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_codex_app_server_text_generate_adapter_isolates_concurrent_borrowed_threads() -> (
+    None
+):
+    class PerThreadCodexClient(FakeCodexAppServerClient):
+        async def run_turn(
+            self,
+            thread_id: str,
+            prompt: str,
+            images: list[str] | None = None,
+            **config_overrides: Any,
+        ) -> AsyncIterator[dict[str, Any]]:
+            self.turn_kwargs = {
+                "thread_id": thread_id,
+                "prompt": prompt,
+                "images": images,
+                **config_overrides,
+            }
+            self.turn_kwargs_list.append(self.turn_kwargs)
+            yield {"type": "item/agentMessage/delta", "delta": f"{thread_id}:{prompt}"}
+
+    shared_client = PerThreadCodexClient(
+        connected=True,
+        thread_ids=["thread-a", "thread-b"],
+    )
+    adapter = CodexAppServerTextGenerateAdapter(
+        lambda: FakeCodexAppServerClient(),
+        shared_client_provider=lambda: shared_client,
+    )
+
+    first, second = await asyncio.gather(
+        adapter.generate(TextGenerationRequest(provider="codex", prompt="first")),
+        adapter.generate(TextGenerationRequest(provider="codex", prompt="second")),
+    )
+
+    assert first == "thread-a:first"
+    assert second == "thread-b:second"
+    assert shared_client.start_calls == 0
+    assert shared_client.stop_calls == 0
+    assert shared_client.archived_thread_ids == ["thread-a", "thread-b"]
 
 
 @pytest.mark.asyncio
@@ -1623,6 +1800,47 @@ async def test_daemon_codex_text_generate_adapter_uses_configured_deadline(
 
     assert client.started is True
     assert client.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_build_daemon_text_generation_service_plumbs_codex_client_provider() -> None:
+    shared_client = HangingCodexAppServerClient(connected=True)
+    provider_calls = 0
+
+    def shared_client_provider() -> FakeCodexAppServerClient:
+        nonlocal provider_calls
+        provider_calls += 1
+        return shared_client
+
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+            )
+        ]
+    )
+    service = build_daemon_text_generation_service(
+        DaemonConfig(ai={"generation": {"timeout_seconds": 0.01}}),
+        registry=registry,
+        codex_client_provider=shared_client_provider,
+    )
+
+    with pytest.raises(RuntimeError, match="timed out after 0.01s"):
+        await service.generate(
+            TextGenerationRequest(
+                provider="codex",
+                model="gpt-5",
+                prompt="never completes",
+            )
+        )
+
+    assert provider_calls == 1
+    assert shared_client.start_calls == 0
+    assert shared_client.stop_calls == 0
+    assert shared_client.archived_thread_ids == ["thread-1"]
 
 
 @pytest.mark.asyncio

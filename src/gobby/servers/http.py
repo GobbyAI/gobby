@@ -13,6 +13,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from gobby.ai import build_daemon_text_generation_service
 from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.hooks.broadcaster import HookEventBroadcaster
 from gobby.llm import create_llm_service
@@ -83,10 +84,18 @@ class HTTPServer:
 
         self._start_time: float = time.time()
 
-        # Create LLM service if not provided in container (fallback)
+        # Create LLM/text-generation services if not provided in container (fallback)
         if not services.llm_service and services.config:
             try:
-                services.llm_service = create_llm_service(services.config)
+                if services.text_generation_service is None:
+                    services.text_generation_service = build_daemon_text_generation_service(
+                        services.config,
+                        codex_client_provider=lambda: self.codex_client,
+                    )
+                services.llm_service = create_llm_service(
+                    services.config,
+                    text_generation=services.text_generation_service,
+                )
                 logger.debug(
                     f"LLM service initialized with providers: {services.llm_service.enabled_providers}"
                 )

@@ -27,7 +27,8 @@ class AICapabilityRegistryProtocol(Protocol):
 
 
 class TextGenerationDependency(Protocol):
-    registry: AICapabilityRegistryProtocol
+    @property
+    def registry(self) -> AICapabilityRegistryProtocol: ...
 
     async def generate(self, request: TextGenerationRequest) -> str: ...
 

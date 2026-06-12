@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,6 +16,7 @@ import pytest
 from gobby.adapters import acp_client_requests
 from gobby.adapters.gemini_acp_client import StreamEvent
 from gobby.agents.sandbox import SandboxConfig
+from gobby.ai import CodexAppServerTextGenerateAdapter, TextGenerationRequest
 from gobby.config.ai import LocalGenerationEndpointConfig
 from gobby.config.app import DaemonConfig
 from gobby.llm.claude_models import DoneEvent, TextChunk, ToolCallEvent, ToolResultEvent
@@ -602,6 +605,106 @@ class TestCodexBackend:
         assert session.sdk_session_id == "thread-1"
         assert session._thread_id == "thread-1"
         assert session._transcript_path == "/tmp/codex.jsonl"
+
+    @pytest.mark.asyncio
+    async def test_web_chat_and_one_shot_share_client_without_event_leakage(self) -> None:
+        class SharedCodexClient:
+            def __init__(self) -> None:
+                self.is_connected = True
+                self.handlers: dict[str, list[Any]] = {}
+                self.archived_thread_ids: list[str] = []
+
+            async def start(self) -> None:
+                self.is_connected = True
+
+            async def stop(self) -> None:
+                self.is_connected = False
+
+            def register_approval_handler(self, _handler: Any) -> None:
+                return None
+
+            def add_notification_handler(self, method: str, handler: Any) -> None:
+                self.handlers.setdefault(method, []).append(handler)
+
+            def remove_notification_handler(self, method: str, handler: Any) -> None:
+                self.handlers.get(method, []).remove(handler)
+
+            async def start_thread(
+                self,
+                cwd: str | None = None,
+                model: str | None = None,
+                approval_policy: str | None = None,
+                sandbox: str | None = None,
+                terminal_context: dict[str, Any] | None = None,
+            ) -> SimpleNamespace:
+                return SimpleNamespace(id="one-shot-thread")
+
+            async def start_turn(
+                self,
+                thread_id: str,
+                prompt: str,
+                **_config_overrides: Any,
+            ) -> SimpleNamespace:
+                notifications = [
+                    (
+                        "agent/messageDelta",
+                        {
+                            "threadId": "one-shot-thread",
+                            "turnId": "one-shot-turn",
+                            "delta": "one-shot leak",
+                        },
+                    ),
+                    ("turn/started", {"threadId": thread_id, "turnId": "chat-turn"}),
+                    (
+                        "agent/messageDelta",
+                        {"threadId": thread_id, "turnId": "chat-turn", "delta": "chat ok"},
+                    ),
+                    ("turn/completed", {"threadId": thread_id, "turnId": "chat-turn", "usage": {}}),
+                ]
+                for method, params in notifications:
+                    for handler in list(self.handlers.get(method, [])):
+                        handler(method, params)
+                return SimpleNamespace(id="chat-turn")
+
+            async def run_turn(
+                self,
+                thread_id: str,
+                prompt: str,
+                images: list[str] | None = None,
+                **_config_overrides: Any,
+            ) -> AsyncIterator[dict[str, Any]]:
+                yield {"type": "item/agentMessage/delta", "delta": "one-shot ok"}
+
+            async def archive_thread(self, thread_id: str) -> None:
+                self.archived_thread_ids.append(thread_id)
+
+        async def collect_text_chunks(events: AsyncIterator[Any]) -> list[str]:
+            return [event.content async for event in events if isinstance(event, TextChunk)]
+
+        client = SharedCodexClient()
+        backend = CodexWebChatBackend(client=client)
+        await backend.start()
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session._connected = True
+        session._thread_id = "chat-thread"
+        session.sdk_session_id = "chat-thread"
+        session._get_transcript_offset = AsyncMock(return_value=0)
+        session._get_transcript_records_since = AsyncMock(return_value=[])
+        session._get_transcript_assistant_text_since = AsyncMock(return_value=None)
+        adapter = CodexAppServerTextGenerateAdapter(
+            shared_client_provider=lambda: client,
+            timeout_seconds=1,
+        )
+
+        chat_task = asyncio.create_task(collect_text_chunks(backend.send_message(session, "chat")))
+        one_shot_task = asyncio.create_task(
+            adapter.generate(TextGenerationRequest(provider="codex", prompt="one-shot"))
+        )
+        chat_text, one_shot_text = await asyncio.gather(chat_task, one_shot_task)
+
+        assert chat_text == ["chat ok"]
+        assert one_shot_text == "one-shot ok"
+        assert client.archived_thread_ids == ["one-shot-thread"]
 
     @pytest.mark.asyncio
     async def test_attach_session_passes_codex_sandbox_policy(self) -> None:

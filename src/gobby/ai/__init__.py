@@ -26,6 +26,7 @@ from gobby.ai.registry import (
 from gobby.ai.text_generation import (
     ACPTextGenerateAdapter,
     ClaudeTextGenerateAdapter,
+    CodexAppServerClientProvider,
     CodexAppServerTextGenerateAdapter,
     DroidCLITextGenerateAdapter,
     LocalTextGenerateAdapter,
@@ -62,6 +63,7 @@ __all__ = [
     "CapabilityUnavailableError",
     "ClaudeTextGenerateAdapter",
     "ClaudeVisionExtractAdapter",
+    "CodexAppServerClientProvider",
     "CodexAppServerTextGenerateAdapter",
     "DroidCLITextGenerateAdapter",
     "LocalTextGenerateAdapter",

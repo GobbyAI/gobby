@@ -324,14 +324,16 @@ def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None)
 
         summarizer = None
         if runner.config.code_index.summary_enabled:
-            from gobby.ai import build_daemon_text_generation_service
             from gobby.code_index.summarizer import SymbolSummarizer
 
             try:
-                summarizer = SymbolSummarizer(
-                    build_daemon_text_generation_service(runner.config),
-                    runner.config.code_index,
-                )
+                if runner.text_generation_service is None:
+                    logger.warning("Skipping SymbolSummarizer: text generation service unavailable")
+                else:
+                    summarizer = SymbolSummarizer(
+                        runner.text_generation_service,
+                        runner.config.code_index,
+                    )
             except Exception as e:
                 logger.warning(f"Failed to create SymbolSummarizer: {e}")
 

@@ -9,6 +9,7 @@ import pytest
 from gobby.ai import AIAdapterStyle, AICapability, AICapabilityRegistry, CapabilityBinding
 from gobby.config.app import DaemonConfig
 from gobby.config.sessions import DigestConfig
+from gobby.llm import create_llm_service
 from gobby.llm.service import LLMService
 
 pytestmark = pytest.mark.unit
@@ -47,6 +48,14 @@ def test_init_with_empty_providers_succeeds() -> None:
     service = LLMService(DaemonConfig(), text_generation=FakeTextGeneration(bindings=[]))
 
     assert repr(service) == "LLMService(enabled=[])"
+
+
+def test_create_llm_service_uses_injected_text_generation(llm_config: DaemonConfig) -> None:
+    fake_generation = FakeTextGeneration()
+
+    service = create_llm_service(llm_config, text_generation=fake_generation)
+
+    assert service.enabled_providers == ["claude"]
 
 
 def test_direct_provider_accessors_are_not_public(llm_config: DaemonConfig) -> None:

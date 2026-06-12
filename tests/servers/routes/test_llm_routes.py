@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import stat
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -76,6 +77,7 @@ def server_with_llm() -> MagicMock:
             )
         )
     )
+    server.services = SimpleNamespace(text_generation_service=None)
     return server
 
 
@@ -133,25 +135,21 @@ def test_generate_selects_acp_backed_provider(
         ]
     )
     service = TextGenerationService(registry, {"gemini": adapter})
+    server_with_llm.services.text_generation_service = service
 
-    with patch(
-        "gobby.servers.routes.llm.build_daemon_text_generation_service",
-        return_value=service,
-    ) as build_service:
-        response = client.post(
-            "/api/llm/generate",
-            json={
-                "prompt": "Summarize this",
-                "provider": "gemini",
-                "model": "gemini-pro",
-                "system_prompt": "Be concise",
-                "max_tokens": 128,
-                "cwd": "/tmp/project",
-            },
-        )
+    response = client.post(
+        "/api/llm/generate",
+        json={
+            "prompt": "Summarize this",
+            "provider": "gemini",
+            "model": "gemini-pro",
+            "system_prompt": "Be concise",
+            "max_tokens": 128,
+            "cwd": "/tmp/project",
+        },
+    )
 
     assert response.status_code == 200
-    build_service.assert_called_once_with(server_with_llm.config)
     assert response.json() == {
         "text": "Generated text",
         "capability": "text_generate",
@@ -171,6 +169,13 @@ def test_generate_selects_acp_backed_provider(
     ]
 
 
+def test_generate_returns_503_without_text_generation_service(client: TestClient) -> None:
+    response = client.post("/api/llm/generate", json={"prompt": "Summarize this"})
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Text generation service not initialized"}
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -180,6 +185,7 @@ def test_generate_selects_acp_backed_provider(
 )
 def test_generate_rejects_partial_explicit_routing(
     client: TestClient,
+    server_with_llm: MagicMock,
     payload: dict[str, str],
 ) -> None:
     droid = _FakeTextAdapter()
@@ -203,12 +209,9 @@ def test_generate_rejects_partial_explicit_routing(
         ]
     )
     service = TextGenerationService(registry, {"droid": droid, "local:lm-studio": local})
+    server_with_llm.services.text_generation_service = service
 
-    with patch(
-        "gobby.servers.routes.llm.build_daemon_text_generation_service",
-        return_value=service,
-    ):
-        response = client.post("/api/llm/generate", json=payload)
+    response = client.post("/api/llm/generate", json=payload)
 
     assert response.status_code == 400
     assert response.json() == {
@@ -243,18 +246,14 @@ def test_generate_defaults_to_feature_low_and_accepts_system_alias(
         ]
     )
     service = TextGenerationService(registry, {"codex": codex, "local:lm-studio": local})
+    server_with_llm.services.text_generation_service = service
 
-    with patch(
-        "gobby.servers.routes.llm.build_daemon_text_generation_service",
-        return_value=service,
-    ) as build_service:
-        response = client.post(
-            "/api/llm/generate",
-            json={"prompt": "Summarize this", "system": "Be concise"},
-        )
+    response = client.post(
+        "/api/llm/generate",
+        json={"prompt": "Summarize this", "system": "Be concise"},
+    )
 
     assert response.status_code == 200
-    build_service.assert_called_once_with(server_with_llm.config)
     assert response.json() == {
         "text": "Generated text",
         "capability": "text_generate",
@@ -276,6 +275,7 @@ def test_generate_defaults_to_feature_low_and_accepts_system_alias(
 
 def test_generate_explicit_candidates_bypass_default_profile_and_provider(
     client: TestClient,
+    server_with_llm: MagicMock,
 ) -> None:
     codex = _FakeTextAdapter()
     local = _FakeTextAdapter()
@@ -298,20 +298,17 @@ def test_generate_explicit_candidates_bypass_default_profile_and_provider(
         ]
     )
     service = TextGenerationService(registry, {"codex": codex, "local:lm-studio": local})
+    server_with_llm.services.text_generation_service = service
 
-    with patch(
-        "gobby.servers.routes.llm.build_daemon_text_generation_service",
-        return_value=service,
-    ):
-        response = client.post(
-            "/api/llm/generate",
-            json={
-                "prompt": "Summarize this",
-                "provider": "codex",
-                "model": "gpt-5.3-codex-spark",
-                "candidates": ["local:lm-studio/Qwen3-Coder-30B-A3B-Instruct"],
-            },
-        )
+    response = client.post(
+        "/api/llm/generate",
+        json={
+            "prompt": "Summarize this",
+            "provider": "codex",
+            "model": "gpt-5.3-codex-spark",
+            "candidates": ["local:lm-studio/Qwen3-Coder-30B-A3B-Instruct"],
+        },
+    )
 
     assert response.status_code == 200
     assert response.json() == {
@@ -332,7 +329,10 @@ def test_generate_explicit_candidates_bypass_default_profile_and_provider(
     ]
 
 
-def test_generate_selects_candidate_with_slashed_local_model_id(client: TestClient) -> None:
+def test_generate_selects_candidate_with_slashed_local_model_id(
+    client: TestClient,
+    server_with_llm: MagicMock,
+) -> None:
     local = _FakeTextAdapter()
     model = "qwen/qwen3-coder-30b"
     candidate = f"local:lm-studio/{model}"
@@ -348,18 +348,15 @@ def test_generate_selects_candidate_with_slashed_local_model_id(client: TestClie
         ]
     )
     service = TextGenerationService(registry, {"local:lm-studio": local})
+    server_with_llm.services.text_generation_service = service
 
-    with patch(
-        "gobby.servers.routes.llm.build_daemon_text_generation_service",
-        return_value=service,
-    ):
-        response = client.post(
-            "/api/llm/generate",
-            json={
-                "prompt": "Summarize this",
-                "candidates": [candidate],
-            },
-        )
+    response = client.post(
+        "/api/llm/generate",
+        json={
+            "prompt": "Summarize this",
+            "candidates": [candidate],
+        },
+    )
 
     assert response.status_code == 200
     assert response.json() == {
@@ -406,22 +403,18 @@ def test_generate_falls_back_when_feature_mid_candidate_echoes_prompt(
         ]
     )
     service = TextGenerationService(registry, {"codex": codex, "claude": claude})
+    server_with_llm.services.text_generation_service = service
 
-    with patch(
-        "gobby.servers.routes.llm.build_daemon_text_generation_service",
-        return_value=service,
-    ) as build_service:
-        response = client.post(
-            "/api/llm/generate",
-            json={
-                "prompt": prompt,
-                "profile": "feature_mid",
-                "candidates": list(candidates),
-            },
-        )
+    response = client.post(
+        "/api/llm/generate",
+        json={
+            "prompt": prompt,
+            "profile": "feature_mid",
+            "candidates": list(candidates),
+        },
+    )
 
     assert response.status_code == 200
-    build_service.assert_called_once_with(server_with_llm.config)
     assert response.json() == {
         "text": "Fallback prose",
         "capability": "text_generate",
@@ -452,6 +445,7 @@ def test_generate_falls_back_when_feature_mid_candidate_echoes_prompt(
 
 def test_generate_candidates_override_partial_top_level_provider(
     client: TestClient,
+    server_with_llm: MagicMock,
 ) -> None:
     droid = _FakeTextAdapter()
     local = _FakeTextAdapter()
@@ -474,19 +468,16 @@ def test_generate_candidates_override_partial_top_level_provider(
         ]
     )
     service = TextGenerationService(registry, {"droid": droid, "local:lm-studio": local})
+    server_with_llm.services.text_generation_service = service
 
-    with patch(
-        "gobby.servers.routes.llm.build_daemon_text_generation_service",
-        return_value=service,
-    ):
-        response = client.post(
-            "/api/llm/generate",
-            json={
-                "prompt": "Summarize this",
-                "provider": "droid",
-                "candidates": ["local:lm-studio/Qwen3-Coder-30B-A3B-Instruct"],
-            },
-        )
+    response = client.post(
+        "/api/llm/generate",
+        json={
+            "prompt": "Summarize this",
+            "provider": "droid",
+            "candidates": ["local:lm-studio/Qwen3-Coder-30B-A3B-Instruct"],
+        },
+    )
 
     assert response.status_code == 200
     assert response.json() == {
@@ -525,22 +516,18 @@ def test_generate_includes_usage_when_available(
         ]
     )
     service = TextGenerationService(registry, {"local:lm-studio": adapter})
+    server_with_llm.services.text_generation_service = service
 
-    with patch(
-        "gobby.servers.routes.llm.build_daemon_text_generation_service",
-        return_value=service,
-    ) as build_service:
-        response = client.post(
-            "/api/llm/generate",
-            json={
-                "prompt": "Summarize this",
-                "provider": "local:lm-studio",
-                "model": "local-model",
-            },
-        )
+    response = client.post(
+        "/api/llm/generate",
+        json={
+            "prompt": "Summarize this",
+            "provider": "local:lm-studio",
+            "model": "local-model",
+        },
+    )
 
     assert response.status_code == 200
-    build_service.assert_called_once_with(server_with_llm.config)
     assert response.json() == {
         "text": "Generated text",
         "capability": "text_generate",
@@ -574,20 +561,17 @@ def test_generate_returns_real_usage_for_claude_path(
         ]
     )
     service = TextGenerationService(registry, {"claude": adapter})
+    server_with_llm.services.text_generation_service = service
 
-    with patch(
-        "gobby.servers.routes.llm.build_daemon_text_generation_service",
-        return_value=service,
-    ):
-        response = client.post(
-            "/api/llm/generate",
-            json={
-                "prompt": "Summarize this",
-                "provider": "claude",
-                "model": "claude-sonnet-4-5",
-                "max_tokens": 64,
-            },
-        )
+    response = client.post(
+        "/api/llm/generate",
+        json={
+            "prompt": "Summarize this",
+            "provider": "claude",
+            "model": "claude-sonnet-4-5",
+            "max_tokens": 64,
+        },
+    )
 
     assert response.status_code == 200
     body = response.json()
@@ -597,7 +581,10 @@ def test_generate_returns_real_usage_for_claude_path(
     assert adapter.requests[0].max_tokens == 64
 
 
-def test_generate_returns_deterministic_unavailable_error(client: TestClient) -> None:
+def test_generate_returns_deterministic_unavailable_error(
+    client: TestClient,
+    server_with_llm: MagicMock,
+) -> None:
     registry = AICapabilityRegistry(
         [
             CapabilityBinding.unavailable(
@@ -609,15 +596,12 @@ def test_generate_returns_deterministic_unavailable_error(client: TestClient) ->
         ]
     )
     service = TextGenerationService(registry, {})
+    server_with_llm.services.text_generation_service = service
 
-    with patch(
-        "gobby.servers.routes.llm.build_daemon_text_generation_service",
-        return_value=service,
-    ):
-        response = client.post(
-            "/api/llm/generate",
-            json={"prompt": "Summarize this", "provider": "gemini", "model": "gemini-pro"},
-        )
+    response = client.post(
+        "/api/llm/generate",
+        json={"prompt": "Summarize this", "provider": "gemini", "model": "gemini-pro"},
+    )
 
     assert response.status_code == 400
     assert response.json() == {
@@ -631,6 +615,7 @@ def test_generate_returns_deterministic_unavailable_error(client: TestClient) ->
 
 def test_generate_returns_aggregated_unavailable_error_for_profile_candidates(
     client: TestClient,
+    server_with_llm: MagicMock,
 ) -> None:
     registry = AICapabilityRegistry(
         [
@@ -651,19 +636,16 @@ def test_generate_returns_aggregated_unavailable_error_for_profile_candidates(
         ]
     )
     service = TextGenerationService(registry, {})
+    server_with_llm.services.text_generation_service = service
 
-    with patch(
-        "gobby.servers.routes.llm.build_daemon_text_generation_service",
-        return_value=service,
-    ):
-        response = client.post(
-            "/api/llm/generate",
-            json={
-                "prompt": "Summarize this",
-                "profile": "feature_low",
-                "candidates": ("claude/haiku", "codex/gpt-5.4-mini"),
-            },
-        )
+    response = client.post(
+        "/api/llm/generate",
+        json={
+            "prompt": "Summarize this",
+            "profile": "feature_low",
+            "candidates": ("claude/haiku", "codex/gpt-5.4-mini"),
+        },
+    )
 
     assert response.status_code == 400
     body = response.json()

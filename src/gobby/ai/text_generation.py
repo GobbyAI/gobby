@@ -539,6 +539,10 @@ class ACPTextGenerateAdapter:
 class CodexAppServerClientLike(Protocol):
     """Subset of Codex app-server client used by text_generate."""
 
+    @property
+    def is_connected(self) -> bool:
+        """Return whether the app-server process is connected."""
+
     async def start(self) -> None:
         """Start the app-server process."""
 
@@ -564,8 +568,12 @@ class CodexAppServerClientLike(Protocol):
     ) -> AsyncIterator[dict[str, Any]]:
         """Run one Codex app-server turn."""
 
+    async def archive_thread(self, thread_id: str) -> None:
+        """Archive a Codex app-server thread."""
+
 
 CodexAppServerClientFactory = Callable[[], CodexAppServerClientLike]
+CodexAppServerClientProvider = Callable[[], CodexAppServerClientLike | None]
 
 
 class CodexAppServerTextGenerateAdapter:
@@ -575,15 +583,46 @@ class CodexAppServerTextGenerateAdapter:
         self,
         client_factory: CodexAppServerClientFactory | None = None,
         *,
+        shared_client_provider: CodexAppServerClientProvider | None = None,
         timeout_seconds: float = 600.0,
     ) -> None:
         self._client_factory = client_factory or _codex_app_server_client
+        self._shared_client_provider = shared_client_provider
         self._timeout_seconds = timeout_seconds
 
     async def generate(self, request: TextGenerationRequest) -> str:
+        shared_client = self._connected_shared_client()
+        if shared_client is not None:
+            try:
+                return await self._generate_with_deadline(
+                    shared_client,
+                    request,
+                    start_client=False,
+                    archive_thread=True,
+                )
+            except TimeoutError as exc:
+                if shared_client.is_connected:
+                    raise RuntimeError(
+                        "Codex app-server text generation timed out after "
+                        f"{self._timeout_seconds:g}s"
+                    ) from exc
+                logger.info("Borrowed Codex app-server disconnected during generation")
+            except Exception:
+                if shared_client.is_connected:
+                    raise
+                logger.info("Borrowed Codex app-server disconnected during generation")
+
+        return await self._generate_with_owned_client(request)
+
+    async def _generate_with_owned_client(self, request: TextGenerationRequest) -> str:
         client = self._client_factory()
         try:
-            return await self._generate_with_deadline(client, request)
+            return await self._generate_with_deadline(
+                client,
+                request,
+                start_client=True,
+                archive_thread=False,
+            )
         except TimeoutError as exc:
             raise RuntimeError(
                 f"Codex app-server text generation timed out after {self._timeout_seconds:g}s"
@@ -592,47 +631,91 @@ class CodexAppServerTextGenerateAdapter:
             await client.stop()
 
     async def _generate_with_deadline(
-        self, client: CodexAppServerClientLike, request: TextGenerationRequest
+        self,
+        client: CodexAppServerClientLike,
+        request: TextGenerationRequest,
+        *,
+        start_client: bool,
+        archive_thread: bool,
     ) -> str:
         return await asyncio.wait_for(
-            self._generate_with_client(client, request),
+            self._generate_with_client(
+                client,
+                request,
+                start_client=start_client,
+                archive_thread=archive_thread,
+            ),
             timeout=self._timeout_seconds,
         )
 
     async def _generate_with_client(
-        self, client: CodexAppServerClientLike, request: TextGenerationRequest
+        self,
+        client: CodexAppServerClientLike,
+        request: TextGenerationRequest,
+        *,
+        start_client: bool,
+        archive_thread: bool,
     ) -> str:
         request = _with_one_shot_directive(request)
-        await client.start()
-        thread = await client.start_thread(
-            cwd=request.cwd,
-            model=request.model,
-            approval_policy="never",
-            sandbox="readOnly",
-        )
-        chunks: list[str] = []
-        fallback_chunks: list[str] = []
-        async for event in client.run_turn(
-            thread.id,
-            request.prompt,
-            context_prefix=request.system_prompt,
-        ):
-            _raise_for_codex_error_event(event)
-            event_type = event.get("type")
-            text = _codex_event_text(event)
-            if not text:
-                continue
-            if event_type in {"agent/messageDelta", "item/agentMessage/delta"}:
-                chunks.append(text)
-            elif (
-                event_type == "item/completed"
-                and _codex_completed_item_type(event) == "agentMessage"
+        if start_client:
+            await client.start()
+        thread_id: str | None = None
+        try:
+            thread = await client.start_thread(
+                cwd=request.cwd,
+                model=request.model,
+                approval_policy="never",
+                sandbox="readOnly",
+            )
+            thread_id = thread.id
+            chunks: list[str] = []
+            fallback_chunks: list[str] = []
+            async for event in client.run_turn(
+                thread.id,
+                request.prompt,
+                context_prefix=request.system_prompt,
             ):
-                fallback_chunks.append(text)
-        output = "".join(chunks or fallback_chunks).strip()
-        if not output:
-            raise RuntimeError("Codex text generation returned no output")
-        return output
+                _raise_for_codex_error_event(event)
+                event_type = event.get("type")
+                text = _codex_event_text(event)
+                if not text:
+                    continue
+                if event_type in {"agent/messageDelta", "item/agentMessage/delta"}:
+                    chunks.append(text)
+                elif (
+                    event_type == "item/completed"
+                    and _codex_completed_item_type(event) == "agentMessage"
+                ):
+                    fallback_chunks.append(text)
+            output = "".join(chunks or fallback_chunks).strip()
+            if not output:
+                raise RuntimeError("Codex text generation returned no output")
+            return output
+        finally:
+            if archive_thread and thread_id is not None:
+                await self._archive_borrowed_thread(client, thread_id)
+
+    def _connected_shared_client(self) -> CodexAppServerClientLike | None:
+        if self._shared_client_provider is None:
+            return None
+        try:
+            client = self._shared_client_provider()
+        except Exception:
+            logger.debug("Shared Codex app-server provider failed", exc_info=True)
+            return None
+        if client is None:
+            return None
+        try:
+            return client if client.is_connected else None
+        except Exception:
+            logger.debug("Shared Codex app-server connection check failed", exc_info=True)
+            return None
+
+    async def _archive_borrowed_thread(
+        self, client: CodexAppServerClientLike, thread_id: str
+    ) -> None:
+        with contextlib.suppress(Exception):
+            await client.archive_thread(thread_id)
 
 
 class DroidCLITextGenerateAdapter:
@@ -698,11 +781,15 @@ def build_daemon_text_generation_service(
     config: DaemonConfig,
     *,
     registry: AICapabilityRegistry | None = None,
+    codex_client_provider: CodexAppServerClientProvider | None = None,
 ) -> TextGenerationService:
     """Build the daemon text_generate service from configured capability bindings."""
     return TextGenerationService(
         registry or build_daemon_ai_capability_registry(config),
-        adapter_factories=_daemon_text_generation_adapter_factories(config),
+        adapter_factories=_daemon_text_generation_adapter_factories(
+            config,
+            codex_client_provider=codex_client_provider,
+        ),
         profile_defaults=config.ai.generation.profile_defaults,
         candidate_timeout_seconds=config.ai.generation.candidate_timeout_seconds,
     )
@@ -710,11 +797,14 @@ def build_daemon_text_generation_service(
 
 def _daemon_text_generation_adapter_factories(
     config: DaemonConfig,
+    *,
+    codex_client_provider: CodexAppServerClientProvider | None = None,
 ) -> dict[str, TextGenerateAdapterFactory]:
     factories: dict[str, TextGenerateAdapterFactory] = {
         "claude": lambda: _claude_text_generate_adapter(config),
         "codex": lambda: CodexAppServerTextGenerateAdapter(
-            timeout_seconds=config.ai.generation.timeout_seconds
+            shared_client_provider=codex_client_provider,
+            timeout_seconds=config.ai.generation.timeout_seconds,
         ),
         "gemini": lambda: ACPTextGenerateAdapter(_gemini_acp_client),
         "grok": lambda: ACPTextGenerateAdapter(_grok_acp_client),
