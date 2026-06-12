@@ -24,8 +24,16 @@ def get_task(db: HubDatabase, task_id: str, project_id: str | None = None) -> Ta
         except TaskNotFoundError as e:
             raise ValueError(str(e)) from e
 
-    row = db.fetchone("SELECT * FROM tasks WHERE id = %s", (task_id,))
+    if project_id:
+        row = db.fetchone(
+            "SELECT * FROM tasks WHERE id = %s AND project_id = %s",
+            (task_id, project_id),
+        )
+    else:
+        row = db.fetchone("SELECT * FROM tasks WHERE id = %s", (task_id,))
     if not row:
+        if project_id:
+            raise ValueError(f"Task {task_id} not found in project")
         raise ValueError(f"Task {task_id} not found")
     task = Task.from_row(row)
     hydrate_task_stage_state(db, [task])

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Coroutine
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -32,10 +33,19 @@ from gobby.build.observability import (
 )
 from gobby.build.options import resolve_build_isolation
 from gobby.build.profiles import BuildProfileError
+from gobby.config.build import DeliveryMode
 from gobby.config.build import StageCapOverride as BuildStageCapOverride
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
+
+
+def _run_coroutine(coro: Coroutine[Any, Any, Any]) -> Any:
+    return asyncio.run(coro)
+
+
+async def _run_blocking_build_call(coro: Coroutine[Any, Any, Any]) -> Any:
+    return await asyncio.to_thread(_run_coroutine, coro)
 
 
 class BuildRequest(BaseModel):
@@ -48,6 +58,8 @@ class BuildRequest(BaseModel):
     cwd: str | None = None
     project_explicit: bool = False
     profile: str | None = None
+    delivery_mode: DeliveryMode | None = None
+    delivery_target_repo: str | None = None
     quick: bool = False
     skip_stages: list[str] = Field(default_factory=list)
     workspace_backend: Literal["worktree", "clone"] | None = None
@@ -78,8 +90,12 @@ class BuildControlRequest(BaseModel):
     project_explicit: bool = False
     dry_run: bool = False
     force: bool = False
+    delete_dirty_worktrees: bool = False
     yes: bool = False
     no_resume: bool = False
+    profile: str | None = None
+    delivery_mode: DeliveryMode | None = None
+    delivery_target_repo: str | None = None
     skip_stages: list[str] = Field(default_factory=list)
     workspace_backend: Literal["worktree", "clone"] | None = None
     isolation: Literal["none", "worktree", "clone"] | None = None
@@ -98,9 +114,12 @@ class BuildControlRequest(BaseModel):
 _RESTART_OPTION_FIELDS = frozenset(
     {
         "skip_stages",
+        "profile",
         "workspace_backend",
         "isolation",
         "clone",
+        "delivery_mode",
+        "delivery_target_repo",
         "no_merge",
         "pr",
         "stage",
@@ -162,7 +181,6 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
     )
     return BuildOptions(
         profile=request_data.profile or "default",
-        profile_explicit="profile" in request_data.model_fields_set,
         quick=request_data.quick,
         skip_stages=request_data.skip_stages,
         skip_stages_explicit="skip_stages" in request_data.model_fields_set,
@@ -170,6 +188,10 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
         isolation_explicit=isolation.explicit,
         unattended=request_data.unattended if request_data.unattended is not None else False,
         unattended_explicit="unattended" in request_data.model_fields_set,
+        delivery_mode=request_data.delivery_mode or "auto",
+        delivery_mode_explicit="delivery_mode" in request_data.model_fields_set,
+        delivery_target_repo=request_data.delivery_target_repo,
+        delivery_target_repo_explicit="delivery_target_repo" in request_data.model_fields_set,
         no_merge=request_data.no_merge,
         pr=request_data.pr,
         stage_caps=_parse_stage_options(request_data.stage),
@@ -196,10 +218,15 @@ def _restart_options(request_data: BuildControlRequest) -> BuildOptions:
         clone=request_data.clone,
     )
     return BuildOptions(
+        profile=request_data.profile or "default",
         skip_stages=request_data.skip_stages,
         skip_stages_explicit="skip_stages" in request_data.model_fields_set,
         isolation=isolation.isolation,
         isolation_explicit=isolation.explicit,
+        delivery_mode=request_data.delivery_mode or "auto",
+        delivery_mode_explicit="delivery_mode" in request_data.model_fields_set,
+        delivery_target_repo=request_data.delivery_target_repo,
+        delivery_target_repo_explicit="delivery_target_repo" in request_data.model_fields_set,
         no_merge=request_data.no_merge,
         pr=request_data.pr,
         stage_caps=_parse_stage_options(request_data.stage),
@@ -332,12 +359,14 @@ def create_build_router(server: HTTPServer) -> APIRouter:
         """Start lifecycle automation for a plan, epic, or automated leaf task."""
         try:
             project_id = _resolve_request_project_id(server, request_data)
-            result = await build(
-                request_data.input_ref,
-                _build_options(request_data),
-                db=server.services.database,
-                project_id=project_id,
-                services=server.services,
+            result = await _run_blocking_build_call(
+                build(
+                    request_data.input_ref,
+                    _build_options(request_data),
+                    db=server.services.database,
+                    project_id=project_id,
+                    services=server.services,
+                )
             )
             return _build_result_json(result)
         except BuildProfileError as e:
@@ -349,22 +378,26 @@ def create_build_router(server: HTTPServer) -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
-    @router.post("/stop")
-    async def post_build_stop(request_data: BuildControlRequest) -> dict[str, Any]:
+    @router.post("/stop", response_model=None)
+    async def post_build_stop(request_data: BuildControlRequest) -> dict[str, Any] | JSONResponse:
         """Stop project-wide dispatcher ticks or task-scoped automation."""
         try:
             project_id = _resolve_request_project_id(server, request_data)
             if request_data.input_ref is None:
-                return _result_json(build_stop(db=server.services.database, project_id=project_id))
-            result = await build_stop_target(
+                result = build_stop(db=server.services.database, project_id=project_id)
+                return _success_envelope(_result_json(result))
+            target_result = await build_stop_target(
                 request_data.input_ref,
                 db=server.services.database,
                 project_id=project_id,
                 services=server.services,
             )
-            return _result_json(result)
+            return _success_envelope(_result_json(target_result))
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse(
+                status_code=400,
+                content=_error_envelope(str(e), "BUILD_STOP_ERROR"),
+            )
 
     @router.post("/resume", response_model=None)
     async def post_build_resume(request_data: BuildControlRequest) -> dict[str, Any] | JSONResponse:
@@ -392,51 +425,70 @@ def create_build_router(server: HTTPServer) -> APIRouter:
                 content=_error_envelope(str(e), "BUILD_RESUME_ERROR"),
             )
 
-    @router.post("/clean")
-    async def post_build_clean(request_data: BuildControlRequest) -> dict[str, Any]:
+    @router.post("/clean", response_model=None)
+    async def post_build_clean(request_data: BuildControlRequest) -> dict[str, Any] | JSONResponse:
         """Delete failed build artifacts for a task ref."""
         if request_data.input_ref is None:
-            raise HTTPException(status_code=400, detail="input_ref is required")
+            return JSONResponse(
+                status_code=400,
+                content=_error_envelope("input_ref is required", "BUILD_CLEAN_ERROR"),
+            )
         try:
             project_id = _resolve_request_project_id(server, request_data)
-            result = await build_clean_target(
-                request_data.input_ref,
-                db=server.services.database,
-                project_id=project_id,
-                dry_run=request_data.dry_run,
-                force=request_data.force,
-                yes=request_data.yes,
-                services=server.services,
+            result = await _run_blocking_build_call(
+                build_clean_target(
+                    request_data.input_ref,
+                    db=server.services.database,
+                    project_id=project_id,
+                    dry_run=request_data.dry_run,
+                    force=request_data.force,
+                    delete_dirty_worktrees=request_data.delete_dirty_worktrees,
+                    yes=request_data.yes,
+                    services=server.services,
+                )
             )
-            return result.to_dict()
+            return _success_envelope(result.to_dict())
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse(
+                status_code=400,
+                content=_error_envelope(str(e), "BUILD_CLEAN_ERROR"),
+            )
 
-    @router.post("/restart")
-    async def post_build_restart(request_data: BuildControlRequest) -> dict[str, Any]:
+    @router.post("/restart", response_model=None)
+    async def post_build_restart(
+        request_data: BuildControlRequest,
+    ) -> dict[str, Any] | JSONResponse:
         """Stop, clean, and resume task-scoped build automation."""
         if request_data.input_ref is None:
-            raise HTTPException(status_code=400, detail="input_ref is required")
+            return JSONResponse(
+                status_code=400,
+                content=_error_envelope("input_ref is required", "BUILD_RESTART_ERROR"),
+            )
         try:
             project_id = _resolve_request_project_id(server, request_data)
-            result = await build_restart_target(
-                request_data.input_ref,
-                db=server.services.database,
-                project_id=project_id,
-                dry_run=request_data.dry_run,
-                force=request_data.force,
-                yes=request_data.yes,
-                no_resume=request_data.no_resume,
-                opts=(
-                    _restart_options(request_data)
-                    if _restart_options_were_supplied(request_data)
-                    else None
-                ),
-                services=server.services,
+            result = await _run_blocking_build_call(
+                build_restart_target(
+                    request_data.input_ref,
+                    db=server.services.database,
+                    project_id=project_id,
+                    dry_run=request_data.dry_run,
+                    force=request_data.force,
+                    yes=request_data.yes,
+                    no_resume=request_data.no_resume,
+                    opts=(
+                        _restart_options(request_data)
+                        if _restart_options_were_supplied(request_data)
+                        else None
+                    ),
+                    services=server.services,
+                )
             )
-            return result.to_dict()
+            return _success_envelope(result.to_dict())
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse(
+                status_code=400,
+                content=_error_envelope(str(e), "BUILD_RESTART_ERROR"),
+            )
 
     @router.get("/status")
     async def get_status(

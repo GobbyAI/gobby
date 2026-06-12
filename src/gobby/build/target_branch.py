@@ -10,6 +10,7 @@ from gobby.build.stage_manifest import InputKind
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.git import git_subprocess_env
 
 
 async def _resolve_target_branch(
@@ -48,6 +49,7 @@ async def _validate_target_branch(
         cwd=repo_path,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=git_subprocess_env(),
     )
     stdout_bytes, stderr_bytes = await proc.communicate()
     if proc.returncode == 0 and stdout_bytes.decode().strip():
@@ -61,6 +63,7 @@ async def _validate_target_branch(
         cwd=repo_path,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=git_subprocess_env(),
     )
     branches_stdout, _ = await list_proc.communicate()
     available = ", ".join(branches_stdout.decode().split()) or "main"
@@ -83,6 +86,7 @@ async def _current_target_branch(db: HubDatabase, project_id: str) -> str | None
         cwd=repo_path,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=git_subprocess_env(),
     )
     stdout_bytes, _ = await proc.communicate()
     if proc.returncode != 0:

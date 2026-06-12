@@ -28,7 +28,6 @@ def resolve_build_profile_options(
     # explicit marker remain direct build options rather than profile overlays.
     return BuildOptions(
         profile=opts.profile,
-        profile_explicit=opts.profile_explicit,
         quick=opts.quick,
         skip_stages=list(opts.skip_stages)
         if has_request_skip_stages
@@ -38,8 +37,14 @@ def resolve_build_profile_options(
         isolation_explicit=opts.isolation_explicit,
         unattended=profile.unattended if not opts.unattended_explicit else opts.unattended,
         unattended_explicit=opts.unattended_explicit,
-        delivery_mode=profile.delivery_mode,
-        delivery_target_repo=profile.delivery_target_repo,
+        delivery_mode=profile.delivery_mode
+        if not opts.delivery_mode_explicit
+        else opts.delivery_mode,
+        delivery_mode_explicit=opts.delivery_mode_explicit,
+        delivery_target_repo=profile.delivery_target_repo
+        if not opts.delivery_target_repo_explicit
+        else opts.delivery_target_repo,
+        delivery_target_repo_explicit=opts.delivery_target_repo_explicit,
         no_merge=opts.no_merge,
         pr=opts.pr,
         stage_caps=list(opts.stage_caps),

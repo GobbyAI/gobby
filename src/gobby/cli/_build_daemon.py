@@ -61,7 +61,12 @@ def _build_payload(
         "planning_seed_state": opts.planning_seed_state,
         "completed_plan_review_rounds": opts.completed_plan_review_rounds,
         "dry_run": opts.dry_run,
+        "profile": opts.profile,
     }
+    if opts.delivery_mode_explicit:
+        payload["delivery_mode"] = opts.delivery_mode
+    if opts.delivery_target_repo_explicit:
+        payload["delivery_target_repo"] = opts.delivery_target_repo
     if opts.coordinator_session_ref:
         payload["coordinator"] = opts.coordinator_session_ref
     if opts.isolation_explicit:
@@ -78,6 +83,12 @@ def _restart_options_payload(opts: BuildOptions) -> dict[str, object]:
         "completed_plan_review_rounds": opts.completed_plan_review_rounds,
         "project_explicit": opts.project_explicit,
     }
+    if opts.profile != "default":
+        payload["profile"] = opts.profile
+    if opts.delivery_mode_explicit:
+        payload["delivery_mode"] = opts.delivery_mode
+    if opts.delivery_target_repo_explicit:
+        payload["delivery_target_repo"] = opts.delivery_target_repo
     if opts.pr is not None:
         payload["pr"] = opts.pr
     if opts.target_branch is not None:
@@ -199,6 +210,7 @@ def _try_daemon_build_control(
     cwd: str | None = None,
     dry_run: bool = False,
     force: bool = False,
+    delete_dirty_worktrees: bool = False,
     yes: bool = False,
     no_resume: bool = False,
     opts: BuildOptions | None = None,
@@ -223,6 +235,8 @@ def _try_daemon_build_control(
             "yes": yes,
             "no_resume": no_resume,
         }
+        if action == "clean":
+            payload["delete_dirty_worktrees"] = delete_dirty_worktrees
         if opts is not None:
             payload.update(_restart_options_payload(opts))
         response = client.call_http_api(
@@ -264,7 +278,7 @@ def _control_payload_from_daemon(payload: dict[str, object]) -> dict[str, object
         return None
     if payload.get("success") is False:
         raise click.ClickException(_daemon_error_message(payload))
-    return payload
+    return None
 
 
 def _daemon_error_detail(response: Any) -> Any:

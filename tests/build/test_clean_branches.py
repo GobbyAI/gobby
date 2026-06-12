@@ -77,6 +77,38 @@ def test_branch_cleanup_ignores_branch_already_deleted(
     assert errors == []
 
 
+def test_branch_cleanup_refuses_missing_project_repo_path(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+) -> None:
+    from gobby.build import branch_cleanup
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.tasks import LocalTaskManager
+
+    project = LocalProjectManager(temp_db).create("missing-repo")
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=project.id,
+        title="missing project repo path",
+        task_type="task",
+        category="code",
+    )
+
+    def fail_git_operation(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("branch cleanup must not inspect or delete branches without repo_path")
+
+    monkeypatch.setattr(branch_cleanup, "local_branches", fail_git_operation)
+    monkeypatch.setattr(branch_cleanup, "current_branch", fail_git_operation)
+    monkeypatch.setattr(branch_cleanup, "git", fail_git_operation)
+
+    with pytest.raises(ValueError, match="project repo_path is required"):
+        branch_cleanup.project_path(temp_db, project.id)
+
+    deleted, errors = branch_cleanup.delete_orphan_build_branches(temp_db, project.id, [task])
+
+    assert deleted == 0
+    assert errors == ["project repo_path is required for build branch cleanup"]
+
+
 @pytest.mark.asyncio
 async def test_clean_deletes_stale_task_branch(temp_db, tmp_path: Path) -> None:
     from gobby.build.branch_cleanup import default_task_branch_name
@@ -98,6 +130,8 @@ async def test_clean_deletes_stale_task_branch(temp_db, tmp_path: Path) -> None:
     )
     stale_branch = default_task_branch_name(task)
     _git(repo, "branch", stale_branch)
+    manual_branch = f"task-{task.seq_num}-manual"
+    _git(repo, "branch", manual_branch)
     _git(repo, "branch", "task-999-unrelated")
 
     result = await build_clean_target(
@@ -110,6 +144,7 @@ async def test_clean_deletes_stale_task_branch(temp_db, tmp_path: Path) -> None:
 
     branches = _branches(repo)
     assert stale_branch not in branches
+    assert manual_branch in branches
     assert "task-999-unrelated" in branches
     assert result.branches_deleted == 1
 
@@ -198,3 +233,148 @@ async def test_clean_clears_dangling_integration_workspace_id(
         and artifact.deleted
         for artifact in result.artifacts
     )
+
+
+@pytest.mark.asyncio
+async def test_clean_force_defers_dirty_descendant_worktree(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    from gobby.build.controls import build_clean_target
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.worktrees import LocalWorktreeManager
+
+    repo = tmp_path / "repo"
+    worktree_path = tmp_path / "task-worktree"
+    repo.mkdir()
+    _init_repo(repo)
+
+    project = LocalProjectManager(temp_db).create("dirty-clean", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    root = task_manager.create_task(
+        project_id=project.id,
+        title="Root",
+        task_type="epic",
+        category="planning",
+    )
+    leaf = task_manager.create_task(
+        project_id=project.id,
+        title="Dirty leaf",
+        parent_task_id=root.id,
+        task_type="task",
+        category="code",
+    )
+
+    _git(repo, "worktree", "add", "-b", "task/dirty-leaf", str(worktree_path), "main")
+    worktrees = LocalWorktreeManager(temp_db)
+    worktree = worktrees.create(
+        project_id=project.id,
+        branch_name="task/dirty-leaf",
+        worktree_path=str(worktree_path),
+        base_branch="main",
+        task_id=leaf.id,
+    )
+    task_manager.artifacts.set_artifacts_atomic(
+        leaf.id,
+        worktree_path=str(worktree_path),
+        worktree_id=worktree.id,
+        base_commit_sha=_git(repo, "rev-parse", "main"),
+        target_branch="main",
+    )
+    (worktree_path / "dirty.txt").write_text("uncommitted work\n", encoding="utf-8")
+
+    result = await build_clean_target(
+        f"#{root.seq_num}",
+        db=temp_db,
+        project_id=project.id,
+        yes=True,
+        force=True,
+    )
+
+    artifact = next(
+        artifact
+        for artifact in result.artifacts
+        if artifact.task_id == leaf.id and artifact.artifact_id == worktree.id
+    )
+    stored_artifacts = task_manager.artifacts.get_artifacts(leaf.id)
+
+    assert worktree_path.exists()
+    assert worktrees.get(worktree.id) is not None
+    assert stored_artifacts.worktree_id == worktree.id
+    assert artifact.deferred
+    assert artifact.cleanup_reason == "dirty_open_task_deferred"
+    assert not artifact.deleted
+    assert result.branches_deleted == 0
+
+
+@pytest.mark.asyncio
+async def test_clean_dirty_worktree_override_deletes_descendant_worktree(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    from gobby.build.controls import build_clean_target
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.worktrees import LocalWorktreeManager
+
+    repo = tmp_path / "repo"
+    worktree_path = tmp_path / "task-worktree"
+    repo.mkdir()
+    _init_repo(repo)
+
+    project = LocalProjectManager(temp_db).create("dirty-clean-override", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    root = task_manager.create_task(
+        project_id=project.id,
+        title="Root",
+        task_type="epic",
+        category="planning",
+    )
+    leaf = task_manager.create_task(
+        project_id=project.id,
+        title="Dirty leaf",
+        parent_task_id=root.id,
+        task_type="task",
+        category="code",
+    )
+
+    _git(repo, "worktree", "add", "-b", "task/dirty-leaf", str(worktree_path), "main")
+    worktrees = LocalWorktreeManager(temp_db)
+    worktree = worktrees.create(
+        project_id=project.id,
+        branch_name="task/dirty-leaf",
+        worktree_path=str(worktree_path),
+        base_branch="main",
+        task_id=leaf.id,
+    )
+    task_manager.artifacts.set_artifacts_atomic(
+        leaf.id,
+        worktree_path=str(worktree_path),
+        worktree_id=worktree.id,
+        base_commit_sha=_git(repo, "rev-parse", "main"),
+        target_branch="main",
+    )
+    (worktree_path / "dirty.txt").write_text("uncommitted work\n", encoding="utf-8")
+
+    result = await build_clean_target(
+        f"#{root.seq_num}",
+        db=temp_db,
+        project_id=project.id,
+        yes=True,
+        force=True,
+        delete_dirty_worktrees=True,
+    )
+
+    artifact = next(
+        artifact
+        for artifact in result.artifacts
+        if artifact.task_id == leaf.id and artifact.artifact_id == worktree.id
+    )
+    stored_artifacts = task_manager.artifacts.get_artifacts(leaf.id)
+
+    assert not worktree_path.exists()
+    assert worktrees.get(worktree.id) is None
+    assert stored_artifacts.worktree_id is None
+    assert not artifact.deferred
+    assert artifact.deleted

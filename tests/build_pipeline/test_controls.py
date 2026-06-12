@@ -56,7 +56,7 @@ def _tree(task_manager: LocalTaskManager, project_id: str) -> tuple[Task, list[T
 
 
 @pytest.mark.asyncio
-async def test_stop_disables_leaf_automation_and_cancels_active_agent(
+async def test_stop_disables_leaf_automation_preserves_unattended_and_cancels_active_agent(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -99,7 +99,7 @@ async def test_stop_disables_leaf_automation_and_cancels_active_agent(
     assert result.action == "stop"
     assert result.automation_updated == 1
     assert updated.allow_automation is False
-    assert updated.unattended is False
+    assert updated.unattended is True
     assert cancelled is not None
     assert cancelled.status == "cancelled"
 
@@ -172,6 +172,7 @@ async def test_stop_clears_runtime_claim_and_resets_current_stage(
 
     updated = task_manager.get_task(task.id)
     assert updated.claimed_by_session_id is None
+    assert updated.unattended is True
     assert TaskDispatchMutexManager(temp_db).get_mutex(task.id) is None
     assert stage_row(temp_db, task.id, "development")["state"] == "ready"
     assert result.claims_released == 1
@@ -220,7 +221,7 @@ async def test_stop_prevents_dispatcher_respawn_on_next_heartbeat(
 
 
 @pytest.mark.asyncio
-async def test_resume_epic_sets_subtree_automation_and_kicks_dispatcher(
+async def test_resume_epic_sets_subtree_automation_preserves_unattended_and_kicks_dispatcher(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -228,8 +229,11 @@ async def test_resume_epic_sets_subtree_automation_and_kicks_dispatcher(
 
     task_manager = LocalTaskManager(temp_db)
     epic, descendants = _tree(task_manager, sample_project["id"])
-    for task in [epic, *descendants]:
-        task_manager.update_task(task.id, allow_automation=False)
+    expected_unattended: dict[str, bool] = {}
+    for index, task in enumerate([epic, *descendants]):
+        unattended = index % 2 == 0
+        expected_unattended[task.id] = unattended
+        task_manager.update_task(task.id, allow_automation=False, unattended=unattended)
 
     with patch(
         "gobby.build.controls._kick_dispatcher_tick",
@@ -244,7 +248,9 @@ async def test_resume_epic_sets_subtree_automation_and_kicks_dispatcher(
     assert result.action == "resume"
     assert result.automation_updated == 3
     for task in [epic, *descendants]:
-        assert task_manager.get_task(task.id).allow_automation is True
+        updated = task_manager.get_task(task.id)
+        assert updated.allow_automation is True
+        assert updated.unattended == expected_unattended[task.id]
 
 
 @pytest.mark.asyncio

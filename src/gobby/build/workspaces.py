@@ -81,17 +81,21 @@ def ensure_epic_integration_workspaces(
         if backend == "worktree":
             artifact_fields["integration_workspace_id"] = integration.id
             artifact_fields["integration_clone_id"] = None
+            artifact_fields["clone_id"] = None
+            artifact_fields["clone_path"] = None
+            artifact_fields["base_commit_sha"] = None
             if artifacts.worktree_id:
                 artifact_fields["worktree_id"] = None
                 artifact_fields["worktree_path"] = None
-                artifact_fields["base_commit_sha"] = None
         else:
             artifact_fields["integration_clone_id"] = integration.id
             artifact_fields["integration_workspace_id"] = None
+            artifact_fields["worktree_id"] = None
+            artifact_fields["worktree_path"] = None
+            artifact_fields["base_commit_sha"] = None
             if artifacts.clone_id:
                 artifact_fields["clone_id"] = None
                 artifact_fields["clone_path"] = None
-                artifact_fields["base_commit_sha"] = None
         task_manager.artifacts.set_artifacts_atomic(task.id, **artifact_fields)
         if merge_closed_descendant_commits:
             _merge_closed_descendant_commits(
@@ -172,9 +176,15 @@ def ensure_task_parent_integration_workspace(
     if backend == "worktree":
         artifact_fields["integration_workspace_id"] = integration.id
         artifact_fields["integration_clone_id"] = None
+        artifact_fields["clone_id"] = None
+        artifact_fields["clone_path"] = None
+        artifact_fields["base_commit_sha"] = None
     else:
         artifact_fields["integration_clone_id"] = integration.id
         artifact_fields["integration_workspace_id"] = None
+        artifact_fields["worktree_id"] = None
+        artifact_fields["worktree_path"] = None
+        artifact_fields["base_commit_sha"] = None
     task_manager.artifacts.set_artifacts_atomic(epic.id, **artifact_fields)
     if not task_artifacts.target_branch:
         task_manager.artifacts.set_artifact(task.id, "target_branch", branch_name)

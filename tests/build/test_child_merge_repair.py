@@ -15,6 +15,7 @@ from gobby.build.workspaces import (
     _refresh_clean_git_dir,
     ensure_epic_integration_workspaces,
 )
+from gobby.storage.clones import LocalCloneManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
@@ -852,6 +853,45 @@ def test_epic_integration_workspace_refresh_aborts_timeout_merge(
     assert ("merge", "--abort") in calls
 
 
+def test_epic_integration_workspace_refuses_dirty_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "integration"
+    workspace.mkdir()
+    calls: list[tuple[str, ...]] = []
+
+    def completed(
+        args: list[str],
+        *,
+        returncode: int = 0,
+        stdout: str = "",
+        stderr: str = "",
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, returncode, stdout, stderr)
+
+    def fake_git(
+        repo_path: Path,
+        args: list[str],
+        *,
+        timeout: int,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        assert repo_path == workspace
+        assert env is None
+        calls.append(tuple(args))
+        if args == ["status", "--porcelain"]:
+            return completed(args, stdout=" M src/gobby/build/workspace_git.py\n")
+        raise AssertionError(f"unexpected git args: {args}")
+
+    monkeypatch.setattr("gobby.build.workspace_git._git", fake_git)
+
+    with pytest.raises(BuildWorkspaceError, match="dirty"):
+        _refresh_clean_git_dir(workspace, "gobby/integration/phase", "main")
+
+    assert calls == [("status", "--porcelain")]
+
+
 def test_epic_integration_workspace_clears_stale_task_worktree_artifacts(
     temp_db,
     tmp_path: Path,
@@ -979,6 +1019,197 @@ def test_epic_integration_workspace_promotes_existing_task_worktree(
     assert promoted.workspace_role == "integration"
     assert _git(phase_path, "rev-parse", "HEAD") == phase_sha
     assert _git(repo, "branch", "--list", _integration_branch(parent)) == ""
+
+
+def test_epic_integration_workspace_dirty_task_worktree_keeps_task_role(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    phase_path = tmp_path / "phase"
+    repo.mkdir()
+    _init_repo(repo)
+    base_sha = _git(repo, "rev-parse", "main")
+
+    _git(repo, "worktree", "add", "-b", "task/phase", str(phase_path), "main")
+    (phase_path / "dirty.txt").write_text("dirty work\n")
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    worktrees = LocalWorktreeManager(temp_db)
+    phase = worktrees.create(
+        project_id=project.id,
+        branch_name="task/phase",
+        worktree_path=str(phase_path),
+        base_branch="main",
+        task_id=parent.id,
+        workspace_role="task",
+    )
+    task_manager.artifacts.set_artifacts_atomic(
+        parent.id,
+        worktree_path=str(phase_path),
+        worktree_id=phase.id,
+        base_commit_sha=base_sha,
+    )
+
+    with pytest.raises(BuildWorkspaceError, match="dirty"):
+        ensure_epic_integration_workspaces(
+            task_manager=task_manager,
+            root_task=parent,
+            backend="worktree",
+            target_branch="main",
+            project_id=project.id,
+            services=None,
+        )
+
+    parent_artifacts = task_manager.artifacts.get_artifacts(parent.id)
+    stored = worktrees.get(phase.id)
+
+    assert stored is not None
+    assert stored.workspace_role == "task"
+    assert parent_artifacts.worktree_id == phase.id
+    assert parent_artifacts.integration_workspace_id is None
+
+
+def test_epic_integration_workspace_blocks_active_run_for_task_worktree_promotion(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    from gobby.storage.agents import LocalAgentRunManager
+
+    repo = tmp_path / "repo"
+    phase_path = tmp_path / "phase"
+    repo.mkdir()
+    _init_repo(repo)
+    base_sha = _git(repo, "rev-parse", "main")
+
+    _git(repo, "worktree", "add", "-b", "task/phase", str(phase_path), "main")
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    worktrees = LocalWorktreeManager(temp_db)
+    phase = worktrees.create(
+        project_id=project.id,
+        branch_name="task/phase",
+        worktree_path=str(phase_path),
+        base_branch="main",
+        task_id=parent.id,
+        workspace_role="task",
+    )
+    temp_db.execute(
+        "INSERT INTO sessions "
+        "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
+        "VALUES (%s, %s, %s, %s, %s, NOW(), NOW())",
+        ("parent-session-promote", "ext-promote", "machine-1", "codex", project.id),
+    )
+    run_manager = LocalAgentRunManager(temp_db)
+    run = run_manager.create(
+        parent_session_id="parent-session-promote",
+        provider="codex",
+        prompt="review",
+        agent_name="holistic-reviewer",
+        task_id=parent.id,
+        run_id="run-active-task-worktree",
+    )
+    run_manager.update_runtime(run.id, worktree_id=phase.id)
+    task_manager.artifacts.set_artifacts_atomic(
+        parent.id,
+        worktree_path=str(phase_path),
+        worktree_id=phase.id,
+        base_commit_sha=base_sha,
+    )
+
+    with pytest.raises(BuildWorkspaceError, match="active run run-active-task-worktree"):
+        ensure_epic_integration_workspaces(
+            task_manager=task_manager,
+            root_task=parent,
+            backend="worktree",
+            target_branch="main",
+            project_id=project.id,
+            services=None,
+        )
+
+    stored = worktrees.get(phase.id)
+    parent_artifacts = task_manager.artifacts.get_artifacts(parent.id)
+
+    assert stored is not None
+    assert stored.workspace_role == "task"
+    assert parent_artifacts.worktree_id == phase.id
+    assert parent_artifacts.integration_workspace_id is None
+
+
+def test_epic_integration_workspace_blocks_active_run_for_task_clone_promotion(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    from gobby.storage.agents import LocalAgentRunManager
+
+    repo = tmp_path / "repo"
+    clone_path = tmp_path / "clone"
+    repo.mkdir()
+    _init_repo(repo)
+    base_sha = _git(repo, "rev-parse", "main")
+    _git(repo, "checkout", "-b", "task/phase")
+    (repo / "phase.txt").write_text("phase work\n")
+    _git(repo, "add", "phase.txt")
+    _git(repo, "commit", "-m", "phase work")
+    _git(repo, "checkout", "main")
+    _git(tmp_path, "clone", "--branch", "task/phase", str(repo), str(clone_path))
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    clones = LocalCloneManager(temp_db)
+    phase = clones.create(
+        project_id=project.id,
+        branch_name="task/phase",
+        clone_path=str(clone_path),
+        base_branch="main",
+        task_id=parent.id,
+        workspace_role="task",
+    )
+    temp_db.execute(
+        "INSERT INTO sessions "
+        "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
+        "VALUES (%s, %s, %s, %s, %s, NOW(), NOW())",
+        ("parent-session-clone", "ext-clone", "machine-1", "codex", project.id),
+    )
+    run_manager = LocalAgentRunManager(temp_db)
+    run = run_manager.create(
+        parent_session_id="parent-session-clone",
+        provider="codex",
+        prompt="review",
+        agent_name="holistic-reviewer",
+        task_id=parent.id,
+        run_id="run-active-task-clone",
+    )
+    run_manager.update_runtime(run.id, clone_id=phase.id)
+    task_manager.artifacts.set_artifacts_atomic(
+        parent.id,
+        clone_path=str(clone_path),
+        clone_id=phase.id,
+        base_commit_sha=base_sha,
+    )
+
+    with pytest.raises(BuildWorkspaceError, match="active run run-active-task-clone"):
+        ensure_epic_integration_workspaces(
+            task_manager=task_manager,
+            root_task=parent,
+            backend="clone",
+            target_branch="main",
+            project_id=project.id,
+            services=None,
+        )
+
+    stored = clones.get(phase.id)
+    parent_artifacts = task_manager.artifacts.get_artifacts(parent.id)
+
+    assert stored is not None
+    assert stored.workspace_role == "task"
+    assert parent_artifacts.clone_id == phase.id
+    assert parent_artifacts.integration_clone_id is None
 
 
 def test_epic_integration_workspace_recovers_partially_promoted_worktree(

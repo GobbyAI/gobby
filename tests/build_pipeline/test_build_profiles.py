@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+from gobby.build.profiles import resolve_build_profile_options
 from gobby.build.service import BuildOptions, build
 from gobby.storage.build_profiles import BuildProfileLoader, BuildProfileManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -17,6 +18,7 @@ def _options(**overrides: object) -> BuildOptions:
         "quick": False,
         "skip_stages": [],
         "isolation": "none",
+        "isolation_explicit": True,
         "no_merge": False,
         "pr": None,
         "target_branch": None,
@@ -119,7 +121,7 @@ async def test_submit_profile_records_same_repo_delivery_campaign(
 
     await build(
         f"#{task.seq_num}",
-        _options(profile="submit", profile_explicit=True),
+        _options(profile="submit"),
         db=temp_db,
         project_id=sample_project["id"],
     )
@@ -164,7 +166,7 @@ async def test_submit_profile_records_cross_repo_delivery_campaign(
 
     await build(
         f"#{task.seq_num}",
-        _options(profile="submit", profile_explicit=True),
+        _options(profile="submit"),
         db=temp_db,
         project_id=sample_project["id"],
     )
@@ -180,3 +182,38 @@ async def test_submit_profile_records_cross_repo_delivery_campaign(
     assert row["delivery_mode"] == "pull_request"
     assert row["source_repo"] == "test/test-project"
     assert row["target_repo"] == "upstream/test-project"
+
+
+def test_explicit_delivery_options_override_profile_defaults(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    BuildProfileLoader().sync(temp_db)
+    BuildProfileManager(temp_db).create(
+        name="submit",
+        display_label="Submit Override",
+        description="Submit to upstream repo.",
+        skip_stages=["merge"],
+        isolation="worktree",
+        unattended=False,
+        delivery_mode="pull_request",
+        delivery_target_repo="upstream/test-project",
+        source="project",
+        project_id=sample_project["id"],
+    )
+
+    resolved = resolve_build_profile_options(
+        _options(
+            profile="submit",
+            delivery_mode="auto",
+            delivery_mode_explicit=True,
+            delivery_target_repo=None,
+            delivery_target_repo_explicit=True,
+        ),
+        db=temp_db,
+        project_id=sample_project["id"],
+    )
+
+    assert resolved.delivery_mode == "auto"
+    assert resolved.delivery_mode_explicit is True
+    assert resolved.delivery_target_repo is None
+    assert resolved.delivery_target_repo_explicit is True

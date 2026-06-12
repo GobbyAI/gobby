@@ -84,6 +84,20 @@ class TestLocalTaskManager:
         fetched = task_manager.get_task(created.id)
         assert fetched == created
 
+    def test_get_task_rejects_foreign_project_uuid(self, task_manager, temp_db) -> None:
+        temp_db.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
+            ("proj-a", "Project A"),
+        )
+        temp_db.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
+            ("proj-b", "Project B"),
+        )
+        foreign_task = task_manager.create_task(project_id="proj-b", title="Task B")
+
+        with pytest.raises(ValueError, match="not found in project"):
+            task_manager.get_task(foreign_task.id, project_id="proj-a")
+
     def test_update_task(self, task_manager, project_id) -> None:
         task = task_manager.create_task(project_id=project_id, title="Original Title")
         updated = task_manager.update_task(task.id, title="New Title")
