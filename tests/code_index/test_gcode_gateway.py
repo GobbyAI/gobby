@@ -12,6 +12,7 @@ from gobby.code_index.gcode_gateway import (
     GcodeCommandError,
     GcodeGateway,
     GcodeIndexedFileNotFoundError,
+    GcodeInputValidationError,
     GcodeJsonError,
     GcodeProjectNotFoundError,
     GcodeTimeoutError,
@@ -270,6 +271,64 @@ async def test_gateway_builds_graph_read_args(
             "--quiet",
         ),
     ]
+
+
+@pytest.mark.parametrize(
+    ("invalid_value", "expected_reason"),
+    [
+        ("-src/app.py", "value must not start with '-'"),
+        ("/tmp/app.py", "value must not be an absolute path"),
+        ("src/../app.py", "value must not contain '..' segments"),
+    ],
+)
+@pytest.mark.parametrize("operation", ["sync_file", "graph_file", "blast_radius"])
+async def test_gateway_rejects_invalid_file_paths_before_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    operation: str,
+    invalid_value: str,
+    expected_reason: str,
+) -> None:
+    calls = _patch_subprocess(monkeypatch, [])
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    with pytest.raises(GcodeInputValidationError, match=expected_reason):
+        if operation == "sync_file":
+            await gateway.graph_sync_file(tmp_path, invalid_value)
+        elif operation == "graph_file":
+            await gateway.graph_file(tmp_path, invalid_value)
+        else:
+            await gateway.graph_blast_radius(tmp_path, file_path=invalid_value)
+
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("invalid_value", "expected_reason"),
+    [
+        ("-sym-1", "value must not start with '-'"),
+        ("/sym-1", "value must not be an absolute path"),
+        ("symbols/../sym-1", "value must not contain '..' segments"),
+    ],
+)
+@pytest.mark.parametrize("operation", ["neighbors", "blast_radius"])
+async def test_gateway_rejects_invalid_symbol_ids_before_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    operation: str,
+    invalid_value: str,
+    expected_reason: str,
+) -> None:
+    calls = _patch_subprocess(monkeypatch, [])
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    with pytest.raises(GcodeInputValidationError, match=expected_reason):
+        if operation == "neighbors":
+            await gateway.graph_neighbors(tmp_path, invalid_value)
+        else:
+            await gateway.graph_blast_radius(tmp_path, symbol_id=invalid_value)
+
+    assert calls == []
 
 
 async def test_gateway_rejects_blast_radius_without_target(tmp_path: Path) -> None:

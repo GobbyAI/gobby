@@ -18,6 +18,7 @@ from gobby.code_index.context import (
 )
 from gobby.code_index.gcode_gateway import (
     GcodeCommandError,
+    GcodeInputValidationError,
     GcodeProjectNotFoundError,
     GcodeUnavailableError,
 )
@@ -243,6 +244,27 @@ def test_graph_file_delegates(client: TestClient, mock_server: MagicMock) -> Non
         "proj-1",
         "src/app.py",
     )
+
+
+def test_graph_route_returns_400_for_invalid_gcode_input(
+    client: TestClient,
+    mock_server: MagicMock,
+) -> None:
+    mock_server.services.code_indexer.graph_file.side_effect = GcodeInputValidationError(
+        "file_path",
+        "-src/app.py",
+        "value must not start with '-'",
+    )
+
+    response = client.get(
+        "/api/code-index/graph/file/-src/app.py",
+        params={"project_id": "proj-1"},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": "Invalid file_path: value must not start with '-'",
+    }
 
 
 def test_graph_symbol_neighbors_delegates(client: TestClient, mock_server: MagicMock) -> None:
