@@ -26,6 +26,7 @@ class TestPackHelpers:
         assert _human_size(1048576) == "1.0MB"
         assert _human_size(1073741824) == "1.0GB"
         assert _human_size(1099511627776) == "1.0TB"
+        assert _human_size(1649267441664) == "1.5TB"
 
 
 class TestPackCommand:

@@ -366,10 +366,6 @@ def merge_resolve(file_path: str, strategy: str, json_format: bool) -> None:
 
         click.echo(f"Resolved: {file_path}")
 
-    except AttributeError:
-        # get_conflict_by_path may not exist
-        click.echo(f"Error: Conflict not found for '{file_path}'", err=True)
-        raise SystemExit(1) from None
     except Exception as e:
         click.echo(f"Error resolving conflict: {e}", err=True)
         raise SystemExit(1) from None
@@ -433,10 +429,6 @@ def merge_apply(force: bool, json_format: bool) -> None:
         if result.get("commit_sha"):
             click.echo(f"  commit: {result['commit_sha']}")
 
-    except AttributeError:
-        # get_active_resolution may not exist
-        click.echo("Error: No active merge operation found.", err=True)
-        raise SystemExit(1) from None
     except Exception as e:
         click.echo(f"Error applying merge: {e}", err=True)
         raise SystemExit(1) from None
@@ -486,10 +478,6 @@ def merge_abort(json_format: bool) -> None:
             click.echo("Failed to abort merge.", err=True)
             raise SystemExit(1)
 
-    except AttributeError:
-        # get_active_resolution may not exist
-        click.echo("Error: No active merge operation to abort.", err=True)
-        raise SystemExit(1) from None
     except Exception as e:
         click.echo(f"Error aborting merge: {e}", err=True)
         raise SystemExit(1) from None

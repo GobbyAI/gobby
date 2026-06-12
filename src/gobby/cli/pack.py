@@ -682,11 +682,12 @@ def unpack(
 
 def _human_size(size: int) -> str:
     """Convert bytes to human-readable size."""
+    size_float = float(size)
     for unit in ("B", "KB", "MB", "GB"):
-        if size < 1024:
-            return f"{size:.1f}{unit}" if unit != "B" else f"{size}{unit}"
-        size //= 1024
-    return f"{size:.1f}TB"
+        if size_float < 1024:
+            return f"{size_float:.1f}{unit}" if unit != "B" else f"{size}B"
+        size_float /= 1024
+    return f"{size_float:.1f}TB"
 
 
 def _postgres_restore_requires_docker_services() -> bool:

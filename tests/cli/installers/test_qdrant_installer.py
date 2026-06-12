@@ -248,6 +248,19 @@ class TestQdrantHealthCheck:
 
         assert is_qdrant_installed(gobby_home=tmp_path) is True
 
+    def test_is_qdrant_installed_uses_gobby_home_default(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Uses get_gobby_home when no explicit home is supplied."""
+        import gobby.cli.services as services_module
+
+        services = tmp_path / "services"
+        services.mkdir(parents=True)
+        (services / "docker-compose.yml").write_text("services: {}")
+        monkeypatch.setattr(services_module, "get_gobby_home", lambda: tmp_path)
+
+        assert services_module.is_qdrant_installed() is True
+
 
 # ---------------------------------------------------------------------------
 # Config model tests

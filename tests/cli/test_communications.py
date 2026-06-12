@@ -241,6 +241,16 @@ def test_comms_channels_add_gobby_chat(mock_daemon_client):
     )
 
 
+def test_comms_channels_add_custom_rejects_non_object_config(mock_daemon_client):
+    runner = CliRunner()
+
+    result = runner.invoke(comms, ["channels", "add", "custom", "bad-custom"], input="[]\n")
+
+    assert result.exit_code == 1
+    assert "Configuration must be a JSON object." in result.output
+    mock_daemon_client.call_http_api.assert_not_called()
+
+
 def test_comms_channels_remove(mock_daemon_client):
     runner = CliRunner()
 
