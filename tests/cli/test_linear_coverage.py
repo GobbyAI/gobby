@@ -371,7 +371,8 @@ class TestLinearSync:
         tm, mcp, pm, pid = _mock_linear_deps()
         mock_deps.return_value = (tm, mcp, pm, pid)
         result = runner.invoke(linear, ["sync", "bad-id"], catch_exceptions=False)
-        assert result.exit_code == 0  # resolve returns None, command returns early
+        assert result.exit_code != 0
+        assert "Task not found: bad-id" in result.output
 
     @patch(
         "gobby.cli.linear.asyncio.run",
@@ -472,7 +473,8 @@ class TestLinearCreate:
         tm, mcp, pm, pid = _mock_linear_deps()
         mock_deps.return_value = (tm, mcp, pm, pid)
         result = runner.invoke(linear, ["create", "bad"], catch_exceptions=False)
-        assert result.exit_code == 0
+        assert result.exit_code != 0
+        assert "Task not found: bad" in result.output
 
     @patch("gobby.cli.linear.asyncio.run", side_effect=ValueError("bad task"))
     @patch("gobby.cli.linear.get_sync_service")

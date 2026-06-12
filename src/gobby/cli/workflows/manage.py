@@ -249,16 +249,17 @@ def reload_workflows(ctx: click.Context) -> None:
                     if data.get("status") == "success":
                         click.echo("✓ Triggered daemon workflow reload")
                         return
-                    else:
-                        click.echo(f"Daemon reload failed: {data.get('message')}", err=True)
+                    click.echo(f"Daemon reload failed: {data.get('message')}", err=True)
                 else:
                     click.echo(f"Daemon returned status {response.status_code}", err=True)
             except httpx.ConnectError:
                 click.echo("Could not reach daemon; reload may not have occurred.", err=True)
             except httpx.RequestError as e:
                 click.echo(f"Failed to communicate with daemon: {e}", err=True)
+            raise SystemExit(1)
     except Exception as e:
         logger.debug(f"Error checking daemon status: {e}", exc_info=True)
+        raise click.ClickException(f"Failed to check daemon status: {e}") from None
 
     # Fallback: Clear local cache (useful if running in same process or just validating)
     # This also helps if the user just wants to verify the command runs
