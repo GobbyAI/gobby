@@ -339,6 +339,19 @@ class LocalWorktreeManager:
         """
         return self.update(worktree_id, agent_session_id=session_id)
 
+    def is_claimed_by_live_session(self, worktree_id: str) -> bool:
+        """Return True when the worktree owner is an active session."""
+        row = self.db.fetchone(
+            """
+            SELECT 1
+            FROM worktrees wt
+            JOIN sessions s ON s.id = wt.agent_session_id
+            WHERE wt.id = %s AND s.status IN ('active', 'paused')
+            """,
+            (worktree_id,),
+        )
+        return row is not None
+
     def claim_if_available(
         self,
         worktree_id: str,

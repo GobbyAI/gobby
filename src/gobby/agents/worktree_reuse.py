@@ -120,7 +120,12 @@ def _sync_reused_worktree_to_base_sync(
         detail = _detail(ancestor)
         raise RuntimeError(f"Failed to compare reused worktree with {base_ref}: {detail}")
 
-    result = _run_git(git_manager, ["rebase", base_ref], cwd=path, timeout=120)
+    try:
+        result = _run_git(git_manager, ["rebase", base_ref], cwd=path, timeout=120)
+    except subprocess.TimeoutExpired as exc:
+        abort_detail = _abort_rebase(git_manager, path)
+        message = f"Timed out rebasing reused worktree onto {base_ref}: {exc}{abort_detail}"
+        raise RuntimeError(message) from exc
     if result.returncode != 0:
         abort_detail = _abort_rebase(git_manager, path)
         detail = _detail(result)

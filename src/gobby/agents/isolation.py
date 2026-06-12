@@ -198,12 +198,7 @@ class WorktreeIsolationHandler(IsolationHandler):
         """
         Prepare worktree environment.
 
-        - Generate branch name if not provided
-        - Check for existing worktree for the branch
-        - Determine base branch (use parent's current branch if not specified)
-        - Check for unpushed commits and use local ref if needed
-        - Create new worktree if needed
-        - Return IsolationContext with worktree info
+        Prepare or reuse a git worktree and return isolation metadata.
         """
         # Reset partial state
         self._created_worktree_path = None
@@ -221,6 +216,11 @@ class WorktreeIsolationHandler(IsolationHandler):
         )
         if existing:
             if Path(existing.worktree_path).is_dir():
+                live_claim = await asyncio.to_thread(
+                    self._worktree_storage.is_claimed_by_live_session, existing.id
+                )
+                if live_claim:
+                    raise RuntimeError(f"Cannot reuse claimed live worktree: {existing.id}")
                 sync_result = await worktree_reuse.sync_reused_worktree_to_base(
                     git_manager=self._git_manager,
                     worktree_path=existing.worktree_path,

@@ -849,6 +849,32 @@ class TestLocalWorktreeManagerStatusTransitions:
         assert claimed is not None
         assert claimed.agent_session_id == resumed_owner.id
 
+    def test_is_claimed_by_live_session_checks_owner_status(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, object],
+    ) -> None:
+        session_manager = SessionManager(temp_db)
+        owner = session_manager.register(
+            machine_id="test-machine",
+            source="claude",
+            project_id=str(sample_project["id"]),
+            external_id="worktree-live-owner",
+        )
+        manager = LocalWorktreeManager(temp_db)
+        worktree = manager.create(
+            project_id=str(sample_project["id"]),
+            branch_name="feature/live-claim",
+            worktree_path="/tmp/gobby-live-claim",
+            agent_session_id=owner.id,
+        )
+
+        assert manager.is_claimed_by_live_session(worktree.id) is True
+
+        session_manager.update_status(owner.id, "expired")
+
+        assert manager.is_claimed_by_live_session(worktree.id) is False
+
     def test_mark_stale_sets_status(
         self,
         manager: LocalWorktreeManager,

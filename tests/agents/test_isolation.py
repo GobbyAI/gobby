@@ -8,6 +8,7 @@ import asyncio
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -539,6 +540,7 @@ class TestWorktreeIsolationHandler:
             worktree_path="/tmp/worktrees/existing-branch",
             branch_name="existing-branch",
         )
+        mock_worktree_storage.is_claimed_by_live_session.return_value = False
 
         handler = WorktreeIsolationHandler(
             git_manager=mock_git_manager,
@@ -586,6 +588,71 @@ class TestWorktreeIsolationHandler:
         )
         # Should NOT create a new worktree
         mock_git_manager.create_worktree.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_prepare_environment_refuses_live_claimed_existing_worktree(self) -> None:
+        """Test prepare_environment refuses to reuse a worktree claimed by a live session."""
+        checked_worktree_ids: list[str] = []
+        existing = SimpleNamespace(
+            id="existing-wt-456",
+            worktree_path="/tmp/worktrees/existing-branch",
+            branch_name="existing-branch",
+        )
+
+        def unexpected_create_worktree(*_args: object, **_kwargs: object) -> object:
+            raise AssertionError("claimed worktree reuse must not create a worktree")
+
+        def get_by_branch(_project_id: str, _branch_name: str) -> SimpleNamespace:
+            return existing
+
+        def is_claimed_by_live_session(worktree_id: str) -> bool:
+            checked_worktree_ids.append(worktree_id)
+            return True
+
+        git_manager = SimpleNamespace(
+            repo_path="/path/to/main/repo",
+            get_current_branch=lambda: "main",
+            create_worktree=unexpected_create_worktree,
+        )
+        worktree_storage = SimpleNamespace(
+            get_by_branch=get_by_branch,
+            is_claimed_by_live_session=is_claimed_by_live_session,
+        )
+        handler = WorktreeIsolationHandler(
+            git_manager=git_manager,
+            worktree_storage=worktree_storage,
+        )
+        config = SpawnConfig(
+            prompt="Test",
+            task_id=None,
+            task_title=None,
+            task_seq_num=None,
+            branch_name="existing-branch",
+            branch_prefix=None,
+            base_branch="main",
+            project_id="proj-123",
+            project_path="/path/to/main/repo",
+            provider="claude",
+            parent_session_id="sess-456",
+        )
+
+        with (
+            patch("pathlib.Path.is_dir", return_value=True),
+            patch(
+                "gobby.agents.isolation.repair_isolation_environment",
+                new=AsyncMock(),
+            ) as repair,
+            patch(
+                "gobby.agents.isolation.worktree_reuse.sync_reused_worktree_to_base",
+                new=AsyncMock(),
+            ) as sync,
+            pytest.raises(RuntimeError, match="Cannot reuse claimed live worktree"),
+        ):
+            await handler.prepare_environment(config)
+
+        assert checked_worktree_ids == ["existing-wt-456"]
+        sync.assert_not_awaited()
+        repair.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_prepare_environment_cleans_stale_record_before_recreate(self) -> None:
