@@ -44,6 +44,8 @@ def registry(mock_manager):
 async def test_send_message(registry, mock_manager):
     mock_msg = MagicMock()
     mock_msg.id = "msg-123"
+    mock_msg.status = "sent"
+    mock_msg.error = None
     mock_manager.send_message.return_value = mock_msg
 
     handler = registry.get_tool("send_message")
@@ -64,6 +66,20 @@ async def test_send_message(registry, mock_manager):
         session_id="session-1",
         metadata={"thread_id": "thread-1", "content_type": "text/markdown"},
     )
+
+
+async def test_send_message_reports_failed_status(registry, mock_manager):
+    mock_msg = MagicMock()
+    mock_msg.id = "msg-123"
+    mock_msg.status = "failed"
+    mock_msg.error = "network error"
+    mock_manager.send_message.return_value = mock_msg
+
+    handler = registry.get_tool("send_message")
+
+    res = await handler(channel="test-channel", content="Hello world")
+
+    assert res == {"success": False, "message_id": "msg-123", "error": "network error"}
 
 
 def test_list_channels(registry, mock_store, mock_manager):

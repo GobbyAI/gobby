@@ -40,7 +40,7 @@ def create_communications_registry(
                 session_id=session_id,
                 metadata=metadata,
             )
-            return {"success": True, "message_id": msg.id}
+            return {"success": msg.status == "sent", "message_id": msg.id, "error": msg.error}
         except Exception as e:
             logger.exception("Communications tool error")
             return {"success": False, "error": str(e)}
