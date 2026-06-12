@@ -630,8 +630,12 @@ def doc(ctx: click.Context, output: str | None, output_format: str) -> None:
         content = format_skills_markdown_table(skills_list)
 
     if output:
-        with open(output, "w", encoding="utf-8") as f:
-            f.write(content)
+        try:
+            with open(output, "w", encoding="utf-8") as f:
+                f.write(content)
+        except OSError as e:
+            click.echo(f"Error: Failed to write documentation to {output}: {e}", err=True)
+            sys.exit(1)
         click.echo(f"Written to {output}")
     else:
         click.echo(content)
