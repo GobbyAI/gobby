@@ -317,9 +317,14 @@ class SlackAdapter(BaseChannelAdapter):
                 channel = event.get("channel")
                 ts = event.get("ts")
                 thread_ts = event.get("thread_ts")
+                external_username = event.get("username") or event.get("user_name") or user
 
-                if channel and text:
-                    metadata = {**event, "platform_channel_id": channel}
+                if channel and text and user:
+                    metadata = {
+                        **event,
+                        "platform_channel_id": channel,
+                        "external_username": external_username,
+                    }
                     messages.append(
                         CommsMessage(
                             id=ts or f"slack_msg_{time.time()}",
@@ -338,13 +343,18 @@ class SlackAdapter(BaseChannelAdapter):
                 user = event.get("user")
                 reaction = event.get("reaction")
                 item = event.get("item", {})
+                external_username = event.get("username") or event.get("user_name") or user
 
                 if item.get("type") == "message":
                     channel = item.get("channel")
                     ts = item.get("ts")
 
-                    if channel and reaction and ts:
-                        metadata = {**event, "platform_channel_id": channel}
+                    if channel and reaction and ts and user:
+                        metadata = {
+                            **event,
+                            "platform_channel_id": channel,
+                            "external_username": external_username,
+                        }
                         messages.append(
                             CommsMessage(
                                 id=f"slack_rxn_{ts}_{time.time()}",

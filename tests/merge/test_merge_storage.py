@@ -634,6 +634,48 @@ class TestMergeResolutionManagerUpdate:
         assert updated.status == "resolved"
         assert updated.tier_used == "conflict_only_ai"
 
+    def test_late_pending_update_does_not_revert_resolved_resolution(
+        self, hub_db: HubDatabase
+    ) -> None:
+        """Test stale concurrent resolution writers cannot revert terminal state."""
+        db = hub_db
+
+        db.execute(
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
+            ("proj-concurrent-resolution", "Test Project"),
+        )
+        db.execute(
+            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            (
+                "wt-concurrent-resolution",
+                "proj-concurrent-resolution",
+                "feature",
+                "/tmp/wt-concurrent-resolution",
+                "active",
+            ),
+        )
+
+        resolving_manager = MergeResolutionManager(db)
+        stale_manager = MergeResolutionManager(db)
+        resolution = resolving_manager.create_resolution(
+            worktree_id="wt-concurrent-resolution",
+            source_branch="feature/test",
+            target_branch="main",
+        )
+
+        resolved = resolving_manager.update_resolution(
+            resolution.id,
+            status="resolved",
+            tier_used="conflict_only_ai",
+        )
+        stale_result = stale_manager.update_resolution(resolution.id, status="pending")
+
+        assert resolved is not None
+        assert stale_result is not None
+        assert stale_result.status == "resolved"
+        assert stale_result.tier_used == "conflict_only_ai"
+
     def test_update_resolution_persists_changes(self, hub_db: HubDatabase) -> None:
         """Test that update_resolution saves changes to database."""
         from gobby.storage.merge_resolutions import MergeResolutionManager
@@ -797,6 +839,54 @@ class TestMergeResolutionManagerUpdateConflict:
         assert updated is not None
         assert updated.status == "resolved"
         assert updated.resolved_content == "merged code"
+
+    def test_late_pending_update_does_not_revert_resolved_conflict(
+        self, hub_db: HubDatabase
+    ) -> None:
+        """Test stale concurrent conflict writers cannot revert terminal state."""
+        db = hub_db
+
+        db.execute(
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
+            ("proj-concurrent-conflict", "Test Project"),
+        )
+        db.execute(
+            """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            (
+                "wt-concurrent-conflict",
+                "proj-concurrent-conflict",
+                "feature",
+                "/tmp/wt-concurrent-conflict",
+                "active",
+            ),
+        )
+
+        resolving_manager = MergeResolutionManager(db)
+        stale_manager = MergeResolutionManager(db)
+        resolution = resolving_manager.create_resolution(
+            worktree_id="wt-concurrent-conflict",
+            source_branch="feature/test",
+            target_branch="main",
+        )
+        conflict = resolving_manager.create_conflict(
+            resolution_id=resolution.id,
+            file_path="src/main.py",
+            ours_content="our code",
+            theirs_content="their code",
+        )
+
+        resolved = resolving_manager.update_conflict(
+            conflict.id,
+            status="resolved",
+            resolved_content="merged code",
+        )
+        stale_result = stale_manager.update_conflict(conflict.id, status="pending")
+
+        assert resolved is not None
+        assert stale_result is not None
+        assert stale_result.status == "resolved"
+        assert stale_result.resolved_content == "merged code"
 
 
 # =============================================================================

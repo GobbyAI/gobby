@@ -480,9 +480,15 @@ class DiscordAdapter(BaseChannelAdapter):
             msg_id = d.get("message_id")
             emoji = d.get("emoji", {})
             reaction = emoji.get("name", "")
+            reaction_user = d.get("member", {}).get("user", {}) or d.get("user", {})
+            external_username = reaction_user.get("username") or user_id
 
-            if channel_id and reaction and msg_id:
-                metadata = {**d, "platform_channel_id": channel_id}
+            if channel_id and reaction and msg_id and user_id:
+                metadata = {
+                    **d,
+                    "platform_channel_id": channel_id,
+                    "external_username": external_username,
+                }
                 messages.append(
                     CommsMessage(
                         id=f"discord_rxn_{msg_id}_{time.time()}",
@@ -507,6 +513,7 @@ class DiscordAdapter(BaseChannelAdapter):
         content = msg_data.get("content", "")
         author = payload_dict.get("member", {}).get("user", {}) or payload_dict.get("author", {})
         user_id = author.get("id")
+        external_username = author.get("username") or user_id
         channel_id = payload_dict.get("channel_id")
         msg_id = payload_dict.get("id") or msg_data.get("id")
         # Extract thread ID from message reference or thread metadata
@@ -518,8 +525,12 @@ class DiscordAdapter(BaseChannelAdapter):
         if thread_meta:
             thread_id = thread_meta.get("id")
 
-        if channel_id and content:
-            metadata = {**payload_dict, "platform_channel_id": channel_id}
+        if channel_id and content and user_id:
+            metadata = {
+                **payload_dict,
+                "platform_channel_id": channel_id,
+                "external_username": external_username,
+            }
             messages.append(
                 CommsMessage(
                     id=msg_id or f"discord_msg_{time.time()}",

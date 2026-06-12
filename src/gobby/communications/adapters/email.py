@@ -11,7 +11,7 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from email.message import EmailMessage
-from email.utils import make_msgid
+from email.utils import make_msgid, parseaddr
 from pathlib import Path
 from typing import Any
 
@@ -438,6 +438,11 @@ class EmailAdapter(BaseChannelAdapter):
             msg_id = email_msg.get("Message-ID", "")
             thread_id = email_msg.get("In-Reply-To", "")
             sender = email_msg.get("From", "")
+            sender_name, sender_addr = parseaddr(sender)
+            external_user_id = sender_addr or sender
+            if not external_user_id:
+                continue
+            external_username = sender_name or external_user_id
             subject = email_msg.get("Subject", "")
 
             content = ""
@@ -470,14 +475,15 @@ class EmailAdapter(BaseChannelAdapter):
                     direction="inbound",
                     content=content,
                     created_at=datetime.now(UTC).isoformat(),
-                    identity_id=sender,
+                    identity_id=external_user_id,
                     platform_message_id=msg_id,
                     platform_thread_id=thread_id,
                     content_type=content_type,
                     metadata_json={
                         "subject": subject,
-                        "platform_destination": sender,
-                        "platform_channel_id": sender,
+                        "platform_destination": external_user_id,
+                        "platform_channel_id": external_user_id,
+                        "external_username": external_username,
                     },
                 )
             )

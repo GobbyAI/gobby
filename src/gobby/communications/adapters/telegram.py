@@ -235,12 +235,15 @@ class TelegramAdapter(BaseChannelAdapter):
         raw_user_id = from_user.get("id")
         user_id = str(raw_user_id) if raw_user_id is not None else ""
         username = from_user.get("username")
+        if not user_id:
+            return []
 
         metadata = {
             "chat_id": chat_id,
             "platform_channel_id": chat_id,
             "user_id": user_id,
             "username": username,
+            "external_username": username or user_id,
         }
 
         platform_thread_id = (
@@ -258,6 +261,7 @@ class TelegramAdapter(BaseChannelAdapter):
                 content_type="text",
                 platform_message_id=message_id,
                 platform_thread_id=platform_thread_id,
+                identity_id=user_id,
                 metadata_json=metadata,
                 created_at=datetime.now(UTC).isoformat(),
             )

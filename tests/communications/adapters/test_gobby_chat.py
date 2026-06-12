@@ -209,6 +209,7 @@ def test_parse_inbound_valid(adapter: GobbyChatAdapter) -> None:
     assert msg.id == "msg-789"
     assert msg.channel_id == ""
     assert msg.metadata_json["platform_channel_id"] == "gobby_chat"
+    assert msg.metadata_json["external_username"] == "user-456"
     assert msg.direction == "inbound"
     assert msg.content_type == "text"
     # model should be in metadata (not a core field)
@@ -222,7 +223,7 @@ def test_parse_inbound_missing_content(adapter: GobbyChatAdapter) -> None:
 
 
 def test_parse_inbound_generates_id(adapter: GobbyChatAdapter) -> None:
-    msg = adapter.parse_inbound({"content": "test"})
+    msg = adapter.parse_inbound({"content": "test", "user_id": "user-456"})
     assert msg is not None
     assert msg.id  # Should have a generated UUID
 

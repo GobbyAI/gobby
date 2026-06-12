@@ -295,25 +295,33 @@ class MergeResolutionManager:
         Returns:
             The updated MergeResolution if found, None otherwise
         """
-        resolution = self.get_resolution(resolution_id)
-        if not resolution:
-            return None
-
         now = datetime.now(UTC).isoformat()
-        new_status = status if status is not None else resolution.status
-        new_tier = tier_used if tier_used is not None else resolution.tier_used
 
         with self.db.transaction() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """
                 UPDATE merge_resolutions
-                SET status = %s, tier_used = %s, updated_at = %s
+                SET
+                    status = COALESCE(%s, status),
+                    tier_used = COALESCE(%s, tier_used),
+                    updated_at = %s
                 WHERE id = %s
+                  AND (%s IS NULL OR %s <> %s OR status = %s)
                 """,
-                (new_status, new_tier, now, resolution_id),
+                (
+                    status,
+                    tier_used,
+                    now,
+                    resolution_id,
+                    status,
+                    status,
+                    ConflictStatus.PENDING.value,
+                    ConflictStatus.PENDING.value,
+                ),
             )
 
-        self._notify_listeners()
+        if cursor.rowcount > 0:
+            self._notify_listeners()
         return self.get_resolution(resolution_id)
 
     def delete_resolution(self, resolution_id: str) -> bool:
@@ -470,30 +478,37 @@ class MergeResolutionManager:
         Returns:
             The updated MergeConflict if found, None otherwise
         """
-        conflict = self.get_conflict(conflict_id)
-        if not conflict:
-            return None
-
         now = datetime.now(UTC).isoformat()
-        new_status = status if status is not None else conflict.status
-        new_ours = ours_content if ours_content is not None else conflict.ours_content
-        new_theirs = theirs_content if theirs_content is not None else conflict.theirs_content
-        new_resolved = (
-            resolved_content if resolved_content is not None else conflict.resolved_content
-        )
 
         with self.db.transaction() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """
                 UPDATE merge_conflicts
-                SET status = %s, ours_content = %s, theirs_content = %s, resolved_content = %s,
+                SET
+                    status = COALESCE(%s, status),
+                    ours_content = COALESCE(%s, ours_content),
+                    theirs_content = COALESCE(%s, theirs_content),
+                    resolved_content = COALESCE(%s, resolved_content),
                     updated_at = %s
                 WHERE id = %s
+                  AND (%s IS NULL OR %s <> %s OR status = %s)
                 """,
-                (new_status, new_ours, new_theirs, new_resolved, now, conflict_id),
+                (
+                    status,
+                    ours_content,
+                    theirs_content,
+                    resolved_content,
+                    now,
+                    conflict_id,
+                    status,
+                    status,
+                    ConflictStatus.PENDING.value,
+                    ConflictStatus.PENDING.value,
+                ),
             )
 
-        self._notify_listeners()
+        if cursor.rowcount > 0:
+            self._notify_listeners()
         return self.get_conflict(conflict_id)
 
     def delete_conflict(self, conflict_id: str) -> bool:

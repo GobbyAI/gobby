@@ -97,6 +97,12 @@ class CommsMessage:
     read their platform destination from ``metadata_json["platform_destination"]``;
     inbound adapters preserve their platform channel in
     ``metadata_json["platform_channel_id"]`` before storage.
+
+    Inbound adapters must use ``identity_id`` for the platform-stable user id
+    and must store the platform username/display name in
+    ``metadata_json["external_username"]``. When a platform has no distinct
+    username field, adapters should use the same stable platform id for
+    ``external_username``.
     """
 
     id: str

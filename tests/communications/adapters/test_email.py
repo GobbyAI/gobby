@@ -1,6 +1,7 @@
 """Tests for gobby.communications.adapters.email."""
 
 from email.message import EmailMessage
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -262,7 +263,7 @@ class TestEmailAdapter:
     async def test_poll_no_messages(self, mock_imap, adapter) -> None:
         adapter._imap_client = AsyncMock()
         # Mock search to return empty response
-        adapter._imap_client.search.return_value = ("OK", [b""])
+        adapter._imap_client.search.return_value = SimpleNamespace(result="OK", lines=[b""])
 
         messages = await adapter.poll()
         assert messages == []
@@ -274,9 +275,9 @@ class TestEmailAdapter:
         adapter._imap_client = AsyncMock()
 
         # poll() now calls imap.select("INBOX") before search
-        adapter._imap_client.select.return_value = ("OK", [])
+        adapter._imap_client.select.return_value = SimpleNamespace(result="OK", lines=[])
         # Mock search to return msg numbers
-        adapter._imap_client.search.return_value = ("OK", [b"1 2"])
+        adapter._imap_client.search.return_value = SimpleNamespace(result="OK", lines=[b"1 2"])
 
         # Craft two raw RFC822 emails
         msg1 = EmailMessage()
@@ -294,13 +295,13 @@ class TestEmailAdapter:
         # poll() now uses string num_str (decoded from bytes) for fetch/store
         def fetch_side_effect(num, query):
             if num == "1":
-                return ("OK", [("1 (RFC822)", bytes(msg1))])
+                return SimpleNamespace(result="OK", lines=[b"1 (RFC822)", bytes(msg1)])
             if num == "2":
-                return ("OK", [("2 (RFC822)", bytes(msg2))])
-            return ("BAD", [])
+                return SimpleNamespace(result="OK", lines=[b"2 (RFC822)", bytes(msg2)])
+            return SimpleNamespace(result="BAD", lines=[])
 
         adapter._imap_client.fetch = AsyncMock(side_effect=fetch_side_effect)
-        adapter._imap_client.store = AsyncMock(return_value=("OK", []))
+        adapter._imap_client.store = AsyncMock(return_value=SimpleNamespace(result="OK", lines=[]))
 
         messages = await adapter.poll()
         assert len(messages) == 2
@@ -397,6 +398,7 @@ class TestEmailOAuth2:
         mock_smtp.SMTP.return_value = mock_smtp_client
         mock_imap_client = AsyncMock()
         mock_imap.IMAP4_SSL.return_value = mock_imap_client
+        mock_imap_client.xoauth2.return_value = SimpleNamespace(result="OK", lines=[])
 
         # Mock token exchange
         mock_http_client = AsyncMock()

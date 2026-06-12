@@ -205,6 +205,7 @@ class SMSAdapter(BaseChannelAdapter):
             **params,
             "opt_out_action": opt_out_action,
             "platform_channel_id": from_number,
+            "external_username": from_number,
         }
 
         return [

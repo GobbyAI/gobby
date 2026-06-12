@@ -250,16 +250,20 @@ class TeamsAdapter(BaseChannelAdapter):
         conversation = payload_dict.get("conversation", {})
 
         identity_id = from_user.get("id")
+        external_username = from_user.get("name") or identity_id
         channel_id = conversation.get("id")
         text = payload_dict.get("text", "")
         message_id = payload_dict.get("id")
         reply_to_id = payload_dict.get("replyToId")
         service_url = payload_dict.get("serviceUrl")
 
-        if not channel_id or not text:
+        if not channel_id or not text or not identity_id:
             return []
 
-        metadata: dict[str, Any] = {"platform_channel_id": channel_id}
+        metadata: dict[str, Any] = {
+            "platform_channel_id": channel_id,
+            "external_username": external_username,
+        }
         if service_url:
             metadata["service_url"] = service_url
 

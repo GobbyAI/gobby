@@ -165,6 +165,9 @@ class GobbyChatAdapter(BaseChannelAdapter):
         content = data.get("content")
         if not content or not isinstance(content, str):
             return None
+        user_id = data.get("user_id")
+        if not user_id or not isinstance(user_id, str):
+            return None
 
         from datetime import UTC, datetime
         from uuid import uuid4
@@ -172,9 +175,18 @@ class GobbyChatAdapter(BaseChannelAdapter):
         metadata = {
             k: v
             for k, v in data.items()
-            if k not in ("content", "message_id", "conversation_id", "user_id", "type")
+            if k
+            not in (
+                "content",
+                "message_id",
+                "conversation_id",
+                "user_id",
+                "username",
+                "type",
+            )
         }
         metadata.setdefault("platform_channel_id", "gobby_chat")
+        metadata["external_username"] = data.get("username") or user_id
 
         return CommsMessage(
             id=data.get("message_id") or str(uuid4()),
@@ -183,7 +195,7 @@ class GobbyChatAdapter(BaseChannelAdapter):
             content=content,
             created_at=datetime.now(UTC).isoformat(),
             session_id=data.get("conversation_id"),
-            identity_id=data.get("user_id"),
+            identity_id=user_id,
             content_type="text",
             metadata_json=metadata,
         )

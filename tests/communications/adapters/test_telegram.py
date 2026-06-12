@@ -306,7 +306,12 @@ async def test_poll(
         "result": [
             {
                 "update_id": 500,
-                "message": {"message_id": 1, "chat": {"id": 123}, "text": "hello"},
+                "message": {
+                    "message_id": 1,
+                    "from": {"id": 1111111, "username": "polluser"},
+                    "chat": {"id": 123},
+                    "text": "hello",
+                },
             }
         ],
     }
