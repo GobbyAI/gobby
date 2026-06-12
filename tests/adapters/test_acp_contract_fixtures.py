@@ -14,6 +14,9 @@ from gobby.adapters.acp_client import ACPClient, StreamEvent
 from gobby.adapters.gemini_acp_client import GeminiACPClient
 from gobby.adapters.grok_acp_client import GrokACPClient
 from gobby.adapters.qwen_acp_client import QwenACPClient
+from gobby.llm.claude_models import DoneEvent, ToolCallEvent
+from gobby.servers.websocket.chat.backends.gemini import GeminiManagedChatSession
+from gobby.servers.websocket.chat.backends.qwen import QwenManagedChatSession
 
 pytestmark = pytest.mark.unit
 
@@ -30,6 +33,17 @@ class ACPFixtureCase:
     load_fixture: str
     new_session_id: str
     load_session_id: str
+
+
+@dataclass(frozen=True)
+class ACPToolCallFixtureCase:
+    client_class: type[ACPClient]
+    session_class: type[GeminiManagedChatSession | QwenManagedChatSession]
+    fixture: str
+    expected_call_id: str
+    expected_tool_name: str
+    expected_lifecycle_tool_name: str
+    expected_tool_input: dict[str, Any]
 
 
 ACP_FIXTURE_CASES = [
@@ -58,6 +72,47 @@ ACP_FIXTURE_CASES = [
         id="qwen-0.15.6",
     ),
 ]
+
+ACP_TOOL_CALL_FIXTURE_CASES = [
+    pytest.param(
+        ACPToolCallFixtureCase(
+            client_class=GeminiACPClient,
+            session_class=GeminiManagedChatSession,
+            fixture="gemini-0.40.1-session-tool-call.stdout.jsonl",
+            expected_call_id="call-gemini-tool-1",
+            expected_tool_name="run_shell_command",
+            expected_lifecycle_tool_name="Bash",
+            expected_tool_input={"command": "pwd", "description": "Show current directory"},
+        ),
+        id="gemini-0.40.1",
+    ),
+    pytest.param(
+        ACPToolCallFixtureCase(
+            client_class=QwenACPClient,
+            session_class=QwenManagedChatSession,
+            fixture="qwen-0.15.6-session-tool-call.stdout.jsonl",
+            expected_call_id="call-qwen-tool-1",
+            expected_tool_name="run_shell_command",
+            expected_lifecycle_tool_name="Bash",
+            expected_tool_input={"command": "pwd", "description": "Show current directory"},
+        ),
+        id="qwen-0.15.6",
+    ),
+]
+
+
+class FixtureBackend:
+    def __init__(self, events: list[StreamEvent]) -> None:
+        self.events = events
+
+    async def attach_session(self, session: Any, *, model: str | None = None) -> None:
+        del model
+        session._connected = True
+
+    async def send_message(self, session: Any, prompt: str) -> Any:
+        del session, prompt
+        for event in self.events:
+            yield event
 
 
 class FakeStdin:
@@ -88,7 +143,8 @@ class FakeStdout:
 
 
 class FakeStderr:
-    async def read(self) -> bytes:
+    async def read(self, n: int = -1) -> bytes:
+        del n
         return b""
 
 
@@ -246,6 +302,60 @@ def test_normalize_notification_handles_recorded_provider_payloads(
     assert len(thinking_deltas) == 2
     assert all(event.data["content"] for event in content_deltas)
     assert all(event.data["content"] for event in thinking_deltas)
+
+
+@pytest.mark.parametrize("case", ACP_TOOL_CALL_FIXTURE_CASES)
+def test_normalize_notification_maps_tool_call_updates(
+    case: ACPToolCallFixtureCase,
+) -> None:
+    notifications = _notification_payloads(case.fixture)
+
+    normalized = [case.client_class._normalize_notification(payload) for payload in notifications]
+
+    assert len(normalized) == 1
+    tool_call = normalized[0]
+    assert tool_call.event_type == "tool_call"
+    assert tool_call.data == {
+        "call_id": case.expected_call_id,
+        "tool_name": case.expected_tool_name,
+        "tool_input": case.expected_tool_input,
+    }
+
+
+@pytest.mark.parametrize("case", ACP_TOOL_CALL_FIXTURE_CASES)
+async def test_tool_call_updates_reach_pre_tool_lifecycle(
+    case: ACPToolCallFixtureCase,
+) -> None:
+    events = [
+        case.client_class._normalize_notification(payload)
+        for payload in _notification_payloads(case.fixture)
+    ]
+    pre_tool_payloads: list[dict[str, Any]] = []
+
+    async def on_pre_tool(payload: dict[str, Any]) -> None:
+        pre_tool_payloads.append(payload)
+
+    session = case.session_class(
+        conversation_id=f"{case.expected_call_id}-conversation",
+        _backend=FixtureBackend(events),
+        project_path=".",
+        _on_pre_tool=on_pre_tool,
+    )
+
+    chat_events = [event async for event in session.send_message("ping")]
+
+    tool_call_events = [event for event in chat_events if isinstance(event, ToolCallEvent)]
+    assert len(tool_call_events) == 1
+    assert tool_call_events[0].tool_call_id == case.expected_call_id
+    assert tool_call_events[0].tool_name == case.expected_lifecycle_tool_name
+    assert tool_call_events[0].arguments == case.expected_tool_input
+    assert pre_tool_payloads == [
+        {
+            "tool_name": case.expected_lifecycle_tool_name,
+            "tool_input": case.expected_tool_input,
+        }
+    ]
+    assert isinstance(chat_events[-1], DoneEvent)
 
 
 async def test_grok_recorded_fixture_stream_drives_authenticated_client_flow() -> None:

@@ -37,6 +37,7 @@ from gobby.adapters.codex_impl.shared import (
 from gobby.adapters.codex_impl.types import (
     CodexThread,
 )
+from gobby.adapters.degradation import AdapterDegradationKind, record_adapter_degradation
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 
 if TYPE_CHECKING:
@@ -179,6 +180,54 @@ class CodexAdapter(BaseAdapter):
             return await cast(Awaitable[HookResponse], response)
         return cast(HookResponse, response)
 
+    async def _dispatch_notification_event(self, method: str, event: HookEvent) -> HookResponse:
+        """Dispatch a notification and enforce gating decisions when Codex can be stopped."""
+        response = await self._dispatch_hook_event(event)
+        if event.event_type == HookEventType.BEFORE_AGENT and response.decision in {
+            "deny",
+            "block",
+        }:
+            await self._interrupt_blocked_turn(method, event, response)
+        return response
+
+    async def _interrupt_blocked_turn(
+        self, method: str, event: HookEvent, response: HookResponse
+    ) -> None:
+        """Interrupt a Codex turn after a blocking BEFORE_AGENT hook decision."""
+        turn_id = event.data.get("turn_id")
+        if (
+            not self._codex_client
+            or not event.session_id
+            or not isinstance(turn_id, str)
+            or not turn_id
+        ):
+            turn_id_present = bool(turn_id) if isinstance(turn_id, str) else False
+            detail = (
+                f"method={method} decision={response.decision} "
+                f"has_client={self._codex_client is not None} "
+                f"thread_id_present={bool(event.session_id)} "
+                f"turn_id_present={turn_id_present}"
+            )
+            record_adapter_degradation(
+                provider=self.source,
+                hook_type=method,
+                kind=AdapterDegradationKind.GRACEFUL_ERROR,
+                response_field="decision",
+                destination_channel="turn_interrupt",
+                detail=detail,
+                event_logger=logger,
+            )
+            logger.warning("Cannot enforce Codex BEFORE_AGENT block: %s", detail)
+            return
+
+        await self._codex_client.interrupt_turn(event.session_id, turn_id)
+        logger.info(
+            "Interrupted Codex turn %s for %s hook decision on %s",
+            turn_id,
+            response.decision,
+            method,
+        )
+
     @staticmethod
     def _compose_mcp_tool_name(server_name: str, tool_name: str) -> str:
         """Return the canonical MCP tool name used by shared hook logic."""
@@ -318,11 +367,11 @@ class CodexAdapter(BaseAdapter):
                 try:
                     loop = asyncio.get_running_loop()
                 except RuntimeError:
-                    asyncio.run(self._dispatch_hook_event(hook_event))
+                    asyncio.run(self._dispatch_notification_event(method, hook_event))
                     logger.debug("Processed Codex event: %s -> %s", method, hook_event.event_type)
                     return
 
-                task = loop.create_task(self._dispatch_hook_event(hook_event))
+                task = loop.create_task(self._dispatch_notification_event(method, hook_event))
 
                 def _log_notification_result(done_task: asyncio.Task[HookResponse]) -> None:
                     try:
@@ -679,7 +728,7 @@ class CodexAdapter(BaseAdapter):
         if response.decision == "deny":
             decision = "decline"
         elif response.decision == "block":
-            decision = "cancel"
+            decision = "decline"
         elif response.auto_approve:
             decision = "acceptForSession"
         elif response.metadata.get("exec_policy_amendment"):

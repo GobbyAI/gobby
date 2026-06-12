@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -484,6 +485,29 @@ class TestCodexAppServerClientStop:
         assert client._pending_requests == {}
 
 
+class TestCodexAppServerClientReadLoop:
+    """Tests for _read_loop process lifecycle handling."""
+
+    @pytest.mark.asyncio
+    async def test_process_death_fails_pending_requests(self) -> None:
+        client = CodexAppServerClient()
+        mock_process = MagicMock()
+        mock_process.stdout.readline.return_value = ""
+        mock_process.poll.return_value = 1
+        client._process = mock_process
+
+        future1 = asyncio.get_running_loop().create_future()
+        future2 = asyncio.get_running_loop().create_future()
+        client._pending_requests = {1: future1, 2: future2}
+
+        await client._read_loop()
+
+        assert client.state == CodexConnectionState.ERROR
+        assert isinstance(future1.exception(), ConnectionError)
+        assert isinstance(future2.exception(), ConnectionError)
+        assert client._pending_requests == {}
+
+
 class TestCodexAppServerClientContextManager:
     """Tests for async context manager support."""
 
@@ -529,6 +553,17 @@ class TestCodexAppServerClientSendRequest:
         client = CodexAppServerClient()
 
         with pytest.raises(RuntimeError, match="Not connected"):
+            await client._send_request("test", {})
+
+    @pytest.mark.asyncio
+    async def test_send_request_error_state_stays_dead(self) -> None:
+        client = CodexAppServerClient()
+        mock_process = MagicMock()
+        mock_process.stdin = MagicMock()
+        client._process = mock_process
+        client._state = CodexConnectionState.ERROR
+
+        with pytest.raises(ConnectionError, match="unavailable"):
             await client._send_request("test", {})
 
     @pytest.mark.asyncio
@@ -829,6 +864,23 @@ class TestCodexAppServerClientTurnManagement:
         assert turn.status == "inProgress"
 
     @pytest.mark.asyncio
+    async def test_start_turn_clears_pending_prompt_on_send_failure(self) -> None:
+        client = CodexAppServerClient()
+
+        with (
+            patch.object(
+                client,
+                "_send_request",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("send failed"),
+            ),
+            pytest.raises(RuntimeError, match="send failed"),
+        ):
+            await client.start_turn("thr-1", "Help me refactor")
+
+        assert "thr-1" not in client._pending_turn_prompts_by_thread
+
+    @pytest.mark.asyncio
     async def test_start_turn_with_images(self):
         """start_turn handles image inputs."""
         client = CodexAppServerClient()
@@ -946,6 +998,43 @@ class TestCodexAppServerClientRunTurn:
 
             assert len(events) >= 1
             assert events[0]["type"] == "turn/created"
+
+    @pytest.mark.asyncio
+    async def test_run_turn_filters_concurrent_thread_events(self):
+        """Concurrent run_turn streams ignore events from other turns."""
+        client = CodexAppServerClient()
+
+        async def mock_send_request(method: str, params: dict[str, Any]) -> dict[str, Any]:
+            assert method == "turn/start"
+            thread_id = params["threadId"]
+            turn_id = f"turn-{thread_id}"
+            return {"turn": {"id": turn_id, "status": "inProgress", "items": []}}
+
+        def emit(method: str, params: dict[str, Any]) -> None:
+            for handler in list(client._notification_handlers.get(method, [])):
+                handler(method, params)
+
+        async def drain(iterator: AsyncIterator[dict[str, Any]]) -> list[dict[str, Any]]:
+            return [event async for event in iterator]
+
+        with patch.object(client, "_send_request", new_callable=AsyncMock) as send_request:
+            send_request.side_effect = mock_send_request
+            first = client.run_turn("first", "Prompt one")
+            second = client.run_turn("second", "Prompt two")
+
+            assert (await anext(first))["type"] == "turn/created"
+            assert (await anext(second))["type"] == "turn/created"
+
+            emit("item/completed", {"threadId": "second", "turnId": "turn-second", "item": {}})
+            emit("turn/completed", {"threadId": "second", "turn": {"id": "turn-second"}})
+            emit("item/completed", {"threadId": "first", "turnId": "turn-first", "item": {}})
+            emit("turn/completed", {"threadId": "first", "turn": {"id": "turn-first"}})
+
+            first_events = await drain(first)
+            second_events = await drain(second)
+
+        assert [event["threadId"] for event in first_events] == ["first", "first"]
+        assert [event["threadId"] for event in second_events] == ["second", "second"]
 
 
 class TestCodexAppServerClientAuthentication:
@@ -1629,13 +1718,13 @@ class TestCodexAdapterTranslateFromHookResponse:
         assert result["decision"] == "decline"
 
     def test_block_response(self) -> None:
-        """Block response maps to cancel."""
+        """Block response maps to decline."""
         adapter = CodexAdapter()
 
         response = HookResponse(decision="block")
         result = adapter.translate_from_hook_response(response)
 
-        assert result["decision"] == "cancel"
+        assert result["decision"] == "decline"
 
     def test_auto_approve_response(self) -> None:
         """Auto-approve maps to acceptForSession."""
@@ -1722,6 +1811,39 @@ class TestCodexAdapterHandleNotification:
         mock_hook_manager.handle.assert_called_once()
         call_args = mock_hook_manager.handle.call_args[0]
         assert call_args[0].event_type == HookEventType.BEFORE_AGENT
+
+    def test_handle_notification_interrupts_turn_when_before_agent_blocks(self) -> None:
+        """Blocking BEFORE_AGENT notification decisions interrupt the active Codex turn."""
+
+        class BlockingHookManager:
+            def __init__(self) -> None:
+                self.events: list[HookEvent] = []
+
+            def handle(self, event: HookEvent) -> HookResponse:
+                self.events.append(event)
+                return HookResponse(decision="block", reason="Blocked by rule")
+
+        class RecordingClient:
+            def __init__(self) -> None:
+                self.interrupts: list[tuple[str, str]] = []
+
+            async def interrupt_turn(self, thread_id: str, turn_id: str) -> None:
+                self.interrupts.append((thread_id, turn_id))
+
+        hook_manager = BlockingHookManager()
+        client = RecordingClient()
+        adapter = CodexAdapter(hook_manager=hook_manager)
+        adapter._codex_client = client
+
+        adapter._handle_notification(
+            "turn/started",
+            {"threadId": "thr-1", "turn": {"id": "turn-1", "status": "inProgress"}},
+        )
+
+        assert len(hook_manager.events) == 1
+        assert hook_manager.events[0].event_type == HookEventType.BEFORE_AGENT
+        assert hook_manager.events[0].data["turn_id"] == "turn-1"
+        assert client.interrupts == [("thr-1", "turn-1")]
 
     def test_handle_notification_without_hook_manager(self) -> None:
         """Notification without hook manager is silently ignored."""
@@ -1887,6 +2009,7 @@ class TestCodexHooksAdapterInit:
         adapter = CodexHooksAdapter(hook_manager=mock_hook_manager)
 
         assert adapter._hook_manager is mock_hook_manager
+
 
 class TestCodexHooksAdapterTranslateToHookEvent:
     """Tests for translate_to_hook_event method."""
@@ -3259,6 +3382,151 @@ class TestCodexClientApprovalResponseRouting:
         assert "Hook processing failed" in response["error"]["message"]
 
     @pytest.mark.asyncio
+    async def test_colliding_request_id_routes_to_approval_handler(self) -> None:
+        """Inbound request id collisions don't resolve outgoing request futures."""
+        client = CodexAppServerClient()
+        written_lines: list[str] = []
+        handler_called = False
+
+        async def handler(method: str, params: dict[str, Any]) -> dict[str, str]:
+            nonlocal handler_called
+            handler_called = True
+            return {"decision": "accept"}
+
+        client.register_approval_handler(handler)
+
+        loop = asyncio.get_running_loop()
+        pending_future = loop.create_future()
+        client._pending_requests[7] = pending_future
+
+        approval_msg = {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "item/commandExecution/requestApproval",
+            "params": {"threadId": "thr-1", "parsedCmd": "echo test"},
+        }
+
+        mock_process = MagicMock()
+        lines = [json.dumps(approval_msg) + "\n"]
+        read_idx = 0
+
+        def mock_readline() -> str:
+            nonlocal read_idx
+            if read_idx < len(lines):
+                line = lines[read_idx]
+                read_idx += 1
+                return line
+            return ""
+
+        mock_process.stdout.readline = mock_readline
+        mock_process.poll.return_value = 0
+        mock_process.stdin.write = lambda x: written_lines.append(x)
+        mock_process.stdin.flush = MagicMock()
+
+        client._process = mock_process
+        client._state = CodexConnectionState.CONNECTED
+
+        reader_task = asyncio.create_task(client._read_loop())
+        await asyncio.wait_for(reader_task, timeout=2.0)
+
+        assert handler_called
+        assert not pending_future.done()
+        response = json.loads(written_lines[0].strip())
+        assert response["id"] == 7
+        assert response["result"]["decision"] == "accept"
+
+    @pytest.mark.asyncio
+    async def test_slow_approval_handler_does_not_block_other_messages(self) -> None:
+        """Pending approvals don't block unrelated responses or notifications."""
+        notification_received = asyncio.Event()
+        approval_started = asyncio.Event()
+        release_approval = asyncio.Event()
+        response_written = asyncio.Event()
+        written_lines: list[str] = []
+        notifications: list[tuple[str, dict[str, Any]]] = []
+
+        def on_notification(method: str, params: dict[str, Any]) -> None:
+            notifications.append((method, params))
+            notification_received.set()
+
+        client = CodexAppServerClient(on_notification=on_notification)
+
+        async def handler(method: str, params: dict[str, Any]) -> dict[str, str]:
+            approval_started.set()
+            await release_approval.wait()
+            return {"decision": "accept"}
+
+        client.register_approval_handler(handler)
+
+        loop = asyncio.get_running_loop()
+        pending_future = loop.create_future()
+        client._pending_requests[1] = pending_future
+
+        approval_msg = {
+            "jsonrpc": "2.0",
+            "id": 42,
+            "method": "item/commandExecution/requestApproval",
+            "params": {"threadId": "thr-1", "parsedCmd": "echo test"},
+        }
+        response_msg = {"jsonrpc": "2.0", "id": 1, "result": {"ok": True}}
+        notification_msg = {
+            "jsonrpc": "2.0",
+            "method": "item/completed",
+            "params": {"thread_id": "thr-1", "item": {"id": "item-1"}},
+        }
+
+        mock_process = MagicMock()
+        lines = [
+            json.dumps(approval_msg) + "\n",
+            json.dumps(response_msg) + "\n",
+            json.dumps(notification_msg) + "\n",
+        ]
+        read_idx = 0
+
+        def mock_readline() -> str:
+            nonlocal read_idx
+            if read_idx < len(lines):
+                line = lines[read_idx]
+                read_idx += 1
+                return line
+            return ""
+
+        def write_response(line: str) -> None:
+            written_lines.append(line)
+            loop.call_soon_threadsafe(response_written.set)
+
+        mock_process.stdout.readline = mock_readline
+        mock_process.poll.return_value = None
+        mock_process.stdin.write = write_response
+        mock_process.stdin.flush = MagicMock()
+
+        client._process = mock_process
+        client._state = CodexConnectionState.CONNECTED
+
+        reader_task = asyncio.create_task(client._read_loop())
+        try:
+            await asyncio.wait_for(approval_started.wait(), timeout=2.0)
+            await asyncio.wait_for(asyncio.shield(pending_future), timeout=2.0)
+            await asyncio.wait_for(notification_received.wait(), timeout=2.0)
+
+            assert pending_future.result() == {"ok": True}
+            assert notifications == [("item/completed", notification_msg["params"])]
+            assert written_lines == []
+
+            release_approval.set()
+            await asyncio.wait_for(response_written.wait(), timeout=2.0)
+
+            response = json.loads(written_lines[0].strip())
+            assert response["id"] == 42
+            assert response["result"]["decision"] == "accept"
+        finally:
+            release_approval.set()
+            reader_task.cancel()
+            await asyncio.gather(reader_task, return_exceptions=True)
+            if client._incoming_request_tasks:
+                await asyncio.gather(*client._incoming_request_tasks, return_exceptions=True)
+
+    @pytest.mark.asyncio
     async def test_response_preserves_request_id(self) -> None:
         """Response id matches the incoming request id."""
         client = CodexAppServerClient()
@@ -3959,19 +4227,39 @@ class TestCodexApprovalDeclineFormat:
     """
 
     @pytest.mark.asyncio
-    async def test_blocked_tool_produces_decline(self) -> None:
-        """HookManager deny → adapter decline for Codex."""
+    @pytest.mark.parametrize(
+        ("method", "params"),
+        [
+            (
+                "item/commandExecution/requestApproval",
+                {"threadId": "thr-blocked", "parsedCmd": "rm -rf /"},
+            ),
+            (
+                "item/fileChange/requestApproval",
+                {"threadId": "thr-blocked", "changes": [{"path": "secrets.txt"}]},
+            ),
+            (
+                "item/mcpToolCall/requestApproval",
+                {
+                    "threadId": "thr-blocked",
+                    "toolName": "gobby-tasks:claim_task",
+                    "arguments": {"task_id": "#1"},
+                },
+            ),
+        ],
+    )
+    async def test_blocked_approval_shapes_produce_decline(
+        self, method: str, params: dict[str, Any]
+    ) -> None:
+        """HookManager block -> adapter decline for Codex approval requests."""
         mock_hm = MagicMock()
         mock_hm.handle.return_value = HookResponse(
-            decision="deny",
+            decision="block",
             reason="Bash is blocked in this workflow step.",
         )
         adapter = CodexAdapter(hook_manager=mock_hm)
 
-        result = await adapter.handle_approval_request(
-            "item/commandExecution/requestApproval",
-            {"threadId": "thr-blocked", "parsedCmd": "rm -rf /"},
-        )
+        result = await adapter.handle_approval_request(method, params)
 
         assert result == {"decision": "decline"}
 
@@ -4056,8 +4344,7 @@ class TestCodexApprovalDeclineFormat:
         """translate_from_hook_response maps 'block' decision correctly."""
         adapter = CodexAdapter()
 
-        # 'deny' maps to 'decline'
-        response = HookResponse(decision="deny")
+        response = HookResponse(decision="block")
         result = adapter.translate_from_hook_response(response)
         assert result["decision"] == "decline"
 

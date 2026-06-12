@@ -143,7 +143,11 @@ class BaseAdapter(ABC):
     - translate_from_hook_response(): Convert HookResponse to native format
     """
 
-    source: SessionSource
+    @property
+    @abstractmethod
+    def source(self) -> SessionSource:
+        """Provider source handled by this adapter."""
+        pass
 
     def _copy_platform_session_metadata(
         self,

@@ -109,6 +109,26 @@ def test_unsupported_elicitation_fields_are_dropped_with_telemetry(
     assert {"elicitation_action", "elicitation_content"} <= dropped_fields
 
 
+def test_unknown_hook_response_fields_are_dropped_with_telemetry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _capture_degradations(monkeypatch)
+
+    result = CodexHooksAdapter().translate_from_hook_response(
+        HookResponse(context="not supported by an unknown hook"),
+        hook_type="UnknownHook",
+    )
+
+    assert result == {"continue": True}
+    assert {
+        "provider": "codex",
+        "hook_type": "UnknownHook",
+        "kind": "dropped_field",
+        "response_field": "context",
+        "destination_channel": "none",
+    } in calls
+
+
 def test_claude_reason_compaction_records_degradation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

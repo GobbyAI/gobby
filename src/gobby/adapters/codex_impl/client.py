@@ -24,6 +24,7 @@ from gobby.adapters.codex_impl.types import (
     CodexTurn,
     NotificationHandler,
 )
+from gobby.adapters.subprocess_stderr import SubprocessStderrDrain
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,8 @@ class CodexAppServerClient:
 
         # Reader task
         self._reader_task: asyncio.Task[None] | None = None
+        self._incoming_request_tasks: set[asyncio.Task[None]] = set()
+        self._stderr_drain = SubprocessStderrDrain("Codex app-server", logger=logger)
         self._shutdown_event = asyncio.Event()
 
         # Thread tracking for session management
@@ -166,6 +169,7 @@ class CodexAppServerClient:
             # Start the reader task
             self._shutdown_event.clear()
             self._reader_task = asyncio.create_task(self._read_loop())
+            self._stderr_drain.start_text(self._process.stderr)
 
             # Send initialize request
             result = await self._send_request(
@@ -208,6 +212,14 @@ class CodexAppServerClient:
             except asyncio.CancelledError:
                 pass
 
+        # Cancel request handlers spawned by the reader loop
+        if self._incoming_request_tasks:
+            tasks = tuple(self._incoming_request_tasks)
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            self._incoming_request_tasks.clear()
+
         # Terminate process
         if self._process:
             try:
@@ -221,6 +233,7 @@ class CodexAppServerClient:
                 self._process.kill()
             finally:
                 self._process = None
+        await self._stderr_drain.stop()
 
         # Cancel pending requests
         with self._pending_requests_lock:
@@ -451,8 +464,6 @@ class CodexAppServerClient:
 
         return models
 
-    # ===== Turn Management =====
-
     async def start_turn(
         self,
         thread_id: str,
@@ -477,7 +488,6 @@ class CodexAppServerClient:
         Returns:
             CodexTurn object (initial state, updates via notifications)
         """
-        # Build input array
         inputs: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
 
         if images:
@@ -493,7 +503,6 @@ class CodexAppServerClient:
         }
         self._pending_turn_prompts_by_thread[thread_id] = prompt
 
-        # Add context prefix as instructions field
         if context_prefix:
             params["instructions"] = context_prefix
 
@@ -504,8 +513,11 @@ class CodexAppServerClient:
             params["effort"] = config_overrides.pop("reasoningEffort")
 
         params.update(config_overrides)
-
-        result = await self._send_request("turn/start", params)
+        try:
+            result = await self._send_request("turn/start", params)
+        except Exception:
+            self._pending_turn_prompts_by_thread.pop(thread_id, None)
+            raise
 
         turn_data = result.get("turn", {})
         turn = CodexTurn(
@@ -638,20 +650,27 @@ class CodexAppServerClient:
         # Queue to receive notifications
         event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         turn_completed = asyncio.Event()
+        turn_id: str | None = None
 
         def on_event(method: str, params: dict[str, Any]) -> None:
+            turn = params.get("turn")
+            event_thread_id = params.get("threadId")
+            if not isinstance(event_thread_id, str) and isinstance(turn, dict):
+                event_thread_id = turn.get("threadId")
+            event_turn_id = params.get("turnId")
+            if not isinstance(event_turn_id, str) and isinstance(turn, dict):
+                event_turn_id = turn.get("id")
+            if event_thread_id not in (None, thread_id) or (
+                turn_id and event_turn_id not in (None, turn_id)
+            ):
+                return
             event_queue.put_nowait({"type": method, **params})
-            if method == "turn/completed":
+            if method == "turn/completed" and event_turn_id == turn_id:
                 turn_completed.set()
 
         # Register handlers for all turn-related events
-        event_methods = [
-            "turn/started",
-            "turn/completed",
-            "item/started",
-            "item/completed",
-            "item/agentMessage/delta",
-        ]
+        event_methods = ["turn/started", "turn/completed", "item/started", "item/completed"]
+        event_methods.append("item/agentMessage/delta")
 
         for method in event_methods:
             self.add_notification_handler(method, on_event)
@@ -659,6 +678,7 @@ class CodexAppServerClient:
         try:
             # Start the turn
             turn = await self.start_turn(thread_id, prompt, images=images, **config_overrides)
+            turn_id = turn.id or None
 
             yield {"type": "turn/created", "turn": turn.__dict__}
 
@@ -729,6 +749,8 @@ class CodexAppServerClient:
         """
         if not self._process or not self._process.stdin:
             raise RuntimeError("Not connected to Codex app-server")
+        if self._state is CodexConnectionState.ERROR:
+            raise ConnectionError("Codex app-server process is unavailable")
 
         request_id = self._next_request_id()
         request = {
@@ -862,6 +884,19 @@ class CodexAppServerClient:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, write_response)
 
+    def _dispatch_incoming_request(self, message: dict[str, Any]) -> None:
+        task = asyncio.create_task(self._handle_incoming_request(message))
+        self._incoming_request_tasks.add(task)
+
+        def discard_task(done_task: asyncio.Task[None]) -> None:
+            self._incoming_request_tasks.discard(done_task)
+            if done_task.cancelled():
+                return
+            if exc := done_task.exception():
+                logger.error("Incoming Codex request handler failed", exc_info=exc)
+
+        task.add_done_callback(discard_task)
+
     async def _read_loop(self) -> None:
         """Background task to read responses and notifications."""
         if not self._process or not self._process.stdout:
@@ -883,21 +918,34 @@ class CodexAppServerClient:
                 line = await loop.run_in_executor(None, stdout.readline)
 
                 if not line:
-                    if proc.poll() is not None:
+                    return_code = proc.poll()
+                    if return_code is not None:
                         logger.warning("Codex app-server process terminated")
                         self._state = CodexConnectionState.ERROR
+                        if return_code:
+                            with self._pending_requests_lock:
+                                for pending_future in self._pending_requests.values():
+                                    if not pending_future.done():
+                                        pending_future.set_exception(
+                                            ConnectionError("Codex app-server process terminated")
+                                        )
+                                self._pending_requests.clear()
                         break
                     continue
 
-                # Parse JSON-RPC message
                 try:
                     message = json.loads(line.strip())
                 except json.JSONDecodeError as e:
                     logger.warning(f"Invalid JSON from app-server: {e}")
                     continue
 
-                # Handle response or incoming request (has "id")
-                if "id" in message:
+                if "method" in message and "id" in message:
+                    # Codex uses an independent id space for inbound requests,
+                    # so these ids can collide with our outgoing request ids.
+                    self._dispatch_incoming_request(message)
+
+                # Handle response to our outgoing request (has "id" without "method")
+                elif "id" in message:
                     request_id = message["id"]
                     with self._pending_requests_lock:
                         future = self._pending_requests.get(request_id)
@@ -913,11 +961,7 @@ class CodexAppServerClient:
                             )
                         else:
                             future.set_result(message.get("result", {}))
-                    elif "method" in message:
-                        # Incoming request from Codex (has id + method, not our response)
-                        await self._handle_incoming_request(message)
 
-                # Handle notification (no "id")
                 elif "method" in message:
                     method = message["method"]
                     params = message.get("params", {})
@@ -926,14 +970,12 @@ class CodexAppServerClient:
 
                     logger.debug(f"Received notification: {method}")
 
-                    # Call global handler
                     if self._on_notification:
                         try:
                             self._on_notification(method, params)
                         except Exception as e:
                             logger.error(f"Notification handler error: {e}")
 
-                    # Call method-specific handlers
                     handlers = self._notification_handlers.get(method, [])
                     for handler in handlers:
                         try:

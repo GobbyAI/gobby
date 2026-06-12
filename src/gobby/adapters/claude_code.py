@@ -336,6 +336,8 @@ class ClaudeCodeAdapter(BaseAdapter):
             if not permission_decision:
                 if is_denied:
                     permission_decision = "deny"
+                elif response.modified_input is not None:
+                    permission_decision = "allow"
                 elif response.auto_approve:
                     permission_decision = "allow"
                 elif response.decision == "ask":
