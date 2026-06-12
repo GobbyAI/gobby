@@ -224,20 +224,20 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
             logger.error(error_msg)
             result["errors"].append(error_msg)
 
-    # Orphan cleanup: soft-delete agent rows whose YAML was removed.
-    # Only touch gobby-tagged agent rows.
+    # Orphan cleanup: soft-delete sync-managed agent rows whose YAML was removed.
     tag_condition, tag_params = json_array_contains_condition(db, "tags", "gobby")
     orphan_rows = db.fetchall(
-        "SELECT id, name FROM workflow_definitions "
+        "SELECT * FROM workflow_definitions "
         "WHERE workflow_type = 'agent' "
         f"AND {tag_condition} AND deleted_at IS NULL",
         tag_params,
     )
     result["orphaned"] = 0
     for row in orphan_rows:
-        if row["name"] not in on_disk:
-            manager.delete(row["id"])
-            logger.info(f"Soft-deleted orphaned bundled agent: {row['name']}")
+        existing = WorkflowDefinitionRow.from_row(row)
+        if existing.name not in on_disk and _is_sync_managed_bundled_agent(existing):
+            manager.delete(existing.id)
+            logger.info(f"Soft-deleted orphaned bundled agent: {existing.name}")
             result["orphaned"] += 1
 
     total = result["synced"] + result["updated"] + result["skipped"]
