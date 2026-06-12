@@ -124,6 +124,43 @@ fn daemon_down_distinguishes_critical_and_noncritical_hooks() -> TestResult {
 }
 
 #[test]
+fn detached_noncritical_action_ignores_closed_stdout_pipe() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let daemon_url = closed_local_url()?;
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ghook"));
+    command
+        .arg("--gobby-owned")
+        .arg("--detach")
+        .args(["--cli", "codex", "--type", "PreToolUse"])
+        .env("HOME", home.path())
+        .env("GOBBY_HOME", gobby_home.path())
+        .env("GOBBY_DAEMON_URL", daemon_url)
+        .env_remove("GOBBY_HOOKS_DISABLED")
+        .env_remove("GOBBY_PLANNED_SHUTDOWN_ALLOW_SECONDS")
+        .env_remove("GOBBY_SOURCE")
+        .env_remove("CLAUDE_CODE_ENTRYPOINT")
+        .env_remove("TMUX")
+        .env_remove("TMUX_PANE")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = command.spawn()?;
+    drop(child.stdout.take());
+    if let Some(mut child_stdin) = child.stdin.take() {
+        child_stdin.write_all(VALID_STDIN.as_bytes())?;
+    }
+    let output = child.wait_with_output()?;
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_stderr_empty(&output, "detached closed stdout")?;
+
+    Ok(())
+}
+
+#[test]
 fn daemon_success_maps_deny_and_block_bodies() -> TestResult {
     let deny_body = r#"{"decision":"deny","reason":"policy"}"#;
     let deny_response = http_ok_json(deny_body);

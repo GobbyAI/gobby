@@ -26,6 +26,7 @@ mod cli_config;
 mod detach;
 mod diagnose;
 mod envelope;
+mod output;
 mod planned_shutdown;
 mod statusline;
 mod terminal_context;
@@ -81,8 +82,8 @@ fn main() -> ExitCode {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 // Still print the version; stamp-write failure is non-fatal.
-                println!("ghook {}", diagnose::GHOOK_VERSION);
-                eprintln!("note: could not write runtime stamp: {e}");
+                output::stdout(format_args!("ghook {}\n", diagnose::GHOOK_VERSION));
+                output::stderr(format_args!("note: could not write runtime stamp: {e}\n"));
                 ExitCode::SUCCESS
             }
         };
@@ -335,10 +336,10 @@ fn detect_source(cfg: &CliConfig) -> String {
 
 fn emit_action(action: HookAction) -> ExitCode {
     if let Some(stdout_json) = action.stdout_json {
-        println!("{stdout_json}");
+        output::stdout(format_args!("{stdout_json}\n"));
     }
     if let Some(stderr_message) = action.stderr_message {
-        eprintln!("\n{}", stderr_message.trim_end());
+        output::stderr(format_args!("\n{}\n", stderr_message.trim_end()));
     }
     ExitCode::from(action.exit_code)
 }
@@ -581,7 +582,7 @@ fn write_runtime_stamp() -> Result<()> {
     });
     let bytes = serde_json::to_vec_pretty(&stamp)?;
     transport::atomic_write(&stamp_path, &bytes)?;
-    println!("ghook {}", diagnose::GHOOK_VERSION);
+    output::stdout(format_args!("ghook {}\n", diagnose::GHOOK_VERSION));
     Ok(())
 }
 
