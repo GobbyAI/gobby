@@ -111,7 +111,13 @@ def backup_cmd(output_dir: Path | None) -> None:
     default=False,
     help="Restore without an interactive confirmation prompt.",
 )
-def restore_cmd(dump_or_dir: Path, clean: bool, yes: bool) -> None:
+@click.option(
+    "--allow-unverified",
+    is_flag=True,
+    default=False,
+    help="Allow restore when metadata.json and SHA256SUMS are missing.",
+)
+def restore_cmd(dump_or_dir: Path, clean: bool, yes: bool, allow_unverified: bool) -> None:
     """Restore a verified PostgreSQL backup into the configured target database."""
     if _daemon_running():
         raise click.ClickException("Stop the daemon first: gobby stop")
@@ -124,6 +130,7 @@ def restore_cmd(dump_or_dir: Path, clean: bool, yes: bool) -> None:
     result = restore_postgres_backup(
         dump_or_dir,
         clean=clean,
+        allow_unverified=allow_unverified,
         gobby_home=get_gobby_home(),
     )
     _render_restore_result(result)

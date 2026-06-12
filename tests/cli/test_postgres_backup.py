@@ -205,6 +205,55 @@ def test_restore_docker_backup_verifies_checksum_and_runs_restore_probes(
     assert result["probes"]["pg_search_present"] is True
 
 
+def test_restore_rejects_unverified_dump_without_sidecar_before_pg_restore(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import gobby.cli.postgres_backup as backup
+
+    _patch_common(monkeypatch, backup, mode="docker")
+    dump_path = tmp_path / backup.POSTGRES_DUMP_NAME
+    dump_path.write_bytes(b"PGDMP")
+
+    def _run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        raise AssertionError("pg_restore must not run for an unverified dump")
+
+    monkeypatch.setattr(backup.subprocess, "run", _run)
+
+    with pytest.raises(click.ClickException, match="missing trusted checksum sidecar"):
+        backup.restore_postgres_backup(dump_path, gobby_home=tmp_path)
+
+
+def test_restore_allows_explicit_unverified_dump_override(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import gobby.cli.postgres_backup as backup
+
+    _patch_common(monkeypatch, backup, mode="docker")
+    dump_path = tmp_path / backup.POSTGRES_DUMP_NAME
+    dump_path.write_bytes(b"PGDMP")
+    commands: list[list[str]] = []
+
+    def _run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        commands.append(args)
+        assert kwargs["stdin"].read() == b"PGDMP"
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(backup.subprocess, "run", _run)
+
+    result = backup.restore_postgres_backup(
+        dump_path,
+        allow_unverified=True,
+        gobby_home=tmp_path,
+    )
+
+    assert result["sha256_verified"] is False
+    assert result["expected_dump_sha256"] is None
+    assert commands[0][-2:] == ["pg_restore", "--list"]
+    assert commands[1][4:7] == ["pg_restore", "--no-owner", "--no-privileges"]
+
+
 def test_restore_rejects_unmanaged_dsn(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

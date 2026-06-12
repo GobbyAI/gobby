@@ -33,7 +33,7 @@ def test_postgres_group_is_registered_on_root_cli() -> None:
         (["postgres", "install", "--help"], ["--mode", "--dsn", "docker"]),
         (["postgres", "status", "--help"], ["--json"]),
         (["postgres", "backup", "--help"], ["--output"]),
-        (["postgres", "restore", "--help"], ["--clean", "--yes"]),
+        (["postgres", "restore", "--help"], ["--clean", "--yes", "--allow-unverified"]),
         (["postgres", "activate", "--help"], ["--capture-sink", "--accept-no-rollback-risk"]),
     ],
 )
@@ -209,10 +209,20 @@ def test_postgres_restore_command_invokes_restore_helper(
     monkeypatch.setattr(postgres_cli_module, "get_gobby_home", lambda: tmp_path)
     monkeypatch.setattr(postgres_cli_module, "restore_postgres_backup", _restore)
 
-    result = CliRunner().invoke(postgres_cli, ["restore", str(dump), "--clean", "--yes"])
+    result = CliRunner().invoke(
+        postgres_cli,
+        ["restore", str(dump), "--clean", "--allow-unverified", "--yes"],
+    )
 
     assert result.exit_code == 0
-    assert calls == [{"source": dump, "clean": True, "gobby_home": tmp_path}]
+    assert calls == [
+        {
+            "source": dump,
+            "clean": True,
+            "allow_unverified": True,
+            "gobby_home": tmp_path,
+        }
+    ]
     assert "PostgreSQL restore completed." in result.output
     assert "Verified: SHA256SUMS" in result.output
     assert "pg_search: yes" in result.output
