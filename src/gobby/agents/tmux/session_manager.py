@@ -459,7 +459,37 @@ class TmuxSessionManager:
         rc, _stdout, _stderr = await self._run("has-session", "-t", name)
         return rc == 0
 
-    async def kill_session(self, name: str, *, missing_ok: bool = False) -> bool:
+    @staticmethod
+    def _live_process_groups(pgids: set[int]) -> set[int]:
+        live_pgids: set[int] = set()
+        for pgid in pgids:
+            try:
+                os.killpg(pgid, 0)
+                live_pgids.add(pgid)
+            except ProcessLookupError:
+                continue
+            except PermissionError:
+                live_pgids.add(pgid)
+            except OSError:
+                continue
+        return live_pgids
+
+    @classmethod
+    async def _wait_for_process_groups_exit(cls, pgids: set[int], timeout: float) -> set[int]:
+        if not pgids or timeout <= 0:
+            return cls._live_process_groups(pgids)
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        live_pgids = cls._live_process_groups(pgids)
+        while live_pgids and loop.time() < deadline:
+            await asyncio.sleep(min(0.1, max(0.0, deadline - loop.time())))
+            live_pgids = cls._live_process_groups(live_pgids)
+        return live_pgids
+
+    async def kill_session(
+        self, name: str, *, missing_ok: bool = False, timeout: float = 5.0
+    ) -> bool:
         """Kill a tmux session and all processes in it.
 
         Collects pane PIDs before destroying the session, then sends SIGTERM
@@ -490,20 +520,22 @@ class TmuxSessionManager:
             return True
 
         # Kill process groups rooted at each pane shell
+        pgids: set[int] = set()
         for pid in pids:
             try:
-                os.killpg(os.getpgid(pid), signal.SIGTERM)
+                pgid = os.getpgid(pid)
+                os.killpg(pgid, signal.SIGTERM)
+                pgids.add(pgid)
             except (ProcessLookupError, PermissionError, OSError):
                 pass
 
-        # Brief grace period, then SIGKILL stragglers
-        if pids:
-            await asyncio.sleep(0.5)
-            for pid in pids:
-                try:
-                    os.killpg(os.getpgid(pid), signal.SIGKILL)
-                except (ProcessLookupError, PermissionError, OSError):
-                    pass
+        # Honor the caller's grace period, then SIGKILL straggling process groups.
+        live_pgids = await self._wait_for_process_groups_exit(pgids, timeout)
+        for pgid in live_pgids:
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
 
         logger.info(f"Killed tmux session '{name}' (pids: {pids})")
         return True

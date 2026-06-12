@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import signal
 from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1595,10 +1596,44 @@ class TestTmuxSessionManagerExtended:
                 (0, "12345\n", ""),  # list-panes for PIDs
                 (0, "", ""),  # kill-session
             ]
-            result = await mgr.kill_session("test")
+            result = await mgr.kill_session("test", timeout=0)
         assert result is True
-        # Should have called killpg with SIGTERM then SIGKILL
-        assert mock_killpg.call_count >= 2
+        mock_killpg.assert_any_call(12345, signal.SIGTERM)
+        mock_killpg.assert_any_call(12345, 0)
+        mock_killpg.assert_any_call(12345, signal.SIGKILL)
+
+    @pytest.mark.asyncio
+    async def test_kill_session_passes_timeout_to_process_group_wait(self) -> None:
+        """kill_session waits for process-group exit using the caller's timeout."""
+
+        mgr = TmuxSessionManager()
+        with (
+            patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
+            patch.object(
+                mgr, "_wait_for_process_groups_exit", new_callable=AsyncMock, return_value={12345}
+            ) as mock_wait,
+            patch("os.killpg") as mock_killpg,
+            patch("os.getpgid", return_value=12345),
+        ):
+            mock_run.side_effect = [
+                (0, "12345\n", ""),  # list-panes for PIDs
+                (0, "", ""),  # kill-session
+            ]
+            result = await mgr.kill_session("test", timeout=1.75)
+
+        assert result is True
+        mock_wait.assert_awaited_once_with({12345}, 1.75)
+        assert len(mock_run.await_args_list) == 2
+        assert mock_run.await_args_list[0].args == (
+            "list-panes",
+            "-t",
+            "=test:",
+            "-F",
+            "#{pane_pid}",
+        )
+        assert mock_run.await_args_list[1].args == ("kill-session", "-t", "=test:")
+        mock_killpg.assert_any_call(12345, signal.SIGTERM)
+        mock_killpg.assert_any_call(12345, signal.SIGKILL)
 
     async def test_kill_session_skips_process_groups_for_wsl(self) -> None:
         """kill_session avoids host process-group signals when tmux is running via WSL."""

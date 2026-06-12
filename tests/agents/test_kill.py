@@ -98,9 +98,10 @@ class TestCloseTerminalWindow:
         assert res["pid"] == "123"
 
     @pytest.mark.asyncio
-    @patch("gobby.agents.kill.os.kill")
+    @patch("gobby.agents.kill.os.killpg")
+    @patch("gobby.agents.kill.os.getpgid", return_value=456)
     @patch("gobby.agents.kill.SessionManager")
-    async def test_close_parent_pid_unix(self, mock_sm_cls, mock_kill):
+    async def test_close_parent_pid_unix(self, mock_sm_cls, mock_getpgid, mock_killpg):
         mock_session = MagicMock()
         mock_session.terminal_context = {"parent_pid": "456"}
         mock_sm = MagicMock()
@@ -111,7 +112,8 @@ class TestCloseTerminalWindow:
         assert res["success"] is True
         assert res["method"] == "parent_pid"
         assert res["pid"] == 456
-        mock_kill.assert_called_with(456, signal.SIGTERM)
+        mock_getpgid.assert_called_once_with(456)
+        mock_killpg.assert_called_once_with(456, signal.SIGTERM)
 
     @pytest.mark.asyncio
     @patch("gobby.agents.kill._run_subprocess")
@@ -152,16 +154,20 @@ class TestKillAgent:
         )
 
     @pytest.mark.asyncio
+    @patch("gobby.agents.kill.os.kill")
     @patch("gobby.agents.kill._close_terminal_window")
     @patch("gobby.agents.kill._close_tmux_session")
     async def test_close_terminal_prefers_persisted_tmux_session(
         self,
         mock_close_tmux,
         mock_close_window,
+        mock_kill,
         agent_run,
         mock_db,
     ):
+        agent_run.pid = 999
         agent_run.tmux_session_name = "gobby-run-123"
+        mock_kill.side_effect = ProcessLookupError("already dead")
         mock_close_tmux.return_value = {
             "success": True,
             "method": "tmux_kill_session",
@@ -172,20 +178,24 @@ class TestKillAgent:
 
         assert res["success"] is True
         assert res["method"] == "tmux_kill_session"
-        mock_close_tmux.assert_awaited_once_with("gobby-run-123")
+        mock_close_tmux.assert_awaited_once_with("gobby-run-123", timeout=5.0)
         mock_close_window.assert_not_called()
 
     @pytest.mark.asyncio
+    @patch("gobby.agents.kill.os.kill")
     @patch("gobby.agents.kill._close_terminal_window")
     @patch("gobby.agents.kill._close_tmux_session")
     async def test_close_terminal_falls_back_to_session_context(
         self,
         mock_close_tmux,
         mock_close_window,
+        mock_kill,
         agent_run,
         mock_db,
     ):
+        agent_run.pid = 999
         agent_run.tmux_session_name = "gobby-run-123"
+        mock_kill.side_effect = ProcessLookupError("already dead")
         mock_close_tmux.return_value = {"success": False, "error": "missing"}
         mock_close_window.return_value = {"success": True, "method": "tmux_kill_pane"}
 
@@ -193,29 +203,74 @@ class TestKillAgent:
 
         assert res["success"] is True
         assert res["method"] == "tmux_kill_pane"
-        mock_close_tmux.assert_awaited_once_with("gobby-run-123")
+        mock_close_tmux.assert_awaited_once_with("gobby-run-123", timeout=5.0)
         mock_close_window.assert_called_once()
 
     @pytest.mark.asyncio
+    @patch("gobby.agents.kill.os.killpg")
+    @patch("gobby.agents.kill._run_subprocess")
+    @patch("gobby.agents.kill.os.kill")
     @patch("gobby.agents.kill._close_terminal_window")
-    async def test_close_terminal_true(self, mock_close, agent_run, mock_db):
+    async def test_close_terminal_true(
+        self, mock_close, mock_kill, mock_run, mock_killpg, agent_run, mock_db
+    ):
+        agent_run.pid = 999
+        mock_kill.side_effect = [None, ProcessLookupError("closed")]
+        mock_run.return_value = (0, "python claude session-id sess1", "")
         mock_close.return_value = {"success": True, "method": "tmux"}
         res = await kill_agent(agent_run, mock_db, close_terminal=True)
         assert res["success"] is True
         assert res["method"] == "tmux"
         mock_close.assert_called_once()
+        assert mock_kill.call_args_list == [((999, 0),), ((999, 0),)]
+        mock_killpg.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("gobby.agents.kill.os.killpg")
+    @patch("gobby.agents.kill.os.getpgid", return_value=999)
+    @patch("gobby.agents.kill._run_subprocess")
+    @patch("gobby.agents.kill.os.kill")
+    @patch("gobby.agents.kill._close_terminal_window")
+    async def test_close_terminal_zero_timeout_escalates_alive_pid(
+        self,
+        mock_close,
+        mock_kill,
+        mock_run,
+        mock_getpgid,
+        mock_killpg,
+        agent_run,
+        mock_db,
+    ):
+        agent_run.pid = 999
+        mock_kill.return_value = None
+        mock_run.return_value = (0, "python claude session-id sess1", "")
+        mock_close.return_value = {"success": True, "method": "tmux"}
+
+        res = await kill_agent(agent_run, mock_db, close_terminal=True, timeout=0)
+
+        assert res["success"] is True
+        assert res["method"] == "tmux"
+        assert res["pid"] == 999
+        assert mock_kill.call_args_list == [((999, 0),)]
+        mock_getpgid.assert_called_once_with(999)
+        mock_killpg.assert_called_once_with(999, signal.SIGKILL)
 
     @pytest.mark.asyncio
     @patch("gobby.agents.kill._run_subprocess")
     @patch("gobby.agents.kill.os.kill")
-    async def test_kill_by_explicit_pid(self, mock_kill, mock_run, agent_run, mock_db):
+    @patch("gobby.agents.kill.os.killpg")
+    @patch("gobby.agents.kill.os.getpgid", return_value=999)
+    async def test_kill_by_explicit_pid(
+        self, mock_getpgid, mock_killpg, mock_kill, mock_run, agent_run, mock_db
+    ):
         agent_run.pid = 999
         mock_run.return_value = (0, "python claude session-id sess1", "")
         res = await kill_agent(agent_run, mock_db, timeout=0)
         assert res["success"] is True
         assert res["pid"] == 999
         assert res["found_via"] == "db"
-        mock_kill.assert_called_with(999, signal.SIGTERM)
+        mock_getpgid.assert_called_once_with(999)
+        mock_killpg.assert_called_once_with(999, signal.SIGTERM)
 
     @pytest.mark.asyncio
     @patch("gobby.agents.kill._run_subprocess")
@@ -237,8 +292,10 @@ class TestKillAgent:
     @patch("gobby.agents.kill._run_subprocess")
     @patch("gobby.agents.kill.SessionManager")
     @patch("gobby.agents.kill.os.kill")
+    @patch("gobby.agents.kill.os.killpg")
+    @patch("gobby.agents.kill.os.getpgid", return_value=888)
     async def test_kill_pid_from_terminal_context(
-        self, mock_kill, mock_sm_cls, mock_run, agent_run, mock_db
+        self, mock_getpgid, mock_killpg, mock_kill, mock_sm_cls, mock_run, agent_run, mock_db
     ):
         agent_run.pid = None
         mock_session = MagicMock()
@@ -252,12 +309,17 @@ class TestKillAgent:
         assert res["success"] is True
         assert res["pid"] == 888
         assert res["found_via"] == "terminal_context"
-        mock_kill.assert_called_with(888, signal.SIGTERM)
+        mock_getpgid.assert_called_once_with(888)
+        mock_killpg.assert_called_once_with(888, signal.SIGTERM)
 
     @pytest.mark.asyncio
     @patch("gobby.agents.kill._run_subprocess")
     @patch("gobby.agents.kill.os.kill")
-    async def test_kill_pid_from_pgrep(self, mock_kill, mock_run, agent_run, mock_db):
+    @patch("gobby.agents.kill.os.killpg")
+    @patch("gobby.agents.kill.os.getpgid", return_value=777)
+    async def test_kill_pid_from_pgrep(
+        self, mock_getpgid, mock_killpg, mock_kill, mock_run, agent_run, mock_db
+    ):
         agent_run.pid = None
 
         def _run_side_effect(*args, **kwargs):
@@ -274,13 +336,16 @@ class TestKillAgent:
         assert res["success"] is True
         assert res["pid"] == 777
         assert res["found_via"] == "pgrep"
-        mock_kill.assert_called_with(777, signal.SIGTERM)
+        mock_getpgid.assert_called_once_with(777)
+        mock_killpg.assert_called_once_with(777, signal.SIGTERM)
 
     @pytest.mark.asyncio
     @patch("gobby.agents.kill._run_subprocess")
     @patch("gobby.agents.kill.os.kill")
+    @patch("gobby.agents.kill.os.killpg")
+    @patch("gobby.agents.kill.os.getpgid", return_value=778)
     async def test_kill_pid_from_pgrep_disambiguation(
-        self, mock_kill, mock_run, agent_run, mock_db
+        self, mock_getpgid, mock_killpg, mock_kill, mock_run, agent_run, mock_db
     ):
         agent_run.pid = None
         agent_run.provider = "claude"
@@ -303,7 +368,8 @@ class TestKillAgent:
         assert res["success"] is True
         assert res["pid"] == 778
         assert res["found_via"] == "pgrep_disambiguated"
-        mock_kill.assert_called_with(778, signal.SIGTERM)
+        mock_getpgid.assert_called_once_with(778)
+        mock_killpg.assert_called_once_with(778, signal.SIGTERM)
 
     @pytest.mark.asyncio
     @patch("gobby.agents.kill.os.kill")
@@ -320,8 +386,10 @@ class TestKillAgent:
     @patch("gobby.agents.kill.os.kill")
     @patch("gobby.agents.kill.asyncio.sleep")
     @patch("gobby.agents.kill._run_subprocess")
+    @patch("gobby.agents.kill.os.killpg")
+    @patch("gobby.agents.kill.os.getpgid", return_value=999)
     async def test_kill_escalates_to_kill(
-        self, mock_run, mock_sleep, mock_kill, agent_run, mock_db
+        self, mock_getpgid, mock_killpg, mock_run, mock_sleep, mock_kill, agent_run, mock_db
     ):
         agent_run.pid = 999
         mock_run.return_value = (0, "python claude session-id sess1", "")
@@ -335,11 +403,18 @@ class TestKillAgent:
             mock_loop = MagicMock()
             # simulate time passing
             # Start, Loop 1 check, Exceeded deadline + extras to avoid StopIteration
-            mock_loop.time.side_effect = [0.0, 0.0, 10.0, 10.0, 10.0, 10.0]
+            mock_loop.time.side_effect = [0.0, 0.0, 1.95, 10.0, 10.0, 10.0]
             mock_loop_getter.return_value = mock_loop
 
             res = await kill_agent(agent_run, mock_db, timeout=2.0)
 
             assert res["success"] is True
-            # Verify SIGKILL was sent
-            assert mock_kill.call_args_list[-1] == ((999, signal.SIGKILL),)
+            assert res["pid"] == 999
+            assert res["signal"] == "TERM"
+            assert res["found_via"] == "db"
+            assert mock_kill.call_args_list == [((999, 0),), ((999, 0),)]
+            mock_sleep.assert_awaited_once()
+            assert mock_sleep.await_args.args[0] == pytest.approx(0.05)
+            mock_getpgid.assert_any_call(999)
+            mock_killpg.assert_any_call(999, signal.SIGTERM)
+            mock_killpg.assert_any_call(999, signal.SIGKILL)

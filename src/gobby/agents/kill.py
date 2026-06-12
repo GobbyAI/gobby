@@ -61,6 +61,32 @@ async def _run_subprocess(*args: str, timeout: float = 5.0) -> tuple[int, str, s
     )
 
 
+def _signal_process_group(pid: int, sig: int) -> None:
+    if sys.platform == "win32":
+        os.kill(pid, sig)
+        return
+    os.killpg(os.getpgid(pid), sig)
+
+
+async def _wait_for_pid_exit(pid: int, timeout: float) -> bool:
+    if timeout <= 0:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        return False
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        await asyncio.sleep(min(0.1, max(0.0, deadline - loop.time())))
+    return False
+
+
 async def pid_matches_agent_identity(
     pid: int,
     *,
@@ -213,7 +239,7 @@ async def _close_terminal_window(
                     timeout=timeout,
                 )
             else:
-                os.kill(pid, signal.SIGTERM)
+                _signal_process_group(pid, signal.SIGTERM)
             return {"success": True, "method": "parent_pid", "pid": pid}
         except (ProcessLookupError, OSError, ValueError) as e:
             logger.debug(f"parent_pid kill failed: {e}")
@@ -221,12 +247,12 @@ async def _close_terminal_window(
     return {"success": False, "error": "No terminal close method available"}
 
 
-async def _close_tmux_session(session_name: str) -> dict[str, Any]:
+async def _close_tmux_session(session_name: str, *, timeout: float = 5.0) -> dict[str, Any]:
     """Close a persisted Gobby tmux session and its process groups."""
     try:
         from gobby.agents.tmux.session_manager import TmuxSessionManager
 
-        killed = await TmuxSessionManager().kill_session(session_name)
+        killed = await TmuxSessionManager().kill_session(session_name, timeout=timeout)
     except Exception as e:
         logger.debug("tmux session close failed for %s: %s", session_name, e)
         return {"success": False, "error": str(e)}
@@ -262,14 +288,15 @@ async def kill_agent(
     """
     session_id = run.child_session_id or run.parent_session_id
     session_manager = SessionManager(db) if session_id else None
+    terminal_close_result: dict[str, Any] | None = None
 
     # Try terminal-specific close
     if close_terminal and run.tmux_session_name:
-        result = await _close_tmux_session(run.tmux_session_name)
+        result = await _close_tmux_session(run.tmux_session_name, timeout=timeout)
         if result.get("success"):
-            return result
+            terminal_close_result = result
 
-    if close_terminal and session_id:
+    if close_terminal and session_id and terminal_close_result is None:
         result = await _close_terminal_window(
             session_id,
             db,
@@ -279,7 +306,7 @@ async def kill_agent(
             provider=run.provider,
         )
         if result.get("success"):
-            return result
+            terminal_close_result = result
 
     # Find PID via multiple strategies
     target_pid = run.pid
@@ -354,17 +381,27 @@ async def kill_agent(
                     logger.warning(f"pgrep fallback failed: {e}")
 
     if not target_pid:
+        if terminal_close_result is not None:
+            return {
+                "success": False,
+                "error": "Terminal closed but no target PID was found to verify process death",
+                "terminal_close": terminal_close_result,
+            }
         return {"success": False, "error": "No target PID found"}
 
     # Check if process is alive
     try:
         os.kill(target_pid, 0)
     except ProcessLookupError:
-        return {
+        response = {
             "success": True,
             "message": f"Process {target_pid} already dead",
             "already_dead": True,
         }
+        if terminal_close_result is not None:
+            response["terminal_close"] = terminal_close_result
+            response["method"] = terminal_close_result.get("method")
+        return response
     except PermissionError:
         return {"success": False, "error": f"No permission to signal PID {target_pid}"}
 
@@ -387,28 +424,28 @@ async def kill_agent(
         except OSError:
             pass
 
-    # Send signal
+    # Send signal, unless terminal close already requested termination.
     sig = getattr(signal, f"SIG{signal_name}", signal.SIGTERM)
-    try:
-        os.kill(target_pid, sig)
-    except ProcessLookupError:
-        return {
-            "success": True,
-            "message": "Process died during signal",
-            "already_dead": True,
-        }
+    if terminal_close_result is None or signal_name != "TERM":
+        try:
+            _signal_process_group(target_pid, sig)
+        except ProcessLookupError:
+            response = {
+                "success": True,
+                "message": "Process died during signal",
+                "already_dead": True,
+            }
+            if terminal_close_result is not None:
+                response["terminal_close"] = terminal_close_result
+                response["method"] = terminal_close_result.get("method")
+            return response
 
     # Wait for termination with optional SIGKILL escalation
-    if signal_name == "TERM" and timeout > 0:
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout
-        while loop.time() < deadline:
-            try:
-                os.kill(target_pid, 0)
-                await asyncio.sleep(0.1)
-            except ProcessLookupError:
-                break
-        else:
+    if signal_name == "TERM":
+        should_escalate = terminal_close_result is not None and timeout <= 0
+        if timeout > 0:
+            should_escalate = not await _wait_for_pid_exit(target_pid, timeout)
+        if should_escalate:
             try:
                 if not await pid_matches_agent_identity(
                     target_pid,
@@ -421,15 +458,19 @@ async def kill_agent(
                         "pid": target_pid,
                         "found_via": found_via,
                     }
-                os.kill(target_pid, signal.SIGKILL)
+                _signal_process_group(target_pid, signal.SIGKILL)
                 logger.info(f"Escalated to SIGKILL for PID {target_pid}")
             except ProcessLookupError:
                 pass
 
-    return {
+    response = {
         "success": True,
         "message": f"Sent SIG{signal_name} to PID {target_pid}",
         "pid": target_pid,
         "signal": signal_name,
         "found_via": found_via,
     }
+    if terminal_close_result is not None:
+        response["terminal_close"] = terminal_close_result
+        response["method"] = terminal_close_result.get("method")
+    return response
