@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from gobby.communications.adapters.base import BaseChannelAdapter
+from gobby.communications.adapters.base import _MAX_RETRY_AFTER_DELAY_SECONDS, BaseChannelAdapter
 from gobby.communications.models import ChannelCapabilities, CommsMessage
 
 pytestmark = pytest.mark.unit
@@ -97,6 +97,24 @@ async def test_429_with_retry_after_header(mock_sleep: AsyncMock, adapter: Concr
     assert result is success
     assert factory.await_count == 2
     mock_sleep.assert_awaited_once_with(2.5)
+
+
+@pytest.mark.asyncio
+@patch("gobby.communications.adapters.base.asyncio.sleep", new_callable=AsyncMock)
+async def test_429_with_oversized_retry_after_clamps_sleep_and_rate_limit_callback(
+    mock_sleep: AsyncMock, adapter: ConcreteAdapter
+) -> None:
+    rate_limit_callback = MagicMock()
+    adapter.set_rate_limit_callback(rate_limit_callback)
+    rate_limited = _make_response(429, headers={"Retry-After": "999999"})
+    success = _make_response(200)
+    factory = AsyncMock(side_effect=[rate_limited, success])
+
+    result = await adapter._retry_request(factory, max_retries=3)
+
+    assert result is success
+    rate_limit_callback.assert_called_once_with(_MAX_RETRY_AFTER_DELAY_SECONDS, False)
+    mock_sleep.assert_awaited_once_with(_MAX_RETRY_AFTER_DELAY_SECONDS)
 
 
 @pytest.mark.asyncio
