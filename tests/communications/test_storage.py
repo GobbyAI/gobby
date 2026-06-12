@@ -2,14 +2,17 @@
 
 import pytest
 
+from gobby.communications.identities import IdentityManager
 from gobby.communications.models import (
     ChannelConfig,
     CommsIdentity,
     CommsMessage,
     CommsRoutingRule,
 )
+from gobby.config.communications import CommunicationsConfig
 from gobby.storage.communications import LocalCommunicationsStore
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 
 
 @pytest.fixture
@@ -128,6 +131,50 @@ def test_identity_crud(comms_store: LocalCommunicationsStore) -> None:
     # Delete
     comms_store.delete_identity(saved.id)
     assert comms_store.get_identity(saved.id) is None
+
+
+def test_resolve_identity_creates_real_store_identity_with_timestamps(
+    temp_db: HubDatabase,
+) -> None:
+    """Resolve a new external user through the real store with generated timestamps."""
+    comms_store = LocalCommunicationsStore(
+        temp_db, project_id="00000000-0000-0000-0000-000000000000"
+    )
+    channel = ChannelConfig(
+        id="cc-resolve",
+        channel_type="test",
+        name="Resolve Test",
+        enabled=True,
+        config_json={},
+        created_at="2024-01-01T00:00:00Z",
+        updated_at="2024-01-01T00:00:00Z",
+    )
+    comms_store.create_channel(channel)
+
+    identities = IdentityManager(
+        comms_store,
+        SessionManager(temp_db),
+        CommunicationsConfig(auto_create_sessions=True),
+    )
+    identity = identities.resolve_identity(
+        channel_id="cc-resolve",
+        external_user_id="new-user",
+        external_username="newuser",
+        metadata={"source": "telegram"},
+        project_id="00000000-0000-0000-0000-000000000000",
+    )
+
+    assert identity.id.startswith("ci-")
+    assert identity.session_id
+    assert identity.created_at
+    assert identity.updated_at
+    assert identity.metadata_json == {"source": "telegram"}
+
+    stored = comms_store.get_identity_by_external("cc-resolve", "new-user")
+    assert stored is not None
+    assert stored.id == identity.id
+    assert stored.created_at == identity.created_at
+    assert stored.updated_at == identity.updated_at
 
 
 def test_message_crud(comms_store: LocalCommunicationsStore) -> None:

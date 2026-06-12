@@ -107,7 +107,7 @@ class IdentityManager:
             if needs_update:
                 self._store.update_identity(identity)
         else:
-            # Store generates id/created_at/updated_at on insert
+            # Store generates the id and fills missing timestamps on insert.
             identity = CommsIdentity(
                 id="",
                 channel_id=channel_id,

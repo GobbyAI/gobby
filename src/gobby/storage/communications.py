@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.communications.models import (
@@ -131,6 +131,12 @@ class LocalCommunicationsStore:
         """Save a new identity to the database."""
         if not identity.id:
             identity.id = generate_prefixed_id("ci")
+
+        now = datetime.now(UTC).isoformat()
+        if not identity.created_at:
+            identity.created_at = now
+        if not identity.updated_at:
+            identity.updated_at = now
 
         if identity.project_id is None and self.project_id:
             identity.project_id = self.project_id
