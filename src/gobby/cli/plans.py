@@ -114,7 +114,7 @@ def register_plan_command(
             db.close()
     except click.ClickException:
         raise
-    except (PlanParseError, ValueError, OSError, psycopg.Error) as exc:
+    except (PlanParseError, UnicodeDecodeError, ValueError, OSError, psycopg.Error) as exc:
         raise click.ClickException(str(exc)) from exc
 
     click.echo(f"Registered {record.plan_id} ({record.state})")

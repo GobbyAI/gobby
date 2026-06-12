@@ -149,6 +149,13 @@ This deliverable is malformed.
     return path
 
 
+def _write_binary_register_plan(root: Path) -> Path:
+    path = root / ".gobby" / "plans" / "cli-binary-plan.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\xff\xfe\x00")
+    return path
+
+
 def _create_project(temp_db: HubDatabase, root: Path) -> str:
     return LocalProjectManager(temp_db).create(name=f"plans-{root.name}", repo_path=str(root)).id
 
@@ -223,6 +230,22 @@ def test_register_command_malformed_plan_raises_click_exception(
 
     assert str(plan) in exc_info.value.message
     assert "missing kind: front-matter" in exc_info.value.message
+
+
+def test_register_command_binary_plan_raises_click_exception(tmp_path: Path) -> None:
+    plan = _write_binary_register_plan(tmp_path)
+
+    with pytest.raises(click.ClickException) as exc_info:
+        plans_module.register_plan_command.callback(
+            plan_path=plan,
+            plan_id="cli-binary-plan",
+            plan_kind="implementation",
+            root_task_ref=None,
+            project="gobby",
+        )
+
+    assert "utf-8" in exc_info.value.message
+    assert "Traceback" not in exc_info.value.message
 
 
 def test_root_ref_from_file_reads_front_matter(tmp_path: Path) -> None:
