@@ -44,6 +44,7 @@ async def code_index_maintenance_loop(
         summary_batch_size: Max symbols to summarize per pass.
     """
     logger.info(f"Code index maintenance loop started (interval={interval}s)")
+    missing_root_observations: dict[str, int] = {}
 
     while True:
         # Check shutdown
@@ -51,7 +52,12 @@ async def code_index_maintenance_loop(
             break
 
         try:
-            await _run_maintenance(context, summarizer, summary_batch_size)
+            await _run_maintenance(
+                context,
+                summarizer,
+                summary_batch_size,
+                missing_root_observations=missing_root_observations,
+            )
         except Exception as e:
             logger.error(f"Code index maintenance error: {e}", exc_info=True)
 
@@ -72,8 +78,12 @@ async def _run_maintenance(
     context: CodeIndexContext,
     summarizer: SymbolSummarizer | None = None,
     summary_batch_size: int = 20,
+    missing_root_observations: dict[str, int] | None = None,
 ) -> None:
     """Single maintenance pass: re-index via gcode, recover unsynced files, generate summaries."""
+    if missing_root_observations is None:
+        missing_root_observations = {}
+
     await _retry_pending_projection_cleanups(context)
     projects = await context.run_db(context.storage.list_indexed_projects)
     gcode_bin = await asyncio.to_thread(resolve_native_bin, "gcode")
@@ -81,21 +91,34 @@ async def _run_maintenance(
     if gcode_bin is None:
         logger.warning("gcode not installed — skipping maintenance index. Run `gobby install`.")
 
+    active_project_ids = {str(project.id) for project in projects}
+    for stale_project_id in set(missing_root_observations) - active_project_ids:
+        missing_root_observations.pop(stale_project_id, None)
+
     for project in projects:
+        project_id = str(project.id)
         if not project.root_path:
+            missing_root_observations.pop(project_id, None)
             continue
 
         root = Path(project.root_path).expanduser()
         if not await asyncio.to_thread(root.is_dir):
-            await purge_missing_project(
-                project=project,
-                storage=context.storage,
-                config=context.config,
-                vector_store=context.vector_store,
-                clear_graph=context.clear_graph,
-                run_db=context.run_db,
-            )
+            observations = missing_root_observations.get(project_id, 0) + 1
+            missing_root_observations[project_id] = observations
+            threshold = context.config.missing_root_purge_observations
+            if observations >= threshold:
+                await purge_missing_project(
+                    project=project,
+                    storage=context.storage,
+                    config=context.config,
+                    vector_store=context.vector_store,
+                    clear_graph=context.clear_graph,
+                    run_db=context.run_db,
+                )
+                missing_root_observations.pop(project_id, None)
             continue
+
+        missing_root_observations.pop(project_id, None)
 
         if gcode_bin is not None:
             proc: asyncio.subprocess.Process | None = None

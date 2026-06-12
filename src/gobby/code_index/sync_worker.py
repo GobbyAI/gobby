@@ -157,14 +157,6 @@ async def _sync_pass(
 
         root = Path(project.root_path).expanduser()
         if not await asyncio.to_thread(root.is_dir):
-            await purge_missing_project(
-                project=project,
-                storage=storage,
-                config=config,
-                vector_store=vector_store,
-                clear_graph=clear_graph,
-                run_db=run_db,
-            )
             continue
 
         files = await _run_db(

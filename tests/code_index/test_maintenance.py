@@ -27,6 +27,7 @@ T = TypeVar("T")
 
 class _MaintenanceConfig(Protocol):
     graph_enabled: bool
+    missing_root_purge_observations: int
     qdrant_collection_prefix: str
 
 
@@ -55,8 +56,10 @@ class _MaintenanceProcess:
 
 
 @pytest.mark.asyncio
-async def test_maintenance_purges_indexed_project_when_root_is_missing(tmp_path: Path) -> None:
-    """Missing indexed roots are purged instead of being sent to gcode."""
+async def test_maintenance_purges_indexed_project_after_missing_threshold(
+    tmp_path: Path,
+) -> None:
+    """Missing indexed roots are purged after consecutive maintenance observations."""
     missing_root = tmp_path / "missing"
     project = IndexedProject(
         id="proj-missing",
@@ -91,22 +94,48 @@ async def test_maintenance_purges_indexed_project_when_root_is_missing(tmp_path:
         storage=storage,
         clear_graph=clear_graph,
         vector_store=vector_store,
-        config=SimpleNamespace(graph_enabled=True, qdrant_collection_prefix="code_symbols_"),
+        config=SimpleNamespace(
+            graph_enabled=True,
+            missing_root_purge_observations=2,
+            qdrant_collection_prefix="code_symbols_",
+        ),
         run_db=run_db,
     )
+    missing_root_observations: dict[str, int] = {}
 
     with (
         patch("gobby.code_index.maintenance.resolve_native_bin", return_value="/tmp/gcode"),
         patch("asyncio.create_subprocess_exec") as create_proc,
     ):
-        await _run_maintenance(context)
+        await _run_maintenance(
+            context,
+            missing_root_observations=missing_root_observations,
+        )
+
+    storage.delete_project_index.assert_not_called()
+    clear_graph.assert_not_awaited()
+    vector_store.delete_collection.assert_not_awaited()
+    create_proc.assert_not_called()
+    assert missing_root_observations == {"proj-missing": 1}
+
+    with (
+        patch("gobby.code_index.maintenance.resolve_native_bin", return_value="/tmp/gcode"),
+        patch("asyncio.create_subprocess_exec") as create_proc,
+    ):
+        await _run_maintenance(
+            context,
+            missing_root_observations=missing_root_observations,
+        )
 
     storage.delete_project_index.assert_called_once_with("proj-missing")
     clear_graph.assert_awaited_once_with("proj-missing")
     vector_store.delete_collection.assert_awaited_once_with("code_symbols_proj-missing")
     create_proc.assert_not_called()
     assert not missing_root.exists()
+    assert missing_root_observations == {}
     assert run_db_calls == [
+        "list_projection_cleanup_pending",
+        "list_indexed_projects",
         "list_projection_cleanup_pending",
         "list_indexed_projects",
         "delete_project_index",
@@ -425,7 +454,11 @@ async def test_maintenance_logs_and_raises_on_unexpected_delete_counts(
         storage=storage,
         clear_graph=AsyncMock(return_value={"success": True}),
         vector_store=None,
-        config=SimpleNamespace(graph_enabled=True, qdrant_collection_prefix="code_symbols_"),
+        config=SimpleNamespace(
+            graph_enabled=True,
+            missing_root_purge_observations=1,
+            qdrant_collection_prefix="code_symbols_",
+        ),
         run_db=run_db,
     )
 

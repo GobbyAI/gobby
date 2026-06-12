@@ -406,8 +406,8 @@ async def test_sync_worker_delegates_graph_sync_to_gcode_gateway(tmp_path: Path)
 
 
 @pytest.mark.asyncio
-async def test_sync_pass_purges_missing_project_before_pending_files(tmp_path: Path) -> None:
-    """Missing project roots are purged before polling pending graph work."""
+async def test_sync_pass_skips_missing_project_before_pending_files(tmp_path: Path) -> None:
+    """Missing project roots are skipped before polling pending graph work."""
     missing_root = tmp_path / "deleted-worktree"
     project = _indexed_project(missing_root)
     storage = MagicMock()
@@ -437,11 +437,11 @@ async def test_sync_pass_purges_missing_project_before_pending_files(tmp_path: P
     )
 
     assert not missing_root.exists()
-    assert run_db.calls == ["list_indexed_projects", "delete_project_index"]
+    assert run_db.calls == ["list_indexed_projects"]
     storage.get_pending_sync_files.assert_not_called()
-    storage.delete_project_index.assert_called_once_with(project.id)
-    clear_graph.assert_awaited_once_with(project.id)
-    vector_store.delete_collection.assert_awaited_once_with(f"code_symbols_{project.id}")
+    storage.delete_project_index.assert_not_called()
+    clear_graph.assert_not_awaited()
+    vector_store.delete_collection.assert_not_awaited()
 
 
 @pytest.mark.asyncio
