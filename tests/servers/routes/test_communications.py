@@ -52,6 +52,16 @@ def client(server):
     return TestClient(server.app)
 
 
+@pytest.fixture
+def ui_auth_client(server: Any, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    monkeypatch.setattr("gobby.servers.routes.auth.is_auth_enabled", lambda _server: True)
+    monkeypatch.setattr(
+        "gobby.servers.routes.auth.validate_session_cookie",
+        lambda _request, _server: False,
+    )
+    return TestClient(server.app)
+
+
 def test_receive_webhook_ok(client, comms_manager):
     comms_manager.handle_inbound.return_value = [
         CommsMessage(
@@ -65,6 +75,17 @@ def test_receive_webhook_ok(client, comms_manager):
     response = client.post("/api/comms/webhooks/slack", json={"text": "hello"})
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "messages": 1}
+    comms_manager.handle_inbound.assert_called_once()
+
+
+def test_receive_webhook_bypasses_ui_auth(ui_auth_client, comms_manager):
+    protected_response = ui_auth_client.get("/api/comms/channels")
+    assert protected_response.status_code == 401
+
+    response = ui_auth_client.post("/api/comms/webhooks/slack", json={"text": "hello"})
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "messages": 0}
     comms_manager.handle_inbound.assert_called_once()
 
 
