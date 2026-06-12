@@ -13,6 +13,9 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(not(target_os = "windows"))]
+use std::os::unix::process::CommandExt;
+
 const STATUSLINE_ENDPOINT: &str = "/api/sessions/statusline";
 const DAEMON_POST_TIMEOUT: Duration = Duration::from_secs(2);
 const DAEMON_POST_JOIN_TIMEOUT: Duration = Duration::from_millis(300);
@@ -167,8 +170,7 @@ fn forward_downstream(command: &OsStr, stdin_raw: &[u8]) -> Option<Vec<u8>> {
                 thread::sleep(Duration::from_millis(10));
             }
             Ok(None) | Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                terminate_downstream(&mut child);
                 if let Some(writer) = stdin_writer {
                     let _ = writer.join();
                 }
@@ -179,10 +181,29 @@ fn forward_downstream(command: &OsStr, stdin_raw: &[u8]) -> Option<Vec<u8>> {
     }
 }
 
+fn terminate_downstream(child: &mut std::process::Child) {
+    terminate_downstream_group(child);
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[cfg(not(target_os = "windows"))]
+fn terminate_downstream_group(child: &std::process::Child) {
+    // SAFETY: downstream_shell_command puts the shell in a fresh process group
+    // whose pgid equals the child pid, so this only targets that downstream tree.
+    unsafe {
+        libc::killpg(child.id() as libc::pid_t, libc::SIGKILL);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn terminate_downstream_group(_child: &std::process::Child) {}
+
 #[cfg(not(target_os = "windows"))]
 fn downstream_shell_command(command: &OsStr) -> Command {
     let mut shell = Command::new("sh");
     shell.arg("-c").arg(command);
+    shell.process_group(0);
     shell
 }
 

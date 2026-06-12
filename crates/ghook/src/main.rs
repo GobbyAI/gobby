@@ -28,12 +28,14 @@ mod diagnose;
 mod envelope;
 mod output;
 mod planned_shutdown;
+mod source;
 mod statusline;
 mod terminal_context;
 mod transport;
 
 use cli_config::CliConfig;
 use envelope::Envelope;
+use source::detect_source;
 
 #[derive(Debug, PartialEq, Eq)]
 struct HookAction {
@@ -316,22 +318,6 @@ fn build_dispatch_envelope(
         detect_source(cfg),
         headers,
     )
-}
-
-fn detect_source(cfg: &CliConfig) -> String {
-    if cfg.source != "claude" {
-        return cfg.source.to_string();
-    }
-
-    if let Some(source) = std::env::var_os("GOBBY_SOURCE")
-        && !source.is_empty()
-    {
-        return source.to_string_lossy().into_owned();
-    }
-    if std::env::var("CLAUDE_CODE_ENTRYPOINT").ok().as_deref() == Some("sdk-py") {
-        return "claude".to_string();
-    }
-    cfg.source.to_string()
 }
 
 fn emit_action(action: HookAction) -> ExitCode {
