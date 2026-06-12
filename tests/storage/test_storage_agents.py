@@ -1270,6 +1270,31 @@ class TestLocalAgentRunManager:
         assert cleaned.turns_used == 4
         assert cleaned.completed_at is not None
 
+    def test_cleanup_stale_runs_skips_runs_with_process_identity(
+        self,
+        agent_manager: LocalAgentRunManager,
+        sample_session: dict,
+    ) -> None:
+        """Synchronous stale cleanup must not timeout runs it cannot kill."""
+        run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Stale terminal run",
+        )
+        agent_manager.start(run.id)
+        agent_manager.update_runtime(run.id, tmux_session_name="gobby-stale-live")
+        agent_manager.db.execute(
+            "UPDATE agent_runs SET started_at = NOW() - INTERVAL '35 minutes' WHERE id = %s",
+            (run.id,),
+        )
+
+        count = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
+
+        assert count == 0
+        stale_live = agent_manager.get(run.id)
+        assert stale_live is not None
+        assert stale_live.status == "running"
+
     def test_cleanup_stale_runs_skips_active_child_session(
         self,
         agent_manager: LocalAgentRunManager,

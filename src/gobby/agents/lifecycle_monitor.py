@@ -128,6 +128,14 @@ class AgentLifecycleMonitor:
             task_manager=task_manager,
             agent_run_manager=agent_run_manager,
             stall_classifier=self._stall_classifier,
+            terminal_agent_killer=lambda run: kill_agent(
+                cast("AgentRun", run),
+                db,
+                master_fd=self._master_fds.get(run.id),
+                signal_name="TERM",
+                timeout=5.0,
+                close_terminal=True,
+            ),
             run_db=run_db,
         )
         self._terminal_prompt_monitor = TerminalPromptMonitor(

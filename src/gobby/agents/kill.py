@@ -476,6 +476,13 @@ async def kill_agent(
                     }
                 _signal_process_group(target_pid, signal.SIGKILL)
                 logger.info(f"Escalated to SIGKILL for PID {target_pid}")
+                if not await _wait_for_pid_exit(target_pid, max(0.5, min(timeout, 1.0))):
+                    return {
+                        "success": False,
+                        "error": f"PID {target_pid} still alive after SIGKILL",
+                        "pid": target_pid,
+                        "found_via": found_via,
+                    }
             except ProcessLookupError:
                 pass
 

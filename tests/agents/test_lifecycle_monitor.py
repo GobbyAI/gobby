@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor, _has_dispatch_stage_context
+from gobby.agents.tmux import configure_tmux
 from gobby.config.tmux import TmuxConfig
 from gobby.servers.routes.sessions import statusline_activity
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
@@ -35,6 +36,8 @@ from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.state_manager import WorkflowInstanceManager
 
 pytestmark = pytest.mark.unit
+
+configure_tmux(TmuxConfig())
 
 
 @pytest.fixture
@@ -2123,6 +2126,83 @@ class TestCheckExpiredAgents:
         assert "timeout" in (updated.error or "").lower()
 
     @pytest.mark.asyncio
+    async def test_timed_out_dispatched_agent_is_killed_before_claim_release(
+        self,
+        agent_run_manager: LocalAgentRunManager,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_session: dict,
+        sample_project: dict,
+    ) -> None:
+        child = session_manager.register(
+            external_id="child-timeout-kill-before-release",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        task_manager = LocalTaskManager(temp_db)
+        task, run, mutexes = _make_dispatched_stage_run(
+            agent_run_manager=agent_run_manager,
+            task_manager=task_manager,
+            temp_db=temp_db,
+            sample_project=sample_project,
+            parent_session_id=sample_session["id"],
+            child_session_id=child.id,
+            run_id="run-timeout-kill-before-release",
+            tmux_session_name="gobby-timeout-kill-before-release",
+        )
+        past = (datetime.now(UTC) - timedelta(seconds=180)).isoformat()
+        temp_db.execute(
+            "UPDATE agent_runs SET started_at = %s, timeout_seconds = %s WHERE id = %s",
+            (past, 120, run.id),
+        )
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=agent_run_manager,
+            db=temp_db,
+            session_manager=session_manager,
+            task_manager=task_manager,
+            check_interval_seconds=1.0,
+            tmux_config=TmuxConfig(),
+        )
+        events: list[str] = []
+        original_release_claim = task_manager.release_task_claim
+
+        async def kill_live_agent(*args: object, **kwargs: object) -> dict[str, object]:
+            events.append("killed")
+            return {"success": True, "pid": 12345}
+
+        def release_task_claim(*args: object, **kwargs: object) -> object:
+            assert events == ["killed"]
+            mutex = mutexes.get_mutex(task.id)
+            assert mutex is not None
+            assert mutex.lease_holder == "recovery"
+            events.append("release_task_claim")
+            return original_release_claim(*args, **kwargs)
+
+        with (
+            patch.object(
+                monitor._tmux,
+                "capture_pane",
+                new_callable=AsyncMock,
+                return_value="",
+            ),
+            patch(
+                "gobby.agents.agent_health.kill_agent",
+                new_callable=AsyncMock,
+                side_effect=kill_live_agent,
+            ),
+            patch.object(task_manager, "release_task_claim", side_effect=release_task_claim),
+        ):
+            cleaned = await monitor.check_unhealthy_agents()
+
+        assert cleaned == 1
+        assert events == ["killed", "release_task_claim"]
+        assert mutexes.get_mutex(task.id) is None
+        recovered = task_manager.get_task(task.id)
+        assert recovered is not None
+        assert recovered.claimed_by_session_id is None
+
+    @pytest.mark.asyncio
     async def test_expired_pid_agent_refuses_recycled_pid(
         self,
         monitor: AgentLifecycleMonitor,
@@ -2207,6 +2287,7 @@ class TestCheckExpiredAgents:
             session_manager=session_manager,
             task_manager=task_manager,
             check_interval_seconds=1.0,
+            tmux_config=TmuxConfig(),
         )
 
         with (
@@ -2282,6 +2363,7 @@ class TestCheckExpiredAgents:
             session_manager=session_manager,
             task_manager=task_manager,
             check_interval_seconds=1.0,
+            tmux_config=TmuxConfig(),
         )
 
         with (
@@ -2493,9 +2575,17 @@ class TestCheckExpiredAgents:
             session_manager=session_manager,
             task_manager=task_manager,
             check_interval_seconds=1.0,
+            tmux_config=TmuxConfig(),
         )
 
-        with patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock):
+        with (
+            patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock),
+            patch(
+                "gobby.agents.lifecycle_monitor.kill_agent",
+                new_callable=AsyncMock,
+                return_value={"success": True, "already_dead": True},
+            ),
+        ):
             expired = await monitor.expire_terminal_run_sessions()
 
         assert expired == 1
@@ -2508,6 +2598,91 @@ class TestCheckExpiredAgents:
         assert recovered.claimed_by_session_id is None
         assert recovered.dispatch_failure_count == 1
         assert session_manager.get(child.id).status == "expired"
+
+    @pytest.mark.asyncio
+    async def test_terminal_error_recovery_writes_under_recovery_mutex_after_kill(
+        self,
+        agent_run_manager: LocalAgentRunManager,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_session: dict,
+        sample_project: dict,
+    ) -> None:
+        child = session_manager.register(
+            external_id="child-terminal-error-recovery-mutex",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        task_manager = LocalTaskManager(temp_db)
+        task, run, mutexes = _make_dispatched_stage_run(
+            agent_run_manager=agent_run_manager,
+            task_manager=task_manager,
+            temp_db=temp_db,
+            sample_project=sample_project,
+            parent_session_id=sample_session["id"],
+            child_session_id=child.id,
+            run_id="run-terminal-error-recovery-mutex",
+            tmux_session_name="gobby-terminal-error-recovery-mutex",
+        )
+        completed_at = datetime.now(UTC).isoformat()
+        temp_db.execute(
+            """
+            UPDATE agent_runs
+            SET status = 'error', error = %s, completed_at = %s, updated_at = %s
+            WHERE id = %s
+            """,
+            ("agent session ended with incomplete workflow", completed_at, completed_at, run.id),
+        )
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=agent_run_manager,
+            db=temp_db,
+            session_manager=session_manager,
+            task_manager=task_manager,
+            check_interval_seconds=1.0,
+            tmux_config=TmuxConfig(),
+        )
+        events: list[str] = []
+        original_fail_stage = task_manager.stage_states.fail_stage
+        original_release_claim = task_manager.release_task_claim
+
+        async def verified_dead(*args: object, **kwargs: object) -> dict[str, object]:
+            events.append("verified_dead")
+            return {"success": True, "pid": 12345}
+
+        def assert_recovery_mutex_held() -> None:
+            mutex = mutexes.get_mutex(task.id)
+            assert mutex is not None
+            assert mutex.lease_holder == "recovery"
+            assert mutex.run_id is None
+
+        def fail_stage(*args: object, **kwargs: object) -> object:
+            assert events == ["verified_dead"]
+            assert_recovery_mutex_held()
+            events.append("fail_stage")
+            return original_fail_stage(*args, **kwargs)
+
+        def release_task_claim(*args: object, **kwargs: object) -> object:
+            assert events == ["verified_dead", "fail_stage"]
+            assert_recovery_mutex_held()
+            events.append("release_task_claim")
+            return original_release_claim(*args, **kwargs)
+
+        with (
+            patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock),
+            patch(
+                "gobby.agents.lifecycle_monitor.kill_agent",
+                new_callable=AsyncMock,
+                side_effect=verified_dead,
+            ),
+            patch.object(task_manager.stage_states, "fail_stage", side_effect=fail_stage),
+            patch.object(task_manager, "release_task_claim", side_effect=release_task_claim),
+        ):
+            expired = await monitor.expire_terminal_run_sessions()
+
+        assert expired == 1
+        assert events == ["verified_dead", "fail_stage", "release_task_claim"]
+        assert mutexes.get_mutex(task.id) is None
 
     @pytest.mark.asyncio
     async def test_terminal_cancelled_run_cleans_claim_without_failing_stage(
@@ -2551,9 +2726,17 @@ class TestCheckExpiredAgents:
             session_manager=session_manager,
             task_manager=task_manager,
             check_interval_seconds=1.0,
+            tmux_config=TmuxConfig(),
         )
 
-        with patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock):
+        with (
+            patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock),
+            patch(
+                "gobby.agents.lifecycle_monitor.kill_agent",
+                new_callable=AsyncMock,
+                return_value={"success": True, "already_dead": True},
+            ),
+        ):
             expired = await monitor.expire_terminal_run_sessions()
 
         assert expired == 1
@@ -2837,6 +3020,7 @@ class TestCheckProviderStallsKillsAgent:
             db=temp_db,
             task_manager=task_manager,
             check_interval_seconds=1.0,
+            tmux_config=TmuxConfig(),
         )
 
         with (
@@ -3065,6 +3249,7 @@ class TestCheckInitializationTimeout:
             session_manager=session_manager,
             task_manager=task_manager,
             check_interval_seconds=1.0,
+            tmux_config=TmuxConfig(),
         )
 
         with patch.object(

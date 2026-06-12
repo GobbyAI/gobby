@@ -252,10 +252,11 @@ class TestKillAgent:
 
         res = await kill_agent(agent_run, mock_db, close_terminal=True, timeout=0)
 
-        assert res["success"] is True
-        assert res["method"] == "tmux"
+        assert res["success"] is False
+        assert res["error"] == "PID 999 still alive after SIGKILL"
         assert res["pid"] == 999
-        assert mock_kill.call_args_list == [((999, 0),)]
+        assert mock_kill.call_count >= 2
+        mock_kill.assert_any_call(999, 0)
         mock_getpgid.assert_called_once_with(999)
         mock_killpg.assert_called_once_with(999, signal.SIGKILL)
 
@@ -397,6 +398,7 @@ class TestKillAgent:
     ):
         agent_run.pid = 999
         mock_run.return_value = (0, "python claude session-id sess1", "")
+        mock_kill.side_effect = [None, None, ProcessLookupError("dead after sigkill")]
 
         # Custom side effect for os.kill
         # call 1: os.kill(999, 0) -> pass
@@ -407,7 +409,7 @@ class TestKillAgent:
             mock_loop = MagicMock()
             # simulate time passing
             # Start, Loop 1 check, Exceeded deadline + extras to avoid StopIteration
-            mock_loop.time.side_effect = [0.0, 0.0, 1.95, 10.0, 10.0, 10.0]
+            mock_loop.time.side_effect = [0.0, 0.0, 1.95, 10.0, 10.0, 10.0, 10.0]
             mock_loop_getter.return_value = mock_loop
 
             res = await kill_agent(agent_run, mock_db, timeout=2.0)
@@ -416,7 +418,7 @@ class TestKillAgent:
             assert res["pid"] == 999
             assert res["signal"] == "TERM"
             assert res["found_via"] == "db"
-            assert mock_kill.call_args_list == [((999, 0),), ((999, 0),)]
+            assert mock_kill.call_args_list == [((999, 0),), ((999, 0),), ((999, 0),)]
             mock_sleep.assert_awaited_once()
             assert mock_sleep.await_args.args[0] == pytest.approx(0.05)
             mock_getpgid.assert_any_call(999)
