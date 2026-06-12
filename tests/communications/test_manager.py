@@ -15,6 +15,7 @@ from gobby.communications.adapters.slack import SlackAdapter
 from gobby.communications.adapters.telegram import TelegramAdapter
 from gobby.communications.manager import CommunicationsManager
 from gobby.communications.models import ChannelConfig, CommsIdentity, CommsMessage
+from gobby.communications.rate_limiter import RateLimitWaitExceeded
 from gobby.config.communications import ChannelDefaults, CommunicationsConfig
 from gobby.storage.secrets import SecretStore
 
@@ -202,6 +203,21 @@ async def test_start_skips_unknown_adapter():
 
 
 @pytest.mark.asyncio
+async def test_start_rejects_invalid_channel_rate_limit_before_activation():
+    channel = make_channel(config_json={"rate_limit_per_minute": 0, "burst": 1})
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+
+    mock_adapter_cls = MagicMock(return_value=make_adapter())
+
+    with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
+        await manager.start()
+
+    assert "test-channel" not in manager._adapters
+    mock_adapter_cls.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_stop_shuts_down_all_adapters():
     """stop() calls shutdown on all active adapters and clears state."""
     channel = make_channel()
@@ -272,6 +288,32 @@ async def test_send_message_adapter_failure_marks_failed():
 
     assert msg.status == "failed"
     assert "network error" in (msg.error or "")
+    store.create_message.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_send_message_rate_limit_timeout_marks_failed():
+    """send_message() marks message failed if rate-limit waiting exceeds its bound."""
+    channel = make_channel()
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+
+    mock_adapter = make_adapter()
+    mock_adapter_cls = MagicMock(return_value=mock_adapter)
+
+    with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
+        await manager.start()
+
+    with patch.object(
+        manager._rate_limiter,
+        "wait_if_needed",
+        AsyncMock(side_effect=RateLimitWaitExceeded("rate limit wait exceeded")),
+    ):
+        msg = await manager.send_message("test-channel", "Hello!")
+
+    assert msg.status == "failed"
+    assert "rate limit wait exceeded" in (msg.error or "")
+    mock_adapter.send_message.assert_not_called()
     store.create_message.assert_called_once()
 
 

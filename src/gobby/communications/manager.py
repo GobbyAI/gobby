@@ -101,21 +101,12 @@ class CommunicationsManager:
         channels = await asyncio.to_thread(self._store.list_channels, enabled_only=True)
         for channel in channels:
             try:
+                self._configure_channel_rate_limit(channel)
                 adapter = await self._init_adapter(channel)
                 self._adapters[channel.name] = adapter
                 self._channel_by_name[channel.name] = channel
                 if channel.name == "gobby_chat" and self._websocket_broadcast is not None:
                     self.set_websocket_broadcast(self._websocket_broadcast)
-                # Configure rate limiter with per-channel overrides
-                rate = channel.config_json.get(
-                    "rate_limit_per_minute",
-                    self._config.channel_defaults.rate_limit_per_minute,
-                )
-                burst = channel.config_json.get(
-                    "burst",
-                    self._config.channel_defaults.burst,
-                )
-                self._rate_limiter.configure_channel(channel.id, int(rate), int(burst))
 
                 if should_poll(adapter, self._config.webhook_base_url):
                     interval = channel.config_json.get("poll_interval")
@@ -195,13 +186,13 @@ class CommunicationsManager:
         self._rate_limiter.configure_channel(channel.id, int(rate), int(burst))
 
     async def _activate_channel(self, channel: ChannelConfig) -> BaseChannelAdapter:
+        self._configure_channel_rate_limit(channel)
         adapter = await self._init_adapter(channel)
         self._adapters[channel.name] = adapter
         self._channel_by_name[channel.name] = channel
         if channel.name == "gobby_chat" and self._websocket_broadcast is not None:
             self.set_websocket_broadcast(self._websocket_broadcast)
         self._channel_init_errors.pop(channel.name, None)
-        self._configure_channel_rate_limit(channel)
 
         if should_poll(adapter, self._config.webhook_base_url):
             interval = channel.config_json.get("poll_interval")
@@ -290,8 +281,6 @@ class CommunicationsManager:
 
         channel = self._channel_by_name[channel_name]
 
-        await self._rate_limiter.wait_if_needed(channel.id)
-
         platform_thread_id = None
         if session_id:
             platform_thread_id = self._get_thread_id(channel_name, session_id)
@@ -313,6 +302,7 @@ class CommunicationsManager:
         )
 
         try:
+            await self._rate_limiter.wait_if_needed(channel.id)
             platform_message_id = await adapter.send_message(message)
             message.platform_message_id = platform_message_id
             message.status = "sent"

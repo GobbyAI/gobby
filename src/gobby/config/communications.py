@@ -6,8 +6,8 @@ from pydantic import BaseModel, Field
 class ChannelDefaults(BaseModel):
     """Default settings for communication channels."""
 
-    rate_limit_per_minute: int = 30
-    burst: int = 5
+    rate_limit_per_minute: int = Field(default=30, ge=1)
+    burst: int = Field(default=5, ge=1)
     retry_count: int = 3
     poll_interval_seconds: int = 30
     retention_days: int = 90

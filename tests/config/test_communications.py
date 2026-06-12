@@ -1,5 +1,8 @@
 """Tests for communication configuration models."""
 
+import pytest
+from pydantic import ValidationError
+
 from gobby.config.app import DaemonConfig
 from gobby.config.communications import ChannelDefaults, CommunicationsConfig
 
@@ -18,6 +21,21 @@ def test_channel_defaults_pydantic():
     assert defaults.retry_count == 5
     assert defaults.poll_interval_seconds == 15
     assert defaults.retention_days == 30
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("rate_limit_per_minute", 0),
+        ("rate_limit_per_minute", -1),
+        ("burst", 0),
+        ("burst", -1),
+    ],
+)
+def test_channel_defaults_reject_non_positive_pacing(field: str, value: int):
+    """ChannelDefaults rejects unsafe pacing values."""
+    with pytest.raises(ValidationError):
+        ChannelDefaults(**{field: value})
 
 
 def test_communications_config_pydantic():

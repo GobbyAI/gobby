@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from gobby.communications.rate_limiter import TokenBucketRateLimiter
+from gobby.communications.rate_limiter import RateLimitWaitExceeded, TokenBucketRateLimiter
 
 
 @pytest.mark.asyncio
@@ -60,6 +60,48 @@ async def test_rate_limiter_configure():
     for _ in range(10):
         assert limiter.check("fast-chan") is True
     assert limiter.check("fast-chan") is False
+
+
+@pytest.mark.parametrize(
+    ("rate", "burst"),
+    [
+        (0, 1),
+        (-1, 1),
+        (1, 0),
+        (1, -1),
+    ],
+)
+def test_rate_limiter_rejects_invalid_defaults(rate: int, burst: int):
+    with pytest.raises(ValueError):
+        TokenBucketRateLimiter(default_rate=rate, default_burst=burst)
+
+
+@pytest.mark.parametrize(
+    ("rate", "burst"),
+    [
+        (0, 1),
+        (-1, 1),
+        (1, 0),
+        (1, -1),
+    ],
+)
+def test_rate_limiter_rejects_invalid_channel_limits(rate: int, burst: int):
+    limiter = TokenBucketRateLimiter()
+
+    with pytest.raises(ValueError):
+        limiter.configure_channel("chan-1", rate=rate, burst=burst)
+
+
+@pytest.mark.asyncio
+async def test_rate_limiter_wait_raises_when_max_wait_exceeded():
+    limiter = TokenBucketRateLimiter(default_rate=1, default_burst=1, max_wait_seconds=0.01)
+    assert limiter.check("chan-1") is True
+
+    start = time.monotonic()
+    with pytest.raises(RateLimitWaitExceeded):
+        await limiter.wait_if_needed("chan-1")
+
+    assert time.monotonic() - start < 0.1
 
 
 @pytest.mark.asyncio
