@@ -130,6 +130,8 @@ async def test_clean_deletes_stale_task_branch(temp_db, tmp_path: Path) -> None:
     )
     stale_branch = default_task_branch_name(task)
     _git(repo, "branch", stale_branch)
+    manual_branch = f"task-{task.seq_num}-manual"
+    _git(repo, "branch", manual_branch)
     _git(repo, "branch", "task-999-unrelated")
 
     result = await build_clean_target(
@@ -142,6 +144,7 @@ async def test_clean_deletes_stale_task_branch(temp_db, tmp_path: Path) -> None:
 
     branches = _branches(repo)
     assert stale_branch not in branches
+    assert manual_branch in branches
     assert "task-999-unrelated" in branches
     assert result.branches_deleted == 1
 

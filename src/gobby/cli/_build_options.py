@@ -65,7 +65,7 @@ def _stage_cap_options(stage_caps: list[StageCapOverride]) -> list[str]:
 def _restart_options_were_supplied(opts: BuildOptions) -> bool:
     return bool(
         opts.skip_stages
-        or opts.profile_explicit
+        or opts.profile != "default"
         or opts.isolation_explicit
         or opts.delivery_mode_explicit
         or opts.delivery_target_repo_explicit

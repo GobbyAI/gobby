@@ -139,7 +139,6 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
     assert call.args[0] == str(plan_file)
     opts = call.args[1]
     assert opts.profile == "submit"
-    assert opts.profile_explicit is True
     assert opts.quick is True
     assert opts.skip_stages == ["qa", "pr"]
     assert opts.isolation == "clone"
@@ -315,7 +314,6 @@ def test_build_payload_includes_explicit_profile_and_delivery_fields() -> None:
     payload = _build_payload(
         BuildOptions(
             profile="submit",
-            profile_explicit=True,
             delivery_mode="pull_request",
             delivery_mode_explicit=True,
             delivery_target_repo="owner/repo",

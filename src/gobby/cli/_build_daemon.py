@@ -61,9 +61,8 @@ def _build_payload(
         "planning_seed_state": opts.planning_seed_state,
         "completed_plan_review_rounds": opts.completed_plan_review_rounds,
         "dry_run": opts.dry_run,
+        "profile": opts.profile,
     }
-    if opts.profile_explicit:
-        payload["profile"] = opts.profile
     if opts.delivery_mode_explicit:
         payload["delivery_mode"] = opts.delivery_mode
     if opts.delivery_target_repo_explicit:
@@ -84,7 +83,7 @@ def _restart_options_payload(opts: BuildOptions) -> dict[str, object]:
         "completed_plan_review_rounds": opts.completed_plan_review_rounds,
         "project_explicit": opts.project_explicit,
     }
-    if opts.profile_explicit:
+    if opts.profile != "default":
         payload["profile"] = opts.profile
     if opts.delivery_mode_explicit:
         payload["delivery_mode"] = opts.delivery_mode

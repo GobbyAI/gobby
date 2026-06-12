@@ -29,13 +29,11 @@ def test_http_build_options_tracks_profile_and_unattended_explicitness() -> None
 
     default_opts = _build_options(BuildRequest(input_ref="#42"))
     assert default_opts.profile == "default"
-    assert default_opts.profile_explicit is False
     assert default_opts.unattended is False
     assert default_opts.unattended_explicit is False
 
     explicit_opts = _build_options(BuildRequest(input_ref="#42", profile="submit", unattended=True))
     assert explicit_opts.profile == "submit"
-    assert explicit_opts.profile_explicit is True
     assert explicit_opts.unattended is True
     assert explicit_opts.unattended_explicit is True
 
@@ -113,14 +111,7 @@ def test_json_surfaces_omit_removed_fields(temp_db: HubDatabase) -> None:
     tool = next(item for item in registry.list_tools() if item["name"] == "build_task")
     schema = cast(dict[str, Any], tool["inputSchema"])
     assert {"isolation", "quick", "no_merge", "stage", "pr"}.issubset(schema["properties"])
-    assert {
-        "profile",
-        "stages",
-        "add_stages",
-        "unattended",
-        "yolo",
-        "composer_yolo",
-    }.isdisjoint(schema["properties"])
+    assert {"stages", "add_stages", "yolo", "composer_yolo"}.isdisjoint(schema["properties"])
     assert {"profile", "unattended", "isolation", "quick", "no_merge", "stage", "pr"}.issubset(
         BuildRequest.model_fields
     )

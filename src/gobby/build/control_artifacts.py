@@ -506,13 +506,12 @@ def _detect_orphan_artifacts(
     for task in tasks:
         if not task.seq_num:
             continue
-        prefix = f"task-{task.seq_num}-"
         expected = default_task_branch_name(task)
         for family, root in roots.items():
             if not root.exists() or not root.is_dir():
                 continue
             for candidate in root.iterdir():
-                if candidate.name != expected and not candidate.name.startswith(prefix):
+                if candidate.name != expected:
                     continue
                 key = (family, str(candidate))
                 if key in seen:

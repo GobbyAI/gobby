@@ -15,12 +15,11 @@ class BuildOptions:
     """Resolved options for a build request."""
 
     profile: str = "default"
-    profile_explicit: bool = False
     quick: bool = False
     skip_stages: list[str] = field(default_factory=list)
     skip_stages_explicit: bool = False
     isolation: Isolation = "worktree"
-    isolation_explicit: bool = True
+    isolation_explicit: bool = False
     unattended: bool = False
     unattended_explicit: bool = False
     delivery_mode: DeliveryMode = "auto"

@@ -151,7 +151,7 @@ async def build_resume_target(
 
     updated = 0
     for task in tasks:
-        task_manager.update_task(task.id, allow_automation=True)
+        task_manager.update_task(task.id, allow_automation=True, unattended=True)
         updated += 1
 
     mutexes_cleared = _clear_stale_dispatch_mutexes(db, task_ids)

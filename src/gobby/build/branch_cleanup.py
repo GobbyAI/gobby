@@ -61,7 +61,6 @@ def build_branch_candidates(
     worktrees = LocalWorktreeManager(db)
     clones = LocalCloneManager(db)
     task_manager = LocalTaskManager(db)
-    branches = local_branches(repo_path)
     candidates: set[str] = set()
 
     for task in tasks:
@@ -72,8 +71,6 @@ def build_branch_candidates(
             candidates.add(integration_branch_name(task))
         if task.seq_num:
             candidates.add(default_task_branch_name(task))
-            prefix = f"task-{task.seq_num}-"
-            candidates.update(branch for branch in branches if branch.startswith(prefix))
 
         for worktree_id in (artifacts.worktree_id, artifacts.integration_workspace_id):
             if not worktree_id:

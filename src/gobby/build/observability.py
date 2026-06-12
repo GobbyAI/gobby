@@ -19,6 +19,7 @@ from gobby.dispatch.actions import (
     StartPipelineAction,
     StartStageAction,
 )
+from gobby.dispatch.agent_counts import count_active_agents
 from gobby.dispatch.context import build_context, reload_candidate
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.build_history import BuildHistoryStorage
@@ -88,7 +89,7 @@ def explain_dispatch(
     current_stage = dispatch_rules.current_stage(candidate)
     mutex = _mutex_diagnosis(db, task.id)
     cap = max_active_agents or MAX_ACTIVE_AGENTS
-    active_count = _count_active_agents(db, project_id=project_id)
+    active_count = count_active_agents(db, project_id=project_id)
     active_agents = {
         "count": active_count,
         "cap": cap,
@@ -349,29 +350,6 @@ def _agent_summary(run: Any) -> dict[str, Any]:
         "started_at": run.started_at,
         "created_at": run.created_at,
     }
-
-
-def _count_active_agents(db: HubDatabase, project_id: str | None) -> int:
-    if project_id:
-        row = db.fetchone(
-            """
-            SELECT COUNT(*) AS count
-              FROM agent_runs ar
-              JOIN sessions parent_s ON parent_s.id = ar.parent_session_id
-             WHERE ar.status IN ('pending', 'running')
-               AND parent_s.project_id = %s
-            """,
-            (project_id,),
-        )
-    else:
-        row = db.fetchone(
-            """
-            SELECT COUNT(*) AS count
-              FROM agent_runs
-             WHERE status IN ('pending', 'running')
-            """
-        )
-    return int(row["count"]) if row is not None else 0
 
 
 def _mutex_summaries(db: HubDatabase, task_ids: Sequence[str]) -> list[dict[str, Any]]:

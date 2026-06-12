@@ -105,7 +105,6 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         opts = BuildOptions(
             profile=profile or "default",
-            profile_explicit=profile is not None,
             quick=quick,
             skip_stages=skip_stages or [],
             skip_stages_explicit=skip_stages is not None,

@@ -148,7 +148,6 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(
     assert call.args[0] == "#42"
     opts = call.args[1]
     assert opts.profile == "submit"
-    assert opts.profile_explicit is True
     assert opts.quick is True
     assert opts.skip_stages == ["qa"]
     assert opts.isolation == "clone"

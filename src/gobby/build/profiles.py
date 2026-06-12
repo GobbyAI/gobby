@@ -28,7 +28,6 @@ def resolve_build_profile_options(
     # explicit marker remain direct build options rather than profile overlays.
     return BuildOptions(
         profile=opts.profile,
-        profile_explicit=opts.profile_explicit,
         quick=opts.quick,
         skip_stages=list(opts.skip_stages)
         if has_request_skip_stages

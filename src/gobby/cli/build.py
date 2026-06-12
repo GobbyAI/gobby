@@ -154,7 +154,6 @@ def _make_build_options(
     resolved_isolation: Isolation = isolation or ("clone" if use_clone else "worktree")
     return BuildOptions(
         profile=profile or "default",
-        profile_explicit=profile is not None,
         quick=quick,
         skip_stages=_parse_skip_stages(skip_stage),
         skip_stages_explicit=bool(skip_stage),
@@ -219,7 +218,7 @@ def _make_build_options(
 )
 @click.option(
     "--max-active-agents",
-    type=int,
+    type=click.IntRange(min=1),
     help="Maximum active automation agents allowed during the immediate dispatcher tick.",
 )
 @click.option(

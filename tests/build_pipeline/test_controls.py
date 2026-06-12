@@ -244,7 +244,9 @@ async def test_resume_epic_sets_subtree_automation_and_kicks_dispatcher(
     assert result.action == "resume"
     assert result.automation_updated == 3
     for task in [epic, *descendants]:
-        assert task_manager.get_task(task.id).allow_automation is True
+        updated = task_manager.get_task(task.id)
+        assert updated.allow_automation is True
+        assert updated.unattended is True
 
 
 @pytest.mark.asyncio

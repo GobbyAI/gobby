@@ -18,6 +18,7 @@ def _options(**overrides: object) -> BuildOptions:
         "quick": False,
         "skip_stages": [],
         "isolation": "none",
+        "isolation_explicit": True,
         "no_merge": False,
         "pr": None,
         "target_branch": None,
@@ -120,7 +121,7 @@ async def test_submit_profile_records_same_repo_delivery_campaign(
 
     await build(
         f"#{task.seq_num}",
-        _options(profile="submit", profile_explicit=True),
+        _options(profile="submit"),
         db=temp_db,
         project_id=sample_project["id"],
     )
@@ -165,7 +166,7 @@ async def test_submit_profile_records_cross_repo_delivery_campaign(
 
     await build(
         f"#{task.seq_num}",
-        _options(profile="submit", profile_explicit=True),
+        _options(profile="submit"),
         db=temp_db,
         project_id=sample_project["id"],
     )
@@ -203,7 +204,6 @@ def test_explicit_delivery_options_override_profile_defaults(
     resolved = resolve_build_profile_options(
         _options(
             profile="submit",
-            profile_explicit=True,
             delivery_mode="auto",
             delivery_mode_explicit=True,
             delivery_target_repo=None,

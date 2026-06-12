@@ -181,7 +181,6 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
     )
     return BuildOptions(
         profile=request_data.profile or "default",
-        profile_explicit="profile" in request_data.model_fields_set,
         quick=request_data.quick,
         skip_stages=request_data.skip_stages,
         skip_stages_explicit="skip_stages" in request_data.model_fields_set,
@@ -220,7 +219,6 @@ def _restart_options(request_data: BuildControlRequest) -> BuildOptions:
     )
     return BuildOptions(
         profile=request_data.profile or "default",
-        profile_explicit="profile" in request_data.model_fields_set,
         skip_stages=request_data.skip_stages,
         skip_stages_explicit="skip_stages" in request_data.model_fields_set,
         isolation=isolation.isolation,
