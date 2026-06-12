@@ -10,7 +10,7 @@ import os
 import shlex
 import shutil
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -23,6 +23,7 @@ from gobby.ai.registry import (
 )
 from gobby.config.app import DaemonConfig
 from gobby.config.feature_base import (
+    FeatureProfile,
     default_candidates_for_profile,
     normalize_feature_candidate,
     parse_feature_candidate,
@@ -121,10 +122,17 @@ class TextGenerationService:
         registry: AICapabilityRegistry,
         adapters: Mapping[str, TextGenerateAdapter] | None = None,
         adapter_factories: Mapping[str, TextGenerateAdapterFactory] | None = None,
+        profile_defaults: Mapping[FeatureProfile, Sequence[str]] | None = None,
     ) -> None:
         self._registry = registry
         self._adapters = dict(adapters or {})
         self._adapter_factories = dict(adapter_factories or {})
+        self._profile_defaults = {
+            FeatureProfile(profile): tuple(
+                normalize_feature_candidate(candidate) for candidate in candidates
+            )
+            for profile, candidates in (profile_defaults or {}).items()
+        }
 
     @property
     def registry(self) -> AICapabilityRegistry:
@@ -352,7 +360,10 @@ class TextGenerationService:
         if has_provider and has_model:
             return (request,)
         if request.profile:
-            candidates = default_candidates_for_profile(request.profile)
+            profile = FeatureProfile(request.profile)
+            candidates = self._profile_defaults.get(profile)
+            if candidates is None:
+                candidates = default_candidates_for_profile(profile)
             return tuple(
                 replace(request, provider=provider, model=model)
                 for provider, model in (
@@ -660,6 +671,7 @@ def build_daemon_text_generation_service(
     return TextGenerationService(
         registry or build_daemon_ai_capability_registry(config),
         adapter_factories=_daemon_text_generation_adapter_factories(config),
+        profile_defaults=config.ai.generation.profile_defaults,
     )
 
 

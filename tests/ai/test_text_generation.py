@@ -25,6 +25,7 @@ from gobby.ai import (
     build_daemon_text_generation_service,
 )
 from gobby.config.app import DaemonConfig
+from gobby.config.feature_base import FeatureProfile
 from gobby.llm.base import LLMProviderCancellation, LLMTextResult
 
 pytestmark = pytest.mark.unit
@@ -769,6 +770,61 @@ async def test_text_generation_service_profile_only_expands_profile_defaults() -
             provider="codex",
             profile="feature_low",
             model="gpt-5.4-mini",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_profile_only_uses_configured_profile_defaults() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.4-mini",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local:lm-studio",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("qwen-local",),
+            ),
+        ]
+    )
+    config = DaemonConfig(
+        ai={
+            "generation": {
+                "profile_defaults": {
+                    FeatureProfile.LOW: ["local:lm-studio/qwen-local"],
+                }
+            }
+        }
+    )
+    codex = RecordingAdapter("codex")
+    local = RecordingAdapter("local:lm-studio")
+    service = TextGenerationService(
+        registry,
+        {"codex": codex, "local:lm-studio": local},
+        profile_defaults=config.ai.generation.profile_defaults,
+    )
+
+    result = await service.generate_result(
+        TextGenerationRequest(prompt="summarize", profile="feature_low")
+    )
+
+    assert result.text == "local:lm-studio:summarize"
+    assert result.provider == "local:lm-studio"
+    assert result.model == "qwen-local"
+    assert codex.requests == []
+    assert local.requests == [
+        TextGenerationRequest(
+            prompt="summarize",
+            provider="local:lm-studio",
+            profile="feature_low",
+            model="qwen-local",
         )
     ]
 
