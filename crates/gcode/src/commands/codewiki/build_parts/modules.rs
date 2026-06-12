@@ -1,10 +1,12 @@
 use super::super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_module_docs(
     files: &[FileDoc],
     graph_edges: &[CodewikiGraphEdge],
     graph_availability: CodewikiGraphAvailability,
+    leading_chunks: &BTreeMap<String, LeadingChunk>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
@@ -91,6 +93,16 @@ pub(crate) fn build_module_docs(
         let (summary, reused_page) = match reused {
             Some((page, summary)) => (summary, Some(page)),
             None => {
+                // Real retrieved input alongside summaries-of-summaries: the
+                // module's busiest member files contribute leading source
+                // excerpts to the brief.
+                let sources = ranked_source_excerpts(
+                    files
+                        .iter()
+                        .filter(|file| file_is_direct_module_member(file, &module)),
+                    leading_chunks,
+                    prompts::MAX_PROMPT_SOURCE_EXCERPTS,
+                );
                 let generated = maybe_generate(
                     generate,
                     &prompts::module_prompt(
@@ -98,16 +110,14 @@ pub(crate) fn build_module_docs(
                         &file_summaries,
                         &child_summaries,
                         &prompt_component_ids,
+                        &sources,
                     ),
                     prompts::MODULE_SYSTEM,
                     PromptTier::Aggregate,
                 )
                 .unwrap_or_record(fallback, &mut degraded);
-                let summary = ground_text(
-                    &generated,
-                    &source_spans,
-                    Some(&citation_list(&source_spans)),
-                );
+                let citations = citation_list(&source_spans, &generated);
+                let summary = ground_text(&generated, &source_spans, Some(&citations));
                 (summary, None)
             }
         };

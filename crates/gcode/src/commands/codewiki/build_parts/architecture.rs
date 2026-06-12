@@ -7,13 +7,19 @@ pub(crate) fn build_architecture_doc(
     modules: &[ModuleDoc],
     graph_edges: &[CodewikiGraphEdge],
     graph_availability: CodewikiGraphAvailability,
+    leading_chunks: &BTreeMap<String, LeadingChunk>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     progress: &mut CodewikiProgress,
 ) -> ArchitectureDoc {
-    let subsystem_names = files
+    // Decomposition starts at meaningful units — the subsystem roots (a
+    // workspace's individual crates), not the directory container above
+    // them — so subsystems, narrative, and the cross-subsystem diagram all
+    // describe the same level.
+    let file_paths = files
         .iter()
-        .map(|file| file.module.clone())
-        .collect::<BTreeSet<_>>();
+        .map(|file| file.path.clone())
+        .collect::<Vec<_>>();
+    let subsystem_names = cluster::subsystem_roots(&file_paths);
     let mut degraded_sources = BTreeSet::new();
     match graph_availability {
         CodewikiGraphAvailability::Available => {}
@@ -52,6 +58,13 @@ pub(crate) fn build_architecture_doc(
             structural_module_summary(&module.module, &module.direct_files, &module.child_modules);
         let source_spans = collect_link_spans(&module.direct_files, &module.child_modules);
         let prompt_component_ids = prompt_component_ids_for_module(files, &module.module);
+        let sources = ranked_source_excerpts(
+            files.iter().filter(|file| {
+                file.module == module.module || module_is_ancestor(&module.module, &file.module)
+            }),
+            leading_chunks,
+            SUBSYSTEM_SOURCE_EXCERPTS,
+        );
         progress.emit(format!(
             "generating architecture doc subsystem {}/{} {}",
             index + 1,
@@ -65,16 +78,16 @@ pub(crate) fn build_architecture_doc(
                 &file_summaries,
                 &child_summaries,
                 &prompt_component_ids,
+                &sources,
             ),
             prompts::ARCHITECTURE_SYSTEM,
             PromptTier::Aggregate,
         );
         let responsibility = match generated {
-            Generation::Generated(generated) => ground_text(
-                &generated,
-                &source_spans,
-                Some(&citation_list(&source_spans)),
-            ),
+            Generation::Generated(generated) => {
+                let citations = citation_list(&source_spans, &generated);
+                ground_text(&generated, &source_spans, Some(&citations))
+            }
             fallback_generation => {
                 // Only an attempted-and-failed generation is a degradation;
                 // structural output is the intent when no generator runs.
@@ -88,16 +101,15 @@ pub(crate) fn build_architecture_doc(
         subsystems.push(ArchitectureSubsystem {
             module: module.module.clone(),
             responsibility,
+            child_modules: module
+                .child_modules
+                .iter()
+                .map(|child| child.module.clone())
+                .collect(),
             source_spans,
         });
     }
 
-    let dependency_diagram = match graph_availability {
-        CodewikiGraphAvailability::Unavailable => None,
-        CodewikiGraphAvailability::Available | CodewikiGraphAvailability::Truncated => {
-            render_architecture_dependency_mermaid(files, graph_edges)
-        }
-    };
     let source_spans = subsystems
         .iter()
         .flat_map(|subsystem| subsystem.source_spans.iter().cloned())
@@ -105,13 +117,59 @@ pub(crate) fn build_architecture_doc(
         .into_iter()
         .collect::<Vec<_>>();
 
+    // Layered narrative over the subsystem responsibilities and the
+    // cross-subsystem dependency edges.
+    let subsystem_edges = collect_subsystem_dependency_edges(&subsystem_names, files, graph_edges)
+        .into_iter()
+        .collect::<Vec<_>>();
+    let narrative = if subsystems.is_empty() {
+        None
+    } else {
+        progress.emit("generating architecture narrative");
+        let subsystem_summaries = subsystems
+            .iter()
+            .map(|subsystem| prompts::ChildSummary {
+                name: subsystem.module.clone(),
+                summary: subsystem.responsibility.clone(),
+            })
+            .collect::<Vec<_>>();
+        match maybe_generate(
+            generate,
+            &prompts::architecture_narrative_prompt(&subsystem_summaries, &subsystem_edges),
+            prompts::ARCHITECTURE_NARRATIVE_SYSTEM,
+            PromptTier::Aggregate,
+        ) {
+            Generation::Generated(generated) => {
+                let citations = citation_list(&source_spans, &generated);
+                Some(ground_text(&generated, &source_spans, Some(&citations)))
+            }
+            Generation::Failed => {
+                degraded_sources.insert("model-unavailable".to_string());
+                None
+            }
+            Generation::Skipped => None,
+        }
+    };
+
+    let dependency_diagram = match graph_availability {
+        CodewikiGraphAvailability::Unavailable => None,
+        CodewikiGraphAvailability::Available | CodewikiGraphAvailability::Truncated => {
+            render_subsystem_dependency_mermaid(&subsystem_names, files, graph_edges)
+        }
+    };
+
     ArchitectureDoc {
         source_spans,
         subsystems,
+        narrative,
         dependency_diagram,
         degraded_sources: degraded_sources.into_iter().collect(),
     }
 }
+
+/// Source excerpts per subsystem stay below the module-brief budget because
+/// the architecture page rolls every subsystem into one document.
+const SUBSYSTEM_SOURCE_EXCERPTS: usize = 2;
 
 pub(super) fn module_dependency_edges(
     graph_edges: &[CodewikiGraphEdge],

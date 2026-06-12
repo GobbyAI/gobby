@@ -17,6 +17,8 @@ struct Frontmatter<'a> {
     #[serde(rename = "type")]
     kind: &'a str,
     provenance: Vec<FrontmatterSourceFile<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provenance_truncated: Option<usize>,
     generated_by: &'static str,
     trust: &'static str,
     freshness: &'static str,
@@ -228,6 +230,14 @@ pub(crate) fn structural_file_summary(file: &str, symbols: &[SymbolDoc]) -> Stri
     )
 }
 
+/// Display form of a child summary for overview listings: the structural
+/// no-symbol filler returns `None` so index pages list the file link without
+/// stub prose.
+pub(crate) fn display_child_summary(summary: &str, file: &str) -> Option<String> {
+    let filler = structural_file_summary(file, &[]);
+    (summary.trim() != filler).then(|| summary.trim().to_string())
+}
+
 pub(crate) fn structural_module_summary(
     module: &str,
     files: &[FileLink],
@@ -271,34 +281,98 @@ pub(crate) fn collect_link_spans(files: &[FileLink], modules: &[ModuleLink]) -> 
 /// downstream summaries and prompts (#699).
 pub(crate) const MAX_FALLBACK_CITATIONS: usize = 5;
 
+/// Cap on the number of provenance files listed in page frontmatter; pages
+/// rolling up more files keep the top contributors by span count and record
+/// the omitted count as `provenance_truncated`.
+pub(crate) const MAX_FRONTMATTER_PROVENANCE_FILES: usize = 30;
+
 /// Representative subset of `spans` for fallback citations: at most
 /// [`MAX_FALLBACK_CITATIONS`] entries, preferring one span per distinct file
 /// so broad pages cite breadth rather than one file's span run.
-fn fallback_spans(spans: &[SourceSpan]) -> Vec<SourceSpan> {
+/// Extensions whose files are asset/data provenance rather than behavior;
+/// they rank behind source files in fallback citations unless they are the
+/// only provenance available.
+const ASSET_DATA_EXTENSIONS: &[&str] = &[
+    "csv", "gif", "ico", "jpeg", "jpg", "json", "lock", "png", "svg", "toml", "tsv", "xml", "yaml",
+    "yml",
+];
+
+fn is_asset_or_data_file(file: &str) -> bool {
+    std::path::Path::new(file)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            let extension = extension.to_ascii_lowercase();
+            ASSET_DATA_EXTENSIONS.contains(&extension.as_str())
+        })
+}
+
+/// Lowercased alphanumeric tokens of at least three characters, used for
+/// lexical-overlap scoring between generated text and span file paths.
+fn lexical_tokens(value: &str) -> BTreeSet<String> {
+    value
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|token| token.len() >= 3)
+        .map(str::to_ascii_lowercase)
+        .collect()
+}
+
+fn citation_relevance(text_tokens: &BTreeSet<String>, file: &str) -> usize {
+    lexical_tokens(file)
+        .iter()
+        .filter(|token| text_tokens.contains(*token))
+        .count()
+}
+
+/// Picks fallback citation spans by relevance to `text`: files whose path
+/// tokens overlap the text rank first, asset/data files rank last (still
+/// used when they are the sole provenance), and ties keep deterministic
+/// path order. Distinct files are preferred before a second span of the
+/// same file is taken.
+fn fallback_spans(spans: &[SourceSpan], text: &str) -> Vec<SourceSpan> {
     let deduped = spans.iter().cloned().collect::<BTreeSet<_>>();
-    let mut picked = Vec::new();
-    let mut seen_files = BTreeSet::new();
-    for span in &deduped {
+    let text_tokens = lexical_tokens(text);
+    let mut ranked_files = deduped
+        .iter()
+        .map(|span| span.file.as_str())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    ranked_files.sort_by_key(|file| {
+        (
+            is_asset_or_data_file(file),
+            std::cmp::Reverse(citation_relevance(&text_tokens, file)),
+            *file,
+        )
+    });
+
+    let mut picked: Vec<SourceSpan> = Vec::new();
+    for file in &ranked_files {
         if picked.len() == MAX_FALLBACK_CITATIONS {
             return picked;
         }
-        if seen_files.insert(span.file.clone()) {
+        if let Some(span) = deduped.iter().find(|span| span.file == *file) {
             picked.push(span.clone());
         }
     }
-    for span in deduped {
+    for file in &ranked_files {
         if picked.len() == MAX_FALLBACK_CITATIONS {
             break;
         }
-        if !picked.contains(&span) {
-            picked.push(span);
+        for span in deduped.iter().filter(|span| span.file == *file) {
+            if picked.len() == MAX_FALLBACK_CITATIONS {
+                break;
+            }
+            if !picked.contains(span) {
+                picked.push(span.clone());
+            }
         }
     }
     picked
 }
 
-pub(crate) fn citation_list(spans: &[SourceSpan]) -> String {
-    fallback_spans(spans)
+pub(crate) fn citation_list(spans: &[SourceSpan], text: &str) -> String {
+    fallback_spans(spans, text)
         .into_iter()
         .map(|span| span.citation())
         .collect::<Vec<_>>()
@@ -327,8 +401,8 @@ where
     lines.join("\n")
 }
 
-pub(crate) fn citation_markers(spans: &[SourceSpan]) -> String {
-    let fallback = fallback_spans(spans)
+pub(crate) fn citation_markers(spans: &[SourceSpan], text: &str) -> String {
+    let fallback = fallback_spans(spans, text)
         .into_iter()
         .map(|span| span.citation())
         .collect::<BTreeSet<_>>();
@@ -498,6 +572,25 @@ fn frontmatter_with_options(
             .insert((span.line_start, span.line_end));
     }
 
+    // Aggregate pages can roll up provenance for hundreds of files; cap the
+    // frontmatter at the files contributing the most spans and record how
+    // many were omitted so the truncation is visible, not silent.
+    let provenance_truncated = files.len().saturating_sub(MAX_FRONTMATTER_PROVENANCE_FILES);
+    if provenance_truncated > 0 {
+        let mut ranked = files.keys().copied().collect::<Vec<_>>();
+        ranked.sort_by_key(|file| {
+            (
+                std::cmp::Reverse(files.get(file).map_or(0, BTreeSet::len)),
+                *file,
+            )
+        });
+        let kept = ranked
+            .into_iter()
+            .take(MAX_FRONTMATTER_PROVENANCE_FILES)
+            .collect::<BTreeSet<_>>();
+        files.retain(|file, _| kept.contains(file));
+    }
+
     let source_files: Vec<FrontmatterSourceFile<'_>> = files
         .into_iter()
         .map(|(file, ranges)| FrontmatterSourceFile {
@@ -513,6 +606,7 @@ fn frontmatter_with_options(
         title,
         kind,
         provenance: source_files,
+        provenance_truncated: (provenance_truncated > 0).then_some(provenance_truncated),
         generated_by: gobby_core::codewiki_contract::GENERATED_BY_CODEWIKI,
         trust: gobby_core::codewiki_contract::TRUST_GENERATED,
         freshness: gobby_core::codewiki_contract::FRESHNESS_INDEXED,
@@ -606,7 +700,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let citations = citation_list(&spans);
+        let citations = citation_list(&spans, "");
 
         let lines = citations.lines().collect::<Vec<_>>();
         assert_eq!(lines.len(), spans.len(), "{citations}");
@@ -621,7 +715,7 @@ mod tests {
             .map(|index| span(format!("src/file_{index:03}.rs"), 1, 10))
             .collect::<Vec<_>>();
 
-        let citations = citation_list(&spans);
+        let citations = citation_list(&spans, "");
 
         assert_eq!(
             citations.lines().count(),
@@ -637,7 +731,7 @@ mod tests {
             .collect::<Vec<_>>();
         spans.push(span("src/other.rs", 1, 5));
 
-        let picked = fallback_spans(&spans);
+        let picked = fallback_spans(&spans, "");
 
         assert!(picked.len() <= MAX_FALLBACK_CITATIONS);
         assert!(
@@ -652,7 +746,7 @@ mod tests {
             .map(|index| span(format!("src/file_{index:02}.rs"), 1, 1))
             .collect::<Vec<_>>();
 
-        let markers = citation_markers(&spans);
+        let markers = citation_markers(&spans, "");
 
         assert_eq!(
             markers.split_whitespace().count(),
@@ -660,6 +754,68 @@ mod tests {
             "{markers}"
         );
         assert!(markers.starts_with("[1]"), "{markers}");
+    }
+
+    #[test]
+    fn fallback_citations_rank_lexically_relevant_files_first() {
+        let spans = vec![
+            span("src/aardvark.rs", 1, 10),
+            span("src/parser.rs", 1, 10),
+            span("src/zoo.rs", 1, 10),
+        ];
+
+        let picked = fallback_spans(&spans, "The parser walks the AST and emits tokens.");
+
+        assert_eq!(picked[0].file, "src/parser.rs", "{picked:?}");
+    }
+
+    #[test]
+    fn asset_data_files_rank_behind_source_unless_sole_provenance() {
+        let spans = vec![
+            span("assets/data.json", 1, 10),
+            span("src/zz_late.rs", 1, 10),
+        ];
+        let picked = fallback_spans(&spans, "");
+        assert_eq!(picked[0].file, "src/zz_late.rs", "{picked:?}");
+
+        let sole = vec![span("assets/data.json", 1, 10)];
+        let picked = fallback_spans(&sole, "");
+        assert_eq!(picked[0].file, "assets/data.json", "{picked:?}");
+    }
+
+    #[test]
+    fn frontmatter_caps_provenance_and_records_truncation() {
+        let mut spans = Vec::new();
+        for index in 0..MAX_FRONTMATTER_PROVENANCE_FILES + 7 {
+            spans.push(span(format!("src/file_{index:02}.rs"), 1, 5));
+        }
+        // The busiest file contributes extra spans, so it must survive the cap
+        // even though it sorts last alphabetically.
+        let busiest = "src/zz_busiest.rs";
+        for line in [1, 10, 20, 30] {
+            spans.push(span(busiest, line, line + 2));
+        }
+
+        let doc = frontmatter("Repository Overview", "code_repo", &spans);
+
+        let kept_files = io::source_files_from_frontmatter(&doc);
+        assert_eq!(kept_files.len(), MAX_FRONTMATTER_PROVENANCE_FILES, "{doc}");
+        assert!(kept_files.contains(busiest), "{doc}");
+        let truncated_marker = format!(
+            "{}: 8",
+            gobby_core::codewiki_contract::PROVENANCE_TRUNCATED_KEY
+        );
+        assert!(
+            doc.contains(&truncated_marker),
+            "7 overflow files + 1 displaced by the busiest file: {doc}"
+        );
+
+        let bounded = frontmatter(
+            "src/lib.rs",
+            "code_file",
+            &[span("src/lib.rs", 1, 2), span("src/lib.rs", 9, 9)],
+        );
+        assert!(!bounded.contains("provenance_truncated"), "{bounded}");
     }
 
     #[test]
@@ -698,6 +854,7 @@ mod tests {
                 name: "crates/gcode/Cargo.toml".to_string(),
                 summary: "Manifest for the gcode binary.".to_string(),
             }],
+            &[],
             &[],
             &[],
         );

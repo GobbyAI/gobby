@@ -19,6 +19,10 @@ pub const TRUST_KEY: &str = "trust";
 pub const FRESHNESS_KEY: &str = "freshness";
 pub const DEGRADED_KEY: &str = "degraded";
 pub const DEGRADED_SOURCES_KEY: &str = "degraded_sources";
+/// Count of provenance files omitted by the per-page cap. Emitted only when
+/// a page rolls up more files than the cap, so the golden page (uncapped)
+/// intentionally omits it.
+pub const PROVENANCE_TRUNCATED_KEY: &str = "provenance_truncated";
 
 /// Marker values codewiki writes for the keys above.
 pub const GENERATED_BY_CODEWIKI: &str = "gcode-codewiki";

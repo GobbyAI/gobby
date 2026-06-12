@@ -152,6 +152,7 @@ fn frontmatter_matches_the_shared_codewiki_contract_golden() {
 #[test]
 fn citations_validated_against_spans() {
     let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec!["src/lib.rs".to_string()],
         graph_edges: Vec::new(),
         graph_availability: CodewikiGraphAvailability::Available,

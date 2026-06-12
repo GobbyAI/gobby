@@ -41,6 +41,7 @@ fn degraded_doc_is_rewritten_once_generation_succeeds() {
     std::fs::write(project.path().join("src/lib.rs"), "pub struct Client;\n").expect("write lib");
     let out_dir = project.path().join("codewiki");
     let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec!["src/lib.rs".to_string()],
         graph_edges: Vec::new(),
         graph_availability: CodewikiGraphAvailability::Available,
@@ -133,6 +134,7 @@ fn incremental_regenerates_only_changed() {
     let out_dir = project.path().join("codewiki");
 
     let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec!["src/lib.rs".to_string(), "src/nested/api.rs".to_string()],
         graph_edges: Vec::new(),
         graph_availability: CodewikiGraphAvailability::Available,
@@ -205,6 +207,7 @@ fn incremental_regenerates_only_changed() {
     );
 
     let reduced_input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec!["src/lib.rs".to_string()],
         graph_edges: Vec::new(),
         graph_availability: CodewikiGraphAvailability::Available,
@@ -246,6 +249,7 @@ fn scoped_incremental_write_preserves_out_of_scope_docs_and_meta() {
     let out_dir = project.path().join("codewiki");
 
     let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec![
             "src/lib.rs".to_string(),
             "src/old.rs".to_string(),
@@ -282,6 +286,7 @@ fn scoped_incremental_write_preserves_out_of_scope_docs_and_meta() {
     assert!(stale_in_scope_file_doc.exists());
 
     let scoped_input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec!["src/lib.rs".to_string()],
         graph_edges: Vec::new(),
         graph_availability: CodewikiGraphAvailability::Available,

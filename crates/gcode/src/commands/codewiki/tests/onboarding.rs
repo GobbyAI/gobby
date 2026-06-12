@@ -6,6 +6,7 @@ use super::*;
 #[test]
 fn codewiki_onboarding_ranks_modules_from_graph_analytics() {
     let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec![
             "src/main.rs".to_string(),
             "src/lib.rs".to_string(),
@@ -81,6 +82,7 @@ fn codewiki_onboarding_ranks_modules_from_graph_analytics() {
 #[test]
 fn codewiki_onboarding_degrades_to_structural_entry_points_without_graph_analytics() {
     let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec!["src/main.rs".to_string(), "src/lib.rs".to_string()],
         graph_edges: Vec::new(),
         graph_availability: CodewikiGraphAvailability::Unavailable,
@@ -109,6 +111,7 @@ fn codewiki_onboarding_degrades_to_structural_entry_points_without_graph_analyti
 #[test]
 fn codewiki_onboarding_available_empty_reading_order_is_not_unavailable() {
     let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec!["src/lib.rs".to_string()],
         graph_edges: Vec::new(),
         graph_availability: CodewikiGraphAvailability::Available,

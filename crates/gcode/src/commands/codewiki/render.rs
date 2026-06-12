@@ -7,12 +7,37 @@ pub(crate) fn render_module_dependency_mermaid(
     files: &[FileDoc],
     graph_edges: &[CodewikiGraphEdge],
 ) -> Option<String> {
-    let all_edges = collect_import_module_edges(files, graph_edges);
+    // Aggregate edge endpoints relative to this page (the page itself, one
+    // of its direct children, or an external module truncated to the page's
+    // depth) so dependency diagrams render at every module level that has
+    // bounded edges, not only at leaf cluster granularity.
+    let all_edges = collect_import_module_edges(files, graph_edges)
+        .into_iter()
+        .filter_map(|(source, target)| {
+            let source = aggregate_module_for_page(module, &source);
+            let target = aggregate_module_for_page(module, &target);
+            (source != target).then_some((source, target))
+        })
+        .collect::<BTreeSet<_>>();
     if all_edges.is_empty() {
         return None;
     }
 
-    let bounded_edges = bounded_module_dependency_edges(module, &all_edges, MAX_MERMAID_HOPS);
+    let mut bounded_edges = bounded_module_dependency_edges(module, &all_edges, MAX_MERMAID_HOPS);
+    if bounded_edges.is_empty() {
+        // The page module itself has no direct edges; fall back to edges
+        // among its aggregated children so container modules still render
+        // their internal dependency structure.
+        let page_prefix = format!("{module}/");
+        bounded_edges = all_edges
+            .iter()
+            .filter(|(source, target)| {
+                source.starts_with(&page_prefix) && target.starts_with(&page_prefix)
+            })
+            .take(MAX_MERMAID_EDGES)
+            .cloned()
+            .collect();
+    }
     if bounded_edges.is_empty() {
         return None;
     }
@@ -34,25 +59,49 @@ pub(crate) fn render_module_dependency_mermaid(
     Some(diagram)
 }
 
-pub(crate) fn render_architecture_dependency_mermaid(
+/// Maps an edge-endpoint module to a node on `page`'s dependency diagram:
+/// the page itself, `page/<child>` for descendants, or an external module
+/// truncated to the page's depth so siblings stay comparable.
+pub(crate) fn aggregate_module_for_page(page: &str, module: &str) -> String {
+    if module == page {
+        return page.to_string();
+    }
+    if let Some(rest) = module.strip_prefix(page)
+        && let Some(rest) = rest.strip_prefix('/')
+    {
+        let child = rest.split('/').next().unwrap_or_default();
+        if !child.is_empty() {
+            return format!("{page}/{child}");
+        }
+        return page.to_string();
+    }
+    let depth = module_depth(page).max(1);
+    module
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .take(depth)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Crate/subsystem-level dependency diagram: import edges aggregated to the
+/// supplied subsystem roots. Returns `None` when no cross-root edges exist —
+/// an edge-free diagram is never fabricated.
+pub(crate) fn render_subsystem_dependency_mermaid(
+    roots: &BTreeSet<String>,
     files: &[FileDoc],
     graph_edges: &[CodewikiGraphEdge],
 ) -> Option<String> {
-    let edges = collect_import_module_edges(files, graph_edges);
+    let edges = collect_subsystem_dependency_edges(roots, files, graph_edges);
     if edges.is_empty() {
         return None;
     }
-    let seed_components = repo_mermaid_seed_modules(&edges);
-    let bounded_edges = bounded_component_edges(
-        &seed_components,
-        &edges,
-        MAX_MERMAID_HOPS,
-        MAX_MERMAID_EDGES,
-    );
-    if bounded_edges.is_empty() {
-        return None;
-    }
 
+    let bounded_edges = edges
+        .iter()
+        .take(MAX_MERMAID_EDGES)
+        .cloned()
+        .collect::<Vec<_>>();
     let omitted_edges = edges.len().saturating_sub(bounded_edges.len());
     let mut diagram = "```mermaid\ngraph LR\n".to_string();
     write_partial_import_graph_comment(&mut diagram, omitted_edges);
@@ -70,19 +119,34 @@ pub(crate) fn render_architecture_dependency_mermaid(
     Some(diagram)
 }
 
-fn repo_mermaid_seed_modules(edges: &BTreeSet<(String, String)>) -> BTreeSet<String> {
-    let top_level = edges
-        .iter()
-        .flat_map(|(source, target)| [source, target])
-        .filter(|module| parent_module(module).is_none())
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    if !top_level.is_empty() {
-        return top_level;
+/// Import edges between distinct subsystem roots, attributed through each
+/// component's owning file.
+pub(crate) fn collect_subsystem_dependency_edges(
+    roots: &BTreeSet<String>,
+    files: &[FileDoc],
+    graph_edges: &[CodewikiGraphEdge],
+) -> BTreeSet<(String, String)> {
+    let mut component_to_root = HashMap::new();
+    for file in files {
+        let Some(root) = cluster::subsystem_root_for_file(&file.path, roots) else {
+            continue;
+        };
+        for component_id in &file.component_ids {
+            component_to_root.insert(component_id.as_str(), root);
+        }
     }
-    edges
+
+    graph_edges
         .iter()
-        .flat_map(|(source, target)| [source.clone(), target.clone()])
+        .filter(|edge| edge.kind == CodewikiGraphEdgeKind::Import)
+        .filter_map(|edge| {
+            let source = component_to_root.get(edge.source_component_id.as_str())?;
+            let target = component_to_root.get(edge.target_component_id.as_str())?;
+            if source == target {
+                return None;
+            }
+            Some(((*source).to_string(), (*target).to_string()))
+        })
         .collect()
 }
 
@@ -150,7 +214,9 @@ pub(crate) fn render_module_call_mermaid(
         .filter_map(|edge| {
             let source_module = component_to_module.get(edge.source_component_id.as_str())?;
             let target_module = component_to_module.get(edge.target_component_id.as_str())?;
-            if *source_module != module && *target_module != module {
+            let in_page =
+                |candidate: &str| candidate == module || module_is_ancestor(module, candidate);
+            if !in_page(source_module) && !in_page(target_module) {
                 return None;
             }
             Some((
@@ -340,6 +406,8 @@ pub(crate) fn mermaid_label(module: &str) -> String {
 pub(crate) fn build_repo_doc(
     files: &[FileDoc],
     modules: &[ModuleDoc],
+    graph_edges: &[CodewikiGraphEdge],
+    leading_chunks: &BTreeMap<String, LeadingChunk>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
@@ -389,30 +457,70 @@ pub(crate) fn build_repo_doc(
         return (page, false);
     }
     progress.emit("generating repo overview");
+    let sources = repo_source_excerpts(files, leading_chunks);
     let generation = maybe_generate(
         generate,
-        &prompts::repo_prompt(&module_summaries, &file_summaries),
+        &prompts::repo_prompt(&module_summaries, &file_summaries, &sources),
         prompts::REPO_SYSTEM,
         PromptTier::Aggregate,
     );
     let degraded = generation.failed();
     let summary = match generation {
-        Generation::Generated(generated) => ground_text(
-            &generated,
-            &source_spans,
-            Some(&citation_markers(&source_spans)),
-        ),
+        Generation::Generated(generated) => {
+            let markers = citation_markers(&source_spans, &generated);
+            ground_text(&generated, &source_spans, Some(&markers))
+        }
         Generation::Failed | Generation::Skipped => ground_text(&fallback, &source_spans, None),
     };
 
-    let doc = render_repo_doc(&summary, &top_modules, &root_files, &source_spans, degraded);
+    let roots = cluster::subsystem_roots(
+        &files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect::<Vec<_>>(),
+    );
+    let module_map = render_subsystem_dependency_mermaid(&roots, files, graph_edges);
+    let doc = render_repo_doc(
+        &summary,
+        &top_modules,
+        &root_files,
+        module_map.as_deref(),
+        &source_spans,
+        degraded,
+    );
     (doc, degraded)
+}
+
+/// Root-level source excerpts for the repository overview prompt; README-style
+/// files rank first because they describe the system, then code roots by
+/// symbol count.
+fn repo_source_excerpts(
+    files: &[FileDoc],
+    leading_chunks: &BTreeMap<String, LeadingChunk>,
+) -> Vec<prompts::SourceExcerpt> {
+    let mut candidates = files
+        .iter()
+        .filter(|file| file.module.is_empty())
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|file| {
+        (
+            !file.path.to_ascii_lowercase().starts_with("readme"),
+            std::cmp::Reverse(file.symbols.len()),
+            file.path.clone(),
+        )
+    });
+    candidates
+        .into_iter()
+        .filter_map(|file| source_excerpt_for_file(&file.path, leading_chunks))
+        .take(prompts::MAX_PROMPT_SOURCE_EXCERPTS)
+        .collect()
 }
 
 pub(crate) fn render_repo_doc(
     summary: &str,
     modules: &[ModuleLink],
     files: &[FileLink],
+    module_map: Option<&str>,
     source_spans: &[SourceSpan],
     degraded: bool,
 ) -> String {
@@ -425,6 +533,11 @@ pub(crate) fn render_repo_doc(
     doc.push_str("# Repository Overview\n\n");
     let summary = replace_citations_with_markers(summary, source_spans);
     write_section(&mut doc, "Overview", &summary);
+    if let Some(diagram) = module_map {
+        doc.push_str("## Module Map\n\n");
+        doc.push_str(diagram);
+        doc.push('\n');
+    }
     if !modules.is_empty() {
         doc.push_str("## Modules\n\n");
         for module in modules {
@@ -436,8 +549,17 @@ pub(crate) fn render_repo_doc(
     if !files.is_empty() {
         doc.push_str("## Files\n\n");
         for file in files {
-            let summary = replace_citations_with_markers(&file.summary, source_spans);
-            let _ = writeln!(doc, "- {} - {}", file_wikilink(&file.path), summary);
+            // Structural no-symbol filler is dropped from the front page so
+            // it never reads as a wall of "has no indexed API symbols".
+            match display_child_summary(&file.summary, &file.path) {
+                Some(summary) => {
+                    let summary = replace_citations_with_markers(&summary, source_spans);
+                    let _ = writeln!(doc, "- {} - {}", file_wikilink(&file.path), summary);
+                }
+                None => {
+                    let _ = writeln!(doc, "- {}", file_wikilink(&file.path));
+                }
+            }
         }
         doc.push('\n');
     }
@@ -453,6 +575,9 @@ pub(crate) fn render_architecture_doc(architecture: &ArchitectureDoc) -> String 
         &architecture.degraded_sources,
     );
     doc.push_str("# Architecture Overview\n\n");
+    if let Some(narrative) = &architecture.narrative {
+        write_section(&mut doc, "Overview", narrative);
+    }
     if let Some(diagram) = &architecture.dependency_diagram {
         doc.push_str("## Subsystem Map\n\n");
         doc.push_str(diagram);
@@ -467,6 +592,11 @@ pub(crate) fn render_architecture_doc(architecture: &ArchitectureDoc) -> String 
                 module_wikilink(&subsystem.module),
                 subsystem.responsibility
             );
+            // Enumerate one module level below each subsystem so the page
+            // shows the top one to two levels of the decomposition.
+            for child in &subsystem.child_modules {
+                let _ = writeln!(doc, "  - {}", module_wikilink(child));
+            }
         }
         doc.push('\n');
     }

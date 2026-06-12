@@ -1,9 +1,9 @@
 use std::collections::BTreeSet;
 
 use super::super::{
-    AiDepth, CodewikiProgress, FileDoc, Generation, PromptTier, ReusePlan, SourceSpan, SymbolDoc,
-    TextGenerator, citation_list, component_label, file_doc_path, ground_text, maybe_generate,
-    prompts, structural_file_summary, structural_symbol_purpose,
+    AiDepth, CodewikiProgress, FileDoc, Generation, LeadingChunk, PromptTier, ReusePlan,
+    SourceSpan, SymbolDoc, TextGenerator, citation_list, component_label, file_doc_path,
+    ground_text, maybe_generate, prompts, structural_file_summary, structural_symbol_purpose,
 };
 use crate::models::Symbol;
 
@@ -19,6 +19,7 @@ pub(crate) fn build_file_doc(
     file: &str,
     module: String,
     symbols: Vec<Symbol>,
+    leading_chunk: Option<&LeadingChunk>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
     ai_depth: AiDepth,
@@ -86,10 +87,27 @@ pub(crate) fn build_file_doc(
             }
         })
         .collect::<Vec<_>>();
-    let source_spans = symbol_docs
+    let source_excerpt = leading_chunk.map(|chunk| prompts::SourceExcerpt {
+        path: file.to_string(),
+        line_start: chunk.line_start.max(1),
+        line_end: chunk.line_end.max(chunk.line_start.max(1)),
+        excerpt: chunk.content.clone(),
+    });
+    let mut source_spans = symbol_docs
         .iter()
         .map(|symbol| symbol.source_span.clone())
         .collect::<Vec<_>>();
+    // Files without indexed symbols (markdown, config, data) ground their
+    // content-derived purpose in the leading chunk's line range.
+    if source_spans.is_empty()
+        && let Some(excerpt) = &source_excerpt
+    {
+        source_spans.push(SourceSpan {
+            file: file.to_string(),
+            line_start: excerpt.line_start,
+            line_end: excerpt.line_end,
+        });
+    }
     let prompt_symbols = symbol_docs
         .iter()
         .map(|symbol| prompts::SymbolSummary {
@@ -111,21 +129,26 @@ pub(crate) fn build_file_doc(
         Some((page, summary)) => (summary, Some(page)),
         None => {
             let generated = if ai_depth.includes_files() {
-                maybe_generate(
-                    generate,
-                    &prompts::file_prompt(file, &prompt_symbols),
-                    prompts::FILE_SYSTEM,
-                    PromptTier::Standard,
-                )
+                // Non-code files have no symbols to summarize; their purpose
+                // comes from the leading content instead. The structural
+                // fallback is unchanged either way.
+                let (prompt, system) = match (&prompt_symbols[..], &source_excerpt) {
+                    ([], Some(excerpt)) => (
+                        prompts::content_file_prompt(file, excerpt),
+                        prompts::CONTENT_FILE_SYSTEM,
+                    ),
+                    _ => (
+                        prompts::file_prompt(file, &prompt_symbols, source_excerpt.as_slice()),
+                        prompts::FILE_SYSTEM,
+                    ),
+                };
+                maybe_generate(generate, &prompt, system, PromptTier::Standard)
             } else {
                 Generation::Skipped
             }
             .unwrap_or_record(fallback, &mut degraded);
-            let summary = ground_text(
-                &generated,
-                &source_spans,
-                Some(&citation_list(&source_spans)),
-            );
+            let citations = citation_list(&source_spans, &generated);
+            let summary = ground_text(&generated, &source_spans, Some(&citations));
             (summary, None)
         }
     };

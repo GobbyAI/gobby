@@ -5,6 +5,7 @@ use super::*;
 fn generates_hierarchical_docs() {
     let out_dir = tempfile::tempdir().expect("tempdir");
     let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec!["src/lib.rs".to_string(), "src/nested/api.rs".to_string()],
         graph_edges: Vec::new(),
         graph_availability: CodewikiGraphAvailability::Available,
@@ -41,6 +42,7 @@ fn generates_hierarchical_docs() {
 #[test]
 fn codewiki_unified_vault_emits_code_paths_frontmatter_and_wikilinks() {
     let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec!["src/lib.rs".to_string()],
         graph_edges: Vec::new(),
         graph_availability: CodewikiGraphAvailability::Available,
@@ -205,6 +207,7 @@ fn repo_marker_input() -> CodewikiInput {
         "zeta.rs",
     ];
     CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: files.iter().map(|file| (*file).to_string()).collect(),
         graph_edges: Vec::new(),
         graph_availability: CodewikiGraphAvailability::Available,

@@ -4,16 +4,27 @@ use super::*;
 #[test]
 fn clusters_modules_from_graph() {
     let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec![
             "src/api/handler.rs".to_string(),
+            "src/api/inner/router.rs".to_string(),
             "src/domain/service.rs".to_string(),
             "tests/domain/service_test.rs".to_string(),
             "vendor/generated/client.rs".to_string(),
         ],
-        graph_edges: vec![CodewikiGraphEdge::call(
-            test_component_id("src/api/handler.rs", "handle", "function"),
-            test_component_id("src/domain/service.rs", "Service", "class"),
-        )],
+        graph_edges: vec![
+            // Same subsystem root (src/api): clusters to the common module.
+            CodewikiGraphEdge::call(
+                test_component_id("src/api/handler.rs", "handle", "function"),
+                test_component_id("src/api/inner/router.rs", "route", "function"),
+            ),
+            // Cross-root (src/api -> src/domain): must not collapse the
+            // decomposition to the shared `src` container.
+            CodewikiGraphEdge::call(
+                test_component_id("src/api/handler.rs", "handle", "function"),
+                test_component_id("src/domain/service.rs", "Service", "class"),
+            ),
+        ],
         graph_availability: CodewikiGraphAvailability::Available,
         symbols: vec![
             test_symbol(
@@ -22,6 +33,13 @@ fn clusters_modules_from_graph() {
                 "function",
                 1,
                 "pub fn handle()",
+            ),
+            test_symbol(
+                "src/api/inner/router.rs",
+                "route",
+                "function",
+                1,
+                "pub fn route()",
             ),
             test_symbol(
                 "src/domain/service.rs",
@@ -58,21 +76,37 @@ fn clusters_modules_from_graph() {
     let docs = generate_hierarchical_docs(&input, None);
     let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
 
-    let module = docs_by_path
+    // The container module lists its children; the cross-root call edge did
+    // not pull either file up to `src` directly.
+    let container = docs_by_path
         .get("code/modules/src.md")
-        .expect("graph-connected files cluster under common module");
-    assert!(module.contains("[[code/files/src/api/handler.rs|src/api/handler.rs]]"));
-    assert!(module.contains("[[code/files/src/domain/service.rs|src/domain/service.rs]]"));
-    assert!(module.contains(&test_component_id(
+        .expect("container module is documented");
+    assert!(container.contains("[[code/modules/src/api|src/api]]"));
+    assert!(container.contains("[[code/modules/src/domain|src/domain]]"));
+    assert!(!container.contains("[[code/files/src/api/handler.rs|src/api/handler.rs]]"));
+
+    // Same-root call-connected files cluster to their common module.
+    let api = docs_by_path
+        .get("code/modules/src/api.md")
+        .expect("same-root cluster module is documented");
+    assert!(api.contains("[[code/files/src/api/handler.rs|src/api/handler.rs]]"));
+    assert!(api.contains("[[code/files/src/api/inner/router.rs|src/api/inner/router.rs]]"));
+    assert!(api.contains(&test_component_id(
         "src/api/handler.rs",
         "handle",
         "function"
     )));
-    assert!(module.contains(&test_component_id(
+
+    let domain = docs_by_path
+        .get("code/modules/src/domain.md")
+        .expect("cross-root file keeps its own module");
+    assert!(domain.contains("[[code/files/src/domain/service.rs|src/domain/service.rs]]"));
+    assert!(domain.contains(&test_component_id(
         "src/domain/service.rs",
         "Service",
         "class"
     )));
+
     assert!(!docs_by_path.contains_key("code/files/tests/domain/service_test.rs.md"));
     assert!(!docs_by_path.contains_key("code/files/vendor/generated/client.rs.md"));
 }
@@ -255,6 +289,7 @@ fn edge_limit_validation_rejects_zero_and_excessive_limits() {
 #[test]
 fn clusters_without_falkordb() {
     let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec![
             "src/api/handler.rs".to_string(),
             "src/domain/service.rs".to_string(),
@@ -342,6 +377,7 @@ fn clusters_without_falkordb() {
 #[test]
 fn emits_bounded_mermaid() {
     let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec![
             "src/api/handler.rs".to_string(),
             "src/domain/service.rs".to_string(),
@@ -430,6 +466,7 @@ fn bounded_component_edges_prefers_edges_nearest_seed() {
 #[test]
 fn mermaid_degrades_without_falkordb() {
     let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec!["src/api/handler.rs".to_string()],
         graph_edges: Vec::new(),
         graph_availability: CodewikiGraphAvailability::Unavailable,
@@ -463,6 +500,7 @@ fn mermaid_degrades_without_falkordb() {
 #[test]
 fn empty_available_graph_does_not_emit_degradation_marker() {
     let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec!["src/api/handler.rs".to_string()],
         graph_edges: Vec::new(),
         graph_availability: CodewikiGraphAvailability::Available,
@@ -487,6 +525,7 @@ fn empty_available_graph_does_not_emit_degradation_marker() {
 #[test]
 fn truncated_graph_emits_degradation_marker_with_partial_diagram() {
     let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec![
             "src/api/handler.rs".to_string(),
             "src/domain/service.rs".to_string(),

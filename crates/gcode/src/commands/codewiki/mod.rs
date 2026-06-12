@@ -66,17 +66,17 @@ pub(crate) use paths::{
 };
 // Rendered markdown and graph diagrams.
 pub(crate) use render::{
-    build_repo_doc, render_architecture_dependency_mermaid, render_architecture_doc,
-    render_file_doc, render_hotspots_doc, render_module_call_mermaid,
-    render_module_dependency_mermaid, render_module_doc, render_onboarding_doc,
+    build_repo_doc, collect_subsystem_dependency_edges, render_architecture_doc, render_file_doc,
+    render_hotspots_doc, render_module_call_mermaid, render_module_dependency_mermaid,
+    render_module_doc, render_onboarding_doc, render_subsystem_dependency_mermaid,
 };
 // AI and structural text helpers.
 pub(crate) use text::{
-    Generation, citation_list, citation_markers, collect_link_spans, frontmatter_with_degradation,
-    frontmatter_with_degradation_without_ranges, ground_text, maybe_generate,
-    replace_citations_with_markers, resolve_text_generator, structural_file_summary,
-    structural_module_summary, structural_repo_summary, structural_symbol_purpose,
-    write_references, write_section,
+    Generation, citation_list, citation_markers, collect_link_spans, display_child_summary,
+    frontmatter_with_degradation, frontmatter_with_degradation_without_ranges, ground_text,
+    maybe_generate, replace_citations_with_markers, resolve_text_generator,
+    structural_file_summary, structural_module_summary, structural_repo_summary,
+    structural_symbol_purpose, write_references, write_section,
 };
 #[cfg(test)]
 pub(crate) use text::{frontmatter, generate_with_bounded_retry};
@@ -94,6 +94,52 @@ pub struct CodewikiInput {
     pub graph_edges: Vec<CodewikiGraphEdge>,
     pub graph_availability: CodewikiGraphAvailability,
     pub symbols: Vec<Symbol>,
+    /// Leading content chunk per file, retrieved from the code index. Feeds
+    /// real source content into aggregate prompts and gives non-code files
+    /// (markdown, config) a content-derived purpose. Missing entries degrade
+    /// to summary-only prompts.
+    pub leading_chunks: BTreeMap<String, LeadingChunk>,
+}
+
+/// The first indexed content chunk of a file: real source text with its
+/// line range, used as retrieved prompt input and citation provenance.
+#[derive(Debug, Clone)]
+pub struct LeadingChunk {
+    pub content: String,
+    pub line_start: usize,
+    pub line_end: usize,
+}
+
+/// Builds a prompt source excerpt for `file` from its leading chunk.
+pub(crate) fn source_excerpt_for_file(
+    file: &str,
+    leading_chunks: &BTreeMap<String, LeadingChunk>,
+) -> Option<prompts::SourceExcerpt> {
+    leading_chunks
+        .get(file)
+        .map(|chunk| prompts::SourceExcerpt {
+            path: file.to_string(),
+            line_start: chunk.line_start,
+            line_end: chunk.line_end,
+            excerpt: chunk.content.clone(),
+        })
+}
+
+/// Top-k source excerpts for a set of candidate file docs, ranked by symbol
+/// count (the busiest files describe the module best) with path order as the
+/// deterministic tie-break.
+pub(crate) fn ranked_source_excerpts<'a>(
+    candidates: impl Iterator<Item = &'a FileDoc>,
+    leading_chunks: &BTreeMap<String, LeadingChunk>,
+    limit: usize,
+) -> Vec<prompts::SourceExcerpt> {
+    let mut ranked = candidates.collect::<Vec<_>>();
+    ranked.sort_by_key(|file| (std::cmp::Reverse(file.symbols.len()), file.path.clone()));
+    ranked
+        .into_iter()
+        .filter_map(|file| source_excerpt_for_file(&file.path, leading_chunks))
+        .take(limit)
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,6 +261,7 @@ pub(crate) struct ModuleDoc {
 pub(crate) struct ArchitectureDoc {
     source_spans: Vec<SourceSpan>,
     subsystems: Vec<ArchitectureSubsystem>,
+    narrative: Option<String>,
     dependency_diagram: Option<String>,
     degraded_sources: Vec<String>,
 }
@@ -223,6 +270,7 @@ pub(crate) struct ArchitectureDoc {
 pub(crate) struct ArchitectureSubsystem {
     module: String,
     responsibility: String,
+    child_modules: Vec<String>,
     source_spans: Vec<SourceSpan>,
 }
 
@@ -505,12 +553,16 @@ pub fn run(
         symbols.len(),
         edge_limit
     ));
+    progress.emit("loading leading content chunks");
+    let leading_chunks = load_leading_chunks(&mut conn, ctx, &files)?;
+
     let graph = fetch_codewiki_graph_edges(ctx, &files, &symbols, edge_limit)?;
     let input = CodewikiInput {
         files,
         graph_edges: graph.edges,
         graph_availability: graph.availability,
         symbols,
+        leading_chunks,
     };
     let mut generator = resolve_text_generator(ctx, &ai);
     let ai_enabled = generator.is_some();
@@ -611,6 +663,57 @@ fn load_symbols_for_codewiki(
 ) -> anyhow::Result<Vec<Symbol>> {
     progress.emit(format!("loading symbols for {} files", files.len()));
     load_symbols(files)
+}
+
+/// Loads each file's first indexed content chunk (`chunk_index = 0`) from the
+/// hub. Overlay scopes prefer overlay rows and fall back to the parent
+/// project for files the overlay has not re-indexed.
+fn load_leading_chunks(
+    conn: &mut postgres::Client,
+    ctx: &Context,
+    files: &[String],
+) -> anyhow::Result<BTreeMap<String, LeadingChunk>> {
+    let mut chunks = BTreeMap::new();
+    if files.is_empty() {
+        return Ok(chunks);
+    }
+    let project_ids = match &ctx.index_scope {
+        config::ProjectIndexScope::Single => vec![ctx.project_id.clone()],
+        config::ProjectIndexScope::Overlay {
+            overlay_project_id,
+            parent_project_id,
+            ..
+        } => vec![overlay_project_id.clone(), parent_project_id.clone()],
+    };
+    for project_id in project_ids {
+        let rows = conn.query(
+            "SELECT file_path,
+                    line_start::BIGINT AS line_start,
+                    line_end::BIGINT AS line_end,
+                    content
+             FROM code_content_chunks
+             WHERE project_id = $1 AND file_path = ANY($2) AND chunk_index = 0",
+            &[&project_id, &files],
+        )?;
+        for row in rows {
+            let file_path: String = row.get("file_path");
+            if chunks.contains_key(&file_path) {
+                continue;
+            }
+            let line_start: i64 = row.get("line_start");
+            let line_end: i64 = row.get("line_end");
+            let content: String = row.get("content");
+            chunks.insert(
+                file_path,
+                LeadingChunk {
+                    content,
+                    line_start: usize::try_from(line_start).unwrap_or(0),
+                    line_end: usize::try_from(line_end).unwrap_or(0),
+                },
+            );
+        }
+    }
+    Ok(chunks)
 }
 
 pub fn generate_hierarchical_docs(
@@ -760,6 +863,7 @@ fn generate_hierarchical_docs_core(
                 .cloned()
                 .unwrap_or_else(|| module_for_file(file)),
             symbols_by_file.remove(file).unwrap_or_default(),
+            input.leading_chunks.get(file),
             generate,
             reuse,
             ai_depth,
@@ -785,6 +889,7 @@ fn generate_hierarchical_docs_core(
         &file_docs,
         &input.graph_edges,
         input.graph_availability,
+        &input.leading_chunks,
         generate,
         reuse,
         progress,
@@ -800,8 +905,15 @@ fn generate_hierarchical_docs_core(
             })
         },
     )?;
-    let (repo_doc, repo_degraded) =
-        build_repo_doc(&file_docs, &module_docs, generate, reuse, progress);
+    let (repo_doc, repo_degraded) = build_repo_doc(
+        &file_docs,
+        &module_docs,
+        &input.graph_edges,
+        &input.leading_chunks,
+        generate,
+        reuse,
+        progress,
+    );
     emit(BuiltDoc {
         path: "code/repo.md".to_string(),
         content: repo_doc,
@@ -812,10 +924,7 @@ fn generate_hierarchical_docs_core(
     // Architecture provenance covers every subsystem source, so the page is
     // reusable only when nothing changed at all — then the per-subsystem
     // generation loop is skipped entirely and the on-disk page kept.
-    let subsystem_names = file_docs
-        .iter()
-        .map(|file| file.module.clone())
-        .collect::<BTreeSet<_>>();
+    let subsystem_names = cluster::subsystem_roots(&files);
     let architecture_sources = span_files(
         &module_docs
             .iter()
@@ -837,6 +946,7 @@ fn generate_hierarchical_docs_core(
                 &module_docs,
                 &input.graph_edges,
                 input.graph_availability,
+                &input.leading_chunks,
                 generate,
                 progress,
             );

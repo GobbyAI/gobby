@@ -1,5 +1,65 @@
 use super::*;
 
+/// Directory roots acting as the repository's top decomposition units.
+/// A top-level directory that holds no direct files is a container — like
+/// `crates/` in a Cargo workspace — and expands one level so decomposition
+/// starts at meaningful units (the individual crates) instead of the
+/// container. Root-level files belong to no subsystem.
+pub(crate) fn subsystem_roots(files: &[String]) -> BTreeSet<String> {
+    let mut top_level = BTreeSet::new();
+    let mut has_direct_files = BTreeSet::new();
+    let mut children: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for file in files {
+        let module = module_for_file(file);
+        let mut parts = module.split('/').filter(|part| !part.is_empty());
+        let Some(top) = parts.next() else {
+            continue;
+        };
+        top_level.insert(top.to_string());
+        match parts.next() {
+            None => {
+                has_direct_files.insert(top.to_string());
+            }
+            Some(child) => {
+                children
+                    .entry(top.to_string())
+                    .or_default()
+                    .insert(format!("{top}/{child}"));
+            }
+        }
+    }
+
+    let mut roots = BTreeSet::new();
+    for top in top_level {
+        let expandable = !has_direct_files.contains(&top)
+            && children.get(&top).is_some_and(|kids| !kids.is_empty());
+        if expandable {
+            roots.extend(children.remove(&top).unwrap_or_default());
+        } else {
+            roots.insert(top);
+        }
+    }
+    roots
+}
+
+/// The subsystem root that owns `file`, when one exists.
+pub(crate) fn subsystem_root_for_file<'a>(
+    file: &str,
+    roots: &'a BTreeSet<String>,
+) -> Option<&'a str> {
+    let module = module_for_file(file);
+    roots
+        .iter()
+        .map(String::as_str)
+        .find(|root| module_is_within(&module, root))
+}
+
+fn module_is_within(module: &str, root: &str) -> bool {
+    module
+        .strip_prefix(root)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+}
+
 pub(crate) fn cluster_file_modules(
     files: &[String],
     symbols_by_file: &BTreeMap<String, Vec<Symbol>>,
@@ -12,6 +72,7 @@ pub(crate) fn cluster_file_modules(
         }
     }
 
+    let roots = subsystem_roots(files);
     let mut parents = files
         .iter()
         .map(|file| (file.clone(), file.clone()))
@@ -30,6 +91,14 @@ pub(crate) fn cluster_file_modules(
         let Some(target_file) = components_to_file.get(&edge.target_component_id) else {
             continue;
         };
+        // Call edges never merge clusters across subsystem roots; otherwise
+        // one cross-subsystem call collapses the decomposition to the common
+        // container (`crates`) and every page above it loses its structure.
+        if subsystem_root_for_file(source_file, &roots)
+            != subsystem_root_for_file(target_file, &roots)
+        {
+            continue;
+        }
         union_files(&mut parents, &mut ranks, source_file, target_file);
     }
 
@@ -230,4 +299,116 @@ fn contains_component_sequence(components: &[String], target: &[String]) -> bool
         && components
             .windows(target.len())
             .any(|window| window.iter().zip(target).all(|(left, right)| left == right))
+}
+
+#[cfg(test)]
+mod cluster_tests {
+    use super::*;
+
+    fn paths(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[test]
+    fn subsystem_roots_expand_container_directories_one_level() {
+        let files = paths(&[
+            "crates/gcode/src/main.rs",
+            "crates/gcore/src/lib.rs",
+            "docs/guides/guide.md",
+            "scripts/install.sh",
+            "README.md",
+        ]);
+
+        let roots = subsystem_roots(&files);
+
+        assert!(roots.contains("crates/gcode"), "{roots:?}");
+        assert!(roots.contains("crates/gcore"), "{roots:?}");
+        assert!(!roots.contains("crates"), "container expands: {roots:?}");
+        assert!(roots.contains("docs/guides"), "{roots:?}");
+        assert!(roots.contains("scripts"), "{roots:?}");
+    }
+
+    #[test]
+    fn subsystem_roots_keep_top_level_directories_with_direct_files() {
+        let files = paths(&["docs/readme.md", "docs/guides/guide.md"]);
+        let roots = subsystem_roots(&files);
+        assert_eq!(roots, BTreeSet::from(["docs".to_string()]), "{roots:?}");
+    }
+
+    #[test]
+    fn subsystem_root_for_file_matches_whole_components_only() {
+        let roots = BTreeSet::from(["crates/gcode".to_string()]);
+        assert_eq!(
+            subsystem_root_for_file("crates/gcode/src/main.rs", &roots),
+            Some("crates/gcode")
+        );
+        assert_eq!(
+            subsystem_root_for_file("crates/gcodex/src/main.rs", &roots),
+            None
+        );
+        assert_eq!(subsystem_root_for_file("README.md", &roots), None);
+    }
+
+    #[test]
+    fn call_edges_never_merge_clusters_across_subsystem_roots() {
+        let files = paths(&["crates/gcode/src/main.rs", "crates/gcore/src/lib.rs"]);
+        let main_symbol = Symbol::make_id(
+            "project-1",
+            "crates/gcode/src/main.rs",
+            "main",
+            "function",
+            0,
+        );
+        let lib_symbol = Symbol::make_id(
+            "project-1",
+            "crates/gcore/src/lib.rs",
+            "helper",
+            "function",
+            0,
+        );
+        let mut symbols_by_file: BTreeMap<String, Vec<Symbol>> = BTreeMap::new();
+        for (file, name, id) in [
+            ("crates/gcode/src/main.rs", "main", &main_symbol),
+            ("crates/gcore/src/lib.rs", "helper", &lib_symbol),
+        ] {
+            let symbol = Symbol {
+                id: id.clone(),
+                project_id: "project-1".to_string(),
+                file_path: file.to_string(),
+                name: name.to_string(),
+                qualified_name: name.to_string(),
+                kind: "function".to_string(),
+                language: "rust".to_string(),
+                byte_start: 0,
+                byte_end: 0,
+                line_start: 1,
+                line_end: 1,
+                signature: None,
+                docstring: None,
+                parent_symbol_id: None,
+                content_hash: String::new(),
+                summary: None,
+                created_at: String::new(),
+                updated_at: String::new(),
+            };
+            symbols_by_file.insert(file.to_string(), vec![symbol]);
+        }
+        let edges = vec![CodewikiGraphEdge::call(
+            main_symbol.clone(),
+            lib_symbol.clone(),
+        )];
+
+        let modules = cluster_file_modules(&files, &symbols_by_file, &edges);
+
+        assert_eq!(
+            modules.get("crates/gcode/src/main.rs").map(String::as_str),
+            Some("crates/gcode/src"),
+            "cross-root call must not collapse modules to `crates`: {modules:?}"
+        );
+        assert_eq!(
+            modules.get("crates/gcore/src/lib.rs").map(String::as_str),
+            Some("crates/gcore/src"),
+            "{modules:?}"
+        );
+    }
 }

@@ -5,6 +5,7 @@ use super::*;
 
 fn depth_probe_input() -> CodewikiInput {
     CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec!["src/lib.rs".to_string(), "src/nested/api.rs".to_string()],
         graph_edges: Vec::new(),
         graph_availability: CodewikiGraphAvailability::Available,
@@ -65,6 +66,89 @@ fn ai_depth_symbols_generates_symbol_purposes() {
 }
 
 #[test]
+fn non_code_files_get_content_derived_purpose_from_leading_chunk() {
+    let mut leading_chunks = std::collections::BTreeMap::new();
+    leading_chunks.insert(
+        "README.md".to_string(),
+        LeadingChunk {
+            content: "# Demo\n\nA workspace of small CLI tools.".to_string(),
+            line_start: 1,
+            line_end: 3,
+        },
+    );
+    let input = CodewikiInput {
+        leading_chunks,
+        files: vec!["README.md".to_string(), "src/lib.rs".to_string()],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![test_symbol(
+            "src/lib.rs",
+            "Client",
+            "class",
+            1,
+            "pub struct Client;",
+        )],
+    };
+
+    let mut content_prompts = Vec::new();
+    let mut generator = |prompt: &str, system: &str, _tier: PromptTier| {
+        if system == prompts::CONTENT_FILE_SYSTEM {
+            content_prompts.push(prompt.to_string());
+            Some("Introduces the workspace of small CLI tools.".to_string())
+        } else {
+            None
+        }
+    };
+    let docs = generate_hierarchical_docs(&input, Some(&mut generator));
+    let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
+    let readme = docs_by_path
+        .get("code/files/README.md.md")
+        .expect("readme file doc");
+
+    let prompt = content_prompts.first().expect("content prompt captured");
+    assert!(prompt.contains("File: README.md"), "{prompt}");
+    assert!(
+        prompt.contains("A workspace of small CLI tools."),
+        "{prompt}"
+    );
+    assert!(
+        readme.contains("Introduces the workspace of small CLI tools."),
+        "{readme}"
+    );
+    // The content-derived purpose grounds in the leading chunk's line range.
+    assert!(readme.contains("[README.md:1-3]"), "{readme}");
+    assert!(!readme.contains("has no indexed API symbols"), "{readme}");
+}
+
+#[test]
+fn repo_front_page_drops_no_symbol_filler_for_root_files() {
+    let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
+        files: vec!["README.md".to_string(), "src/lib.rs".to_string()],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![test_symbol(
+            "src/lib.rs",
+            "Client",
+            "class",
+            1,
+            "pub struct Client;",
+        )],
+    };
+
+    let docs = generate_hierarchical_docs(&input, None);
+    let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
+    let repo = docs_by_path.get("code/repo.md").expect("repo doc");
+
+    assert!(
+        repo.lines()
+            .any(|line| line.trim() == "- [[code/files/README.md|README.md]]"),
+        "filler-only root files list as a bare link: {repo}"
+    );
+    assert!(!repo.contains("has no indexed API symbols"), "{repo}");
+}
+
+#[test]
 fn aggregate_docs_use_heavier_prompt_tier_than_file_docs() {
     let input = depth_probe_input();
     let mut tiers = Vec::new();
@@ -117,6 +201,7 @@ fn ai_mode_change_invalidates_unchanged_docs() {
     std::fs::write(project.path().join("src/lib.rs"), "pub struct Client;\n").expect("write lib");
     let out_dir = project.path().join("codewiki");
     let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec!["src/lib.rs".to_string()],
         graph_edges: Vec::new(),
         graph_availability: CodewikiGraphAvailability::Available,

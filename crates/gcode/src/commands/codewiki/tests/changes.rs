@@ -8,6 +8,7 @@ fn codewiki_changes_baseline_persists_snapshot_and_degrades_without_graph() {
     std::fs::write(project.path().join("src/lib.rs"), "pub struct Client;\n").expect("write lib");
     let out_dir = project.path().join("codewiki");
     let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec!["src/lib.rs".to_string()],
         graph_edges: Vec::new(),
         graph_availability: CodewikiGraphAvailability::Unavailable,
@@ -55,6 +56,7 @@ fn codewiki_changes_lists_index_diff_against_previous_snapshot() {
         test_symbol("src/api.rs", "serve", "function", 1, "pub fn serve()"),
     ];
     let previous_input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec!["src/lib.rs".to_string(), "src/api.rs".to_string()],
         graph_edges: vec![CodewikiGraphEdge::call(
             previous_symbols[0].id.clone(),
@@ -79,6 +81,7 @@ fn codewiki_changes_lists_index_diff_against_previous_snapshot() {
         test_symbol("src/new.rs", "start", "function", 1, "pub fn start()"),
     ];
     let current_input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec!["src/lib.rs".to_string(), "src/new.rs".to_string()],
         graph_edges: vec![CodewikiGraphEdge::call(
             current_symbols[0].id.clone(),

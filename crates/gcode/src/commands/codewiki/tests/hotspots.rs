@@ -5,6 +5,7 @@ use super::*;
 fn codewiki_hotspots_page_surfaces_analytics_rankings() {
     let hub_id = test_component_id("src/lib.rs", "Hub", "class");
     let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec![
             "src/lib.rs".to_string(),
             "src/a.rs".to_string(),
@@ -60,6 +61,7 @@ fn codewiki_hotspots_page_surfaces_analytics_rankings() {
 #[test]
 fn codewiki_hotspots_page_degrades_when_analytics_unavailable() {
     let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
         files: vec!["src/lib.rs".to_string()],
         graph_edges: Vec::new(),
         graph_availability: CodewikiGraphAvailability::Unavailable,
