@@ -544,4 +544,5 @@ class UnifiedSearcher:
         """
         if self._keyword_backend and hasattr(self._keyword_backend, "mark_update"):
             self._keyword_backend.mark_update()
-        # Embedding backend tracks updates through fitted state
+        if self._embedding_backend and hasattr(self._embedding_backend, "mark_update"):
+            self._embedding_backend.mark_update()

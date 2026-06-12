@@ -194,6 +194,7 @@ class KeywordAsyncSearchBackend:
         self._table = table
         self._backend = pick_search_backend(hub, table)
         self._fitted_items: list[tuple[str, str]] | None = None
+        self._needs_refit = False
 
     async def fit_async(self, items: list[tuple[str, str]]) -> None:
         fit = getattr(self._backend, "fit", None)
@@ -202,6 +203,7 @@ class KeywordAsyncSearchBackend:
             self._fitted_items = None
         else:
             self._fitted_items = items.copy()
+        self._needs_refit = False
         return None
 
     async def search_async(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
@@ -214,7 +216,10 @@ class KeywordAsyncSearchBackend:
         return _search_fitted_items(query, self._fitted_items, top_k)
 
     def needs_refit(self) -> bool:
-        return False
+        return self._needs_refit
+
+    def mark_update(self) -> None:
+        self._needs_refit = True
 
     def get_stats(self) -> dict[str, Any]:
         get_stats = getattr(self._backend, "get_stats", None)
@@ -227,6 +232,7 @@ class KeywordAsyncSearchBackend:
         if callable(clear):
             clear()
         self._fitted_items = None
+        self._needs_refit = False
 
 
 def _search_fitted_items(

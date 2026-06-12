@@ -8,11 +8,14 @@ import os
 import threading
 import tomllib
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PureWindowsPath
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 
+from gobby.agents import trust
 from gobby.agents.trust import (
     _MODEL_DISCOVERY_TRUST_LOCKS,
     TrustSeedResult,
@@ -183,6 +186,52 @@ class TestPreApproveGemini:
             "trustedFolders.json",
         }
         assert not list((tmp_path / ".gemini").glob("*.tmp"))
+
+    def test_concurrent_pre_approve_preserves_all_paths(self, tmp_path: Path) -> None:
+        clone_dirs = [f"/private/tmp/gobby-clones/task-{index}" for index in range(12)]
+        original_load = trust._load_json_object
+        project_load_condition = threading.Condition()
+        project_loads = 0
+        release_project_loads = False
+
+        def delayed_load(path: Path, *, reset_label: str) -> dict[str, Any]:
+            nonlocal project_loads, release_project_loads
+
+            data = original_load(path, reset_label=reset_label)
+            if path.name == "projects.json":
+                with project_load_condition:
+                    if not release_project_loads:
+                        project_loads += 1
+                        if project_loads == len(clone_dirs):
+                            release_project_loads = True
+                            project_load_condition.notify_all()
+                        else:
+                            project_load_condition.wait_for(
+                                lambda: release_project_loads,
+                                timeout=0.2,
+                            )
+                            release_project_loads = True
+                            project_load_condition.notify_all()
+            return data
+
+        with (
+            patch("gobby.agents.trust.Path.home", return_value=tmp_path),
+            patch("gobby.agents.trust._load_json_object", side_effect=delayed_load),
+            ThreadPoolExecutor(max_workers=len(clone_dirs)) as executor,
+        ):
+            list(
+                executor.map(
+                    lambda clone_dir: pre_approve_directory("gemini", clone_dir), clone_dirs
+                )
+            )
+
+        projects_file = tmp_path / ".gemini" / "projects.json"
+        trust_file = tmp_path / ".gemini" / "trustedFolders.json"
+        projects = json.loads(projects_file.read_text())["projects"]
+        trusted = json.loads(trust_file.read_text())
+
+        assert set(projects) == set(clone_dirs)
+        assert trusted == dict.fromkeys(clone_dirs, "TRUST_PARENT")
 
     def test_install_trust_uses_configured_and_real_gobby_home(self, tmp_path: Path) -> None:
         configured = "/tmp/gobby-home-link"
