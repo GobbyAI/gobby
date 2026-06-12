@@ -36,7 +36,7 @@ class CodeIndexStorage:
     # ── Symbols ──────────────────────────────────────────────────────
 
     def upsert_symbols(self, symbols: list[Symbol]) -> int:
-        """Insert or update symbols. Returns count of upserted rows."""
+        """Reference Python symbol writer used by tests; production indexing is Rust gcode."""
         if not symbols:
             return 0
 
@@ -211,7 +211,7 @@ class CodeIndexStorage:
     # ── Files ────────────────────────────────────────────────────────
 
     def upsert_file(self, file: IndexedFile) -> None:
-        """Insert or update an indexed file record."""
+        """Reference Python file writer used by tests; production indexing is Rust gcode."""
         with self.db.transaction() as conn:
             conn.execute(
                 """INSERT INTO code_indexed_files (

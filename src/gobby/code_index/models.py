@@ -31,7 +31,14 @@ def make_external_symbol_id(project_id: str, callee_name: str, module: str | Non
 
 @dataclass
 class Symbol:
-    """A code symbol extracted from AST parsing."""
+    """A code symbol extracted from AST parsing.
+
+    ``qualified_name`` is a container-qualified symbol path within one file, not
+    a module- or package-qualified import path. Top-level symbols use ``name``
+    unchanged; nested class/type members use ``Parent.member``. The Rust
+    ``gcode`` writer is the production writer, and ``CodeIndexStorage`` tests
+    use these model helpers as the Python reference contract.
+    """
 
     id: str
     project_id: str
@@ -61,7 +68,7 @@ class Symbol:
 
     @staticmethod
     def make_id(project_id: str, file_path: str, name: str, kind: str, byte_start: int) -> str:
-        """Generate deterministic UUID5 for a symbol."""
+        """Generate the UUID5 ID shared by Python tests and the Rust ``gcode`` writer."""
         key = f"{project_id}:{file_path}:{name}:{kind}:{byte_start}"
         return str(uuid.uuid5(CODE_INDEX_UUID_NAMESPACE, key))
 
@@ -138,7 +145,12 @@ class Symbol:
 
 @dataclass
 class IndexedFile:
-    """A file that has been indexed."""
+    """A file that has been indexed.
+
+    Re-indexing a file marks graph/vector projections stale; the Rust ``gcode``
+    writer and ``CodeIndexStorage.upsert_file`` must keep that flag contract in
+    sync.
+    """
 
     id: str
     project_id: str
