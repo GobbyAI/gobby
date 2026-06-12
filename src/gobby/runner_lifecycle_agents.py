@@ -80,16 +80,18 @@ async def _recover_agent_runs_after_restart(runner: GobbyRunner) -> int:
 
     rehydrated = 0
     seen_ids: set[str] = set()
+    offset = 0
     while True:
-        batch = runner.agent_runner.run_storage.list_active(limit=_RUN_REPLAY_PAGE_SIZE)
+        batch = runner.agent_runner.run_storage.list_active(
+            limit=_RUN_REPLAY_PAGE_SIZE,
+            offset=offset,
+        )
         if not batch:
             break
-        new_in_batch = 0
         for run in batch:
             if run.id in seen_ids:
                 continue
             seen_ids.add(run.id)
-            new_in_batch += 1
             if runner.completion_registry.is_registered(run.id):
                 continue
             subscribers: list[str] = []
@@ -101,7 +103,8 @@ async def _recover_agent_runs_after_restart(runner: GobbyRunner) -> int:
                 continuation_prompt=getattr(run, "continuation_prompt", None),
             )
             rehydrated += 1
-        if new_in_batch < _RUN_REPLAY_PAGE_SIZE:
+        offset += len(batch)
+        if len(batch) < _RUN_REPLAY_PAGE_SIZE:
             break
 
     return rehydrated
@@ -207,19 +210,19 @@ def _list_active_agent_runs_once(runner: GobbyRunner) -> list[Any]:
     run_storage = runner.agent_runner.run_storage
     active_runs: list[Any] = []
     seen_ids: set[str] = set()
+    offset = 0
     while True:
-        batch = run_storage.list_active(limit=_RUN_REPLAY_PAGE_SIZE)
+        batch = run_storage.list_active(limit=_RUN_REPLAY_PAGE_SIZE, offset=offset)
         if not batch:
             break
-        new_in_batch = 0
         for run in batch:
             run_id = str(getattr(run, "id", ""))
             if not run_id or run_id in seen_ids:
                 continue
             seen_ids.add(run_id)
             active_runs.append(run)
-            new_in_batch += 1
-        if new_in_batch < _RUN_REPLAY_PAGE_SIZE:
+        offset += len(batch)
+        if len(batch) < _RUN_REPLAY_PAGE_SIZE:
             break
     return active_runs
 
@@ -261,18 +264,19 @@ async def _replay_daemon_restart_agent_cancellations(runner: GobbyRunner) -> int
 
     replayed = 0
     seen_ids: set[str] = set()
+    offset = 0
     while True:
         batch = runner.agent_runner.run_storage.list_by_status(
-            "cancelled", limit=_RUN_REPLAY_PAGE_SIZE
+            "cancelled",
+            limit=_RUN_REPLAY_PAGE_SIZE,
+            offset=offset,
         )
         if not batch:
             break
-        new_in_batch = 0
         for run in batch:
             if run.id in seen_ids:
                 continue
             seen_ids.add(run.id)
-            new_in_batch += 1
             if getattr(run, "terminal_reason", None) != "daemon_restart":
                 continue
 
@@ -316,7 +320,8 @@ async def _replay_daemon_restart_agent_cancellations(runner: GobbyRunner) -> int
 
             _cleanup_persisted_completion_subscribers(runner, run.id, subscribers)
             replayed += 1
-        if new_in_batch < _RUN_REPLAY_PAGE_SIZE:
+        offset += len(batch)
+        if len(batch) < _RUN_REPLAY_PAGE_SIZE:
             break
 
     return replayed

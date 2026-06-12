@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
 import gobby.runner_lifecycle as runner_lifecycle
 from gobby.agents.tmux import configure_tmux, get_tmux_output_reader, get_tmux_session_manager
 from gobby.config.tmux import TmuxConfig
-from gobby.runner_lifecycle_agents import _list_active_agent_runs_once
+from gobby.runner_lifecycle_agents import _RUN_REPLAY_PAGE_SIZE, _list_active_agent_runs_once
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
@@ -22,6 +22,72 @@ pytestmark = pytest.mark.unit
 
 class TestAgentRestartReconciliation:
     """Recover preserved tmux-backed agents after daemon startup."""
+
+    @pytest.mark.asyncio
+    async def test_recover_agent_runs_after_restart_paginates_active_runs(self) -> None:
+        page_size = _RUN_REPLAY_PAGE_SIZE
+        runs = [
+            SimpleNamespace(id=f"run-{index}", continuation_prompt=None)
+            for index in range(page_size + 3)
+        ]
+        list_active = MagicMock(
+            side_effect=lambda *, limit, offset=0: runs[offset : offset + limit]
+        )
+        runner = self._runner(SimpleNamespace(list_active=list_active))
+
+        rehydrated = await runner_lifecycle._recover_agent_runs_after_restart(runner)
+
+        assert rehydrated == page_size + 3
+        assert list_active.call_args_list == [
+            call(limit=page_size, offset=0),
+            call(limit=page_size, offset=page_size),
+        ]
+        assert runner.completion_registry.register.call_count == page_size + 3
+
+    def test_list_active_agent_runs_paginates_offsets(self) -> None:
+        page_size = _RUN_REPLAY_PAGE_SIZE
+        runs = [
+            SimpleNamespace(id=f"run-{index}", tmux_session_name=None)
+            for index in range(page_size + 2)
+        ]
+        list_active = MagicMock(
+            side_effect=lambda *, limit, offset=0: runs[offset : offset + limit]
+        )
+        runner = self._runner(SimpleNamespace(list_active=list_active))
+
+        active_runs = _list_active_agent_runs_once(runner)
+
+        assert active_runs == runs
+        assert list_active.call_args_list == [
+            call(limit=page_size, offset=0),
+            call(limit=page_size, offset=page_size),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_replay_daemon_restart_agent_cancellations_paginates_offsets(self) -> None:
+        page_size = _RUN_REPLAY_PAGE_SIZE
+        runs = [
+            SimpleNamespace(
+                id=f"run-{index}",
+                terminal_reason="daemon_restart",
+                continuation_prompt=None,
+                tmux_session_name=None,
+            )
+            for index in range(page_size + 1)
+        ]
+        list_by_status = MagicMock(
+            side_effect=lambda _status, *, limit, offset=0: runs[offset : offset + limit]
+        )
+        runner = self._runner(SimpleNamespace(list_by_status=list_by_status))
+
+        replayed = await runner_lifecycle._replay_daemon_restart_agent_cancellations(runner)
+
+        assert replayed == page_size + 1
+        assert list_by_status.call_args_list == [
+            call("cancelled", limit=page_size, offset=0),
+            call("cancelled", limit=page_size, offset=page_size),
+        ]
+        assert runner.completion_registry.notify.await_count == page_size + 1
 
     @pytest.mark.asyncio
     async def test_reconcile_live_tmux_run_refreshes_pid_and_reader(self) -> None:
@@ -291,9 +357,12 @@ class TestAgentRestartReconciliation:
             ),
             pipeline_execution_manager=SimpleNamespace(
                 get_completion_subscribers=MagicMock(return_value=["parent-1"]),
+                remove_completion_subscribers=MagicMock(),
             ),
             completion_registry=SimpleNamespace(
                 is_registered=MagicMock(return_value=False),
                 register=MagicMock(),
+                notify=AsyncMock(),
+                cleanup=MagicMock(),
             ),
         )

@@ -125,6 +125,7 @@ class _AgentRunQueryMixin:
         status: str | None = None,
         limit: int = 100,
         project_id: str | None = None,
+        offset: int = 0,
     ) -> list[AgentRun]:
         """
         List agent runs, optionally filtered by status and/or project.
@@ -133,6 +134,7 @@ class _AgentRunQueryMixin:
             status: Optional status filter.
             limit: Maximum number of results.
             project_id: Optional project ID filter (joins through sessions).
+            offset: Number of matching rows to skip.
 
         Returns:
             List of AgentRun objects.
@@ -155,6 +157,7 @@ class _AgentRunQueryMixin:
             params,
             order_by="ORDER BY ar.created_at DESC",
             limit=limit,
+            offset=offset,
         )
 
     def list_running(self: _AgentRunQueryHost, limit: int = 100) -> list[AgentRun]:

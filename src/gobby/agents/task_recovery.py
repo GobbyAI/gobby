@@ -51,6 +51,7 @@ class _AgentRunManager(Protocol):
         status: str | None = ...,
         limit: int = ...,
         project_id: str | None = ...,
+        offset: int = ...,
     ) -> Sequence[_AgentRun]: ...
 
 
