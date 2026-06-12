@@ -21,9 +21,8 @@ def test_postgres_group_is_registered_on_root_cli() -> None:
 
     assert "postgres" in cli.commands
     postgres_group = cli.commands["postgres"]
-    assert {"install", "backup", "restore", "uninstall", "status", "activate"} <= set(
-        postgres_group.commands
-    )
+    assert {"install", "backup", "restore", "status", "activate"} <= set(postgres_group.commands)
+    assert "uninstall" not in postgres_group.commands
     assert "migrate-from-postgres" not in postgres_group.commands
     assert "deactivate" not in postgres_group.commands
 
@@ -34,8 +33,7 @@ def test_postgres_group_is_registered_on_root_cli() -> None:
         (["postgres", "install", "--help"], ["--mode", "--dsn", "docker"]),
         (["postgres", "status", "--help"], ["--json"]),
         (["postgres", "backup", "--help"], ["--output"]),
-        (["postgres", "restore", "--help"], ["--clean", "--yes"]),
-        (["postgres", "uninstall", "--help"], ["--remove-data"]),
+        (["postgres", "restore", "--help"], ["--clean", "--yes", "--allow-unverified"]),
         (["postgres", "activate", "--help"], ["--capture-sink", "--accept-no-rollback-risk"]),
     ],
 )
@@ -211,18 +209,72 @@ def test_postgres_restore_command_invokes_restore_helper(
     monkeypatch.setattr(postgres_cli_module, "get_gobby_home", lambda: tmp_path)
     monkeypatch.setattr(postgres_cli_module, "restore_postgres_backup", _restore)
 
-    result = CliRunner().invoke(postgres_cli, ["restore", str(dump), "--clean", "--yes"])
+    result = CliRunner().invoke(
+        postgres_cli,
+        ["restore", str(dump), "--clean", "--allow-unverified", "--yes"],
+    )
 
     assert result.exit_code == 0
-    assert calls == [{"source": dump, "clean": True, "gobby_home": tmp_path}]
+    assert calls == [
+        {
+            "source": dump,
+            "clean": True,
+            "allow_unverified": True,
+            "gobby_home": tmp_path,
+        }
+    ]
     assert "PostgreSQL restore completed." in result.output
     assert "Verified: SHA256SUMS" in result.output
     assert "pg_search: yes" in result.output
 
 
-def test_postgres_uninstall_preserves_required_runtime_bootstrap(
+def test_postgres_restore_command_decline_skips_restore_helper(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+) -> None:
+    import gobby.cli.postgres as postgres_cli_module
+    from gobby.cli.postgres import postgres_cli
+
+    dump = tmp_path / "gobby.dump"
+    dump.write_bytes(b"dump")
+    calls: list[Path] = []
+
+    def _restore(source: Path, **_kwargs: Any) -> dict[str, Any]:
+        calls.append(source)
+        raise AssertionError("restore helper should not be called")
+
+    monkeypatch.setattr(postgres_cli_module, "_daemon_running", lambda: False)
+    monkeypatch.setattr(postgres_cli_module, "restore_postgres_backup", _restore)
+
+    result = CliRunner().invoke(postgres_cli, ["restore", str(dump)], input="n\n")
+
+    assert result.exit_code == 0
+    assert calls == []
+    assert "Aborted." in result.output
+
+
+def test_postgres_restore_rejects_missing_checksum_sidecar(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import gobby.cli.postgres_backup as backup_module
+
+    dump = tmp_path / "gobby.dump"
+    dump.write_bytes(b"dump")
+    monkeypatch.setattr(backup_module, "_active_install_mode", lambda *, gobby_home: "docker")
+    monkeypatch.setattr(
+        backup_module,
+        "_resolve_database_url",
+        lambda _home: "postgresql://gobby:secret@localhost:5432/gobby",
+    )
+    monkeypatch.setattr(backup_module, "_require_managed_docker_postgres", lambda **_kwargs: None)
+
+    with pytest.raises(click.ClickException, match="missing trusted checksum sidecar"):
+        backup_module.restore_postgres_backup(dump, gobby_home=tmp_path)
+
+
+def test_postgres_uninstall_command_is_not_registered(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from gobby.cli.postgres import postgres_cli
 
@@ -231,33 +283,12 @@ def test_postgres_uninstall_preserves_required_runtime_bootstrap(
 
     result = CliRunner().invoke(postgres_cli, ["uninstall"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 2
+    assert "No such command 'uninstall'" in result.output
     bootstrap = _read_bootstrap(tmp_path)
     assert bootstrap["hub_backend"] == "postgres"
     assert bootstrap["database_url"] == "postgresql://gobby:secret@example.com/gobby"
     assert bootstrap["postgres_install_mode"] == "docker"
-    assert "runtime bootstrap preserved" in result.output
-    assert "hub_backend=postgres" not in result.output
-    assert "PostgreSQL uninstalled" not in result.output
-
-
-def test_postgres_uninstall_preserves_runtime_bootstrap(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    from gobby.cli.postgres import postgres_cli
-
-    _write_postgres_bootstrap(tmp_path, mode="docker", hub_backend="postgres")
-    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
-
-    result = CliRunner().invoke(postgres_cli, ["uninstall"])
-
-    assert result.exit_code == 0
-    bootstrap = _read_bootstrap(tmp_path)
-    assert bootstrap["hub_backend"] == "postgres"
-    assert bootstrap["database_url"] == "postgresql://gobby:secret@example.com/gobby"
-    assert bootstrap["postgres_install_mode"] == "docker"
-    assert "runtime bootstrap preserved" in result.output
 
 
 def test_postgres_activate_refuses_when_daemon_is_running(

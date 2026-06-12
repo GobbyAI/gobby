@@ -56,11 +56,12 @@ class TestFalkorDBInstallFlags:
         assert "--neo4j" not in result.output
         assert "--neo4j-password" not in result.output
 
-    def test_uninstall_exposes_falkordb_target_flag(self) -> None:
+    def test_uninstall_hides_falkordb_target_flag(self) -> None:
         from gobby.cli.install import uninstall
 
         option_names = _option_names(uninstall)
-        assert "--falkordb" in option_names
+        assert "--falkordb" not in option_names
+        assert "--volumes" not in option_names
         assert "--neo4j" in option_names
 
         legacy = _param_by_name(uninstall, "neo4j_flag")
@@ -143,7 +144,8 @@ class TestLegacyNeo4jFlagErrors:
         assert result.exit_code == 2
         assert MIGRATION_MESSAGE in result.output
         assert "gobby install --falkordb" in result.output
-        assert "gobby uninstall --falkordb" in result.output
+        assert "gobby uninstall" in result.output
+        assert "--falkordb" not in result.output.split("gobby uninstall", maxsplit=1)[-1]
 
     def test_install_neo4j_hidden_flag_fails_with_migration_message(
         self, runner: CliRunner

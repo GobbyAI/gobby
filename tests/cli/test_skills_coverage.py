@@ -960,13 +960,30 @@ class TestHelperFunctions:
         assert result == {"key": "val"}
 
     @patch("gobby.cli.skills.DaemonClient")
-    def test_call_skills_tool_failure(self, mock_client_cls: MagicMock) -> None:
+    def test_call_skills_tool_success_non_dict_result(
+        self, mock_client_cls: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         from gobby.cli.skills import call_skills_tool
 
         client = MagicMock()
-        client.call_mcp_tool.return_value = {"success": False}
+        client.call_mcp_tool.return_value = {"success": True, "result": ["skill-a", "skill-b"]}
         result = call_skills_tool(client, "test_tool", {})
-        assert result is None
+        captured = capsys.readouterr()
+        assert result == ["skill-a", "skill-b"]
+        assert "Error:" not in captured.err
+
+    @patch("gobby.cli.skills.DaemonClient")
+    def test_call_skills_tool_failure(
+        self, mock_client_cls: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from gobby.cli.skills import call_skills_tool
+
+        client = MagicMock()
+        client.call_mcp_tool.return_value = {"success": False, "error": "daemon says no"}
+        result = call_skills_tool(client, "test_tool", {})
+        captured = capsys.readouterr()
+        assert result == {"success": False, "error": "daemon says no"}
+        assert "Error: daemon says no" in captured.err
 
     @patch("gobby.cli.skills.DaemonClient")
     def test_call_skills_tool_exception(self, mock_client_cls: MagicMock) -> None:

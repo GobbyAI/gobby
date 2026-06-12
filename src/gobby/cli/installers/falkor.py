@@ -1,4 +1,4 @@
-"""FalkorDB service installation and uninstallation."""
+"""FalkorDB service installation."""
 
 from __future__ import annotations
 
@@ -26,7 +26,6 @@ DEFAULT_FALKORDB_HOST = "127.0.0.1"
 DEFAULT_FALKORDB_PORT = 16379
 DEFAULT_FALKORDB_BROWSER_URL = "http://localhost:13000"
 DEFAULT_FALKORDB_PASSWORD = "gobbyfalkor"
-FALKORDB_DATA_VOLUME = "gobby_falkordb_data"
 
 
 @dataclass(frozen=True)
@@ -194,7 +193,7 @@ def install_falkordb(
             "success": False,
             "error": (
                 "Failed to persist FalkorDB credentials to config_store; run "
-                "'gobby uninstall --falkordb' to clean up the running container, then retry."
+                "'gobby uninstall' to clean up the Gobby containers, then retry."
             ),
             "compose_running": True,
         }
@@ -204,8 +203,8 @@ def install_falkordb(
             "success": False,
             "error": (
                 "FalkorDB is running and credentials are persisted to config_store, but the "
-                "bootstrap.yaml write failed. Run 'gobby uninstall --falkordb' to roll back "
-                "the container and config_store, then retry."
+                "bootstrap.yaml write failed. Run 'gobby uninstall' to roll back the "
+                "Gobby containers and config_store, then retry."
             ),
             "compose_running": True,
         }
@@ -222,56 +221,6 @@ def install_falkordb(
         "password": resolved.value if resolved.expose_value else None,
     }
     return response
-
-
-def uninstall_falkordb(
-    *,
-    gobby_home: Path | None = None,
-    purge: bool = False,
-) -> dict[str, Any]:
-    """Uninstall FalkorDB service and clear connection credentials."""
-    home = _normalize_home(gobby_home)
-    services_dir = home / "services"
-    compose_file = services_dir / "docker-compose.yml"
-
-    if compose_file.exists():
-        try:
-            result = subprocess.run(  # nosec B603 B607
-                [
-                    "docker",
-                    "compose",
-                    "-f",
-                    str(compose_file),
-                    "--profile",
-                    "falkordb",
-                    "down",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=60,
-                cwd=str(services_dir),
-            )
-            if result.returncode != 0:
-                logger.warning("Docker compose down failed: %s", result.stderr or result.stdout)
-        except subprocess.TimeoutExpired:
-            logger.warning("Docker compose down timed out")
-        except OSError as exc:
-            logger.warning("Docker compose down failed: %s", exc)
-
-    if purge:
-        try:
-            subprocess.run(  # nosec B603 B607
-                ["docker", "volume", "rm", FALKORDB_DATA_VOLUME],
-                capture_output=True,
-                timeout=30,
-            )
-        except (subprocess.TimeoutExpired, OSError) as exc:
-            logger.warning("Failed to remove Docker volume %s: %s", FALKORDB_DATA_VOLUME, exc)
-
-    _clear_config(gobby_home=home)
-    _clear_bootstrap_password(home)
-
-    return {"success": True, "data_removed": purge}
 
 
 def _wait_for_health(

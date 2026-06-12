@@ -9,13 +9,13 @@ from .claude import install_claude, uninstall_claude
 from .codex import install_codex, uninstall_codex
 from .droid import install_droid, uninstall_droid
 from .embedding import install_embedding
-from .falkor import install_falkordb, uninstall_falkordb
+from .falkor import install_falkordb
 from .gemini import install_gemini, uninstall_gemini
 from .git_hooks import install_git_hooks
 from .grok import install_grok, uninstall_grok
 from .mcp_config import install_default_mcp_servers
-from .postgres import install_postgres, uninstall_postgres
-from .qdrant import install_qdrant, uninstall_qdrant
+from .postgres import install_postgres
+from .qdrant import install_qdrant
 from .qwen import install_qwen, uninstall_qwen
 from .service import get_service_status, install_service, uninstall_service
 from .shared import (
@@ -56,13 +56,10 @@ __all__ = [
     "install_embedding",
     # FalkorDB
     "install_falkordb",
-    "uninstall_falkordb",
     # Qdrant
     "install_qdrant",
-    "uninstall_qdrant",
     # PostgreSQL
     "install_postgres",
-    "uninstall_postgres",
     # Service (OS-level daemon)
     "install_service",
     "uninstall_service",

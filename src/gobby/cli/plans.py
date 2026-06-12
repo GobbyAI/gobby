@@ -94,25 +94,28 @@ def register_plan_command(
 ) -> None:
     """Register a plan and emit its managed coverage manifest."""
 
-    resolved_plan_id = plan_id or _plan_id_from_file(plan_path)
-    resolved_root_ref = root_task_ref or _root_ref_from_file(plan_path)
-    if resolved_root_ref is None:
-        raise click.ClickException("--root-task-ref is required when it cannot be inferred")
-
-    db = _open_db()
     try:
-        project_id = cast(str, _project_id(project, required=True))
-        record = LocalPlanManager(db).create_plan(
-            project_id=project_id,
-            plan_id=resolved_plan_id,
-            plan_path=plan_path,
-            plan_kind=plan_kind,
-            root_task_ref=resolved_root_ref,
-        )
-    except (PlanParseError, ValueError, OSError, psycopg.Error) as exc:
+        resolved_plan_id = plan_id or _plan_id_from_file(plan_path)
+        resolved_root_ref = root_task_ref or _root_ref_from_file(plan_path)
+        if resolved_root_ref is None:
+            raise click.ClickException("--root-task-ref is required when it cannot be inferred")
+
+        db = _open_db()
+        try:
+            project_id = cast(str, _project_id(project, required=True))
+            record = LocalPlanManager(db).create_plan(
+                project_id=project_id,
+                plan_id=resolved_plan_id,
+                plan_path=plan_path,
+                plan_kind=plan_kind,
+                root_task_ref=resolved_root_ref,
+            )
+        finally:
+            db.close()
+    except click.ClickException:
+        raise
+    except (PlanParseError, UnicodeDecodeError, ValueError, OSError, psycopg.Error) as exc:
         raise click.ClickException(str(exc)) from exc
-    finally:
-        db.close()
 
     click.echo(f"Registered {record.plan_id} ({record.state})")
 

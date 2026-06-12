@@ -4,8 +4,9 @@ TDD tests for the pipelines CLI group.
 """
 
 from pathlib import Path
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from click.testing import CliRunner
 
@@ -248,6 +249,11 @@ class TestPipelinesShow:
 
 class TestPipelinesRun:
     """Tests for gobby pipelines run command."""
+
+    @pytest.fixture(autouse=True)
+    def _daemon_run_unavailable(self):
+        with patch("gobby.cli.pipelines._try_daemon_run", return_value=None):
+            yield
 
     @pytest.fixture
     def mock_execution(self):
@@ -534,8 +540,118 @@ class TestPipelineRunsShow:
             assert len(data["steps"]) == 2
 
 
+class TestPipelinesDaemonApproval:
+    """Tests for daemon-backed pipeline approval commands."""
+
+    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
+    @pytest.mark.parametrize(
+        ("action", "expected_path", "expected_text"),
+        [
+            ("approve", "/api/pipelines/approve/approval-token-xyz", "Pipeline approved"),
+            ("reject", "/api/pipelines/reject/approval-token-xyz", "Pipeline rejected"),
+        ],
+    )
+    def test_approval_commands_prefer_healthy_daemon(
+        self,
+        runner,
+        action: str,
+        expected_path: str,
+        expected_text: str,
+    ) -> None:
+        """Verify approve/reject use the daemon route when the daemon is healthy."""
+        calls: list[tuple[str, str, float]] = []
+
+        class FakeResponse:
+            status_code = 200
+
+            def json(self) -> dict[str, str]:
+                return {
+                    "execution_id": "pe-daemon",
+                    "pipeline_name": "deploy",
+                    "status": "completed" if action == "approve" else "cancelled",
+                }
+
+        class FakeDaemonClient:
+            def __init__(self, *, port: int) -> None:
+                self.port = port
+
+            def check_health(self) -> tuple[bool, str | None]:
+                return True, None
+
+            def call_http_api(
+                self,
+                endpoint: str,
+                *,
+                method: str,
+                timeout: float,
+            ) -> FakeResponse:
+                calls.append((endpoint, method, timeout))
+                return FakeResponse()
+
+        with (
+            patch("gobby.config.app.load_config", return_value=MagicMock(daemon_port=1234)),
+            patch("gobby.utils.daemon_client.DaemonClient", FakeDaemonClient),
+            patch("gobby.cli.pipelines.get_pipeline_executor") as get_local_executor,
+        ):
+            result = runner.invoke(cli, ["pipelines", action, "approval-token-xyz"])
+
+        assert result.exit_code == 0
+        assert calls == [(expected_path, "POST", 300.0)]
+        assert expected_text in result.output
+        assert "pe-daemon" in result.output
+        get_local_executor.assert_not_called()
+
+    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
+    def test_approve_falls_back_to_local_when_daemon_unreachable(self, runner) -> None:
+        """Verify local approval is used only after the daemon route is unreachable."""
+        from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
+
+        class FakeDaemonClient:
+            def __init__(self, *, port: int) -> None:
+                self.port = port
+
+            def check_health(self) -> tuple[bool, str | None]:
+                return True, None
+
+            def call_http_api(
+                self,
+                endpoint: str,
+                *,
+                method: str,
+                timeout: float,
+            ) -> object:
+                raise httpx.ConnectError("daemon unreachable")
+
+        mock_executor = MagicMock()
+        mock_execution = PipelineExecution(
+            id="pe-local",
+            pipeline_name="deploy",
+            project_id="proj-1",
+            status=ExecutionStatus.COMPLETED,
+            created_at="2026-01-01T00:00:00Z",
+            updated_at="2026-01-01T00:01:00Z",
+        )
+        mock_executor.approve = AsyncMock(return_value=mock_execution)
+
+        with (
+            patch("gobby.config.app.load_config", return_value=MagicMock(daemon_port=1234)),
+            patch("gobby.utils.daemon_client.DaemonClient", FakeDaemonClient),
+            patch("gobby.cli.pipelines.get_pipeline_executor", return_value=mock_executor),
+        ):
+            result = runner.invoke(cli, ["pipelines", "approve", "approval-token-xyz"])
+
+        assert result.exit_code == 0
+        mock_executor.approve.assert_called_once_with("approval-token-xyz", approved_by=None)
+        assert "pe-local" in result.output
+
+
 class TestPipelinesApprove:
     """Tests for gobby pipelines approve command."""
+
+    @pytest.fixture(autouse=True)
+    def _daemon_unavailable(self):
+        with patch("gobby.cli.pipelines._try_daemon_approval", return_value=None):
+            yield
 
     @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_approve_subcommand_exists(self, runner) -> None:
@@ -635,6 +751,11 @@ class TestPipelinesApprove:
 
 class TestPipelinesReject:
     """Tests for gobby pipelines reject command."""
+
+    @pytest.fixture(autouse=True)
+    def _daemon_unavailable(self):
+        with patch("gobby.cli.pipelines._try_daemon_approval", return_value=None):
+            yield
 
     @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_reject_subcommand_exists(self, runner) -> None:

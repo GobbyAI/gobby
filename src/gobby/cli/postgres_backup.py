@@ -97,6 +97,7 @@ def restore_postgres_backup(
     source: Path,
     *,
     clean: bool = False,
+    allow_unverified: bool = False,
     gobby_home: Path | None = None,
 ) -> dict[str, Any]:
     """Verify and restore a PostgreSQL backup file or backup directory."""
@@ -115,6 +116,12 @@ def restore_postgres_backup(
                 "PostgreSQL dump checksum mismatch: "
                 f"expected {expected_sha256}, got {actual_sha256}"
             )
+    elif not allow_unverified:
+        raise click.ClickException(
+            "PostgreSQL dump is missing trusted checksum sidecar metadata. "
+            f"Place {POSTGRES_METADATA_NAME} or {POSTGRES_SHA256SUMS_NAME} beside the dump, "
+            "or rerun with --allow-unverified to restore without SHA256 verification."
+        )
     _verify_dump_with_pg_restore(dump_path=dump_path)
     _run_pg_restore(database_url=database_url, dump_path=dump_path, clean=clean)
     probes = _run_post_restore_probes(
