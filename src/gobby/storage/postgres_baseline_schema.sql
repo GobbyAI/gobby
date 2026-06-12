@@ -1605,6 +1605,8 @@ CREATE TABLE comms_messages (
 
 CREATE INDEX idx_comms_messages_channel_created ON comms_messages(channel_id, created_at);
 
+CREATE UNIQUE INDEX idx_comms_messages_channel_platform_message ON comms_messages(channel_id, platform_message_id) WHERE platform_message_id IS NOT NULL;
+
 CREATE INDEX idx_comms_messages_session ON comms_messages(session_id);
 
 CREATE INDEX idx_comms_messages_direction ON comms_messages(direction);

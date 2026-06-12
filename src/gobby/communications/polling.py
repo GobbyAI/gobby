@@ -100,7 +100,9 @@ class PollingManager:
                 messages = await adapter.poll()
 
                 if messages:
-                    await self._manager.handle_inbound_messages(channel_name, messages)
+                    stored = await self._manager.handle_inbound_messages(channel_name, messages)
+                    if stored:
+                        await adapter.acknowledge_messages(stored)
 
                 consecutive_failures = 0
                 await asyncio.sleep(interval)

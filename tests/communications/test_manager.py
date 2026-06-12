@@ -53,7 +53,7 @@ def make_store(channels: list[ChannelConfig] | None = None) -> MagicMock:
         None,
     )
     store.get_routing_rules.return_value = []
-    store.create_message.return_value = None
+    store.create_message.side_effect = lambda message: message
     store.create_channel.return_value = None
 
     def delete_channel(channel_id: str) -> None:
@@ -460,6 +460,51 @@ async def test_handle_inbound_resolves_identity():
     stored = await manager.handle_inbound("test-channel", {}, {})
     assert stored[0].session_id == "session-abc"
     assert stored[0].identity_id == "identity-1"
+
+
+async def test_handle_inbound_messages_continues_after_identity_resolution_failure():
+    """A bad inbound message should not abort the rest of the batch."""
+    channel = make_channel()
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    manager._channel_by_name[channel.name] = channel
+
+    identity = CommsIdentity(
+        id="identity-2",
+        channel_id="chan-1",
+        external_user_id="ext-user-2",
+        created_at="2024-01-01T00:00:00",
+        updated_at="2024-01-01T00:00:00",
+        session_id="session-ok",
+    )
+    manager._identity_manager.resolve_identity = MagicMock(
+        side_effect=[RuntimeError("database unavailable"), identity]
+    )
+
+    messages = [
+        CommsMessage(
+            id="bad-msg",
+            channel_id="chan-1",
+            direction="inbound",
+            content="bad",
+            identity_id="ext-user-1",
+            created_at="2024-01-01T00:00:00",
+        ),
+        CommsMessage(
+            id="good-msg",
+            channel_id="chan-1",
+            direction="inbound",
+            content="good",
+            identity_id="ext-user-2",
+            created_at="2024-01-01T00:00:00",
+        ),
+    ]
+
+    stored = await manager.handle_inbound_messages("test-channel", messages)
+
+    assert [message.content for message in stored] == ["good"]
+    assert stored[0].session_id == "session-ok"
+    store.create_message.assert_called_once_with(messages[1])
 
 
 @pytest.mark.parametrize(

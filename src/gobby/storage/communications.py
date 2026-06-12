@@ -244,13 +244,17 @@ class LocalCommunicationsStore:
             message.id = generate_prefixed_id("cm")
 
         with self.db.transaction() as conn:
-            conn.execute(
+            row = conn.execute(
                 """
                 INSERT INTO comms_messages (
                     id, channel_id, identity_id, direction, content, content_type,
                     platform_message_id, platform_thread_id, session_id, status,
                     error, metadata_json, created_at
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (channel_id, platform_message_id)
+                WHERE platform_message_id IS NOT NULL
+                DO NOTHING
+                RETURNING *
                 """,
                 (
                     message.id,
@@ -267,8 +271,19 @@ class LocalCommunicationsStore:
                     json.dumps(message.metadata_json),
                     message.created_at,
                 ),
-            )
-        return message
+            ).fetchone()
+            if row is None and message.platform_message_id is not None:
+                row = conn.execute(
+                    """
+                    SELECT *
+                      FROM comms_messages
+                     WHERE channel_id = %s AND platform_message_id = %s
+                    """,
+                    (message.channel_id, message.platform_message_id),
+                ).fetchone()
+        if row is None:
+            raise RuntimeError("Failed to create communications message")
+        return CommsMessage.from_row(row)
 
     def get_message(self, message_id: str) -> CommsMessage | None:
         """Get a message by ID."""

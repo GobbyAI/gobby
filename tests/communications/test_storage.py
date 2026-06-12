@@ -240,6 +240,50 @@ def test_message_crud(comms_store: LocalCommunicationsStore) -> None:
     assert updated.error == "no error"
 
 
+def test_create_message_deduplicates_channel_platform_message_id(
+    comms_store: LocalCommunicationsStore,
+) -> None:
+    """Webhook retries should not create duplicate platform-message rows."""
+    comms_store.create_channel(
+        ChannelConfig(
+            id="cc-dedup",
+            channel_type="test",
+            name="Dedup",
+            enabled=True,
+            config_json={},
+            created_at="2024-01-01T00:00:00Z",
+            updated_at="2024-01-01T00:00:00Z",
+        )
+    )
+
+    first = comms_store.create_message(
+        CommsMessage(
+            id="first",
+            channel_id="cc-dedup",
+            direction="inbound",
+            content="first",
+            platform_message_id="platform-1",
+            created_at="2024-01-01T00:00:00Z",
+        )
+    )
+    duplicate = comms_store.create_message(
+        CommsMessage(
+            id="second",
+            channel_id="cc-dedup",
+            direction="inbound",
+            content="second",
+            platform_message_id="platform-1",
+            created_at="2024-01-01T00:00:01Z",
+        )
+    )
+
+    messages = comms_store.list_messages(channel_id="cc-dedup")
+
+    assert duplicate.id == first.id
+    assert len(messages) == 1
+    assert messages[0].content == "first"
+
+
 def test_routing_rule_crud(comms_store: LocalCommunicationsStore) -> None:
     """Test full CRUD lifecycle for routing rules."""
     # Create channel

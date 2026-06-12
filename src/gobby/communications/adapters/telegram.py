@@ -32,10 +32,13 @@ class TelegramAdapter(BaseChannelAdapter):
 
     def __init__(self) -> None:
         """Initialize the Telegram adapter."""
+        super().__init__()
         self._client: httpx.AsyncClient | None = None
         self._bot_token: str | None = None
         self._api_base: str | None = None
         self._offset: int = 0
+        self._pending_update_ids: list[int] = []
+        self._acknowledged_update_ids: set[int] = set()
 
     def _redact_bot_token(self, value: str) -> str:
         """Replace the resolved Telegram bot token in error strings."""
@@ -241,6 +244,7 @@ class TelegramAdapter(BaseChannelAdapter):
         metadata = {
             "chat_id": chat_id,
             "platform_channel_id": chat_id,
+            "telegram_update_id": payload_dict.get("update_id"),
             "user_id": user_id,
             "username": username,
             "external_username": username or user_id,
@@ -292,16 +296,32 @@ class TelegramAdapter(BaseChannelAdapter):
 
         updates = data.get("result", [])
         messages = []
+        self._pending_update_ids = []
+        self._acknowledged_update_ids.clear()
 
         for update in updates:
             update_id = update["update_id"]
-            if update_id >= self._offset:
-                self._offset = update_id + 1
+            self._pending_update_ids.append(update_id)
 
             msg_list = self.parse_webhook(update, {})
             messages.extend(msg_list)
 
         return messages
+
+    async def acknowledge_messages(self, messages: list[CommsMessage]) -> None:
+        """Advance the Telegram offset for successfully handled updates."""
+        for message in messages:
+            update_id = message.metadata_json.get("telegram_update_id")
+            if isinstance(update_id, int):
+                self._acknowledged_update_ids.add(update_id)
+
+        while self._pending_update_ids:
+            update_id = self._pending_update_ids[0]
+            if update_id not in self._acknowledged_update_ids:
+                break
+            self._offset = max(self._offset, update_id + 1)
+            self._pending_update_ids.pop(0)
+            self._acknowledged_update_ids.discard(update_id)
 
 
 # Register the adapter

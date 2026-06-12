@@ -115,6 +115,10 @@ class BaseChannelAdapter(ABC):
         """Poll for new messages (default implementation returns empty list)."""
         return []
 
+    async def acknowledge_messages(self, messages: list[CommsMessage]) -> None:
+        """Acknowledge successfully handled polled messages."""
+        return None
+
     def platform_destination(self, message: CommsMessage) -> str:
         """Return the adapter-facing destination for an outbound message.
 

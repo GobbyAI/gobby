@@ -331,12 +331,62 @@ async def test_poll(
 
         assert len(messages) == 1
         assert messages[0].content == "hello"
+        assert adapter._offset == 0
+        await adapter.acknowledge_messages(messages)
         assert adapter._offset == 501
 
         mock_get.assert_called_with(
             "https://api.telegram.org/bottest-telegram-token/getUpdates",
             params={"offset": 0, "timeout": 30},
         )
+
+
+@pytest.mark.asyncio
+async def test_poll_acknowledges_only_contiguous_successful_updates(
+    adapter: TelegramAdapter,
+    channel_config: ChannelConfig,
+    secret_resolver: Callable[[str], str | None],
+) -> None:
+    mock_get = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.json.return_value = {
+        "ok": True,
+        "result": [
+            {
+                "update_id": 500,
+                "message": {
+                    "message_id": 1,
+                    "from": {"id": 1111111, "username": "first"},
+                    "chat": {"id": 123},
+                    "text": "first",
+                },
+            },
+            {
+                "update_id": 501,
+                "message": {
+                    "message_id": 2,
+                    "from": {"id": 2222222, "username": "second"},
+                    "chat": {"id": 123},
+                    "text": "second",
+                },
+            },
+        ],
+    }
+    mock_get.return_value = mock_response
+
+    with patch("httpx.AsyncClient") as MockClient:
+        mock_client_instance = MockClient.return_value
+        mock_client_instance.get = mock_get
+        mock_client_instance.post = AsyncMock()
+
+        await adapter.initialize(channel_config, secret_resolver)
+        messages = await adapter.poll()
+
+        await adapter.acknowledge_messages([messages[1]])
+        assert adapter._offset == 0
+
+        await adapter.acknowledge_messages([messages[0]])
+        assert adapter._offset == 502
 
 
 @pytest.mark.asyncio

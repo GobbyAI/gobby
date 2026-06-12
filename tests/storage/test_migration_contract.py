@@ -180,6 +180,7 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
         "277_drop_llm_providers_config.sql",
         "278_session_summary_revisions.sql",
         "279_session_summary_revision_integrity.sql",
+        "280_comms_messages_platform_dedup.sql",
     ]
 
 

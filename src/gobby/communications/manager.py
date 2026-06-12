@@ -485,75 +485,56 @@ class CommunicationsManager:
     async def handle_inbound_messages(
         self, channel_name: str, messages: list[CommsMessage]
     ) -> list[CommsMessage]:
-        """Process, resolve identity, and store a list of inbound messages.
-
-        Args:
-            channel_name: Name of the channel the messages came from.
-            messages: List of parsed CommsMessage objects.
-
-        Returns:
-            List of stored CommsMessages.
-
-        Raises:
-            ValueError: If channel is not found or not active.
-        """
+        """Process, resolve identity, and store a list of inbound messages."""
         channel = self._channel_by_name.get(channel_name)
         if channel is None:
             raise ValueError(f"Channel {channel_name!r} not found or not active")
 
         stored: list[CommsMessage] = []
         for message in messages:
-            # Adapters may receive platform IDs from webhooks or polling, but
-            # stored messages must always reference the internal channel UUID.
-            platform_channel_id = (
-                message.metadata_json.get("platform_channel_id")
-                or message.channel_id
-                or message.metadata_json.get("chat_id")
-            )
-            if platform_channel_id:
-                message.metadata_json["platform_channel_id"] = str(platform_channel_id)
-            # Always overwrite adapter-supplied channel_id before persistence so
-            # comms_messages.channel_id satisfies its comms_channels FK.
-            message.channel_id = channel.id
-
-            if message.content_type == "reaction":
-                if self.reaction_handler:
-                    try:
-                        await self.reaction_handler.handle_reaction(
-                            channel_name,
-                            message.platform_message_id,
-                            message.content,
-                            message.identity_id,
-                        )
-                    except Exception as e:
-                        logger.error(f"Failed to handle reaction: {e}", exc_info=True)
-                continue
-
-            # Resolve identity: if identity_id looks like an external_user_id, resolve it
-            if message.identity_id:
-                external_username = message.metadata_json.get("external_username")
-                # Capture conversation_reference from message metadata if present (proactive messaging)
-                identity_meta = {}
-                if "conversation_reference" in message.metadata_json:
-                    identity_meta["conversation_reference"] = message.metadata_json[
-                        "conversation_reference"
-                    ]
-
-                identity = self._identity_manager.resolve_identity(
-                    channel.id, message.identity_id, external_username, metadata=identity_meta
-                )
-                message.session_id = identity.session_id
-                message.identity_id = identity.id
-
-            if message.session_id and message.platform_thread_id:
-                self._track_thread(channel_name, message.session_id, message.platform_thread_id)
-
-            # Store message
             try:
-                self._store.create_message(message)
-                stored.append(message)
+                platform_channel_id = (
+                    message.metadata_json.get("platform_channel_id")
+                    or message.channel_id
+                    or message.metadata_json.get("chat_id")
+                )
+                if platform_channel_id:
+                    message.metadata_json["platform_channel_id"] = str(platform_channel_id)
+                message.channel_id = channel.id
+
+                if message.content_type == "reaction":
+                    if self.reaction_handler:
+                        try:
+                            await self.reaction_handler.handle_reaction(
+                                channel_name,
+                                message.platform_message_id,
+                                message.content,
+                                message.identity_id,
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to handle reaction: {e}", exc_info=True)
+                    continue
+
+                if message.identity_id:
+                    external_username = message.metadata_json.get("external_username")
+                    identity_meta = {}
+                    if "conversation_reference" in message.metadata_json:
+                        identity_meta["conversation_reference"] = message.metadata_json[
+                            "conversation_reference"
+                        ]
+
+                    identity = self._identity_manager.resolve_identity(
+                        channel.id, message.identity_id, external_username, metadata=identity_meta
+                    )
+                    message.session_id = identity.session_id
+                    message.identity_id = identity.id
+
+                if message.session_id and message.platform_thread_id:
+                    self._track_thread(channel_name, message.session_id, message.platform_thread_id)
+
+                stored.append(self._store.create_message(message))
             except Exception as e:
-                logger.error(f"Failed to store inbound message: {e}")
+                logger.error(f"Failed to process inbound message: {e}", exc_info=True)
 
         # Fire event callback for each stored message
         if self.event_callback is not None:
