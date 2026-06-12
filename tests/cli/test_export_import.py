@@ -142,6 +142,65 @@ class TestImportCommand:
         assert result.exit_code == 0
         assert (target / ".gobby" / "agents" / "my-agent.yaml").exists()
 
+    def test_import_single_file_rejects_unsupported_extension(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        """Import rejects single-file sources with unsupported extensions."""
+        target = tmp_path / "target"
+        target.mkdir()
+        (target / ".gobby").mkdir()
+        monkeypatch.chdir(target)
+
+        source_file = tmp_path / "my-agent.txt"
+        source_file.write_text("name: my-agent\n")
+
+        result = runner.invoke(import_cmd, ["agent", "--from", str(source_file)])
+
+        assert result.exit_code != 0
+        assert "Unsupported agent import file extension" in result.output
+        assert not (target / ".gobby" / "agents" / "my-agent.txt").exists()
+
+    def test_import_rejects_malformed_workflow_without_copying(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        """Import rejects malformed workflow YAML before copying it."""
+        source_project = tmp_path / "source"
+        workflow_dir = source_project / ".gobby" / "workflows"
+        workflow_dir.mkdir(parents=True)
+        (workflow_dir / "bad.yaml").write_text("name: [\n")
+
+        target = tmp_path / "target"
+        target.mkdir()
+        (target / ".gobby").mkdir()
+        monkeypatch.chdir(target)
+
+        result = runner.invoke(import_cmd, ["workflow", "--from-project", str(source_project)])
+
+        assert result.exit_code != 0
+        assert "Invalid YAML" in result.output
+        assert not (target / ".gobby" / "workflows" / "bad.yaml").exists()
+
+    def test_import_from_project_skips_unsupported_files(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        """Import ignores unsupported files under the source resource directory."""
+        source_project = tmp_path / "source"
+        agents_dir = source_project / ".gobby" / "agents"
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "my-agent.yaml").write_text("name: my-agent\n")
+        (agents_dir / "notes.txt").write_text("name: notes\n")
+
+        target = tmp_path / "target"
+        target.mkdir()
+        (target / ".gobby").mkdir()
+        monkeypatch.chdir(target)
+
+        result = runner.invoke(import_cmd, ["agent", "--from-project", str(source_project)])
+
+        assert result.exit_code == 0
+        assert (target / ".gobby" / "agents" / "my-agent.yaml").exists()
+        assert not (target / ".gobby" / "agents" / "notes.txt").exists()
+
     def test_import_single_file_rejects_absolute_name(
         self, runner, project_with_resources, tmp_path, monkeypatch
     ) -> None:
