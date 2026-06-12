@@ -50,7 +50,17 @@ class CompletionEventRegistry:
             continuation_prompt: Optional prompt describing what to do with results
         """
         if completion_id in self._events:
-            logger.warning(f"Overwriting existing completion registration: {completion_id}")
+            logger.warning(f"Merging existing completion registration: {completion_id}")
+            registered_subscribers = self._subscribers.setdefault(completion_id, [])
+            seen = set(registered_subscribers)
+            for session_id in subscribers:
+                if session_id not in seen:
+                    registered_subscribers.append(session_id)
+                    seen.add(session_id)
+            if continuation_prompt and completion_id not in self._continuation_prompts:
+                self._continuation_prompts[completion_id] = continuation_prompt
+            return
+
         self._events[completion_id] = asyncio.Event()
         self._subscribers[completion_id] = list(subscribers)
         if continuation_prompt:

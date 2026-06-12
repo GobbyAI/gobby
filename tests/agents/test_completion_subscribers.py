@@ -11,6 +11,7 @@ from gobby.agents.completion_subscribers import (
     completion_subscriber_lineage,
     subscribe_agent_completion,
 )
+from gobby.events.completion_registry import CompletionEventRegistry
 
 pytestmark = pytest.mark.unit
 
@@ -50,3 +51,36 @@ def test_subscribe_agent_completion_does_not_swallow_manager_constructor_errors(
                 subscriber_session_id="child-session",
                 db=MagicMock(),
             )
+
+
+def test_subscribe_agent_completion_reregistration_preserves_subscribers() -> None:
+    completion_registry = CompletionEventRegistry()
+    session_manager = MagicMock()
+    session_manager.get.side_effect = [
+        SimpleNamespace(id="child-1", parent_session_id="parent-1"),
+        SimpleNamespace(id="parent-1", parent_session_id=None),
+        SimpleNamespace(id="child-2", parent_session_id="parent-2"),
+        SimpleNamespace(id="parent-2", parent_session_id=None),
+    ]
+
+    first_subscribers = subscribe_agent_completion(
+        completion_registry=completion_registry,
+        run_id="run-1",
+        subscriber_session_id="child-1",
+        session_manager=session_manager,
+    )
+    second_subscribers = subscribe_agent_completion(
+        completion_registry=completion_registry,
+        run_id="run-1",
+        subscriber_session_id="child-2",
+        session_manager=session_manager,
+    )
+
+    assert first_subscribers == ["parent-1", "child-1"]
+    assert second_subscribers == ["parent-2", "child-2"]
+    assert completion_registry.get_subscribers("run-1") == [
+        "parent-1",
+        "child-1",
+        "parent-2",
+        "child-2",
+    ]
