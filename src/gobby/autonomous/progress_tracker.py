@@ -4,8 +4,10 @@ Provides progress tracking for autonomous workflows to detect stagnation
 and enable informed decisions about when to stop or redirect work.
 """
 
+import hashlib
 import json
 import logging
+import shlex
 import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -55,6 +57,72 @@ HIGH_VALUE_PROGRESS = {
     ProgressType.TEST_PASSED,
     ProgressType.BUILD_SUCCEEDED,
 }
+
+
+def _normalize_tool_args(tool_args: dict[str, Any] | None) -> str:
+    """Return a stable representation of tool arguments for loop detection."""
+    return json.dumps(tool_args or {}, sort_keys=True, default=str, separators=(",", ":"))
+
+
+def _hash_tool_args(tool_args: dict[str, Any] | None) -> str:
+    normalized_args = _normalize_tool_args(tool_args)
+    return hashlib.sha256(normalized_args.encode("utf-8")).hexdigest()[:16]
+
+
+def _split_shell_command(command: Any) -> list[str]:
+    command_str = str(command or "")
+    try:
+        return shlex.split(command_str)
+    except ValueError:
+        return command_str.split()
+
+
+def _has_adjacent_tokens(tokens: list[str], first: str, second: str) -> bool:
+    return any(
+        left == first and right == second for left, right in zip(tokens, tokens[1:], strict=False)
+    )
+
+
+def _is_test_command(tokens: list[str]) -> bool:
+    return (
+        "pytest" in tokens
+        or _has_adjacent_tokens(tokens, "npm", "test")
+        or _has_adjacent_tokens(tokens, "cargo", "test")
+    )
+
+
+def _is_build_command(tokens: list[str]) -> bool:
+    return (
+        "build" in tokens or "compile" in tokens or _has_adjacent_tokens(tokens, "cargo", "build")
+    )
+
+
+def _is_git_commit_command(tokens: list[str]) -> bool:
+    return _has_adjacent_tokens(tokens, "git", "commit")
+
+
+def _result_indicates_failure(result_str: str) -> bool:
+    result_lower = result_str.lower()
+    return any(
+        marker in result_lower
+        for marker in ("failed", "failure", "error", "not successful", "unsuccessful")
+    )
+
+
+def _result_indicates_test_success(result_str: str) -> bool:
+    return "passed" in result_str.lower() or "OK" in result_str
+
+
+def _result_indicates_build_success(result_str: str) -> bool:
+    result_lower = result_str.lower()
+    negative_success_markers = ("not successful", "not successfully", "unsuccessful")
+    if any(marker in result_lower for marker in negative_success_markers):
+        return False
+
+    return any(
+        marker in result_lower
+        for marker in ("completed successfully", "built successfully", "succeeded", "successfully")
+    )
 
 
 @dataclass
@@ -205,26 +273,27 @@ class ProgressTracker:
         if is_shell_tool(canonical_tool_name):
             # Check for test/build commands
             command = (tool_args or {}).get("command", "")
-            if any(kw in command for kw in ["pytest", "test", "npm test", "cargo test"]):
-                # Check result for pass/fail
-                result_str = str(tool_result) if tool_result else ""
-                if "FAILED" in result_str or "error" in result_str.lower():
-                    progress_type = ProgressType.TEST_FAILED
-                elif "passed" in result_str or "OK" in result_str:
-                    progress_type = ProgressType.TEST_PASSED
-            elif any(kw in command for kw in ["build", "compile", "npm run build", "cargo build"]):
-                result_str = str(tool_result) if tool_result else ""
-                if "error" in result_str.lower() or "failed" in result_str.lower():
-                    progress_type = ProgressType.BUILD_FAILED
-                else:
-                    progress_type = ProgressType.BUILD_SUCCEEDED
-            elif "git commit" in command:
+            command_tokens = _split_shell_command(command)
+            result_str = str(tool_result) if tool_result else ""
+            if _is_git_commit_command(command_tokens):
                 progress_type = ProgressType.COMMIT_CREATED
+            elif _is_test_command(command_tokens):
+                # Check result for pass/fail
+                if _result_indicates_failure(result_str):
+                    progress_type = ProgressType.TEST_FAILED
+                elif _result_indicates_test_success(result_str):
+                    progress_type = ProgressType.TEST_PASSED
+            elif _is_build_command(command_tokens):
+                if _result_indicates_failure(result_str):
+                    progress_type = ProgressType.BUILD_FAILED
+                elif _result_indicates_build_success(result_str):
+                    progress_type = ProgressType.BUILD_SUCCEEDED
 
         # Don't track Read/Glob/Grep as high-priority events
         # They're useful but don't represent meaningful progress alone
         details = {
             "tool_args_keys": list((tool_args or {}).keys()),
+            "tool_args_fingerprint": _hash_tool_args(tool_args),
             "result_type": type(tool_result).__name__ if tool_result else None,
         }
 
@@ -387,12 +456,26 @@ class ProgressTracker:
             )
             return True, duration
 
-        # Check event count-based stagnation
-        low_value_events = total_events - high_value_events
-        if high_value_events == 0 and low_value_events >= self.max_low_value_events:
+        # Check event count-based stagnation since the last high-value event.
+        if last_high_value_at:
+            low_value_result = self.db.fetchone(
+                """
+                SELECT COUNT(*) as count
+                FROM loop_progress
+                WHERE session_id = %s
+                    AND is_high_value IS NOT TRUE
+                    AND recorded_at > %s
+                """,
+                (session_id, last_high_value_at.isoformat()),
+            )
+            low_value_events = low_value_result["count"] if low_value_result else 0
+        else:
+            low_value_events = total_events - high_value_events
+
+        if low_value_events >= self.max_low_value_events:
             logger.info(
                 f"Session {session_id} stagnant: "
-                f"{low_value_events} low-value events without high-value progress"
+                f"{low_value_events} low-value events since high-value progress"
             )
             return True, duration
 

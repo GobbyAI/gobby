@@ -25,9 +25,13 @@ from gobby.autonomous.stuck_detector import (
     StuckDetector,
     TaskSelectionEvent,
 )
+from gobby.hooks.event_handlers import EventHandlers
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
@@ -381,6 +385,21 @@ class TestProgressTrackerToolCall:
         assert event.progress_type == ProgressType.TEST_FAILED
         assert event.is_high_value is False
 
+    def test_record_tool_call_does_not_match_test_substrings(
+        self, progress_tracker: ProgressTracker, session_id: str
+    ) -> None:
+        """Test that shell command classification uses command tokens."""
+        event = progress_tracker.record_tool_call(
+            session_id=session_id,
+            tool_name="Bash",
+            tool_args={"command": "git checkout latest"},
+            tool_result="Already on 'latest'",
+        )
+
+        assert event is not None
+        assert event.progress_type == ProgressType.TOOL_CALL
+        assert event.is_high_value is False
+
     def test_record_tool_call_for_bash_build_success(
         self, progress_tracker: ProgressTracker, session_id: str
     ) -> None:
@@ -395,6 +414,36 @@ class TestProgressTrackerToolCall:
         assert event is not None
         assert event.progress_type == ProgressType.BUILD_SUCCEEDED
         assert event.is_high_value is True
+
+    def test_record_tool_call_does_not_default_build_to_success(
+        self, progress_tracker: ProgressTracker, session_id: str
+    ) -> None:
+        """Test that build commands need explicit success output."""
+        event = progress_tracker.record_tool_call(
+            session_id=session_id,
+            tool_name="Bash",
+            tool_args={"command": "npm run build"},
+            tool_result="",
+        )
+
+        assert event is not None
+        assert event.progress_type == ProgressType.TOOL_CALL
+        assert event.is_high_value is False
+
+    def test_record_tool_call_does_not_treat_negated_build_success_as_success(
+        self, progress_tracker: ProgressTracker, session_id: str
+    ) -> None:
+        """Test that negated success phrases do not count as build success."""
+        event = progress_tracker.record_tool_call(
+            session_id=session_id,
+            tool_name="Bash",
+            tool_args={"command": "npm run build"},
+            tool_result="Not successful",
+        )
+
+        assert event is not None
+        assert event.progress_type == ProgressType.BUILD_FAILED
+        assert event.is_high_value is False
 
     def test_record_tool_call_for_bash_build_failed(
         self, progress_tracker: ProgressTracker, session_id: str
@@ -568,6 +617,25 @@ class TestProgressTrackerStagnation:
 
         # Should not be stagnant because we have high-value events
         assert tracker.is_stagnant(session_id) is False
+
+    def test_stagnant_by_event_count_after_high_value(
+        self, test_db: HubDatabase, session_id: str
+    ) -> None:
+        """Test count-based stagnation resets after each high-value event."""
+        tracker = ProgressTracker(
+            test_db,
+            stagnation_threshold=3600,
+            max_low_value_events=5,
+        )
+
+        tracker.record_event(session_id, ProgressType.FILE_MODIFIED)
+        for _ in range(6):
+            tracker.record_event(session_id, ProgressType.FILE_READ)
+
+        summary = tracker.get_summary(session_id)
+        assert summary.is_stagnant is True
+        assert summary.high_value_events == 1
+        assert summary.total_events == 7
 
     def test_stagnant_by_time(self, test_db: HubDatabase, session_id: str) -> None:
         """Test stagnation detection by time threshold."""
@@ -817,6 +885,53 @@ class TestStopRegistry:
         assert second_signal.reason == "First request"
         assert first_signal.requested_at == second_signal.requested_at
 
+    def test_signal_stop_does_not_pre_read_pending_signal(
+        self,
+        stop_registry: StopRegistry,
+        session_id: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Test that signal_stop relies on the atomic upsert for pending signals."""
+        first_signal = stop_registry.signal_stop(
+            session_id=session_id,
+            source="http",
+            reason="First request",
+        )
+
+        def fail_get_signal(_session_id: str) -> StopSignal | None:
+            raise AssertionError("signal_stop must not pre-read existing signals")
+
+        monkeypatch.setattr(stop_registry, "get_signal", fail_get_signal)
+
+        second_signal = stop_registry.signal_stop(
+            session_id=session_id,
+            source="cli",
+            reason="Second request",
+        )
+
+        assert second_signal.source == "http"
+        assert second_signal.reason == "First request"
+        assert first_signal.requested_at == second_signal.requested_at
+
+    def test_signal_stop_does_not_unacknowledge_existing_signal(
+        self, stop_registry: StopRegistry, session_id: str
+    ) -> None:
+        """Test that signal_stop cannot resurrect an acknowledged stop signal."""
+        stop_registry.signal_stop(session_id=session_id, source="http", reason="First request")
+        assert stop_registry.acknowledge(session_id) is True
+
+        signal = stop_registry.signal_stop(
+            session_id=session_id,
+            source="workflow",
+            reason="Stale racing request",
+        )
+
+        assert signal.source == "http"
+        assert signal.reason == "First request"
+        assert signal.acknowledged_at is not None
+        assert signal.is_pending is False
+        assert stop_registry.has_pending_signal(session_id) is False
+
     def test_get_signal_returns_signal(self, stop_registry: StopRegistry, session_id: str) -> None:
         """Test get_signal returns the signal."""
         stop_registry.signal_stop(session_id, source="mcp")
@@ -954,17 +1069,36 @@ class TestStopRegistryCleanup:
         # Verify signal is gone
         assert stop_registry.has_pending_signal(session_id) is False
 
-    def test_cleanup_stale_preserves_pending(
+    def test_cleanup_stale_preserves_recent_pending(
         self, stop_registry: StopRegistry, session_id: str
     ) -> None:
-        """Test that cleanup preserves pending (unacknowledged) signals."""
+        """Test that cleanup preserves recent pending signals."""
         stop_registry.signal_stop(session_id, source="test")
 
-        count = stop_registry.cleanup_stale(max_age_hours=0)
+        count = stop_registry.cleanup_stale(max_age_hours=24)
 
-        # Should not clean up pending signals
-        assert count == 0, "Pending signals should not be cleaned up"
+        assert count == 0
         assert stop_registry.has_pending_signal(session_id) is True
+
+    def test_cleanup_stale_removes_old_pending(
+        self, stop_registry: StopRegistry, test_db: HubDatabase, session_id: str
+    ) -> None:
+        """Test that cleanup removes old pending signals."""
+        stop_registry.signal_stop(session_id, source="test")
+
+        test_db.execute(
+            """
+            UPDATE session_stop_signals
+            SET requested_at = %s
+            WHERE session_id = %s
+            """,
+            ((datetime.now(UTC) - timedelta(hours=48)).isoformat(), session_id),
+        )
+
+        count = stop_registry.cleanup_stale(max_age_hours=24)
+
+        assert count == 1
+        assert stop_registry.get_signal(session_id) is None
 
 
 class TestStopRegistryThreadSafety:
@@ -1235,6 +1369,29 @@ class TestStuckDetectorToolLoop:
 
         assert result.is_stuck is False
 
+    def test_no_tool_loop_with_distinct_bash_commands(
+        self, test_db: HubDatabase, session_id: str
+    ) -> None:
+        """Test no tool loop when commands differ but arg keys match."""
+        tracker = ProgressTracker(test_db)
+        detector = StuckDetector(
+            test_db,
+            progress_tracker=tracker,
+            tool_loop_threshold=4,
+            tool_window_size=10,
+        )
+
+        for index in range(5):
+            tracker.record_tool_call(
+                session_id,
+                "Bash",
+                tool_args={"command": f"echo {index}"},
+            )
+
+        result = detector.detect_tool_loop(session_id)
+
+        assert result.is_stuck is False
+
     def test_tool_loop_detected(self, test_db: HubDatabase, session_id: str) -> None:
         """Test tool loop detection with repeated identical calls."""
         tracker = ProgressTracker(test_db)
@@ -1259,6 +1416,31 @@ class TestStuckDetectorToolLoop:
         assert result.layer == "tool_loop"
         assert "Read" in result.reason
         assert result.suggested_action == "change_approach"
+
+    def test_tool_loop_detected_with_identical_bash_commands(
+        self, test_db: HubDatabase, session_id: str
+    ) -> None:
+        """Test repeated Bash commands still count as a tool loop."""
+        tracker = ProgressTracker(test_db)
+        detector = StuckDetector(
+            test_db,
+            progress_tracker=tracker,
+            tool_loop_threshold=4,
+            tool_window_size=10,
+        )
+
+        for _ in range(5):
+            tracker.record_tool_call(
+                session_id,
+                "Bash",
+                tool_args={"command": "echo same"},
+            )
+
+        result = detector.detect_tool_loop(session_id)
+
+        assert result.is_stuck is True
+        assert result.layer == "tool_loop"
+        assert "Bash" in result.reason
 
 
 class TestStuckDetectorIsStuck:
@@ -1361,6 +1543,7 @@ class TestStuckDetectorSelectionHistory:
         """Test history for empty session."""
         history = stuck_detector.get_selection_history(session_id)
         assert history == []
+
 
 class TestStuckDetectorThreadSafety:
     """Tests for StuckDetector thread safety."""
@@ -1516,3 +1699,72 @@ class TestAutonomousIntegration:
 
         history = stuck_detector.get_selection_history(session_id)
         assert len(history) == 0
+
+    def test_live_hook_and_task_selection_traffic_persist_and_detect_stuck(
+        self,
+        test_db: HubDatabase,
+        session_id: str,
+        test_project: dict,
+    ) -> None:
+        """Production wiring persists hook/task traffic and detects a wedged session."""
+        progress_tracker = ProgressTracker(test_db)
+        stuck_detector = StuckDetector(test_db, progress_tracker=progress_tracker)
+        handlers = EventHandlers(progress_tracker=progress_tracker)
+
+        for _ in range(stuck_detector.tool_loop_threshold):
+            event = HookEvent(
+                event_type=HookEventType.AFTER_TOOL,
+                session_id="external-session",
+                source=SessionSource.CLAUDE,
+                timestamp=datetime.now(UTC),
+                data={
+                    "tool_name": "Read",
+                    "tool_input": {"file_path": "src/gobby/autonomous/progress_tracker.py"},
+                    "tool_output": "same file contents",
+                },
+                metadata={"_platform_session_id": session_id},
+            )
+            response = handlers.handle_after_tool(event)
+            assert response.decision == "allow"
+
+        progress_rows = test_db.fetchall(
+            """
+            SELECT tool_name
+            FROM loop_progress
+            WHERE session_id = %s
+            ORDER BY recorded_at
+            """,
+            (session_id,),
+        )
+        assert [row["tool_name"] for row in progress_rows] == [
+            "Read"
+        ] * stuck_detector.tool_loop_threshold
+
+        task_manager = LocalTaskManager(test_db)
+        task = task_manager.create_task(
+            project_id=test_project["id"],
+            title="Ready autonomous task",
+            description="Task selected through readiness registry.",
+        )
+        registry = create_readiness_registry(
+            task_manager=task_manager,
+            stuck_detector=stuck_detector,
+        )
+        suggest = registry.get_tool("suggest_next_task")
+
+        suggestion = suggest(session_id=session_id, project=test_project["id"])
+
+        assert suggestion["suggestion"]["id"] == task.id
+        selection_rows = test_db.fetchall(
+            """
+            SELECT task_id
+            FROM task_selection_history
+            WHERE session_id = %s
+            """,
+            (session_id,),
+        )
+        assert [row["task_id"] for row in selection_rows] == [task.id]
+
+        stuck = stuck_detector.is_stuck(session_id)
+        assert stuck.is_stuck is True
+        assert stuck.layer == "tool_loop"

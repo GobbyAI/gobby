@@ -32,6 +32,7 @@ from gobby.storage.tasks import TaskDispatchMutexManager
 from gobby.telemetry.instruments import inc_counter, observe_histogram
 
 if TYPE_CHECKING:
+    from gobby.autonomous.stuck_detector import StuckDetector
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.hooks.session_coordinator import SessionCoordinator
     from gobby.storage.agents import AgentRun, AgentRunTerminalReason, LocalAgentRunManager
@@ -99,6 +100,7 @@ class AgentLifecycleMonitor:
         checkpoint_storage: LocalCheckpointManager | None = None,
         worktree_storage: LocalWorktreeManager | None = None,
         project_manager: LocalProjectManager | None = None,
+        stuck_detector: StuckDetector | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
@@ -178,6 +180,7 @@ class AgentLifecycleMonitor:
         )
         self._worktree_storage = worktree_storage
         self._project_manager = project_manager
+        self._stuck_detector = stuck_detector
         self._dispatch_refresh_cursor = 0
         self._running = False
         self._task: asyncio.Task[None] | None = None
@@ -282,6 +285,7 @@ class AgentLifecycleMonitor:
                 await self.check_initialization_timeout()
                 await self.check_idle_agents()
                 await self.check_provider_stalls()
+                await self.check_autonomous_stuck_agents()
                 await self.refresh_active_run_dispatch_mutexes()
 
                 if iteration > 0 and iteration % 10 == 0:
@@ -350,6 +354,46 @@ class AgentLifecycleMonitor:
     async def check_provider_stalls(self) -> int:
         """Check tmux agents for provider-side stalls (rate limits, outages)."""
         return await self._health_monitor.check_provider_stalls()
+
+    async def check_autonomous_stuck_agents(self) -> int:
+        """Check active autonomous sessions with the production stuck detector."""
+        if self._stuck_detector is None:
+            return 0
+
+        runs = await self._run_db(self._get_active_terminal_runs)
+        handled = 0
+        for run in runs:
+            session_id = run.child_session_id or run.claimed_session_id or run.parent_session_id
+            if not session_id:
+                continue
+            try:
+                result = await self._run_db(self._stuck_detector.is_stuck, session_id)
+            except Exception as e:
+                logger.warning("Autonomous stuck detection failed for %s: %s", session_id, e)
+                continue
+            if not result.is_stuck:
+                continue
+
+            handled += 1
+            logger.warning(
+                "Autonomous session stuck: session_id=%s run_id=%s layer=%s action=%s reason=%s",
+                session_id,
+                run.id,
+                result.layer,
+                result.suggested_action,
+                result.reason,
+            )
+            if result.suggested_action in {"stop", "escalate"}:
+                await self._cleanup_handler.cleanup_agent(
+                    run,
+                    terminal_payload=f"autonomous stuck: {result.reason or result.layer}",
+                )
+            elif run.tmux_session_name:
+                await self._tmux.send_keys(run.tmux_session_name, "Enter", literal=True)
+
+        if handled:
+            inc_counter("agent_lifecycle_autonomous_stuck_detected_total", handled)
+        return handled
 
     async def refresh_active_run_dispatch_mutexes(self) -> int:
         """Extend or restore dispatch mutex leases for active task-bound runs."""
