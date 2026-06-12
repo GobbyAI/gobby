@@ -9,6 +9,7 @@ Tests for Clone CLI commands:
 - delete
 """
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -265,6 +266,23 @@ class TestClonesDeleteCommand:
 
         assert result.exit_code == 0
         assert "Deleted" in result.output or "success" in result.output.lower()
+
+    def test_delete_clone_force_json_requires_yes(self, mock_clone_manager, mock_httpx) -> None:
+        """Test 'clones delete --force --json' without --yes does not delete."""
+        from gobby.cli.clones import clones
+
+        mock_clone_manager.list_clones.return_value = [MOCK_CLONE]
+        mock_clone_manager.get.return_value = MOCK_CLONE
+
+        runner = CliRunner()
+        result = runner.invoke(clones, ["delete", "clone-123", "--force", "--json"])
+
+        assert result.exit_code == 0
+        assert json.loads(result.output) == {
+            "success": False,
+            "error": "Force deleting a clone requires --yes",
+        }
+        mock_httpx.assert_not_called()
 
     def test_delete_clone_not_found(self, mock_clone_manager) -> None:
         """Test 'clones delete' with non-existent clone."""

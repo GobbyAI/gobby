@@ -359,7 +359,25 @@ def delete_clone(clone_ref: str, force: bool, yes: bool, json_format: bool) -> N
             click.echo(f"Clone not found: {clone_ref}", err=True)
         return
 
-    if not yes and not json_format:
+    if force and not yes:
+        error = "Force deleting a clone requires --yes"
+        if json_format:
+            click.echo(json.dumps({"success": False, "error": error}))
+        else:
+            click.echo(f"Error: {error}", err=True)
+        return
+
+    if not yes:
+        if json_format:
+            click.echo(
+                json.dumps(
+                    {
+                        "success": False,
+                        "error": "Deleting a clone requires --yes or interactive confirmation",
+                    }
+                )
+            )
+            return
         click.confirm("Are you sure you want to delete this clone?", abort=True)
 
     daemon_url = get_daemon_url()
