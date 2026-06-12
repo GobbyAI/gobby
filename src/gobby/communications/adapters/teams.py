@@ -101,11 +101,14 @@ class TeamsAdapter(BaseChannelAdapter):
             if time.time() >= self._token_expires_at:
                 await self._refresh_token()
 
+        conv_ref = message.metadata_json.get("conversation_reference")
         service_url = message.metadata_json.get("service_url")
+        if not service_url and isinstance(conv_ref, dict):
+            service_url = conv_ref.get("service_url")
         if not service_url:
             raise ValueError("Missing service_url in message metadata")
 
-        conversation_id = message.channel_id
+        conversation_id = self.platform_destination(message)
         url = f"{service_url.rstrip('/')}/v3/conversations/{conversation_id}/activities"
 
         activity: dict[str, Any] = {

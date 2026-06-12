@@ -89,7 +89,11 @@ class ChannelConfig:
 
 @dataclass
 class CommsMessage:
-    """A message sent or received via a communication channel."""
+    """A message sent or received via a communication channel.
+
+    ``channel_id`` is always the internal ``comms_channels.id`` value. Platform
+    destinations and inbound platform channel IDs live in ``metadata_json``.
+    """
 
     id: str
     channel_id: str

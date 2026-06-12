@@ -95,10 +95,13 @@ async def test_concurrent_refresh(adapter, mock_secret_resolver):
 
     msg = CommsMessage(
         id="test_id",
-        channel_id="conv_123",
+        channel_id="gobby-internal-channel",
         direction="outbound",
         content="Hello",
-        metadata_json={"service_url": "https://smba.trafficmanager.net/teams/"},
+        metadata_json={
+            "service_url": "https://smba.trafficmanager.net/teams/",
+            "platform_destination": "conv_123",
+        },
         created_at="2024-01-01T00:00:00Z",
     )
 
@@ -135,7 +138,7 @@ async def test_send_message(adapter, mock_secret_resolver):
 
     msg = CommsMessage(
         id="test_id",
-        channel_id="conv_123",
+        channel_id="gobby-internal-channel",
         direction="outbound",
         content="Hello teams",
         metadata_json={

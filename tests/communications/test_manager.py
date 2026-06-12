@@ -330,6 +330,52 @@ async def test_handle_inbound_resolves_identity():
     assert stored[0].identity_id == "identity-1"
 
 
+@pytest.mark.parametrize(
+    ("adapter_name", "raw_channel_id", "metadata_json", "expected_platform_channel_id"),
+    [
+        ("slack", "C123", {}, "C123"),
+        ("sms", "+15551234567", {}, "+15551234567"),
+        ("teams", "conv-123", {}, "conv-123"),
+        ("discord", "discord-channel-123", {}, "discord-channel-123"),
+        ("email", "sender@example.com", {}, "sender@example.com"),
+        ("telegram", "", {"chat_id": "2222222"}, "2222222"),
+        ("gobby_chat", "gobby_chat", {}, "gobby_chat"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_handle_inbound_messages_stores_internal_channel_id(
+    adapter_name: str,
+    raw_channel_id: str,
+    metadata_json: dict[str, str],
+    expected_platform_channel_id: str,
+) -> None:
+    """Inbound messages store the internal channel UUID and preserve platform channel."""
+    channel = make_channel(channel_id="internal-channel-id")
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+
+    mock_adapter = make_adapter(channel_type=adapter_name)
+    mock_adapter_cls = MagicMock(return_value=mock_adapter)
+
+    with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
+        await manager.start()
+
+    message = CommsMessage(
+        id=f"{adapter_name}-msg-1",
+        channel_id=raw_channel_id,
+        direction="inbound",
+        content="Hi",
+        metadata_json=metadata_json,
+        created_at="2024-01-01T00:00:00",
+    )
+
+    stored = await manager.handle_inbound_messages("test-channel", [message])
+
+    assert stored[0].channel_id == "internal-channel-id"
+    assert stored[0].metadata_json["platform_channel_id"] == expected_platform_channel_id
+    store.create_message.assert_called_once_with(stored[0])
+
+
 @pytest.mark.asyncio
 async def test_adapter_rate_limit_callback_wires_to_limiter():
     """Verify that the adapter's rate_limit_callback correctly updates the manager's rate limiter."""
@@ -611,6 +657,45 @@ async def test_send_message_no_platform_destination_without_config():
     msg = await manager.send_message("test-channel", "Hello!")
 
     assert "platform_destination" not in msg.metadata_json
+
+
+@pytest.mark.asyncio
+async def test_send_message_injects_conversation_reference_destination():
+    """send_message() injects Teams conversation reference destination fields."""
+    channel = make_channel(channel_type="teams", config_json={})
+    identity = CommsIdentity(
+        id="identity-1",
+        channel_id=channel.id,
+        external_user_id="teams-user-1",
+        created_at="2024-01-01T00:00:00",
+        updated_at="2024-01-01T00:00:00",
+        session_id="session-abc",
+        metadata_json={
+            "conversation_reference": {
+                "conversation_id": "teams-conversation-1",
+                "service_url": "https://smba.trafficmanager.net/apis/",
+            }
+        },
+    )
+    store = make_store([channel])
+    store.list_identities.return_value = [identity]
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+
+    mock_adapter = make_adapter(channel_type="teams")
+    mock_adapter_cls = MagicMock(return_value=mock_adapter)
+
+    with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
+        await manager.start()
+
+    msg = await manager.send_message("test-channel", "Hello!", session_id="session-abc")
+
+    assert msg.channel_id == channel.id
+    assert msg.metadata_json["platform_destination"] == "teams-conversation-1"
+    assert msg.metadata_json["service_url"] == "https://smba.trafficmanager.net/apis/"
+    assert (
+        msg.metadata_json["conversation_reference"]
+        == identity.metadata_json["conversation_reference"]
+    )
 
 
 @pytest.mark.asyncio

@@ -117,10 +117,11 @@ class SlackAdapter(BaseChannelAdapter):
         """Send a plain text message, chunked if needed."""
         chunks = self.chunk_message(message.content, self.max_message_length)
         last_ts = None
+        channel = self.platform_destination(message)
 
         for chunk in chunks:
             payload: dict[str, Any] = {
-                "channel": message.channel_id,
+                "channel": channel,
                 "text": chunk,
             }
             if message.platform_thread_id:
@@ -153,7 +154,7 @@ class SlackAdapter(BaseChannelAdapter):
 
         fallback = message.metadata_json.get("fallback_text", "Message from Gobby")
         payload: dict[str, Any] = {
-            "channel": message.channel_id,
+            "channel": self.platform_destination(message),
             "blocks": blocks,
             "text": fallback,
         }
@@ -174,10 +175,11 @@ class SlackAdapter(BaseChannelAdapter):
         """Send markdown content wrapped in a mrkdwn section block."""
         chunks = self.chunk_message(message.content, self.max_message_length)
         last_ts = None
+        channel = self.platform_destination(message)
 
         for chunk in chunks:
             payload: dict[str, Any] = {
-                "channel": message.channel_id,
+                "channel": channel,
                 "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": chunk}}],
                 "text": chunk,
             }
@@ -239,7 +241,7 @@ class SlackAdapter(BaseChannelAdapter):
         # Step 3: Complete the upload
         complete_payload: dict[str, Any] = {
             "files": json.dumps([{"id": file_id, "title": attachment.filename}]),
-            "channel_id": message.channel_id,
+            "channel_id": self.platform_destination(message),
         }
         if message.platform_thread_id:
             complete_payload["thread_ts"] = message.platform_thread_id

@@ -65,9 +65,10 @@ async def test_send_message(adapter, mock_secret_resolver):
 
     msg = CommsMessage(
         id="test_id",
-        channel_id="+0987654321",
+        channel_id="gobby-internal-channel",
         direction="outbound",
         content="Hello SMS",
+        metadata_json={"platform_destination": "+0987654321"},
         created_at="2024-01-01T00:00:00Z",
     )
 

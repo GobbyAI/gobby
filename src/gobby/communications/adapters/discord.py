@@ -352,7 +352,7 @@ class DiscordAdapter(BaseChannelAdapter):
         """Send a plain text message, chunked if needed."""
         chunks = self.chunk_message(message.content, self.max_message_length)
         last_id = None
-        channel_id = message.platform_thread_id or message.channel_id
+        channel_id = message.platform_thread_id or self.platform_destination(message)
 
         for chunk in chunks:
             payload: dict[str, Any] = {"content": chunk}
@@ -389,7 +389,7 @@ class DiscordAdapter(BaseChannelAdapter):
             if len(fields) > 25:
                 raise ValueError(f"Embed has {len(fields)} fields (max 25)")
 
-        channel_id = message.platform_thread_id or message.channel_id
+        channel_id = message.platform_thread_id or self.platform_destination(message)
         payload: dict[str, Any] = {"embeds": embed_data}
         fallback = message.metadata_json.get("fallback_text")
         if fallback:
@@ -408,7 +408,7 @@ class DiscordAdapter(BaseChannelAdapter):
         if not self._client:
             raise RuntimeError("Discord adapter not initialized")
 
-        channel_id = message.platform_thread_id or message.channel_id
+        channel_id = message.platform_thread_id or self.platform_destination(message)
         file_bytes = await asyncio.to_thread(file_path.read_bytes)
         data: dict[str, Any] = {}
         if message.content:

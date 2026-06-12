@@ -59,9 +59,10 @@ async def test_send_message(adapter, mock_secret_resolver):
 
     msg = CommsMessage(
         id="test_id",
-        channel_id="channel_123",
+        channel_id="gobby-internal-channel",
         direction="outbound",
         content="Hello world",
+        metadata_json={"platform_destination": "channel_123"},
         created_at="2024-01-01T00:00:00Z",
     )
 
@@ -102,9 +103,10 @@ async def test_send_message_chunking(adapter, mock_secret_resolver):
     long_content = "A" * 2500
     msg = CommsMessage(
         id="test_id",
-        channel_id="channel_123",
+        channel_id="gobby-internal-channel",
         direction="outbound",
         content=long_content,
+        metadata_json={"platform_destination": "channel_123"},
         created_at="2024-01-01T00:00:00Z",
     )
 

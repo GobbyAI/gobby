@@ -103,6 +103,15 @@ class BaseChannelAdapter(ABC):
         """Poll for new messages (default implementation returns empty list)."""
         return []
 
+    def platform_destination(self, message: CommsMessage) -> str:
+        """Return the adapter-facing destination for an outbound message."""
+        destination = message.metadata_json.get("platform_destination")
+        if destination is None or destination == "":
+            raise ValueError(
+                f"No platform_destination provided in message metadata for {self.channel_type}"
+            )
+        return str(destination)
+
     def set_rate_limit_callback(self, callback: Callable[[float, bool], None]) -> None:
         """Set a callback invoked when an adapter detects a platform rate limit.
 

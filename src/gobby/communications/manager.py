@@ -183,12 +183,18 @@ class CommunicationsManager:
             if default_dest:
                 effective["platform_destination"] = default_dest
 
-            if not effective.get("platform_destination") and session_id:
-                identity = self._identity_manager.get_identity_by_session(channel.id, session_id)
-                if identity and "conversation_reference" in identity.metadata_json:
-                    effective["conversation_reference"] = identity.metadata_json[
-                        "conversation_reference"
-                    ]
+        if session_id:
+            identity = self._identity_manager.get_identity_by_session(channel.id, session_id)
+            if identity and "conversation_reference" in identity.metadata_json:
+                conv_ref = identity.metadata_json["conversation_reference"]
+                if isinstance(conv_ref, dict):
+                    effective.setdefault("conversation_reference", conv_ref)
+                    conversation_id = conv_ref.get("conversation_id")
+                    if conversation_id and not effective.get("platform_destination"):
+                        effective["platform_destination"] = conversation_id
+                    service_url = conv_ref.get("service_url")
+                    if service_url and not effective.get("service_url"):
+                        effective["service_url"] = service_url
                     logger.debug(
                         "Injected conversation_reference for proactive messaging on %s",
                         channel_name,
@@ -441,6 +447,15 @@ class CommunicationsManager:
 
         stored: list[CommsMessage] = []
         for message in messages:
+            platform_channel_id = (
+                message.metadata_json.get("platform_channel_id")
+                or message.channel_id
+                or message.metadata_json.get("chat_id")
+            )
+            if platform_channel_id:
+                message.metadata_json["platform_channel_id"] = str(platform_channel_id)
+            message.channel_id = channel.id
+
             if message.content_type == "reaction":
                 if self.reaction_handler:
                     try:
@@ -453,10 +468,6 @@ class CommunicationsManager:
                     except Exception as e:
                         logger.error(f"Failed to handle reaction: {e}", exc_info=True)
                 continue
-
-            # Ensure channel_id is set
-            if not message.channel_id:
-                message.channel_id = channel.id
 
             # Resolve identity: if identity_id looks like an external_user_id, resolve it
             if message.identity_id:

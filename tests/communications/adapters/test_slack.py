@@ -101,11 +101,12 @@ async def test_send_message_success(
 
         message = CommsMessage(
             id="msg_1",
-            channel_id="C12345",
+            channel_id="gobby-internal-channel",
             direction="outbound",
             content="Hello World",
             created_at="2024-01-01T00:00:00Z",
             platform_thread_id="thread_123",
+            metadata_json={"platform_destination": "C12345"},
         )
 
         ts = await adapter.send_message(message)
@@ -139,10 +140,11 @@ async def test_send_attachment_success(
     test_file.write_text("hello world")
     message = CommsMessage(
         id="msg_1",
-        channel_id="C12345",
+        channel_id="gobby-internal-channel",
         direction="outbound",
         content="Check this out",
         created_at="2024-01-01T00:00:00Z",
+        metadata_json={"platform_destination": "C12345"},
     )
     attachment = MagicMock()
     attachment.filename = "test.txt"
@@ -348,11 +350,12 @@ async def test_send_attachment_three_step_upload(
 
         message = CommsMessage(
             id="msg_1",
-            channel_id="C12345",
+            channel_id="gobby-internal-channel",
             direction="outbound",
             content="Here's the file",
             created_at="2024-01-01T00:00:00Z",
             platform_thread_id="thread_1",
+            metadata_json={"platform_destination": "C12345"},
         )
 
         attachment = CommsAttachment(
@@ -395,12 +398,12 @@ async def test_send_message_blocks(
     blocks = '[{"type": "section", "text": {"type": "mrkdwn", "text": "Hello"}}]'
     message = CommsMessage(
         id="msg_blocks",
-        channel_id="C12345",
+        channel_id="gobby-internal-channel",
         direction="outbound",
         content=blocks,
         created_at="2024-01-01T00:00:00Z",
         content_type="blocks",
-        metadata_json={"fallback_text": "Hello fallback"},
+        metadata_json={"fallback_text": "Hello fallback", "platform_destination": "C12345"},
     )
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
@@ -428,11 +431,12 @@ async def test_send_message_markdown(
 
     message = CommsMessage(
         id="msg_md",
-        channel_id="C12345",
+        channel_id="gobby-internal-channel",
         direction="outbound",
         content="*bold* and _italic_",
         created_at="2024-01-01T00:00:00Z",
         content_type="markdown",
+        metadata_json={"platform_destination": "C12345"},
     )
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
@@ -460,11 +464,12 @@ async def test_send_message_blocks_invalid_json(
 
     message = CommsMessage(
         id="msg_bad",
-        channel_id="C12345",
+        channel_id="gobby-internal-channel",
         direction="outbound",
         content="not json",
         created_at="2024-01-01T00:00:00Z",
         content_type="blocks",
+        metadata_json={"platform_destination": "C12345"},
     )
 
     with pytest.raises(ValueError, match="Invalid Block Kit JSON"):
@@ -482,11 +487,12 @@ async def test_send_message_blocks_not_list(
 
     message = CommsMessage(
         id="msg_obj",
-        channel_id="C12345",
+        channel_id="gobby-internal-channel",
         direction="outbound",
         content='{"type": "section"}',
         created_at="2024-01-01T00:00:00Z",
         content_type="blocks",
+        metadata_json={"platform_destination": "C12345"},
     )
 
     with pytest.raises(ValueError, match="must be a JSON array"):
@@ -504,11 +510,12 @@ async def test_send_message_blocks_missing_type(
 
     message = CommsMessage(
         id="msg_notype",
-        channel_id="C12345",
+        channel_id="gobby-internal-channel",
         direction="outbound",
         content='[{"text": "no type field"}]',
         created_at="2024-01-01T00:00:00Z",
         content_type="blocks",
+        metadata_json={"platform_destination": "C12345"},
     )
 
     with pytest.raises(ValueError, match="must be a dict with a 'type' field"):

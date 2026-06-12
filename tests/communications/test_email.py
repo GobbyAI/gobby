@@ -80,10 +80,10 @@ async def test_send_message(adapter, mock_secret_resolver):
 
     msg = CommsMessage(
         id="test_id",
-        channel_id="user@example.com",
+        channel_id="gobby-internal-channel",
         direction="outbound",
         content="Hello via email",
-        metadata_json={"subject": "Test Subject"},
+        metadata_json={"platform_destination": "user@example.com", "subject": "Test Subject"},
         created_at="2024-01-01T00:00:00Z",
     )
 
@@ -159,10 +159,10 @@ async def test_send_message_with_threading(adapter, mock_secret_resolver):
 
     msg = CommsMessage(
         id="test_id",
-        channel_id="user@example.com",
+        channel_id="gobby-internal-channel",
         direction="outbound",
         content="Thread reply",
-        metadata_json={"subject": "Re: Original"},
+        metadata_json={"platform_destination": "user@example.com", "subject": "Re: Original"},
         platform_thread_id="<original-msg-id@example.com>",
         created_at="2024-01-01T00:00:00Z",
     )

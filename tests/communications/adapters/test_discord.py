@@ -87,10 +87,11 @@ async def test_send_message_success(
 
         message = CommsMessage(
             id="msg_1",
-            channel_id="channel_123",
+            channel_id="gobby-internal-channel",
             direction="outbound",
             content="Hello Discord",
             created_at="2024-01-01T00:00:00Z",
+            metadata_json={"platform_destination": "channel_123"},
         )
 
         msg_id = await adapter.send_message(message)
@@ -184,10 +185,11 @@ async def test_rate_limit_headers_parsed(
 
         message = CommsMessage(
             id="msg_1",
-            channel_id="channel_123",
+            channel_id="gobby-internal-channel",
             direction="outbound",
             content="Test",
             created_at="2024-01-01T00:00:00Z",
+            metadata_json={"platform_destination": "channel_123"},
         )
 
         await adapter.send_message(message)
@@ -227,10 +229,11 @@ async def test_rate_limit_pre_wait(
 
         message = CommsMessage(
             id="msg_1",
-            channel_id="channel_123",
+            channel_id="gobby-internal-channel",
             direction="outbound",
             content="Test",
             created_at="2024-01-01T00:00:00Z",
+            metadata_json={"platform_destination": "channel_123"},
         )
 
         await adapter.send_message(message)
@@ -372,12 +375,12 @@ async def test_send_message_embed(
     embed = json.dumps({"title": "Test", "description": "Hello embed"})
     message = CommsMessage(
         id="msg_embed",
-        channel_id="channel_123",
+        channel_id="gobby-internal-channel",
         direction="outbound",
         content=embed,
         created_at="2024-01-01T00:00:00Z",
         content_type="embed",
-        metadata_json={"fallback_text": "Test fallback"},
+        metadata_json={"fallback_text": "Test fallback", "platform_destination": "channel_123"},
     )
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
@@ -408,11 +411,12 @@ async def test_send_message_embed_list(
     embeds = json.dumps([{"title": "Embed 1"}, {"title": "Embed 2"}])
     message = CommsMessage(
         id="msg_embeds",
-        channel_id="channel_123",
+        channel_id="gobby-internal-channel",
         direction="outbound",
         content=embeds,
         created_at="2024-01-01T00:00:00Z",
         content_type="embed",
+        metadata_json={"platform_destination": "channel_123"},
     )
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
@@ -441,11 +445,12 @@ async def test_send_message_embed_invalid_json(
 
     message = CommsMessage(
         id="msg_bad",
-        channel_id="channel_123",
+        channel_id="gobby-internal-channel",
         direction="outbound",
         content="not json",
         created_at="2024-01-01T00:00:00Z",
         content_type="embed",
+        metadata_json={"platform_destination": "channel_123"},
     )
 
     with pytest.raises(ValueError, match="Invalid embed JSON"):
@@ -465,11 +470,12 @@ async def test_send_message_embed_title_too_long(
     embed = json.dumps({"title": "x" * 257})
     message = CommsMessage(
         id="msg_long_title",
-        channel_id="channel_123",
+        channel_id="gobby-internal-channel",
         direction="outbound",
         content=embed,
         created_at="2024-01-01T00:00:00Z",
         content_type="embed",
+        metadata_json={"platform_destination": "channel_123"},
     )
 
     with pytest.raises(ValueError, match="title exceeds 256 chars"):
@@ -489,11 +495,12 @@ async def test_send_message_embed_too_many_fields(
     embed = json.dumps({"fields": [{"name": f"f{i}", "value": "v"} for i in range(26)]})
     message = CommsMessage(
         id="msg_fields",
-        channel_id="channel_123",
+        channel_id="gobby-internal-channel",
         direction="outbound",
         content=embed,
         created_at="2024-01-01T00:00:00Z",
         content_type="embed",
+        metadata_json={"platform_destination": "channel_123"},
     )
 
     with pytest.raises(ValueError, match="26 fields"):

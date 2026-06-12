@@ -141,11 +141,14 @@ async def test_send_message_adaptive_card(
         card_json = '{"type": "AdaptiveCard", "version": "1.0", "body": []}'
         message = CommsMessage(
             id="1",
-            channel_id="conv-1",
+            channel_id="gobby-internal-uuid",
             direction="outbound",
             content=card_json,
             content_type="adaptive_card",
-            metadata_json={"service_url": "https://smba.trafficmanager.net/apis/"},
+            metadata_json={
+                "service_url": "https://smba.trafficmanager.net/apis/",
+                "platform_destination": "conv-1",
+            },
             created_at="2024-01-01T00:00:00Z",
         )
 
@@ -314,10 +317,13 @@ async def test_token_refresh_lock(
 
         message = CommsMessage(
             id="1",
-            channel_id="conv-1",
+            channel_id="gobby-internal-uuid",
             direction="outbound",
             content="Hello",
-            metadata_json={"service_url": "https://smba.trafficmanager.net/apis/"},
+            metadata_json={
+                "service_url": "https://smba.trafficmanager.net/apis/",
+                "platform_destination": "conv-1",
+            },
             created_at="2024-01-01T00:00:00Z",
         )
 

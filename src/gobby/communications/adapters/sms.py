@@ -105,10 +105,11 @@ class SMSAdapter(BaseChannelAdapter):
 
         chunks = self.chunk_message(message.content, self.max_message_length)
         last_sid = None
+        destination = self.platform_destination(message)
 
         for chunk in chunks:
             payload: dict[str, str] = {
-                "To": message.channel_id,
+                "To": destination,
                 **self._build_sender_payload(),
                 "Body": chunk,
             }
@@ -140,7 +141,7 @@ class SMSAdapter(BaseChannelAdapter):
             )
 
         payload: dict[str, Any] = {
-            "To": message.channel_id,
+            "To": self.platform_destination(message),
             **self._build_sender_payload(),
             "MediaUrl": attachment.platform_url,
         }

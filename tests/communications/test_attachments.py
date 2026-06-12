@@ -279,7 +279,7 @@ async def test_telegram_send_attachment(tmp_path: Path) -> None:
         direction="outbound",
         content="Here is the file",
         created_at="2024-01-01",
-        metadata_json={"chat_id": "12345"},
+        metadata_json={"platform_destination": "12345"},
     )
     att = CommsAttachment(
         id="a1",
@@ -324,9 +324,10 @@ async def test_slack_send_attachment(tmp_path: Path) -> None:
 
     msg = CommsMessage(
         id="m2",
-        channel_id="C123",
+        channel_id="gobby-internal-channel",
         direction="outbound",
         content="Report attached",
+        metadata_json={"platform_destination": "C123"},
         created_at="2024-01-01",
     )
     att = CommsAttachment(
@@ -374,9 +375,10 @@ async def test_discord_send_attachment(tmp_path: Path) -> None:
 
     msg = CommsMessage(
         id="m3",
-        channel_id="discord-ch",
+        channel_id="gobby-internal-channel",
         direction="outbound",
         content="",
+        metadata_json={"platform_destination": "discord-ch"},
         created_at="2024-01-01",
     )
     att = CommsAttachment(
@@ -472,9 +474,10 @@ async def test_sms_send_attachment_with_url() -> None:
 
     msg = CommsMessage(
         id="m6",
-        channel_id="+15559876543",
+        channel_id="gobby-internal-channel",
         direction="outbound",
         content="Check this out",
+        metadata_json={"platform_destination": "+15559876543"},
         created_at="2024-01-01",
     )
     att = CommsAttachment(

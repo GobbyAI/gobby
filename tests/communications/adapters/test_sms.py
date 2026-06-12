@@ -104,10 +104,11 @@ async def test_send_message_success(
 
         message = CommsMessage(
             id="1",
-            channel_id="+0987654321",
+            channel_id="gobby-internal-channel",
             direction="outbound",
             content="Hello world",
             created_at="2024-01-01T00:00:00Z",
+            metadata_json={"platform_destination": "+0987654321"},
         )
 
         msg_id = await adapter.send_message(message)
@@ -196,10 +197,11 @@ async def test_messaging_service_sid(secret_resolver: Any) -> None:
 
         message = CommsMessage(
             id="1",
-            channel_id="+0987654321",
+            channel_id="gobby-internal-channel",
             direction="outbound",
             content="Hello",
             created_at="2024-01-01T00:00:00Z",
+            metadata_json={"platform_destination": "+0987654321"},
         )
         await adapter.send_message(message)
 

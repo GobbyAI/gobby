@@ -135,7 +135,7 @@ async def test_send_message_basic(
             direction="outbound",
             content="Hello world",
             platform_thread_id="reply123",
-            metadata_json={"chat_id": "chat999"},
+            metadata_json={"platform_destination": "chat999"},
             created_at=datetime.now(UTC).isoformat(),
         )
 
@@ -191,7 +191,7 @@ async def test_send_message_chunking(
             direction="outbound",
             content=long_content,
             platform_thread_id="reply123",
-            metadata_json={"chat_id": "chat999"},
+            metadata_json={"platform_destination": "chat999"},
             created_at=datetime.now(UTC).isoformat(),
         )
 
