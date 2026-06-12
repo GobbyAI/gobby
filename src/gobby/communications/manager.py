@@ -37,14 +37,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _WEBHOOK_VERIFICATION_TIMEOUT_SECONDS = 5.0
+_DEFAULT_CHANNEL_SECRET_REFS = {
+    "discord": ("$secret:DISCORD_BOT_TOKEN",),
+    "email": ("$secret:EMAIL_PASSWORD",),
+}
 
 
 class CommunicationsManager:
-    """Central manager for communication channel adapters.
-
-    Owns the adapter lifecycle, message routing, and inbound/outbound coordination.
-    Same pattern as pipeline_executor, memory_manager, etc. on ServiceContainer.
-    """
+    """Central manager for communication channel adapters."""
 
     def __init__(
         self,
@@ -121,9 +121,7 @@ class CommunicationsManager:
                     interval = channel.config_json.get("poll_interval")
                     self._polling_manager.start_polling(channel.name, adapter, interval)
 
-                logger.info(
-                    f"Communications: initialized channel {channel.name!r} ({channel.channel_type})",
-                )
+                logger.info(f"Comms: initialized channel {channel.name!r} ({channel.channel_type})")
             except Exception as e:
                 logger.error(f"Failed to initialize channel {channel.name!r}: {e}", exc_info=True)
         logger.info(f"CommunicationsManager started ({len(self._adapters)} channels active)")
@@ -141,17 +139,7 @@ class CommunicationsManager:
         logger.info("CommunicationsManager stopped")
 
     async def _init_adapter(self, channel: ChannelConfig) -> BaseChannelAdapter:
-        """Lookup adapter class from registry, instantiate, and initialize.
-
-        Args:
-            channel: Channel configuration.
-
-        Returns:
-            Initialized adapter instance.
-
-        Raises:
-            ValueError: If no adapter is registered for the channel type.
-        """
+        """Lookup adapter class from registry, instantiate, and initialize."""
         adapter_cls = get_adapter_class(channel.channel_type)
         if adapter_cls is None:
             raise ValueError(f"No adapter registered for channel type {channel.channel_type!r}")
@@ -174,12 +162,22 @@ class CommunicationsManager:
                 self._rate_limiter.set_backoff(cid, duration)
 
         adapter.set_rate_limit_callback(on_rate_limit)
-        adapter.set_inbound_callback(
-            lambda messages: self.handle_inbound_messages(channel.name, messages)
-        )
+        adapter.set_inbound_callback(lambda msgs: self.handle_inbound_messages(channel.name, msgs))
+
+        secret_refs: set[str] = set()
+        for value in channel.config_json.values():
+            if isinstance(value, str) and value.startswith("$secret:"):
+                secret_refs.add(value)
+        secret_refs.update(_DEFAULT_CHANNEL_SECRET_REFS.get(channel.channel_type, ()))
+        resolved_secret_refs = {}
+        for ref in secret_refs:
+            name = ref.removeprefix("$secret:")
+            resolved = await asyncio.to_thread(self._secret_store.get, name)
+            resolved_secret_refs[ref] = resolved
+            resolved_secret_refs[name] = resolved
 
         def resolve_secret_ref(ref: str) -> str | None:
-            return self._secret_store.get(ref.removeprefix("$secret:"))
+            return resolved_secret_refs.get(ref)
 
         await adapter.initialize(channel, resolve_secret_ref)
         return adapter

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+from collections.abc import Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -555,7 +557,7 @@ async def test_handle_inbound_messages_stores_internal_channel_id(
 
 @pytest.mark.asyncio
 async def test_adapter_rate_limit_callback_wires_to_limiter():
-    """Verify that the adapter's rate_limit_callback correctly updates the manager's rate limiter."""
+    """Verify adapter rate_limit_callback updates the manager's rate limiter."""
     channel = make_channel(channel_id="chan-rate-limit")
     store = make_store([channel])
     manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
@@ -672,6 +674,36 @@ def test_channel_to_dict_redacts_webhook_secret():
 
     assert "webhook_secret" not in payload
     assert payload["active"] is False
+
+
+@pytest.mark.asyncio
+async def test_init_adapter_offloads_secret_ref_store_reads() -> None:
+    loop_thread_id = threading.get_ident()
+    secret_store = make_secret_store()
+
+    def get_secret(name: str) -> str | None:
+        assert threading.get_ident() != loop_thread_id
+        return "resolved-token" if name == "COMMS_TEST_TOKEN" else None
+
+    secret_store.get.side_effect = get_secret
+    manager = CommunicationsManager(make_config(), make_store(), secret_store, MagicMock())
+    channel = make_channel(config_json={"bot_token": "$secret:COMMS_TEST_TOKEN"})
+    adapter = make_adapter()
+
+    async def initialize(
+        _config: ChannelConfig, secret_resolver: Callable[[str], str | None]
+    ) -> None:
+        assert secret_resolver("$secret:COMMS_TEST_TOKEN") == "resolved-token"
+        assert secret_resolver("COMMS_TEST_TOKEN") == "resolved-token"
+
+    adapter.initialize.side_effect = initialize
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=adapter),
+    ):
+        await manager._init_adapter(channel)
+
+    secret_store.get.assert_any_call("COMMS_TEST_TOKEN")
 
 
 @pytest.mark.asyncio
@@ -1077,7 +1109,7 @@ async def test_handle_inbound_populates_thread_map_and_handles_reactions():
         identity_id="user-1",
     )
 
-    # Needs to be dict with .get("channel_type") so _channel_by_name works, but manager.start() does that
+    # Needs to be dict-like so _channel_by_name works; manager.start() does that.
     mock_adapter = make_adapter()
     mock_adapter_cls = MagicMock(return_value=mock_adapter)
     with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
