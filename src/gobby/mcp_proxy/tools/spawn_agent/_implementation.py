@@ -36,6 +36,7 @@ from ._code_index import (
     prepare_spawn_code_index,
     without_code_index_skill,
 )
+from ._failure_cleanup import cleanup_created_isolation, cleanup_failed_spawn
 from ._health import TMUX_HEALTH_CHECK_DELAY, _check_tmux_session_alive, _health_check_tasks
 from ._idempotency import non_actionable_task_spawn_response
 from ._provider_resolution import defaulted_provider, provider_prefixed_model
@@ -222,40 +223,7 @@ async def spawn_agent_impl(
     code_index: Any | None = None,  # CodeIndexContext
     held_task_mutex: Any | None = None,
 ) -> dict[str, Any]:
-    """
-    Core spawn_agent implementation that can be called directly.
-
-    Args:
-        prompt: Required - what the agent should do (with preamble already applied)
-        runner: AgentRunner instance for executing agents
-        agent_body: Optional loaded agent definition body
-        agent_lookup_name: The name used to look up the agent definition
-        task_id: Optional - link to task (supports N, #N, UUID)
-        task_manager: Task manager for task resolution
-        isolation: Isolation mode (none/worktree/clone)
-        branch_name: Git branch name (auto-generated from task if not provided)
-        base_branch: Base branch for worktree/clone
-        clone_id: Existing clone ID to reuse
-        worktree_id: Existing worktree ID to reuse
-        worktree_storage: Storage for worktree records
-        git_manager: Git manager for worktree operations
-        clone_storage: Storage for clone records
-        clone_manager: Git manager for clone operations
-        workflow: Workflow to use
-        mode: Execution mode (interactive/autonomous)
-        provider: AI provider (claude/gemini/qwen/codex/droid)
-        model: Model to use
-        timeout: Timeout in seconds
-        max_turns: Maximum conversation turns
-        parent_session_id: Parent session ID
-        project_path: Project path override
-        initial_variables: Pre-built initial variables from factory (merged with impl's own)
-        session_manager: SessionManager for mode=self
-        db: HubDatabase for mode=self
-
-    Returns:
-        Dict with success status, run_id, child_session_id, isolation metadata
-    """
+    """Core spawn_agent implementation used by the MCP tool and direct callers."""
     # 0. Plan-validation gate for planning agents.
     # planner / plan-adversary spawns refuse to start when the task's
     # plan artifact fails the Plan-Coverage Contract validator. Catches
@@ -529,7 +497,7 @@ async def spawn_agent_impl(
             clone_storage=clone_storage,
         )
 
-    # 7. Prepare environment (worktree/clone creation) — skipped if clone_id was reused
+    cleanup_isolation_on_failure = not (worktree_id or clone_id)
     if isolation_ctx is None:
         try:
             isolation_ctx = await handler.prepare_environment(spawn_config)
@@ -544,6 +512,9 @@ async def spawn_agent_impl(
     if effective_isolation in {"worktree", "clone"}:
         config_error = provider_mcp_config_error(isolation_ctx.cwd, effective_provider)
         if config_error is not None:
+            await cleanup_created_isolation(
+                handler, spawn_config, cleanup=cleanup_isolation_on_failure
+            )
             return {"success": False, "error": config_error}
     code_index_preflight = await prepare_spawn_code_index(
         cwd=isolation_ctx.cwd,
@@ -554,6 +525,7 @@ async def spawn_agent_impl(
         task_category=task_category,
     )
     if code_index_preflight.error is not None:
+        await cleanup_created_isolation(handler, spawn_config, cleanup=cleanup_isolation_on_failure)
         return {"success": False, "error": code_index_preflight.error}
     code_index_preflight_warning = code_index_preflight.warning
     code_index_preflight_env = code_index_preflight.env or {}
@@ -704,9 +676,13 @@ async def spawn_agent_impl(
             parent_session_id=parent_session_id,
         )
         if active_response is not None:
+            await cleanup_created_isolation(
+                handler, spawn_config, cleanup=cleanup_isolation_on_failure
+            )
             return active_response
     lease_response = task_spawn_lease.acquire()
     if lease_response is not None:
+        await cleanup_created_isolation(handler, spawn_config, cleanup=cleanup_isolation_on_failure)
         return lease_response
     if resolved_task_id and runner.run_storage:
         active_response = active_task_response_if_blocked(
@@ -718,6 +694,9 @@ async def spawn_agent_impl(
         )
         if active_response is not None:
             task_spawn_lease.release_unattached()
+            await cleanup_created_isolation(
+                handler, spawn_config, cleanup=cleanup_isolation_on_failure
+            )
             return active_response
 
     async with reserve_agent_slot(
@@ -727,8 +706,23 @@ async def spawn_agent_impl(
     ) as slot_response:
         if slot_response is not None:
             task_spawn_lease.release_unattached()
+            await cleanup_created_isolation(
+                handler, spawn_config, cleanup=cleanup_isolation_on_failure
+            )
             return slot_response
-        spawn_result = await execute_spawn(spawn_request)
+        try:
+            spawn_result = await execute_spawn(spawn_request)
+        except Exception as exc:
+            task_spawn_lease.release_unattached()
+            await cleanup_failed_spawn(
+                runner,
+                run_id,
+                str(exc),
+                handler,
+                spawn_config,
+                cleanup_isolation=cleanup_isolation_on_failure,
+            )
+            return {"success": False, "error": str(exc), "reasoning": reasoning.to_dict()}
         if spawn_result.success:
             attach_error = task_spawn_lease.attach(run_id)
             if attach_error is not None:
@@ -953,12 +947,16 @@ async def spawn_agent_impl(
             _health_check_tasks.add(health_task)
             health_task.add_done_callback(_health_check_tasks.discard)
     else:
-        # Spawn failed — mark DB record as failed
         task_spawn_lease.release_unattached()
-        try:
-            runner.run_storage.fail(run_id, error=spawn_result.error or "Spawn failed")
-        except Exception as e:
-            logger.warning(f"Failed to mark agent_run {run_id} as failed: {e}")
+        await cleanup_failed_spawn(
+            runner,
+            run_id,
+            spawn_result.error or "Spawn failed",
+            handler,
+            spawn_config,
+            cleanup_isolation=cleanup_isolation_on_failure,
+            child_session_id=spawn_result.child_session_id,
+        )
 
     # 13. Return response with isolation metadata
     if not spawn_result.success:

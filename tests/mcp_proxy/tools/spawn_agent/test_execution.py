@@ -9,6 +9,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.agents.isolation import IsolationContext
+from gobby.agents.session import ChildSessionManager
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
@@ -652,6 +653,101 @@ class TestSpawnAgentPreRegistration:
             mock_runner.run_storage.fail.assert_called_once()
             assert mock_runner.run_storage.fail.call_count == 1
             assert mock_runner.run_storage.fail.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_spawn_exception_fails_run_and_cleans_child_session(
+        self,
+        temp_db,
+        sample_project: dict[str, object],
+        mock_runner,
+        agent_body,
+    ) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+        session_manager = SessionManager(temp_db)
+        parent_session_id = _register_parent_session(temp_db, sample_project, "parent-exception")
+        child_manager = ChildSessionManager(session_manager)
+        run_storage = LocalAgentRunManager(temp_db)
+        mock_runner.child_session_manager = child_manager
+        mock_runner._child_session_manager = child_manager
+        mock_runner.run_storage = run_storage
+        captured: dict[str, str] = {}
+
+        async def execute_spawn(request) -> None:
+            child_session_id = session_manager.register_session(
+                external_id=request.session_id,
+                machine_id="machine-1",
+                source="test-agent",
+                project_id=request.project_id,
+                parent_session_id=request.parent_session_id,
+                title="Child",
+            )
+            run_storage.create(
+                parent_session_id=request.parent_session_id,
+                provider=request.provider,
+                prompt=request.prompt,
+                child_session_id=child_session_id,
+                run_id=request.agent_run_id,
+            )
+            captured["run_id"] = request.agent_run_id
+            captured["child_session_id"] = child_session_id
+            raise RuntimeError("tmux spawn exploded")
+
+        registry = create_spawn_agent_registry(mock_runner, db=temp_db)
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
+                return_value=agent_body,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
+            ) as mock_ctx,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_isolation_handler"
+            ) as mock_get_handler,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.provider_mcp_config_error",
+                return_value=None,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
+                new=AsyncMock(side_effect=execute_spawn),
+            ),
+        ):
+            mock_ctx.return_value = {
+                "id": str(sample_project["id"]),
+                "project_path": str(sample_project["repo_path"]),
+            }
+            mock_handler = MagicMock()
+            mock_handler.prepare_environment = AsyncMock(
+                return_value=IsolationContext(
+                    cwd=str(sample_project["repo_path"]),
+                    worktree_id="wt-created",
+                    isolation_type="worktree",
+                )
+            )
+            mock_handler.cleanup_environment = AsyncMock()
+            mock_handler.build_context_prompt.return_value = "Test prompt"
+            mock_get_handler.return_value = mock_handler
+
+            result = await registry.call(
+                "spawn_agent",
+                {
+                    "prompt": "Test prompt",
+                    "parent_session_id": parent_session_id,
+                    "isolation": "worktree",
+                },
+            )
+
+        run = run_storage.get(captured["run_id"])
+        assert result["success"] is False
+        assert result["error"] == "tmux spawn exploded"
+        assert run is not None
+        assert run.status == "error"
+        assert run.error == "tmux spawn exploded"
+        assert run.child_session_id is None
+        assert session_manager.get(captured["child_session_id"]) is None
+        mock_handler.cleanup_environment.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_status_transitions_to_running_on_success(self, mock_runner, agent_body):

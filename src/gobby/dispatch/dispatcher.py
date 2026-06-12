@@ -191,6 +191,9 @@ async def _run_heartbeat_unlocked(
     reclaimed = sweep_stale_claims(resolved_db, project_id=project_id)
     if reclaimed:
         logger.info("Dispatcher reclaimed %d task(s) from dead sessions", reclaimed)
+    pending_reaped = LocalAgentRunManager(resolved_db).cleanup_stale_pending_runs()
+    if pending_reaped:
+        logger.info("Dispatcher failed %d stale pending agent run(s)", pending_reaped)
 
     cap = MAX_ACTIVE_AGENTS if max_active_agents is None else max_active_agents
     candidates = list_automation_candidates(resolved_db, project_id=project_id)

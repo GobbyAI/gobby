@@ -1,0 +1,91 @@
+"""Cleanup helpers for failed spawn attempts."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+
+async def cleanup_created_isolation(
+    handler: Any,
+    spawn_config: Any,
+    *,
+    cleanup: bool,
+) -> None:
+    if not cleanup:
+        return
+    try:
+        await handler.cleanup_environment(spawn_config)
+    except Exception as exc:
+        logging.getLogger(__name__).warning("Spawn failure isolation cleanup failed: %s", exc)
+
+
+async def cleanup_failed_spawn(
+    runner: Any,
+    run_id: str,
+    error: str,
+    handler: Any,
+    spawn_config: Any,
+    *,
+    cleanup_isolation: bool,
+    child_session_id: str | None = None,
+) -> None:
+    run_storage = getattr(runner, "run_storage", None)
+    if run_storage is not None:
+        child_session_id = _fail_run(run_storage, run_id, error, child_session_id)
+    await cleanup_created_isolation(handler, spawn_config, cleanup=cleanup_isolation)
+    _delete_child_session(runner, run_storage, run_id, child_session_id)
+
+
+def _fail_run(
+    run_storage: Any,
+    run_id: str,
+    error: str,
+    child_session_id: str | None,
+) -> str | None:
+    try:
+        failed_run = run_storage.fail(run_id, error=error)
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "Failed to mark agent_run %s as failed: %s", run_id, exc
+        )
+        failed_run = None
+    if failed_run is None:
+        try:
+            failed_run = run_storage.get(run_id)
+        except Exception:
+            failed_run = None
+    return _string_attr(failed_run, "child_session_id") or child_session_id
+
+
+def _delete_child_session(
+    runner: Any,
+    run_storage: Any,
+    run_id: str,
+    child_session_id: str | None,
+) -> None:
+    if child_session_id is None:
+        return
+    session_storage = getattr(getattr(runner, "child_session_manager", None), "_storage", None)
+    if session_storage is None:
+        return
+    try:
+        db = getattr(run_storage, "db", None) or getattr(session_storage, "db", None)
+        if db is not None:
+            with db.transaction() as conn:
+                conn.execute(
+                    "UPDATE agent_runs SET child_session_id = NULL WHERE id = %s",
+                    (run_id,),
+                )
+        session_storage.delete(child_session_id)
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "Failed to delete failed spawn child session %s: %s",
+            child_session_id,
+            exc,
+        )
+
+
+def _string_attr(obj: Any, name: str) -> str | None:
+    value = getattr(obj, name, None)
+    return value if isinstance(value, str) else None
