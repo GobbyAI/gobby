@@ -1776,7 +1776,9 @@ async def test_daemon_codex_text_generate_adapter_uses_configured_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = HangingCodexAppServerClient()
-    monkeypatch.setattr("gobby.ai.text_generation._codex_app_server_client", lambda: client)
+    monkeypatch.setattr(
+        "gobby.ai._text_generation_adapters._codex_app_server_client", lambda: client
+    )
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
@@ -2100,7 +2102,7 @@ async def test_build_daemon_text_generation_service_plumbs_candidate_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = HangingACPClient()
-    monkeypatch.setattr("gobby.ai.text_generation._gemini_acp_client", lambda: client)
+    monkeypatch.setattr("gobby.ai._text_generation_adapters._gemini_acp_client", lambda: client)
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
