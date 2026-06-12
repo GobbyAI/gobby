@@ -113,7 +113,7 @@ async def build_stop_target(
 
     updated = 0
     for task in tasks:
-        task_manager.update_task(task.id, allow_automation=False, unattended=False)
+        task_manager.update_task(task.id, allow_automation=False)
         updated += 1
 
     await _cancel_active_agents(db, agents, services=services)
@@ -151,7 +151,7 @@ async def build_resume_target(
 
     updated = 0
     for task in tasks:
-        task_manager.update_task(task.id, allow_automation=True, unattended=True)
+        task_manager.update_task(task.id, allow_automation=True)
         updated += 1
 
     mutexes_cleared = _clear_stale_dispatch_mutexes(db, task_ids)
