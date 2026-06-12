@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from gobby.communications.adapters.slack import SlackAdapter
+from gobby.communications.adapters.telegram import TelegramAdapter
 from gobby.communications.manager import CommunicationsManager
 from gobby.communications.models import ChannelConfig, CommsIdentity, CommsMessage
 from gobby.config.communications import ChannelDefaults, CommunicationsConfig
@@ -196,6 +199,51 @@ async def test_send_message_adapter_failure_marks_failed():
     assert msg.status == "failed"
     assert "network error" in (msg.error or "")
     store.create_message.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_send_message_telegram_4xx_redacts_token_from_logs_and_storage(caplog):
+    token = "test-telegram-token"
+    channel = make_channel(
+        channel_type="telegram",
+        config_json={
+            "bot_token": "$secret:TELEGRAM_BOT_TOKEN",
+            "default_destination": "chat999",
+        },
+    )
+    store = make_store([channel])
+    secret_store = make_secret_store()
+    secret_store.get.return_value = token
+    manager = CommunicationsManager(make_config(), store, secret_store, MagicMock())
+
+    mock_post = AsyncMock()
+
+    async def side_effect(url, **kwargs):
+        request = httpx.Request("POST", url)
+        if "deleteWebhook" in url:
+            return httpx.Response(200, request=request, json={"ok": True})
+        return httpx.Response(400, request=request, json={"ok": False})
+
+    mock_post.side_effect = side_effect
+
+    with (
+        patch("httpx.AsyncClient") as MockClient,
+        patch("gobby.communications.manager.get_adapter_class", return_value=TelegramAdapter),
+    ):
+        MockClient.return_value.post = mock_post
+        await manager.start()
+
+        with caplog.at_level(logging.ERROR, logger="gobby.communications.manager"):
+            msg = await manager.send_message("test-channel", "Hello!")
+
+    stored_message = store.create_message.call_args.args[0]
+    assert msg.status == "failed"
+    assert msg.error == stored_message.error
+    assert stored_message.error is not None
+    assert "400" in stored_message.error
+    assert "***" in stored_message.error
+    assert token not in stored_message.error
+    assert token not in caplog.text
 
 
 @pytest.mark.asyncio

@@ -37,6 +37,36 @@ class TelegramAdapter(BaseChannelAdapter):
         self._api_base: str | None = None
         self._offset: int = 0
 
+    def _redact_bot_token(self, value: str) -> str:
+        """Replace the resolved Telegram bot token in error strings."""
+        if not self._bot_token:
+            return value
+        return value.replace(self._bot_token, "***")
+
+    def _redacted_status_error(self, exc: httpx.HTTPStatusError) -> httpx.HTTPStatusError:
+        request = exc.request
+        redacted_request = httpx.Request(
+            request.method,
+            self._redact_bot_token(str(request.url)),
+            headers=request.headers,
+        )
+        redacted_response = httpx.Response(
+            exc.response.status_code,
+            headers=exc.response.headers,
+            request=redacted_request,
+        )
+        return httpx.HTTPStatusError(
+            self._redact_bot_token(str(exc)),
+            request=redacted_request,
+            response=redacted_response,
+        )
+
+    def _raise_for_status_with_redacted_token(self, response: httpx.Response) -> None:
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise self._redacted_status_error(exc) from None
+
     @property
     def channel_type(self) -> str:
         """The unique type identifier for this channel."""
@@ -89,12 +119,12 @@ class TelegramAdapter(BaseChannelAdapter):
                 payload["secret_token"] = webhook_secret
 
             response = await self._client.post(f"{self._api_base}/setWebhook", json=payload)
-            response.raise_for_status()
+            self._raise_for_status_with_redacted_token(response)
             logger.info("Successfully registered Telegram webhook")
         else:
             # If polling is intended, delete webhook
             response = await self._client.post(f"{self._api_base}/deleteWebhook")
-            response.raise_for_status()
+            self._raise_for_status_with_redacted_token(response)
             logger.info("Cleared Telegram webhook for polling mode")
 
     async def send_message(self, message: CommsMessage) -> str | None:
@@ -118,7 +148,12 @@ class TelegramAdapter(BaseChannelAdapter):
                 payload["reply_to_message_id"] = message.platform_thread_id
 
             url = f"{self._api_base}/sendMessage"
-            response = await self._retry_request(functools.partial(client.post, url, json=payload))
+            try:
+                response = await self._retry_request(
+                    functools.partial(client.post, url, json=payload)
+                )
+            except httpx.HTTPStatusError as exc:
+                raise self._redacted_status_error(exc) from None
 
             data = response.json()
             if data.get("ok"):
@@ -145,9 +180,12 @@ class TelegramAdapter(BaseChannelAdapter):
             data["reply_to_message_id"] = message.platform_thread_id
 
         url = f"{self._api_base}/sendDocument"
-        response = await self._retry_request(
-            functools.partial(client.post, url, data=data, files=files)
-        )
+        try:
+            response = await self._retry_request(
+                functools.partial(client.post, url, data=data, files=files)
+            )
+        except httpx.HTTPStatusError as exc:
+            raise self._redacted_status_error(exc) from None
         result = response.json()
         if result.get("ok"):
             return str(result["result"]["message_id"])
@@ -242,7 +280,7 @@ class TelegramAdapter(BaseChannelAdapter):
         response = await self._client.get(
             f"{self._api_base}/getUpdates", params={"offset": self._offset, "timeout": 30}
         )
-        response.raise_for_status()
+        self._raise_for_status_with_redacted_token(response)
 
         data = response.json()
         if not data.get("ok"):

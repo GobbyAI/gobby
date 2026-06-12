@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from gobby.communications.adapters.telegram import TelegramAdapter
@@ -152,6 +153,48 @@ async def test_send_message_basic(
             "text": "Hello world",
             "reply_to_message_id": "reply123",
         }
+
+
+@pytest.mark.asyncio
+async def test_send_message_http_status_error_redacts_bot_token(
+    adapter: TelegramAdapter,
+    channel_config: ChannelConfig,
+    secret_resolver: Callable[[str], str | None],
+) -> None:
+    token = "test-telegram-token"
+    mock_post = AsyncMock()
+
+    async def side_effect(url, **kwargs):
+        request = httpx.Request("POST", url)
+        if "deleteWebhook" in url:
+            return httpx.Response(200, request=request, json={"ok": True})
+        return httpx.Response(400, request=request, json={"ok": False})
+
+    mock_post.side_effect = side_effect
+
+    with patch("httpx.AsyncClient") as MockClient:
+        mock_client_instance = MockClient.return_value
+        mock_client_instance.post = mock_post
+
+        await adapter.initialize(channel_config, secret_resolver)
+
+        message = CommsMessage(
+            id="msg1",
+            channel_id=channel_config.id,
+            direction="outbound",
+            content="Hello world",
+            metadata_json={"platform_destination": "chat999"},
+            created_at=datetime.now(UTC).isoformat(),
+        )
+
+        with pytest.raises(httpx.HTTPStatusError) as exc_info:
+            await adapter.send_message(message)
+
+    exc = exc_info.value
+    assert exc.response.status_code == 400
+    assert token not in str(exc)
+    assert token not in str(exc.request.url)
+    assert "***" in str(exc)
 
 
 @pytest.mark.asyncio
