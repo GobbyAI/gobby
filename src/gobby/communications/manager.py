@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.communications.adapters import get_adapter_class
 from gobby.communications.attachments import AttachmentManager
 from gobby.communications.identities import IdentityManager
+from gobby.communications.inbound_mode import channel_for_adapter_init, should_poll
 from gobby.communications.models import (
     ChannelConfig,
     CommsAttachment,
@@ -116,8 +117,7 @@ class CommunicationsManager:
                 )
                 self._rate_limiter.configure_channel(channel.id, int(rate), int(burst))
 
-                # Start polling if supported and no webhook URL configured
-                if adapter.supports_polling and not self._config.webhook_base_url:
+                if should_poll(adapter, self._config.webhook_base_url):
                     interval = channel.config_json.get("poll_interval")
                     self._polling_manager.start_polling(channel.name, adapter, interval)
 
@@ -179,7 +179,8 @@ class CommunicationsManager:
         def resolve_secret_ref(ref: str) -> str | None:
             return resolved_secret_refs.get(ref)
 
-        await adapter.initialize(channel, resolve_secret_ref)
+        init_channel = channel_for_adapter_init(channel, adapter, self._config.webhook_base_url)
+        await adapter.initialize(init_channel, resolve_secret_ref)
         return adapter
 
     def _configure_channel_rate_limit(self, channel: ChannelConfig) -> None:
@@ -202,7 +203,7 @@ class CommunicationsManager:
         self._channel_init_errors.pop(channel.name, None)
         self._configure_channel_rate_limit(channel)
 
-        if adapter.supports_polling and not self._config.webhook_base_url:
+        if should_poll(adapter, self._config.webhook_base_url):
             interval = channel.config_json.get("poll_interval")
             self._polling_manager.start_polling(channel.name, adapter, interval)
 

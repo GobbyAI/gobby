@@ -117,6 +117,78 @@ async def test_start_loads_channels():
 
 
 @pytest.mark.asyncio
+async def test_start_polls_poll_only_adapter_with_global_webhook_url():
+    """Poll-only adapters keep polling when webhook-capable channels use webhooks."""
+    channel = make_channel()
+    store = make_store([channel])
+    config = make_config()
+    config.webhook_base_url = "https://example.com"
+    manager = CommunicationsManager(config, store, make_secret_store(), MagicMock())
+    manager._polling_manager.start_polling = MagicMock()
+
+    adapter = make_adapter(supports_webhooks=False, supports_polling=True)
+    adapter_cls = MagicMock(return_value=adapter)
+
+    with patch("gobby.communications.manager.get_adapter_class", return_value=adapter_cls):
+        await manager.start()
+
+    assert manager._adapters[channel.name] is adapter
+    assert manager._channel_by_name[channel.name] is channel
+    manager._polling_manager.start_polling.assert_called_once_with(channel.name, adapter, None)
+
+
+@pytest.mark.asyncio
+async def test_telegram_init_uses_global_webhook_url_as_inbound_source():
+    """Telegram webhook setup follows the manager's global inbound mode decision."""
+    channel = make_channel(channel_type="telegram", config_json={})
+    store = make_store([channel])
+    config = make_config()
+    config.webhook_base_url = "https://global.example/hooks"
+    manager = CommunicationsManager(config, store, make_secret_store(), MagicMock())
+    manager._polling_manager.start_polling = MagicMock()
+
+    adapter = make_adapter(channel_type="telegram", supports_webhooks=True, supports_polling=True)
+
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=adapter),
+    ):
+        await manager.start()
+
+    init_channel = adapter.initialize.call_args.args[0]
+    assert manager._adapters[channel.name] is adapter
+    assert "webhook_base_url" not in channel.config_json
+    assert init_channel.config_json["webhook_base_url"] == "https://global.example/hooks"
+    manager._polling_manager.start_polling.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_telegram_init_removes_stale_channel_webhook_url_when_polling():
+    """Telegram polling setup cannot leave a channel-level webhook registered."""
+    channel = make_channel(
+        channel_type="telegram",
+        config_json={"webhook_base_url": "https://stale.example/hooks"},
+    )
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    manager._polling_manager.start_polling = MagicMock()
+
+    adapter = make_adapter(channel_type="telegram", supports_webhooks=True, supports_polling=True)
+
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=adapter),
+    ):
+        await manager.start()
+
+    init_channel = adapter.initialize.call_args.args[0]
+    assert manager._adapters[channel.name] is adapter
+    assert channel.config_json["webhook_base_url"] == "https://stale.example/hooks"
+    assert "webhook_base_url" not in init_channel.config_json
+    manager._polling_manager.start_polling.assert_called_once_with(channel.name, adapter, None)
+
+
+@pytest.mark.asyncio
 async def test_start_skips_unknown_adapter():
     """start() logs error but continues if adapter type is unknown."""
     channel = make_channel(channel_type="unknown_type")
