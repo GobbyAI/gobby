@@ -984,6 +984,11 @@ class TestGetSandboxResolver:
         resolver = get_sandbox_resolver("qwen")
         assert isinstance(resolver, QwenSandboxResolver)
 
+    def test_droid_raises_value_error(self) -> None:
+        """Test that providers without sandbox support raise ValueError."""
+        with pytest.raises(ValueError, match="Unknown CLI"):
+            get_sandbox_resolver("droid")
+
     def test_unknown_cli_raises_value_error(self) -> None:
         """Test that unknown CLI raises ValueError."""
         with pytest.raises(ValueError, match="Unknown CLI"):

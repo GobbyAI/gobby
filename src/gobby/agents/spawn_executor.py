@@ -15,11 +15,6 @@ from typing import TYPE_CHECKING, cast
 from gobby.agents.constants import ALL_TERMINAL_ENV_VARS
 from gobby.agents.resume_metadata import merge_resume_metadata_env
 from gobby.agents.sandbox import (
-    ClaudeSandboxResolver,
-    CodexSandboxResolver,
-    GeminiSandboxResolver,
-    GrokSandboxResolver,
-    QwenSandboxResolver,
     compute_sandbox_paths,
     get_sandbox_resolver,
 )
@@ -318,7 +313,7 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
     sandbox_args: list[str] = []
     sandbox_env: dict[str, str] = {}
     if sandbox_config and sandbox_config.enabled:
-        resolver = ClaudeSandboxResolver()
+        resolver = get_sandbox_resolver("claude")
         paths = compute_sandbox_paths(
             config=sandbox_config,
             workspace_path=request.cwd,
@@ -441,7 +436,7 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
     sandbox_args: list[str] = []
     sandbox_env: dict[str, str] = {}
     if sandbox_config and sandbox_config.enabled:
-        resolver = GeminiSandboxResolver()
+        resolver = get_sandbox_resolver("gemini")
         paths = compute_sandbox_paths(
             config=sandbox_config,
             workspace_path=request.cwd,
@@ -568,7 +563,7 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
     sandbox_args: list[str] = []
     sandbox_env: dict[str, str] = {}
     if sandbox_config and sandbox_config.enabled:
-        resolver = QwenSandboxResolver()
+        resolver = get_sandbox_resolver("qwen")
         paths = compute_sandbox_paths(
             config=sandbox_config,
             workspace_path=request.cwd,
@@ -676,7 +671,7 @@ async def _spawn_grok_terminal(request: SpawnRequest) -> SpawnResult:
     sandbox_args: list[str] = []
     sandbox_env: dict[str, str] = {}
     if sandbox_config and sandbox_config.enabled:
-        resolver = GrokSandboxResolver()
+        resolver = get_sandbox_resolver("grok")
         paths = compute_sandbox_paths(
             config=sandbox_config,
             workspace_path=request.cwd,
@@ -796,7 +791,7 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
     sandbox_config = _sandbox_config_for_spawn(request.sandbox_config, spawn_context.env_vars)
     sandbox_args: list[str] = []
     if sandbox_config and sandbox_config.enabled:
-        resolver = CodexSandboxResolver()
+        resolver = get_sandbox_resolver("codex")
         paths = compute_sandbox_paths(
             config=sandbox_config,
             workspace_path=request.cwd,

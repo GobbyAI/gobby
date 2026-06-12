@@ -18,6 +18,8 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field
 
+from gobby.agents.provider_capabilities import provider_supports_sandbox
+
 
 class SandboxConfig(BaseModel):
     """
@@ -499,7 +501,7 @@ def get_sandbox_resolver(cli: str) -> SandboxResolver:
         "qwen": QwenSandboxResolver,
     }
 
-    if cli not in resolvers:
+    if not provider_supports_sandbox(cli) or cli not in resolvers:
         raise ValueError(f"Unknown CLI: {cli}. Must be one of: {list(resolvers.keys())}")
 
     return resolvers[cli]()
