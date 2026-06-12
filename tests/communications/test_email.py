@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aioimaplib
+import aiosmtplib
 import pytest
 
 from gobby.communications.adapters.email import EmailAdapter
@@ -47,6 +48,7 @@ async def test_initialize(adapter, mock_secret_resolver):
         MockSMTP.return_value = mock_smtp_inst
 
         mock_imap_inst = AsyncMock()
+        mock_imap_inst.login.return_value = _imap_response("OK", [b"Authenticated"])
         MockIMAP.return_value = mock_imap_inst
 
         await adapter.initialize(config, mock_secret_resolver)
@@ -118,6 +120,7 @@ async def test_poll(adapter, mock_secret_resolver):
 
     with patch("aiosmtplib.SMTP"), patch("aioimaplib.IMAP4_SSL") as MockIMAP:
         mock_imap_inst = AsyncMock()
+        mock_imap_inst.login.return_value = _imap_response("OK", [b"Authenticated"])
         MockIMAP.return_value = mock_imap_inst
         await adapter.initialize(config, mock_secret_resolver)
 
@@ -214,6 +217,7 @@ async def test_poll_marks_messages_as_seen(adapter, mock_secret_resolver):
 
     with patch("aiosmtplib.SMTP"), patch("aioimaplib.IMAP4_SSL") as MockIMAP:
         mock_imap_inst = AsyncMock()
+        mock_imap_inst.login.return_value = _imap_response("OK", [b"Authenticated"])
         MockIMAP.return_value = mock_imap_inst
         await adapter.initialize(config, mock_secret_resolver)
 
@@ -247,6 +251,7 @@ async def test_poll_does_not_mark_unparsed_fetch_as_seen(adapter, mock_secret_re
 
     with patch("aiosmtplib.SMTP"), patch("aioimaplib.IMAP4_SSL") as MockIMAP:
         mock_imap_inst = AsyncMock()
+        mock_imap_inst.login.return_value = _imap_response("OK", [b"Authenticated"])
         MockIMAP.return_value = mock_imap_inst
         await adapter.initialize(config, mock_secret_resolver)
 
@@ -296,6 +301,263 @@ async def test_imap_oauth2_login_rejects_non_ok_response(adapter):
 
     with pytest.raises(ValueError, match="IMAP XOAUTH2 login failed: NO"):
         await adapter._imap_login(imap_client)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_smtp_oauth2_login_rejects_non_success_response(adapter):
+    adapter._auth_method = "oauth2"
+    adapter._from_address = "bot@example.com"
+    adapter._oauth2_access_token = "access-token"
+    adapter._oauth2_token_expiry = 9999999999
+    smtp_client = AsyncMock()
+    smtp_client.execute_command.return_value = aiosmtplib.SMTPResponse(535, "Invalid credentials")
+
+    with pytest.raises(ValueError, match="SMTP XOAUTH2 login failed"):
+        await adapter._smtp_login(smtp_client)
+
+
+@pytest.mark.asyncio
+async def test_imap_password_login_rejects_non_ok_response(adapter):
+    adapter._auth_method = "password"
+    adapter._from_address = "bot@example.com"
+    adapter._password = "pass123"
+    imap_client = AsyncMock()
+    imap_client.login.return_value = _imap_response("NO", [b"Invalid credentials"])
+
+    with pytest.raises(ValueError, match="IMAP login failed: NO"):
+        await adapter._imap_login(imap_client)
+
+
+@pytest.mark.asyncio
+async def test_initialize_rejects_plaintext_smtp_credentials(adapter, mock_secret_resolver):
+    config = ChannelConfig(
+        id="test",
+        channel_type="email",
+        name="test",
+        enabled=True,
+        created_at="2024-01-01T00:00:00Z",
+        updated_at="2024-01-01T00:00:00Z",
+        config_json={
+            "from_address": "bot@example.com",
+            "smtp_host": "smtp.example.com",
+            "smtp_port": 25,
+        },
+    )
+
+    with patch("aiosmtplib.SMTP"):
+        with pytest.raises(ValueError, match="Refusing to send email credentials"):
+            await adapter.initialize(config, mock_secret_resolver)
+
+
+@pytest.mark.asyncio
+async def test_initialize_allows_plaintext_smtp_credentials_with_override(
+    adapter, mock_secret_resolver
+):
+    config = ChannelConfig(
+        id="test",
+        channel_type="email",
+        name="test",
+        enabled=True,
+        created_at="2024-01-01T00:00:00Z",
+        updated_at="2024-01-01T00:00:00Z",
+        config_json={
+            "from_address": "bot@example.com",
+            "smtp_host": "smtp.example.com",
+            "smtp_port": 25,
+            "allow_plaintext_credentials": True,
+        },
+    )
+
+    with patch("aiosmtplib.SMTP") as MockSMTP:
+        mock_smtp_inst = AsyncMock()
+        MockSMTP.return_value = mock_smtp_inst
+        await adapter.initialize(config, mock_secret_resolver)
+
+    MockSMTP.assert_called_once_with(
+        hostname="smtp.example.com",
+        port=25,
+        use_tls=False,
+        start_tls=False,
+    )
+    assert adapter._allow_plaintext_credentials is True
+    assert adapter._smtp_client is mock_smtp_inst
+    mock_smtp_inst.login.assert_called_once_with("bot@example.com", "pass123")
+
+
+@pytest.mark.asyncio
+async def test_imap_reconnect_catches_abort(adapter, mock_secret_resolver):
+    config = ChannelConfig(
+        id="test",
+        channel_type="email",
+        name="test",
+        enabled=True,
+        created_at="2024-01-01T00:00:00Z",
+        updated_at="2024-01-01T00:00:00Z",
+        config_json={"from_address": "bot@example.com", "imap_host": "imap.example.com"},
+    )
+
+    with patch("aioimaplib.IMAP4_SSL") as MockIMAP:
+        old_imap = AsyncMock()
+        old_imap.login.return_value = _imap_response("OK", [b"Authenticated"])
+        old_imap.noop.side_effect = aioimaplib.Abort("connection aborted")
+        new_imap = AsyncMock()
+        new_imap.login.return_value = _imap_response("OK", [b"Authenticated"])
+        MockIMAP.side_effect = [old_imap, new_imap]
+
+        await adapter.initialize(config, mock_secret_resolver)
+        await adapter._ensure_imap_connected()
+
+    old_imap.logout.assert_called_once()
+    new_imap.wait_hello_from_server.assert_called_once()
+    new_imap.login.assert_called_once_with("bot@example.com", "pass123")
+    assert adapter._imap_client is new_imap
+
+
+@pytest.mark.asyncio
+async def test_reconnect_checks_are_lock_guarded(adapter):
+    class RecordingAsyncLock:
+        def __init__(self) -> None:
+            self.enter_count = 0
+
+        async def __aenter__(self) -> None:
+            self.enter_count += 1
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    smtp_lock = RecordingAsyncLock()
+    imap_lock = RecordingAsyncLock()
+
+    async def recording_retry(coro_factory, max_retries=3, backoff_base=0.5):
+        return await coro_factory()
+
+    adapter._smtp_client = AsyncMock()
+    adapter._smtp_client.is_connected = True
+    adapter._imap_client = AsyncMock()
+    adapter._smtp_connection_lock = smtp_lock
+    adapter._imap_connection_lock = imap_lock
+    adapter._retry = recording_retry  # type: ignore[method-assign]
+
+    await adapter._ensure_smtp_connected()
+    await adapter._ensure_imap_connected()
+
+    assert smtp_lock.enter_count == 1
+    assert imap_lock.enter_count == 1
+
+
+@pytest.mark.asyncio
+async def test_poll_rejects_comma_separated_from_injection(adapter, mock_secret_resolver):
+    config = ChannelConfig(
+        id="test",
+        channel_type="email",
+        name="test",
+        enabled=True,
+        created_at="2024-01-01T00:00:00Z",
+        updated_at="2024-01-01T00:00:00Z",
+        config_json={"from_address": "bot@example.com", "imap_host": "imap.example.com"},
+    )
+
+    with patch("aiosmtplib.SMTP"), patch("aioimaplib.IMAP4_SSL") as MockIMAP:
+        mock_imap_inst = AsyncMock()
+        mock_imap_inst.login.return_value = _imap_response("OK", [b"Authenticated"])
+        MockIMAP.return_value = mock_imap_inst
+        await adapter.initialize(config, mock_secret_resolver)
+
+        mock_imap_inst.search.return_value = _imap_response("OK", [b"1"])
+        email_content = (
+            b"From: user@example.com, attacker@example.com\r\n"
+            b"Subject: Test\r\n"
+            b"Message-ID: <m1>\r\n\r\n"
+            b"Body"
+        )
+        mock_imap_inst.fetch.return_value = _imap_response(
+            "OK", [b"1 (RFC822 {100})", email_content, b")"]
+        )
+
+        messages = await adapter.poll()
+
+    assert messages == []
+    mock_imap_inst.store.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_poll_decodes_body_using_part_charset(adapter, mock_secret_resolver):
+    config = ChannelConfig(
+        id="test",
+        channel_type="email",
+        name="test",
+        enabled=True,
+        created_at="2024-01-01T00:00:00Z",
+        updated_at="2024-01-01T00:00:00Z",
+        config_json={"from_address": "bot@example.com", "imap_host": "imap.example.com"},
+    )
+
+    with patch("aiosmtplib.SMTP"), patch("aioimaplib.IMAP4_SSL") as MockIMAP:
+        mock_imap_inst = AsyncMock()
+        mock_imap_inst.login.return_value = _imap_response("OK", [b"Authenticated"])
+        MockIMAP.return_value = mock_imap_inst
+        await adapter.initialize(config, mock_secret_resolver)
+
+        mock_imap_inst.search.return_value = _imap_response("OK", [b"1"])
+        email_content = (
+            b"From: user@example.com\r\n"
+            b"Subject: Test\r\n"
+            b"Message-ID: <m1>\r\n"
+            b"Content-Type: text/plain; charset=iso-8859-1\r\n\r\n"
+            b"caf\xe9"
+        )
+        mock_imap_inst.fetch.return_value = _imap_response(
+            "OK", [b"1 (RFC822 {100})", email_content, b")"]
+        )
+        mock_imap_inst.store.return_value = _imap_response("OK", [b""])
+
+        messages = await adapter.poll()
+
+    assert len(messages) == 1
+    assert messages[0].content == "caf\xe9"
+
+
+@pytest.mark.asyncio
+async def test_poll_returns_already_marked_messages_after_mark_seen_failure(
+    adapter, mock_secret_resolver
+):
+    config = ChannelConfig(
+        id="test",
+        channel_type="email",
+        name="test",
+        enabled=True,
+        created_at="2024-01-01T00:00:00Z",
+        updated_at="2024-01-01T00:00:00Z",
+        config_json={"from_address": "bot@example.com", "imap_host": "imap.example.com"},
+    )
+
+    with patch("aiosmtplib.SMTP"), patch("aioimaplib.IMAP4_SSL") as MockIMAP:
+        mock_imap_inst = AsyncMock()
+        mock_imap_inst.login.return_value = _imap_response("OK", [b"Authenticated"])
+        MockIMAP.return_value = mock_imap_inst
+        await adapter.initialize(config, mock_secret_resolver)
+
+        async def single_try_retry(coro_factory, max_retries=3, backoff_base=0.5):
+            return await coro_factory()
+
+        adapter._retry = single_try_retry  # type: ignore[method-assign]
+
+        mock_imap_inst.search.return_value = _imap_response("OK", [b"1 2"])
+        first_email = b"From: user@example.com\r\nMessage-ID: <m1>\r\n\r\nFirst"
+        second_email = b"From: user@example.com\r\nMessage-ID: <m2>\r\n\r\nSecond"
+        mock_imap_inst.fetch.side_effect = [
+            _imap_response("OK", [b"1 (RFC822 {50})", first_email, b")"]),
+            _imap_response("OK", [b"2 (RFC822 {50})", second_email, b")"]),
+        ]
+        mock_imap_inst.store.side_effect = [
+            _imap_response("OK", [b""]),
+            _imap_response("NO", [b"store failed"]),
+        ]
+
+        messages = await adapter.poll()
+
+    assert [message.platform_message_id for message in messages] == ["<m1>"]
+    assert mock_imap_inst.store.call_count == 2
 
 
 @pytest.mark.asyncio

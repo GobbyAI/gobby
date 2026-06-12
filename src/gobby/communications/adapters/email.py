@@ -10,8 +10,8 @@ import time
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
-from email.message import EmailMessage
-from email.utils import make_msgid, parseaddr
+from email.message import EmailMessage, Message
+from email.utils import getaddresses, make_msgid
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +60,9 @@ class EmailAdapter(BaseChannelAdapter):
         self._to_address: str | None = None
         self._default_destination: str | None = None
         self._password: str = ""
+        self._allow_plaintext_credentials = False
+        self._smtp_connection_lock = asyncio.Lock()
+        self._imap_connection_lock = asyncio.Lock()
         # OAuth2 fields
         self._auth_method: str = "password"
         self._oauth2_client_id: str = ""
@@ -102,6 +105,9 @@ class EmailAdapter(BaseChannelAdapter):
         self._default_destination = (
             config.config_json.get("default_recipient") or self._to_address or None
         )
+        self._allow_plaintext_credentials = bool(
+            config.config_json.get("allow_plaintext_credentials", False)
+        )
 
         self._auth_method = config.config_json.get("auth_method", "password")
 
@@ -111,6 +117,7 @@ class EmailAdapter(BaseChannelAdapter):
             await self._init_password(config, secret_resolver)
 
         if HAS_SMTP and self._smtp_host:
+            self._validate_smtp_credential_transport()
             self._smtp_client = aiosmtplib.SMTP(
                 hostname=self._smtp_host,
                 port=self._smtp_port,
@@ -194,12 +201,33 @@ class EmailAdapter(BaseChannelAdapter):
         auth_str = f"user={self._from_address}\x01auth=Bearer {access_token}\x01\x01"
         return base64.b64encode(auth_str.encode()).decode()
 
+    def _validate_smtp_credential_transport(self) -> None:
+        """Reject SMTP credential auth over plaintext unless explicitly enabled."""
+        if self._smtp_port in (465, 587) or self._allow_plaintext_credentials:
+            return
+        raise ValueError(
+            "Refusing to send email credentials over plaintext SMTP; "
+            "use port 465/587 or set allow_plaintext_credentials=true"
+        )
+
+    @staticmethod
+    def _smtp_response_code(response: Any) -> int | None:
+        code = getattr(response, "code", None)
+        if isinstance(code, int):
+            return code
+        if isinstance(response, tuple) and response and isinstance(response[0], int):
+            return response[0]
+        return None
+
     async def _smtp_login(self, smtp_client: aiosmtplib.SMTP) -> None:
         """Authenticate SMTP with password or XOAUTH2."""
         if self._auth_method == "oauth2":
             token = await self._get_oauth2_token()
             auth_string = self._build_xoauth2_string(token)
-            await smtp_client.execute_command(b"AUTH XOAUTH2 " + auth_string.encode())
+            response = await smtp_client.execute_command(b"AUTH XOAUTH2 " + auth_string.encode())
+            code = self._smtp_response_code(response)
+            if code != 235:
+                raise ValueError(f"SMTP XOAUTH2 login failed: {response!r}")
         else:
             await smtp_client.login(self._from_address, self._password)
 
@@ -208,10 +236,12 @@ class EmailAdapter(BaseChannelAdapter):
         if self._auth_method == "oauth2":
             token = await self._get_oauth2_token()
             response = await imap_client.xoauth2(self._from_address, token.encode())
-            if response.result != "OK":
-                raise ValueError(f"IMAP XOAUTH2 login failed: {response.result}")
+            auth_label = "IMAP XOAUTH2"
         else:
-            await imap_client.login(self._from_address, self._password)
+            response = await imap_client.login(self._from_address, self._password)
+            auth_label = "IMAP"
+        if response.result != "OK":
+            raise ValueError(f"{auth_label} login failed: {response.result}")
 
     @staticmethod
     def _message_bytes_from_fetch_lines(lines: list[Any]) -> bytes | None:
@@ -244,6 +274,7 @@ class EmailAdapter(BaseChannelAdapter):
                     except OSError:
                         pass
 
+                self._validate_smtp_credential_transport()
                 self._smtp_client = aiosmtplib.SMTP(
                     hostname=self._smtp_host,
                     port=self._smtp_port,
@@ -253,7 +284,8 @@ class EmailAdapter(BaseChannelAdapter):
                 await self._smtp_client.connect()
                 await self._smtp_login(self._smtp_client)
 
-        await self._retry(_check_and_reconnect)
+        async with self._smtp_connection_lock:
+            await self._retry(_check_and_reconnect)
 
     async def _ensure_imap_connected(self) -> None:
         """Ensure IMAP connection is active."""
@@ -266,17 +298,18 @@ class EmailAdapter(BaseChannelAdapter):
                 if self._imap_client is None:
                     raise RuntimeError("IMAP client not initialized")
                 await self._imap_client.noop()
-            except (TimeoutError, OSError, RuntimeError):
+            except (TimeoutError, OSError, RuntimeError, aioimaplib.Abort):
                 try:
                     if self._imap_client:
                         await self._imap_client.logout()
-                except (TimeoutError, OSError):
+                except (TimeoutError, OSError, aioimaplib.Abort):
                     pass
                 self._imap_client = aioimaplib.IMAP4_SSL(host=self._imap_host, port=self._imap_port)
                 await self._imap_client.wait_hello_from_server()
                 await self._imap_login(self._imap_client)
 
-        await self._retry(_check_and_reconnect)
+        async with self._imap_connection_lock:
+            await self._retry(_check_and_reconnect)
 
     @staticmethod
     def _strip_html(html: str) -> str:
@@ -312,6 +345,29 @@ class EmailAdapter(BaseChannelAdapter):
         stripper = _Stripper()
         stripper.feed(html)
         return stripper.get_text()
+
+    @staticmethod
+    def _parse_single_address(header_value: str) -> tuple[str, str] | None:
+        addresses = getaddresses([header_value])
+        if len(addresses) != 1:
+            return None
+        name, addr = addresses[0]
+        if not addr or "@" not in addr or "\r" in addr or "\n" in addr:
+            return None
+        return name, addr
+
+    @staticmethod
+    def _decode_message_part(part: Message) -> str:
+        payload = part.get_payload(decode=True)
+        if isinstance(payload, bytes):
+            charset = part.get_content_charset() or "utf-8"
+            try:
+                return payload.decode(charset, errors="replace")
+            except LookupError:
+                return payload.decode("utf-8", errors="replace")
+        if isinstance(payload, str):
+            return payload
+        return ""
 
     async def send_message(self, message: CommsMessage) -> str | None:
         """Send message and return platform message ID."""
@@ -438,10 +494,10 @@ class EmailAdapter(BaseChannelAdapter):
             msg_id = email_msg.get("Message-ID", "")
             thread_id = email_msg.get("In-Reply-To", "")
             sender = email_msg.get("From", "")
-            sender_name, sender_addr = parseaddr(sender)
-            external_user_id = sender_addr or sender
-            if not external_user_id:
+            parsed_sender = self._parse_single_address(sender)
+            if parsed_sender is None:
                 continue
+            sender_name, external_user_id = parsed_sender
             external_username = sender_name or external_user_id
             subject = email_msg.get("Subject", "")
 
@@ -450,49 +506,51 @@ class EmailAdapter(BaseChannelAdapter):
             if email_msg.is_multipart():
                 for payload_part in email_msg.walk():
                     if payload_part.get_content_type() == "text/plain":
-                        payload = payload_part.get_payload(decode=True)
-                        if isinstance(payload, bytes):
-                            content = payload.decode(errors="replace")
+                        content = self._decode_message_part(payload_part)
                         break
                     elif payload_part.get_content_type() == "text/html" and not content:
-                        payload = payload_part.get_payload(decode=True)
-                        if isinstance(payload, bytes):
-                            content = payload.decode(errors="replace")
+                        content = self._decode_message_part(payload_part)
                         content_type = "html"
             else:
-                payload = email_msg.get_payload(decode=True)
-                if isinstance(payload, bytes):
-                    content = payload.decode(errors="replace")
-                elif isinstance(payload, str):
-                    content = payload
+                content = self._decode_message_part(email_msg)
                 if email_msg.get_content_type() == "text/html":
                     content_type = "html"
 
-            messages.append(
-                CommsMessage(
-                    id=msg_id or f"{datetime.now(UTC).timestamp()}-{uuid.uuid4().hex[:8]}",
-                    channel_id="",
-                    direction="inbound",
-                    content=content,
-                    created_at=datetime.now(UTC).isoformat(),
-                    identity_id=external_user_id,
-                    platform_message_id=msg_id,
-                    platform_thread_id=thread_id,
-                    content_type=content_type,
-                    metadata_json={
-                        "subject": subject,
-                        "platform_destination": external_user_id,
-                        "platform_channel_id": external_user_id,
-                        "external_username": external_username,
-                    },
-                )
+            comms_message = CommsMessage(
+                id=msg_id or f"{datetime.now(UTC).timestamp()}-{uuid.uuid4().hex[:8]}",
+                channel_id="",
+                direction="inbound",
+                content=content,
+                created_at=datetime.now(UTC).isoformat(),
+                identity_id=external_user_id,
+                platform_message_id=msg_id,
+                platform_thread_id=thread_id,
+                content_type=content_type,
+                metadata_json={
+                    "subject": subject,
+                    "platform_destination": external_user_id,
+                    "platform_channel_id": external_user_id,
+                    "external_username": external_username,
+                },
             )
 
             async def _mark_seen(n: str = num_str) -> tuple[str, list[Any]]:
                 response = await imap.store(n, "+FLAGS", "(\\Seen)")
+                if response.result != "OK":
+                    raise RuntimeError(
+                        f"Failed to mark email message {n} as seen: {response.result}"
+                    )
                 return response.result, response.lines
 
-            await self._retry(_mark_seen)
+            try:
+                await self._retry(_mark_seen)
+            except Exception:
+                logger.warning(
+                    "Stopping email poll after failing to mark message seen", exc_info=True
+                )
+                return messages
+
+            messages.append(comms_message)
 
         return messages
 
