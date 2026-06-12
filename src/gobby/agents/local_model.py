@@ -13,6 +13,7 @@ import httpx
 
 if TYPE_CHECKING:
     from gobby.config.ai import LocalGenerationEndpointConfig
+    from gobby.storage.agents import LocalAgentRunManager
 
 __all__ = ["ensure_local_model", "LocalModelError"]
 
@@ -49,20 +50,16 @@ async def _unload_model(client: httpx.AsyncClient, base_url: str, model: str) ->
     logger.info(f"Unloaded local model: {model}")
 
 
-def count_active_local_agents(registry: Any) -> int:
+def count_active_local_agents(run_manager: LocalAgentRunManager) -> int:
     """Count running agents that were spawned against a local endpoint.
 
     Args:
-        registry: AgentRegistry instance
+        run_manager: Agent run storage manager.
 
     Returns:
         Number of active agents using local models
     """
-    count = 0
-    for run in registry.list_running():
-        if bool(getattr(run, "is_local", False)):
-            count += 1
-    return count
+    return sum(1 for run in run_manager.list_active() if run.is_local)
 
 
 def _model_api_base(api_base: str) -> str:
@@ -75,7 +72,7 @@ def _model_api_base(api_base: str) -> str:
 
 async def ensure_local_model(
     config: LocalGenerationEndpointConfig,
-    registry: Any | None = None,
+    run_manager: LocalAgentRunManager | None = None,
 ) -> str:
     """Ensure the configured model is loaded at the local endpoint.
 
@@ -88,7 +85,7 @@ async def ensure_local_model(
 
     Args:
         config: Named local generation endpoint configuration
-        registry: Optional AgentRegistry for active-agent checking
+        run_manager: Optional agent run storage manager for active-agent checking.
 
     Returns:
         The resolved model name (important for auto mode)
@@ -129,7 +126,7 @@ async def ensure_local_model(
         # Different model (or no model) is loaded
         if loaded_ids:
             # Check for active local agents before swapping
-            active_count = count_active_local_agents(registry) if registry else 0
+            active_count = count_active_local_agents(run_manager) if run_manager else 0
             if active_count > 0:
                 raise LocalModelError(
                     f"Cannot swap local model: {active_count} local agent(s) still active "

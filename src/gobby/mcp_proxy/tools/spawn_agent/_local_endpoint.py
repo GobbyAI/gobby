@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gobby.ai.local_endpoints import resolve_local_generation_endpoint_selector
+
+if TYPE_CHECKING:
+    from gobby.storage.agents import LocalAgentRunManager
 
 
 @dataclass(frozen=True)
@@ -24,7 +27,7 @@ async def resolve_spawn_local_endpoint(
     api_base: str | None,
     api_token: str | None,
     daemon_config: Any | None,
-    registry: Any | None,
+    run_manager: LocalAgentRunManager | None,
 ) -> SpawnLocalEndpointResolution:
     """Resolve model='local:<endpoint>' for a spawned CLI runtime."""
     if model == "local":
@@ -45,7 +48,7 @@ async def resolve_spawn_local_endpoint(
     try:
         from gobby.agents.local_model import ensure_local_model
 
-        resolved_model = await ensure_local_model(selection.endpoint, registry=registry)
+        resolved_model = await ensure_local_model(selection.endpoint, run_manager=run_manager)
     except Exception as exc:
         raise ValueError(f"Local model pre-flight failed: {exc}") from exc
 

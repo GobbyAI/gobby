@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from gobby.agents.local_model import count_active_local_agents
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.agents._selectors import _AgentRunSelectorMixin
 from gobby.storage.hub.protocol import HubDatabase
@@ -56,6 +57,47 @@ def test_agent_run_manager_persists_is_local_flag(temp_db: HubDatabase) -> None:
 
     assert run.is_local is True
     assert run.to_dict()["is_local"] is True
+
+
+def test_count_active_local_agents_uses_run_manager_is_local_flag(
+    temp_db: HubDatabase,
+) -> None:
+    db = temp_db
+    project = LocalProjectManager(db).create(name="agent-local-count-project")
+    session = SessionManager(db).register(
+        external_id="parent-count-ext",
+        machine_id="machine-1",
+        source="claude",
+        project_id=project.id,
+    )
+    run_manager = LocalAgentRunManager(db)
+
+    active_local = run_manager.create(
+        parent_session_id=session.id,
+        provider="local:lm-studio",
+        model="qwen2.5-coder",
+        prompt="local run",
+        is_local=True,
+    )
+    run_manager.create(
+        parent_session_id=session.id,
+        provider="claude",
+        model="sonnet",
+        prompt="remote run",
+        is_local=False,
+    )
+    completed_local = run_manager.create(
+        parent_session_id=session.id,
+        provider="local:lm-studio",
+        model="qwen2.5-coder",
+        prompt="finished local run",
+        is_local=True,
+    )
+    run_manager.start(active_local.id)
+    run_manager.start(completed_local.id)
+    run_manager.complete(completed_local.id)
+
+    assert count_active_local_agents(run_manager) == 1
 
 
 def test_session_manager_persists_is_local_flag(temp_db: HubDatabase) -> None:

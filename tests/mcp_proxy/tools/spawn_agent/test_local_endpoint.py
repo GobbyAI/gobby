@@ -30,7 +30,7 @@ def _config() -> DaemonConfig:
 
 @pytest.mark.asyncio
 async def test_resolve_spawn_local_endpoint_uses_named_generation_endpoint() -> None:
-    registry = object()
+    run_manager = object()
     with patch(
         "gobby.agents.local_model.ensure_local_model",
         new=AsyncMock(return_value="qwen-coder-32b"),
@@ -40,7 +40,7 @@ async def test_resolve_spawn_local_endpoint_uses_named_generation_endpoint() -> 
             api_base=None,
             api_token=None,
             daemon_config=_config(),
-            registry=registry,
+            run_manager=run_manager,
         )
 
     assert resolution.model == "qwen-coder-32b"
@@ -48,7 +48,7 @@ async def test_resolve_spawn_local_endpoint_uses_named_generation_endpoint() -> 
     assert resolution.api_token == "endpoint-token"
     assert resolution.is_local is True
     ensure_local_model.assert_awaited_once()
-    assert ensure_local_model.await_args.kwargs == {"registry": registry}
+    assert ensure_local_model.await_args.kwargs == {"run_manager": run_manager}
 
 
 @pytest.mark.asyncio
@@ -59,7 +59,7 @@ async def test_resolve_spawn_local_endpoint_rejects_bare_local_model() -> None:
             api_base=None,
             api_token=None,
             daemon_config=_config(),
-            registry=None,
+            run_manager=None,
         )
 
 
@@ -70,7 +70,7 @@ async def test_resolve_spawn_local_endpoint_preserves_non_local_api_settings() -
         api_base="http://custom.example/v1",
         api_token="agent-token",
         daemon_config=_config(),
-        registry=None,
+        run_manager=None,
     )
 
     assert resolution.model == "sonnet"

@@ -323,7 +323,7 @@ async def spawn_agent_impl(
             api_base=effective_api_base,
             api_token=effective_api_token,
             daemon_config=daemon_config,
-            registry=runner.registry if hasattr(runner, "registry") else None,
+            run_manager=runner.run_storage,
         )
     except ValueError as e:
         return {"success": False, "error": str(e)}
