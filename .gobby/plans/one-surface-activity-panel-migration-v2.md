@@ -12,7 +12,7 @@ Scope: migrate every remaining hamburger surface into the activity panel — Rul
 
 - **Design system (`.impeccable.md`) is binding.** Dark default, hue-125 chartreuse accent, deutan-safe state palette (lightness + icon first, hue fourth), WCAG 2.2 AA, 44px touch targets, no border-left/right greater than 1px, no gradient text, Vercel/Linear restraint. Every migration is an impeccable redesign, not a 1:1 port.
 - **Implementing agents MUST load the `impeccable` skill before any UI output.** On the `gobby-skills` MCP server via progressive discovery: `list_tools(server_name="gobby-skills")` → `get_tool_schema(..., "get_skill")` → `call_tool(..., "get_skill", {"name": "impeccable"})` — and read `.impeccable.md` at the repo root. Every UI deliverable below repeats this instruction; it is not optional.
-- **Save/Discard, not commit-on-blur.** Editor detail panes hold a local draft; explicit **Save** and **Discard** buttons render on the bottom-pane status bar (the `h-10` strip — the same bar that shows "Watching…" on the Sessions tab), styled identically to the existing action buttons there. Dirty state guards selection change, segment change, tab change, and panel close through one shared confirm path. TasksTab's existing per-field commit behavior is intentionally unchanged in this epic.
+- **Save/Discard, not commit-on-blur.** Editor detail panes hold a local draft; explicit **Save** and **Discard** buttons render on the bottom-pane status bar (the `h-10` strip — the same bar that shows "Watching…" on the Sessions tab), styled identically to the existing action buttons there. Dirty state guards selection change, segment change, tab change, and panel close through one shared confirm path — pane-local changes via `useDetailDraft.confirmIfDirty`, shell-originated changes (activity-tab switch, panel close, layout toggle) via the dirty-guard registry of deliverable 1.6, since tab changes happen in `ActivityPanel`/`useActivityPanel` above the panes where a pane-local guard cannot intercept them. TasksTab's existing per-field commit behavior is intentionally unchanged in this epic.
 - **Kebab QuickMenu is canon** for activity top-panel list rows. Row-level actions live behind a three-vertical-dot trigger. **Popup menus must never render off-screen** — the shared primitive measures via `getBoundingClientRect`, flips vertically near the bottom edge, and clamps horizontally.
 - **`ui/SegmentedControl` in the activity-panel toolbar always uses `controlHeight="sm"`** (binding directive carried from epic #14767).
 - **Teardown gates on spec, not parity.** Several legacy pages contain non-working functions/buttons/menus that are part of what is being cleaned out. Each build deliverable consumes a capability inventory of its legacy source with explicit dispositions — port / fix / drop-as-broken — but the deletion gate is the new tab working per this plan plus a zero-importers grep. Never block deletion on parity with broken legacy UI. Deletions land in a separate commit from the replacement they follow.
@@ -175,6 +175,41 @@ Two registration-hygiene fixes before the panel grows from 10 to 16 tabs:
 
 - 1.5.1 - `VALID_TABS` covers the full `ActivityTab` union, enforced by a test. test: `web/src/components/activity/__tests__/useActivityPanel.test.tsx`.
 - 1.5.2 - Tab selector renders 16 simulated entries without clipping or dead entries at panel-min-width and 390×844. behavior: "16-tab selector fully operable" in chrome-devtools verification.
+
+### 1.6 Build the activity-shell dirty-guard registry [category: code] (depends: 1.2)
+`kind: deliverable`
+
+Before any work: load the `impeccable` skill from `gobby-skills`, read `.impeccable.md`, and read `docs/guides/one-surface-tab-recipe.md`.
+
+Targets:
+- `web/src/components/activity/DirtyGuardContext.tsx`
+- `web/src/components/activity/ActivityPanel.tsx`
+- `web/src/components/activity/useActivityPanel.ts`
+- `web/src/components/activity/fields/useDetailDraft.ts`
+- `web/src/components/activity/__tests__/DirtyGuardContext.test.tsx`
+
+`useDetailDraft.confirmIfDirty` can only guard changes the pane itself initiates (row selection, segment swap). Activity-tab changes, panel close, and layout toggles originate in the shell — `ActivityPanel.tsx` (tab switch around line 275) and `useActivityPanel.ts` (tab-state handling around line 202) — above any detail pane, so they need a registry the panes publish into:
+
+- `DirtyGuardContext.tsx` — provider mounted in `ActivityPanel`; API:
+
+```ts
+registerDirtyGuard(guard: {
+  isDirty: () => boolean;
+  confirmLeave: () => Promise<boolean>;  // shows the shared discard-confirm; resolves true to proceed
+}): () => void;  // unregister
+guardedRun(action: () => void): void;    // runs action if no guard is dirty or user confirms
+```
+
+- `useDetailDraft` auto-registers with the context while mounted under the provider (its dirty flag and discard feed `isDirty`/`confirmLeave`), so every draft-based pane participates with zero extra wiring.
+- `ActivityPanel`/`useActivityPanel` route activity-tab changes, panel close, layout toggles (`toggleFromChat`/`toggleFromPanel`), and programmatic tab activation (`showTab`-style calls) through `guardedRun`. A declined confirm leaves the current tab/layout untouched.
+- One confirm path: the same dialog/copy as the pane-local guard. Mobile view switches route through the same registry.
+- Tests: dirty pane blocks tab change until confirmed; discard-on-confirm proceeds; unregister on unmount; non-dirty pass-through.
+
+**Acceptance:**
+
+- 1.6.1 - DirtyGuardContext exposes register/guardedRun and ActivityPanel routes tab change, panel close, and layout toggles through it. symbol: `DirtyGuardContext` in `web/src/components/activity/DirtyGuardContext.tsx`.
+- 1.6.2 - useDetailDraft auto-registers its dirty state with the provider. symbol: `useDetailDraft` in `web/src/components/activity/fields/useDetailDraft.ts`.
+- 1.6.3 - A dirty draft blocks activity-tab switch and panel close until confirmed; declining leaves state untouched. test: `web/src/components/activity/__tests__/DirtyGuardContext.test.tsx`.
 
 ## P2: Rules tab
 `kind: framing`
@@ -796,17 +831,18 @@ Rebuild `WikiTab.tsx` (295L) as a multi-file family on the canonical shape: tool
 Targets:
 - `docs/audits/configuration-audit.md`
 
-A code-archaeology deliverable, committed as a reviewable artifact (Josh signs off on the matrix before P13 starts):
+A code-archaeology deliverable, committed as a reviewable artifact. **This deliverable is not complete until Josh's sign-off is recorded**: after authoring the matrix, escalate to Josh for review, then append a `## Sign-off` section to the audit document recording approver, date, and any matrix amendments made during review. P13 depends on 12.1 and therefore cannot start before the recorded sign-off exists. Content:
 
 1. **Backend surface**: every route + model in `src/gobby/servers/routes/configuration*.py` (core, models, values, prompts, templates, import_export, validation_detection, tool_approvals, secrets, context, ui_settings) plus schema fields in `src/gobby/config/` and `telemetry` config.
 2. **Frontend surface**: every control in `web/src/components/ConfigurationPage.tsx` (954L) and its satellites (`.SchemaField`, `.SecretsTab`, `.TemplateTab`, `ValidationDetectionEditor.tsx`, `useConfiguration.ts`), plus client-only settings in `useSettings.ts` (theme, chat mode, etc. — candidates for the same overlay).
 3. **Matrix**: one row per option — option → backend source → frontend control → status (`live` / `dead-backend` / `dead-frontend` / `mismatched-type` / `missing-validation`) → disposition (`keep` / `drop` / `fix`).
-4. **Proposed overlay IA**: ordered section list assigning every `keep` option to a section; `drop`/`fix` rows enumerated as follow-up cleanup items.
+4. **Proposed overlay IA**: ordered section list with **stable kebab-case section ids** (for example `providers`, `tool-approvals`, `appearance`) assigning every `keep` option to exactly one section; `drop`/`fix` rows enumerated as follow-up cleanup items. The ids are load-bearing: 13.2 derives its component filenames from them deterministically.
 
 **Acceptance:**
 
 - 12.1.1 - Audit exists with the backend inventory, frontend inventory, full matrix, and proposed overlay IA. file: `docs/audits/configuration-audit.md`.
-- 12.1.2 - Every matrix row carries a status and a disposition; drop/fix rows are enumerated as follow-ups. behavior: "complete matrix with dispositions" in `docs/audits/configuration-audit.md`.
+- 12.1.2 - Every matrix row carries a status and a disposition; drop/fix rows are enumerated as follow-ups; IA sections carry stable kebab-case ids. behavior: "complete matrix with dispositions and stable section ids" in `docs/audits/configuration-audit.md`.
+- 12.1.3 - Josh's sign-off is recorded in a `## Sign-off` section of the audit document (approver, date, amendments) before any P13 work begins. behavior: "recorded sign-off section present" in `docs/audits/configuration-audit.md`.
 
 ## P13: Settings overlay
 `kind: framing`
@@ -841,14 +877,14 @@ Targets:
 Before any work: load the `impeccable` skill from `gobby-skills`, read `.impeccable.md`, and read `docs/guides/one-surface-tab-recipe.md`.
 
 Targets:
-- `web/src/components/settings/sections/`
+- `web/src/components/settings/sections/index.ts`
 - `web/src/components/settings/__tests__/sections.test.tsx`
 
-One file per audit-IA section under `sections/` (names finalized by the audit — the IA section list in `docs/audits/configuration-audit.md` is the authoritative input; only `keep` rows are built). Controls use the `fields/` primitives with per-section draft + Save/Discard (the `DetailPaneHeader` pair adapts to a section footer here); secrets render masked with reveal; client-only settings from `useSettings.ts` (theme, chat mode) join their natural sections. Section-level dirty guards route through the shared confirm path before section switch or overlay close.
+File naming is deterministic from the audit's stable section ids — no interpretation required: each IA section id maps to `web/src/components/settings/sections/<PascalCase(id)>Section.tsx` (id `tool-approvals` → `ToolApprovalsSection.tsx`, id `providers` → `ProvidersSection.tsx`), and `sections/index.ts` exports the ordered registry `Array<{ id: string; label: string; component: ComponentType }>` that `SettingsNav` renders from. The IA section list in `docs/audits/configuration-audit.md` (signed off per 12.1) is the authoritative input; only `keep` rows are built. Controls use the `fields/` primitives with per-section draft + Save/Discard (the `DetailPaneHeader` pair adapts to a section footer here); secrets render masked with reveal; client-only settings from `useSettings.ts` (theme, chat mode) join their natural sections. Section-level dirty guards route through the shared confirm path before section switch or overlay close.
 
 **Acceptance:**
 
-- 13.2.1 - Every keep-row option from the audit is editable in exactly one section; sections save through drafts with Save/Discard. file: `web/src/components/settings/sections/`.
+- 13.2.1 - Every keep-row option from the audit is editable in exactly one section; sections save through drafts with Save/Discard; one `<PascalCase(id)>Section.tsx` file exists per IA section id and `sections/index.ts` registers them in IA order. file: `web/src/components/settings/sections/index.ts`.
 - 13.2.2 - Dirty-section guard blocks section switch and overlay close until saved or discarded. test: `web/src/components/settings/__tests__/sections.test.tsx`.
 - 13.2.3 - Overlay passes grayscale, AA dark+light, 44px, and 390×844 scroll verification. behavior: "overlay gates pass" in chrome-devtools verification.
 
@@ -874,7 +910,7 @@ Delete `ConfigurationPage.tsx` and its satellites (`.SchemaField`, `.SecretsTab`
 
 **Goal**: Nothing left in the hamburger — remove it, delete the dead Dashboard, and finalize the header.
 
-### 14.1 Remove the hamburger, Sidebar, and DashboardPage; finalize the header [category: refactor] (depends: P7, 8.3, 9.3, 10.4, 11.1, 13.3)
+### 14.1 Remove the hamburger, Sidebar, and DashboardPage; finalize the header [category: refactor] (depends: 3.2, P7, 8.3, 9.3, 10.4, 11.1, 13.3)
 `kind: deliverable`
 
 Targets:
@@ -909,3 +945,534 @@ Final gate, only after every in-scope migration is in:
 - verdict: drafted
 - findings: none yet
 - resolution_notes: Initial draft. Supersedes `.gobby/plans/task-14923-one-surface-tabs-migration.md` (task-14923 was never registered in the plans table; its file moves to `.gobby/plans/completed/`). Differences from the superseded plan: MCP is polish-on-existing-tab rather than greenfield (ActivityMcpTab shipped in the interim); Reports/Cron/Traces deliverables dropped (already done); Memory's List|Graph segment became a full-width graph override; Skills' Installed|Hub segments have intentionally different layouts; added Save/Discard draft editing, kebab QuickMenu canon with viewport clamping, Wiki tab rework, Configuration audit + settings overlay + header cog, Dashboard deletion; teardown gates changed from parity-with-legacy to spec-plus-zero-importers. Post-draft revisions: added backend rule-rename deliverable (2.1) with type-scoped collision check and bundled-rule guard, renumbering P2 (tab 2.2, YAML 2.3, teardown 2.4) and updating 7.1's dependency; confirmed Save/Discard stays for all non-task surfaces after weighing tasks' existing commit-on-blur pattern (field-level PATCH + harmless intermediate states there vs. full-object PUTs of live behavior-bearing config here).
+
+**Round 1**
+
+- reviewer_run: plan-adversary review of 2026-06-11 (findings relayed by coordinator)
+- verdict: needs_review
+- findings:
+  - F1/blocking/bad-sequencing — shared dirty guard specified only as pane-local `confirmIfDirty`; shell-originated tab change/panel close/layout toggle paths in `ActivityPanel`/`useActivityPanel` had no guard contract.
+  - F2/blocking/bad-sequencing — final gate 14.1 did not depend on MCP teardown 3.2, so expansion could schedule hamburger removal before MCP legacy cleanup.
+  - F3/blocking/bad-sequencing — 12.1 prose required Josh's sign-off before P13 but no acceptance item or dependency enforced it.
+  - F4/blocking/gobby-format — 13.2 targeted only a directory with audit-determined filenames, violating expansion self-containment.
+- resolution_notes: (F1) added deliverable 1.6 — `DirtyGuardContext` registry in the activity shell; panes auto-register via `useDetailDraft`; `ActivityPanel`/`useActivityPanel` route tab change, panel close, layout toggles, and programmatic tab activation through `guardedRun`; Constraints updated to name both guard levels. (F2) 14.1 depends now include 3.2. (F3) 12.1 sign-off is part of the deliverable: new acceptance 12.1.3 requires a recorded `## Sign-off` section in the audit document before P13 work; P13's existing dependency on 12.1 now enforces the gate. (F4) audit IA must emit stable kebab-case section ids (12.1.2 amended); 13.2 filenames derive deterministically as `sections/<PascalCase(id)>Section.tsx` with an ordered registry in `sections/index.ts`, which replaces the directory target. Whole-plan sweep for each finding class: no other shell-originated guard gaps (overlay close is owned by `useSettingsOverlay` within its own deliverable), no other missing teardown dependencies on 14.1 (2.4/4.3/5.2/6.2 flow through P7), the 13.1 mock-review checkpoint already carries acceptance 13.1.3, and no other deliverable targets a directory or undetermined filenames.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Write the activity-tab recipe guide
+  category: docs
+  task_type: feature
+  depends_on: []
+  validation_criteria: docs/guides/one-surface-tab-recipe.md
+  labels:
+  - covers:unknown:1.1:1.1.1
+  - covers:unknown:1.1:1.1.2
+  - covers:unknown:1.1:1.1.3
+  tdd: false
+  source_section: '1.1'
+  assigned_agent: tech-writer
+- title: Build the draft-based detail-field family
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: web/src/components/activity/fields/FieldPrimitives.tsx
+  labels:
+  - covers:unknown:1.2:1.2.1
+  - covers:unknown:1.2:1.2.2
+  - covers:unknown:1.2:1.2.3
+  - covers:unknown:1.2:1.2.4
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Add ProjectSelectField and DateTimeField
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: ProjectSelectField` in `web/src/components/activity/fields/ProjectSelectField.tsx
+  labels:
+  - covers:unknown:1.3:1.3.1
+  - covers:unknown:1.3:1.3.2
+  - covers:unknown:1.3:1.3.3
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Build the shared QuickMenu primitive and retrofit existing menus
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: web/src/components/activity/__tests__/QuickMenu.test.tsx
+  labels:
+  - covers:unknown:1.4:1.4.1
+  - covers:unknown:1.4:1.4.2
+  - covers:unknown:1.4:1.4.3
+  tdd: true
+  source_section: '1.4'
+  implementation_domain: backend
+- title: Fix VALID_TABS coverage and tab-selector scaling
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: web/src/components/activity/__tests__/useActivityPanel.test.tsx
+  labels:
+  - covers:unknown:1.5:1.5.1
+  - covers:unknown:1.5:1.5.2
+  tdd: true
+  source_section: '1.5'
+  implementation_domain: backend
+- title: Build the activity-shell dirty-guard registry
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: DirtyGuardContext` in `web/src/components/activity/DirtyGuardContext.tsx
+  labels:
+  - covers:unknown:1.6:1.6.1
+  - covers:unknown:1.6:1.6.2
+  - covers:unknown:1.6:1.6.3
+  tdd: true
+  source_section: '1.6'
+  implementation_domain: backend
+- title: Add rule rename support to the backend
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: RuleUpdateRequest` in `src/gobby/servers/routes/rules.py
+  labels:
+  - covers:unknown:2.1:2.1.1
+  - covers:unknown:2.1:2.1.2
+  - covers:unknown:2.1:2.1.3
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Build the Rules activity tab
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '1.6'
+  validation_criteria: web/src/components/activity/ActivityPanelTabs.tsx
+  labels:
+  - covers:unknown:2.2:2.2.1
+  - covers:unknown:2.2:2.2.2
+  - covers:unknown:2.2:2.2.3
+  - covers:unknown:2.2:2.2.4
+  - covers:unknown:2.2:2.2.5
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Add the Rules YAML editor view
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: RulesYamlView` in `web/src/components/activity/rules/RulesYamlView.tsx
+  labels:
+  - covers:unknown:2.3:2.3.1
+  - covers:unknown:2.3:2.3.2
+  - covers:unknown:2.3:2.3.3
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: Remove the Workflows Rules sub-tab and legacy rule editor
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '2.3'
+  validation_criteria: WorkflowsPage` in `web/src/components/workflows/WorkflowsPage.tsx
+  labels:
+  - covers:unknown:2.4:2.4.1
+  - covers:unknown:2.4:2.4.2
+  - covers:unknown:2.4:2.4.3
+  tdd: false
+  source_section: '2.4'
+  assigned_agent: backend-developer
+- title: Replace the MCP add-server modal with detail-pane editing
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '1.6'
+  validation_criteria: web/src/components/activity/ActivityMcpTab.tsx
+  labels:
+  - covers:unknown:3.1:3.1.1
+  - covers:unknown:3.1:3.1.2
+  - covers:unknown:3.1:3.1.3
+  - covers:unknown:3.1:3.1.4
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Delete McpPage and satellites
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: web/src/components/mcp/McpPage.tsx
+  labels:
+  - covers:unknown:3.2:3.2.1
+  - covers:unknown:3.2:3.2.2
+  tdd: false
+  source_section: '3.2'
+  assigned_agent: backend-developer
+- title: Hoist execution helpers to shared/executions
+  category: refactor
+  task_type: feature
+  depends_on: []
+  validation_criteria: web/src/components/shared/executions/executionFormatters.ts
+  labels:
+  - covers:unknown:4.1:4.1.1
+  - covers:unknown:4.1:4.1.2
+  tdd: false
+  source_section: '4.1'
+  assigned_agent: backend-developer
+- title: Build the Agents activity tab
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '1.6'
+  validation_criteria: web/src/components/activity/ActivityPanel.tsx
+  labels:
+  - covers:unknown:4.2:4.2.1
+  - covers:unknown:4.2:4.2.2
+  - covers:unknown:4.2:4.2.3
+  tdd: true
+  source_section: '4.2'
+  implementation_domain: backend
+- title: Remove the Workflows Agents sub-tab and family
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '4.2'
+  validation_criteria: web/src/components/workflows/AgentsTab.tsx
+  labels:
+  - covers:unknown:4.3:4.3.1
+  - covers:unknown:4.3:4.3.2
+  tdd: false
+  source_section: '4.3'
+  assigned_agent: backend-developer
+- title: Build the Stages tab with Stages | Profiles segments
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '1.6'
+  validation_criteria: StagesTab` in `web/src/components/activity/StagesTab.tsx
+  labels:
+  - covers:unknown:5.1:5.1.1
+  - covers:unknown:5.1:5.1.2
+  - covers:unknown:5.1:5.1.3
+  tdd: true
+  source_section: '5.1'
+  implementation_domain: backend
+- title: Remove the Workflows Stages and Profiles sub-tabs
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '5.1'
+  validation_criteria: web/src/components/workflows/StagesTab.tsx
+  labels:
+  - covers:unknown:5.2:5.2.1
+  - covers:unknown:5.2:5.2.2
+  tdd: false
+  source_section: '5.2'
+  assigned_agent: backend-developer
+- title: Add the Defs segment to the pipelines activity tab
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '1.6'
+  validation_criteria: PipelinesTab` in `web/src/components/activity/PipelinesTab.tsx
+  labels:
+  - covers:unknown:6.1:6.1.1
+  - covers:unknown:6.1:6.1.2
+  - covers:unknown:6.1:6.1.3
+  tdd: true
+  source_section: '6.1'
+  implementation_domain: backend
+- title: Remove the Workflows Pipelines sub-tab
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '6.1'
+  validation_criteria: web/src/components/workflows/PipelinesTab.tsx
+  labels:
+  - covers:unknown:6.2:6.2.1
+  - covers:unknown:6.2:6.2.2
+  tdd: false
+  source_section: '6.2'
+  assigned_agent: backend-developer
+- title: Delete WorkflowsPage and the workflows component subtree
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '2.4'
+  - '4.3'
+  - '5.2'
+  - '6.2'
+  validation_criteria: web/src/components/workflows/WorkflowsPage.tsx
+  labels:
+  - covers:unknown:7.1:7.1.1
+  - covers:unknown:7.1:7.1.2
+  - covers:unknown:7.1:7.1.3
+  tdd: false
+  source_section: '7.1'
+  assigned_agent: backend-developer
+- title: Build the Skills tab Installed segment
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '1.6'
+  validation_criteria: SkillsTab` in `web/src/components/activity/SkillsTab.tsx
+  labels:
+  - covers:unknown:8.1:8.1.1
+  - covers:unknown:8.1:8.1.2
+  - covers:unknown:8.1:8.1.3
+  tdd: true
+  source_section: '8.1'
+  implementation_domain: backend
+- title: Build the Skills Hub segment
+  category: code
+  task_type: feature
+  depends_on:
+  - '8.1'
+  validation_criteria: SkillsHubView` in `web/src/components/activity/skills/SkillsHubView.tsx
+  labels:
+  - covers:unknown:8.2:8.2.1
+  - covers:unknown:8.2:8.2.2
+  - covers:unknown:8.2:8.2.3
+  tdd: true
+  source_section: '8.2'
+  implementation_domain: backend
+- title: Delete SkillsPage and satellites
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '8.2'
+  validation_criteria: web/src/components/skills/SkillsPage.tsx
+  labels:
+  - covers:unknown:8.3:8.3.1
+  - covers:unknown:8.3:8.3.2
+  tdd: false
+  source_section: '8.3'
+  assigned_agent: backend-developer
+- title: Build the Integrations activity tab
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '1.6'
+  validation_criteria: IntegrationsTab` in `web/src/components/activity/IntegrationsTab.tsx
+  labels:
+  - covers:unknown:9.1:9.1.1
+  - covers:unknown:9.1:9.1.2
+  - covers:unknown:9.1:9.1.3
+  - covers:unknown:9.1:9.1.4
+  tdd: true
+  source_section: '9.1'
+  implementation_domain: backend
+- title: Add the Messages alternate view
+  category: code
+  task_type: feature
+  depends_on:
+  - '9.1'
+  validation_criteria: MessagesView` in `web/src/components/activity/integrations/MessagesView.tsx
+  labels:
+  - covers:unknown:9.2:9.2.1
+  - covers:unknown:9.2:9.2.2
+  tdd: true
+  source_section: '9.2'
+  implementation_domain: backend
+- title: Delete IntegrationsPage and satellites
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '9.2'
+  validation_criteria: web/src/components/integrations/IntegrationsPage.tsx
+  labels:
+  - covers:unknown:9.3:9.3.1
+  - covers:unknown:9.3:9.3.2
+  tdd: false
+  source_section: '9.3'
+  assigned_agent: backend-developer
+- title: Add the transient panel-width override to useActivityPanel
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: requestPanelOverride` in `web/src/components/activity/useActivityPanel.ts
+  labels:
+  - covers:unknown:10.1:10.1.1
+  - covers:unknown:10.1:10.1.2
+  tdd: true
+  source_section: '10.1'
+  implementation_domain: backend
+- title: Build the Memory activity tab
+  category: code
+  task_type: feature
+  depends_on:
+  - '10.1'
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '1.6'
+  validation_criteria: MemoryTab` in `web/src/components/activity/MemoryTab.tsx
+  labels:
+  - covers:unknown:10.2:10.2.1
+  - covers:unknown:10.2:10.2.2
+  - covers:unknown:10.2:10.2.3
+  tdd: true
+  source_section: '10.2'
+  implementation_domain: backend
+- title: Add the full-width Memory Graph view
+  category: code
+  task_type: feature
+  depends_on:
+  - '10.2'
+  validation_criteria: MemoryGraphView` in `web/src/components/activity/memory/MemoryGraphView.tsx
+  labels:
+  - covers:unknown:10.3:10.3.1
+  - covers:unknown:10.3:10.3.2
+  - covers:unknown:10.3:10.3.3
+  tdd: true
+  source_section: '10.3'
+  implementation_domain: backend
+- title: Delete MemoryPage and satellites
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '10.3'
+  validation_criteria: web/src/components/memory/MemoryPage.tsx
+  labels:
+  - covers:unknown:10.4:10.4.1
+  - covers:unknown:10.4:10.4.2
+  tdd: false
+  source_section: '10.4'
+  assigned_agent: backend-developer
+- title: Rebuild WikiTab to the canonical pattern
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '1.5'
+  - '1.6'
+  validation_criteria: web/src/components/activity/wiki/WikiTabList.tsx
+  labels:
+  - covers:unknown:11.1:11.1.1
+  - covers:unknown:11.1:11.1.2
+  - covers:unknown:11.1:11.1.3
+  tdd: true
+  source_section: '11.1'
+  implementation_domain: backend
+- title: Author the configuration audit
+  category: docs
+  task_type: feature
+  depends_on: []
+  validation_criteria: docs/audits/configuration-audit.md
+  labels:
+  - covers:unknown:12.1:12.1.1
+  - covers:unknown:12.1:12.1.2
+  - covers:unknown:12.1:12.1.3
+  tdd: false
+  source_section: '12.1'
+  assigned_agent: tech-writer
+- title: Build the settings overlay shell and header cog
+  category: code
+  task_type: feature
+  depends_on:
+  - '12.1'
+  validation_criteria: web/src/App.tsx
+  labels:
+  - covers:unknown:13.1:13.1.1
+  - covers:unknown:13.1:13.1.2
+  - covers:unknown:13.1:13.1.3
+  tdd: true
+  source_section: '13.1'
+  implementation_domain: backend
+- title: Build the settings sections from the audit IA
+  category: code
+  task_type: feature
+  depends_on:
+  - '13.1'
+  validation_criteria: web/src/components/settings/sections/index.ts
+  labels:
+  - covers:unknown:13.2:13.2.1
+  - covers:unknown:13.2:13.2.2
+  - covers:unknown:13.2:13.2.3
+  tdd: true
+  source_section: '13.2'
+  implementation_domain: backend
+- title: Delete ConfigurationPage and satellites
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '13.2'
+  validation_criteria: web/src/components/ConfigurationPage.tsx
+  labels:
+  - covers:unknown:13.3:13.3.1
+  - covers:unknown:13.3:13.3.2
+  tdd: false
+  source_section: '13.3'
+  assigned_agent: backend-developer
+- title: Remove the hamburger, Sidebar, and DashboardPage; finalize the header
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '3.2'
+  - '7.1'
+  - '8.3'
+  - '9.3'
+  - '10.4'
+  - '11.1'
+  - '13.3'
+  validation_criteria: web/src/App.tsx
+  labels:
+  - covers:unknown:14.1:14.1.1
+  - covers:unknown:14.1:14.1.2
+  - covers:unknown:14.1:14.1.3
+  tdd: false
+  source_section: '14.1'
+  assigned_agent: backend-developer
+```
