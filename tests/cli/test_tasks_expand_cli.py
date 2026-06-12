@@ -1,50 +1,46 @@
 """Tests for task expansion CLI commands."""
 
-from __future__ import annotations
-
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
-from gobby.cli import cli
-from gobby.storage.expansion_runs import LocalExpansionRunManager
-from gobby.storage.tasks import LocalTaskManager
+from gobby.cli.tasks.expand import expand_cmd
 
 pytestmark = pytest.mark.unit
 
 
-@pytest.fixture
-def runner() -> CliRunner:
-    return CliRunner()
-
-
-def test_expand_compile_failure_marks_run_failed(
-    runner: CliRunner, temp_db, sample_project
-) -> None:
-    task_manager = LocalTaskManager(temp_db)
-    task = task_manager.create_task(
-        project_id=sample_project["id"],
-        title="Parent task",
-        task_type="task",
+def test_compile_fails_when_run_status_is_not_completed() -> None:
+    """Compile exits nonzero when the service leaves the run incomplete."""
+    task = SimpleNamespace(id="task-1", project_id="project-1")
+    run = SimpleNamespace(
+        id="run-1",
+        status="failed",
+        error="compile failed",
+        compiled_spec={},
+        to_dict=lambda: {"id": "run-1", "status": "failed"},
     )
-    run_manager = LocalExpansionRunManager(temp_db)
+    task_manager = MagicMock()
+    task_manager.db = MagicMock()
 
-    async def fail_compile(run_id: str):
-        run_manager.start(run_id)
-        raise RuntimeError("generation failed")
+    async def compile_run(run_id: str) -> SimpleNamespace:
+        assert run_id == "run-1"
+        return run
 
-    service = SimpleNamespace(task_manager=task_manager, compile_run=fail_compile)
+    service = MagicMock()
+    service.task_manager = task_manager
+    service.compile_run.side_effect = compile_run
+    run_manager = MagicMock()
+    run_manager.create.return_value = run
 
-    with patch("gobby.cli.tasks.expand._build_expansion_service", return_value=service):
-        result = runner.invoke(cli, ["tasks", "expand", "compile", task.id])
+    with (
+        patch("gobby.cli.tasks.expand._build_expansion_service", return_value=service),
+        patch("gobby.cli.tasks.expand.resolve_task_id", return_value=task),
+        patch("gobby.cli.tasks.expand.LocalExpansionRunManager", return_value=run_manager),
+        patch("gobby.cli.tasks.expand._resolve_cli_session_id", return_value=None),
+    ):
+        result = CliRunner().invoke(expand_cmd, ["compile", "#1"])
 
     assert result.exit_code == 1
-    assert "Error: generation failed" in result.output
-    assert "Traceback" not in result.output
-
-    run = run_manager.get_latest_for_task(task.id)
-    assert run is not None
-    assert run.status == "failed"
-    assert run.error == "generation failed"
+    assert "Expansion compile failed: compile failed" in result.output

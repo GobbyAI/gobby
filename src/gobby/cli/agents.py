@@ -464,8 +464,7 @@ def show_agent_run(run_ref: str, json_format: bool) -> None:
 
     if not run:
         # Should not happen if resolve succeeded, but safe check
-        click.echo(f"Agent run not found: {run_id}", err=True)
-        return
+        raise click.ClickException(f"Agent run not found: {run_id}")
 
     if json_format:
         click.echo(json.dumps(run.to_dict(), indent=2, default=str))
@@ -512,8 +511,7 @@ def agent_status(run_ref: str) -> None:
     run = manager.get(run_id)
 
     if not run:
-        click.echo(f"Agent run not found: {run_id}", err=True)
-        return
+        raise click.ClickException(f"Agent run not found: {run_id}")
 
     status_icon = {
         "pending": "○",
@@ -548,12 +546,10 @@ def stop_agent(run_ref: str) -> None:
     run = manager.get(run_id)
 
     if not run:
-        click.echo(f"Agent run not found: {run_id}", err=True)
-        return
+        raise click.ClickException(f"Agent run not found: {run_id}")
 
     if run.status not in ("pending", "running"):
-        click.echo(f"Cannot stop agent in status: {run.status}", err=True)
-        return
+        raise click.ClickException(f"Cannot stop agent in status: {run.status}")
 
     client = DaemonClient()
     try:
@@ -563,13 +559,12 @@ def stop_agent(run_ref: str) -> None:
             arguments={"run_id": run.id},
         )
     except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        return
+        raise click.ClickException(str(e)) from e
 
     if result.get("success"):
         click.echo(f"Stopped agent run: {run.id}")
     else:
-        click.echo(f"Failed: {result.get('error')}", err=True)
+        raise click.ClickException(f"Failed: {result.get('error')}")
 
 
 @agents.command("kill")
@@ -615,8 +610,7 @@ def kill_agent(run_ref: str, force: bool, stop: bool, yes: bool) -> None:
             },
         )
     except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        return
+        raise click.ClickException(str(e)) from e
 
     if result.get("success"):
         msg = result.get("message", f"Killed agent {run_id}")
@@ -628,7 +622,7 @@ def kill_agent(run_ref: str, force: bool, stop: bool, yes: bool) -> None:
         if result.get("workflow_stopped"):
             click.echo("  (workflow ended)")
     else:
-        click.echo(f"Failed: {result.get('error')}", err=True)
+        raise click.ClickException(f"Failed: {result.get('error')}")
 
 
 @agents.command("check")
@@ -683,12 +677,14 @@ def check_agent(
             timeout=15.0,
         )
     except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        click.echo("Is the Gobby daemon running? Start with: gobby start", err=True)
-        return
+        raise click.ClickException(
+            f"{e}\nIs the Gobby daemon running? Start with: gobby start"
+        ) from e
 
     if json_format:
         click.echo(json.dumps(result, indent=2, default=str))
+        if not result.get("can_spawn", False):
+            raise SystemExit(1)
         return
 
     # Formatted output
@@ -748,6 +744,9 @@ def check_agent(
 
         if wf_eval.get("lifecycle_path"):
             click.echo(f"\n  Path: {' -> '.join(wf_eval['lifecycle_path'])}")
+
+    if not can_spawn:
+        raise SystemExit(1)
 
 
 @agents.command("stats")

@@ -726,6 +726,9 @@ def close_task_cmd(
         else:
             click.echo(f"\nClosed {closed_count} tasks")
 
+    if failed_count > 0:
+        raise SystemExit(1)
+
 
 @click.command("reopen")
 @click.argument("task_id", metavar="TASK")
@@ -796,7 +799,7 @@ def delete_task(task_refs: tuple[str, ...], cascade: bool, unlink: bool, yes: bo
             resolved_tasks.append((ref, resolved))
 
     if not resolved_tasks:
-        return
+        raise SystemExit(1)
 
     # Confirm deletion
     if not yes:
@@ -807,6 +810,7 @@ def delete_task(task_refs: tuple[str, ...], cascade: bool, unlink: bool, yes: bo
 
     # Delete tasks
     deleted = 0
+    failed = 0
     for ref, resolved in resolved_tasks:
         try:
             manager.delete_task(resolved.id, cascade=cascade, unlink=unlink)
@@ -822,9 +826,13 @@ def delete_task(task_refs: tuple[str, ...], cascade: bool, unlink: bool, yes: bo
                     f"Use --cascade to delete them, or --unlink to preserve them."
                 )
             click.echo(f"Error: {msg}", err=True)
+            failed += 1
 
     if len(resolved_tasks) > 1:
         click.echo(f"\nDeleted {deleted}/{len(resolved_tasks)} tasks.")
+
+    if failed > 0:
+        raise SystemExit(1)
 
 
 @click.command("de-escalate")

@@ -47,17 +47,31 @@ def _call_worktree_tool(
 ) -> dict[str, Any]:
     """Call a gobby-worktrees MCP tool through the daemon HTTP proxy."""
     daemon_url = get_daemon_url()
-    response = httpx.post(
-        f"{daemon_url}/api/mcp/gobby-worktrees/tools/{tool_name}",
-        json=arguments,
-        timeout=timeout,
-    )
-    response.raise_for_status()
+    try:
+        response = httpx.post(
+            f"{daemon_url}/api/mcp/gobby-worktrees/tools/{tool_name}",
+            json=arguments,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+    except httpx.ConnectError as exc:
+        raise click.ClickException("Cannot connect to Gobby daemon. Is it running?") from exc
+    except httpx.TimeoutException as exc:
+        raise click.ClickException(f"Timed out calling Gobby daemon: {exc}") from exc
+    except httpx.HTTPStatusError as exc:
+        raise click.ClickException(
+            f"HTTP Error {exc.response.status_code}: {exc.response.text}"
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     result = cast(dict[str, Any], response.json())
     inner_result = result.get("result")
     if result.get("success") is True and isinstance(inner_result, dict):
-        return cast(dict[str, Any], inner_result)
+        result = cast(dict[str, Any], inner_result)
+    if result.get("success") is False:
+        message = result.get("error") or result.get("message") or "Worktree tool failed"
+        raise click.ClickException(str(message))
     return result
 
 
@@ -104,20 +118,19 @@ def create_worktree(
         resolved = resolve_task_id(task_manager, task_id)
         if not resolved:
             # resolve_task_id prints error
-            return
+            raise SystemExit(1)
         arguments["task_id"] = resolved.id
 
     try:
         result = _call_worktree_tool("create_worktree", arguments, timeout=60.0)
-    except httpx.ConnectError:
-        click.echo("Error: Cannot connect to Gobby daemon. Is it running?", err=True)
-        return
+    except click.ClickException:
+        raise
+    except httpx.ConnectError as e:
+        raise click.ClickException("Cannot connect to Gobby daemon. Is it running?") from e
     except httpx.HTTPStatusError as e:
-        click.echo(f"HTTP Error {e.response.status_code}: {e.response.text}", err=True)
-        raise SystemExit(1) from None
+        raise click.ClickException(f"HTTP Error {e.response.status_code}: {e.response.text}") from e
     except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        return
+        raise click.ClickException(str(e)) from e
 
     if json_format:
         click.echo(json.dumps(result, indent=2, default=str))
@@ -128,7 +141,7 @@ def create_worktree(
         click.echo(f"  Path: {result.get('worktree_path', 'unknown')}")
         click.echo(f"  Branch: {result.get('branch_name', 'unknown')}")
     else:
-        click.echo(f"Failed to create worktree: {result.get('error')}", err=True)
+        raise click.ClickException(f"Failed to create worktree: {result.get('error')}")
 
 
 @worktrees.command("list")
@@ -177,8 +190,7 @@ def show_worktree(worktree_ref: str, json_format: bool) -> None:
     worktree = manager.get(worktree_id)
 
     if not worktree:
-        click.echo(f"Worktree not found: {worktree_id}", err=True)
-        return
+        raise click.ClickException(f"Worktree not found: {worktree_id}")
 
     if json_format:
         click.echo(json.dumps(worktree.to_dict(), indent=2, default=str))
@@ -210,8 +222,7 @@ def delete_worktree(worktree_ref: str, force: bool, yes: bool) -> None:
     try:
         worktree_id = resolve_worktree_id(manager, worktree_ref)
     except click.ClickException as e:
-        click.echo(str(e), err=True)
-        return
+        raise SystemExit(1) from e
 
     try:
         result = _call_worktree_tool(
@@ -219,20 +230,19 @@ def delete_worktree(worktree_ref: str, force: bool, yes: bool) -> None:
             {"worktree_id": worktree_id, "force": force},
             timeout=30.0,
         )
-    except httpx.ConnectError:
-        click.echo("Error: Cannot connect to Gobby daemon. Is it running?", err=True)
-        return
+    except click.ClickException:
+        raise
+    except httpx.ConnectError as e:
+        raise click.ClickException("Cannot connect to Gobby daemon. Is it running?") from e
     except httpx.HTTPStatusError as e:
-        click.echo(f"HTTP Error {e.response.status_code}: {e.response.text}", err=True)
-        return
+        raise click.ClickException(f"HTTP Error {e.response.status_code}: {e.response.text}") from e
     except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        return
+        raise click.ClickException(str(e)) from e
 
     if _delete_tool_succeeded(result):
         click.echo(f"Deleted worktree: {worktree_id}")
     else:
-        click.echo(f"Failed to delete worktree: {result.get('error')}", err=True)
+        raise click.ClickException(f"Failed to delete worktree: {result.get('error')}")
 
 
 # ... spawn command is unchanged ...
@@ -261,20 +271,19 @@ def claim_worktree(worktree_ref: str, session_id: str) -> None:
             {"worktree_id": worktree_id, "session_id": session_id},
             timeout=30.0,
         )
-    except httpx.ConnectError:
-        click.echo("Error: Cannot connect to Gobby daemon. Is it running?", err=True)
-        return
+    except click.ClickException:
+        raise
+    except httpx.ConnectError as e:
+        raise click.ClickException("Cannot connect to Gobby daemon. Is it running?") from e
     except httpx.HTTPStatusError as e:
-        click.echo(f"HTTP Error {e.response.status_code}: {e.response.text}", err=True)
-        return
+        raise click.ClickException(f"HTTP Error {e.response.status_code}: {e.response.text}") from e
     except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        return
+        raise click.ClickException(str(e)) from e
 
     if result.get("success"):
         click.echo(f"Claimed worktree {worktree_id} for session {session_id}")
     else:
-        click.echo(f"Failed to claim worktree {worktree_id}: {result.get('error')}", err=True)
+        raise click.ClickException(f"Failed to claim worktree {worktree_id}: {result.get('error')}")
 
 
 @worktrees.command("release")
@@ -293,20 +302,21 @@ def release_worktree(worktree_ref: str) -> None:
             {"worktree_id": worktree_id},
             timeout=30.0,
         )
-    except httpx.ConnectError:
-        click.echo("Error: Cannot connect to Gobby daemon. Is it running?", err=True)
-        return
+    except click.ClickException:
+        raise
+    except httpx.ConnectError as e:
+        raise click.ClickException("Cannot connect to Gobby daemon. Is it running?") from e
     except httpx.HTTPStatusError as e:
-        click.echo(f"HTTP Error {e.response.status_code}: {e.response.text}", err=True)
-        return
+        raise click.ClickException(f"HTTP Error {e.response.status_code}: {e.response.text}") from e
     except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        return
+        raise click.ClickException(str(e)) from e
 
     if result.get("success"):
         click.echo(f"Released worktree {worktree_id}")
     else:
-        click.echo(f"Failed to release worktree {worktree_id}: {result.get('error')}", err=True)
+        raise click.ClickException(
+            f"Failed to release worktree {worktree_id}: {result.get('error')}"
+        )
 
 
 @worktrees.command("sync")
@@ -321,8 +331,7 @@ def sync_worktree(worktree_ref: str, source_branch: str | None, json_format: boo
     try:
         worktree_id = resolve_worktree_id(manager, worktree_ref)
     except click.ClickException as e:
-        click.echo(str(e), err=True)
-        return
+        raise SystemExit(1) from e
 
     arguments = {"worktree_id": worktree_id}
     if source_branch:
@@ -330,15 +339,14 @@ def sync_worktree(worktree_ref: str, source_branch: str | None, json_format: boo
 
     try:
         result = _call_worktree_tool("sync_worktree", arguments, timeout=60.0)
-    except httpx.ConnectError:
-        click.echo("Error: Cannot connect to Gobby daemon. Is it running?", err=True)
-        return
+    except click.ClickException:
+        raise
+    except httpx.ConnectError as e:
+        raise click.ClickException("Cannot connect to Gobby daemon. Is it running?") from e
     except httpx.HTTPStatusError as e:
-        click.echo(f"HTTP Error {e.response.status_code}: {e.response.text}", err=True)
-        return
+        raise click.ClickException(f"HTTP Error {e.response.status_code}: {e.response.text}") from e
     except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        return
+        raise click.ClickException(str(e)) from e
 
     if json_format:
         click.echo(json.dumps(result, indent=2, default=str))
@@ -349,7 +357,7 @@ def sync_worktree(worktree_ref: str, source_branch: str | None, json_format: boo
         if result.get("commits_behind"):
             click.echo(f"  Commits merged: {result['commits_behind']}")
     else:
-        click.echo(f"Failed to sync worktree: {result.get('error')}", err=True)
+        raise click.ClickException(f"Failed to sync worktree: {result.get('error')}")
 
 
 # ... stale/cleanup/stats commands ...
@@ -387,15 +395,14 @@ def detect_stale(days: int, json_format: bool) -> None:
 
     try:
         result = _call_worktree_tool("detect_stale_worktrees", {"hours": hours}, timeout=30.0)
-    except httpx.ConnectError:
-        click.echo("Error: Cannot connect to Gobby daemon. Is it running?", err=True)
-        return
+    except click.ClickException:
+        raise
+    except httpx.ConnectError as e:
+        raise click.ClickException("Cannot connect to Gobby daemon. Is it running?") from e
     except httpx.HTTPStatusError as e:
-        click.echo(f"HTTP Error {e.response.status_code}: {e.response.text}", err=True)
-        return
+        raise click.ClickException(f"HTTP Error {e.response.status_code}: {e.response.text}") from e
     except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        return
+        raise click.ClickException(str(e)) from e
 
     if json_format:
         click.echo(json.dumps(result, indent=2, default=str))
@@ -434,8 +441,10 @@ def cleanup_worktrees(days: int, dry_run: bool, yes: bool) -> None:
             click.echo(f"Would cleanup {len(stale)} stale worktree(s)")
             for wt in stale:
                 click.echo(f"  {wt['id']}: {wt['branch_name']}")
+        except click.ClickException:
+            raise
         except Exception as e:
-            click.echo(f"Error: {e}", err=True)
+            raise click.ClickException(str(e)) from e
         return
 
     # Confirm before actual cleanup unless --yes is provided
@@ -448,21 +457,20 @@ def cleanup_worktrees(days: int, dry_run: bool, yes: bool) -> None:
             {"hours": hours, "dry_run": False},
             timeout=120.0,
         )
-    except httpx.ConnectError:
-        click.echo("Error: Cannot connect to Gobby daemon. Is it running?", err=True)
-        return
+    except click.ClickException:
+        raise
+    except httpx.ConnectError as e:
+        raise click.ClickException("Cannot connect to Gobby daemon. Is it running?") from e
     except httpx.HTTPStatusError as e:
-        click.echo(f"HTTP Error {e.response.status_code}: {e.response.text}", err=True)
-        return
+        raise click.ClickException(f"HTTP Error {e.response.status_code}: {e.response.text}") from e
     except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        return
+        raise click.ClickException(str(e)) from e
 
     if result.get("success"):
         cleaned = result.get("count", 0)
         click.echo(f"Cleaned up {cleaned} stale worktree(s)")
     else:
-        click.echo(f"Failed to cleanup worktrees: {result.get('error')}", err=True)
+        raise click.ClickException(f"Failed to cleanup worktrees: {result.get('error')}")
 
 
 @worktrees.command("stats")
@@ -477,15 +485,14 @@ def worktree_stats(json_format: bool) -> None:
             {"project_path": os.getcwd()},
             timeout=10.0,
         )
-    except httpx.ConnectError:
-        click.echo("Error: Cannot connect to Gobby daemon. Is it running?", err=True)
-        return
+    except click.ClickException:
+        raise
+    except httpx.ConnectError as e:
+        raise click.ClickException("Cannot connect to Gobby daemon. Is it running?") from e
     except httpx.HTTPStatusError as e:
-        click.echo(f"HTTP Error {e.response.status_code}: {e.response.text}", err=True)
-        return
+        raise click.ClickException(f"HTTP Error {e.response.status_code}: {e.response.text}") from e
     except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        return
+        raise click.ClickException(str(e)) from e
 
     if json_format:
         click.echo(json.dumps(result, indent=2, default=str))

@@ -1185,7 +1185,7 @@ class TestCloseTaskCommand:
 
         result = runner.invoke(cli, ["tasks", "close", "gt-abc123"])
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Cannot close" in result.output
         assert "child tasks still open" in result.output
 
@@ -2702,7 +2702,7 @@ class TestDoctorCommand:
 
             result = runner.invoke(cli, ["tasks", "doctor"])
 
-            assert result.exit_code == 0
+            assert result.exit_code == 1
             assert "Found 1 orphan dependencies" in result.output
 
     @patch("gobby.cli.tasks.main.get_task_manager")
@@ -2728,7 +2728,7 @@ class TestDoctorCommand:
 
             result = runner.invoke(cli, ["tasks", "doctor"])
 
-            assert result.exit_code == 0
+            assert result.exit_code == 1
             assert "Found 1 tasks with invalid projects" in result.output
 
     @patch("gobby.cli.tasks.main.get_task_manager")
@@ -2752,7 +2752,7 @@ class TestDoctorCommand:
 
             result = runner.invoke(cli, ["tasks", "doctor"])
 
-            assert result.exit_code == 0
+            assert result.exit_code == 1
             assert "Found 1 dependency cycles" in result.output
 
 

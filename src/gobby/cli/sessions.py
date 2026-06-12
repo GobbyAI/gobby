@@ -291,14 +291,13 @@ def delete_session(session_id: str) -> None:
     with session_manager_context() as manager:
         session = manager.get(session_id)
         if not session:
-            click.echo(f"Session not found: {session_id}", err=True)
-            return
+            raise click.ClickException(f"Session not found: {session_id}")
 
         success = manager.delete(session.id)
     if success:
         click.echo(f"Deleted session: {session.id}")
     else:
-        click.echo(f"Failed to delete session: {session.id}", err=True)
+        raise click.ClickException(f"Failed to delete session: {session.id}")
 
 
 @sessions.command("stats")

@@ -9,6 +9,7 @@ from click.testing import CliRunner
 
 from gobby.cli import cli
 from gobby.cli.memory.main import memory as memory_cli
+from gobby.sync.memories import MemoryImportError
 
 pytestmark = pytest.mark.unit
 
@@ -686,6 +687,30 @@ class TestMemoryRestoreCommand:
         assert "Memory backup not found:" in result.output
         assert "missing.jsonl" in result.output
 
+    @patch("gobby.sync.memories.MemoryBackupManager")
+    @patch("gobby.cli.memory.get_memory_manager")
+    def test_restore_import_error_fails(
+        self,
+        mock_get_manager: MagicMock,
+        mock_backup_manager_cls: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """Restore exits nonzero when backup import fails."""
+        mock_manager = MagicMock()
+        mock_manager.db = MagicMock()
+        mock_get_manager.return_value = mock_manager
+        mock_backup_manager = MagicMock()
+        mock_backup_manager.import_sync.side_effect = MemoryImportError("corrupt JSONL")
+        mock_backup_manager_cls.return_value = mock_backup_manager
+
+        with runner.isolated_filesystem():
+            restore_path = Path("memories.jsonl")
+            restore_path.write_text("{", encoding="utf-8")
+            result = runner.invoke(cli, ["memory", "restore", "--input", str(restore_path)])
+
+        assert result.exit_code == 1
+        assert "corrupt JSONL" in result.output
+
 
 class TestResolveMemoryId:
     """Tests for resolve_memory_id function."""
@@ -776,7 +801,7 @@ class TestMemoryDeleteNotFound:
 
         result = runner.invoke(cli, ["memory", "delete", "nonexistent"])
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Memory not found" in result.output
 
 
@@ -804,7 +829,7 @@ class TestMemoryShowNotFound:
 
         result = runner.invoke(cli, ["memory", "show", "nonexistent"])
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Memory not found" in result.output
 
     @patch("gobby.cli.memory.resolve_memory_id")

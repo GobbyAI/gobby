@@ -115,6 +115,9 @@ def compile_cmd(
         run = asyncio.run(service.compile_run(run.id))
     except Exception as exc:
         _fail_run_and_raise(run_manager, run.id, exc)
+    if run.status != "completed" or run.error:
+        detail = run.error or f"run finished with status {run.status}"
+        raise click.ClickException(f"Expansion compile failed: {detail}")
     if json_output:
         click.echo(json.dumps(run.to_dict()))
         return
