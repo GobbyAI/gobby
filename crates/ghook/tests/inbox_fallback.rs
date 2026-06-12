@@ -56,6 +56,40 @@ fn blocked_inbox_keeps_failure_action_when_daemon_post_fails()
     Ok(())
 }
 
+#[test]
+fn gobby_home_env_keeps_envelope_and_marker_under_same_root()
+-> Result<(), Box<dyn std::error::Error>> {
+    let real_home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    fs::write(
+        gobby_home.path().join("shutdown_intent_active.json"),
+        br#"{"source":"test","intent":"restart","timestamp":1}"#,
+    )?;
+    let daemon_url = closed_local_url()?;
+
+    let output = run_ghook_with_gobby_home(real_home.path(), gobby_home.path(), &daemon_url)?;
+
+    assert_eq!(output.status.code(), Some(2));
+    let marker = gobby_home.path().join("shutdown_intent_active.json");
+    let inbox = gobby_home.path().join("hooks").join("inbox");
+    assert!(
+        marker.exists(),
+        "shutdown marker should stay under GOBBY_HOME"
+    );
+    let envelopes = fs::read_dir(&inbox)?.collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(
+        envelopes.len(),
+        1,
+        "expected one queued envelope in {inbox:?}"
+    );
+    assert!(
+        !real_home.path().join(".gobby").join("hooks").exists(),
+        "raw HOME should not receive hook inbox writes when GOBBY_HOME is set"
+    );
+
+    Ok(())
+}
+
 fn home_with_blocked_inbox() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     let home = tempfile::tempdir()?;
     let hooks_dir = home.path().join(".gobby").join("hooks");
@@ -65,7 +99,22 @@ fn home_with_blocked_inbox() -> Result<tempfile::TempDir, Box<dyn std::error::Er
 }
 
 fn run_ghook(home: &Path, daemon_url: &str) -> Result<Output, Box<dyn std::error::Error>> {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_ghook"))
+    run_ghook_command(ghook_command(home, daemon_url))
+}
+
+fn run_ghook_with_gobby_home(
+    home: &Path,
+    gobby_home: &Path,
+    daemon_url: &str,
+) -> Result<Output, Box<dyn std::error::Error>> {
+    let mut command = ghook_command(home, daemon_url);
+    command.env("GOBBY_HOME", gobby_home);
+    run_ghook_command(command)
+}
+
+fn ghook_command(home: &Path, daemon_url: &str) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ghook"));
+    command
         .args(["--gobby-owned", "--cli", "codex", "--type", "SessionStart"])
         .env("HOME", home)
         .env("GOBBY_DAEMON_URL", daemon_url)
@@ -74,9 +123,12 @@ fn run_ghook(home: &Path, daemon_url: &str) -> Result<Output, Box<dyn std::error
         .env_remove("TMUX_PANE")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+        .stderr(Stdio::piped());
+    command
+}
 
+fn run_ghook_command(mut command: Command) -> Result<Output, Box<dyn std::error::Error>> {
+    let mut child = command.spawn()?;
     let mut stdin = child
         .stdin
         .take()

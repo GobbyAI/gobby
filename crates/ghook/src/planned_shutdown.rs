@@ -130,13 +130,7 @@ fn daemon_is_reachable(daemon_url: &str) -> bool {
 }
 
 fn marker_home() -> Option<PathBuf> {
-    if let Some(home) = std::env::var_os("GOBBY_HOME")
-        && !home.is_empty()
-    {
-        return Some(PathBuf::from(home));
-    }
-
-    dirs::home_dir().map(|home| home.join(".gobby"))
+    gobby_core::gobby_home().ok()
 }
 
 fn allow_seconds() -> f64 {

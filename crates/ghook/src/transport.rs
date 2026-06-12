@@ -56,8 +56,7 @@ pub struct DeliveryReport {
 
 /// Compute the inbox directory (`~/.gobby/hooks/inbox/`).
 pub fn inbox_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().context("no home directory")?;
-    Ok(home.join(".gobby").join("hooks").join("inbox"))
+    Ok(gobby_core::gobby_home()?.join("hooks").join("inbox"))
 }
 
 /// Compute the quarantine directory (`~/.gobby/hooks/inbox/quarantine/`).

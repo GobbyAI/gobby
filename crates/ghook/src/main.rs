@@ -572,8 +572,7 @@ fn json_value_is_meaningful(value: &Value) -> bool {
 }
 
 fn write_runtime_stamp() -> Result<()> {
-    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("no home directory"))?;
-    let bin_dir = home.join(".gobby").join("bin");
+    let bin_dir = gobby_core::gobby_home()?.join("bin");
     std::fs::create_dir_all(&bin_dir)?;
     let stamp_path = bin_dir.join(".ghook-runtime.json");
     let stamp = serde_json::json!({
