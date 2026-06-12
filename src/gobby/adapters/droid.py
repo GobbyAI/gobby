@@ -47,15 +47,30 @@ class DroidAdapter(BaseAdapter):
     def __init__(self, hook_manager: HookManager | None = None) -> None:
         self._hook_manager = hook_manager
 
+    def _resolve_hook_type(self, native_event: dict[str, Any]) -> str:
+        hook_type = native_event.get("hook_type")
+        if isinstance(hook_type, str) and hook_type:
+            return hook_type
+
+        input_data = native_event.get("input_data") or {}
+        if isinstance(input_data, dict):
+            hook_event_name = input_data.get("hook_event_name")
+            if isinstance(hook_event_name, str) and hook_event_name:
+                return hook_event_name
+
+        hook_event_name = native_event.get("hook_event_name")
+        if isinstance(hook_event_name, str):
+            return hook_event_name
+        return ""
+
     def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent:
         """Convert Droid native payload to a unified HookEvent."""
 
-        hook_type = native_event.get("hook_type", "")
+        hook_type = self._resolve_hook_type(native_event)
         input_data = native_event.get("input_data", {}) or {}
 
         if not input_data and "hook_event_name" in native_event:
             input_data = native_event
-            hook_type = hook_type or native_event.get("hook_event_name", "")
 
         event_type = self.EVENT_MAP.get(hook_type, HookEventType.NOTIFICATION)
         normalized_data = self._normalize_event_data(input_data)
@@ -225,8 +240,6 @@ class DroidAdapter(BaseAdapter):
         """Translate, handle through HookManager, and translate the response."""
 
         hook_event = self.translate_to_hook_event(native_event)
-        hook_type = native_event.get("hook_type") or (
-            (native_event.get("input_data") or {}).get("hook_event_name")
-        )
+        hook_type = self._resolve_hook_type(native_event)
         hook_response = hook_manager.handle(hook_event)
         return self.translate_from_hook_response(hook_response, hook_type=hook_type)
