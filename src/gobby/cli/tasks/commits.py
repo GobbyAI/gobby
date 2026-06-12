@@ -17,6 +17,15 @@ def commit_cmd() -> None:
     pass
 
 
+def _get_project_cwd() -> str | None:
+    ctx = get_project_context(cwd=Path.cwd())
+    if not ctx:
+        return None
+
+    project_path = ctx.get("project_path")
+    return str(project_path) if project_path else None
+
+
 @commit_cmd.command("link")
 @click.argument("task_id", metavar="TASK")
 @click.argument("commit_sha")
@@ -32,7 +41,8 @@ def link_commit(task_id: str, commit_sha: str) -> None:
         raise SystemExit(1)
 
     try:
-        updated_task = manager.link_commit(task.id, commit_sha)
+        cwd = _get_project_cwd()
+        updated_task = manager.link_commit(task.id, commit_sha, cwd=cwd)
         click.echo(f"Linked commit {commit_sha} to task {task.id}")
         if updated_task.commits:
             click.echo(f"Total commits: {len(updated_task.commits)}")
@@ -56,10 +66,21 @@ def unlink_commit(task_id: str, commit_sha: str) -> None:
         raise SystemExit(1)
 
     try:
-        updated_task = manager.unlink_commit(task.id, commit_sha)
+        existing_commits = list(task.commits or [])
+        cwd = _get_project_cwd()
+        updated_task = manager.unlink_commit(task.id, commit_sha, cwd=cwd)
+        remaining_commits = list(updated_task.commits or [])
+        if existing_commits == remaining_commits:
+            click.echo(f"Commit {commit_sha} not found on task {task.id}; nothing to unlink")
+            if remaining_commits:
+                click.echo(f"Remaining commits: {len(remaining_commits)}")
+            else:
+                click.echo("No commits linked")
+            return
+
         click.echo(f"Unlinked commit {commit_sha} from task {task.id}")
-        if updated_task.commits:
-            click.echo(f"Remaining commits: {len(updated_task.commits)}")
+        if remaining_commits:
+            click.echo(f"Remaining commits: {len(remaining_commits)}")
         else:
             click.echo("No commits linked")
     except ValueError as e:
