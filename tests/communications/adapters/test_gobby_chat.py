@@ -208,7 +208,8 @@ def test_parse_inbound_valid(adapter: GobbyChatAdapter) -> None:
     assert msg.session_id == "conv-123"
     assert msg.identity_id == "user-456"
     assert msg.id == "msg-789"
-    assert msg.channel_id == "gobby_chat"
+    assert msg.channel_id == ""
+    assert msg.metadata_json["platform_channel_id"] == "gobby_chat"
     assert msg.direction == "inbound"
     assert msg.content_type == "text"
     # model should be in metadata (not a core field)

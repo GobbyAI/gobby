@@ -89,6 +89,7 @@ async def test_send_message(adapter, mock_secret_resolver):
 
     msg_id = await adapter.send_message(msg)
 
+    assert msg.channel_id != msg.metadata_json["platform_destination"]
     assert msg_id is not None
     mock_smtp_inst.send_message.assert_called_once()
 
@@ -129,7 +130,8 @@ async def test_poll(adapter, mock_secret_resolver):
         messages = await adapter.poll()
 
         assert len(messages) == 2
-        assert messages[0].channel_id == "user@example.com"
+        assert messages[0].channel_id == ""
+        assert messages[0].metadata_json["platform_channel_id"] == "user@example.com"
         assert messages[0].content.strip() == "Hello back!"
         assert messages[0].platform_message_id == "<msg123>"
         assert messages[0].metadata_json["subject"] == "Test Reply"

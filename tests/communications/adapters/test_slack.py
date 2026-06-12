@@ -111,6 +111,7 @@ async def test_send_message_success(
 
         ts = await adapter.send_message(message)
 
+        assert message.channel_id != message.metadata_json["platform_destination"]
         assert ts == "1234567890.123456"
         mock_post.assert_called_once_with(
             "chat.postMessage",
@@ -239,7 +240,8 @@ def test_parse_webhook_event_callback(adapter: SlackAdapter) -> None:
     assert len(messages) == 1
     assert messages[0].content == "Hello bot"
     assert messages[0].identity_id == "U123"
-    assert messages[0].channel_id == "C123"
+    assert messages[0].channel_id == ""
+    assert messages[0].metadata_json["platform_channel_id"] == "C123"
     assert messages[0].platform_message_id == "123.456"
     assert messages[0].platform_thread_id == "thread.789"
 

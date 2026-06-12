@@ -141,6 +141,7 @@ async def test_send_message_basic(
 
         msg_id = await adapter.send_message(message)
 
+        assert message.channel_id != message.metadata_json["platform_destination"]
         assert msg_id == "12345"
 
         # Checking last call
@@ -234,6 +235,7 @@ def test_parse_webhook(adapter: TelegramAdapter) -> None:
     assert msg.metadata_json["user_id"] == "1111111"
     assert msg.metadata_json["username"] == "testuser"
     assert msg.metadata_json["chat_id"] == "2222222"
+    assert msg.metadata_json["platform_channel_id"] == "2222222"
 
 
 def test_verify_webhook(adapter: TelegramAdapter) -> None:

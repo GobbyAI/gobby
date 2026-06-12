@@ -102,7 +102,8 @@ def test_parse_webhook(adapter):
     messages = adapter.parse_webhook(payload, {})
 
     assert len(messages) == 1
-    assert messages[0].channel_id == "+0987654321"
+    assert messages[0].channel_id == ""
+    assert messages[0].metadata_json["platform_channel_id"] == "+0987654321"
     assert messages[0].content == "Hello Twilio"
     assert messages[0].platform_message_id == "SM123"
     assert messages[0].identity_id == "+0987654321"
@@ -114,7 +115,8 @@ def test_parse_webhook_urlencoded(adapter):
     messages = adapter.parse_webhook(payload, {})
 
     assert len(messages) == 1
-    assert messages[0].channel_id == "+0987654321"
+    assert messages[0].channel_id == ""
+    assert messages[0].metadata_json["platform_channel_id"] == "+0987654321"
     assert messages[0].content == "Hello Twilio"
     assert messages[0].platform_message_id == "SM123"
 

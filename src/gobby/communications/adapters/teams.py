@@ -256,7 +256,7 @@ class TeamsAdapter(BaseChannelAdapter):
         if not channel_id or not text:
             return []
 
-        metadata: dict[str, Any] = {}
+        metadata: dict[str, Any] = {"platform_channel_id": channel_id}
         if service_url:
             metadata["service_url"] = service_url
 
@@ -273,7 +273,7 @@ class TeamsAdapter(BaseChannelAdapter):
 
         msg = CommsMessage(
             id=message_id or "",
-            channel_id=channel_id,
+            channel_id="",
             direction="inbound",
             content=text,
             created_at=datetime.now(UTC).isoformat(),

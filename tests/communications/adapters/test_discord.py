@@ -96,6 +96,7 @@ async def test_send_message_success(
 
         msg_id = await adapter.send_message(message)
 
+        assert message.channel_id != message.metadata_json["platform_destination"]
         assert msg_id == "1234567890"
         mock_post.assert_called_once_with(
             "/channels/channel_123/messages",
@@ -123,7 +124,8 @@ def test_parse_webhook_message(adapter: DiscordAdapter) -> None:
     assert len(messages) == 1
     assert messages[0].content == "Hello bot"
     assert messages[0].identity_id == "user_789"
-    assert messages[0].channel_id == "channel_123"
+    assert messages[0].channel_id == ""
+    assert messages[0].metadata_json["platform_channel_id"] == "channel_123"
     assert messages[0].platform_message_id == "msg_456"
 
 

@@ -114,7 +114,12 @@ async def test_send_message_success(
 
         msg_id = await adapter.send_message(message)
 
+        assert message.channel_id != message.metadata_json["platform_destination"]
         assert msg_id == "msg-123"
+        assert (
+            mock_client.post.call_args.args[0]
+            == "https://smba.trafficmanager.net/apis/v3/conversations/conv-1/activities"
+        )
         assert mock_client.post.call_args.kwargs["json"]["text"] == "Hello world"
 
 
@@ -191,10 +196,11 @@ def test_parse_webhook(adapter: TeamsAdapter) -> None:
     assert len(messages) == 1
     msg = messages[0]
     assert msg.content == "Hello bot"
-    assert msg.channel_id == "conv-123"
+    assert msg.channel_id == ""
     assert msg.identity_id == "user-789"
     assert msg.platform_message_id == "msg-456"
     assert msg.platform_thread_id == "msg-111"
+    assert msg.metadata_json["platform_channel_id"] == "conv-123"
     assert msg.metadata_json["service_url"] == "https://smba.trafficmanager.net/apis/"
 
 
@@ -356,6 +362,7 @@ def test_parse_webhook_stores_conversation_reference(adapter: TeamsAdapter) -> N
 
     assert len(messages) == 1
     conv_ref = messages[0].metadata_json["conversation_reference"]
+    assert messages[0].metadata_json["platform_channel_id"] == "conv-abc"
     assert conv_ref["service_url"] == "https://smba.trafficmanager.net/apis/"
     assert conv_ref["conversation_id"] == "conv-abc"
     assert conv_ref["tenant_id"] == "tenant-xyz"

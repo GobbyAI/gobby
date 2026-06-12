@@ -482,17 +482,18 @@ class DiscordAdapter(BaseChannelAdapter):
             reaction = emoji.get("name", "")
 
             if channel_id and reaction and msg_id:
+                metadata = {**d, "platform_channel_id": channel_id}
                 messages.append(
                     CommsMessage(
                         id=f"discord_rxn_{msg_id}_{time.time()}",
-                        channel_id=channel_id,
+                        channel_id="",
                         direction="inbound",
                         content=reaction,
                         created_at=datetime.now(UTC).isoformat(),
                         identity_id=user_id,
                         platform_message_id=msg_id,
                         content_type="reaction",
-                        metadata_json=d,
+                        metadata_json=metadata,
                     )
                 )
             return messages
@@ -518,10 +519,11 @@ class DiscordAdapter(BaseChannelAdapter):
             thread_id = thread_meta.get("id")
 
         if channel_id and content:
+            metadata = {**payload_dict, "platform_channel_id": channel_id}
             messages.append(
                 CommsMessage(
                     id=msg_id or f"discord_msg_{time.time()}",
-                    channel_id=channel_id,
+                    channel_id="",
                     direction="inbound",
                     content=content,
                     created_at=datetime.now(UTC).isoformat(),
@@ -529,7 +531,7 @@ class DiscordAdapter(BaseChannelAdapter):
                     platform_message_id=msg_id,
                     platform_thread_id=thread_id,
                     content_type="text",
-                    metadata_json=payload_dict,
+                    metadata_json=metadata,
                 )
             )
 

@@ -19,6 +19,7 @@ def create_mock_message(**kwargs: Any) -> MagicMock:
     msg = MagicMock()
     msg.content = "content"
     msg.channel_id = "chan_1"
+    msg.metadata_json = {"platform_destination": "chan_1"}
     msg.platform_thread_id = None
     for k, v in kwargs.items():
         setattr(msg, k, v)
@@ -105,7 +106,8 @@ class TestDiscordExtras:
         assert msg.content == "👍"
         assert msg.identity_id == "user1"
         assert msg.platform_message_id == "msg1"
-        assert msg.channel_id == "chan1"
+        assert msg.channel_id == ""
+        assert msg.metadata_json["platform_channel_id"] == "chan1"
 
     def test_parse_webhook_missing_data(self, adapter):
         """Test payload structures with varying structures."""

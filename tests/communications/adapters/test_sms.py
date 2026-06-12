@@ -113,6 +113,7 @@ async def test_send_message_success(
 
         msg_id = await adapter.send_message(message)
 
+        assert message.channel_id != message.metadata_json["platform_destination"]
         assert msg_id == "SM12345"
         mock_post.assert_called_with(
             "Messages.json",
@@ -137,11 +138,12 @@ def test_parse_webhook(adapter: SMSAdapter) -> None:
 
     assert len(messages) == 1
     msg = messages[0]
-    assert msg.channel_id == "+0987654321"
+    assert msg.channel_id == ""
     assert msg.direction == "inbound"
     assert msg.content == "Hello from Twilio!"
     assert msg.platform_message_id == "SM12345"
     assert msg.identity_id == "+0987654321"
+    assert msg.metadata_json["platform_channel_id"] == "+0987654321"
     assert msg.metadata_json["opt_out_action"] is None
 
 

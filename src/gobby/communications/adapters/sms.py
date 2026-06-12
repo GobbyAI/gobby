@@ -199,12 +199,16 @@ class SMSAdapter(BaseChannelAdapter):
         elif body_upper in self._OPT_IN_KEYWORDS:
             opt_out_action = "opt_in"
 
-        metadata: dict[str, Any] = {**params, "opt_out_action": opt_out_action}
+        metadata: dict[str, Any] = {
+            **params,
+            "opt_out_action": opt_out_action,
+            "platform_channel_id": from_number,
+        }
 
         return [
             CommsMessage(
                 id=message_sid or f"sms_{time.time()}",
-                channel_id=from_number,
+                channel_id="",
                 direction="inbound",
                 content=body,
                 created_at=datetime.now(UTC).isoformat(),

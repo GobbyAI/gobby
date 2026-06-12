@@ -179,7 +179,8 @@ def test_parse_webhook(adapter):
     messages = adapter.parse_webhook(payload, {})
 
     assert len(messages) == 1
-    assert messages[0].channel_id == "conv_123"
+    assert messages[0].channel_id == ""
+    assert messages[0].metadata_json["platform_channel_id"] == "conv_123"
     assert messages[0].content == "Hello bot"
     assert messages[0].identity_id == "user_123"
     assert messages[0].metadata_json["service_url"] == "https://smba.trafficmanager.net/teams/"

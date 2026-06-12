@@ -103,10 +103,7 @@ class TelegramAdapter(BaseChannelAdapter):
             raise RuntimeError("Adapter not initialized")
         client = self._client
 
-        chat_id = message.metadata_json.get("platform_destination")
-
-        if not chat_id:
-            raise ValueError("No platform_destination provided in message metadata")
+        chat_id = self.platform_destination(message)
 
         chunks = self.chunk_message(message.content)
 
@@ -137,9 +134,7 @@ class TelegramAdapter(BaseChannelAdapter):
             raise RuntimeError("Adapter not initialized")
         client = self._client
 
-        chat_id = message.metadata_json.get("platform_destination")
-        if not chat_id:
-            raise ValueError("No platform_destination provided in message metadata")
+        chat_id = self.platform_destination(message)
 
         file_bytes = await asyncio.to_thread(file_path.read_bytes)
         files = {"document": (attachment.filename, file_bytes, attachment.content_type)}
@@ -205,6 +200,7 @@ class TelegramAdapter(BaseChannelAdapter):
 
         metadata = {
             "chat_id": chat_id,
+            "platform_channel_id": chat_id,
             "user_id": user_id,
             "username": username,
         }

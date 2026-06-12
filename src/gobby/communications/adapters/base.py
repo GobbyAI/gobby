@@ -104,7 +104,11 @@ class BaseChannelAdapter(ABC):
         return []
 
     def platform_destination(self, message: CommsMessage) -> str:
-        """Return the adapter-facing destination for an outbound message."""
+        """Return the adapter-facing destination for an outbound message.
+
+        ``message.channel_id`` is the internal comms channel UUID. Adapters must
+        use this helper to route via ``metadata_json["platform_destination"]``.
+        """
         destination = message.metadata_json.get("platform_destination")
         if destination is None or destination == "":
             raise ValueError(

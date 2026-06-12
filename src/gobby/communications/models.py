@@ -91,8 +91,12 @@ class ChannelConfig:
 class CommsMessage:
     """A message sent or received via a communication channel.
 
-    ``channel_id`` is always the internal ``comms_channels.id`` value. Platform
-    destinations and inbound platform channel IDs live in ``metadata_json``.
+    ``channel_id`` is always the internal ``comms_channels.id`` value. It is
+    never a Slack channel, SMS number, Teams conversation, Discord channel,
+    Telegram chat, email sender, or Gobby Chat destination. Outbound adapters
+    read their platform destination from ``metadata_json["platform_destination"]``;
+    inbound adapters preserve their platform channel in
+    ``metadata_json["platform_channel_id"]`` before storage.
     """
 
     id: str

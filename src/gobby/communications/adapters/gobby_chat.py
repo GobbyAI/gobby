@@ -170,20 +170,23 @@ class GobbyChatAdapter(BaseChannelAdapter):
         from datetime import UTC, datetime
         from uuid import uuid4
 
+        metadata = {
+            k: v
+            for k, v in data.items()
+            if k not in ("content", "message_id", "conversation_id", "user_id", "type")
+        }
+        metadata.setdefault("platform_channel_id", "gobby_chat")
+
         return CommsMessage(
             id=data.get("message_id") or str(uuid4()),
-            channel_id="gobby_chat",
+            channel_id="",
             direction="inbound",
             content=content,
             created_at=datetime.now(UTC).isoformat(),
             session_id=data.get("conversation_id"),
             identity_id=data.get("user_id"),
             content_type="text",
-            metadata_json={
-                k: v
-                for k, v in data.items()
-                if k not in ("content", "message_id", "conversation_id", "user_id", "type")
-            },
+            metadata_json=metadata,
         )
 
 

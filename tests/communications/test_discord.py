@@ -136,7 +136,8 @@ def test_parse_webhook(adapter):
     messages = adapter.parse_webhook(payload, {})
 
     assert len(messages) == 1
-    assert messages[0].channel_id == "channel_123"
+    assert messages[0].channel_id == ""
+    assert messages[0].metadata_json["platform_channel_id"] == "channel_123"
     assert messages[0].content == "Hello discord"
     assert messages[0].identity_id == "user_123"
 
@@ -161,7 +162,8 @@ def test_parse_webhook_reaction_added(adapter):
     assert msg.content == "thumbsup"
     assert msg.platform_message_id == "msg_456"
     assert msg.identity_id == "user_789"
-    assert msg.channel_id == "channel_123"
+    assert msg.channel_id == ""
+    assert msg.metadata_json["platform_channel_id"] == "channel_123"
 
 
 def test_parse_webhook_extracts_thread_id(adapter):

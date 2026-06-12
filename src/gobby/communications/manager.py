@@ -447,6 +447,8 @@ class CommunicationsManager:
 
         stored: list[CommsMessage] = []
         for message in messages:
+            # Adapters may receive platform IDs from webhooks or polling, but
+            # stored messages must always reference the internal channel UUID.
             platform_channel_id = (
                 message.metadata_json.get("platform_channel_id")
                 or message.channel_id
@@ -454,6 +456,8 @@ class CommunicationsManager:
             )
             if platform_channel_id:
                 message.metadata_json["platform_channel_id"] = str(platform_channel_id)
+            # Always overwrite adapter-supplied channel_id before persistence so
+            # comms_messages.channel_id satisfies its comms_channels FK.
             message.channel_id = channel.id
 
             if message.content_type == "reaction":

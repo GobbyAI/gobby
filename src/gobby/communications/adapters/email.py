@@ -452,7 +452,7 @@ class EmailAdapter(BaseChannelAdapter):
                     messages.append(
                         CommsMessage(
                             id=msg_id or f"{datetime.now(UTC).timestamp()}-{uuid.uuid4().hex[:8]}",
-                            channel_id=sender,
+                            channel_id="",
                             direction="inbound",
                             content=content,
                             created_at=datetime.now(UTC).isoformat(),
@@ -463,6 +463,7 @@ class EmailAdapter(BaseChannelAdapter):
                             metadata_json={
                                 "subject": subject,
                                 "platform_destination": sender,
+                                "platform_channel_id": sender,
                             },
                         )
                     )

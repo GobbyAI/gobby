@@ -315,10 +315,11 @@ class SlackAdapter(BaseChannelAdapter):
                 thread_ts = event.get("thread_ts")
 
                 if channel and text:
+                    metadata = {**event, "platform_channel_id": channel}
                     messages.append(
                         CommsMessage(
                             id=ts or f"slack_msg_{time.time()}",
-                            channel_id=channel,
+                            channel_id="",
                             direction="inbound",
                             content=text,
                             created_at=datetime.now(UTC).isoformat(),
@@ -326,7 +327,7 @@ class SlackAdapter(BaseChannelAdapter):
                             platform_message_id=ts,
                             platform_thread_id=thread_ts,
                             content_type="text",
-                            metadata_json=event,
+                            metadata_json=metadata,
                         )
                     )
             elif event_type == "reaction_added":
@@ -339,17 +340,18 @@ class SlackAdapter(BaseChannelAdapter):
                     ts = item.get("ts")
 
                     if channel and reaction and ts:
+                        metadata = {**event, "platform_channel_id": channel}
                         messages.append(
                             CommsMessage(
                                 id=f"slack_rxn_{ts}_{time.time()}",
-                                channel_id=channel,
+                                channel_id="",
                                 direction="inbound",
                                 content=reaction,
                                 created_at=datetime.now(UTC).isoformat(),
                                 identity_id=user,
                                 platform_message_id=ts,  # ID of message being reacted to
                                 content_type="reaction",
-                                metadata_json=event,
+                                metadata_json=metadata,
                             )
                         )
 
