@@ -31,8 +31,7 @@ Link each section epic to its worktree.
 Branch names: `review-fixes/<section-slug>`.
 
 Concurrency:
-Start with at most 6 active section worktrees.
-Raise to 8 only after the first wave completes cleanly.
+Run at most 10 active section worktrees.
 Run at most one active developer worker per section worktree.
 
 Coordinator manifest:
@@ -112,7 +111,7 @@ Every 6 confirmed dispatched subagents:
 update manifest memory
 call gobby-sessions.compact_self
 resume from summary and manifest memory
-Also compact after a full six-slot launch/refill batch.
+Also compact after any launch/refill batch that reaches the six-dispatch compaction threshold.
 
 Stop condition:
 Stop when all eligible leaves across queued sections are closed or blocked.
