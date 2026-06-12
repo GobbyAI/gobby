@@ -22,6 +22,7 @@ use std::time::Duration;
 
 const POST_TIMEOUT: Duration = Duration::from_secs(30);
 const HOOKS_ENDPOINT: &str = "/api/hooks/execute";
+const ENVELOPE_ID_HEADER: &str = "X-Gobby-Envelope-Id";
 
 /// Result of `enqueue_and_post` — the main CLI needs to know whether the
 /// daemon ACKed (delete the inbox file and return early) or not (keep the
@@ -120,6 +121,10 @@ pub fn enqueue_to(envelope: &Envelope, inbox: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
+fn envelope_id_from_path(enqueued_path: &Path) -> Option<&str> {
+    enqueued_path.file_stem()?.to_str()
+}
+
 /// POST the current hook envelope to the daemon. On 2xx, delete the inbox file
 /// and return `Delivered`. On any other outcome, leave the file and return
 /// `Enqueued`.
@@ -137,6 +142,9 @@ pub fn post_and_cleanup(
         .set("Content-Type", "application/json");
     for (k, v) in &envelope.headers {
         req = req.set(k, v);
+    }
+    if let Some(envelope_id) = envelope_id_from_path(enqueued_path) {
+        req = req.set(ENVELOPE_ID_HEADER, envelope_id);
     }
 
     let body = match serde_json::to_string(envelope) {
@@ -387,6 +395,12 @@ mod tests {
             headers,
         );
         let path = enqueue_to(&envelope, &inbox).unwrap();
+        let envelope_id = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.strip_suffix(".json"))
+            .unwrap()
+            .to_string();
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
@@ -394,6 +408,7 @@ mod tests {
             let (mut stream, _) = listener.accept().unwrap();
             let request = read_http_request(&mut stream);
             assert!(request.contains("POST /api/hooks/execute HTTP/1.1"));
+            assert!(request.contains(&format!("{ENVELOPE_ID_HEADER}: {envelope_id}")));
             assert!(request.contains("X-Gobby-Session-Id: s"));
             assert!(request.contains("\"hook_type\":\"SessionStart\""));
             assert!(request.contains("\"input_data\":{\"session_id\":\"s\"}"));
@@ -439,6 +454,12 @@ mod tests {
             BTreeMap::new(),
         );
         let path = enqueue_to(&envelope, &inbox).unwrap();
+        let envelope_id = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.strip_suffix(".json"))
+            .unwrap()
+            .to_string();
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
@@ -446,6 +467,7 @@ mod tests {
             let (mut stream, _) = listener.accept().unwrap();
             let request = read_http_request(&mut stream);
             assert!(request.contains("POST /api/hooks/execute HTTP/1.1"));
+            assert!(request.contains(&format!("{ENVELOPE_ID_HEADER}: {envelope_id}")));
             assert!(request.contains("\"hook_type\":\"PreToolUse\""));
             assert!(request.contains("\"source\":\"droid\""));
             assert!(request.contains("\"schema_version\":1"));
