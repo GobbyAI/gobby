@@ -1600,6 +1600,34 @@ class TestTmuxSessionManagerExtended:
         # Should have called killpg with SIGTERM then SIGKILL
         assert mock_killpg.call_count >= 2
 
+    async def test_kill_session_skips_process_groups_for_wsl(self) -> None:
+        """kill_session avoids host process-group signals when tmux is running via WSL."""
+
+        mgr = TmuxSessionManager()
+        with (
+            patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
+            patch("gobby.agents.tmux.session_manager.needs_wsl", return_value=True),
+            patch("os.killpg") as mock_killpg,
+            patch("os.getpgid") as mock_getpgid,
+        ):
+            mock_run.side_effect = [
+                (0, "12345\n", ""),  # list-panes for PIDs
+                (0, "", ""),  # kill-session
+            ]
+            result = await mgr.kill_session("test")
+        assert result is True
+        assert len(mock_run.await_args_list) == 2
+        assert mock_run.await_args_list[0].args == (
+            "list-panes",
+            "-t",
+            "=test:",
+            "-F",
+            "#{pane_pid}",
+        )
+        assert mock_run.await_args_list[1].args == ("kill-session", "-t", "=test:")
+        mock_getpgid.assert_not_called()
+        mock_killpg.assert_not_called()
+
 
 class TestGetWindowAutomaticRename:
     """Tests for TmuxSessionManager.get_window_automatic_rename."""

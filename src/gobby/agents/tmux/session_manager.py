@@ -23,6 +23,7 @@ from gobby.agents.tmux.text_injection import (
     TmuxTextInjectionError,
     send_literal_text_to_tmux_target,
 )
+from gobby.agents.tmux.wsl_compat import needs_wsl
 from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
@@ -483,6 +484,10 @@ class TmuxSessionManager:
                 return missing_ok
             logger.warning("Failed to kill tmux session '%s': %s", name, message)
             return False
+
+        if needs_wsl():
+            logger.info("Killed tmux session '%s' via WSL tmux", name)
+            return True
 
         # Kill process groups rooted at each pane shell
         for pid in pids:
