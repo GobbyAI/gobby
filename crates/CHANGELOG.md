@@ -9,15 +9,196 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] — gcode
+
+### Added
+
+#### gcode
+
+- **Codewiki knowledge pages** — architecture overview, onboarding, ownership
+  (git-blame attribution), hotspots, and change-history pages are generated
+  alongside the module/file docs.
+- **Mid-tier AI profile for aggregate docs** — module/repo/architecture pages
+  request the heavier `feature_mid` daemon text-generation profile; file and
+  symbol docs stay on the default profile.
+- **Incremental codewiki with resume** — unchanged docs are reused with zero
+  LLM calls, every doc persists as it is written, and interrupted runs resume
+  from disk instead of regenerating completed pages.
+- **stderr diagnostics** — a minimal `RUST_LOG`-aware logger (silenced by
+  `--quiet`) surfaces operator-facing degradations such as an unreachable
+  Qdrant during semantic search, without touching stdout/JSON output.
+- **Postgres-backed SQL tests** — code-fact upsert semantics are covered by
+  hub-gated tests that report skipped (not passed) when no test DSN is set.
+
 ### Changed
 
-#### gcode/gwiki
+#### gcode
 
 - **Pre-release embedding provider names are canonical** — setup accepts
   `lmstudio`, `ollama`, `openai-compatible`, or `none`; older aliases are
   invalid.
+- **Batched codewiki symbol loading** — one query for the whole run instead of
+  one query per file.
+- **Bounded module Components** — high-level module pages list only their
+  direct components; leaf modules keep full listings.
+- **Cancellable blame** — ownership attribution runs `git blame` as a child
+  process that is killed on timeout, replacing leaked worker threads.
+
+### Fixed
+
+#### gcode
+
+- **Degradation recorded on every codewiki fallback** — failed generations
+  never displace healthy prose, degraded docs repair themselves on re-run, and
+  structural fallbacks carry bounded citations.
+- **Unchanged symbol summaries survive reindex** — per-file reindexing upserts
+  first and deletes only genuinely stale rows.
+- **Scoped codewiki runs preserve out-of-scope docs** on disk and in
+  `_meta/codewiki.json`.
+- **Stale facts reconciled** when discovered files fail AST indexing.
+- **Embedding/AI config read errors propagate** with key context instead of
+  silently degrading to BM25-only defaults.
+- **Compact repo.md provenance** — coalesced line ranges and file-only repo
+  entries shrink the landing page frontmatter from ~637KB to ~17KB.
+- **Accurate relation row counts** reported from import/call upserts.
+
+## [0.5.0] — gobby-core
+
+### Added
+
+#### gobby-core
+
+- **Text-generation profile binding** — `ai.text_generate.profile` (default
+  `feature_low`) plus a per-call override for heavyweight callers.
+- **Layered YAML config loader** — the built-in → global → project → CLI
+  config stack used by gsqz/gloc now lives in the foundation crate.
+- **Expanded AI config env fallback**, with warnings for previously swallowed
+  config resolution errors.
+
+### Changed
+
+#### gobby-core
+
+- **Breaking: slimmer public API** — removed the unused `CoreContext`,
+  `probe_local_backend`, and `default_backends` family; the dead local-backend
+  test shim is gone.
+- **Breaking: HTTP fully behind the `ai` feature** — `ureq` and the direct
+  OpenAI-compatible embeddings client are gated under `ai`, so tiny binaries
+  never compile an HTTP stack they do not use.
+- **Consolidated shared plumbing** — daemon URL resolution, `GOBBY_HOME`
+  handling, the libpq keyword tokenizer, the degradation vocabulary, and the
+  codewiki→gwiki frontmatter contract are single-sourced in gcore.
+
+### Fixed
+
+#### gobby-core
+
+- **Aligned invalid-value handling** between `resolve_port` and
+  `resolve_config_bool`; postgres TLS connector construction is now covered by
+  tests.
+
+## [0.4.0] — gwiki
+
+### Added
+
+#### gwiki
+
+- **Research trust layer** — librarian proposals, citation-quality and review
+  reports, benchmark reporting, and change-triggered refresh mapping.
+- **Shared code graph** — `ask` and `research` consume gcode's code graph with
+  citation endpoints, graph context packs, and graph analytics export.
+- **AI-assisted contradiction detection** in the citation-quality report.
+- **Per-section compile provenance** — compiled sections link back to their
+  source documents.
+- **Minimal stderr logger** honoring `RUST_LOG`.
+
+### Changed
+
+#### gwiki
+
 - **Canonical wiki layout** — `gwiki` uses `knowledge/**` for compiled content
   and does not read deprecated `wiki/**` content paths.
+- **Pre-release embedding provider names are canonical** — setup accepts
+  `lmstudio`, `ollama`, `openai-compatible`, or `none`; older aliases are
+  invalid.
+- **Unified degradation reporting** on the gobby-core vocabulary — index sync
+  degradations are surfaced in command output, and unimplemented global
+  semantic fan-out reports partial data instead of a misleading kind.
+
+### Fixed
+
+#### gwiki
+
+- **`ask` synthesis hardening** — model planning narration is stripped and
+  answers are citation-checked against retrieved evidence.
+- **Secret resolution through the hub** — `$secret:` API keys resolve for
+  `ask`, `research`, and `citation-quality`.
+- **FalkorDB graph fixes** — auth, parameter quoting, source-link Cypher, and
+  jsonb parameter passing.
+- **Audit attribution** — generated code-doc claims are no longer attributed
+  to unrelated raw sources.
+- **CLI fixes** — wikilink page names keep their `.md` suffix during
+  resolution, and a positional `compile` TOPIC no longer hijacks scope
+  selection.
+
+## [0.5.0] — ghook
+
+### Added
+
+#### ghook
+
+- **Envelope ID header** — live POSTs carry `X-Gobby-Envelope-Id` so the
+  daemon can deduplicate inbox drains.
+- **Binary-level contract tests** — hermetic suites pin the per-CLI hook
+  contract and the inbox fallback behavior.
+
+### Changed
+
+#### ghook
+
+- **Source detection isolated** into its own module; HTTP test helper and the
+  Python-truthiness predicate are deduplicated.
+
+### Fixed
+
+#### ghook
+
+- **Direct POST fallback** — when the inbox enqueue fails, ghook detaches
+  first (on `--detach`) and POSTs straight to the daemon instead of dropping
+  the hook.
+- **Statusline pipe handling** — stdout/stdin are pumped concurrently and
+  timeouts kill the downstream process group, eliminating deadlocks with
+  pipeline survivors holding the pipe open.
+- **EPIPE-tolerant action emission** for detached survivors; **inbox directory
+  fsync** after envelope rename; **`GOBBY_HOME` honored** across inbox, marker,
+  and runtime-stamp paths.
+
+## [0.4.7] — gsqz
+
+### Changed
+
+#### gsqz
+
+- **Foundation-crate plumbing** — layered config loading and daemon URL
+  resolution now come from gobby-core (new dependency, no default features).
+  No behavior change.
+
+## [0.1.5] — gloc
+
+### Fixed
+
+#### gloc
+
+- **`--url` override applies before backend validation/detection** — a
+  reachable override URL no longer requires the configured backend URL to be
+  probeable first.
+
+### Changed
+
+#### gloc
+
+- **Foundation-crate plumbing** — layered config loading and daemon URL
+  resolution now come from gobby-core.
 
 ## [1.0.0] — gcode
 

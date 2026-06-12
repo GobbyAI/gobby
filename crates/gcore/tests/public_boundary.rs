@@ -55,7 +55,7 @@ fn cargo_features_define_public_boundary() {
         );
     }
 
-    let gloc_gcore_dependency = r#"gobby-core = { path = "../gcore", version = "0.4.0", default-features = false, features = ["local-backend"] }"#;
+    let gloc_gcore_dependency = r#"gobby-core = { path = "../gcore", version = "0.5.0", default-features = false, features = ["local-backend"] }"#;
     assert!(
         gloc_manifest.contains(gloc_gcore_dependency),
         "gloc must keep default-features = false and opt only into gobby-core/local-backend; \

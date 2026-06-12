@@ -1,6 +1,6 @@
 [package]
 name = "gobby-local"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -23,4 +23,4 @@ serde_yaml = { package = "yaml_serde", version = "0.10.4" }
 # Deliberately ureq, never reqwest: tiny binaries stay off the async HTTP
 # stack (gcore's reqwest transport lives behind its `ai` feature).
 ureq = { version = "2", features = ["json"] }
-gobby-core = { path = "../gcore", version = "0.4.0", default-features = false, features = ["local-backend"] }
+gobby-core = { path = "../gcore", version = "0.5.0", default-features = false, features = ["local-backend"] }
