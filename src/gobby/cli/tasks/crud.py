@@ -466,6 +466,21 @@ def create_task(
         project_id = PERSONAL_PROJECT_ID
 
     manager = get_task_manager()
+    resolved_blockers: list[tuple[str, Any]] = []
+    dependency_failures: list[str] = []
+
+    if depends_on:
+        for blocker_ref in depends_on:
+            blocker = resolve_task_id(manager, blocker_ref)
+            if not blocker:
+                dependency_failures.append(f"{blocker_ref}: task not found")
+                continue
+            resolved_blockers.append((blocker_ref, blocker))
+
+    if dependency_failures:
+        failure_lines = "\n".join(f"  {failure}" for failure in dependency_failures)
+        raise click.ClickException(f"Could not add dependencies:\n{failure_lines}")
+
     task = manager.create_task(
         project_id=project_id,
         title=title,
@@ -478,25 +493,36 @@ def create_task(
     project_name = project_ctx.get("name") if project_ctx else None
 
     if project_name and task.seq_num:
-        click.echo(f"Created task {project_name}-#{task.seq_num}: {task.title}")
+        created_message = f"Created task {project_name}-#{task.seq_num}: {task.title}"
     else:
-        click.echo(f"Created task {task_ref}: {task.title}")
+        created_message = f"Created task {task_ref}: {task.title}"
 
     # Handle depends_on
-    if depends_on:
-        from gobby.storage.task_dependencies import TaskDependencyManager
+    dependency_messages: list[str] = []
+    if resolved_blockers:
+        from gobby.storage.task_dependencies import DependencyCycleError, TaskDependencyManager
 
         dep_manager = TaskDependencyManager(manager.db)
-        for blocker_ref in depends_on:
+        for blocker_ref, blocker in resolved_blockers:
             try:
-                blocker = resolve_task_id(manager, blocker_ref)
-                if blocker:
-                    # blocker blocks task (task depends on blocker)
-                    dep_manager.add_dependency(task.id, blocker.id, "blocks")
-                    blocker_display = f"#{blocker.seq_num}" if blocker.seq_num else blocker.id[:8]
-                    click.echo(f"  → depends on {blocker_display}")
-            except Exception as e:
-                click.echo(f"  Warning: Could not add dependency on '{blocker_ref}': {e}", err=True)
+                # blocker blocks task (task depends on blocker)
+                dep_manager.add_dependency(task.id, blocker.id, "blocks")
+                blocker_display = f"#{blocker.seq_num}" if blocker.seq_num else blocker.id[:8]
+                dependency_messages.append(f"  → depends on {blocker_display}")
+            except (DependencyCycleError, ValueError) as e:
+                dependency_failures.append(f"{blocker_ref}: {e}")
+
+    if dependency_failures:
+        try:
+            manager.delete_task(task.id, unlink=True)
+        except ValueError as e:
+            dependency_failures.append(f"created task cleanup failed: {e}")
+        failure_lines = "\n".join(f"  {failure}" for failure in dependency_failures)
+        raise click.ClickException(f"Could not add dependencies:\n{failure_lines}")
+
+    click.echo(created_message)
+    for message in dependency_messages:
+        click.echo(message)
 
 
 @click.command("show")

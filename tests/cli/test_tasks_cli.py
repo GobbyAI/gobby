@@ -824,6 +824,66 @@ class TestCreateTaskCommand:
             task_type="task",
         )
 
+    @patch("gobby.cli.tasks.crud.resolve_task_id")
+    @patch("gobby.cli.tasks.crud.get_task_manager")
+    @patch("gobby.cli.tasks.crud.get_project_context")
+    def test_create_task_with_bad_dependency_ref_fails_before_create(
+        self,
+        mock_project_ctx: MagicMock,
+        mock_get_manager: MagicMock,
+        mock_resolve_task_id: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """Test bad dependency refs fail the command instead of creating a partial task."""
+        mock_project_ctx.return_value = {"id": "proj-123", "name": "Test Project"}
+        mock_manager = MagicMock()
+        mock_get_manager.return_value = mock_manager
+        mock_resolve_task_id.return_value = None
+
+        result = runner.invoke(cli, ["tasks", "create", "My new task", "--depends-on", "#404"])
+
+        assert result.exit_code != 0
+        assert "Could not add dependencies" in result.output
+        assert "#404: task not found" in result.output
+        mock_manager.create_task.assert_not_called()
+
+    @patch("gobby.storage.task_dependencies.TaskDependencyManager")
+    @patch("gobby.cli.tasks.crud.resolve_task_id")
+    @patch("gobby.cli.tasks.crud.get_task_manager")
+    @patch("gobby.cli.tasks.crud.get_project_context")
+    def test_create_task_with_dependency_attach_error_fails(
+        self,
+        mock_project_ctx: MagicMock,
+        mock_get_manager: MagicMock,
+        mock_resolve_task_id: MagicMock,
+        mock_dependency_manager_cls: MagicMock,
+        runner: CliRunner,
+        mock_task: MagicMock,
+    ) -> None:
+        """Test dependency attach errors fail the command."""
+        mock_project_ctx.return_value = {"id": "proj-123", "name": "Test Project"}
+        mock_manager = MagicMock()
+        mock_manager.create_task.return_value = mock_task
+        mock_get_manager.return_value = mock_manager
+        blocker = MagicMock(id="blocker-id", seq_num=2)
+        mock_resolve_task_id.return_value = blocker
+        mock_dependency_manager = MagicMock()
+        mock_dependency_manager.add_dependency.side_effect = ValueError(
+            "Task cannot depend on itself"
+        )
+        mock_dependency_manager_cls.return_value = mock_dependency_manager
+
+        result = runner.invoke(cli, ["tasks", "create", "My new task", "--depends-on", "#2"])
+
+        assert result.exit_code != 0
+        assert "Could not add dependencies" in result.output
+        assert "#2: Task cannot depend on itself" in result.output
+        assert "Created task" not in result.output
+        mock_dependency_manager.add_dependency.assert_called_once_with(
+            mock_task.id, "blocker-id", "blocks"
+        )
+        mock_manager.delete_task.assert_called_once_with(mock_task.id, unlink=True)
+
 
 class TestShowTaskCommand:
     """Tests for gobby tasks show command."""
