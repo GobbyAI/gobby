@@ -332,6 +332,53 @@ def test_generate_explicit_candidates_bypass_default_profile_and_provider(
     ]
 
 
+def test_generate_selects_candidate_with_slashed_local_model_id(client: TestClient) -> None:
+    local = _FakeTextAdapter()
+    model = "qwen/qwen3-coder-30b"
+    candidate = f"local:lm-studio/{model}"
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local:lm-studio",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=(model,),
+            )
+        ]
+    )
+    service = TextGenerationService(registry, {"local:lm-studio": local})
+
+    with patch(
+        "gobby.servers.routes.llm.build_daemon_text_generation_service",
+        return_value=service,
+    ):
+        response = client.post(
+            "/api/llm/generate",
+            json={
+                "prompt": "Summarize this",
+                "candidates": [candidate],
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "text": "Generated text",
+        "capability": "text_generate",
+        "provider": "local:lm-studio",
+        "model": model,
+    }
+    assert local.requests == [
+        TextGenerationRequest(
+            prompt="Summarize this",
+            provider="local:lm-studio",
+            candidates=(candidate,),
+            model=model,
+            caller="llm-generate-route",
+        )
+    ]
+
+
 def test_generate_falls_back_when_feature_mid_candidate_echoes_prompt(
     client: TestClient,
     server_with_llm: MagicMock,

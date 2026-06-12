@@ -15,6 +15,7 @@ from gobby.agents.sandbox import (
     web_chat_sandbox_config,
     web_chat_sandbox_policy_hash,
 )
+from gobby.config.feature_base import parse_feature_candidate
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.chat_session_base import ChatSessionProtocol
@@ -336,7 +337,11 @@ class ChatSessionMixin:
             # candidate, mirroring ChatSession._default_model.
             chat_cfg = getattr(daemon_cfg, "chat", None)
             for candidate in getattr(chat_cfg, "candidates", ()) or ():
-                normalized = _normalize_web_chat_provider(str(candidate).partition("/")[0])
+                try:
+                    candidate_provider, _candidate_model = parse_feature_candidate(str(candidate))
+                except ValueError:
+                    continue
+                normalized = _normalize_web_chat_provider(candidate_provider)
                 if normalized:
                     effective_provider = normalized
                     break
