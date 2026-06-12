@@ -369,4 +369,30 @@ mod tests {
             "downstream timeout should fire before CI hangs"
         );
     }
+
+    #[test]
+    fn downstream_timeout_kills_pipeline_survivors_holding_stdout() {
+        if cfg!(target_os = "windows") {
+            return;
+        }
+
+        // The background sleep inherits the stdout write-end; only the
+        // process-group kill releases the reader thread. Killing just the
+        // direct shell child would leave this test blocked ~30s.
+        let started = Instant::now();
+        let mut stdout = Vec::new();
+        let exit = handle_with(
+            br#"{"session_id":"sess-123","transcript_path":"/tmp/t.jsonl"}"#,
+            "http://127.0.0.1:9",
+            Some(OsStr::new("sleep 30 & sleep 30")),
+            &mut stdout,
+        );
+
+        assert_eq!(exit, ExitCode::SUCCESS);
+        assert!(stdout.is_empty());
+        assert!(
+            started.elapsed() < Duration::from_secs(7),
+            "group kill should release the stdout reader despite survivors"
+        );
+    }
 }
