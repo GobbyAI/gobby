@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor, _has_dispatch_stage_context
+from gobby.config.tmux import TmuxConfig
 from gobby.servers.routes.sessions import statusline_activity
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.executor import DatabaseExecutor
@@ -93,6 +94,7 @@ def monitor(
         agent_run_manager=agent_run_manager,
         db=temp_db,
         check_interval_seconds=1.0,
+        tmux_config=TmuxConfig(),
     )
 
 
@@ -483,6 +485,45 @@ class TestCheckDeadAgents:
         assert "tmux session died" in (updated.error or "")
 
     @pytest.mark.asyncio
+    async def test_dead_tmux_session_without_pid_cleans_up(
+        self,
+        monitor: AgentLifecycleMonitor,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict,
+    ) -> None:
+        """Dead tmux session with no PID is already gone and should still clean up."""
+        _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id="run-dead-no-pid",
+            tmux_session_name="gobby-dead-no-pid",
+            pid=None,
+        )
+
+        tmux_manager = MagicMock()
+        tmux_manager.has_session = AsyncMock(return_value=False)
+        tmux_manager.kill_session = AsyncMock(return_value=True)
+
+        with (
+            patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=False),
+            patch("gobby.agents.tmux.get_tmux_session_manager", return_value=tmux_manager),
+        ):
+            cleaned = await monitor.check_unhealthy_agents()
+
+        assert cleaned == 1
+        tmux_manager.kill_session.assert_awaited_once_with(
+            "gobby-dead-no-pid",
+            missing_ok=True,
+            timeout=5.0,
+        )
+
+        updated = agent_run_manager.get("run-dead-no-pid")
+        assert updated is not None
+        assert updated.status == "error"
+        assert updated.tmux_session_name is None
+        assert "tmux session died" in (updated.error or "")
+
+    @pytest.mark.asyncio
     async def test_skips_alive_tmux_session(
         self,
         monitor: AgentLifecycleMonitor,
@@ -590,6 +631,7 @@ class TestCheckDeadAgents:
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_coordinator=mock_coordinator,
+            tmux_config=TmuxConfig(),
         )
 
         _make_terminal_run(

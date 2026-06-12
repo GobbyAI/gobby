@@ -250,13 +250,23 @@ async def _close_tmux_session(session_name: str, *, timeout: float = 5.0) -> dic
     try:
         from gobby.agents.tmux import get_tmux_session_manager
 
-        killed = await get_tmux_session_manager().kill_session(session_name, timeout=timeout)
+        tmux = get_tmux_session_manager()
+        already_missing = not await tmux.has_session(session_name)
+        killed = await tmux.kill_session(session_name, missing_ok=True, timeout=timeout)
     except Exception as e:
         logger.debug("tmux session close failed for %s: %s", session_name, e)
         return {"success": False, "error": str(e)}
 
     if not killed:
-        return {"success": False, "error": f"tmux session '{session_name}' not found"}
+        return {"success": False, "error": f"failed to kill tmux session '{session_name}'"}
+    if already_missing:
+        return {
+            "success": True,
+            "message": f"tmux session '{session_name}' already dead",
+            "already_dead": True,
+            "method": "tmux_already_dead",
+            "tmux_session_name": session_name,
+        }
     return {"success": True, "method": "tmux_kill_session", "tmux_session_name": session_name}
 
 
@@ -379,6 +389,14 @@ async def kill_agent(
                     logger.warning(f"pgrep fallback failed: {e}")
 
     if not target_pid:
+        if terminal_close_result is not None and terminal_close_result.get("already_dead"):
+            return {
+                "success": True,
+                "message": "Terminal already dead and no target PID was found",
+                "already_dead": True,
+                "terminal_close": terminal_close_result,
+                "method": terminal_close_result.get("method"),
+            }
         if terminal_close_result is not None:
             return {
                 "success": False,
