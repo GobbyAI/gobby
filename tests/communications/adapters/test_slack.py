@@ -77,13 +77,18 @@ async def test_initialize_missing_token(
 async def test_initialize_auth_failure(
     adapter: SlackAdapter, channel_config: ChannelConfig, secret_resolver: Any
 ) -> None:
-    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+    with patch("httpx.AsyncClient") as mock_client_class:
+        mock_client = AsyncMock()
         mock_response = MagicMock()
         mock_response.json.return_value = {"ok": False, "error": "invalid_auth"}
-        mock_post.return_value = mock_response
+        mock_client.post.return_value = mock_response
+        mock_client_class.return_value = mock_client
 
         with pytest.raises(ValueError, match="Slack auth.test failed: invalid_auth"):
             await adapter.initialize(channel_config, secret_resolver)
+
+        mock_client.aclose.assert_called_once()
+        assert adapter._client is None
 
 
 @pytest.mark.asyncio

@@ -44,9 +44,11 @@ class TestEmailAdapter:
     async def test_initialize_success(self, mock_imap, mock_smtp, adapter, config) -> None:
         # Setup mocks
         mock_smtp_client = AsyncMock()
+        mock_smtp_client.login.return_value = SimpleNamespace(code=235, message="OK")
         mock_smtp.SMTP.return_value = mock_smtp_client
 
         mock_imap_client = AsyncMock()
+        mock_imap_client.login.return_value = SimpleNamespace(result="OK", lines=[])
         mock_imap.IMAP4_SSL.return_value = mock_imap_client
 
         # Mock secret resolver
@@ -82,6 +84,33 @@ class TestEmailAdapter:
 
         with pytest.raises(ValueError, match="Could not resolve Email password"):
             await adapter.initialize(config, resolver)
+
+    @pytest.mark.asyncio
+    @patch("gobby.communications.adapters.email.aiosmtplib", create=True)
+    @patch("gobby.communications.adapters.email.aioimaplib", create=True)
+    async def test_initialize_failure_shuts_down_created_clients(
+        self, mock_imap, mock_smtp, adapter, config
+    ) -> None:
+        mock_smtp_client = AsyncMock()
+        mock_smtp.SMTP.return_value = mock_smtp_client
+
+        mock_imap_client = AsyncMock()
+        mock_imap_client.wait_hello_from_server.side_effect = RuntimeError("imap failed")
+        mock_imap.IMAP4_SSL.return_value = mock_imap_client
+
+        def resolver(ref: str) -> str:
+            return "secret-pass"
+
+        config.config_json["password"] = "$secret:EMAIL_PASSWORD"
+
+        with pytest.raises(RuntimeError, match="imap failed"):
+            await adapter.initialize(config, resolver)
+
+        mock_smtp_client.quit.assert_called_once()
+        mock_imap_client.close.assert_called_once()
+        mock_imap_client.logout.assert_called_once()
+        assert adapter._smtp_client is None
+        assert adapter._imap_client is None
 
     @pytest.mark.asyncio
     @patch("gobby.communications.adapters.email.aiosmtplib", create=True)
@@ -395,6 +424,7 @@ class TestEmailOAuth2:
     ) -> None:
         """OAuth2 init exchanges refresh token for access token."""
         mock_smtp_client = AsyncMock()
+        mock_smtp_client.execute_command.return_value = SimpleNamespace(code=235, message="OK")
         mock_smtp.SMTP.return_value = mock_smtp_client
         mock_imap_client = AsyncMock()
         mock_imap.IMAP4_SSL.return_value = mock_imap_client

@@ -96,41 +96,45 @@ class EmailAdapter(BaseChannelAdapter):
         self, config: ChannelConfig, secret_resolver: Callable[[str], str | None]
     ) -> None:
         """Set up API clients, validate credentials."""
-        self._smtp_host = config.config_json.get("smtp_host", "")
-        self._smtp_port = config.config_json.get("smtp_port", 587)
-        self._imap_host = config.config_json.get("imap_host", "")
-        self._imap_port = config.config_json.get("imap_port", 993)
-        self._from_address = config.config_json.get("from_address", "")
-        self._to_address = config.config_json.get("to_address", "")
-        self._default_destination = (
-            config.config_json.get("default_recipient") or self._to_address or None
-        )
-        self._allow_plaintext_credentials = bool(
-            config.config_json.get("allow_plaintext_credentials", False)
-        )
-
-        self._auth_method = config.config_json.get("auth_method", "password")
-
-        if self._auth_method == "oauth2":
-            await self._init_oauth2(config, secret_resolver)
-        else:
-            await self._init_password(config, secret_resolver)
-
-        if HAS_SMTP and self._smtp_host:
-            self._validate_smtp_credential_transport()
-            self._smtp_client = aiosmtplib.SMTP(
-                hostname=self._smtp_host,
-                port=self._smtp_port,
-                use_tls=self._smtp_port == 465,
-                start_tls=self._smtp_port == 587,
+        try:
+            self._smtp_host = config.config_json.get("smtp_host", "")
+            self._smtp_port = config.config_json.get("smtp_port", 587)
+            self._imap_host = config.config_json.get("imap_host", "")
+            self._imap_port = config.config_json.get("imap_port", 993)
+            self._from_address = config.config_json.get("from_address", "")
+            self._to_address = config.config_json.get("to_address", "")
+            self._default_destination = (
+                config.config_json.get("default_recipient") or self._to_address or None
             )
-            await self._smtp_client.connect()
-            await self._smtp_login(self._smtp_client)
+            self._allow_plaintext_credentials = bool(
+                config.config_json.get("allow_plaintext_credentials", False)
+            )
 
-        if HAS_IMAP and self._imap_host:
-            self._imap_client = aioimaplib.IMAP4_SSL(host=self._imap_host, port=self._imap_port)
-            await self._imap_client.wait_hello_from_server()
-            await self._imap_login(self._imap_client)
+            self._auth_method = config.config_json.get("auth_method", "password")
+
+            if self._auth_method == "oauth2":
+                await self._init_oauth2(config, secret_resolver)
+            else:
+                await self._init_password(config, secret_resolver)
+
+            if HAS_SMTP and self._smtp_host:
+                self._validate_smtp_credential_transport()
+                self._smtp_client = aiosmtplib.SMTP(
+                    hostname=self._smtp_host,
+                    port=self._smtp_port,
+                    use_tls=self._smtp_port == 465,
+                    start_tls=self._smtp_port == 587,
+                )
+                await self._smtp_client.connect()
+                await self._smtp_login(self._smtp_client)
+
+            if HAS_IMAP and self._imap_host:
+                self._imap_client = aioimaplib.IMAP4_SSL(host=self._imap_host, port=self._imap_port)
+                await self._imap_client.wait_hello_from_server()
+                await self._imap_login(self._imap_client)
+        except Exception:
+            await self.shutdown()
+            raise
 
     async def _init_password(
         self, config: ChannelConfig, secret_resolver: Callable[[str], str | None]

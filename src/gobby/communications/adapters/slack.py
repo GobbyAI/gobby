@@ -61,33 +61,41 @@ class SlackAdapter(BaseChannelAdapter):
         self, config: ChannelConfig, secret_resolver: Callable[[str], str | None]
     ) -> None:
         """Set up API clients, validate credentials."""
-        bot_token_ref = config.config_json.get("bot_token", "")
-        signing_secret_ref = config.config_json.get("signing_secret", "")
+        try:
+            bot_token_ref = config.config_json.get("bot_token", "")
+            signing_secret_ref = config.config_json.get("signing_secret", "")
 
-        self._bot_token = secret_resolver(bot_token_ref) if bot_token_ref else None
-        self._signing_secret = secret_resolver(signing_secret_ref) if signing_secret_ref else None
+            self._bot_token = secret_resolver(bot_token_ref) if bot_token_ref else None
+            self._signing_secret = (
+                secret_resolver(signing_secret_ref) if signing_secret_ref else None
+            )
 
-        if not self._bot_token:
-            raise ValueError("SLACK_BOT_TOKEN secret is required")
+            if not self._bot_token:
+                raise ValueError("SLACK_BOT_TOKEN secret is required")
 
-        # signing secret is optional if not using webhooks, but usually required
-        if not self._signing_secret:
-            logger.warning("SLACK_SIGNING_SECRET secret is not set, webhook verification will fail")
+            # signing secret is optional if not using webhooks, but usually required
+            if not self._signing_secret:
+                logger.warning(
+                    "SLACK_SIGNING_SECRET secret is not set, webhook verification will fail"
+                )
 
-        self._client = httpx.AsyncClient(
-            base_url="https://slack.com/api/",
-            headers={"Authorization": f"Bearer {self._bot_token}"},
-            timeout=30.0,
-        )
+            self._client = httpx.AsyncClient(
+                base_url="https://slack.com/api/",
+                headers={"Authorization": f"Bearer {self._bot_token}"},
+                timeout=30.0,
+            )
 
-        # Verify token via auth.test
-        response = await self._client.post("auth.test")
-        response.raise_for_status()
-        data = response.json()
-        if not data.get("ok"):
-            raise ValueError(f"Slack auth.test failed: {data.get('error')}")
+            # Verify token via auth.test
+            response = await self._client.post("auth.test")
+            response.raise_for_status()
+            data = response.json()
+            if not data.get("ok"):
+                raise ValueError(f"Slack auth.test failed: {data.get('error')}")
 
-        self._bot_user_id = data.get("user_id")
+            self._bot_user_id = data.get("user_id")
+        except Exception:
+            await self.shutdown()
+            raise
 
     async def send_message(self, message: CommsMessage) -> str | None:
         """Send message and return platform message ID.

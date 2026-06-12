@@ -85,6 +85,22 @@ async def test_initialize_missing_secrets(
 
 
 @pytest.mark.asyncio
+async def test_initialize_failure_shuts_down_created_client(
+    adapter: TeamsAdapter, channel_config: ChannelConfig, secret_resolver: Any
+) -> None:
+    with patch("httpx.AsyncClient") as mock_client_class:
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = RuntimeError("token failed")
+        mock_client_class.return_value = mock_client
+
+        with pytest.raises(RuntimeError, match="token failed"):
+            await adapter.initialize(channel_config, secret_resolver)
+
+        mock_client.aclose.assert_called_once()
+        assert adapter._client is None
+
+
+@pytest.mark.asyncio
 async def test_send_message_success(
     adapter: TeamsAdapter, channel_config: ChannelConfig, secret_resolver: Any
 ) -> None:
