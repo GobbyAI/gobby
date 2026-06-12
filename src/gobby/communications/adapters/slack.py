@@ -28,14 +28,6 @@ from gobby.communications.models import (
 logger = logging.getLogger(__name__)
 
 
-class SlackVerificationChallenge(Exception):
-    """Exception raised to return a URL verification challenge."""
-
-    def __init__(self, challenge: str):
-        self.challenge = challenge
-        super().__init__(challenge)
-
-
 class SlackAdapter(BaseChannelAdapter):
     """Adapter for Slack Web API and Events API."""
 
@@ -300,8 +292,17 @@ class SlackAdapter(BaseChannelAdapter):
         # Handle url_verification
         if payload_dict.get("type") == "url_verification":
             challenge = payload_dict.get("challenge", "")
-            # We raise a custom exception that the router can catch to return the challenge
-            raise SlackVerificationChallenge(challenge)
+            return [
+                CommsMessage(
+                    id=f"slack_url_verification_{time.time()}",
+                    channel_id="",
+                    direction="inbound",
+                    content=challenge,
+                    created_at=datetime.now(UTC).isoformat(),
+                    content_type="url_verification",
+                    metadata_json=payload_dict,
+                )
+            ]
 
         messages: list[CommsMessage] = []
 

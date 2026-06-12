@@ -1,9 +1,11 @@
 from dataclasses import asdict
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
+from gobby.communications.adapters.slack import SlackAdapter
 from gobby.communications.models import ChannelConfig, CommsMessage
 from gobby.config.app import DaemonConfig
 from tests.servers.conftest import create_http_server
@@ -63,16 +65,18 @@ def test_receive_webhook_ok(client, comms_manager):
 
 
 def test_receive_webhook_url_verification(client, comms_manager):
-    # Setup the mock to return a url_verification message
-    msg = CommsMessage(
-        id="msg1",
-        channel_id="ch1",
-        direction="inbound",
-        content="challenge_token",
-        content_type="url_verification",
-        created_at="2023-01-01T00:00:00Z",
-    )
-    comms_manager.handle_inbound.return_value = [msg]
+    adapter = SlackAdapter()
+
+    async def parse_slack_webhook(
+        _channel_name: str,
+        payload: dict[str, Any] | bytes,
+        headers: dict[str, str],
+        raw_body: bytes | None = None,
+    ) -> list[CommsMessage]:
+        _ = raw_body
+        return adapter.parse_webhook(payload, headers)
+
+    comms_manager.handle_inbound.side_effect = parse_slack_webhook
 
     response = client.post(
         "/api/comms/webhooks/slack",

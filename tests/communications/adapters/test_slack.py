@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.communications.adapters.slack import SlackAdapter, SlackVerificationChallenge
+from gobby.communications.adapters.slack import SlackAdapter
 from gobby.communications.models import ChannelConfig, CommsAttachment, CommsMessage
 
 
@@ -220,9 +220,12 @@ async def test_send_attachment_success(
 
 def test_parse_webhook_url_verification(adapter: SlackAdapter) -> None:
     payload = {"type": "url_verification", "challenge": "test_challenge"}
-    with pytest.raises(SlackVerificationChallenge) as exc_info:
-        adapter.parse_webhook(payload, {})
-    assert exc_info.value.challenge == "test_challenge"
+    messages = adapter.parse_webhook(payload, {})
+    assert len(messages) == 1
+    assert messages[0].content_type == "url_verification"
+    assert messages[0].content == "test_challenge"
+    assert messages[0].channel_id == ""
+    assert messages[0].metadata_json == payload
 
 
 def test_parse_webhook_event_callback(adapter: SlackAdapter) -> None:
