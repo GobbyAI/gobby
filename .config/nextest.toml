@@ -8,7 +8,12 @@ inherits = "default"
 fail-fast = false
 
 [test-groups]
+ghook-process = { max-threads = 2 }
 serial-db = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'package(gobby-hooks)'
+test-group = 'ghook-process'
 
 [[profile.default.overrides]]
 filter = 'package(gobby-code) & (test(::serial_db::) | test(serial_db::))'

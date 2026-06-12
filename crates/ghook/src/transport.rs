@@ -106,6 +106,10 @@ pub fn atomic_write(final_path: &Path, bytes: &[u8]) -> Result<()> {
     }
     fs::rename(&tmp, final_path)
         .with_context(|| format!("rename {} -> {}", tmp.display(), final_path.display()))?;
+    if let Some(parent) = final_path.parent() {
+        // Directory fsync is best-effort because some platforms/filesystems reject it.
+        let _ = File::open(parent).and_then(|dir| dir.sync_all());
+    }
     Ok(())
 }
 
