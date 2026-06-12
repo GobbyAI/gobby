@@ -333,8 +333,8 @@ class TestProviderModelCatalog:
         assert models[0]["context_length"] == 321_000
 
     @pytest.mark.asyncio
-    async def test_refresh_marks_provider_failed_without_prior_cache(self, temp_dir: Path) -> None:
-        """Providers without cache should be marked failed when discovery fails."""
+    async def test_refresh_uses_static_gemini_without_prior_cache(self, temp_dir: Path) -> None:
+        """Gemini keeps a static catalog when ACP discovery fails before cache exists."""
         cache_path = temp_dir / "provider-model-catalog.json"
         catalog = ProviderModelCatalog(cache_path=cache_path)
 
@@ -354,9 +354,19 @@ class TestProviderModelCatalog:
             status = await catalog.refresh()
 
         assert status["claude"]["source"] == "failed"
-        assert status["gemini"]["source"] == "failed"
+        assert status["gemini"]["source"] == "static"
+        assert status["gemini"]["model_count"] == 3
         assert status["grok"]["source"] == "static"
         assert status["codex"]["source"] == "failed"
+
+        gemini = catalog.get_provider_snapshot("gemini")["models"]
+        assert gemini[0]["value"] == "gemini-3.5-flash"
+        assert gemini[0]["label"] == "Gemini 3.5 Flash"
+        assert gemini[0]["context_length"] == 1_048_576
+        assert gemini[0]["reasoning"] == {
+            "supported_efforts": ["minimal", "low", "medium", "high"],
+            "default_effort": "medium",
+        }
 
     @pytest.mark.asyncio
     async def test_discover_acp_models_marks_client_as_model_discovery(
@@ -619,6 +629,7 @@ class TestProviderModelCatalog:
             "gpt-5.3-codex-fast",
             "gpt-5.2",
             "gpt-5.2-codex",
+            "gemini-3.5-flash",
             "gemini-3.1-pro-preview",
             "gemini-3-flash-preview",
             "minimax-m2.7",
@@ -630,7 +641,7 @@ class TestProviderModelCatalog:
             "glm-4.7",
             "gpt-5.1-codex-max",
         }
-        assert len(models) == 25
+        assert len(models) == 26
 
         by_id = {model["value"]: model for model in models}
         assert by_id["claude-fable-5"]["label"] == "Claude Fable 5"
@@ -642,6 +653,11 @@ class TestProviderModelCatalog:
         }
         assert "xhigh" in by_id["claude-opus-4-7"]["reasoning"]["supported_efforts"]
         assert "max" in by_id["claude-opus-4-7"]["reasoning"]["supported_efforts"]
+        assert by_id["gemini-3.5-flash"]["context_length"] == 1_048_576
+        assert by_id["gemini-3.5-flash"]["reasoning"] == {
+            "supported_efforts": ["minimal", "low", "medium", "high"],
+            "default_effort": "medium",
+        }
         assert "minimal" in by_id["gemini-3-flash-preview"]["reasoning"]["supported_efforts"]
         assert by_id["minimax-m2.7"]["reasoning"]["supported_efforts"] == ["high"]
         for model_id in ("glm-5.1", "glm-5", "glm-4.7"):

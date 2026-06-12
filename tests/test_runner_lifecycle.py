@@ -431,6 +431,23 @@ class TestInitSubsystems:
             await task
 
     @pytest.mark.asyncio
+    async def test_refresh_provider_model_catalog_awaits_refresh_with_codex_client(
+        self,
+    ) -> None:
+        from gobby.runner_lifecycle_startup import _refresh_provider_model_catalog
+
+        async def refreshed(**_kwargs: object) -> dict[str, dict[str, object]]:
+            return {"gemini": {"source": "live"}}
+
+        codex_client = object()
+        provider_catalog = SimpleNamespace(refresh=MagicMock(return_value=refreshed()))
+
+        result = await _refresh_provider_model_catalog(provider_catalog, codex_client)
+
+        assert result == {"gemini": {"source": "live"}}
+        provider_catalog.refresh.assert_called_once_with(codex_client=codex_client)
+
+    @pytest.mark.asyncio
     async def test_agent_lifecycle_monitor_startup_failures_are_non_fatal(
         self,
         caplog: pytest.LogCaptureFixture,

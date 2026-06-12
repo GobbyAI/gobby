@@ -35,6 +35,7 @@ class TestFeatureProfile:
             "claude/haiku",
         )
         assert DEFAULT_PROFILE_CANDIDATES[FeatureProfile.MID] == (
+            "gemini/gemini-3.5-flash",
             "codex/gpt-5.3-codex-spark",
             "claude/sonnet",
         )
@@ -48,7 +49,7 @@ class TestFeatureProfile:
     def test_profiles_use_cloud_only_candidates(self) -> None:
         for candidates in DEFAULT_PROFILE_CANDIDATES.values():
             providers = {candidate.split("/", 1)[0] for candidate in candidates}
-            assert providers == {"codex", "claude"}
+            assert providers <= {"codex", "claude", "gemini"}
 
 
 class TestFeatureDefaultConfig:

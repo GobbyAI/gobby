@@ -258,7 +258,11 @@ class TestTaskValidationConfigDefaults:
         config = TaskValidationConfig()
         assert config.enabled is True
         assert config.profile == FeatureProfile.MID
-        assert config.candidates == ["codex/gpt-5.3-codex-spark", "claude/sonnet"]
+        assert config.candidates == [
+            "gemini/gemini-3.5-flash",
+            "codex/gpt-5.3-codex-spark",
+            "claude/sonnet",
+        ]
         assert config.prompt_path is None
         assert config.max_iterations == 10
         assert config.max_consecutive_errors == 3

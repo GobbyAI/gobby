@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter
 
 from gobby.providers import provider_metadata
-from gobby.servers.provider_models import DROID_MODEL_CATALOG, with_context_lengths
+from gobby.servers.provider_models import (
+    DROID_MODEL_CATALOG,
+    GEMINI_MODEL_CATALOG,
+    with_context_lengths,
+)
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -41,21 +46,7 @@ _BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
             },
         ],
     ),
-    "gemini": with_context_lengths(
-        "gemini",
-        [
-            {
-                "value": "gemini-3.1-pro-preview",
-                "label": "pro-3.1",
-                "reasoning": {"supported_efforts": ["low", "medium", "high"]},
-            },
-            {
-                "value": "gemini-3-flash-preview",
-                "label": "flash-3",
-                "reasoning": {"supported_efforts": ["low", "medium", "high"]},
-            },
-        ],
-    ),
+    "gemini": GEMINI_MODEL_CATALOG,
     "grok": with_context_lengths(
         "grok",
         [
@@ -111,6 +102,28 @@ _PROVIDER_META = {entry.provider: entry for entry in provider_metadata()}
 _LAZY_ACP_PROVIDERS = frozenset({"gemini", "grok", "qwen"})
 
 
+def _merge_static_model_metadata(
+    models: list[dict[str, Any]],
+    static_models: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    static_by_value = {
+        str(model.get("value") or "").strip(): model
+        for model in static_models
+        if str(model.get("value") or "").strip()
+    }
+    merged: list[dict[str, Any]] = []
+    for model in models:
+        value = str(model.get("value") or "").strip()
+        entry = copy.deepcopy(model)
+        static_entry = static_by_value.get(value)
+        if static_entry:
+            for key, field_value in static_entry.items():
+                if key not in entry:
+                    entry[key] = copy.deepcopy(field_value)
+        merged.append(entry)
+    return merged
+
+
 def _build_model_catalog(
     server: HTTPServer | None = None,
 ) -> dict[str, tuple[list[dict[str, Any]], str]]:
@@ -131,10 +144,19 @@ def _build_model_catalog(
                 continue
             snapshot = provider_model_catalog.get_provider_snapshot(provider)
             models = snapshot.get("models", [])
-            catalog[provider] = (
-                with_context_lengths(provider, models) if isinstance(models, list) else [],
-                snapshot.get("source", "failed"),
-            )
+            source = snapshot.get("source", "failed")
+            static_models = _BASE_MODEL_CATALOG.get(provider, [])
+            if isinstance(models, list) and models:
+                catalog[provider] = (
+                    with_context_lengths(
+                        provider, _merge_static_model_metadata(models, static_models)
+                    ),
+                    source,
+                )
+            elif static_models:
+                catalog[provider] = ([*static_models], "static")
+            else:
+                catalog[provider] = ([], source)
     else:
         catalog = {
             provider: (

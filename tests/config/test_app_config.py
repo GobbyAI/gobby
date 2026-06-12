@@ -768,7 +768,11 @@ class TestLoadConfig:
         )
 
         low_candidates = ["codex/gpt-5.4-mini", "claude/haiku"]
-        mid_candidates = ["codex/gpt-5.3-codex-spark", "claude/sonnet"]
+        mid_candidates = [
+            "gemini/gemini-3.5-flash",
+            "codex/gpt-5.3-codex-spark",
+            "claude/sonnet",
+        ]
         high_candidates = ["codex/gpt-5.5", "claude/opus"]
 
         assert store.db.params == ("defaults", "one-off-0.5.0-migration")
