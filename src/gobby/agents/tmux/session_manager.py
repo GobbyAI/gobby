@@ -102,8 +102,8 @@ class TmuxSessionManager:
     are invisible to ``tmux ls`` in the user's default server.
     """
 
-    def __init__(self, config: TmuxConfig) -> None:
-        self._config = config
+    def __init__(self, config: TmuxConfig | None = None) -> None:
+        self._config = config or TmuxConfig()
 
     @property
     def config(self) -> TmuxConfig:
@@ -688,11 +688,13 @@ class TmuxSessionManager:
             _exact_session_target(session_name),
             "-p",  # print to stdout
             "-J",  # join wrapped lines
-            f"-S-{lines}",  # start N lines from bottom
+            f"-S-{max(lines, 0)}",  # tmux returns history plus the visible pane
         )
         if rc != 0:
             return None
-        return stdout
+        if lines <= 0:
+            return ""
+        return "".join(stdout.splitlines(keepends=True)[-lines:])
 
     async def send_keys(self, session_name: str, keys: str, *, literal: bool = True) -> bool:
         """Send keys to a tmux session.

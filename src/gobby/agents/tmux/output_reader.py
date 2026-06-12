@@ -44,8 +44,8 @@ class TmuxOutputReader:
        - Cancels the read task and unlinks the FIFO.
     """
 
-    def __init__(self, config: TmuxConfig) -> None:
-        self._config = config
+    def __init__(self, config: TmuxConfig | None = None) -> None:
+        self._config = config or TmuxConfig()
         self._output_callback: OutputCallback | None = None
         self._reader_tasks: dict[str, asyncio.Task[None]] = {}
         self._stop_events: dict[str, asyncio.Event] = {}

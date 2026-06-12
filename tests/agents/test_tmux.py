@@ -758,15 +758,18 @@ class TestSingletons:
         """Reset module-level singletons before and after each test."""
         import gobby.agents.tmux as mod
 
+        mod._configured_tmux_config = None
         mod._session_manager = None
         mod._output_reader = None
         yield
+        mod._configured_tmux_config = None
         mod._session_manager = None
         mod._output_reader = None
 
     def test_get_tmux_session_manager_returns_same(self) -> None:
         import gobby.agents.tmux as mod
 
+        mod.configure_tmux(TmuxConfig())
         mgr1 = mod.get_tmux_session_manager()
         mgr2 = mod.get_tmux_session_manager()
         assert mgr1 is mgr2
@@ -774,6 +777,7 @@ class TestSingletons:
     def test_get_tmux_output_reader_returns_same(self) -> None:
         import gobby.agents.tmux as mod
 
+        mod.configure_tmux(TmuxConfig())
         r1 = mod.get_tmux_output_reader()
         r2 = mod.get_tmux_output_reader()
         assert r1 is r2
@@ -1506,6 +1510,17 @@ class TestTmuxSessionManagerExtended:
             mock_run.return_value = (0, "line 1\nline 2\n", "")
             result = await mgr.capture_pane("my-session", lines=2)
         assert result == "line 1\nline 2\n"
+
+    @pytest.mark.asyncio
+    async def test_capture_pane_limits_output_to_requested_lines(self) -> None:
+        """capture_pane trims tmux history plus visible-screen output to the requested tail."""
+        mgr = TmuxSessionManager()
+        pane_output = "".join(f"line {idx}\n" for idx in range(1, 67))
+        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = (0, pane_output, "")
+            result = await mgr.capture_pane("my-session", lines=15)
+        assert result == "".join(f"line {idx}\n" for idx in range(52, 67))
+        assert len(result.splitlines()) == 15
 
     @pytest.mark.asyncio
     async def test_capture_pane_failure(self) -> None:
