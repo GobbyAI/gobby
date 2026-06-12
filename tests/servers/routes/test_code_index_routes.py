@@ -16,7 +16,11 @@ from gobby.code_index.context import (
     CodeIndexGraphUnavailable,
     CodeIndexProjectNotFound,
 )
-from gobby.code_index.gcode_gateway import GcodeCommandError, GcodeUnavailableError
+from gobby.code_index.gcode_gateway import (
+    GcodeCommandError,
+    GcodeProjectNotFoundError,
+    GcodeUnavailableError,
+)
 from gobby.code_index.models import Symbol
 from gobby.config.code_index import CodeIndexConfig
 from gobby.servers.routes.code_index import create_code_index_router
@@ -416,6 +420,24 @@ def test_graph_route_returns_404_when_project_root_missing(
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Code index project not found: proj-1"
+
+
+def test_graph_route_returns_404_when_gcode_project_missing(
+    client: TestClient,
+    mock_server: MagicMock,
+) -> None:
+    error = GcodeProjectNotFoundError(
+        ["gcode", "graph", "overview"],
+        2,
+        "project not found for root /stale/project",
+        "/stale/project",
+    )
+    mock_server.services.code_indexer.graph_overview = AsyncMock(side_effect=error)
+
+    response = client.get("/api/code-index/graph", params={"project_id": "proj-1"})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == str(error)
 
 
 def test_graph_route_returns_500_when_gcode_command_fails(

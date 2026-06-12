@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from gobby.code_index.context import CodeIndexGraphUnavailable, CodeIndexProjectNotFound
 from gobby.code_index.gcode_gateway import (
     GcodeGatewayError,
+    GcodeProjectNotFoundError,
     GcodeUnavailableError,
     GcodeVersionError,
 )
@@ -71,7 +72,7 @@ def _require_project_id(project_id: str | None) -> str:
 def _graph_http_exception(error: Exception) -> HTTPException:
     if isinstance(error, (CodeIndexGraphUnavailable, GcodeUnavailableError, GcodeVersionError)):
         return HTTPException(status_code=503, detail="Code graph not available")
-    if isinstance(error, CodeIndexProjectNotFound):
+    if isinstance(error, (CodeIndexProjectNotFound, GcodeProjectNotFoundError)):
         return HTTPException(status_code=404, detail=str(error))
     if isinstance(error, GcodeGatewayError):
         logger.exception("Code graph gateway request failed")
