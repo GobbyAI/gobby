@@ -6,6 +6,7 @@ All tmux subprocess calls are mocked — no real tmux binary required.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import shlex
@@ -16,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import gobby.agents.tmux.output_reader as output_reader_mod
 from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
 from gobby.agents.tmux.output_reader import TmuxOutputReader, _safe_fifo_component
 from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
@@ -729,6 +731,46 @@ class TestTmuxOutputReader:
         await reader.stop_all()
 
         assert reader._reader_tasks == {}
+
+    @pytest.mark.asyncio
+    async def test_read_loop_decodes_split_multibyte_utf8(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reader = TmuxOutputReader()
+        stop_event = asyncio.Event()
+        chunks: list[str] = []
+        encoded = "\u2500".encode()
+        reads = [encoded[:2], encoded[2:]]
+
+        def fake_read(fd: int, size: int) -> bytes:
+            assert fd == 123
+            assert size == 4096
+            if reads:
+                return reads.pop(0)
+            stop_event.set()
+            return b""
+
+        monkeypatch.setattr(output_reader_mod.os, "open", lambda path, flags: 123)
+        monkeypatch.setattr(output_reader_mod.os, "read", fake_read)
+        monkeypatch.setattr(output_reader_mod.os, "close", lambda fd: None)
+        monkeypatch.setattr(
+            output_reader_mod.select, "select", lambda r, w, e, timeout: (r, [], [])
+        )
+
+        async def callback(run_id: str, text: str) -> None:
+            assert run_id == "run-1"
+            chunks.append(text)
+            stop_event.set()
+
+        reader.set_output_callback(callback)
+
+        await asyncio.wait_for(
+            reader._read_loop("run-1", "ignored.pipe", stop_event),
+            timeout=1.0,
+        )
+
+        assert chunks == ["\u2500"]
+        assert reads == []
 
 
 # =============================================================================
