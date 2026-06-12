@@ -106,6 +106,13 @@ async def sync_worker_loop(
 
     while not shutdown_flag.is_set():
         gcode_gateway = context.gcode_gateway
+        if config.embedding_enabled and vector_store is not None and embed_model is None:
+            try:
+                embed_model = await _build_embed_model(embeddings_config)
+                logger.info("Sync worker: embedding backend became available")
+            except Exception as e:
+                logger.warning("Sync worker: embedding unavailable: %s", e)
+
         try:
             await _sync_pass(
                 storage=storage,
@@ -150,14 +157,6 @@ async def _sync_pass(
 
         root = Path(project.root_path).expanduser()
         if not await asyncio.to_thread(root.is_dir):
-            await purge_missing_project(
-                project=project,
-                storage=storage,
-                config=config,
-                vector_store=vector_store,
-                clear_graph=clear_graph,
-                run_db=run_db,
-            )
             continue
 
         files = await _run_db(
@@ -165,7 +164,9 @@ async def _sync_pass(
             storage.get_pending_sync_files,
             project.id,
             limit=batch_size,
-            vectors=config.embedding_enabled,
+            vectors=config.embedding_enabled
+            and vector_store is not None
+            and embed_model is not None,
             graph=config.graph_enabled,
         )
         if not files:
@@ -234,6 +235,7 @@ async def _sync_file(
     if not current.vectors_synced and config.embedding_enabled:
         if vector_store is not None and embed_model is not None:
             try:
+                await _run_db(run_db, storage.mark_vector_sync_attempted, current.id)
                 await _sync_vectors(
                     storage=storage,
                     vector_store=vector_store,
@@ -244,7 +246,13 @@ async def _sync_file(
                     embedding_dim=embedding_dim,
                     run_db=run_db,
                 )
-                await _run_db(run_db, storage.mark_vectors_synced, current.id)
+                await _run_db(run_db, storage.mark_vectors_synced, current.id, current.content_hash)
+                await _run_db(
+                    run_db,
+                    storage.clear_projection_cleanup_pending,
+                    project_id,
+                    "vector",
+                )
                 did_work = True
             except Exception as e:
                 logger.error(
@@ -258,13 +266,22 @@ async def _sync_file(
     if not current.graph_synced and config.graph_enabled:
         if gcode_gateway is not None:
             try:
+                await _run_db(run_db, storage.mark_graph_sync_attempted, current.id)
                 graph_synced = await _sync_graph(
                     gcode_gateway=gcode_gateway,
                     project_root=root,
                     file=current,
                 )
                 if graph_synced:
-                    await _run_db(run_db, storage.mark_graph_synced, current.id)
+                    await _run_db(
+                        run_db, storage.mark_graph_synced, current.id, current.content_hash
+                    )
+                    await _run_db(
+                        run_db,
+                        storage.clear_projection_cleanup_pending,
+                        project_id,
+                        "graph",
+                    )
                     did_work = True
             except GcodeIndexedFileNotFoundError as e:
                 refreshed = await _run_db(run_db, storage.get_file, project_id, e.file_path)
@@ -337,11 +354,10 @@ async def _sync_vectors(
 ) -> None:
     """Generate embeddings and upsert to Qdrant for a file's symbols."""
     symbols = await _run_db(run_db, storage.get_symbols_for_file, project_id, file.file_path)
-    if not symbols:
-        return
-
     collection = f"{config.qdrant_collection_prefix}{project_id}"
-    await vector_store.ensure_collection(collection, embedding_dim)
+
+    if symbols:
+        await vector_store.ensure_collection(collection, embedding_dim)
 
     # Delete old vectors for this file's symbols
     try:
@@ -351,6 +367,9 @@ async def _sync_vectors(
         )
     except Exception:
         pass  # Collection may not exist yet
+
+    if not symbols:
+        return
 
     for start in range(0, len(symbols), config.sync_worker_vector_batch_size):
         batch = symbols[start : start + config.sync_worker_vector_batch_size]

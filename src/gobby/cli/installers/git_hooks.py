@@ -24,6 +24,49 @@ logger = logging.getLogger(__name__)
 GOBBY_HOOK_START = "# >>> GOBBY HOOK START >>>"
 GOBBY_HOOK_END = "# <<< GOBBY HOOK END <<<"
 
+_CODE_INDEX_REINDEX_BODY = r"""
+if [ -n "$CHANGED_FILES" ]; then
+    GCODE="$HOME/.gobby/bin/gcode"
+    if [ -x "$GCODE" ]; then
+        (
+            if echo "$CHANGED_FILES" | tr '\n' '\0' | xargs -0 "$GCODE" index --quiet --files >/dev/null 2>&1; then
+                ROOT_PATH=$(git rev-parse --show-toplevel 2>/dev/null)
+                if [ -n "$ROOT_PATH" ] && command -v curl >/dev/null 2>&1; then
+                    DAEMON_PORT="${GOBBY_DAEMON_PORT:-60887}"
+                    if command -v jq >/dev/null 2>&1; then
+                        if ! jq -n --arg root "$ROOT_PATH" '{"root_path":$root}' | curl -fsS --connect-timeout 2 --max-time 10 -X POST \
+                            -H "Content-Type: application/json" \
+                            --data-binary @- \
+                            "http://localhost:${DAEMON_PORT}/api/code-index/codewiki/refresh" >/dev/null 2>&1; then
+                            echo "gobby: codewiki refresh request failed for $ROOT_PATH" >&2
+                        fi
+                    elif printf '%s' "$ROOT_PATH" | LC_ALL=C grep -q '[[:cntrl:]]'; then
+                        echo "gobby: codewiki refresh skipped; ROOT_PATH contains control characters" >&2
+                    else
+                        JSON_ROOT=$(printf '%s' "$ROOT_PATH" | sed 's/\\/\\\\/g; s/"/\\"/g')
+                        if ! curl -fsS --connect-timeout 2 --max-time 10 -X POST \
+                            -H "Content-Type: application/json" \
+                            --data "{\"root_path\":\"$JSON_ROOT\"}" \
+                            "http://localhost:${DAEMON_PORT}/api/code-index/codewiki/refresh" >/dev/null 2>&1; then
+                            echo "gobby: codewiki refresh request failed for $ROOT_PATH" >&2
+                        fi
+                    fi
+                fi
+            fi
+        ) &
+    fi
+fi
+"""
+
+
+def _code_index_reindex_hook(event_name: str, changed_files_script: str) -> str:
+    return (
+        f"# Gobby incremental code indexing after {event_name}\n"
+        f"{changed_files_script.strip()}\n"
+        f"{_CODE_INDEX_REINDEX_BODY.strip()}"
+    )
+
+
 # Hook script templates - these get wrapped with markers
 HOOK_TEMPLATES = {
     "pre-commit": r"""
@@ -142,41 +185,55 @@ if command -v gobby >/dev/null 2>&1; then
     fi
 fi
 """,
-    "post-commit": r"""
-# Gobby incremental code indexing after commit
+    "post-commit": _code_index_reindex_hook(
+        "commit",
+        r"""
 CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)
-if [ -n "$CHANGED_FILES" ]; then
-    GCODE="$HOME/.gobby/bin/gcode"
-    if [ -x "$GCODE" ]; then
-        (
-            if echo "$CHANGED_FILES" | tr '\n' '\0' | xargs -0 "$GCODE" index --quiet --files >/dev/null 2>&1; then
-                ROOT_PATH=$(git rev-parse --show-toplevel 2>/dev/null)
-                if [ -n "$ROOT_PATH" ] && command -v curl >/dev/null 2>&1; then
-                    DAEMON_PORT="${GOBBY_DAEMON_PORT:-60887}"
-                    if command -v jq >/dev/null 2>&1; then
-                        if ! jq -n --arg root "$ROOT_PATH" '{"root_path":$root}' | curl -fsS --connect-timeout 2 --max-time 10 -X POST \
-                            -H "Content-Type: application/json" \
-                            --data-binary @- \
-                            "http://localhost:${DAEMON_PORT}/api/code-index/codewiki/refresh" >/dev/null 2>&1; then
-                            echo "gobby: codewiki refresh request failed for $ROOT_PATH" >&2
-                        fi
-                    elif printf '%s' "$ROOT_PATH" | LC_ALL=C grep -q '[[:cntrl:]]'; then
-                        echo "gobby: codewiki refresh skipped; ROOT_PATH contains control characters" >&2
-                    else
-                        JSON_ROOT=$(printf '%s' "$ROOT_PATH" | sed 's/\\/\\\\/g; s/"/\\"/g')
-                        if ! curl -fsS --connect-timeout 2 --max-time 10 -X POST \
-                            -H "Content-Type: application/json" \
-                            --data "{\"root_path\":\"$JSON_ROOT\"}" \
-                            "http://localhost:${DAEMON_PORT}/api/code-index/codewiki/refresh" >/dev/null 2>&1; then
-                            echo "gobby: codewiki refresh request failed for $ROOT_PATH" >&2
-                        fi
-                    fi
-                fi
-            fi
-        ) &
+""",
+    ),
+    "post-checkout": _code_index_reindex_hook(
+        "checkout",
+        r"""
+if [ "$3" = "1" ] && [ -n "$1" ] && [ -n "$2" ]; then
+    if git rev-parse -q --verify "$1^{commit}" >/dev/null 2>&1; then
+        CHANGED_FILES=$(git diff --name-only "$1" "$2" 2>/dev/null)
+    else
+        CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r "$2" 2>/dev/null)
     fi
+else
+    CHANGED_FILES=
 fi
 """,
+    ),
+    "post-merge": _code_index_reindex_hook(
+        "merge",
+        r"""
+if git rev-parse -q --verify ORIG_HEAD >/dev/null 2>&1; then
+    WORKTREE_CHANGED=$(git diff --name-only HEAD 2>/dev/null)
+    if [ -n "$WORKTREE_CHANGED" ]; then
+        CHANGED_FILES="$WORKTREE_CHANGED"
+    elif [ "$(git rev-parse ORIG_HEAD 2>/dev/null)" != "$(git rev-parse HEAD 2>/dev/null)" ]; then
+        CHANGED_FILES=$(git diff --name-only ORIG_HEAD HEAD 2>/dev/null)
+    else
+        CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)
+    fi
+else
+    CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)
+fi
+""",
+    ),
+    "post-rewrite": _code_index_reindex_hook(
+        "rewrite",
+        r"""
+CHANGED_FILES=$(
+    while read -r OLD_REV NEW_REV; do
+        if [ -n "$OLD_REV" ] && [ -n "$NEW_REV" ]; then
+            git diff --name-only "$OLD_REV" "$NEW_REV" 2>/dev/null
+        fi
+    done | sort -u
+)
+""",
+    ),
 }
 
 

@@ -1008,6 +1008,26 @@ class TestClaimedTaskHelpers:
         mock_svm.set_variable.assert_any_call("sess-1", "claimed_tasks", {"uuid-review": "#55"})
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_db_fallback_returns_claims_when_reconcile_write_fails(
+        self, mock_svm_cls: MagicMock
+    ) -> None:
+        handler = _TestHandler()
+        mock_svm = mock_svm_cls.return_value
+        mock_svm.get_variables.return_value = {}
+        mock_svm.set_variable.side_effect = RuntimeError("write failed")
+
+        task = MagicMock()
+        task.id = "uuid-review"
+        task.seq_num = 55
+        task.status = "needs_review"
+        task.title = "Review the patch"
+        handler._task_manager.list_tasks.return_value = [task]
+
+        result = handler._get_claimed_task_info("sess-1", "proj-1")
+
+        assert result == [("#55", "needs_review", "Review the patch")]
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_multiple_claimed_tasks(self, mock_svm_cls: MagicMock) -> None:
         handler = _TestHandler()
         mock_svm_cls.return_value.get_variables.return_value = {

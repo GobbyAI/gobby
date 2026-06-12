@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.code_index.models import (
@@ -12,8 +12,11 @@ from gobby.code_index.models import (
     ImportRelation,
     IndexedFile,
     IndexedProject,
+    ProjectionCleanupPending,
+    ProjectionCleanupStore,
     Symbol,
 )
+from gobby.code_index.summary_safety import sanitize_symbol_summary
 from gobby.search.keyword import fetch_all, pick_search_backend, placeholder
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -21,6 +24,7 @@ if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
+_SYNC_FAILURE_COOLOFF_SECONDS = 300
 
 
 class CodeIndexStorage:
@@ -33,7 +37,7 @@ class CodeIndexStorage:
     # ── Symbols ──────────────────────────────────────────────────────
 
     def upsert_symbols(self, symbols: list[Symbol]) -> int:
-        """Insert or update symbols. Returns count of upserted rows."""
+        """Reference Python symbol writer used by tests; production indexing is Rust gcode."""
         if not symbols:
             return 0
 
@@ -56,6 +60,7 @@ class CodeIndexStorage:
                 sym.parent_symbol_id,
                 sym.content_hash,
                 sym.summary,
+                sym.summary_attempted_at,
                 sym.created_at,
                 now,
             )
@@ -68,8 +73,8 @@ class CodeIndexStorage:
                     kind, language, byte_start, byte_end,
                     line_start, line_end, signature, docstring,
                     parent_symbol_id, content_hash, summary,
-                    created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    summary_attempted_at, created_at, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(id) DO UPDATE SET
                     name=excluded.name,
                     qualified_name=excluded.qualified_name,
@@ -85,6 +90,8 @@ class CodeIndexStorage:
                     content_hash=excluded.content_hash,
                     summary=CASE WHEN excluded.content_hash != code_symbols.content_hash
                                  THEN NULL ELSE code_symbols.summary END,
+                    summary_attempted_at=CASE WHEN excluded.content_hash != code_symbols.content_hash
+                                             THEN NULL ELSE code_symbols.summary_attempted_at END,
                     updated_at=excluded.updated_at
                 """,
                 rows,
@@ -145,10 +152,16 @@ class CodeIndexStorage:
             params.append(file_path)
 
         where = " AND ".join(conditions)
-        params.append(limit)
+        params.extend([query, f"{escaped}%", limit])
 
         rows = self.db.fetchall(
-            f"SELECT * FROM code_symbols WHERE {where} ORDER BY name LIMIT %s",
+            f"""
+            SELECT *
+            FROM code_symbols
+            WHERE {where}
+            ORDER BY (name = %s) DESC, (name LIKE %s ESCAPE '\\') DESC, name, id
+            LIMIT %s
+            """,
             tuple(params),
         )
         return [Symbol.from_row(r) for r in rows]
@@ -199,14 +212,14 @@ class CodeIndexStorage:
     # ── Files ────────────────────────────────────────────────────────
 
     def upsert_file(self, file: IndexedFile) -> None:
-        """Insert or update an indexed file record."""
+        """Reference Python file writer used by tests; production indexing is Rust gcode."""
         with self.db.transaction() as conn:
             conn.execute(
                 """INSERT INTO code_indexed_files (
                     id, project_id, file_path, language, content_hash,
                     symbol_count, byte_size, graph_synced, vectors_synced,
-                    graph_sync_attempted_at, indexed_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    graph_sync_attempted_at, vector_sync_attempted_at, indexed_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(id) DO UPDATE SET
                     content_hash=excluded.content_hash,
                     symbol_count=excluded.symbol_count,
@@ -214,6 +227,7 @@ class CodeIndexStorage:
                     graph_synced=FALSE,
                     graph_sync_attempted_at=NULL,
                     vectors_synced=FALSE,
+                    vector_sync_attempted_at=NULL,
                     indexed_at=excluded.indexed_at
                 """,
                 (
@@ -227,6 +241,7 @@ class CodeIndexStorage:
                     bool(file.graph_synced),
                     bool(file.vectors_synced),
                     file.graph_sync_attempted_at,
+                    file.vector_sync_attempted_at,
                     file.indexed_at,
                 ),
             )
@@ -327,6 +342,7 @@ class CodeIndexStorage:
         *,
         vectors: bool = True,
         graph: bool = True,
+        failure_cooloff_seconds: int = _SYNC_FAILURE_COOLOFF_SECONDS,
     ) -> list[IndexedFile]:
         """Get files needing external sync.
 
@@ -336,40 +352,65 @@ class CodeIndexStorage:
             vectors: Include files needing vector sync.
             graph: Include files needing graph sync.
         """
+        retry_cutoff = (datetime.now(UTC) - timedelta(seconds=failure_cooloff_seconds)).isoformat()
         conditions = []
+        params: list[Any] = [project_id]
         if vectors:
-            conditions.append("vectors_synced IS FALSE")
+            conditions.append(
+                """(vectors_synced IS FALSE
+                   AND (vector_sync_attempted_at IS NULL OR vector_sync_attempted_at < %s))"""
+            )
+            params.append(retry_cutoff)
         if graph:
-            conditions.append("graph_synced IS FALSE")
+            conditions.append(
+                """(graph_synced IS FALSE
+                   AND (graph_sync_attempted_at IS NULL OR graph_sync_attempted_at < %s))"""
+            )
+            params.append(retry_cutoff)
         if not conditions:
             return []
         where = " OR ".join(conditions)
+        params.append(limit)
         rows = self.db.fetchall(
             f"""SELECT * FROM code_indexed_files
                 WHERE project_id = %s AND ({where})
                 ORDER BY indexed_at LIMIT %s""",
-            (project_id, limit),
+            tuple(params),
         )
         return [IndexedFile.from_row(r) for r in rows]
 
-    def mark_vectors_synced(self, file_id: str) -> bool:
-        """Mark a file's vectors as synced. Returns True if updated."""
+    def mark_vectors_synced(self, file_id: str, content_hash: str) -> bool:
+        """Mark a file's vectors as synced if the content hash still matches."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE code_indexed_files SET vectors_synced = TRUE WHERE id = %s",
-                (file_id,),
+                """UPDATE code_indexed_files
+                   SET vectors_synced = TRUE, vector_sync_attempted_at = %s
+                   WHERE id = %s AND content_hash = %s""",
+                (datetime.now(UTC).isoformat(), file_id, content_hash),
             )
             return cursor.rowcount > 0
 
-    def mark_graph_synced(self, file_id: str) -> bool:
-        """Mark a file's graph edges as synced. Returns True if updated."""
+    def mark_vector_sync_attempted(self, file_id: str) -> bool:
+        """Mark that a vector sync was attempted, even if it later fails."""
+        now = datetime.now(UTC).isoformat()
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """UPDATE code_indexed_files
+                   SET vectors_synced = FALSE, vector_sync_attempted_at = %s
+                   WHERE id = %s""",
+                (now, file_id),
+            )
+            return cursor.rowcount > 0
+
+    def mark_graph_synced(self, file_id: str, content_hash: str) -> bool:
+        """Mark a file's graph edges as synced if the content hash still matches."""
         now = datetime.now(UTC).isoformat()
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 """UPDATE code_indexed_files
                    SET graph_synced = TRUE, graph_sync_attempted_at = %s
-                   WHERE id = %s""",
-                (now, file_id),
+                   WHERE id = %s AND content_hash = %s""",
+                (now, file_id, content_hash),
             )
             return cursor.rowcount > 0
 
@@ -601,6 +642,56 @@ class CodeIndexStorage:
             counts["projects"] = cursor.rowcount
             return counts
 
+    # ── Projection cleanup retry markers ─────────────────────────────
+
+    def record_projection_cleanup_failure(
+        self,
+        project_id: str,
+        store: ProjectionCleanupStore,
+        error: str,
+    ) -> None:
+        """Persist a failed projection cleanup attempt for maintenance retry."""
+        with self.db.transaction() as conn:
+            conn.execute(
+                """INSERT INTO code_index_projection_cleanup_pending (
+                    project_id, store, attempts, last_error
+                ) VALUES (%s, %s, 1, %s)
+                ON CONFLICT(project_id, store) DO UPDATE SET
+                    attempts=code_index_projection_cleanup_pending.attempts + 1,
+                    last_error=excluded.last_error,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (project_id, store, error),
+            )
+
+    def clear_projection_cleanup_pending(
+        self,
+        project_id: str,
+        store: ProjectionCleanupStore,
+    ) -> bool:
+        """Clear a pending projection cleanup marker after cleanup succeeds."""
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """DELETE FROM code_index_projection_cleanup_pending
+                   WHERE project_id = %s AND store = %s""",
+                (project_id, store),
+            )
+            return cursor.rowcount > 0
+
+    def list_projection_cleanup_pending(
+        self,
+        limit: int = 100,
+    ) -> list[ProjectionCleanupPending]:
+        """List pending projection cleanup retries, oldest first."""
+        rows = self.db.fetchall(
+            """SELECT project_id, store, attempts, last_error, created_at, updated_at
+               FROM code_index_projection_cleanup_pending
+               ORDER BY updated_at ASC, created_at ASC
+               LIMIT %s""",
+            (limit,),
+        )
+        return [ProjectionCleanupPending.from_row(row) for row in rows]
+
     # ── Summaries ────────────────────────────────────────────────────
 
     def get_unsummarized_symbols(
@@ -608,6 +699,7 @@ class CodeIndexStorage:
         project_id: str,
         kinds: list[str] | None = None,
         limit: int = 20,
+        failure_cooloff_seconds: int = _SYNC_FAILURE_COOLOFF_SECONDS,
     ) -> list[Symbol]:
         """Get symbols that have no summary yet.
 
@@ -619,24 +711,47 @@ class CodeIndexStorage:
         if kinds is None:
             kinds = ["function", "class", "method"]
         placeholders = ",".join("%s" for _ in kinds)
+        retry_cutoff = (datetime.now(UTC) - timedelta(seconds=failure_cooloff_seconds)).isoformat()
         rows = self.db.fetchall(
             f"""SELECT * FROM code_symbols
                 WHERE project_id = %s AND summary IS NULL
+                  AND (summary_attempted_at IS NULL OR summary_attempted_at < %s)
                   AND kind IN ({placeholders})
                 ORDER BY updated_at DESC
                 LIMIT %s""",
-            (project_id, *kinds, limit),
+            (project_id, retry_cutoff, *kinds, limit),
         )
         return [Symbol.from_row(r) for r in rows]
 
-    def update_symbol_summary(self, symbol_id: str, summary: str) -> bool:
-        """Set the summary for a symbol. Returns True if updated."""
+    def update_symbol_summary(self, symbol_id: str, content_hash: str, summary: str) -> bool:
+        """Set the summary for a symbol if the content hash still matches."""
+        sanitized_summary = sanitize_symbol_summary(summary)
+        if sanitized_summary is None:
+            return False
+
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE code_symbols SET summary = %s WHERE id = %s",
-                (summary, symbol_id),
+                """UPDATE code_symbols
+                   SET summary = %s, summary_attempted_at = NULL
+                   WHERE id = %s AND content_hash = %s""",
+                (sanitized_summary, symbol_id, content_hash),
             )
             return cursor.rowcount > 0
+
+    def mark_symbol_summaries_attempted(self, symbol_ids: list[str]) -> int:
+        """Mark summary generation attempts for symbols that failed to produce summaries."""
+        if not symbol_ids:
+            return 0
+        now = datetime.now(UTC).isoformat()
+        placeholders = ",".join("%s" for _ in symbol_ids)
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                f"""UPDATE code_symbols
+                    SET summary_attempted_at = %s
+                    WHERE id IN ({placeholders}) AND summary IS NULL""",
+                (now, *symbol_ids),
+            )
+            return cursor.rowcount
 
     # ── Counts ───────────────────────────────────────────────────────
 
@@ -814,39 +929,11 @@ class CodeIndexStorage:
         if not query.strip():
             return []
 
-        try:
-            hits = pick_search_backend(self.db, "code_content").search(
-                query,
-                limit,
-                filters={"project_id": project_id, "file_path": file_path},
-            )
-        except Exception as e:
-            logger.debug(f"Content keyword search failed, falling back to LIKE: {e}")
-            # Fallback to LIKE search
-            like_query = f"%{query}%"
-            params: list[Any] = [project_id, like_query]
-            sql = """SELECT file_path, line_start, line_end, language,
-                        substr(content, max(1, instr(content, %s) - 60), 120) as snippet
-                     FROM code_content_chunks
-                     WHERE project_id = %s AND content LIKE %s"""
-            if file_path:
-                sql += " AND file_path = %s"
-                params = [query, project_id, like_query, file_path]
-            else:
-                params = [query, project_id, like_query]
-            sql += " LIMIT %s"
-            params.append(limit)
-            rows = self.db.fetchall(sql, tuple(params))
-            return [
-                {
-                    "file_path": row["file_path"],
-                    "line_start": row["line_start"],
-                    "line_end": row["line_end"],
-                    "snippet": row["snippet"],
-                    "language": row["language"],
-                }
-                for row in rows
-            ]
+        hits = pick_search_backend(self.db, "code_content").search(
+            query,
+            limit,
+            filters={"project_id": project_id, "file_path": file_path},
+        )
 
         rows = self._rows_by_ids("code_content_chunks", [hit.id for hit in hits])
         rows_by_id = {str(row["id"]): row for row in rows}

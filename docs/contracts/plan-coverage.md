@@ -60,13 +60,17 @@ The `A<section>.<n>` shorthand used elsewhere in this contract is read as
 ID with no letter prefix.
 
 Each item names at least one artifact kind: `file`, `symbol`, `test`, or
-`behavior`.
+`behavior`. `symbol` values use the code index's `qualified_name` contract:
+top-level symbols are leaf names and nested class/type members are
+container-qualified within one file, such as `Symbol.make_id`. They are not
+module- or package-qualified import paths; include a `file` artifact when a
+symbol name needs disambiguation.
 
 ```markdown
 **Acceptance:**  (under section `A1`, letter-prefixed)
 
 - A1.1 - <prose>. file: `src/module.py`.
-- A1.2 - <prose>. symbol: `gobby.module.Symbol`.
+- A1.2 - <prose>. symbol: `Symbol`.
 - A1.3 - <prose>. test: `tests/test_module.py::test_behavior`.
 - A1.4 - <prose>. behavior: "documented behavior" in `docs/contract.md`.
 ```
@@ -75,7 +79,7 @@ Each item names at least one artifact kind: `file`, `symbol`, `test`, or
 **Acceptance:**  (under section `1.1`, purely numeric)
 
 - 1.1.1 - <prose>. file: `src/module.py`.
-- 1.1.2 - <prose>. symbol: `gobby.module.Symbol`.
+- 1.1.2 - <prose>. symbol: `Symbol.make_id`.
 ```
 
 ## Deferrals
