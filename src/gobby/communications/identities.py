@@ -35,14 +35,6 @@ class IdentityManager:
         self._session_store = session_store
         self._config = config
 
-    def find_cross_channel_identity(self, external_username: str) -> str | None:
-        """Search for matching identity on other channels by username pattern."""
-        identities = self._store.find_identities_by_username(external_username)
-        for identity in identities:
-            if identity.session_id:
-                return str(identity.session_id)
-        return None
-
     def bridge_identity(self, identity_id: str, session_id: str) -> None:
         """Link existing identity to a session."""
         identity = self._store.get_identity(identity_id)
@@ -75,8 +67,6 @@ class IdentityManager:
         session_id = None
         if identity and identity.session_id:
             session_id = identity.session_id
-        elif external_username:
-            session_id = self.find_cross_channel_identity(external_username)
 
         if not session_id and self._config.auto_create_sessions:
             session = self._session_store.register(

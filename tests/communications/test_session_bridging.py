@@ -124,16 +124,16 @@ async def test_resolve_identity_finds_existing():
     store.create_identity.assert_not_called()
 
 
-# --- Cross-channel identity matching by username ---
+# --- Username collision isolation ---
 
 
 @pytest.mark.asyncio
-async def test_cross_channel_identity_matching_by_username():
-    """_resolve_identity finds session via cross-channel username match."""
+async def test_cross_channel_username_collision_does_not_inherit_session():
+    """A claimed username matching another channel does not bind to its session."""
     store = _store([_channel()])
     # No direct identity for this channel
     store.get_identity_by_external.return_value = None
-    # But a matching identity exists on another channel
+    # A matching username exists on another channel, but that is self-asserted.
     other_identity = _identity(
         identity_id="id-other",
         channel_id="chan-other",
@@ -143,18 +143,19 @@ async def test_cross_channel_identity_matching_by_username():
     )
     store.find_identities_by_username.return_value = [other_identity]
 
-    manager = await _make_manager(store)
+    config = _config(auto_create_sessions=False)
+    manager = await _make_manager(store, config=config)
     identity = await manager._resolve_identity("chan-1", "ext-user-1", "alice")
 
-    store.find_identities_by_username.assert_called_once_with("alice")
-    assert identity.session_id == "session-from-other-channel"
-    # Should have created a new identity for this channel
+    store.find_identities_by_username.assert_not_called()
+    assert identity.session_id is None
+    # A distinct identity is created for this channel without inheriting the other session.
     store.create_identity.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_cross_channel_no_match_without_username():
-    """Cross-channel lookup is skipped when no external_username is provided."""
+    """New identity is created without session when no external_username is provided."""
     store = _store([_channel()])
     store.get_identity_by_external.return_value = None
 
@@ -232,12 +233,12 @@ async def test_no_auto_create_session_when_disabled():
 
 
 @pytest.mark.asyncio
-async def test_resolve_updates_session_on_existing_identity():
-    """Existing identity gets session_id updated when cross-channel match provides one."""
+async def test_resolve_does_not_update_session_on_username_collision():
+    """Existing identity does not get session_id updated from a username collision."""
     store = _store([_channel()])
     existing = _identity(session_id=None)
     store.get_identity_by_external.return_value = existing
-    # Cross-channel match provides session
+    # A username collision on another channel is not a verified bridge.
     other_identity = _identity(
         identity_id="id-other",
         channel_id="chan-other",
@@ -245,11 +246,13 @@ async def test_resolve_updates_session_on_existing_identity():
     )
     store.find_identities_by_username.return_value = [other_identity]
 
-    manager = await _make_manager(store)
+    config = _config(auto_create_sessions=False)
+    manager = await _make_manager(store, config=config)
     identity = await manager._resolve_identity("chan-1", "ext-user-1", "alice")
 
-    assert identity.session_id == "session-from-cross"
-    store.update_identity.assert_called_once()
+    store.find_identities_by_username.assert_not_called()
+    assert identity.session_id is None
+    store.update_identity.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -309,46 +312,6 @@ def test_bridge_identity_noop_when_not_found():
     assert not store.update_identity.called
 
 
-# --- find_cross_channel_identity ---
-
-
-def test_find_cross_channel_identity_returns_session():
-    """_find_cross_channel_identity returns session_id from matching identity."""
-    store = _store()
-    matching = _identity(session_id="session-match")
-    store.find_identities_by_username.return_value = [matching]
-
-    manager = CommunicationsManager(_config(), store, MagicMock(), MagicMock())
-    result = manager._find_cross_channel_identity("alice")
-
-    assert result == "session-match"
-    store.find_identities_by_username.assert_called_once_with("alice")
-
-
-def test_find_cross_channel_identity_skips_no_session():
-    """_find_cross_channel_identity skips identities without a session."""
-    store = _store()
-    no_session = _identity(session_id=None)
-    with_session = _identity(identity_id="id-2", session_id="session-2")
-    store.find_identities_by_username.return_value = [no_session, with_session]
-
-    manager = CommunicationsManager(_config(), store, MagicMock(), MagicMock())
-    result = manager._find_cross_channel_identity("alice")
-
-    assert result == "session-2"
-
-
-def test_find_cross_channel_identity_returns_none_when_empty():
-    """_find_cross_channel_identity returns None when no identities found."""
-    store = _store()
-    store.find_identities_by_username.return_value = []
-
-    manager = CommunicationsManager(_config(), store, MagicMock(), MagicMock())
-    result = manager._find_cross_channel_identity("alice")
-
-    assert result is None
-
-
 # --- End-to-end: inbound message triggers identity resolution ---
 
 
@@ -375,5 +338,6 @@ async def test_inbound_message_resolves_identity_and_sets_session():
     stored = await manager.handle_inbound_messages("test-channel", [inbound])
 
     assert len(stored) == 1
-    assert stored[0].session_id == "session-abc"
-    assert stored[0].identity_id == "id-1"
+    created_message = store.create_message.call_args.args[0]
+    assert created_message.session_id == "session-abc"
+    assert created_message.identity_id == "id-1"

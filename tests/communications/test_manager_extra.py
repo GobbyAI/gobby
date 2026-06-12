@@ -181,10 +181,6 @@ class TestDelegates:
         assert manager._store.list_identities.call_count >= 1
         assert manager._store.list_identities.call_args is not None
 
-    def test_find_cross_channel_identity(self, manager):
-        manager._identity_manager.find_cross_channel_identity = MagicMock(return_value="id_1")
-        assert manager._find_cross_channel_identity("user1") == "id_1"
-
     def test_bridge_identity(self, manager):
         manager._identity_manager.bridge_identity = MagicMock()
         manager._bridge_identity("id_1", "sess_1")

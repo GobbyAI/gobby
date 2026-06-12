@@ -466,10 +466,6 @@ class CommunicationsManager:
 
         return messages
 
-    def _find_cross_channel_identity(self, external_username: str) -> str | None:
-        """Search for matching identity on other channels by username pattern."""
-        return self._identity_manager.find_cross_channel_identity(external_username)
-
     def _bridge_identity(self, identity_id: str, session_id: str) -> None:
         """Link existing identity to a session."""
         self._identity_manager.bridge_identity(identity_id, session_id)
