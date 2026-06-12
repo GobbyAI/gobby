@@ -117,6 +117,7 @@ fn ghook_command(home: &Path, daemon_url: &str) -> Command {
     command
         .args(["--gobby-owned", "--cli", "codex", "--type", "SessionStart"])
         .env("HOME", home)
+        .env_remove("GOBBY_HOME")
         .env("GOBBY_DAEMON_URL", daemon_url)
         .env_remove("GOBBY_HOOKS_DISABLED")
         .env_remove("TMUX")

@@ -193,6 +193,12 @@ fn run_gobby_owned(args: &Args) -> ExitCode {
     let env = build_dispatch_envelope(&cfg, hook_type, input_data, project_id.as_deref());
 
     let direct_post_after_enqueue_failure = |failure_detail: String| -> HookAction {
+        // Mirror the normal enqueue→detach→POST ordering: a --detach run must
+        // escape the host's process group before the bounded fallback POST,
+        // or a host group-kill can reap us mid-delivery with no action emitted.
+        if args.detach {
+            detach::detach();
+        }
         let daemon_url = gobby_core::daemon_url::daemon_url();
         // No inbox file exists here; post_and_cleanup ignores remove errors after 2xx.
         let missing_enqueued_path = PathBuf::new();
